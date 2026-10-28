@@ -151,7 +151,102 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiBadge, uiButton, uiChannelChip } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBadge, uiButton, uiChannelChip, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+
+/**
+ * The open Aggiungi menu, if any. One menu per view, like the clienti and
+ * calendario menus: opening one closes the other, Escape and a click
+ * outside close it. Documents without addEventListener (the dependency-free
+ * fake DOM of the unit tests) skip the outside closer; the toggle voices
+ * and Escape still work there.
+ * @type {{ wrap: any, close: () => void } | null}
+ */
+let openAggiungiMenu = null;
+
+/** The document the single outside-click closer is installed on, if any. */
+let aggiungiCloserDoc = null;
+
+/** @param {any} doc */
+function installAggiungiCloser(doc) {
+  if (aggiungiCloserDoc === doc || typeof doc?.addEventListener !== 'function') return;
+  aggiungiCloserDoc = doc;
+  doc.addEventListener('click', (event) => {
+    const current = openAggiungiMenu;
+    if (!current) return;
+    let node = event?.target ?? null;
+    while (node) {
+      if (node === current.wrap) return;
+      node = node.parentNode ?? null;
+    }
+    current.close();
+  });
+}
+
+/**
+ * The hero carousel content, verbatim from the prototype (`02
+ * Personalizzazione`, Connettori). Three product slides, no customer data:
+ * the third slide is the prototype's own copy, kept as-is.
+ */
+export const CONNETTORI_HERO = Object.freeze([
+  Object.freeze({
+    eyebrow: 'Curato da Accordo',
+    title: 'Kit social',
+    text: 'Instagram, Facebook, TikTok e WhatsApp in un\u2019unica inbox, con risposte che partono dal canale originale.',
+    cta: 'Esplora',
+  }),
+  Object.freeze({
+    eyebrow: '',
+    title: 'Agenda, lead e pagamenti',
+    text: 'Appuntamenti condivisi, richieste dal sito e incassi Stripe dentro la scheda del cliente.',
+    cta: 'Esplora',
+  }),
+  Object.freeze({
+    eyebrow: '\u2726 Accordo AI',
+    title: 'Configura con l\u2019AI',
+    text: 'Dimmi come ti contattano i clienti: scelgo io i canali da collegare e l\u2019ordine giusto.',
+    cta: 'Inizia',
+  }),
+]);
+
+/**
+ * Step the hero carousel with wrap-around: -1 is Precedente, +1 is
+ * Successiva, any integer lands on a real slide.
+ * @param {unknown} index @param {unknown} delta
+ */
+export function heroStep(index, delta) {
+  const total = CONNETTORI_HERO.length;
+  const base = Number(index);
+  const step = Number(delta);
+  const from = Number.isFinite(base) ? Math.trunc(base) : 0;
+  const by = Number.isFinite(step) ? Math.trunc(step) : 0;
+  return (((from + by) % total) + total) % total;
+}
+
+/** Shown when the space may not manage connectors: no codes, no detail. */
+export const CONNECTORS_PERMISSION_MESSAGE = 'Chiedi al titolare di collegare questo canale.';
+
+/**
+ * A normalized connector/space-package failure is a permission case when the
+ * server refused it (403), never when it only failed.
+ * @param {{ code?: unknown, status?: unknown }} failure
+ */
+export function isPermissionFailure(failure) {
+  if (!failure || typeof failure !== 'object') return false;
+  return failure.code === 'FORBIDDEN' || failure.status === 403;
+}
+
+/**
+ * The Prova panel title names the unit's label, never its raw unit name, so
+ * a technical identifier (e.g. `follow-up · task-1`) never reaches the page.
+ * Unknown units fall back to the bare `Prova`, never the raw name.
+ * @param {unknown} previewFor @param {Array<any>} [units]
+ */
+export function previewTitleFor(previewFor, units = []) {
+  const list = Array.isArray(units) ? units : [];
+  const found = list.find((entry) => entry && entry.name === previewFor);
+  const label = found && typeof found.label === 'string' && found.label !== '' ? found.label : '';
+  return label !== '' ? `Prova · ${label}` : 'Prova';
+}
 
 /**
  * The Connettori tab content, from the approved prototype (shots-2026-10-24,
@@ -249,19 +344,28 @@ export function connettoriCardState(entry, connectors) {
 }
 
 /**
- * Filter and sort the Connettori cards. Pure: the query matches label and
- * lines case-insensitively, `stato` sorts connected cards first.
+ * Filter and sort the Connettori cards. Pure: `view` is the prototype's
+ * I tuoi/Scopri toggle (`tuoi` keeps only connected cards, `scopri` keeps
+ * everything, like the packages directory); `stato` is the Stato menu
+ * (`attivi`/`da-attivare`); the query matches label and lines
+ * case-insensitively; `nome` sorts Nome A–Z, `piu-usati` keeps the prototype
+ * order (no usage counts exist server-side, so the catalog order is the
+ * honest ranking), `stato` sorts connected cards first.
  */
-export function filterConnettori({ connectors = [], query = '', sort = 'nome' } = {}) {
+export function filterConnettori({ connectors = [], query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
   const needle = String(query ?? '').trim().toLowerCase();
   return CONNETTORI_SECTIONS.map((section) => {
     const cards = [];
     for (const entry of section.entries) {
+      const state = connettoriCardState(entry, connectors);
+      if (view === 'tuoi' && state !== 'collegato') continue;
+      if (stato === 'attivi' && state !== 'collegato') continue;
+      if (stato === 'da-attivare' && state !== 'da-collegare') continue;
       if (needle !== '') {
         const hay = `${entry.label} ${entry.lines.join(' ')}`.toLowerCase();
         if (!hay.includes(needle)) continue;
       }
-      cards.push({ entry, state: connettoriCardState(entry, connectors) });
+      cards.push({ entry, state });
     }
     cards.sort((left, right) => {
       if (sort === 'stato') {
@@ -269,6 +373,7 @@ export function filterConnettori({ connectors = [], query = '', sort = 'nome' } 
         const byState = rank(left) - rank(right);
         if (byState !== 0) return byState;
       }
+      if (sort === 'piu-usati') return 0;
       return String(left.entry.label).localeCompare(String(right.entry.label), 'it');
     });
     return { section, cards };
@@ -301,6 +406,8 @@ export function createPersonalizzazioneView(deps) {
     view: 'scopri',
     query: '',
     sort: 'nome',
+    stato: 'tutti',
+    hero: 0,
     /** @type {Array<any> | null} */ units: null,
     /** @type {Array<any> | null} */ rows: null,
     notComposed: false,
@@ -308,6 +415,7 @@ export function createPersonalizzazioneView(deps) {
     unitsError: null,
     /** @type {Array<any> | null} */ connectors: null,
     connectorsMissing: false,
+    connectorsForbidden: false,
     /** @type {string | null} */ previewFor: null,
     /** @type {any} */ preview: null,
     busy: false,
@@ -378,6 +486,7 @@ export function createPersonalizzazioneView(deps) {
     const space = readSpace().trim();
     state.connectors = null;
     state.connectorsMissing = false;
+    state.connectorsForbidden = false;
     if (space === '') return;
     try {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(space)}`);
@@ -386,11 +495,16 @@ export function createPersonalizzazioneView(deps) {
       const failure = errorOf(error);
       // 404 means the server does not publish connector state (package not
       // composed): render the directory with every card as `+`, the honest
-      // zero-state, and let the wizard surface its own note. Any other
-      // failure is an outage: the Italian error with Riprova, never cards
-      // pretending every channel is disconnected.
+      // zero-state, and let the wizard surface its own note. A refusal
+      // (403) keeps the page readable with the same directory, but every
+      // collegamento action answers `Chiedi al titolare…` instead of
+      // navigating. Any other failure is an outage: the Italian error with
+      // Riprova, never cards pretending every channel is disconnected.
       if (failure.code === 'NOT_FOUND' || failure.status === 404) state.connectors = [];
-      else state.connectorsMissing = true;
+      else if (isPermissionFailure(failure)) {
+        state.connectors = [];
+        state.connectorsForbidden = true;
+      } else state.connectorsMissing = true;
     }
   }
 
@@ -446,9 +560,115 @@ export function createPersonalizzazioneView(deps) {
     box.appendChild(tabs);
   }
 
+  /**
+   * The Connettori toggle (spec C7): the same I tuoi/Scopri segmented
+   * control as the other tabs, bound to the directory filter.
+   * @param {any} bar
+   */
+  function renderConnettoriToggle(bar) {
+    const group = uiSegmented(doc, PERSONALIZZAZIONE_VIEWS.map((view) => ({
+      id: view,
+      label: view === 'tuoi' ? 'I tuoi' : 'Scopri',
+      active: state.view === view,
+    })));
+    for (const view of PERSONALIZZAZIONE_VIEWS) {
+      const option = group.querySelector(`button[data-seg="${view}"]`);
+      if (!option) continue;
+      if (state.busy) option.setAttribute('disabled', 'disabled');
+      option.addEventListener('click', () => { state.view = view; render(); });
+    }
+    bar.appendChild(group);
+  }
+
+  /**
+   * A labelled select for the Connettori toolbar: Stato (spec C22) or
+   * Ordina per (spec C23). A native select is keyboard-operable with no new
+   * CSS; the voci match the prototype verbatim and in order.
+   * @param {string} name @param {Array<[string, string]>} voices @param {string} current
+   */
+  function renderConnettoriSelect(name, voices, current) {
+    const select = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': name } });
+    for (const [value, label] of voices) {
+      const option = el(doc, 'option', { text: label, attrs: { value } });
+      if (current === value) option.setAttribute('selected', 'selected');
+      select.appendChild(option);
+    }
+    // A real select element reports its choice; the fake keeps first.
+    try { select.value = current; } catch { /* keep rendered order */ }
+    return select;
+  }
+
+  /**
+   * The green Aggiungi CTA with its two-voice menu (spec C9): `Crea con
+   * l'AI` and `Configura manualmente`. Esc and a click outside close the
+   * menu, like the clienti and calendario menus.
+   * @param {any} bar
+   */
+  function renderConnettoriAdd(bar) {
+    installAggiungiCloser(doc);
+    const wrap = el(doc, 'div', { cls: 'ui-conn-addwrap' });
+    const toggle = uiButton(doc, {
+      variant: 'cta', label: 'Aggiungi ▾',
+      attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false' },
+    });
+    toggle.disabled = state.busy;
+    const menu = el(doc, 'div', { cls: 'ui-conn-addmenu hidden', attrs: { role: 'menu' } });
+    /** @type {{ wrap: any, close: () => void }} */
+    const handle = { wrap, close: () => {} };
+    const close = () => {
+      menu.classList.toggle('hidden', true);
+      toggle.setAttribute('aria-expanded', 'false');
+      if (openAggiungiMenu === handle) openAggiungiMenu = null;
+    };
+    handle.close = close;
+    const open = () => {
+      if (openAggiungiMenu && openAggiungiMenu !== handle) openAggiungiMenu.close();
+      menu.classList.toggle('hidden', false);
+      toggle.setAttribute('aria-expanded', 'true');
+      openAggiungiMenu = handle;
+    };
+    toggle.addEventListener('click', () => {
+      if (menu.classList.contains('hidden')) open();
+      else close();
+    });
+    wrap.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') {
+        close();
+        if (typeof toggle.focus === 'function') toggle.focus();
+      }
+    });
+    const voices = [
+      {
+        label: 'Crea con l\u2019AI',
+        run: () => say('La creazione con l\u2019AI non \u00e8 ancora disponibile: usa Configura manualmente.'),
+      },
+      {
+        label: 'Configura manualmente',
+        run: () => go('#/connettori'),
+      },
+    ];
+    for (const voice of voices) {
+      const item = el(doc, 'button', {
+        text: voice.label,
+        cls: 'ui-conn-addvoice',
+        attrs: { type: 'button', role: 'menuitem' },
+      });
+      item.addEventListener('click', () => {
+        close();
+        voice.run();
+      });
+      menu.appendChild(item);
+    }
+    wrap.appendChild(toggle);
+    wrap.appendChild(menu);
+    bar.appendChild(wrap);
+  }
+
   function renderToolbar(box, count) {
     const bar = el(doc, 'div', { cls: 'toolbar' });
-    if (state.tab !== 'connettori') {
+    if (state.tab === 'connettori') {
+      renderConnettoriToggle(bar);
+    } else {
       for (const view of PERSONALIZZAZIONE_VIEWS) {
         const button = el(doc, 'button', {
           text: view === 'tuoi' ? 'I tuoi' : 'Scopri',
@@ -467,30 +687,45 @@ export function createPersonalizzazioneView(deps) {
     search.value = state.query;
     search.addEventListener('input', () => { state.query = String(search.value ?? ''); renderList(); });
     bar.appendChild(search);
-    const sort = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': 'Ordina per' } });
-    for (const [value, label] of [['nome', 'Ordina: nome'], ['stato', 'Ordina: stato']]) {
-      const option = el(doc, 'option', { text: label, attrs: { value } });
-      if (state.sort === value) option.setAttribute('selected', 'selected');
-      sort.appendChild(option);
-    }
-    // A real select element reports its choice; the fake keeps first.
-    try { sort.value = state.sort; } catch { /* keep rendered order */ }
-    sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
-    bar.appendChild(sort);
-    // The green CTA opens where a unit is added: the guided wizard for a
-    // channel, the module factory note for packages, the skill note.
-    const add = uiButton(doc, { variant: 'cta', label: 'Aggiungi ▾', attrs: { type: 'button' } });
-    add.disabled = state.busy;
-    add.addEventListener('click', () => {
-      if (state.tab === 'connettori') {
-        go('#/connettori');
-      } else if (state.tab === 'skill') {
-        say('Le skill personalizzate arrivano con BO-F4-02: intanto copia il prompt dalla Prova di una skill.');
-      } else {
-        say('I pacchetti personalizzati si creano con `accordo module:create` (vedi docs/MODULE_FACTORY.md).');
+    if (state.tab === 'connettori') {
+      const stato = renderConnettoriSelect('Stato', [['tutti', 'Tutti'], ['attivi', 'Attivi'], ['da-attivare', 'Da attivare']], state.stato);
+      stato.addEventListener('change', () => {
+        const next = String(stato.value ?? 'tutti');
+        state.stato = next === 'attivi' || next === 'da-attivare' ? next : 'tutti';
+        renderList();
+      });
+      bar.appendChild(stato);
+      const sort = renderConnettoriSelect('Ordina per', [['piu-usati', 'Più usati'], ['nome', 'Nome A–Z']], state.sort === 'stato' ? 'nome' : state.sort);
+      sort.addEventListener('change', () => {
+        state.sort = String(sort.value === 'nome' ? 'nome' : 'piu-usati');
+        renderList();
+      });
+      bar.appendChild(sort);
+      renderConnettoriAdd(bar);
+    } else {
+      const sort = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': 'Ordina per' } });
+      for (const [value, label] of [['nome', 'Ordina: nome'], ['stato', 'Ordina: stato']]) {
+        const option = el(doc, 'option', { text: label, attrs: { value } });
+        if (state.sort === value) option.setAttribute('selected', 'selected');
+        sort.appendChild(option);
       }
-    });
-    bar.appendChild(add);
+      // A real select element reports its choice; the fake keeps first.
+      try { sort.value = state.sort; } catch { /* keep rendered order */ }
+      sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
+      bar.appendChild(sort);
+      // The green CTA opens where a unit is added: the module factory note
+      // for packages, the skill note.
+      const add = uiButton(doc, { variant: 'cta', label: 'Aggiungi ▾', attrs: { type: 'button' } });
+      add.disabled = state.busy;
+      add.addEventListener('click', () => {
+        if (state.tab === 'skill') {
+          say('Le skill personalizzate arrivano con BO-F4-02: intanto copia il prompt dalla Prova di una skill.');
+        } else {
+          say('I pacchetti personalizzati si creano con `accordo module:create` (vedi docs/MODULE_FACTORY.md).');
+        }
+      });
+      bar.appendChild(add);
+    }
     const total = el(doc, 'span', { text: pluralize(count, 'voce', 'voci'), cls: 'muted' });
     bar.appendChild(total);
     box.appendChild(bar);
@@ -595,7 +830,7 @@ export function createPersonalizzazioneView(deps) {
           await load();
         } catch (error) {
           const failure = errorOf(error);
-          say(failure.message || 'Disattivazione non riuscita.', true);
+          say(isPermissionFailure(failure) ? CONNECTORS_PERMISSION_MESSAGE : (failure.message || 'Disattivazione non riuscita.'), true);
           state.busy = false;
         }
         render();
@@ -645,7 +880,7 @@ export function createPersonalizzazioneView(deps) {
             await load();
           } catch (error) {
             const failure = errorOf(error);
-            say(failure.message || 'Attivazione non riuscita.', true);
+            say(isPermissionFailure(failure) ? CONNECTORS_PERMISSION_MESSAGE : (failure.message || 'Attivazione non riuscita.'), true);
             state.busy = false;
           }
           render();
@@ -669,7 +904,7 @@ export function createPersonalizzazioneView(deps) {
   /** @param {any} box */
   function renderPreview(box) {
     const panel = el(doc, 'section', { cls: 'preview', attrs: { 'aria-live': 'polite' } });
-    panel.appendChild(el(doc, 'h3', { text: `Prova · ${state.previewFor}` }));
+    panel.appendChild(el(doc, 'h3', { text: previewTitleFor(state.previewFor, state.units) }));
     if (!state.preview) {
       panel.appendChild(el(doc, 'p', { text: 'Dimostrazione in corso…', cls: 'muted' }));
     } else {
@@ -708,7 +943,9 @@ export function createPersonalizzazioneView(deps) {
     }
     renderConnettoriHero(box);
     const connectors = state.connectors ?? [];
-    const groups = filterConnettori({ connectors, query: state.query, sort: state.sort });
+    const groups = filterConnettori({
+      connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+    });
     const sections = el(doc, 'div', { cls: 'connettori-sections' });
     let shown = 0;
     for (const group of groups) {
@@ -718,36 +955,63 @@ export function createPersonalizzazioneView(deps) {
     }
     box.appendChild(sections);
     if (shown === 0) {
-      box.appendChild(el(doc, 'p', { text: 'Nessun risultato per questa ricerca.', cls: 'empty' }));
+      // A typed query that matches nothing is the prototype's exact empty
+      // state; an empty I tuoi/Scopri view names what is missing instead.
+      const empty = String(state.query ?? '').trim() !== ''
+        ? 'Nessun risultato per questa ricerca.'
+        : 'Nessun canale collegato in questo spazio.';
+      box.appendChild(el(doc, 'p', { text: empty, cls: 'empty' }));
     }
   }
 
-  /** @param {any} box */
+  /**
+   * The hero carousel (spec C10–C12): the three prototype slides,
+   * Precedente/Successiva arrows and clickable dots. `Esplora` scrolls to
+   * the sections below; `Inizia` opens the guided `#/connettori` flow,
+   * the only configuration entry that exists. No autoplay, no rotating
+   * claims: the slide changes only on user input.
+   * @param {any} box
+   */
   function renderConnettoriHero(box) {
-    const hero = el(doc, 'section', { cls: 'ui-hero', attrs: { 'aria-label': 'Kit social' } });
+    const slide = CONNETTORI_HERO[heroStep(state.hero, 0)];
+    const hero = el(doc, 'section', { cls: 'ui-hero', attrs: { 'aria-label': slide.title, 'aria-roledescription': 'carousel' } });
+    const prev = uiButton(doc, { variant: 'secondary', small: true, label: '‹', attrs: { type: 'button', 'aria-label': 'Precedente' } });
+    prev.addEventListener('click', () => { state.hero = heroStep(state.hero, -1); renderList(); });
+    hero.appendChild(prev);
     const copy = el(doc, 'div', { cls: 'ui-hero-copy' });
-    copy.appendChild(el(doc, 'p', { text: 'CURATO DA ACCORDO', cls: 'ui-hero-eyebrow' }));
-    copy.appendChild(el(doc, 'h3', { text: 'Kit social', cls: 'ui-hero-title' }));
-    copy.appendChild(el(doc, 'p', {
-      text: 'Instagram, Facebook, TikTok e WhatsApp in un\u2019unica inbox, con risposte che partono dal canale originale.',
-      cls: 'ui-hero-text',
-    }));
-    const explore = uiButton(doc, { variant: 'secondary', label: 'Esplora', attrs: { type: 'button' } });
-    explore.addEventListener('click', () => {
+    if (slide.eyebrow !== '') copy.appendChild(el(doc, 'p', { text: slide.eyebrow, cls: 'ui-hero-eyebrow' }));
+    copy.appendChild(el(doc, 'h3', { text: slide.title, cls: 'ui-hero-title' }));
+    copy.appendChild(el(doc, 'p', { text: slide.text, cls: 'ui-hero-text' }));
+    const cta = uiButton(doc, { variant: 'secondary', label: slide.cta, attrs: { type: 'button' } });
+    cta.addEventListener('click', () => {
+      if (slide.cta === 'Inizia') {
+        go('#/connettori');
+        return;
+      }
       try {
         const sections = mount.querySelector('.connettori-sections');
         if (sections && typeof sections.scrollIntoView === 'function') sections.scrollIntoView();
       } catch { /* the fake DOM has no scrolling: the sections render below */ }
     });
-    copy.appendChild(explore);
+    copy.appendChild(cta);
     hero.appendChild(copy);
     const tiles = el(doc, 'div', { cls: 'ui-hero-tiles', attrs: { 'aria-hidden': 'true' } });
     for (const chip of ['IG', 'FB', 'TT', 'WA']) tiles.appendChild(uiChannelChip(doc, chip));
     hero.appendChild(tiles);
-    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { 'aria-hidden': 'true' } });
-    for (let index = 0; index < 3; index += 1) {
-      dots.appendChild(el(doc, 'span', { cls: index === 0 ? 'on' : undefined }));
-    }
+    const next = uiButton(doc, { variant: 'secondary', small: true, label: '›', attrs: { type: 'button', 'aria-label': 'Successiva' } });
+    next.addEventListener('click', () => { state.hero = heroStep(state.hero, 1); renderList(); });
+    hero.appendChild(next);
+    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { role: 'tablist', 'aria-label': 'Slide in evidenza' } });
+    CONNETTORI_HERO.forEach((entry, index) => {
+      const dot = el(doc, 'button', {
+        text: '•',
+        cls: `ui-hero-dot${index === heroStep(state.hero, 0) ? ' on' : ''}`,
+        attrs: { type: 'button', role: 'tab', 'aria-label': `Vai alla slide ${index + 1}: ${entry.title}` },
+      });
+      if (index === heroStep(state.hero, 0)) dot.setAttribute('aria-current', 'true');
+      dot.addEventListener('click', () => { state.hero = index; renderList(); });
+      dots.appendChild(dot);
+    });
     hero.appendChild(dots);
     box.appendChild(hero);
   }
@@ -767,7 +1031,16 @@ export function createPersonalizzazioneView(deps) {
     box.appendChild(head);
     const grid = el(doc, 'div', { cls: 'ui-conn-grid' });
     for (const card of group.cards) {
+      const href = connettoriHref(card.entry);
       const article = el(doc, 'article', { cls: 'ui-card ui-conn-card' });
+      // Clicking the card opens its detail (spec C19); the `+` action
+      // stops the event so it opens the collegamento instead. The fake
+      // DOM has no bubbling, so the guard also ignores in-button clicks
+      // on a real Element.
+      article.addEventListener('click', (event) => {
+        if (event && typeof event.target?.closest === 'function' && event.target.closest('button')) return;
+        go(href);
+      });
       article.appendChild(uiChannelChip(doc, card.entry.chip));
       const body = el(doc, 'div', { cls: 'ui-conn-body' });
       body.appendChild(el(doc, 'strong', { text: card.entry.label, cls: 'ui-conn-label' }));
@@ -775,21 +1048,29 @@ export function createPersonalizzazioneView(deps) {
         body.appendChild(el(doc, 'p', { text: line, cls: 'ui-conn-lines' }));
       }
       article.appendChild(body);
-      const state = el(doc, 'div', { cls: 'ui-conn-state' });
+      const actions = el(doc, 'div', { cls: 'ui-conn-state' });
       if (card.state === 'collegato') {
         const badge = uiBadge(doc, { authority: 'accord', text: '✓' });
         badge.setAttribute('title', 'Collegato');
-        state.appendChild(badge);
+        actions.appendChild(badge);
       } else {
         const add = uiButton(doc, {
           variant: 'secondary', small: true, label: '+',
           attrs: { type: 'button', 'aria-label': `Collega ${card.entry.label}` },
         });
-        const href = connettoriHref(card.entry);
-        add.addEventListener('click', () => go(href));
-        state.appendChild(add);
+        add.addEventListener('click', (event) => {
+          if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+          // Without permission the page stays readable and the action
+          // explains who can do it, in Italian, with no codes (spec Stati).
+          if (state.connectorsForbidden) {
+            say(CONNECTORS_PERMISSION_MESSAGE, true);
+            return;
+          }
+          go(href);
+        });
+        actions.appendChild(add);
       }
-      article.appendChild(state);
+      article.appendChild(actions);
       grid.appendChild(article);
     }
     box.appendChild(grid);
@@ -797,6 +1078,8 @@ export function createPersonalizzazioneView(deps) {
 
   function render() {
     clear();
+    // A rebuilt tree drops every open menu with it.
+    openAggiungiMenu = null;
     const box = el(doc, 'div', { cls: 'panel personalizzazione' });
     renderHeader(box);
     if (readSpace().trim() === '') {
@@ -812,8 +1095,9 @@ export function createPersonalizzazioneView(deps) {
     if (state.tab !== 'connettori') {
       count = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort }).length;
     } else if (Array.isArray(state.connectors)) {
-      count = filterConnettori({ connectors: state.connectors, query: state.query, sort: state.sort })
-        .reduce((total, group) => total + group.cards.length, 0);
+      count = filterConnettori({
+        connectors: state.connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+      }).reduce((total, group) => total + group.cards.length, 0);
     }
     renderToolbar(box, count);
     mount.appendChild(box);
@@ -834,6 +1118,8 @@ export function createPersonalizzazioneView(deps) {
     test: {
       state, filterUnits, activeByUnit, unitStatus, previewLines, bannerFor,
       filterConnettori, connettoriCardState, connettoriHref, sections: CONNETTORI_SECTIONS,
+      hero: CONNETTORI_HERO, heroStep, isPermissionFailure, previewTitleFor,
+      permissionMessage: CONNECTORS_PERMISSION_MESSAGE,
     },
   };
 }

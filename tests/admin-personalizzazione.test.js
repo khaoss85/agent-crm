@@ -253,7 +253,7 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   await flush();
   const text = mount.textContent;
   assert.ok(text.includes('Kit social'), 'the hero names the Kit social');
-  assert.ok(text.includes('CURATO DA ACCORDO'), 'the hero keeps the prototype eyebrow');
+  assert.ok(text.includes('Curato da Accordo'), 'the hero keeps the prototype eyebrow verbatim (spec C10)');
   assert.ok(text.includes('Canali di conversazione'), 'the first section renders');
   assert.ok(text.includes('Agenda, lead e pagamenti'), 'the second section renders');
   for (const label of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
@@ -276,7 +276,12 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   assert.ok(add, 'the green CTA renders on the Connettori tab');
   assert.ok(add.getAttribute('class').split(/\s+/).includes('ui-btn-cta'), 'Aggiungi stays the green accord CTA');
   add.dispatch('click');
-  assert.ok(navigated.includes('#/connettori'), 'Aggiungi opens the wizard hub');
+  const afterOpen = mount.findAll('button');
+  const voices = afterOpen.filter((node) => node.getAttribute('role') === 'menuitem').map((node) => node.textContent);
+  assert.deepEqual(voices, ['Crea con l\u2019AI', 'Configura manualmente'], 'Aggiungi opens the two-voice menu (spec C9)');
+  const manual = afterOpen.find((node) => node.textContent === 'Configura manualmente');
+  manual.dispatch('click');
+  assert.ok(navigated.includes('#/connettori'), 'Configura manualmente opens the wizard hub');
   for (const control of [...mount.findAll('button'), ...mount.findAll('select'), ...mount.findAll('input')]) {
     const classes = String(control.getAttribute('class') ?? '').split(/\s+/);
     assert.ok(classes.some((cls) => cls.startsWith('ui-')), `control ${control.textContent} carries a ui-* class`);
@@ -392,4 +397,213 @@ test('the Connettori search and stato sort filter the prototype cards', async ()
   const labels = mount.findAll('strong').map((node) => node.textContent);
   assert.ok(labels.includes('WhatsApp'), 'the connected card still renders under stato sort');
   assert.equal(labels[0], 'WhatsApp', 'stato sorts the connected channel first');
+});
+
+test('the Connettori toggle splits connected and discoverable cards (spec C7)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [{ channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' }] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  assert.equal(view.test.state.view, 'scopri', 'Scopri is active by default (spec C7)');
+  const seg = mount.findAll('button').filter((node) => node.getAttribute('data-seg'));
+  assert.deepEqual(seg.map((node) => node.textContent), ['I tuoi', 'Scopri'], 'the toggle shows both views');
+  const cardLabels = () => mount.findAll('strong').map((node) => node.textContent);
+  assert.equal(cardLabels().length, 9, 'Scopri shows every card');
+  const mine = mount.findAll('button').find((node) => node.getAttribute('data-seg') === 'tuoi');
+  assert.ok(mine, 'the I tuoi voice renders');
+  mine.dispatch('click');
+  await flush();
+  assert.deepEqual(cardLabels(), ['WhatsApp'], 'I tuoi keeps only the connected card');
+  const badges = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-count'));
+  assert.deepEqual(badges.map((node) => node.textContent), ['1'], 'badges count the visible cards after the toggle');
+});
+
+test('the Stato and Ordina menus list the prototype voci in order (spec C22-C23)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [{ channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' }] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  const selects = mount.findAll('select');
+  const byLabel = (name) => selects.find((node) => node.getAttribute('aria-label') === name);
+  const stato = byLabel('Stato');
+  const ordina = byLabel('Ordina per');
+  assert.ok(stato, 'the Stato menu renders');
+  assert.ok(ordina, 'the Ordina per menu renders');
+  assert.deepEqual(
+    stato.childNodes.map((node) => node.textContent),
+    ['Tutti', 'Attivi', 'Da attivare'],
+    'the Stato voci match the prototype in order',
+  );
+  assert.deepEqual(
+    ordina.childNodes.map((node) => node.textContent),
+    ['Più usati', 'Nome A–Z'],
+    'the Ordina voci match the prototype in order',
+  );
+  const cardLabels = () => mount.findAll('strong').map((node) => node.textContent);
+  view.test.state.stato = 'attivi';
+  await view.render();
+  await flush();
+  assert.deepEqual(cardLabels(), ['WhatsApp'], 'Attivi keeps only connected cards');
+  view.test.state.stato = 'da-attivare';
+  await view.render();
+  await flush();
+  assert.ok(!cardLabels().includes('WhatsApp'), 'Da attivare hides connected cards');
+  assert.equal(cardLabels().length, 8, 'Da attivare keeps the other eight');
+  view.test.state.stato = 'tutti';
+  view.test.state.sort = 'piu-usati';
+  await view.render();
+  await flush();
+  assert.equal(cardLabels()[0], 'WhatsApp', 'Più usati keeps the prototype order');
+});
+
+test('the Aggiungi menu closes with Escape and explains the AI voice honestly (spec C9)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const said = [];
+  const navigated = [];
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({
+    doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId,
+    toast: (message) => said.push(message),
+  });
+  await view.render();
+  await flush();
+  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi ▾');
+  add.dispatch('click');
+  let menu = mount.findAll('button').filter((node) => node.getAttribute('role') === 'menuitem');
+  assert.equal(menu.length, 2, 'the menu opens with two voices');
+  const wrap = mount.querySelector('.ui-conn-addwrap');
+  assert.ok(wrap, 'the menu lives in its own wrap');
+  wrap.dispatch('keydown', { key: 'Escape' });
+  const menuBox = mount.querySelector('.ui-conn-addmenu');
+  assert.ok(menuBox && String(menuBox.getAttribute('class')).split(/\s+/).includes('hidden'), 'Escape closes the menu');
+  add.dispatch('click');
+  const ai = mount.findAll('button').find((node) => node.textContent === 'Crea con l\u2019AI');
+  ai.dispatch('click');
+  assert.ok(said.some((message) => message.includes('non \u00e8 ancora disponibile')), 'the AI voice says what is missing, in Italian');
+  assert.deepEqual(navigated, [], 'the AI voice navigates nowhere');
+});
+
+test('the hero carousel walks three prototype slides with arrows and dots (spec C10-C12)', async () => {
+  const { CONNETTORI_HERO, heroStep } = await import('../apps/admin/public/admin-personalizzazione.js');
+  assert.equal(CONNETTORI_HERO.length, 3, 'three product slides, like the prototype');
+  assert.equal(heroStep(0, -1), 2, 'Precedente wraps around');
+  assert.equal(heroStep(2, 1), 0, 'Successiva wraps around');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId });
+  await view.render();
+  await flush();
+  const text = () => mount.textContent;
+  assert.ok(text().includes('Kit social'), 'slide one shows the Kit social hero');
+  assert.ok(text().includes('Instagram, Facebook, TikTok e WhatsApp'), 'slide one keeps the prototype description');
+  const next = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Successiva');
+  const prev = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Precedente');
+  assert.ok(next && prev, 'both arrows render');
+  next.dispatch('click');
+  await flush();
+  assert.ok(text().includes('Agenda, lead e pagamenti'), 'Successiva moves to slide two');
+  assert.ok(text().includes('Appuntamenti condivisi'), 'slide two keeps the prototype copy');
+  const dots = mount.findAll('button').filter((node) => String(node.getAttribute('aria-label') ?? '').startsWith('Vai alla slide'));
+  assert.equal(dots.length, 3, 'three clickable dots under the panel');
+  dots[2].dispatch('click');
+  await flush();
+  assert.ok(text().includes('Configura con l\u2019AI'), 'the third dot opens the Accordo AI slide');
+  const start = mount.findAll('button').find((node) => node.textContent === 'Inizia');
+  assert.ok(start, 'the third slide offers Inizia');
+  start.dispatch('click');
+  assert.ok(navigated.includes('#/connettori'), 'Inizia opens the guided flow');
+  const back = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Precedente');
+  back.dispatch('click');
+  await flush();
+  assert.ok(text().includes('Agenda, lead e pagamenti'), 'Precedente walks back one slide');
+});
+
+test('a card click opens its detail and + opens the collegamento (spec C19)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({ connectors: [{ channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' }] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId });
+  await view.render();
+  await flush();
+  const articles = mount.findAll('article');
+  assert.ok(articles.length > 0, 'cards render as articles');
+  const instagram = articles.find((node) => node.textContent.includes('Instagram'));
+  instagram.dispatch('click', {});
+  assert.ok(navigated.includes('#/connettori/instagram'), 'clicking the card opens its detail');
+  const plus = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Collega Instagram');
+  plus.dispatch('click', {});
+  assert.ok(navigated.includes('#/connettori/instagram'), 'clicking + opens the collegamento without errors');
+});
+
+test('without permission the page stays readable and + explains in Italian', async () => {
+  const { isPermissionFailure, previewTitleFor } = await import('../apps/admin/public/admin-personalizzazione.js');
+  assert.ok(isPermissionFailure({ code: 'FORBIDDEN' }), 'FORBIDDEN is a permission case');
+  assert.ok(isPermissionFailure({ status: 403 }), '403 is a permission case');
+  assert.ok(!isPermissionFailure({ code: 'UPSTREAM_DOWN' }), 'an outage is not a permission case');
+  assert.equal(previewTitleFor('follow-up · task-1', [{ name: 'follow-up · task-1', label: 'Promemoria' }]), 'Prova · Promemoria', 'the Prova title shows the label, never the raw unit name');
+  assert.equal(previewTitleFor('follow-up · task-1', []), 'Prova', 'an unknown unit falls back to bare Prova, never the raw name');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const said = [];
+  const navigated = [];
+  const client = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors?')) throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const view = createPersonalizzazioneView({
+    doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId,
+    toast: (message) => said.push(message),
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('WhatsApp'), 'the directory still renders without permission');
+  const plus = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Collega WhatsApp');
+  assert.ok(plus, 'the + action stays visible');
+  plus.dispatch('click', {});
+  assert.ok(said.includes('Chiedi al titolare di collegare questo canale.'), 'the action answers in Italian with no codes');
+  assert.deepEqual(navigated, [], 'the refused action navigates nowhere');
+});
+
+test('typing in Cerca filters without reloading (spec C20)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const calls = [];
+  const client = stubClient({ connectors: [], calls });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  const before = calls.length;
+  const search = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Cerca');
+  assert.ok(search, 'the search field renders');
+  search.value = 'stripe';
+  search.dispatch('input');
+  assert.equal(calls.length, before, 'filtering issues no new request');
+  const cardLabels = mount.findAll('strong').map((node) => node.textContent);
+  assert.deepEqual(cardLabels, ['Stripe'], 'the list filters to the matching card');
+});
+
+test('I miei shows an honest empty state when nothing is connected', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  view.test.state.view = 'tuoi';
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun canale collegato in questo spazio.'), 'the empty I tuoi names what is missing');
+  assert.ok(!mount.textContent.includes('NOT_FOUND'), 'no technical codes leak (spec C25)');
 });
