@@ -4,8 +4,8 @@
  * Shell-oracle slice F (backlog:664d5f481a96): the command-shape cells whose
  * grouping is `trap`, plus the heredoc/arithmetic cells — about a sixth of
  * the oracle corpus plus the delimiter cross-product the other slices must
- * not carry. Runs in its own measure piece under the same 900 s lock
- * maximum as every other piece. The corpus generator and the agreement
+ * not carry. Runs in its own measure piece under the same lock
+ * maximum (1800 s) as every other piece. The corpus generator and the agreement
  * assertions are shared with the other slices in
  * tests/helpers/shell-oracle.js; this file only names its slice, so no cell
  * runs twice and none is lost (tests/shell-oracle-slices.test.js pins the
