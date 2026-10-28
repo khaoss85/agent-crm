@@ -22,6 +22,7 @@ import {
   CHARACTERIZATION_SUITES,
   CHARACTERIZATION_TESTS,
   KERNEL_BOUNDARY_TESTS,
+  PACKAGE_DECLARATION_FREEZE_TESTS,
   REPO_WIDE_GUARDS,
   REPO_WIDE_GUARD_EXCLUSIONS,
   buildFileImports,
@@ -38,6 +39,7 @@ import {
   selectTouchedTests,
   withCharacterizationTests,
   withKernelBoundaryTests,
+  withPackageDeclarationFreezeTests,
   withRepoWideGuards,
 } from '../scripts/ci-touched-tests.js';
 
@@ -854,6 +856,173 @@ test('a missing boundary test throws even on a docs-only diff', () => {
       ['docs/QUALITY_GATES.md'],
     ),
     /tests\/contracts-activation-e2e\.test\.js/,
+  );
+});
+
+// --------------------------------------- package declaration freeze tests
+//
+// Twice `main` turned red after green-alone PRs (#360, #380): a new package
+// export and a new work action each hid behind a ~95-test fan-in, fell into
+// the warned oversized fallback, and the freezes pinning those declarations
+// never ran (backlog:86652c07). A diff touching `packages/**` now runs the
+// six freeze tests on top of its selection — mapped or fallback — while a
+// docs-only diff selects none of them; these tests hold both acceptance
+// directions.
+
+test('the declared list holds the package declaration freeze tests', () => {
+  for (const freeze of [
+    'tests/spine-v2-m0-characterization.test.js',
+    'tests/work-package-absence.test.js',
+    'tests/spine-v2-m2e2-portable-http.test.js',
+    'tests/spine-v2-m2e2-portable-facade.test.js',
+    'tests/spine-v2-m2e2-async-lifecycle.test.js',
+    'tests/spine-v2-m2e3-public-async-factory.test.js',
+  ]) {
+    assert.ok(
+      PACKAGE_DECLARATION_FREEZE_TESTS.includes(freeze),
+      `a packages/** diff must run the declaration freeze ${freeze}`,
+    );
+  }
+});
+
+test('a packages/work change runs the declaration freeze tests on top of its selection', () => {
+  const have = contents({
+    'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n",
+    'tests/work-package-absence.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-http.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-facade.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-async-lifecycle.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e3-public-async-factory.test.js': "import test from 'node:test';\n",
+    'tests/work-operations-e2e.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withPackageDeclarationFreezeTests(
+      ['tests/work-operations-e2e.test.js'],
+      have,
+      ['packages/work/src/index.js'],
+    ),
+    [
+      'tests/spine-v2-m0-characterization.test.js',
+      'tests/spine-v2-m2e2-async-lifecycle.test.js',
+      'tests/spine-v2-m2e2-portable-facade.test.js',
+      'tests/spine-v2-m2e2-portable-http.test.js',
+      'tests/spine-v2-m2e3-public-async-factory.test.js',
+      'tests/work-operations-e2e.test.js',
+      'tests/work-package-absence.test.js',
+    ],
+  );
+});
+
+test('a packages/app change runs the declaration freeze tests too', () => {
+  const have = contents({
+    'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n",
+    'tests/work-package-absence.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-http.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-facade.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-async-lifecycle.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e3-public-async-factory.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withPackageDeclarationFreezeTests([], have, ['packages/app/src/index.js']),
+    [
+      'tests/spine-v2-m0-characterization.test.js',
+      'tests/spine-v2-m2e2-async-lifecycle.test.js',
+      'tests/spine-v2-m2e2-portable-facade.test.js',
+      'tests/spine-v2-m2e2-portable-http.test.js',
+      'tests/spine-v2-m2e3-public-async-factory.test.js',
+      'tests/work-package-absence.test.js',
+    ],
+  );
+});
+
+test('a docs-only diff never selects the declaration freeze tests', () => {
+  const have = contents({
+    'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n",
+    'tests/work-package-absence.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-http.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-facade.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-async-lifecycle.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e3-public-async-factory.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withPackageDeclarationFreezeTests([], have, ['docs/QUALITY_GATES.md', 'README.md']),
+    [],
+  );
+});
+
+test('a non-package code diff never selects the declaration freeze tests', () => {
+  const have = contents({
+    'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n",
+    'tests/work-package-absence.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-http.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-facade.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-async-lifecycle.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e3-public-async-factory.test.js': "import test from 'node:test';\n",
+    'tests/admin-shell.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withPackageDeclarationFreezeTests(
+      ['tests/admin-shell.test.js'],
+      have,
+      ['apps/admin/public/app.js'],
+    ),
+    ['tests/admin-shell.test.js'],
+  );
+});
+
+test('an empty diff stays empty of declaration freeze tests', () => {
+  const have = contents({
+    'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n",
+    'tests/work-package-absence.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-http.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-facade.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-async-lifecycle.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e3-public-async-factory.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(withPackageDeclarationFreezeTests([], have, []), []);
+});
+
+test('a freeze test the mapping already selected runs once', () => {
+  const have = contents({
+    'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n",
+    'tests/work-package-absence.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-http.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-portable-facade.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e2-async-lifecycle.test.js': "import test from 'node:test';\n",
+    'tests/spine-v2-m2e3-public-async-factory.test.js': "import test from 'node:test';\n",
+  });
+  assert.deepEqual(
+    withPackageDeclarationFreezeTests(
+      ['tests/spine-v2-m0-characterization.test.js'],
+      have,
+      ['packages/work/src/index.js'],
+    ),
+    [
+      'tests/spine-v2-m0-characterization.test.js',
+      'tests/spine-v2-m2e2-async-lifecycle.test.js',
+      'tests/spine-v2-m2e2-portable-facade.test.js',
+      'tests/spine-v2-m2e2-portable-http.test.js',
+      'tests/spine-v2-m2e3-public-async-factory.test.js',
+      'tests/work-package-absence.test.js',
+    ],
+  );
+});
+
+test('a listed freeze test missing from the corpus throws instead of shrinking the gate', () => {
+  assert.throws(
+    () => withPackageDeclarationFreezeTests([], contents({}), ['packages/work/src/x.js'], ['tests/gone.test.js']),
+    /tests\/gone\.test\.js/,
+  );
+});
+
+test('a missing freeze test throws even on a docs-only diff', () => {
+  assert.throws(
+    () => withPackageDeclarationFreezeTests(
+      [],
+      contents({ 'tests/spine-v2-m0-characterization.test.js': "import test from 'node:test';\n" }),
+      ['docs/QUALITY_GATES.md'],
+    ),
+    /tests\/work-package-absence\.test\.js/,
   );
 });
 
