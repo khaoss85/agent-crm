@@ -250,11 +250,14 @@ export function createPipelineBoard(deps) {
       }));
     }
     heading.appendChild(titleBox);
+    // Supervisor design pass (prototype 06): the forecast is the violet card
+    // beside the title, the count and totals close the single tool row.
+    heading.appendChild(renderForecast(pipeline, visible));
     panel.appendChild(heading);
 
-    panel.appendChild(renderToolbar(pipeline, onBoard));
-    panel.appendChild(renderSummary(visible));
-    panel.appendChild(renderForecast(pipeline, visible));
+    const tools = renderToolbar(pipeline, onBoard);
+    tools.appendChild(renderSummary(visible));
+    panel.appendChild(tools);
 
     if (state.view === 'lista') {
       panel.appendChild(renderList(pipeline, visible));
@@ -421,7 +424,7 @@ export function createPipelineBoard(deps) {
    */
   function renderForecast(pipeline, visible) {
     const box = el(doc, 'div', { class: 'pipeline-forecast', attrs: { 'data-forecast': 'estimate' } });
-    box.appendChild(el(doc, 'h3', { text: 'Previsione · stima' }));
+    box.appendChild(el(doc, 'h3', { text: '✦ Previsione · stima' }));
     const probabilityOf = new Map(pipeline.stages.map((stage) => [stage.key, stage.probability]));
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open').map((stage) => stage.key));
     const weighted = new Map();
