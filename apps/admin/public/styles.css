@@ -764,11 +764,11 @@ select.bo-spazi-input { flex: none; }
 .cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
-.cal-m0 { background: #dce8fb; color: var(--ink); }
-.cal-m1 { background: #ffe0e6; color: var(--ink); }
-.cal-m2 { background: #d8f0e0; color: var(--ink); }
-.cal-m3 { background: #fdf0c2; color: var(--ink); }
-.cal-m4 { background: #e9e4da; color: var(--ink); }
+.cal-m0 { background: var(--data-soft); color: var(--ink); }
+.cal-m1 { background: var(--human-soft); color: var(--ink); }
+.cal-m2 { background: var(--accent-soft); color: var(--ink); }
+.cal-m3 { background: var(--pending-soft); color: var(--ink); }
+.cal-m4 { background: var(--surface-soft); color: var(--ink); }
 .cal-grid .cal-event.cal-selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .cal-grid .cal-event.cal-cancelled { opacity: .55; }
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
@@ -975,15 +975,15 @@ textarea.ui-field { min-height: 88px; resize: vertical; }
 .ui-seg:hover { transform: none; }
 .ui-seg.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(23, 25, 18, .12); }
 .ui-chip { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; background: var(--surface-soft); color: var(--ink); border: 1px solid transparent; }
-.ui-chip-ig { background: #f8d9e7; color: #8f2d5c; }
-.ui-chip-wa { background: #d9f2dd; color: #176b2a; }
-.ui-chip-fb { background: #d6e5fb; color: #1d4fa1; }
-.ui-chip-tt { background: #e6e4e0; color: #171912; }
-.ui-chip-tel { background: #f0e8d2; color: #6b5316; }
-.ui-chip-at { background: #e9e6df; color: #4c4840; }
-.ui-chip-cal { background: #d9e9fb; color: #0b5cad; }
-.ui-chip-s { background: #e6e2fb; color: #4c2fc5; }
-.ui-chip-web { background: #dff8fd; color: #00677a; }
+.ui-chip-ig { background: var(--human-soft); color: var(--human-ink); }
+.ui-chip-wa { background: var(--accent-soft); color: var(--accent); }
+.ui-chip-fb { background: var(--data-soft); color: var(--data-ink); }
+.ui-chip-tt { background: var(--surface-soft); color: var(--ink); }
+.ui-chip-tel { background: var(--pending-soft); color: var(--pending-ink); }
+.ui-chip-at { background: var(--surface-soft); color: var(--muted); }
+.ui-chip-cal { background: var(--data-soft); color: var(--data-ink); }
+.ui-chip-s { background: var(--agent-soft); color: var(--agent-ink); }
+.ui-chip-web { background: var(--data-soft); color: var(--data-ink); }
 .ui-chip-plain { background: var(--surface-soft); color: var(--ink); border-color: var(--line); }
 button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-badge { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; text-transform: none; }
