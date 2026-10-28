@@ -1036,10 +1036,28 @@ export function createPersonalizzazioneView(deps) {
       // Clicking the card opens its detail (spec C19); the `+` action
       // stops the event so it opens the collegamento instead. The fake
       // DOM has no bubbling, so the guard also ignores in-button clicks
-      // on a real Element.
+      // on a real Element. The card is focusable with keyboard activation,
+      // so connected cards (a `✓` badge, no `+` button) still open from
+      // the keyboard. Without permission the card answers like `+`, in
+      // Italian, instead of navigating to a detail that can only error.
+      const openCardDetail = () => {
+        if (state.connectorsForbidden) {
+          say(CONNECTORS_PERMISSION_MESSAGE, true);
+          return;
+        }
+        go(href);
+      };
+      article.setAttribute('tabindex', '0');
+      article.setAttribute('role', 'link');
+      article.setAttribute('aria-label', `${card.entry.label}: apri il dettaglio`);
       article.addEventListener('click', (event) => {
         if (event && typeof event.target?.closest === 'function' && event.target.closest('button')) return;
-        go(href);
+        openCardDetail();
+      });
+      article.addEventListener('keydown', (event) => {
+        if (event?.key !== 'Enter' && event?.key !== ' ') return;
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        openCardDetail();
       });
       article.appendChild(uiChannelChip(doc, card.entry.chip));
       const body = el(doc, 'div', { cls: 'ui-conn-body' });

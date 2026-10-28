@@ -541,6 +541,37 @@ test('a card click opens its detail and + opens the collegamento (spec C19)', as
   const plus = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Collega Instagram');
   plus.dispatch('click', {});
   assert.ok(navigated.includes('#/connettori/instagram'), 'clicking + opens the collegamento without errors');
+  const card = articles.find((node) => node.textContent.includes('Instagram'));
+  assert.equal(card.getAttribute('tabindex'), '0', 'the card is focusable');
+  assert.equal(card.getAttribute('role'), 'link', 'the card exposes its detail destination');
+  card.dispatch('keydown', { key: 'Enter' });
+  assert.ok(navigated.filter((hash) => hash === '#/connettori/instagram').length >= 2, 'Enter on the card opens its detail');
+});
+
+test('a refused card answers like its + action and never leaves the readable page', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const said = [];
+  const navigated = [];
+  const client = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors?')) throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const view = createPersonalizzazioneView({
+    doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId,
+    toast: (message) => said.push(message),
+  });
+  await view.render();
+  await flush();
+  const card = mount.findAll('article').find((node) => node.textContent.includes('WhatsApp'));
+  assert.ok(card, 'the refused card still renders');
+  card.dispatch('click', {});
+  assert.ok(said.includes('Chiedi al titolare di collegare questo canale.'), 'the card answers in Italian with no codes');
+  assert.deepEqual(navigated, [], 'the refused card never leaves the readable directory');
 });
 
 test('without permission the page stays readable and + explains in Italian', async () => {
