@@ -268,9 +268,10 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     firstChannel: 'WhatsApp', confirm: 'Attivare questa sequenza?',
   }));
   assert.doesNotThrow(() => assertProbe('reporting', { kpis: 3 }));
-  assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2 }));
+  assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 2, toConnect: 7 }));
+  assert.throws(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 0, toConnect: 9 }), /connected/);
   assert.doesNotThrow(() => assertProbe('catalogo', {
-    table: '…Pacchetto 10 lezioni…', stripe: 'Stripe collegato', rules: 'auto 10%',
+    table: '…Pacchetto 10 lezioni…', stripe: 'Collegato a Stripe', rules: 'auto 10%',
   }));
   assert.doesNotThrow(() => assertProbe('connettori', { rows: 8, previews: 8, flows: 8 }));
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));

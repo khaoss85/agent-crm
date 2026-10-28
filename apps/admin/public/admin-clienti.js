@@ -62,6 +62,16 @@ const FALLBACK_COLUMNS = Object.freeze([
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
 
+// The prototype's channel tiles: a short mono mark, the full name in the title.
+const CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', email: '@', tiktok: 'TT', phone: 'TEL', sms: 'SMS', web: 'WEB' });
+const channelMark = (system) => CHANNEL_MARKS[String(system ?? '').toLowerCase()] ?? String(system ?? '·').slice(0, 3).toUpperCase();
+const ROME_DAY = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'Europe/Rome' });
+/** «20 ott» for a stored date or timestamp; the raw value only when it does not parse. */
+const shortDay = (value) => {
+  const raw = String(value ?? '');
+  const date = new Date(raw.length === 10 ? `${raw}T12:00:00Z` : raw);
+  return Number.isNaN(date.getTime()) ? raw.slice(0, 10) : ROME_DAY.format(date).replace('.', '');
+};
 const channelLabel = (system) => CHANNEL_LABELS[String(system ?? '').toLowerCase()] ?? String(system ?? 'canale');
 
 /**
@@ -69,6 +79,12 @@ const channelLabel = (system) => CHANNEL_LABELS[String(system ?? '').toLowerCase
  * neighbours of the current page, gaps collapsed to "…".
  * @param {number} pages @param {number} page
  */
+/** Two-letter initials for the row avatar, like the prototype. */
+function initialsOf(name) {
+  const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
+  return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
 export function pageNumbers(pages, page) {
   const nums = [];
   for (let candidate = 1; candidate <= pages; candidate += 1) {
@@ -202,7 +218,9 @@ export function createCustomerListView(deps) {
     clearMount();
     const panel = el('section', 'bo-clienti');
     const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
-    panel.appendChild(el('h1', undefined, total === null ? 'Clienti' : `Clienti ${total}`));
+    const title = el('h1', 'bo-clienti-title', total === null ? 'Clienti' : 'Clienti ');
+    if (total !== null) title.appendChild(el('span', 'bo-clienti-count', String(total)));
+    panel.appendChild(title);
     panel.appendChild(el('p', 'bo-muted bo-clienti-status', ''));
 
     const views = data?.views ?? FALLBACK_VIEWS;
@@ -228,11 +246,10 @@ export function createCustomerListView(deps) {
       });
       viewsRow.appendChild(button);
     }
-    panel.appendChild(viewsRow);
-
-    // ── toolbar: search, grouped filters, AI filter, sort, columns ──────
+    // ── search (the prototype's ✦ field), then views and tools on one bar ──
     const toolbar = el('div', 'bo-clienti-toolbar');
     const form = el('form', 'bo-clienti-search');
+    form.appendChild(el('span', 'bo-clienti-spark', '✦'));
     form.setAttribute('role', 'search');
     const input = doc.createElement('input');
     input.setAttribute('type', 'search');
@@ -265,7 +282,10 @@ export function createCustomerListView(deps) {
       state.q = String(input.value ?? '').trim().replace(/\s+/g, ' ');
       reload();
     });
-    toolbar.appendChild(form);
+    panel.appendChild(form);
+    const bar = el('div', 'bo-clienti-bar');
+    bar.appendChild(viewsRow);
+    bar.appendChild(toolbar);
 
     toolbar.appendChild(menuBox('Filtri', (menu) => {
       menu.appendChild(el('p', 'bo-clienti-group', 'Canale'));
@@ -342,7 +362,7 @@ export function createCustomerListView(deps) {
       });
       menu.appendChild(reset);
     }, 'Colonne'));
-    panel.appendChild(toolbar);
+    panel.appendChild(bar);
 
     // ── active filter chips with × ────────────────────────────────────────
     const chips = el('div', 'bo-clienti-chips');
@@ -386,22 +406,29 @@ export function createCustomerListView(deps) {
     switch (columnId) {
       case 'canali': {
         if (row.channels.length === 0) return el('span', 'bo-muted', '—');
-        return el('span', undefined, row.channels.map(channelLabel).join(' · '));
+        const tiles = el('span', 'bo-clienti-tiles');
+        for (const system of row.channels) {
+          const tile = el('span', `bo-clienti-tile bo-tile-${String(system).toLowerCase()}`, channelMark(system));
+          tile.setAttribute('title', channelLabel(system));
+          tile.setAttribute('aria-label', channelLabel(system));
+          tiles.appendChild(tile);
+        }
+        return tiles;
       }
       case 'stato': {
-        const node = el('span', undefined, STATO_LABELS[row.status?.value] ?? row.status?.value ?? '—');
+        const value = String(row.status?.value ?? '');
+        const node = el('span', `bo-clienti-pill bo-pill-${value || 'none'}`, STATO_LABELS[value] ?? (value || '—'));
         if (row.status?.reason) node.setAttribute('title', row.status.reason);
         return node;
       }
       case 'ultimo': {
         if (!row.lastContactAt) return el('span', 'bo-muted', 'mai');
-        const day = String(row.lastContactAt).slice(0, 10);
-        const channel = row.lastContactChannel ? ` · ${channelLabel(row.lastContactChannel)}` : '';
-        return el('span', undefined, `${day}${channel}`);
+        const channel = row.lastContactChannel ? `${channelLabel(row.lastContactChannel)} · ` : '';
+        return el('span', 'bo-clienti-when', `${channel}${shortDay(row.lastContactAt)}`);
       }
       case 'prossimo': {
         if (!row.nextStep) return el('span', 'bo-muted', '—');
-        const text = `${row.nextStep.title ?? 'attività'}${row.nextStep.dueAt ? ` · ${String(row.nextStep.dueAt).slice(0, 10)}` : ''}${row.nextStep.overdue ? ' (in ritardo)' : ''}`;
+        const text = `✦ ${row.nextStep.title ?? 'attività'}${row.nextStep.dueAt ? ` · ${shortDay(row.nextStep.dueAt)}` : ''}${row.nextStep.overdue ? ' (in ritardo)' : ''}`;
         return el('span', undefined, text);
       }
       case 'email':
@@ -439,26 +466,35 @@ export function createCustomerListView(deps) {
     if (statusLine) {
       statusLine.textContent = total === 0
         ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
-        : `${range} clienti`;
+        : '';
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }
     const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] === true);
+    const grid = `minmax(200px, 1.6fr) ${visible.map(() => 'minmax(0, 1fr)').join(' ')} 16px`;
+    const table = el('div', 'bo-clienti-table');
     const head = el('div', 'bo-clienti-thead');
+    head.setAttribute('style', `grid-template-columns: ${grid}`);
     head.setAttribute('role', 'row');
     head.appendChild(el('span', 'bo-clienti-th', 'Cliente'));
     for (const column of visible) head.appendChild(el('span', 'bo-clienti-th', column.label));
-    panel.appendChild(head);
+    head.appendChild(el('span', undefined, ''));
+    table.appendChild(head);
     const list = el('div', 'bo-clienti-list');
     for (const row of items) {
       const card = el('article', 'bo-clienti-row');
       card.setAttribute('data-customer', `${row.resource}:${row.id}`);
+      card.setAttribute('style', `grid-template-columns: ${grid}`);
       const head = el('div', 'bo-clienti-head');
-      head.appendChild(link(
+      const name = String(row.name ?? '');
+      head.appendChild(el('span', 'bo-clienti-avatar', initialsOf(name)));
+      const who = el('div', 'bo-clienti-who');
+      who.appendChild(link(
         `#/customer-card/${encodeURIComponent(row.resource)}/${encodeURIComponent(row.id)}`,
-        row.name ?? `${row.resource} ${row.id}`,
+        row.name ?? 'Cliente senza nome',
         'open-customer-card',
       ));
-      if (row.company?.name) head.appendChild(el('span', 'bo-muted', ` · ${row.company.name}`));
+      if (row.company?.name) who.appendChild(el('span', 'bo-muted bo-clienti-sub', String(row.company.name)));
+      head.appendChild(who);
       card.appendChild(head);
       for (const column of visible) {
         const line = el('p', 'bo-clienti-fact');
@@ -467,23 +503,27 @@ export function createCustomerListView(deps) {
         line.appendChild(cellFor(row, column.id));
         card.appendChild(line);
       }
+      card.appendChild(el('span', 'bo-clienti-chevron', '›'));
       list.appendChild(card);
     }
-    panel.appendChild(list);
+    table.appendChild(list);
+    panel.appendChild(table);
 
     // ── pagination: 10/25/50 with ellipses ──────────────────────────────
     const pager = el('nav', 'bo-clienti-pager');
     pager.setAttribute('aria-label', 'Paginazione');
     pager.appendChild(el('span', 'bo-clienti-range', range));
+    const pagesBox = el('div', 'bo-clienti-pages');
+    const sizesBox = el('div', 'bo-clienti-sizes');
     const prev = el('button', undefined, '‹');
     prev.setAttribute('data-page', 'prev');
     prev.setAttribute('aria-label', 'Pagina precedente');
     if (page <= 1) prev.setAttribute('disabled', 'true');
     else prev.addEventListener('click', () => { state.page = page - 1; void load(); });
-    pager.appendChild(prev);
+    pagesBox.appendChild(prev);
     for (const num of pageNumbers(pages, page)) {
       if (num === '…') {
-        pager.appendChild(el('span', 'bo-clienti-gap', '…'));
+        pagesBox.appendChild(el('span', 'bo-clienti-gap', '…'));
         continue;
       }
       const button = el('button', 'bo-clienti-page' + (num === page ? ' active' : ''), String(num));
@@ -493,15 +533,17 @@ export function createCustomerListView(deps) {
         button.setAttribute('aria-current', 'page');
         button.setAttribute('aria-label', `Pagina ${num}`);
       }
-      pager.appendChild(button);
+      pagesBox.appendChild(button);
     }
     const next = el('button', undefined, '›');
     next.setAttribute('data-page', 'next');
     next.setAttribute('aria-label', 'Pagina successiva');
     if (page >= pages) next.setAttribute('disabled', 'true');
     else next.addEventListener('click', () => { state.page = page + 1; void load(); });
-    pager.appendChild(next);
-    pager.appendChild(el('span', 'bo-clienti-sizeslabel', 'Righe per pagina'));
+    pagesBox.appendChild(next);
+    pager.appendChild(pagesBox);
+    sizesBox.appendChild(el('span', 'bo-clienti-sizeslabel', 'Righe per pagina'));
+    const sizeGroup = el('div', 'bo-clienti-sizegroup');
     for (const size of sizes) {
       const button = el('button', 'bo-clienti-size' + (pageSize === size ? ' active' : ''), String(size));
       button.setAttribute('data-size', String(size));
@@ -510,8 +552,10 @@ export function createCustomerListView(deps) {
         state.pageSize = size;
         reload();
       });
-      pager.appendChild(button);
+      sizeGroup.appendChild(button);
     }
+    sizesBox.appendChild(sizeGroup);
+    pager.appendChild(sizesBox);
     panel.appendChild(pager);
   }
 

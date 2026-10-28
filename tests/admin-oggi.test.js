@@ -528,7 +528,9 @@ test('home with nothing open says the day is done', () => {
     },
   });
   assert.ok(mount.textContent.includes('Hai finito per oggi'));
-  assert.ok(mount.textContent.includes('Clienti'), 'delivered-screen links still follow below');
+  // The prototype's home ends with the channel invite: no module shortcut
+  // list below (the sidebar already links every screen).
+  assert.ok(!mount.textContent.includes('Clienti'), 'no module shortcut list under the home');
 });
 
 test('loadOggiData degrades honestly without packages', async () => {

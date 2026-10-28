@@ -3,6 +3,7 @@
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
+import { settingsTabs } from './admin-shell.js';
 
 /**
  * Product catalog Admin (BO-F2-05 "11 Catalogo prodotti", BO-F2-04 rules):
@@ -93,6 +94,11 @@ export function createCatalogView(deps) {
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
+  const go = typeof deps.navigate === 'function'
+    ? deps.navigate
+    : (hash) => { if (globalThis.location) globalThis.location.hash = hash; };
+  const SOURCE_LABELS = { manual: 'Manuale' };
+  const sourceLabel = (source) => SOURCE_LABELS[source] ?? (String(source ?? '').toLowerCase().includes('stripe') ? 'Stripe' : String(source ?? '—'));
   const money = (cents, currency) => (typeof cents === 'number' ? formatMinorUnits(cents, currency) : '—');
 
   /** Quantity-tier labels ("etichette sconto quantità"): bounded ranges read as text. */
@@ -123,21 +129,34 @@ export function createCatalogView(deps) {
    */
   function renderStripeBlock(summary) {
     const box = el('div', 'catalog-stripe');
+    box.appendChild(el('span', 'catalog-stripe-badge', 'S'));
+    const text = el('div', 'catalog-stripe-text');
+    box.appendChild(text);
     const byProvider = summary && typeof summary === 'object' && summary.byProvider
       && typeof summary.byProvider === 'object' ? summary.byProvider : {};
     const connected = Object.keys(byProvider).filter((name) => name.toLowerCase().includes('stripe'));
     if (connected.length === 0) {
-      box.appendChild(el('p', 'catalog-invite', 'Stripe non è collegato: i prezzi si gestiscono a mano. Collega Stripe per importare il listino come fonte dei prezzi.'));
+      box.setAttribute('data-state', 'manual');
+      text.appendChild(el('strong', 'catalog-stripe-title', 'Stripe non collegato'));
+      text.appendChild(el('p', 'catalog-invite', 'Stripe non è collegato: i prezzi si gestiscono a mano. Collega Stripe per importare il listino come fonte dei prezzi.'));
       return box;
     }
-    box.appendChild(el('p', 'catalog-stripe-ok', `Stripe collegato: ${connected.join(', ')}. I prezzi di fonte sono sola lettura: si cambiano su Stripe e si sincronizzano.`));
+    text.appendChild(el('strong', 'catalog-stripe-title', 'Collegato a Stripe'));
+    const counted = connected.map((name) => Number(byProvider[name]?.products ?? byProvider[name] ?? NaN)).filter(Number.isFinite);
+    const total = counted.reduce((a, b) => a + b, 0);
+    const imported = counted.length > 0 ? `${total} ${total === 1 ? 'prodotto importato' : 'prodotti importati'} da Stripe · ` : '';
+    text.appendChild(el('p', 'catalog-stripe-ok', `${imported}prezzi di fonte in sola lettura: si cambiano su Stripe e si sincronizzano.`));
+    const actions = el('div', 'catalog-stripe-actions');
+    box.appendChild(actions);
     for (const provider of connected) {
-      const syncButton = el('button', 'catalog-sync', `Sincronizza ora (${provider})`);
+      const syncButton = el('button', 'catalog-sync', 'Sincronizza');
+      syncButton.setAttribute('data-provider', provider);
+      syncButton.setAttribute('title', `Sincronizza i prodotti da Stripe (${provider})`);
       const confirmBox = el('div', 'catalog-confirm');
       const confirmError = el('p', 'field-error', '');
       syncButton.addEventListener('click', () => {
         while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
-        confirmBox.appendChild(el('p', undefined, `Sincronizzare i prodotti da ${provider}? Le offerte di fonte si aggiornano, quelle manuali restano.`));
+        confirmBox.appendChild(el('p', undefined, 'Sincronizzare i prodotti da Stripe? Le offerte di fonte si aggiornano, quelle manuali restano.'));
         const yes = el('button', undefined, 'Conferma');
         const no = el('button', undefined, 'Annulla');
         no.addEventListener('click', () => {
@@ -158,8 +177,8 @@ export function createCatalogView(deps) {
         confirmBox.appendChild(no);
         confirmBox.appendChild(confirmError);
       });
-      box.appendChild(syncButton);
-      box.appendChild(confirmBox);
+      actions.appendChild(syncButton);
+      actions.appendChild(confirmBox);
     }
     return box;
   }
@@ -183,19 +202,19 @@ export function createCatalogView(deps) {
       const item = el('div', 'catalog-rule');
       const name = policy?.name ?? '?';
       const version = policy?.version ?? '?';
-      item.appendChild(el('p', 'catalog-rule-name', `${policy?.label ?? name} (${name}@${version})`));
+      item.setAttribute('data-policy', `${name}@${version}`);
       const config = policy?.config;
       const auto = config && typeof config === 'object' ? bpsLabel(config.autoApproveMaxBps) : null;
       const ownerMax = config && typeof config === 'object' ? bpsLabel(config.ownerApprovalMaxBps) : null;
       if (auto !== null && ownerMax !== null) {
-        const key = typeof config.approvalKey === 'string' && config.approvalKey !== '' ? config.approvalKey : 'titolare';
-        item.appendChild(el('p', 'catalog-rule-bands', `Approvazione automatica fino al ${auto} di sconto; oltre, serve l\u2019ok (${key}) fino al ${ownerMax}; oltre, rifiutato.`));
+        const key = typeof config.approvalKey === 'string' && config.approvalKey !== '' ? config.approvalKey : 'owner';
+        const who = key === 'owner' || key === 'titolare' ? 'della titolare' : `di ${key}`;
+        item.appendChild(el('p', 'catalog-rule-bands', `Sconti approvati da soli fino al ${auto}; oltre serve l\u2019ok ${who} fino al ${ownerMax}; oltre, rifiutati.`));
       } else {
         item.appendChild(el('p', 'catalog-rule-bands', 'Fasce non pubblicate dallo schema.'));
       }
       box.appendChild(item);
     }
-    box.appendChild(el('p', 'muted', 'Le fasce vivono nella composizione del progetto: qui si vedono quelle in vigore e si cambiano prezzi e stato dei prodotti manuali, con conferma.'));
     return box;
   }
 
@@ -206,7 +225,9 @@ export function createCatalogView(deps) {
    */
   function renderActiveToggle(product) {
     const target = product.active !== true;
-    const button = el('button', 'catalog-toggle', target ? 'Attiva' : 'Disattiva');
+    const button = el('button', `catalog-toggle catalog-switch${product.active === true ? ' on' : ''}`, target ? 'Attiva' : 'Disattiva');
+    button.setAttribute('role', 'switch');
+    button.setAttribute('aria-checked', product.active === true ? 'true' : 'false');
     const confirmBox = el('div', 'catalog-confirm');
     const confirmError = el('p', 'field-error', '');
     button.addEventListener('click', () => {
@@ -420,9 +441,15 @@ export function createCatalogView(deps) {
   async function renderTable({ category = '', active = '', source = '' } = {}) {
     const token = ++renderToken;
     clear();
-    mount.appendChild(el('h2', 'panel-title', 'Catalogo prodotti'));
-    const status = el('p', 'muted', 'Caricamento catalogo…');
-    mount.appendChild(status);
+    mount.appendChild(settingsTabs(doc, { activeId: 'catalogo', navigate: go }));
+    const page = el('div', 'catalog-page');
+    mount.appendChild(page);
+    const top = el('div', 'catalog-top');
+    top.appendChild(el('h2', 'panel-title', 'Catalogo prodotti'));
+    top.appendChild(el('p', 'catalog-lede', 'Prodotti e servizi che usi nelle offerte. Prezzi e regole di sconto si applicano da soli quando aggiungi una voce.'));
+    page.appendChild(top);
+    const status = el('p', 'muted catalog-status', 'Caricamento catalogo…');
+    page.appendChild(status);
     const params = new URLSearchParams();
     if (typeof category === 'string' && category.trim() !== '') params.set('category', category.trim());
     if (active === 'true' || active === 'false') params.set('active', active);
@@ -447,12 +474,11 @@ export function createCatalogView(deps) {
       return;
     }
     const summary = table.summary ?? {};
-    mount.appendChild(renderStripeBlock(summary));
-    mount.appendChild(renderRulesBlock(schema));
+    page.appendChild(renderStripeBlock(summary));
     const shown = table.products.length;
     status.textContent = shown >= LIST_LIMIT
       ? `Mostrati i primi ${LIST_LIMIT} prodotti.`
-      : `${shown} prodotto/i.`;
+      : `${shown} ${shown === 1 ? 'prodotto' : 'prodotti'}.`;
 
     const filters = el('div', 'catalog-filters');
     const categoryInput = el('input');
@@ -472,7 +498,7 @@ export function createCatalogView(deps) {
     const sourceInput = el('input');
     sourceInput.setAttribute('name', 'source');
     sourceInput.setAttribute('aria-label', 'Filtra per fonte');
-    sourceInput.setAttribute('placeholder', 'Fonte (manual o nome provider)');
+    sourceInput.setAttribute('placeholder', 'Fonte');
     sourceInput.value = typeof source === 'string' ? source : '';
     const applyButton = el('button', undefined, 'Filtra');
     const filterError = el('small', 'field-error', '');
@@ -491,26 +517,53 @@ export function createCatalogView(deps) {
     filters.appendChild(sourceInput);
     filters.appendChild(applyButton);
     filters.appendChild(filterError);
-    mount.appendChild(filters);
+    // Category chips from the read itself, like the prototype's tabs.
+    const counts = new Map();
+    for (const product of table.products) {
+      const key = typeof product.category === 'string' && product.category !== '' ? product.category : null;
+      if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const bar = el('div', 'catalog-bar');
+    const chips = el('div', 'catalog-chips');
+    const chip = (label, value, count) => {
+      const button = el('button', `catalog-chip${(category ?? '') === value ? ' active' : ''}`, label);
+      if (count !== null) button.appendChild(el('span', 'catalog-chip-count', String(count)));
+      button.addEventListener('click', () => { void renderTable({ category: value, active, source }); });
+      chips.appendChild(button);
+    };
+    chip('Tutti', '', category ? null : table.products.length);
+    for (const [key, count] of counts) chip(key, key, count);
+    bar.appendChild(chips);
+    bar.appendChild(filters);
+    page.appendChild(bar);
 
     const list = el('div', 'catalog-list');
+    const head = el('div', 'catalog-thead');
+    for (const label of ['Prodotto', 'Categoria', 'Prezzo', 'Fonte', 'Attivo']) head.appendChild(el('span', undefined, label));
+    list.appendChild(head);
     for (const product of table.products) {
       const row = el('div', 'catalog-row');
       if (product.productId !== undefined) row.setAttribute('data-product', String(product.productId));
-      const head = el('h3', undefined, `${product.name ?? 'Senza nome'} — ${product.sku ?? '—'}`);
-      row.appendChild(head);
+      const cell = el('div', 'catalog-cell-name');
+      cell.appendChild(el('h3', undefined, product.name ?? 'Senza nome'));
+      cell.appendChild(el('p', 'catalog-sku', product.sku ?? '—'));
+      row.appendChild(cell);
+      row.appendChild(el('p', 'catalog-category', product.category ?? '—'));
+      const priceCell = el('div', 'catalog-cell-price');
+      row.appendChild(priceCell);
       const meta = el('p', 'catalog-meta');
-      const state = product.active === true ? 'attivo' : 'non attivo';
-      meta.textContent = `Fonte: ${product.source ?? '—'} · ${state}`
-        + (product.category ? ` · ${product.category}` : '');
+      meta.appendChild(el('span', `catalog-source catalog-source-${product.source === 'manual' ? 'manual' : 'provider'}`, sourceLabel(product.source)));
+      if (product.active !== true) meta.appendChild(el('span', 'catalog-inactive', 'non attivo'));
       row.appendChild(meta);
+      const switchCell = el('div', 'catalog-cell-switch');
+      row.appendChild(switchCell);
       const manual = product.source === 'manual' && product.priceReadOnly !== true;
       if (product.priceReadOnly === true) {
-        row.appendChild(el('p', 'catalog-readonly', 'Prezzi di fonte — sola lettura: si cambiano alla fonte e si sincronizzano.'));
+        priceCell.appendChild(el('p', 'catalog-readonly', 'Sola lettura: si cambia su Stripe.'));
       }
       const offers = Array.isArray(product.offers) ? product.offers : [];
       if (offers.length === 0) {
-        row.appendChild(el('p', 'catalog-empty', 'Nessuna offerta.'));
+        priceCell.appendChild(el('p', 'catalog-empty', 'Nessuna offerta.'));
       }
       for (const offer of offers) {
         const offerBox = el('div', 'catalog-offer');
@@ -523,15 +576,16 @@ export function createCatalogView(deps) {
         for (const component of components) {
           offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined)));
         }
-        row.appendChild(offerBox);
+        priceCell.appendChild(offerBox);
       }
       if (manual && typeof product.productId === 'string' && product.productId !== '') {
-        row.appendChild(renderPriceEditor(product));
-        row.appendChild(renderActiveToggle(product));
+        priceCell.appendChild(renderPriceEditor(product));
+        switchCell.appendChild(renderActiveToggle(product));
       }
       list.appendChild(row);
     }
-    mount.appendChild(list);
+    page.appendChild(list);
+    page.appendChild(renderRulesBlock(schema));
   }
 
   return { renderTable };
