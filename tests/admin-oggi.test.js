@@ -474,12 +474,20 @@ test('full home renders every section with clickable sources', () => {
   mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
   assert.ok(mount.textContent.includes('1 di 2'), 'progress counts the postponed suggestion');
   assert.ok(mount.textContent.includes('Rimandato a domani'), 'the postponed card names its state');
-  assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears after postponing');
+  // A durable deferral moved the due date for real: no session undo may
+  // imply it was cancelled (Codex P2 on #380).
+  const durableUndos = mount.findAll('button').filter((button) => button.getAttribute('data-triage') === 'undo');
+  assert.equal(durableUndos.length, 0, 'no undo on a durable deferral');
+
+  // The prep suggestion postpones session-only: its Annulla stays honest.
+  mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
+  assert.ok(mount.textContent.includes('2 di 2'), 'progress counts both decisions');
+  assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears for the session-only postpone');
   mount.querySelector('button[data-triage="undo"]').dispatch('click', {});
-  assert.ok(mount.textContent.includes('0 di 2'), 'undo restores the suggestion');
+  assert.ok(mount.textContent.includes('1 di 2'), 'undo restores the session suggestion');
 
   mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
-  assert.deepEqual(seen, ['exec:bo04:followup:task-1']);
+  assert.deepEqual(seen, ['exec:bo04:appointment:appt-1'], 'the prep run navigates');
   assert.ok(mount.textContent.includes('Fatto'), 'executed action reads done');
 });
 
@@ -620,11 +628,14 @@ test('Oggi view postpones through the work-task action, then keeps the open row'
   assert.ok(client.posts[0].path.endsWith('/records/task-1/actions/postpone'), 'Domani runs the durable action');
   await settle(() => mount.textContent.includes('Rimandato a domani'));
   // The task stays open with its new due date: the row attenuates, it does
-  // not disappear, and Annulla restores it.
+  // not disappear, and no session undo is offered — clearing triage would
+  // display the suggestion as undecided while tomorrow's date stays stored
+  // (Codex P2 on #380).
   assert.ok(mount.textContent.includes('Richiama per il preventivo'), 'the postponed row stays');
-  assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears after postponing');
-  mount.querySelector('button[data-triage="undo"]').dispatch('click', {});
-  assert.ok(mount.querySelector('button[data-triage="postpone"]'), 'undo restores Domani');
+  const undos = mount.findAll('button').filter((button) => button.getAttribute('data-triage') === 'undo');
+  assert.equal(undos.length, 0, 'no undo after a durable postpone');
+  const postpones = mount.findAll('button').filter((button) => button.getAttribute('data-triage') === 'postpone');
+  assert.equal(postpones.length, 1, 'only the session-only prep keeps Domani');
 });
 
 test('Oggi view keeps the row open and shows the refusal on stale data', async () => {
