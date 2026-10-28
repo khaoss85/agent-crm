@@ -424,3 +424,20 @@ test('GET /api/connectors/activity and POST /api/connectors/sync-now expose the 
     assert.ok(!line.includes(secret), 'the log carries no secret');
   }
 });
+
+test('the activity carries the provider-stated grant expiry, null when unstated', async (t) => {
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const expiry = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+  const expiring = await harness.register(SPACE, {
+    channel: 'whatsapp', account: ACCOUNT_B, adapter: 'fixture-channel', adapterVersion: 1,
+    secretRef: SECRET_REF, grantExpiresAt: expiry,
+  });
+  const plain = await registeredActive(harness, SPACE, ACCOUNT_A);
+
+  const activity = harness.ops.readSyncActivity({ spaceId: SPACE });
+  const withGrant = activity.connections.find((entry) => entry.connectionKey === expiring.connection.sourceKey);
+  assert.equal(withGrant.grantExpiresAt, expiry);
+  const withoutGrant = activity.connections.find((entry) => entry.connectionKey === plain);
+  assert.equal(withoutGrant.grantExpiresAt, null);
+});
