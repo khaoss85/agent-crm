@@ -283,7 +283,7 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'canale', type: 'string', hint: 'Channel system, e.g. "whatsapp", or "all".' },
           { name: 'stato', type: 'string', hint: '"cliente", "contatto" or "all".' },
           { name: 'sort', type: 'string', hint: 'One of recent, name, value, status.' },
-          { name: 'vista', type: 'string', hint: 'One of tutti, nuovi-lead, clienti-attivi, ricontattare-oggi, rinnovi-30-giorni.' },
+          { name: 'vista', type: 'string', hint: 'One of tutti, ricontattare-oggi, nuovi-lead, clienti-attivi, rinnovi-30-giorni.' },
           { name: 'page', type: 'integer', hint: '1-based page. Absent means 1.' },
           { name: 'pageSize', type: 'integer', hint: '10, 25 or 50. Absent means 10.' },
           { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals. Absent means the budget column reads unavailable.' },

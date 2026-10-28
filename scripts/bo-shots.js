@@ -731,9 +731,9 @@ const ROWS = ${JSON.stringify(DEMO_CLIENTS)};
 const MENUS = {
   views: [
     { id: 'tutti', label: 'Tutti' },
+    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'nuovi-lead', label: 'Nuovi lead' },
     { id: 'clienti-attivi', label: 'Clienti attivi' },
-    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
   ],
   sorts: [
