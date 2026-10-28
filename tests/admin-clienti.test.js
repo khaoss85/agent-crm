@@ -484,6 +484,69 @@ test('the fallback views keep the prototype order before the server answers', as
     ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
 });
 
+test('changing the view or the page size returns to page 1', async () => {
+  // C12, C20: view and size switches re-read from the first page.
+  const page = (items, pageNum, pagesCount) => ({
+    customerListContract: 1, items, total: pagesCount * 10,
+    page: pageNum, pageSize: 10, pages: pagesCount, totalIsExact: true,
+  });
+  const client = stubClient({ pages: [page([ROW_MARCO], 1, 3), page([ROW_ANNA], 2, 3), page([], 3, 3)] });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-page', '2').dispatch('click');
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('page=2'));
+  byAttr(mount, 'button', 'data-view', 'nuovi-lead').dispatch('click');
+  await flush();
+  const switched = client.calls[client.calls.length - 1];
+  assert.ok(switched.includes('vista=nuovi-lead'), `the server sees the view: ${switched}`);
+  assert.ok(switched.includes('page=1'), `changing the view returns to page 1: ${switched}`);
+  byAttr(mount, 'button', 'data-page', '2').dispatch('click');
+  await flush();
+  byAttr(mount, 'button', 'data-size', '25').dispatch('click');
+  await flush();
+  const resized = client.calls[client.calls.length - 1];
+  assert.ok(resized.includes('pageSize=25'), `the server sees the size: ${resized}`);
+  assert.ok(resized.includes('page=1'), `changing the size returns to page 1: ${resized}`);
+});
+
+test('the sort menu lists the four prototype orders', async () => {
+  // C13: Ordina per, then Ultimo contatto, Nome A–Z, Valore offerta, Stato.
+  const { mount } = await render(stubClient());
+  mount.findAll('button').find((node) => node.textContent === 'Ordina').dispatch('click');
+  for (const label of ['Ordina per', 'Ultimo contatto', 'Nome A–Z', 'Valore offerta', 'Stato']) {
+    assert.ok(mount.textContent.includes(label), `the sort menu offers ${label}`);
+  }
+});
+
+test('a row carries avatar, tiles, state pill, last contact, next step and its card link', async () => {
+  // C16: name plus company (city/referente are not in the list contract, so
+  // the row invents none); C17: the row reaches the scheda through its link.
+  const { mount } = await render(stubClient());
+  const cards = mount.findAll('article').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-row'));
+  assert.equal(cards.length, 2, 'one card per customer');
+  const first = cards[0];
+  assert.ok(first.textContent.includes('Marco Rossi'));
+  assert.ok(first.textContent.includes('MR'), 'the avatar carries the initials');
+  assert.ok(first.textContent.includes('Palestra Esempio'), 'the company renders beside the name');
+  const link = first.findAll('a').find((node) => node.getAttribute('data-action') === 'open-customer-card');
+  assert.ok(link, 'the row links to the scheda cliente');
+  assert.equal(link.getAttribute('href'), '#/customer-card/contact/c1');
+  assert.ok(first.textContent.includes('WA'), 'the channel tile marks WhatsApp');
+  assert.ok(first.textContent.includes('Cliente'), 'the state pill names the state');
+  assert.ok(first.textContent.includes('WhatsApp · '), 'last contact names its channel');
+  assert.ok(first.textContent.includes('✦ Prova gratuita'), 'the next step renders with its spark');
+  assert.ok(first.textContent.includes('›'), 'the row carries its chevron');
+});
+
+test('a server failure reads as an Italian retry, never technical', async () => {
+  // C23: Italian, non-technical, with a retry; never codes or English.
+  const failing = { calls: [], async request() { throw Object.assign(new Error('boom'), { status: 500 }); } };
+  const { mount } = await render(failing);
+  const text = mount.textContent;
+  assert.ok(text.includes('Riprova'), 'the failure offers a retry');
+  assert.ok(!/NOT_FOUND|Error|undefined|NaN/.test(text), 'no technical residue leaks into the screen');
+});
+
 test('the clienti screen renders no raw control', async () => {
   // Acceptance: a control without a ui-* system class fails this screen.
   const rawControls = (root) => {
