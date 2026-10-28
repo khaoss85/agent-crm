@@ -353,15 +353,18 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
 }
 
 // ---------------------------------------------------------------------------
-// Triage. "Fatto" and "Rimandato a domani" are decisions on the suggestion,
-// and both are reversible with "Annulla": the map holds only decided
-// suggestions, so a reload recomputes every suggestion from its record and
-// drops the ones whose record is gone or closed. "Domani" on a follow-up is
-// durable — it runs the work-task `postpone` action, moving the due date and
-// writing a timeline note — and the triage flag is only the attenuated paint.
-// Session-local on purpose (same precedent as the assistant panel history):
-// the durable facts live in the cited records, and triage never invents
-// domain state.
+// Triage. "Fatto" and "Rimandato a domani" are decisions on the suggestion:
+// the map holds only decided suggestions, so a reload recomputes every
+// suggestion from its record and drops the ones whose record is gone or
+// closed. "Domani" on a follow-up is durable — it runs the work-task
+// `postpone` action, moving the due date and writing a timeline note — and
+// the triage flag is only the attenuated paint. A durable deferral offers no
+// session "Annulla": clearing the flag would display the suggestion as
+// undecided while tomorrow's date stays stored. Session-only decisions (the
+// pre-call prep, which navigates instead of mutating) keep "Annulla", which
+// truly reverses them. Session-local on purpose (same precedent as the
+// assistant panel history): the durable facts live in the cited records, and
+// triage never invents domain state.
 // ---------------------------------------------------------------------------
 
 /**
@@ -823,9 +826,11 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons
- * while open, the decided state with Annulla after.
+ * while open, the decided state after. A durable "Domani" (a follow-up,
+ * whose `run` commits through the work-task action) attenuates with no
+ * session undo; session-only decisions keep "Annulla".
  * @param {object} doc
- * @param {{ id?: unknown, kind?: unknown, mono?: unknown, title?: unknown, why?: unknown, cta?: unknown, href?: unknown }} action
+ * @param {{ id?: unknown, kind?: unknown, mono?: unknown, title?: unknown, why?: unknown, cta?: unknown, href?: unknown, run?: unknown }} action
  * @param {'open' | 'done' | 'postponed'} state
  * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void }} [events]
  * @param {boolean} [disabled]
@@ -849,6 +854,13 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
     controls.appendChild(postpone);
     controls.appendChild(execute);
     row.appendChild(controls);
+  } else if (state === 'postponed' && action?.run === 'complete-task') {
+    // Durable deferral: the work-task postpone action already moved the due
+    // date and wrote timeline evidence. No session "Annulla" here — it would
+    // imply the deferral was cancelled while tomorrow's date stays stored.
+    const done = el(doc, 'div', 'bo-oggi-btns');
+    done.appendChild(el(doc, 'span', 'bo-oggi-state', 'Rimandato a domani'));
+    row.appendChild(done);
   } else {
     const done = el(doc, 'div', 'bo-oggi-btns');
     done.appendChild(el(
