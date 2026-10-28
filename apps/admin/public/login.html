@@ -10,7 +10,7 @@
       .login-story { background: var(--ink); color: var(--paper); padding: 40px 48px; display: flex; flex-direction: column; justify-content: space-between; gap: 44px; min-height: 600px; }
       .login-brand { display: flex; align-items: center; gap: 10px; }
       .login-brand span { font-weight: 700; font-size: 20px; letter-spacing: -0.02em; }
-      .login-story h1 { margin: 0; font-size: clamp(40px, 5vw, 64px); line-height: 0.98; letter-spacing: -0.032em; font-weight: 700; text-wrap: balance; }
+      .login-story h1 { margin: 0 0 22px; max-width: 460px; font-size: clamp(40px, 5vw, 64px); line-height: 0.98; letter-spacing: -0.032em; font-weight: 700; text-wrap: balance; }
       .login-story .lede { margin: 0; font-size: 18px; line-height: 1.5; color: #c9c6b8; max-width: 440px; text-wrap: pretty; }
       .login-thread { display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
       .login-msg { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(255, 253, 247, 0.06); border: 1px solid rgba(255, 253, 247, 0.1); }
@@ -22,7 +22,7 @@
       .login-card .who { flex: 1; min-width: 0; }
       .login-card .who strong { display: block; font-size: 15px; }
       .login-card .who small { font-size: 13px; color: var(--muted); }
-      .login-card .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accord); flex: none; }
+      .login-card .dot, .login-card span.dot { width: 10px; height: 10px; min-width: 10px; padding: 0; margin: 0; border: none; border-radius: 50%; background: var(--accord); flex: none; }
       .login-form-wrap { display: flex; align-items: center; justify-content: center; padding: 48px 28px; }
       .login-form { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 20px; }
       .login-eyebrow { margin: 0 0 10px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
@@ -40,6 +40,8 @@
       .login-submit:hover { background: #125a22; }
       .login-note { margin: 0; font-size: 13px; color: var(--dim); line-height: 1.45; }
       .login-signup { border-top: 1px solid var(--line); padding-top: 16px; font-size: 14px; color: var(--muted); }
+      .login-signup a { color: var(--accent); text-decoration: none; }
+      .login-signup a:hover { text-decoration: underline; }
     </style>
   </head>
   <body>

@@ -363,6 +363,15 @@ export function sequenzaOfferedAction(status) {
  * @param {string} selectedKey
  * @param {(sourceKey: string) => void} onSelect
  */
+const SEQ_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', email: '@', instagram: 'IG', facebook: 'FB', tiktok: 'TT', sms: 'SMS', phone: 'TEL', voice: 'TEL' });
+const channelMark = (channel) => SEQ_CHANNEL_MARKS[String(channel ?? '').toLowerCase()] ?? '·';
+const VAR_WORDS = Object.freeze({ name: 'il nome', first_name: 'il nome', firstName: 'il nome', company: "l'azienda", city: 'la città', date: 'la data', time: "l'ora", amount: "l'importo" });
+/** «il nome e l'azienda» from template variable names; never the raw names. */
+function personalisedWith(vars) {
+  const words = [...new Set(vars.map((name) => VAR_WORDS[name] ?? 'i dati del cliente'))];
+  return words.length <= 1 ? (words[0] ?? 'i dati del cliente') : `${words.slice(0, -1).join(', ')} e ${words.at(-1)}`;
+}
+
 export function renderSequenzeElenco(doc, sequences, enrollments, sends, selectedKey, onSelect) {
   const box = el(doc, 'section', 'bo-seq-section');
   box.appendChild(el(doc, 'h3', undefined, 'Le tue sequenze'));
@@ -409,13 +418,19 @@ export function renderSequenzeElenco(doc, sequences, enrollments, sends, selecte
  * @param {boolean} busy
  */
 export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancelConfirm, onConfirm, busy) {
-  const box = el(doc, 'section', 'bo-seq-section');
-  box.appendChild(el(doc, 'h3', undefined, detail.name));
-  box.appendChild(el(doc, 'p', 'bo-seq-status', `Stato: ${detail.statusLabel}`));
+  const box = el(doc, 'section', 'bo-seq-section bo-seq-detail');
+  const headCard = el(doc, 'div', 'bo-seq-card bo-seq-headcard');
+  const headText = el(doc, 'div', 'bo-seq-headtext');
+  headText.appendChild(el(doc, 'h3', undefined, detail.name));
+  headText.appendChild(el(doc, 'p', 'bo-seq-status', `Stato: ${detail.statusLabel}`));
+  headCard.appendChild(headText);
+  const headActions = el(doc, 'div', 'bo-seq-headactions');
+  headCard.appendChild(headActions);
+  box.appendChild(headCard);
   const offered = sequenzaOfferedAction(detail.status);
   if (offered !== null) {
     if (confirming === offered.action) {
-      box.appendChild(el(doc, 'p', 'bo-seq-confirm', offered.confirm));
+      headActions.appendChild(el(doc, 'p', 'bo-seq-confirm', offered.confirm));
       const row = el(doc, 'div', 'bo-seq-btns');
       const yes = el(doc, 'button', 'primary', 'Conferma');
       yes.setAttribute('data-confirm', offered.action);
@@ -425,16 +440,16 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
       if (busy) yes.setAttribute('disabled', 'true');
       row.appendChild(yes);
       row.appendChild(no);
-      box.appendChild(row);
+      headActions.appendChild(row);
     } else {
       const button = el(doc, 'button', 'primary', offered.button);
       button.setAttribute('data-action', offered.action);
       button.addEventListener('click', () => onAsk(offered.action));
       if (busy) button.setAttribute('disabled', 'true');
-      box.appendChild(button);
+      headActions.appendChild(button);
     }
   }
-  const steps = el(doc, 'div', 'bo-seq-steps');
+  const steps = el(doc, 'div', 'bo-seq-card bo-seq-steps');
   steps.appendChild(el(doc, 'h4', undefined, 'Passi'));
   if (detail.stepsFailed === true) {
     steps.appendChild(el(doc, 'p', 'bo-seq-error',
@@ -443,23 +458,27 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
     steps.appendChild(el(doc, 'p', 'bo-muted', 'Questa sequenza non ha passi registrati.'));
   } else {
     for (const step of detail.steps) {
+      // The prototype's timeline: day | channel badge on a rail | title and
+      // message. The template language code is plumbing, never shown.
       const item = el(doc, 'div', 'bo-seq-step');
       item.appendChild(el(doc, 'p', 'bo-seq-day', step.dayLabel));
-      item.appendChild(el(doc, 'p', 'bo-seq-channel', step.channelLabel));
-      item.appendChild(el(doc, 'p', 'bo-seq-template', step.templateName));
-      if (step.templateLanguage !== '') {
-        item.appendChild(el(doc, 'p', 'bo-seq-mono', step.templateLanguage));
-      }
+      const rail = el(doc, 'div', 'bo-seq-rail');
+      rail.appendChild(el(doc, 'span', `bo-seq-badge bo-tile-${String(step.channel ?? '').toLowerCase()}`, channelMark(step.channel)));
+      item.appendChild(rail);
+      const body = el(doc, 'div', 'bo-seq-stepbody');
+      body.appendChild(el(doc, 'p', 'bo-seq-channel', step.channelLabel));
+      body.appendChild(el(doc, 'p', 'bo-seq-template', step.templateName));
       if (step.vars.length > 0) {
-        item.appendChild(el(doc, 'p', 'bo-seq-vars', `✦ Personalizzato per: ${step.vars.join(', ')}`));
+        body.appendChild(el(doc, 'p', 'bo-seq-vars', `✦ Personalizzato con ${personalisedWith(step.vars)}`));
       }
+      item.appendChild(body);
       steps.appendChild(item);
     }
   }
-  box.appendChild(steps);
-  box.appendChild(el(doc, 'p', 'bo-muted',
+  steps.appendChild(el(doc, 'p', 'bo-seq-note',
     'Senza il permesso di invio, ogni passo aspetta il tuo ok prima di partire. Alla prima risposta registrata la persona esce da sola.'));
-  const people = el(doc, 'div', 'bo-seq-people');
+  box.appendChild(steps);
+  const people = el(doc, 'div', 'bo-seq-card bo-seq-people');
   people.appendChild(el(doc, 'h4', undefined, 'Persone nella sequenza'));
   if (detail.people.length === 0) {
     people.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna persona dentro per ora.'));
@@ -508,39 +527,51 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   function paint() {
     if (!documentNode) return;
     while (mount.firstChild) mount.removeChild(mount.firstChild);
-    mount.appendChild(el(documentNode, 'p', 'bo-kicker', 'Modulo nativo'));
-    mount.appendChild(el(documentNode, 'h2', undefined, 'Sequenze'));
-    mount.appendChild(el(documentNode, 'p', 'lede',
+    // Supervisor design pass: the prototype's 1240 px page, header, then the
+    // list on the left and the selected sequence on the right.
+    const page = el(documentNode, 'div', 'bo-seq');
+    mount.appendChild(page);
+    const top = el(documentNode, 'div', 'bo-seq-top');
+    top.appendChild(el(documentNode, 'p', 'bo-kicker', 'Modulo nativo'));
+    top.appendChild(el(documentNode, 'h2', 'bo-seq-title', 'Sequenze'));
+    top.appendChild(el(documentNode, 'p', 'lede',
       'Promemoria che partono da soli, sul canale giusto. Si fermano appena il cliente risponde.'));
+    page.appendChild(top);
     if (!state.loaded) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Leggo le sequenze…'));
+      page.appendChild(el(documentNode, 'p', 'bo-muted', 'Leggo le sequenze…'));
       return;
     }
     if (!state.available) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted',
+      page.appendChild(el(documentNode, 'p', 'bo-muted',
         'Le sequenze non sono composte in questo spazio (storia BO-F3-03): niente da mostrare, e niente di finto al loro posto.'));
       return;
     }
-    mount.appendChild(renderSequenzeElenco(
+    const cols = el(documentNode, 'div', 'bo-seq-cols');
+    const left = el(documentNode, 'div', 'bo-seq-left');
+    const right = el(documentNode, 'div', 'bo-seq-right');
+    cols.appendChild(left);
+    cols.appendChild(right);
+    page.appendChild(cols);
+    left.appendChild(renderSequenzeElenco(
       documentNode, state.sequences, state.enrollments, state.sends,
       state.selectedKey, (key) => void selectSequence(key),
     ));
     if (state.capped) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${SEQUENZE_READ_LIMIT} record per elenco.`));
+      right.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${SEQUENZE_READ_LIMIT} record per elenco.`));
     }
     if (state.unavailable.length > 0) {
-      mount.appendChild(el(documentNode, 'p', 'bo-seq-error',
+      right.appendChild(el(documentNode, 'p', 'bo-seq-error',
         `Non riesco a leggere adesso: ${state.unavailable.join(', ')}. I numeri qui sotto contano solo quello che ho letto davvero.`));
     }
     if (state.error !== '') {
-      mount.appendChild(el(documentNode, 'p', 'bo-seq-error', state.error));
+      right.appendChild(el(documentNode, 'p', 'bo-seq-error', state.error));
     }
     if (state.selectedKey !== '') {
       const sequence = state.sequences.find(
         (row) => row?.sourceKey === state.selectedKey || (row?.id !== undefined && row?.id !== null && String(row.id) === state.selectedKey),
       ) ?? null;
       if (sequence === null) {
-        mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Questa sequenza non c’è più: scegline un’altra dall’elenco.'));
+        right.appendChild(el(documentNode, 'p', 'bo-muted', 'Questa sequenza non c’è più: scegline un’altra dall’elenco.'));
       } else {
         const outcome = state.stepsByKey.get(state.selectedKey) ?? { rows: [], failed: false };
         const detail = buildSequenzaDettaglio({
@@ -550,7 +581,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
           enrollments: state.enrollments.filter((row) => row?.sequenceSourceKey === sequence?.sourceKey),
           sends: state.sends.filter((row) => row?.sequenceSourceKey === sequence?.sourceKey),
         });
-        mount.appendChild(renderSequenzaDettaglio(
+        right.appendChild(renderSequenzaDettaglio(
           documentNode, detail, state.confirming,
           (action) => { state.confirming = action; state.error = ''; paint(); },
           () => { state.confirming = null; paint(); },
@@ -559,7 +590,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         ));
       }
     } else if (state.sequences.length > 0) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Scegli una sequenza per vedere i passi, giorno per giorno.'));
+      right.appendChild(el(documentNode, 'p', 'bo-muted', 'Scegli una sequenza per vedere i passi, giorno per giorno.'));
     }
   }
 
