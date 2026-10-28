@@ -5,8 +5,8 @@
  * week inside a real Chromium, once at a desktop viewport and once on a
  * phone viewport. The harness loads a week for two named members through
  * the view's own "Mostra settimana" button, searches free slots through
- * "Trova slot" and picks one with a click, so the PNG shows the week, the
- * slot list and the prefilled manual form. Each run writes a PNG of the
+ * "Trova slot liberi" from a phrase, so the PNG shows the week, the proposal
+ * rows with their ghosts and the prefilled manual form. Each run writes a PNG of the
  * painted week and reports its byte size and pixel dimensions; the phone
  * run additionally asserts, from inside the page, that nothing scrolls
  * sideways under 700px.
@@ -136,13 +136,23 @@ const SLOTS = [
   { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
 ];
 
+const DRAFT = {
+  teamMemberId: 'marco',
+  serviceKey: 'taglio',
+  startsAt: '2026-10-22T16:00:00.000Z',
+  endsAt: '2026-10-22T16:30:00.000Z',
+  notes: 'taglio per Ada',
+};
+
 const FIXTURE_SCRIPT = `
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(WEEK)};
 const SLOTS = ${JSON.stringify(SLOTS)};
+const DRAFT = ${JSON.stringify(DRAFT)};
 const client = {
   async request(path) {
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
+    if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
       return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
     }
@@ -165,19 +175,21 @@ byName('members').dispatchEvent(new Event('input', { bubbles: true }));
 click('Mostra settimana');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-byName('slotMember').value = 'marco';
-byName('slotDay').value = '2026-10-22';
-click('Trova slot');
+document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+click('Trova slot liberi');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-const firstSlot = [...document.querySelectorAll('.cal-slots button')][0];
-if (firstSlot) firstSlot.click();
 await new Promise((r) => setTimeout(r, 100));
+await new Promise((r) => setTimeout(r, 100));
+// No Conferma click here: booking belongs to the operator, and the demo
+// client answers no confirm endpoint — the PNG proves rows and ghosts.
 const probe = {
   days: document.querySelectorAll('.cal-day').length,
   events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
   lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
+  proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
+  ghosts: [...document.querySelectorAll('button')].filter((b) => b.textContent.startsWith('✦ Proposta')).length,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
 };
@@ -305,7 +317,9 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.equal(probe.days, 7, 'the week holds seven day columns');
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
   assert.ok(probe.events.includes('taglio'), 'the desktop render lists the week events');
-  assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `one slot click prefills the manual form (${probe.filled})`);
+  assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
+  assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
+  assert.equal(probe.ghosts, 2, 'two dashed ghosts on the Thursday column');
   console.log(`calendario desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 

@@ -258,6 +258,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('pipeline', { deals: 5 }));
   assert.doesNotThrow(() => assertProbe('calendario', {
     days: 7, events: ['taglio', 'barba'], lede: 'La settimana del team · 19 – 25 ott 2026', filled: 'marco|2026-10-22|09:00',
+    proposals: 2, ghosts: 2,
   }));
   assert.doesNotThrow(() => assertProbe('sequenze', {
     rows: 2, names: ['Bentornato in palestra', 'Promemoria appuntamento'],

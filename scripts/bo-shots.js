@@ -812,9 +812,11 @@ document.title = 'pipeline-ready';`;
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(DEMO_WEEK)};
 const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
+const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z', notes: 'taglio per Ada' };
 const client = {
   async request(path) {
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
+    if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
       return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
     }
@@ -835,19 +837,21 @@ byName('members').dispatchEvent(new Event('input', { bubbles: true }));
 click('Mostra settimana');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-byName('slotMember').value = 'marco';
-byName('slotDay').value = '2026-10-22';
-click('Trova slot');
+document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+click('Trova slot liberi');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-const firstSlot = [...document.querySelectorAll('.cal-slots button')][0];
-if (firstSlot) firstSlot.click();
 await new Promise((r) => setTimeout(r, 100));
+await new Promise((r) => setTimeout(r, 100));
+// No Conferma click here: booking belongs to the operator, and the demo
+// client answers no confirm endpoint — the PNG proves rows and ghosts.
 document.getElementById('probe').textContent = JSON.stringify({
   days: document.querySelectorAll('.cal-day').length,
   events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
   lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
+  proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
+  ghosts: [...document.querySelectorAll('button')].filter((b) => b.textContent.startsWith('✦ Proposta')).length,
 });
 document.title = 'calendario-ready';`;
     case 'sequenze': return `
@@ -1248,8 +1252,8 @@ export function readProbe(stdout, name) {
 /**
  * Fails a screen whose probe proves an empty or half-painted render, using
  * the same invariants the `*-shots` tests assert on the same views: the
- * calendario week holds seven day columns with the demo events and a
- * prefilled manual form, sequenze lists both sequences with detail and
+ * calendario week holds seven day columns with the demo events, the AI
+ * proposal rows with their ghosts and a prefilled manual form, sequenze lists both sequences with detail and
  * steps, the catalog holds the product table with its Stripe state and
  * price-rule bands, spazi-accessi holds both spaces with both members,
  * connettori holds all eight channel rows with their connect previews and
@@ -1293,7 +1297,13 @@ export function assertProbe(name, probe) {
         throw new Error(`calendario: the probe names no pinned week (${String(probe.lede)})`);
       }
       if (typeof probe.filled !== 'string' || !probe.filled.startsWith('marco|2026-10-22|')) {
-        throw new Error(`calendario: no slot click prefilled the manual form (${String(probe.filled)})`);
+        throw new Error(`calendario: the interpreted draft prefilled no manual form (${String(probe.filled)})`);
+      }
+      if (probe.proposals !== 2) {
+        throw new Error(`calendario: the probe lists ${String(probe.proposals)} proposal rows, expected 2`);
+      }
+      if (probe.ghosts !== 2) {
+        throw new Error(`calendario: the probe paints ${String(probe.ghosts)} ghosts, expected 2`);
       }
       return;
     }
