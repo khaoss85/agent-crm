@@ -161,7 +161,7 @@ const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? Str
  * stays space-explicit, never inferred. Without it the calls section stays
  * honestly unavailable.
  */
-const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', phone: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', calendar: 'CAL' });
+const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
 
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;

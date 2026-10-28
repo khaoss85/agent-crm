@@ -267,7 +267,11 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-card .card-owner, .pipeline-card .card-close { margin: 2px 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 /* Supervisor design pass: Pipeline like prototype 06. */
 .pipeline-board-panel.panel { border: none; background: transparent; box-shadow: none; padding: 0; }
-.pipeline-board-panel > .panel-heading { align-items: flex-end; gap: 24px; margin-bottom: 20px; }
+.pipeline-board-panel > .panel-heading { align-items: flex-end; flex-wrap: wrap; gap: 24px; margin-bottom: 20px; }
+@media (max-width: 700px) {
+  .pipeline-board-panel > .panel-heading { flex-direction: column; align-items: stretch; }
+  .pipeline-board-panel .pipeline-forecast { flex: none; width: 100%; }
+}
 .pipeline-board-panel .kicker { text-transform: uppercase; margin-bottom: 10px; }
 .pipeline-board-panel .panel-heading h2 { margin: 0; font-size: clamp(34px, 4.4vw, 50px); line-height: 1; letter-spacing: -.03em; }
 .pipeline-board-panel .panel-heading .lede { margin: 12px 0 0; font-size: 16px; max-width: 560px; }
