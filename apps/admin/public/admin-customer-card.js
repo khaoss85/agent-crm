@@ -161,6 +161,8 @@ const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? Str
  * stays space-explicit, never inferred. Without it the calls section stays
  * honestly unavailable.
  */
+const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
@@ -247,25 +249,32 @@ export function createCustomerCardView(deps) {
     head.appendChild(avatar);
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
-    titles.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    const meta = el('div', 'bo-scheda-meta');
+    meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);
-    if (card?.company?.name) panel.appendChild(el('p', 'bo-scheda-sub', card.company.name));
   }
 
   function quickActions(box, card) {
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
-    const row = el('p', 'bo-scheda-actions');
+    const row = el('div', 'bo-scheda-actions');
     if (card?.phone?.available === true && card.phone.value) {
       const dialable = String(card.phone.value).replaceAll(/[^\d+]/g, '');
-      const call = link(`tel:${dialable === '' ? card.phone.value : dialable}`, `Chiama ${card.phone.value}`, 'call-customer');
+      const call = link(`tel:${dialable === '' ? card.phone.value : dialable}`, 'Chiama', 'call-customer');
+      call.setAttribute('class', 'bo-scheda-tile');
+      call.setAttribute('title', `Chiama ${card.phone.value}`);
       row.appendChild(call);
     } else {
       // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
     }
     if (typeof card?.email === 'string' && card.email !== '') {
-      row.appendChild(link(`mailto:${card.email}`, `Scrivi a ${card.email}`, 'mail-customer'));
+      const mail = link(`mailto:${card.email}`, 'Email', 'mail-customer');
+      mail.setAttribute('class', 'bo-scheda-tile');
+      mail.setAttribute('title', `Scrivi a ${card.email}`);
+      row.appendChild(mail);
     } else {
       row.appendChild(el('span', 'bo-scheda-disabled', 'email non disponibile'));
     }
@@ -285,7 +294,7 @@ export function createCustomerCardView(deps) {
     const members = Array.isArray(cluster.members) ? cluster.members : [];
     box.appendChild(el('p', 'bo-muted',
       cluster.linked === true
-        ? `${members.length} schede unite da una persona`
+        ? `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`
         : 'una sola scheda: nessuna unione registrata'));
     for (const member of members) {
       const line = el('p', 'bo-scheda-identity');
@@ -313,7 +322,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const fact = (label, value) => {
       const row = el('p', 'bo-scheda-fact');
-      row.appendChild(el('span', 'bo-scheda-fact-label', `${label}: `));
+      row.appendChild(el('span', 'bo-scheda-fact-label', label));
       row.appendChild(el('span', undefined, value));
       box.appendChild(row);
     };
@@ -421,6 +430,9 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        const channelKey = String(item?.channel ?? '').trim().toLowerCase();
+        const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
+        row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
         const isOutbound = String(item?.direction ?? '') === 'outbound';
         const who = isOutbound
           ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')
@@ -617,16 +629,23 @@ export function createCustomerCardView(deps) {
     const left = el('div', 'bo-scheda-col');
     const center = el('div', 'bo-scheda-col');
     const right = el('div', 'bo-scheda-col');
-    quickActions(left, card);
-    linkedIdentities(left, profile);
-    details(left, card, profile);
-    enriched(left, enrichment);
-    timelineBox(center, timeline);
-    aiSummary(right, calls);
-    callsBox(right, calls);
-    nextSteps(right, profile);
-    offer(right, profile);
-    nextAppointment(right, timeline);
+    // Supervisor design pass: every section is its own card, like the
+    // prototype; a section that hides itself (returns false) leaves no card.
+    const section = (col, cls, fn, ...args) => {
+      const box = el('section', `bo-scheda-card${cls ? ` ${cls}` : ''}`);
+      const shown = fn(box, ...args);
+      if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
+    };
+    section(left, '', quickActions, card);
+    section(left, '', linkedIdentities, profile);
+    section(left, '', details, card, profile);
+    section(left, '', enriched, enrichment);
+    section(center, 'bo-scheda-card-timeline', timelineBox, timeline);
+    section(right, 'bo-scheda-ai', aiSummary, calls);
+    section(right, '', callsBox, calls);
+    section(right, '', nextSteps, profile);
+    section(right, 'bo-scheda-card-offer', offer, profile);
+    section(right, '', nextAppointment, timeline);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);

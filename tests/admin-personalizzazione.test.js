@@ -638,3 +638,95 @@ test('I miei shows an honest empty state when nothing is connected', async () =>
   assert.ok(mount.textContent.includes('Nessun canale collegato in questo spazio.'), 'the empty I tuoi names what is missing');
   assert.ok(!mount.textContent.includes('NOT_FOUND'), 'no technical codes leak (spec C25)');
 });
+
+test('every hero slide keeps its prototype eyebrow and its own tiles', async () => {
+  const { CONNETTORI_HERO } = await import('../apps/admin/public/admin-personalizzazione.js');
+  assert.equal(CONNETTORI_HERO[1].eyebrow, 'Curato da Accordo', 'slide two keeps the prototype eyebrow');
+  assert.deepEqual([...CONNETTORI_HERO[1].tiles], ['CAL', 'WEB', 'S'], 'slide two shows agenda tiles, not the Kit-social set');
+  assert.deepEqual([...CONNETTORI_HERO[0].tiles], ['IG', 'FB', 'TT', 'WA'], 'slide one keeps the Kit-social tiles');
+  assert.deepEqual([...CONNETTORI_HERO[2].tiles], [], 'slide three is mark-only, like the prototype');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  view.test.state.hero = 1;
+  await view.render();
+  await flush();
+  const tiles = mount.querySelector('.ui-hero-tiles');
+  assert.ok(tiles, 'the hero tiles render');
+  const chips = tiles.findAll('span').map((node) => node.textContent);
+  assert.ok(chips.includes('CAL'), 'slide two renders its own tiles');
+  assert.ok(!chips.includes('IG'), 'slide two never reuses the slide-one tiles');
+});
+
+test('the Skill toolbar never shows a blank sort after Piu usati on Connettori', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  view.test.state.sort = 'piu-usati';
+  view.test.state.tab = 'skill';
+  await view.render();
+  await flush();
+  const selects = mount.findAll('select');
+  assert.ok(selects.length > 0, 'the Skill toolbar renders its own sort');
+  const sort = selects.find((node) => node.getAttribute('aria-label') === 'Ordina per');
+  assert.ok(sort, 'the sort select renders');
+  const selected = sort.childNodes.filter((node) => node.getAttribute('selected') === 'selected');
+  assert.equal(selected.length, 1, 'exactly one sort voice stays selected');
+  assert.equal(selected[0].textContent, 'Ordina: nome', 'Piu usati maps to nome outside Connettori');
+});
+
+test('Enter on the in-card + button does not open the detail twice', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId });
+  await view.render();
+  await flush();
+  const card = mount.findAll('article').find((node) => node.textContent.includes('Instagram'));
+  assert.ok(card, 'the card renders');
+  const before = navigated.length;
+  card.dispatch('keydown', { key: 'Enter', target: { closest: (selector) => (selector === 'button' ? {} : null) }, preventDefault: () => {} });
+  assert.equal(navigated.length, before, 'a keypress on the + button never opens the detail on top of it');
+  card.dispatch('keydown', { key: 'Enter', target: { closest: () => null }, preventDefault: () => {} });
+  assert.ok(navigated.includes('#/connettori/instagram'), 'Enter on the card body still opens its detail');
+});
+
+test('a refused Skill or Pacchetti action names no channel', async () => {
+  const { unitPermissionMessage } = await import('../apps/admin/public/admin-personalizzazione.js');
+  assert.equal(unitPermissionMessage('skill'), 'Chiedi al titolare di gestire le skill.', 'the Skill refusal names skills');
+  assert.equal(unitPermissionMessage('pacchetti'), 'Chiedi al titolare di gestire i pacchetti.', 'the Pacchetti refusal names packages');
+  for (const tab of ['skill', 'pacchetti']) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const said = [];
+    const client = {
+      async request(path, options = {}) {
+        if (path === '/api/space-packages/catalog') return { units: UNITS };
+        if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+        if (path === '/api/space-packages/activate') throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
+        if (path.startsWith('/api/connectors?')) return { connectors: [] };
+        throw new Error(`unexpected request ${path}`);
+      },
+    };
+    const view = createPersonalizzazioneView({
+      doc, mount, client, navigate: () => {}, spaceId,
+      toast: (message) => said.push(message),
+    });
+    await view.render();
+    await flush();
+    view.test.state.tab = tab;
+    await view.render();
+    await flush();
+    const add = mount.findAll('button').find((node) => node.textContent === '+');
+    assert.ok(add, `the + action renders on ${tab}`);
+    add.dispatch('click', {});
+    await flush();
+    assert.ok(!said.some((message) => message.includes('canale')), `the ${tab} refusal mentions no channel`);
+    assert.ok(said.includes(unitPermissionMessage(tab)), `the ${tab} refusal names what the owner must manage`);
+  }
+});

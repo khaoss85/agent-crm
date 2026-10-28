@@ -30,6 +30,7 @@
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
+import { settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);
@@ -192,18 +193,21 @@ export const CONNETTORI_HERO = Object.freeze([
     eyebrow: 'Curato da Accordo',
     title: 'Kit social',
     text: 'Instagram, Facebook, TikTok e WhatsApp in un\u2019unica inbox, con risposte che partono dal canale originale.',
+    tiles: Object.freeze(['IG', 'FB', 'TT', 'WA']),
     cta: 'Esplora',
   }),
   Object.freeze({
-    eyebrow: '',
+    eyebrow: 'Curato da Accordo',
     title: 'Agenda, lead e pagamenti',
     text: 'Appuntamenti condivisi, richieste dal sito e incassi Stripe dentro la scheda del cliente.',
+    tiles: Object.freeze(['CAL', 'WEB', 'S']),
     cta: 'Esplora',
   }),
   Object.freeze({
     eyebrow: '\u2726 Accordo AI',
     title: 'Configura con l\u2019AI',
     text: 'Dimmi come ti contattano i clienti: scelgo io i canali da collegare e l\u2019ordine giusto.',
+    tiles: Object.freeze([]),
     cta: 'Inizia',
   }),
 ]);
@@ -224,6 +228,21 @@ export function heroStep(index, delta) {
 
 /** Shown when the space may not manage connectors: no codes, no detail. */
 export const CONNECTORS_PERMISSION_MESSAGE = 'Chiedi al titolare di collegare questo canale.';
+
+/** Shown when the space may not manage skills: no codes, no detail. */
+export const SKILL_PERMISSION_MESSAGE = 'Chiedi al titolare di gestire le skill.';
+
+/** Shown when the space may not manage packages: no codes, no detail. */
+export const PACKAGES_PERMISSION_MESSAGE = 'Chiedi al titolare di gestire i pacchetti.';
+
+/**
+ * The 403 message for the Skill/Pacchetti activate/deactivate paths: it
+ * names skills or packages, never a channel.
+ * @param {unknown} tab
+ */
+export function unitPermissionMessage(tab) {
+  return tab === 'skill' ? SKILL_PERMISSION_MESSAGE : PACKAGES_PERMISSION_MESSAGE;
+}
 
 /**
  * A normalized connector/space-package failure is a permission case when the
@@ -703,14 +722,17 @@ export function createPersonalizzazioneView(deps) {
       bar.appendChild(sort);
       renderConnettoriAdd(bar);
     } else {
+      // The Connettori-only 'piu-usati' sort is invalid here: show it as
+      // 'nome' instead of a blank select, and keep the tab's own choice.
+      const unitSort = state.sort === 'piu-usati' ? 'nome' : state.sort;
       const sort = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': 'Ordina per' } });
       for (const [value, label] of [['nome', 'Ordina: nome'], ['stato', 'Ordina: stato']]) {
         const option = el(doc, 'option', { text: label, attrs: { value } });
-        if (state.sort === value) option.setAttribute('selected', 'selected');
+        if (unitSort === value) option.setAttribute('selected', 'selected');
         sort.appendChild(option);
       }
       // A real select element reports its choice; the fake keeps first.
-      try { sort.value = state.sort; } catch { /* keep rendered order */ }
+      try { sort.value = unitSort; } catch { /* keep rendered order */ }
       sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
       bar.appendChild(sort);
       // The green CTA opens where a unit is added: the module factory note
@@ -830,7 +852,7 @@ export function createPersonalizzazioneView(deps) {
           await load();
         } catch (error) {
           const failure = errorOf(error);
-          say(isPermissionFailure(failure) ? CONNECTORS_PERMISSION_MESSAGE : (failure.message || 'Disattivazione non riuscita.'), true);
+          say(isPermissionFailure(failure) ? unitPermissionMessage(state.tab) : (failure.message || 'Disattivazione non riuscita.'), true);
           state.busy = false;
         }
         render();
@@ -880,7 +902,7 @@ export function createPersonalizzazioneView(deps) {
             await load();
           } catch (error) {
             const failure = errorOf(error);
-            say(isPermissionFailure(failure) ? CONNECTORS_PERMISSION_MESSAGE : (failure.message || 'Attivazione non riuscita.'), true);
+            say(isPermissionFailure(failure) ? unitPermissionMessage(state.tab) : (failure.message || 'Attivazione non riuscita.'), true);
             state.busy = false;
           }
           render();
@@ -995,8 +1017,10 @@ export function createPersonalizzazioneView(deps) {
     });
     copy.appendChild(cta);
     hero.appendChild(copy);
+    // Tiles are per-slide, like the prototype (slide 3 is mark-only, so no
+    // tiles): never the slide-1 Kit-social set on every slide.
     const tiles = el(doc, 'div', { cls: 'ui-hero-tiles', attrs: { 'aria-hidden': 'true' } });
-    for (const chip of ['IG', 'FB', 'TT', 'WA']) tiles.appendChild(uiChannelChip(doc, chip));
+    for (const chip of (Array.isArray(slide.tiles) ? slide.tiles : [])) tiles.appendChild(uiChannelChip(doc, chip));
     hero.appendChild(tiles);
     const next = uiButton(doc, { variant: 'secondary', small: true, label: '›', attrs: { type: 'button', 'aria-label': 'Successiva' } });
     next.addEventListener('click', () => { state.hero = heroStep(state.hero, 1); renderList(); });
@@ -1056,6 +1080,9 @@ export function createPersonalizzazioneView(deps) {
       });
       article.addEventListener('keydown', (event) => {
         if (event?.key !== 'Enter' && event?.key !== ' ') return;
+        // Mirror the click guard: a keypress on the in-card `+` button must
+        // not open the detail on top of the button's own collegamento.
+        if (event && typeof event.target?.closest === 'function' && event.target.closest('button')) return;
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         openCardDetail();
       });
@@ -1098,6 +1125,9 @@ export function createPersonalizzazioneView(deps) {
     clear();
     // A rebuilt tree drops every open menu with it.
     openAggiungiMenu = null;
+    // Supervisor design pass: the prototype's IMPOSTAZIONI tab row above the
+    // page (vestito del supervisore, #406): kept as-is, functional code below.
+    mount.appendChild(settingsTabs(doc, { activeId: 'personalizzazione', navigate: go }));
     const box = el(doc, 'div', { cls: 'panel personalizzazione' });
     renderHeader(box);
     if (readSpace().trim() === '') {
@@ -1105,7 +1135,9 @@ export function createPersonalizzazioneView(deps) {
       mount.appendChild(box);
       return;
     }
-    renderTabs(box);
+    const toolRow = el(doc, 'div', { cls: 'bo-perso-bar' });
+    renderTabs(toolRow);
+    box.appendChild(toolRow);
     const units = state.units ?? [];
     const rows = state.rows ?? [];
     const known = activeByUnit({ units, rows });
@@ -1117,7 +1149,7 @@ export function createPersonalizzazioneView(deps) {
         connectors: state.connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
-    renderToolbar(box, count);
+    renderToolbar(toolRow, count);
     mount.appendChild(box);
     renderList();
   }
@@ -1138,6 +1170,8 @@ export function createPersonalizzazioneView(deps) {
       filterConnettori, connettoriCardState, connettoriHref, sections: CONNETTORI_SECTIONS,
       hero: CONNETTORI_HERO, heroStep, isPermissionFailure, previewTitleFor,
       permissionMessage: CONNECTORS_PERMISSION_MESSAGE,
+      unitPermissionMessage, skillPermissionMessage: SKILL_PERMISSION_MESSAGE,
+      packagesPermissionMessage: PACKAGES_PERMISSION_MESSAGE,
     },
   };
 }

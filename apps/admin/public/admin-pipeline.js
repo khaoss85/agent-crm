@@ -21,6 +21,11 @@
 // onto the lost stage does not invent a reason: it reveals the card's reason
 // input and asks for one before posting. The Lista rows are read-only; moves
 // happen on Kanban cards.
+//
+// BO-F6-10 fetta Lista (backlog:31bed527): testi esatti C7/C16/C21, intestazioni
+// C19 nell'ordine del prototipo, pill di stato con pallino e percentuale di
+// probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
+// `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
 import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -245,11 +250,14 @@ export function createPipelineBoard(deps) {
       }));
     }
     heading.appendChild(titleBox);
+    // Supervisor design pass (prototype 06): the forecast is the violet card
+    // beside the title, the count and totals close the single tool row.
+    heading.appendChild(renderForecast(pipeline, visible));
     panel.appendChild(heading);
 
-    panel.appendChild(renderToolbar(pipeline, onBoard));
-    panel.appendChild(renderSummary(visible));
-    panel.appendChild(renderForecast(pipeline, visible));
+    const tools = renderToolbar(pipeline, onBoard);
+    tools.appendChild(renderSummary(visible));
+    panel.appendChild(tools);
 
     if (state.view === 'lista') {
       panel.appendChild(renderList(pipeline, visible));
@@ -299,8 +307,8 @@ export function createPipelineBoard(deps) {
 
     const search = el(doc, 'input', {
       attrs: {
-        type: 'search', placeholder: 'Cerca nome, azienda, contatto',
-        'aria-label': 'Cerca record', 'data-filter': 'q', value: state.q,
+        type: 'search', placeholder: 'Cerca offerta o cliente',
+        'aria-label': 'Cerca offerta o cliente', 'data-filter': 'q', value: state.q,
       },
     });
     search.value = state.q;
@@ -371,19 +379,23 @@ export function createPipelineBoard(deps) {
       toolbar.appendChild(input);
     }
 
-    const reset = el(doc, 'button', {
-      class: 'small secondary', text: 'Azzera filtri',
-      attrs: { type: 'button', 'data-action': 'clear-filters' },
-    });
-    reset.addEventListener('click', () => {
-      state.q = '';
-      state.owner = '';
-      state.stage = '';
-      state.closeFrom = '';
-      state.closeTo = '';
-      renderAll(renderToken);
-    });
-    toolbar.appendChild(reset);
+    // BO-F6-10 C11: `Azzera filtri` exists only while a filter or search is
+    // active, so the toolbar never offers a no-op reset.
+    if (state.q || state.owner || state.stage || state.closeFrom || state.closeTo) {
+      const reset = el(doc, 'button', {
+        class: 'small secondary', text: 'Azzera filtri',
+        attrs: { type: 'button', 'data-action': 'clear-filters' },
+      });
+      reset.addEventListener('click', () => {
+        state.q = '';
+        state.owner = '';
+        state.stage = '';
+        state.closeFrom = '';
+        state.closeTo = '';
+        renderAll(renderToken);
+      });
+      toolbar.appendChild(reset);
+    }
 
     return toolbar;
   }
@@ -412,7 +424,7 @@ export function createPipelineBoard(deps) {
    */
   function renderForecast(pipeline, visible) {
     const box = el(doc, 'div', { class: 'pipeline-forecast', attrs: { 'data-forecast': 'estimate' } });
-    box.appendChild(el(doc, 'h3', { text: 'Previsione · stima' }));
+    box.appendChild(el(doc, 'h3', { text: '✦ Previsione · stima' }));
     const probabilityOf = new Map(pipeline.stages.map((stage) => [stage.key, stage.probability]));
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open').map((stage) => stage.key));
     const weighted = new Map();
@@ -438,34 +450,67 @@ export function createPipelineBoard(deps) {
     return box;
   }
 
-  /** Read-only Lista table over the same filtered records (moves stay on Kanban). */
+  /**
+   * Read-only Lista table over the same filtered records (moves stay on Kanban).
+   * Headers follow the prototype order (BO-F6-10 C19); every row shows the
+   * state pill with its dot, the value, the stage probability, the expected
+   * close, the creation day and the referente (BO-F6-10 C20). Values are set
+   * through textContent/setAttribute only, never innerHTML.
+   */
   function renderList(pipeline, visible) {
     const wrap = el(doc, 'div', { class: 'pipeline-list', attrs: { 'data-listview': 'records' } });
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Record', 'Stato', 'Referente', 'Chiusura prevista', 'Valore']) {
+    for (const label of ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente']) {
       headRow.appendChild(el(doc, 'th', { text: label }));
     }
     head.appendChild(headRow);
     table.appendChild(head);
     const body = el(doc, 'tbody');
-    const stageLabel = new Map(pipeline.stages.map((stage) => [stage.key, stage.label ?? stage.key]));
+    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
     for (const record of visible) {
+      const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
       row.appendChild(el(doc, 'td', { text: String(record.name ?? record.id) }));
-      row.appendChild(el(doc, 'td', { text: stageLabel.get(record.pipelineStage) ?? String(record.pipelineStage) }));
-      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? record.owner : '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
+      const stateCell = el(doc, 'td');
+      stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
+      row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatMinorUnits(record.valueCents, record.currency) }));
+      row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
+      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? record.owner : '—' }));
       body.appendChild(row);
     }
     table.appendChild(body);
     wrap.appendChild(table);
     if (!visible.length) {
-      wrap.appendChild(el(doc, 'p', { class: 'empty', text: 'Nessun record corrisponde ai filtri attivi.' }));
+      wrap.appendChild(el(doc, 'p', { class: 'empty', text: 'Nessuna offerta con questi filtri.' }));
     }
     return wrap;
+  }
+
+  /** State pill with its dot (BO-F6-10 C12/C20): the dot color is CSS, the hook is markup. */
+  function renderStagePill(stage, stageKey) {
+    const pill = el(doc, 'span', { class: 'pill' });
+    pill.appendChild(el(doc, 'span', { class: `stage-dot type-${stage?.type ?? 'unknown'}` }));
+    pill.appendChild(el(doc, 'span', { text: stage?.label ?? String(stageKey) }));
+    return pill;
+  }
+
+  /** Stage probability as `NN%`, or an em dash when the stage is unknown. */
+  function probabilityText(stage) {
+    const probability = stage?.probability;
+    if (typeof probability !== 'number' || probability < 0 || probability > 100) return '—';
+    return `${probability}%`;
+  }
+
+  /** Toggle one hook class on a node without touching its other classes. */
+  function toggleHook(node, hook, on) {
+    const current = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+    const next = on ? [...new Set([...current, hook])] : current.filter((cls) => cls !== hook);
+    node.setAttribute('class', next.join(' '));
   }
 
   /**
@@ -478,6 +523,8 @@ export function createPipelineBoard(deps) {
     const column = el(doc, 'div', { class: `pipeline-column type-${stage.type}`, attrs: { 'data-stage': stage.key } });
     const header = el(doc, 'div', { class: 'pipeline-column-header' });
     const badge = stage.type === 'won' ? 'Vinta ✓' : stage.type === 'lost' ? 'Persa ✕' : 'Aperta';
+    // BO-F6-10 C12: state dot hook beside the name; the color itself is CSS.
+    header.appendChild(el(doc, 'span', { class: `stage-dot type-${stage.type}` }));
     header.appendChild(el(doc, 'h3', { text: stage.label }));
     header.appendChild(el(doc, 'span', { class: `stage-type stage-${stage.type}`, text: badge }));
     header.appendChild(el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } }));
@@ -494,11 +541,16 @@ export function createPipelineBoard(deps) {
       column.appendChild(el(doc, 'p', { class: 'stage-total', text: formatMinorUnits(total, currency) }));
     }
 
+    // BO-F6-10 C18: the drop target is marked while a card hovers it, so CSS
+    // can paint the dashed outline; the dragged card is attenuated the same way.
     column.addEventListener('dragover', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      toggleHook(column, 'drop-target', true);
     });
+    column.addEventListener('dragleave', () => toggleHook(column, 'drop-target', false));
     column.addEventListener('drop', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      toggleHook(column, 'drop-target', false);
       const payload = event?.dataTransfer?.getData?.('text/plain') ?? '';
       void handleDrop(pipeline, stage.key, payload);
     });
@@ -506,7 +558,7 @@ export function createPipelineBoard(deps) {
     column.__drop = (payload) => handleDrop(pipeline, stage.key, payload);
 
     if (!records.length) {
-      column.appendChild(el(doc, 'p', { class: 'empty', text: 'Nessun record.' }));
+      column.appendChild(el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" }));
       return column;
     }
     for (const record of records) {
@@ -536,7 +588,9 @@ export function createPipelineBoard(deps) {
     }
     card.addEventListener('dragstart', (event) => {
       event?.dataTransfer?.setData?.('text/plain', JSON.stringify({ id: record.id, fromStage: stage.key }));
+      toggleHook(card, 'dragging', true);
     });
+    card.addEventListener('dragend', () => toggleHook(card, 'dragging', false));
 
     // Terminal stages have no move control (server enforces it regardless).
     if (stage.type !== 'open') return card;

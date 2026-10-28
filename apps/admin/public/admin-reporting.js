@@ -210,7 +210,7 @@ export function manualSteps() {
       'description in italiano: cosa misura il modulo',
     ],
     commands: bundleCommands({ createdBy: 'manual' }),
-    proof: 'bundle verify avvia l\u2019app vera con il bundle composto e serve un record: se non si avvia e non serve, il bundle non esiste.',
+    proof: 'La prova è pratica: il modulo si apre davvero e mostra un record. Se non si apre o non mostra niente, non esiste.',
   };
 }
 
@@ -433,8 +433,10 @@ export function createReportingView(deps) {
    */
   function barChart(section, title, subtitle, rows) {
     const panel = el(doc, 'section', { class: 'panel' });
-    panel.appendChild(el(doc, 'h3', { text: title }));
-    panel.appendChild(el(doc, 'p', { class: 'lede', text: subtitle }));
+    const head = el(doc, 'div', { class: 'bo-rep-head' });
+    head.appendChild(el(doc, 'h3', { text: title }));
+    head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: subtitle }));
+    panel.appendChild(head);
     const max = Math.max(0, ...rows.map((row) => row.minor));
     for (const row of rows) {
       const line = el(doc, 'div');
@@ -599,22 +601,30 @@ export function createReportingView(deps) {
       }));
     }
     kpiCards(host, model);
-    channelsCard(host, model);
-    barChart(host, 'Preventivi', 'dall\u2019invio al pagamento, per fase', model.funnel.map((entry) => ({
-      label: entry.label, minor: entry.count, text: `${entry.count} · ${entry.minor}`,
-    })));
-    barChart(host, 'Valore per fase', 'somme in minor units della valuta mostrata', model.valueByStage.map((entry) => ({
-      label: entry.label, minor: entry.minor, text: String(entry.minor),
-    })));
-    barChart(host, 'Chiusure attese per mese', 'preventivi aperti per mese di chiusura attesa', model.monthly.map((entry) => ({
-      label: entry.label, minor: entry.expectedMinor, text: `${entry.openCount} · ${entry.expectedMinor}`,
-    })));
-    barChart(host, 'Vendite per persona', 'valore aperto per proprietario', model.team.map((entry) => ({
-      label: entry.owner, minor: entry.openMinor, text: `${entry.openCount} · ${entry.openMinor}`,
-    })));
-    forecastPanel(host, model);
-    teamTable(host, model);
-    insightsPanel(host, model);
+    // Supervisor design pass (prototype 09): charts on a six-column grid —
+    // channels wide beside the funnel, three charts per row, the forecast
+    // full width, the team table beside the insights. Money reads as euro,
+    // never as raw minor units.
+    const grid = el(doc, 'div', { class: 'bo-rep-grid' });
+    host.appendChild(grid);
+    const tag = (cls) => { if (grid.lastChild && grid.lastChild.classList) grid.lastChild.classList.add(cls); };
+    const eur = (minor) => formatMoney(minor, model.currency);
+    channelsCard(grid, model); tag('bo-rep-wide');
+    barChart(grid, 'Preventivi', 'dall\u2019invio al pagamento', model.funnel.map((entry) => ({
+      label: entry.label, minor: entry.count, text: `${entry.count} · ${eur(entry.minor)}`,
+    }))); tag('bo-rep-narrow');
+    barChart(grid, 'Valore per fase', 'valore aperto per fase', model.valueByStage.map((entry) => ({
+      label: entry.label, minor: entry.minor, text: eur(entry.minor),
+    }))); tag('bo-rep-third');
+    barChart(grid, 'Chiusure attese per mese', 'preventivi aperti per mese', model.monthly.map((entry) => ({
+      label: entry.label, minor: entry.expectedMinor, text: `${entry.openCount} · ${eur(entry.expectedMinor)}`,
+    }))); tag('bo-rep-third');
+    barChart(grid, 'Vendite per persona', 'valore aperto per persona', model.team.map((entry) => ({
+      label: entry.owner, minor: entry.openMinor, text: `${entry.openCount} · ${eur(entry.openMinor)}`,
+    }))); tag('bo-rep-third');
+    forecastPanel(grid, model); tag('bo-rep-full');
+    teamTable(grid, model); tag('bo-rep-wide');
+    insightsPanel(grid, model); tag('bo-rep-narrow');
   }
 
   async function renderReporting() {
@@ -654,14 +664,19 @@ export function createReportingView(deps) {
     }
     if (token !== renderToken) return;
     clear();
-    const dashHost = el(doc, 'div');
+    const dashHost = el(doc, 'div', { class: 'bo-rep' });
+    const top = el(doc, 'div', { class: 'bo-rep-top' });
+    top.appendChild(el(doc, 'p', { class: 'kicker', text: 'Modulo personalizzato' }));
+    top.appendChild(el(doc, 'h1', { class: 'bo-rep-title', text: 'Reporting' }));
+    dashHost.appendChild(top);
     await renderDashboard(dashHost);
     if (token !== renderToken) return;
     mount.appendChild(dashHost);
-    const panel = kicker('Moduli personalizzati', 'Reporting');
+    const panel = kicker('Reporting', 'Righe del report');
+    panel.classList.add('bo-rep-rows');
     panel.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Sopra: l\u2019andamento della pipeline, aggiornato a ogni filtro. Sotto: le righe del report, con i dati dell\u2019operatore come l\u2019obiettivo di periodo.',
+      text: 'Le righe del report, con i dati dell\u2019operatore come l\u2019obiettivo di periodo.',
     }));
     if (loadError !== null) {
       panel.appendChild(el(doc, 'div', {
@@ -696,13 +711,13 @@ export function createReportingView(deps) {
     card.appendChild(el(doc, 'h2', { text: 'I bundle restano fuori dal processo condiviso' }));
     card.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Un bundle è un set di moduli versionato e rimovibile: vive in bundles/<nome>/<versione>/, non tocca clienti, pipeline e calendario, e si installa solo dove l\u2019host lo compone. Il codice generato non gira mai nel processo condiviso.',
+      text: 'Un modulo è un pacchetto di funzioni a parte: si aggiunge e si toglie senza toccare clienti, pipeline e calendario. Come è fatto davvero è scritto in docs/BUNDLES.md.',
     }));
     const list = el(doc, 'ul');
     for (const line of [
-      'Versionato: una versione non si rigenera mai, una modifica è una nuova versione.',
-      'Rimovibile: uninstall toglie solo le sue tabelle, i dati kernel restano.',
-      'Vero: bundle verify avvia l\u2019app e serve un record, o il bundle non esiste.',
+      'Versionato: una versione non cambia mai, per cambiare si fa una versione nuova.',
+      'Rimovibile: toglierlo toglie solo le sue tabelle, il resto resta.',
+      'Vero: il modulo funziona davvero e mostra un record, altrimenti non esiste.',
     ]) {
       list.appendChild(el(doc, 'li', { text: line }));
     }
@@ -727,7 +742,7 @@ export function createReportingView(deps) {
     ai.appendChild(el(doc, 'h3', { text: 'Crea con l\u2019AI' }));
     ai.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Descrivi il modulo: l\u2019assistente apre il percorso guidato e l\u2019agente di coding redige il manifest ed esegue bundle create --apply e bundle verify. Niente codice simulato.',
+      text: 'Descrivi il modulo: l\u2019assistente apre il percorso guidato e prepara tutto, senza simulare niente.',
     }));
     const label = el(doc, 'label', { text: 'Descrivi il modulo' });
     const area = doc.createElement('textarea');

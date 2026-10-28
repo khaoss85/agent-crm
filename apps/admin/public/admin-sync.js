@@ -34,6 +34,13 @@ export const SYNC_ROUTE = '#/stato-sync';
  * Health verdicts the activity payload carries, in display order of worry.
  * @param {unknown} health
  */
+const SYNC_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', phone: 'TEL', voice: 'TEL', web: 'WEB', form: 'WEB', calendar: 'CAL', google_calendar: 'CAL', stripe: 'S' });
+/** The prototype's channel tile mark, from a channel id or its label. */
+function syncMark(value) {
+  const key = String(value ?? '').toLowerCase().replace(/\s+/g, '_').split(':')[0];
+  return SYNC_MARKS[key] ?? (String(value ?? '·').slice(0, 2).toUpperCase() || '·');
+}
+
 export function healthTone(health) {
   if (health === 'down') return 'down';
   if (health === 'attention') return 'fix';
@@ -621,9 +628,18 @@ export function createSyncView(deps) {
     table.appendChild(head);
     for (const row of rows) {
       const line = doc.createElement('tr');
-      line.appendChild(el(doc, 'td', undefined, row.label));
+      const name = doc.createElement('td');
+      name.setAttribute('class', 'bo-sync-name');
+      const nameWrap = el(doc, 'div', 'bo-sync-namewrap');
+      nameWrap.appendChild(el(doc, 'span', `bo-sync-tile bo-tile-${String(row.channel ?? '').toLowerCase()}`, syncMark(row.channel ?? row.label)));
+      const nameText = el(doc, 'div', 'bo-sync-nametext');
+      nameText.appendChild(el(doc, 'strong', undefined, row.label));
+      nameText.appendChild(el(doc, 'span', 'bo-sync-dir', row.direction));
+      nameWrap.appendChild(nameText);
+      name.appendChild(nameWrap);
+      line.appendChild(name);
       line.appendChild(el(doc, 'td', undefined, row.account));
-      line.appendChild(el(doc, 'td', undefined, row.direction));
+      line.appendChild(el(doc, 'td', 'bo-sync-dircell', row.direction));
       line.appendChild(el(
         doc,
         'td',
@@ -663,8 +679,10 @@ export function createSyncView(deps) {
   }
 
   function renderFeed(box, activity) {
-    box.appendChild(el(doc, 'h3', undefined, 'In tempo reale'));
-    box.appendChild(el(doc, 'p', 'bo-sync-legend', '← entra · → esce · ↔ entrambi'));
+    const head = el(doc, 'div', 'bo-sync-cardhead');
+    head.appendChild(el(doc, 'h3', undefined, 'In tempo reale'));
+    head.appendChild(el(doc, 'p', 'bo-sync-legend', '← entra · → esce · ↔ entrambi'));
+    box.appendChild(head);
     const items = syncFeedItems(activity);
     if (items.length === 0) {
       box.appendChild(el(doc, 'p', 'bo-sync-note', 'Ancora nessun movimento in questo spazio.'));
@@ -674,7 +692,8 @@ export function createSyncView(deps) {
     for (const item of items) {
       const line = el(doc, 'p', 'bo-sync-feed-line');
       line.appendChild(el(doc, 'span', 'bo-sync-feed-time', timeAgo(item.at)));
-      line.appendChild(el(doc, 'span', undefined, ` ${item.arrow} ${item.channel}: ${item.text}`));
+      line.appendChild(el(doc, 'span', 'bo-sync-feed-arrow', item.arrow));
+      line.appendChild(el(doc, 'span', 'bo-sync-feed-text', `${item.channel}: ${item.text}`));
       list.appendChild(line);
     }
     box.appendChild(list);
@@ -758,8 +777,16 @@ export function createSyncView(deps) {
     mount.appendChild(box);
     renderHero(box, state.activity);
     renderFixes(box, state.activity);
-    renderTable(box, state.activity);
-    renderFeed(box, state.activity);
+    // Supervisor design pass: channels and the live feed as the prototype's
+    // two cards side by side (2:1).
+    const cols = el(doc, 'div', 'bo-sync-cols');
+    const channels = el(doc, 'section', 'bo-sync-card bo-sync-channels');
+    const live = el(doc, 'section', 'bo-sync-card bo-sync-live');
+    cols.appendChild(channels);
+    cols.appendChild(live);
+    box.appendChild(cols);
+    renderTable(channels, state.activity);
+    renderFeed(live, state.activity);
   }
 
   return {

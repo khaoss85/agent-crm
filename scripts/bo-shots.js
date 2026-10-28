@@ -542,7 +542,7 @@ export const SCREENS = Object.freeze([
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
-  { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
+  { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
   { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Cosa succede quando colleghi:', 'Collega in 3 passi'] },
@@ -917,7 +917,11 @@ const client = {
     if (path.startsWith('/api/space-packages/preview')) {
       return { headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [{ module: 'channel-connection', count: 1 }], uncomposed: [], writes: 0 };
     }
-    if (path.startsWith('/api/connectors?')) return { connectors: [] };
+    // A mixed state, like the prototype: two channels connected (✓), the rest to connect (+).
+    if (path.startsWith('/api/connectors?')) return { connectors: [
+      { channel: 'whatsapp', connectionKey: 'wa-demo', status: 'active' },
+      { channel: 'email', connectionKey: 'mail-demo', status: 'active' },
+    ] };
     throw new Error('unexpected request ' + path);
   },
 };
@@ -929,6 +933,8 @@ await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   hero: document.getElementById('view-module').textContent.includes('Kit social'),
   sections: (document.getElementById('view-module').textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
+  connected: document.querySelectorAll('[title="Collegato"]').length,
+  toConnect: document.querySelectorAll('button[aria-label^="Collega "]').length,
 });
 document.title = 'personalizzazione-ready';`;
     case 'catalogo': return `
@@ -948,8 +954,8 @@ const client = {
 const view = createCatalogView({ doc: document, mount: document.getElementById('view-module'), client });
 await view.renderTable({});
 document.getElementById('probe').textContent = JSON.stringify({
-  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
-  stripe: (document.querySelector('.catalog-stripe-ok') ?? { textContent: null }).textContent,
+  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 200) : null,
+  stripe: (document.querySelector('.catalog-stripe') ?? { textContent: null }).textContent,
   rules: (document.querySelector('.catalog-rule-bands') ?? { textContent: null }).textContent,
 });
 document.title = 'catalogo-ready';`;
@@ -1328,13 +1334,16 @@ export function assertProbe(name, probe) {
       if (typeof probe.sections !== 'number' || probe.sections < 1) {
         throw new Error('personalizzazione: the probe shows no channel sections');
       }
+      if (typeof probe.connected !== 'number' || probe.connected < 1 || typeof probe.toConnect !== 'number' || probe.toConnect < 1) {
+        throw new Error('personalizzazione: the probe must show both connected (✓) and to-connect (+) cards');
+      }
       return;
     }
     case 'catalogo': {
       if (typeof probe.table !== 'string' || !probe.table.includes('Pacchetto 10 lezioni')) {
         throw new Error('catalogo: the probe holds no product table');
       }
-      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Stripe collegato')) {
+      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Collegato a Stripe')) {
         throw new Error('catalogo: the probe holds no Stripe state');
       }
       if (typeof probe.rules !== 'string' || !probe.rules.includes('10%')) {

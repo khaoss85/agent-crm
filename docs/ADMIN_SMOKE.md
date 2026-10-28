@@ -442,29 +442,29 @@ produce one of every outcome:
 ```
 
 1. The section renders with `data-contract="1"`.
-2. *"Matching is exact only. Nothing here scores, guesses or learns: when the evidence is ambiguous the row is left unresolved for a person."* renders verbatim.
-3. *"Linking two records is a logical canonical merge. Both records still exist, both still resolve, and nothing is deleted, rewritten or merged away."* renders verbatim.
-4. *"No warehouse, no activation and no external system is written. An import reads rows you hand it and nothing else."* renders verbatim.
-5. *"Deciding here requires a signed-in user actor. That is a human-actor boundary for audit — not Sales, Legal or Finance role enforcement."* renders verbatim.
-6. *"None of this is a GDPR, consent, retention or erasure claim. Erasure against immutable signed evidence is deliberately unresolved."* renders verbatim.
+2. *"Gli abbinamenti sono solo esatti: nessun punteggio, nessun tentativo. Se resta un dubbio, la riga aspetta una persona."* renders verbatim.
+3. *"Collegare due schede non cancella nulla: restano tutte e due e si continua a trovarle tutte e due."* renders verbatim.
+4. *"Niente magazzini e niente sistemi esterni: la pagina legge solo le righe che le passi tu."* renders verbatim.
+5. *"A decidere è una persona con il proprio accesso, per tracciabilità: non un controllo di ruoli."* renders verbatim.
+6. *"Questa pagina non dice nulla su privacy, consensi o cancellazioni."* renders verbatim.
 7. **The word CDP appears nowhere on the page**, and neither does "customer data platform".
 8. The deferred work has one named home on screen: `Customer Data Operations v2`.
-9. A preview states plainly that it wrote nothing.
+9. A preview states plainly that it wrote nothing (`L’anteprima non ha scritto nulla.`).
 10. And it **really** wrote nothing: the import-run count is unchanged after it.
-11. Every row has a receipt on screen — row 0, row 1 and row 2.
+11. Every row has a receipt on screen — riga 0, riga 1 and riga 2.
 12. The rejected row names its reason code (`INVALID_EMAIL`).
 13. The preview **keeps the rows the operator typed**, so applying the previewed import is one click and not a retype.
-14. Applying renders the run with its counts (`crm-export · 3 rows · …`).
+14. Applying renders the run with its counts (`crm-export · 3 righe · …`).
 15. The accepted row created a real business record — one contact `ada@northwind.example`.
 16. The ambiguous row became a duplicate candidate, naming the rule `company-name-domain`.
-17. The candidate offers **both** human decisions: link, and not-the-same-customer.
+17. The candidate offers **both** human decisions: collega (`Collega come unico cliente`), and non-è-lo-stesso (`Non è lo stesso cliente`).
 18. **No control anywhere** resolves candidates automatically.
 19. Linking with a reason clears the candidate from the unresolved queue.
 20. **Both linked companies still exist afterwards** — the link is logical, and it deleted nothing.
 21. The cluster records exactly one `canonical` and one `alias`.
 22. The canonical record's profile renders.
 23. It reports the cluster and states that nothing was deleted.
-24. An **absent** package reads *not available* with the reason that it is not composed.
+24. An **absent** package reads *non disponibile* with the reason that it is not composed.
 25. And **no** absent section renders as a zero count.
 26. The profile refuses to call itself a cross-channel customer timeline.
 27. The **alias** side still resolves to a profile of its own — a logical merge does not swallow the other record.
