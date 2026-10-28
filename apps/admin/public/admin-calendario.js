@@ -329,6 +329,12 @@ export function createCalendarioView(deps) {
     confirmed: null,
     /** Last manual form values, restored on every re-render. @type {any} */
     manual: null,
+    /** The manual form shows once asked for, or once a draft or an edit fills it. */
+    manualOpen: false,
+    /** The member filter row, painted inside the Team card. @type {any} */
+    filterRow: null,
+    /** The painted manual form panel, opened in place by the menu voice. @type {any} */
+    manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
@@ -444,13 +450,21 @@ export function createCalendarioView(deps) {
     // the grid while a block stays selected. Fetta 6 seats the Team toggles
     // between the detail and the grid they filter; the booking card follows
     // with fetta 7 (its final left-column home lands with fetta 8).
+    // Supervisor design pass: the prototype's two columns — a 300 px rail
+    // (selected block, phrase, team, manual form when asked) beside the grid.
+    const layout = el(doc, 'div', { className: 'cal-layout' });
+    const rail = el(doc, 'div', { className: 'cal-rail' });
+    const main = el(doc, 'div', { className: 'cal-main' });
     const selected = selectedRow();
-    if (selected) wrap.appendChild(renderDetailCard(selected));
+    if (selected) rail.appendChild(renderDetailCard(selected));
     else state.selectedId = null;
-    wrap.appendChild(renderTeam());
-    wrap.appendChild(renderWeek());
-    wrap.appendChild(renderAi());
-    wrap.appendChild(renderManual());
+    rail.appendChild(renderAi());
+    rail.appendChild(renderTeam());
+    rail.appendChild(renderManual());
+    main.appendChild(renderWeek());
+    layout.appendChild(rail);
+    layout.appendChild(main);
+    wrap.appendChild(layout);
     mount.appendChild(wrap);
   }
 
@@ -504,7 +518,13 @@ export function createCalendarioView(deps) {
       {
         title: 'Compila manualmente',
         sub: 'Giorno, ora, cliente e partecipanti',
-        focus: () => state.manualFirst,
+        focus: () => {
+          // Open the painted form in place: a re-render would swap the
+          // field the operator is about to type in.
+          state.manualOpen = true;
+          state.manualPanel?.classList?.add('open');
+          return state.manualFirst;
+        },
       },
     ];
     for (const voice of voices) {
@@ -586,9 +606,9 @@ export function createCalendarioView(deps) {
     });
     filterRow.appendChild(input);
     filterRow.appendChild(show);
+    state.filterRow = filterRow;
     const box = el(doc, 'div');
     box.appendChild(head);
-    box.appendChild(filterRow);
     return box;
   }
 
@@ -622,8 +642,9 @@ export function createCalendarioView(deps) {
    * gone. Every row is a button, so the raw-control walk stays green.
    */
   function renderTeam() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    const panel = el(doc, 'div', { className: 'panel cal-team' });
     panel.appendChild(el(doc, 'h2', { text: 'Team' }));
+    if (state.filterRow) panel.appendChild(state.filterRow);
     const named = parseMemberFilter(state.memberFilter);
     if (named.length === 0) {
       panel.appendChild(el(doc, 'p', {
@@ -672,7 +693,7 @@ export function createCalendarioView(deps) {
    * their day, hours hidden) needs no extra markup.
    */
   function renderWeek() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    const panel = el(doc, 'div', { className: 'panel cal-week' });
     panel.appendChild(el(doc, 'h2', { text: 'Settimana del team' }));
     if (state.weekError) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: state.weekError }));
@@ -981,7 +1002,7 @@ export function createCalendarioView(deps) {
    * fails closed with a plain sentence naming the manual form.
    */
   function renderAi() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    const panel = el(doc, 'div', { className: 'panel cal-ai' });
     panel.appendChild(el(doc, 'h2', { text: '✦ Fissa con una frase' }));
     panel.appendChild(el(doc, 'p', {
       className: 'lede',
@@ -1198,7 +1219,10 @@ export function createCalendarioView(deps) {
   }
 
   function renderManual() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
+    // form stays in the DOM, so a draft can still prefill it.
+    const panel = el(doc, 'div', { className: `panel cal-manual${state.manualOpen || state.draftFill || state.manual ? ' open' : ''}` });
+    state.manualPanel = panel;
     panel.appendChild(el(doc, 'h2', { text: 'Nuovo appuntamento' }));
     panel.appendChild(el(doc, 'p', {
       className: 'lede',
@@ -1235,6 +1259,7 @@ export function createCalendarioView(deps) {
     state.manualNodes = inputs;
     state.manualFirst = inputs.customerResource ?? null;
     if (state.draftFill) {
+      state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) inputs.teamMemberId.value = String(draft.teamMemberId);
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);

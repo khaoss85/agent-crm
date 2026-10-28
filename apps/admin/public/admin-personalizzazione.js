@@ -30,6 +30,7 @@
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
+import { settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);
@@ -797,6 +798,10 @@ export function createPersonalizzazioneView(deps) {
 
   function render() {
     clear();
+    // Supervisor design pass: the prototype's IMPOSTAZIONI tab row above the
+    // page, then a big title and one tool row (tabs, I tuoi/Scopri, search,
+    // sort, Aggiungi) instead of a boxed panel.
+    mount.appendChild(settingsTabs(doc, { activeId: 'personalizzazione', navigate: go }));
     const box = el(doc, 'div', { cls: 'panel personalizzazione' });
     renderHeader(box);
     if (readSpace().trim() === '') {
@@ -804,7 +809,9 @@ export function createPersonalizzazioneView(deps) {
       mount.appendChild(box);
       return;
     }
-    renderTabs(box);
+    const toolRow = el(doc, 'div', { cls: 'bo-perso-bar' });
+    renderTabs(toolRow);
+    box.appendChild(toolRow);
     const units = state.units ?? [];
     const rows = state.rows ?? [];
     const known = activeByUnit({ units, rows });
@@ -815,7 +822,7 @@ export function createPersonalizzazioneView(deps) {
       count = filterConnettori({ connectors: state.connectors, query: state.query, sort: state.sort })
         .reduce((total, group) => total + group.cards.length, 0);
     }
-    renderToolbar(box, count);
+    renderToolbar(toolRow, count);
     mount.appendChild(box);
     renderList();
   }

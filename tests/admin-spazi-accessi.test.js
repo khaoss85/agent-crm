@@ -182,7 +182,7 @@ test('team and AI panels share one row container, members show avatar and role p
   const pills = byClass('span', 'bo-spazi-role');
   assert.equal(pills.length, 1, 'one role pill for one member');
   assert.equal(pills[0].textContent, 'Operatore', 'the pill names the Italian role');
-  assert.match(text(mount), /active/, 'the status stays next to the subject');
+  assert.match(text(mount), /attivo/, 'the status stays next to the subject, in Italian');
 });
 
 test('the screen lists spaces with roles, team and the five switches', async () => {
