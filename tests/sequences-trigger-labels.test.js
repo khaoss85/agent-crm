@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sequenceMigrations } from '../packages/modules/sequence/src/migration.js';
 
 import { createDatabase } from '../packages/core/src/database.js';
 import { AuditLog } from '../packages/core/src/audit.js';
@@ -159,6 +161,43 @@ test('replay con la stessa chiave riusa le etichette registrate, senza mutarle',
     assert.equal(replayed.sequence.triggerLabel, 'prima etichetta');
   } finally {
     database.close();
+  }
+});
+
+test('la migrazione generata conserva create_sequences e aggiunge evolve_sequences_r2', () => {
+  assert.deepEqual(sequenceMigrations.map((entry) => entry.name), ['create_sequences', 'evolve_sequences_r2']);
+  assert.ok(!sequenceMigrations[0].sql.includes('trigger_label'));
+  assert.ok(!sequenceMigrations[0].sql.includes('stop_label'));
+  assert.ok(sequenceMigrations[1].sql.includes('ADD COLUMN trigger_label TEXT'));
+  assert.ok(sequenceMigrations[1].sql.includes('ADD COLUMN stop_label TEXT'));
+});
+
+test('una base creata con la migrazione generata precedente riapre con la r2 senza checksum mismatch', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'accordo-sequence-r2-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'sequence.sqlite');
+  const before = createDatabase({ path, moduleMigrations: [sequenceMigrations[0]] });
+  try {
+    before.raw.exec(
+      "INSERT INTO sequences (id, source_key, space_id, name, status, decided_at, actor_type, actor_id, source_package, source_action, created_at, updated_at)"
+      + " VALUES ('seq-old', 'seq:vecchia-statica', 'presti-test', 'Vecchia', 'active', '2026-10-27T00:00:00.000Z', 'user', 'test-owner', 'sequences', 'create-sequence', '2026-10-27T00:00:00.000Z', '2026-10-27T00:00:00.000Z')",
+    );
+  } finally {
+    before.close();
+  }
+  const after = createDatabase({ path, moduleMigrations: sequenceMigrations });
+  try {
+    const names = after.raw.prepare('SELECT name FROM module_migrations ORDER BY name').all().map((row) => row.name);
+    assert.deepEqual(names, ['create_sequences', 'evolve_sequences_r2']);
+    const columns = after.raw.prepare('PRAGMA table_info(sequences)').all().map((row) => row.name);
+    assert.ok(columns.includes('trigger_label'));
+    assert.ok(columns.includes('stop_label'));
+    const row = after.raw.prepare('SELECT source_key, trigger_label, stop_label FROM sequences WHERE id = ?').get('seq-old');
+    assert.equal(row.source_key, 'seq:vecchia-statica');
+    assert.equal(row.trigger_label ?? null, null);
+    assert.equal(row.stop_label ?? null, null);
+  } finally {
+    after.close();
   }
 });
 

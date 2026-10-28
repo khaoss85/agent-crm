@@ -18,8 +18,6 @@ export const sequenceMigrations = [
       "  source_key TEXT UNIQUE," + '\n' +
       "  space_id TEXT," + '\n' +
       "  name TEXT," + '\n' +
-      "  trigger_label TEXT," + '\n' +
-      "  stop_label TEXT," + '\n' +
       "  status TEXT CHECK(status IN ('draft', 'active', 'paused'))," + '\n' +
       "  decided_at TEXT," + '\n' +
       "  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system'))," + '\n' +
@@ -32,6 +30,12 @@ export const sequenceMigrations = [
       "CREATE INDEX IF NOT EXISTS sequences_space_id ON sequences(space_id);" + '\n' +
       "CREATE INDEX IF NOT EXISTS sequences_status ON sequences(status);" + '\n' +
       "CREATE INDEX IF NOT EXISTS sequences_source_package ON sequences(source_package);",
+  },
+  {
+    name: "evolve_sequences_r2",
+    sql:
+      "ALTER TABLE sequences ADD COLUMN trigger_label TEXT;" + '\n' +
+      "ALTER TABLE sequences ADD COLUMN stop_label TEXT;" + '\n',
   },
 ];
 
