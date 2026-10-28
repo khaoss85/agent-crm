@@ -26,7 +26,7 @@ export class SequenceService {
     this.manifest = Object.freeze({
       name: "sequence",
       table: "sequences",
-      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"spaceId","column":"space_id","type":"string"},{"name":"name","column":"name","type":"string"},{"name":"status","column":"status","type":"enum"},{"name":"decidedAt","column":"decided_at","type":"timestamp"},{"name":"actorType","column":"actor_type","type":"enum"},{"name":"actorId","column":"actor_id","type":"string"},{"name":"sourcePackage","column":"source_package","type":"string"},{"name":"sourceAction","column":"source_action","type":"string"}]),
+      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"spaceId","column":"space_id","type":"string"},{"name":"name","column":"name","type":"string"},{"name":"triggerLabel","column":"trigger_label","type":"string"},{"name":"stopLabel","column":"stop_label","type":"string"},{"name":"status","column":"status","type":"enum"},{"name":"decidedAt","column":"decided_at","type":"timestamp"},{"name":"actorType","column":"actor_type","type":"enum"},{"name":"actorId","column":"actor_id","type":"string"},{"name":"sourcePackage","column":"source_package","type":"string"},{"name":"sourceAction","column":"source_action","type":"string"}]),
     });
   }
 
@@ -71,6 +71,8 @@ export class SequenceService {
       sourceKey: null,
       spaceId: null,
       name: null,
+      triggerLabel: null,
+      stopLabel: null,
       status: null,
       decidedAt: null,
       actorType: null,
@@ -88,6 +90,12 @@ export class SequenceService {
     }
     if (Object.hasOwn(patch, 'name')) {
       sequence.name = patch.name === null ? null : requiredString(patch.name, 'name');
+    }
+    if (Object.hasOwn(patch, 'triggerLabel')) {
+      sequence.triggerLabel = patch.triggerLabel === null ? null : requiredString(patch.triggerLabel, 'triggerLabel');
+    }
+    if (Object.hasOwn(patch, 'stopLabel')) {
+      sequence.stopLabel = patch.stopLabel === null ? null : requiredString(patch.stopLabel, 'stopLabel');
     }
     if (Object.hasOwn(patch, 'status')) {
       sequence.status = patch.status === null ? null : enumValue(patch.status, ["draft", "active", "paused"], 'status');
@@ -115,6 +123,8 @@ export class SequenceService {
           { column: 'source_key', value: sequence.sourceKey },
           { column: 'space_id', value: sequence.spaceId },
           { column: 'name', value: sequence.name },
+          { column: 'trigger_label', value: sequence.triggerLabel },
+          { column: 'stop_label', value: sequence.stopLabel },
           { column: 'status', value: sequence.status },
           { column: 'decided_at', value: sequence.decidedAt },
           { column: 'actor_type', value: sequence.actorType },
@@ -188,7 +198,7 @@ export class SequenceService {
 
   /** @param {Record<string, unknown>} filters */
   #where(filters) {
-    const columns = {"id":"id","sourceKey":"source_key","spaceId":"space_id","name":"name","status":"status","decidedAt":"decided_at","actorType":"actor_type","actorId":"actor_id","sourcePackage":"source_package","sourceAction":"source_action"};
+    const columns = {"id":"id","sourceKey":"source_key","spaceId":"space_id","name":"name","triggerLabel":"trigger_label","stopLabel":"stop_label","status":"status","decidedAt":"decided_at","actorType":"actor_type","actorId":"actor_id","sourcePackage":"source_package","sourceAction":"source_action"};
     /** @type {string[]} */
     const predicates = [];
     for (const [field, value] of Object.entries(filters ?? {})) {
@@ -231,6 +241,16 @@ export class SequenceService {
         const value = patch.name === null ? null : requiredString(patch.name, 'name');
         assignments.push({ column: 'name', value: value });
         changes.name = value;
+      }
+      if (Object.hasOwn(patch, 'triggerLabel')) {
+        const value = patch.triggerLabel === null ? null : requiredString(patch.triggerLabel, 'triggerLabel');
+        assignments.push({ column: 'trigger_label', value: value });
+        changes.triggerLabel = value;
+      }
+      if (Object.hasOwn(patch, 'stopLabel')) {
+        const value = patch.stopLabel === null ? null : requiredString(patch.stopLabel, 'stopLabel');
+        assignments.push({ column: 'stop_label', value: value });
+        changes.stopLabel = value;
       }
       if (Object.hasOwn(patch, 'status')) {
         const value = patch.status === null ? null : enumValue(patch.status, ["draft", "active", "paused"], 'status');
@@ -293,6 +313,8 @@ function mapSequenceRow(row) {
     sourceKey: row.source_key,
     spaceId: row.space_id,
     name: row.name,
+    triggerLabel: row.trigger_label ?? null,
+    stopLabel: row.stop_label ?? null,
     status: row.status,
     decidedAt: row.decided_at,
     actorType: row.actor_type,

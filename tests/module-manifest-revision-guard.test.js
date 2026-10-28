@@ -152,7 +152,7 @@ const RECORDED = Object.freeze({
   "order-tier": { revision: 1, sqlite: "ad4e4c18cef8b12f43a49863d8dbafcf9b1e5e4db313f2c86e5295ed681145f7", pg: "24840ea742a21416ea1794173e0f6e941652cf101721a4b7ed8fcd4d451e5618" },
   "order-total": { revision: 1, sqlite: "75ea78c68a15bbd1dea4ed0e4a195eadd1a7f26ec983fc5fac48ef0dbbcc05ff", pg: "eeea76eb8b90695293eed9294b4a9f1218629f8ae405f2db1a708362bcb90435" },
   "order": { revision: 1, sqlite: "482588d7ffdca37d4e653900583d0309f697f44566c51fa6135d495e817db138", pg: "16047cd404727b165886f20fb7c1835e13384d2a5ae275df134c61bf345d8edb" },
-  "sequence": { revision: 1, sqlite: "68e660d6d37924ff62587c6f74973f6d2d0c64684b061f55d36b13a6cdad23ed", pg: "6fda38f37f6ce975612d24178315eedf3fff4751211a069aaeb707964f7c2fff" },
+  "sequence": { revision: 2, sqlite: "7adba1d3934939115ba81cb0013db65e00121c5d155449183cd4d0918196c1a1", pg: "6232ccfd4bc1afb1b96f74c47eed32b5112305c0dc76104d06199b10d6a42672" },
   "sequence-enrollment": { revision: 1, sqlite: "4dfd25d0c93ca746d8f0f9ea73bf3b9c2c3aafe9b7401792c96d49da94c9eb52", pg: "a4ff3fcd81bbb655c6523660c73f0eecac1eb3e5ed674ce5bc7caf8ec22127af" },
   "sequence-send": { revision: 2, sqlite: "7c4b1ea326859205b2e607271895c0d23243f1221de09edf6c34efcf717745f0", pg: "dda2b67accae58bcd442fdc191375d33a66b3dd7a6cc41cd5d4dfd7b9b8ffae0" },
   "sequence-step": { revision: 2, sqlite: "52be5a22b82f58b0b855c47610453d72eb0644d1f146faa1d47828ea061dc4a0", pg: "12e56eab9922f1f0a4106fd58304d5fb8983b842c8a012bbd1ffca7cd7655dca" },

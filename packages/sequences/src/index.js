@@ -22,6 +22,7 @@ import {
   checkStepInput,
   computeSequenceMetrics,
   enrollSequencePerson,
+  optionalSequenceLabel,
   requireSequenceActor,
   sameSequenceStepContent,
   sequenceKey,
@@ -195,6 +196,8 @@ export function createSequencesPackage(options = {}) {
           { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
           { name: 'sourceKey', type: 'string', hint: 'Caller-supplied idempotency identity for the sequence.' },
           { name: 'name', type: 'string', hint: 'The human-readable sequence name.' },
+          { name: 'triggerLabel', type: 'string', hint: 'Optional `Quando …` label for the backoffice elenco (BO-F6-12).' },
+          { name: 'stopLabel', type: 'string', hint: 'Optional `Si ferma quando: …` label for the backoffice dettaglio (BO-F6-12).' },
         ],
         create(runtime) {
           return async (request) => {
@@ -205,6 +208,8 @@ export function createSequencesPackage(options = {}) {
             const name = typeof record.name === 'string' && record.name.trim() !== '' && record.name.length <= 200
               ? record.name.trim()
               : (() => { throw new ValidationError('name must be bounded single-line text', { field: 'name' }); })();
+            const triggerLabel = optionalSequenceLabel(record.triggerLabel, 'triggerLabel');
+            const stopLabel = optionalSequenceLabel(record.stopLabel, 'stopLabel');
             const rawSteps = Array.isArray(record.steps) ? record.steps : [];
             if (rawSteps.length === 0 || rawSteps.length > 32) {
               throw new ValidationError('a sequence needs 1 to 32 ordered steps', { field: 'steps' });
@@ -217,7 +222,7 @@ export function createSequencesPackage(options = {}) {
             if (!sequence) {
               try {
                 sequence = await sequences.createManaged({
-                  sourceKey, spaceId, name, status: 'draft',
+                  sourceKey, spaceId, name, triggerLabel, stopLabel, status: 'draft',
                   decidedAt: at,
                   actorType: actor.type, actorId: actor.id,
                   sourcePackage: SEQUENCES_DOMAIN, sourceAction: 'create-sequence',
@@ -552,7 +557,13 @@ export function createSequencesPackage(options = {}) {
             const sends = await trusted(runtime.modules, 'sequence-send')
               .listWhere({ spaceId: sequence.spaceId, sequenceSourceKey: sequence.sourceKey });
             return {
-              sequence: { sourceKey: sequence.sourceKey, name: sequence.name, status: sequence.status },
+              sequence: {
+                sourceKey: sequence.sourceKey,
+                name: sequence.name,
+                status: sequence.status,
+                triggerLabel: sequence.triggerLabel ?? null,
+                stopLabel: sequence.stopLabel ?? null,
+              },
               ...computeSequenceMetrics({ enrollments, sends }),
             };
           };
@@ -585,6 +596,8 @@ export function createSequencesPackage(options = {}) {
                 sourceKey: sequence.sourceKey,
                 name: sequence.name,
                 status: sequence.status,
+                triggerLabel: sequence.triggerLabel ?? null,
+                stopLabel: sequence.stopLabel ?? null,
                 ...computeSequenceMetrics({ enrollments: people, sends: fires }),
               });
             }
@@ -618,6 +631,7 @@ export {
   advanceSequences,
   computeSequenceMetrics,
   findReply,
+  optionalSequenceLabel,
   personalizeVars,
   sequenceKey,
   sequenceMessageKey,

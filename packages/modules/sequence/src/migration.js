@@ -18,6 +18,8 @@ export const sequenceMigrations = [
       "  source_key TEXT UNIQUE," + '\n' +
       "  space_id TEXT," + '\n' +
       "  name TEXT," + '\n' +
+      "  trigger_label TEXT," + '\n' +
+      "  stop_label TEXT," + '\n' +
       "  status TEXT CHECK(status IN ('draft', 'active', 'paused'))," + '\n' +
       "  decided_at TEXT," + '\n' +
       "  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system'))," + '\n' +

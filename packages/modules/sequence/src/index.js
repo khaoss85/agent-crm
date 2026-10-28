@@ -25,6 +25,8 @@ export const sequenceModuleDefinition = Object.freeze({
     {"name":"sourceKey","type":"string","required":false,"unique":true,"writable":"managed"},
     {"name":"spaceId","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"name","type":"string","required":false,"unique":false,"writable":"managed"},
+    {"name":"triggerLabel","type":"string","required":false,"unique":false,"writable":"managed"},
+    {"name":"stopLabel","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"status","type":"enum","required":false,"unique":false,"writable":"managed","values":["draft","active","paused"]},
     {"name":"decidedAt","type":"timestamp","required":false,"unique":false,"writable":"managed"},
     {"name":"actorType","type":"enum","required":false,"unique":false,"writable":"managed","values":["user","agent","system"]},
@@ -37,7 +39,7 @@ export const sequenceModuleDefinition = Object.freeze({
   entities: [
     {
       name: 'sequence',
-      fields: ['id', 'sourceKey', 'spaceId', 'name', 'status', 'decidedAt', 'actorType', 'actorId', 'sourcePackage', 'sourceAction', 'createdAt', 'updatedAt'],
+      fields: ['id', 'sourceKey', 'spaceId', 'name', 'triggerLabel', 'stopLabel', 'status', 'decidedAt', 'actorType', 'actorId', 'sourcePackage', 'sourceAction', 'createdAt', 'updatedAt'],
     },
   ],
 });
