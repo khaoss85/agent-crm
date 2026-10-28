@@ -706,8 +706,10 @@ export function createCalendarioView(deps) {
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
     item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
     item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
-    const foot = el(doc, 'span', { className: 'cal-day-foot', attrs: { 'aria-hidden': 'true' } });
-    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(row?.teamMemberId) }));
+    const foot = el(doc, 'span', { className: 'cal-day-foot' });
+    // Initials decorate (the tint already encodes the member); the WA badge
+    // stays readable because it names the booking origin.
+    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
     if (channelOf(row) === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     }
