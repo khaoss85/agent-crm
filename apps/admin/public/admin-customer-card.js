@@ -113,17 +113,47 @@ export function createCustomerCardView(deps) {
     return { card, timeline, profile, enrichment, calls };
   }
 
+  /** First Unicode letter of a word, or '?' when the word holds none. */
+  function firstLetter(word) {
+    const hit = String(word ?? '').match(/\p{L}/u);
+    return hit ? hit[0] : '?';
+  }
+
+  /**
+   * Initials for the header avatar ("Guido Presti" → "GP"): first letter of
+   * the first and last word, uppercased. Text only, so a hostile name stays
+   * inert text inside the circle.
+   */
+  function initialsFor(name) {
+    const words = String(name ?? '').trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return '?';
+    const last = words.length > 1 ? firstLetter(words[words.length - 1]) : '';
+    return `${firstLetter(words[0])}${last}`.toUpperCase();
+  }
+
   function header(panel, card, resource, id) {
-    const back = link('#/customer-data', '← Clienti', 'back-to-clienti');
-    panel.appendChild(back);
-    panel.appendChild(el('h3', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
-    const sub = [];
-    if (card?.company?.name) sub.push(card.company.name);
-    if (card?.status?.value) sub.push(card.status.value);
-    if (sub.length) panel.appendChild(el('p', 'bo-scheda-sub', sub.join(' · ')));
-    void navigate;
+    // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
+    // and the stato pill. The meta line (città · provenienza · referente) is
+    // NOT rendered: no record holds it yet (the contact record has no city,
+    // nothing names a referente), so the header shows the company instead —
+    // never an invented meta. The data operation is the follow-up.
     void resource;
     void id;
+    const back = el('button', 'bo-scheda-back', '← Clienti');
+    back.setAttribute('type', 'button');
+    back.setAttribute('data-action', 'back-to-clienti');
+    back.addEventListener('click', () => navigate('#/customer-data'));
+    panel.appendChild(back);
+    const head = el('div', 'bo-scheda-head');
+    const avatar = el('span', 'bo-scheda-avatar', initialsFor(card?.name));
+    avatar.setAttribute('aria-hidden', 'true');
+    head.appendChild(avatar);
+    const titles = el('div', 'bo-scheda-titles');
+    titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
+    titles.appendChild(el('span', 'bo-scheda-badge', card?.status?.value ?? 'contatto'));
+    head.appendChild(titles);
+    panel.appendChild(head);
+    if (card?.company?.name) panel.appendChild(el('p', 'bo-scheda-sub', card.company.name));
   }
 
   function quickActions(box, card) {

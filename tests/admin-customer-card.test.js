@@ -224,6 +224,66 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   assert.ok(text.includes('coach-guido'), 'the next appointment names its owner');
 });
 
+test('BO-F6-09 fetta 2a: the header shows back, avatar initials, H1 name and the stato pill', async () => {
+  let navigated = null;
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc,
+    mount,
+    client: stubClient(),
+    navigate: (hash) => { navigated = hash; },
+  }).renderCard('contact', 'c1');
+
+  const back = mount.findAll('button').find((node) => node.textContent === '← Clienti');
+  assert.ok(back, 'the back button keeps its exact text');
+  assert.ok(
+    String(back.getAttribute('class') ?? '').split(/\s+/).some((cls) => cls === 'ui' || cls.startsWith('ui-')),
+    'the back button carries the visual system',
+  );
+  back.dispatch('click');
+  assert.equal(navigated, '#/customer-data', 'back returns to the clienti list');
+
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.ok(avatar, 'the avatar circle exists');
+  assert.equal(avatar.textContent, 'GP', 'the initials come from the card name');
+
+  const title = mount.findAll('h1').find((node) => node.getAttribute('class') === 'bo-scheda-name');
+  assert.ok(title, 'the customer name is an H1');
+  assert.equal(title.textContent, 'Guido Presti', 'the H1 names the customer');
+
+  const badge = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-badge');
+  assert.ok(badge, 'the stato pill exists');
+  assert.equal(badge.textContent, 'contatto', 'the pill shows the card stato');
+});
+
+test('BO-F6-09 fetta 2a: a hostile name stays text in the H1 and the avatar', async () => {
+  const nasty = '<img src=x onerror=alert(1)>';
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: nasty } }));
+  assert.ok(mount.textContent.includes(nasty), 'the hostile name is shown as text');
+  assert.deepEqual(mount.findAll('img'), [], 'and no element was created from it');
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.ok(avatar, 'the avatar still renders');
+  assert.ok(!String(avatar.textContent).includes('<'), 'the initials carry no markup');
+});
+
+test('BO-F6-09: every control on the scheda carries the visual system', async () => {
+  const mount = await renderCard(stubClient());
+  const raw = [];
+  const walk = (node) => {
+    const tag = String(node.tagName ?? '').toLowerCase();
+    if (tag === 'button' || tag === 'select' || tag === 'input' || tag === 'textarea') {
+      const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) {
+        raw.push(`${tag}[${classes.join('.')}]`);
+      }
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(mount);
+  assert.deepEqual(raw, [], 'no button/select/input/textarea on the scheda renders without a ui-* class');
+});
+
 test('the next appointment skips cancelled, past and done bookings', async () => {
   const row = (overrides) => ({
     serviceKey: 'pt-single', priceCents: 4000, currency: 'EUR', notes: null, endsAt: null,
