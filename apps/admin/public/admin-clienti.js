@@ -36,12 +36,12 @@ const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' })
 /** localStorage key for the visible columns (operator-local, like the shell). */
 export const CLIENTI_COLUMNS_KEY = 'accordo.clienti.columns';
 
-/** Fallbacks before the first server answer names the real menus. */
+/** Fallbacks before the first server answer names the real menus, in prototype order. */
 const FALLBACK_VIEWS = Object.freeze([
   { id: 'tutti', label: 'Tutti' },
+  { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
   { id: 'nuovi-lead', label: 'Nuovi lead' },
   { id: 'clienti-attivi', label: 'Clienti attivi' },
-  { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
   { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
 ]);
 const FALLBACK_SORTS = Object.freeze([
@@ -183,16 +183,53 @@ export function createCustomerListView(deps) {
     void load();
   }
 
-  function menuBox(label, build, title) {
+  // Pop-up menus: one open at a time, Escape closes, a click outside closes.
+  // The outside click is a guarded enhancement: the test double has no
+  // document-level events, so it stays off there and single-open + Escape
+  // carry the behavior under test.
+  const openMenus = [];
+  if (doc && typeof doc.addEventListener === 'function' && !doc.__boClientiOutside) {
+    doc.__boClientiOutside = true;
+    doc.addEventListener('click', () => {
+      for (const entry of openMenus) entry.classList.add('hidden');
+    });
+  }
+
+  function closeMenus(except = null) {
+    for (const entry of openMenus) {
+      if (entry !== except) entry.classList.add('hidden');
+    }
+  }
+
+  function menuBox(label, build, title, buttonClass = 'bo-clienti-menubutton') {
     const wrap = el('div', 'bo-clienti-menuwrap');
-    const button = el('button', 'bo-clienti-menubutton', label);
+    const button = el('button', buttonClass, label);
     button.setAttribute('aria-haspopup', 'true');
+    button.setAttribute('aria-expanded', 'false');
     button.setAttribute('title', title ?? label);
     const menu = el('div', 'bo-clienti-menu hidden');
+    openMenus.push(menu);
+    const syncExpanded = () => {
+      button.setAttribute('aria-expanded', menu.classList.contains('hidden') ? 'false' : 'true');
+    };
     button.addEventListener('click', () => {
-      menu.classList.toggle('hidden', !menu.classList.contains('hidden'));
+      const willOpen = menu.classList.contains('hidden');
+      closeMenus(menu);
+      menu.classList.toggle('hidden', !willOpen);
+      syncExpanded();
     });
-    build(menu);
+    const closeOnEscape = (event) => {
+      if (event?.key === 'Escape') {
+        menu.classList.add('hidden');
+        syncExpanded();
+      }
+    };
+    button.addEventListener('keydown', closeOnEscape);
+    menu.addEventListener('keydown', closeOnEscape);
+    build(menu, () => {
+      menu.classList.add('hidden');
+      syncExpanded();
+    });
     wrap.appendChild(button);
     wrap.appendChild(menu);
     return wrap;
@@ -200,9 +237,37 @@ export function createCustomerListView(deps) {
 
   function drawShell() {
     clearMount();
+    openMenus.length = 0;
     const panel = el('section', 'bo-clienti');
     const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
-    panel.appendChild(el('h1', undefined, total === null ? 'Clienti' : `Clienti ${total}`));
+    const headRow = el('div', 'bo-clienti-headrow');
+    headRow.appendChild(el('h1', undefined, total === null ? 'Clienti' : `Clienti ${total}`));
+    // "Aggiungi cliente": AI paste writes nothing until applied (preview is
+    // the plan-then-confirm surface below), manual entry is the host contact
+    // module factory — the list owns no record creation of its own.
+    headRow.appendChild(menuBox('Aggiungi cliente', (menu, closeMenu) => {
+      const addItem = (action, label, hint, onPick) => {
+        const item = el('button', 'bo-clienti-item', label);
+        item.setAttribute('data-action', action);
+        item.appendChild(el('span', 'bo-clienti-menuhint', hint));
+        item.addEventListener('click', () => {
+          closeMenu();
+          onPick();
+        });
+        menu.appendChild(item);
+      };
+      addItem('add-ai', "Crea con l'AI", 'Incolla un messaggio o un biglietto da visita', () => {
+        if (typeof onAskAi === 'function') {
+          onAskAi('Voglio creare un cliente: ti incollo un messaggio o un biglietto da visita.');
+        } else {
+          notify('Apri la barra AI (⌘K) e incolla un messaggio o un biglietto da visita.');
+        }
+      });
+      addItem('add-manual', 'Compila manualmente', 'Nome, recapiti e canale di provenienza', () => {
+        navigate('#/modules/contact/new');
+      });
+    }, 'Aggiungi cliente', 'bo-clienti-menubutton ui-btn-primary'));
+    panel.appendChild(headRow);
     panel.appendChild(el('p', 'bo-muted bo-clienti-status', ''));
 
     const views = data?.views ?? FALLBACK_VIEWS;
@@ -217,7 +282,11 @@ export function createCustomerListView(deps) {
     viewsRow.setAttribute('role', 'tablist');
     viewsRow.setAttribute('aria-label', 'Viste rapide');
     for (const view of views) {
-      const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), view.label);
+      // The server names no per-view counts today, so pills render labels
+      // only; the day it ships a finite `count` per view the pill shows it.
+      const count = Number(view.count);
+      const label = view.label + (Number.isFinite(count) ? ` ${count}` : '');
+      const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
       if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
@@ -234,9 +303,8 @@ export function createCustomerListView(deps) {
     const toolbar = el('div', 'bo-clienti-toolbar');
     const form = el('form', 'bo-clienti-search');
     form.setAttribute('role', 'search');
-    const input = doc.createElement('input');
+    const input = el('input', 'ui-field'); // BO-F6-02: through the library, never raw.
     input.setAttribute('type', 'search');
-    input.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
     input.setAttribute('name', 'q');
     input.setAttribute('aria-label', 'Cerca clienti');
     input.setAttribute('placeholder', 'Cerca per nome o chiedi: «lead da Instagram», «chi è di Milano»');
@@ -290,6 +358,7 @@ export function createCustomerListView(deps) {
         });
         menu.appendChild(item);
       }
+      menu.appendChild(el('p', 'bo-clienti-menuexample', 'Es. «clienti di Milano con offerta sopra 10.000 €»'));
     }));
 
     const aiButton = el('button', 'bo-clienti-ai', '✦ Crea un filtro con l\u2019AI');
@@ -320,6 +389,13 @@ export function createCustomerListView(deps) {
     const configurable = columnsMeta.filter((column) => !column.always);
     const visibleCount = configurable.filter((column) => state.columns[column.id] === true).length;
     toolbar.appendChild(menuBox(`Colonne ${visibleCount}/${configurable.length}`, (menu) => {
+      menu.appendChild(el('p', 'bo-clienti-group', 'Colonne visibili'));
+      for (const column of columnsMeta) {
+        if (!column.always) continue;
+        const fixed = el('span', 'bo-clienti-fixed', `${column.label} · sempre visibile`);
+        fixed.setAttribute('aria-disabled', 'true');
+        menu.appendChild(fixed);
+      }
       for (const column of columnsMeta) {
         if (column.always) continue;
         const on = state.columns[column.id] === true;
