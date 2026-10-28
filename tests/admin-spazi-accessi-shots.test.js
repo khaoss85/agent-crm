@@ -83,6 +83,12 @@ const client = {
     if (path.indexOf('/api/space-permissions/effective') === 0) {
       return { spaceId: 'spazio-1', overrides: [] };
     }
+    if (path.indexOf('/api/connectors') === 0) {
+      return { spaceId: 'spazio-1', connectors: [{ status: 'active' }, { status: 'active' }] };
+    }
+    if (path.indexOf('/api/customer-data/customers') === 0) {
+      return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
+    }
     throw new Error('unexpected ' + path);
   },
 };

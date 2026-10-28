@@ -22,7 +22,9 @@
 //   /api/spine/memberships (the organization team), GET
 //   /api/space-permissions/effective (the flipped switches, scoped
 //   server-side: the generic records surface cannot filter the override
-//   module by space, so the screen never pages it);
+//   module by space, so the screen never pages it), GET /api/connectors
+//   (active connections per space, for the card statistic) and GET
+//   /api/customer-data/customers (exact total only, for the same row);
 // - writes: POST /api/spine/memberships (grant) and
 //   POST /api/spine/memberships/:subject/suspend (removal), the same store
 //   the Identity screen uses — grant names a reason, removal is two-step;
@@ -104,6 +106,58 @@ export function spaceRoleLabel(role) {
     return SPACE_ROLE_LABELS[role];
   }
   return typeof role === 'string' && role !== '' ? role : 'non disponibile';
+}
+
+/**
+ * The statistic of one space card, in the prototype's own pattern
+ * `<n> canali · <m> persone · <k> clienti` with Italian singulars. Every
+ * count is real: active connections of the space (`GET /api/connectors`),
+ * memberships of the organization (`GET /api/spine/memberships`) and the
+ * exact customer total (`GET /api/customer-data/customers`, only when
+ * `totalIsExact`). Any unknown count yields null and the card simply shows
+ * no statistic — a package that is not composed, or an inexact total, must
+ * never invent a row. People and customers are organization-wide (the team
+ * is one per postazione, like the roster this screen already shows), so the
+ * same two numbers honestly repeat on every card until customer records are
+ * scoped per space server-side.
+ * @param {{channels?: unknown, members?: unknown, customers?: unknown}} input
+ */
+export function formatSpaceStat({ channels = null, members = null, customers = null } = {}) {
+  for (const count of [channels, members, customers]) {
+    if (typeof count !== 'number' || !Number.isFinite(count) || count < 0 || !Number.isInteger(count)) return null;
+  }
+  const word = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+  return `${word(channels, 'canale', 'canali')} · ${word(members, 'persona', 'persone')} · ${word(customers, 'cliente', 'clienti')}`;
+}
+
+/**
+ * Active connections of one space from `GET /api/connectors`: a revoked or
+ * suspended connection is not "collegato". No `connectors` array means the
+ * package is not composed here, never zero.
+ * @param {unknown} answer
+ */
+export function countSpaceChannels(answer) {
+  const entries = answer !== null && typeof answer === 'object'
+    ? /** @type {{connectors?: unknown}} */ (answer).connectors
+    : null;
+  if (!Array.isArray(entries)) return null;
+  return entries.filter((entry) => entry !== null && typeof entry === 'object'
+    && /** @type {{status?: unknown}} */ (entry).status === 'active').length;
+}
+
+/**
+ * Exact customer total from `GET /api/customer-data/customers`. An inexact
+ * total (`totalIsExact: false`) reads as unknown: showing it would pass a
+ * floor off as the count.
+ * @param {unknown} answer
+ */
+export function countSpaceCustomers(answer) {
+  if (answer === null || typeof answer !== 'object') return null;
+  const shaped = /** @type {{total?: unknown, totalIsExact?: unknown}} */ (answer);
+  if (shaped.totalIsExact !== true) return null;
+  return typeof shaped.total === 'number' && Number.isInteger(shaped.total) && shaped.total >= 0
+    ? shaped.total
+    : null;
 }
 
 /**
@@ -234,6 +288,9 @@ export function createSpaziAccessiView(deps) {
     overrides: null,
     /** @type {string|null} why the switches are not shown */
     switchesUnavailable: null,
+    /** @type {Map<string, string>} card statistic by space id; a space with
+     * an unknown count simply has no entry, never an invented row */
+    stats: new Map(),
     /** @type {string|null} subject armed for the two-step removal */
     confirmRemove: null,
     /** @type {{key: string, to: boolean}|null} switch flip armed for confirm */
@@ -272,6 +329,30 @@ export function createSpaziAccessiView(deps) {
     return { code: 'UNKNOWN', message: String(error) };
   }
 
+  /**
+   * The statistic of one space card from the composed reads. Any unreadable
+   * count yields null and the card shows no statistic: a failure here is a
+   * missing enhancement, never a page error, so it stays silent.
+   * @param {string} spaceId
+   * @param {number|null} memberCount
+   */
+  async function loadSpaceStat(spaceId, memberCount) {
+    if (memberCount === null) return null;
+    try {
+      const [channelsAnswer, customersAnswer] = await Promise.all([
+        client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
+        client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
+      ]);
+      return formatSpaceStat({
+        channels: countSpaceChannels(channelsAnswer),
+        members: memberCount,
+        customers: countSpaceCustomers(customersAnswer),
+      });
+    } catch {
+      return null;
+    }
+  }
+
   async function load() {
     const space = readActiveSpace().trim();
     state.myRole = null;
@@ -280,6 +361,7 @@ export function createSpaziAccessiView(deps) {
     state.membersUnavailable = null;
     state.overrides = null;
     state.switchesUnavailable = null;
+    state.stats = new Map();
     state.confirmRemove = null;
     state.confirmFlip = null;
     state.refusal = null;
@@ -320,6 +402,16 @@ export function createSpaziAccessiView(deps) {
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
+    const memberCount = Array.isArray(state.members) ? state.members.length : null;
+    const ids = readSpaces()
+      .filter((entry) => entry !== null && typeof entry === 'object'
+        && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
+        && /** @type {{id?: unknown}} */ (entry).id !== '')
+      .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    await Promise.all(ids.map(async (id) => {
+      const stat = await loadSpaceStat(id, memberCount);
+      if (stat !== null) state.stats.set(id, stat);
+    }));
   }
 
   async function mutate(path, body) {
@@ -368,6 +460,10 @@ export function createSpaziAccessiView(deps) {
       }));
       head.appendChild(names);
       cell.appendChild(head);
+      const stat = state.stats.get(card.id) ?? null;
+      if (stat !== null) {
+        cell.appendChild(el(doc, 'div', { text: stat, cls: 'bo-spazi-stat bo-muted' }));
+      }
       if (card.active) {
         cell.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
       } else if (typeof deps.onPickSpace === 'function') {
