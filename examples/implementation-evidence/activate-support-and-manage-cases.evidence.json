@@ -1,8 +1,8 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/activate-support-and-manage-cases.plan.json",
-  "planFingerprint": "af0482c66d71721cc64a4754995158a1862cb6be1d254699ea616087927b4a40",
-  "applicationInspectionFingerprint": "cc39ea0dfb90d0904aafdec0297498537482e7ce4ac83b6060956be11577eb2e",
+  "planFingerprint": "aa0c76da5425c9dffdfa49f82fbc65e9a5debdac73363018e72eae0a90852890",
+  "applicationInspectionFingerprint": "7ca6cc88744ed78cd10095c2730408f8698fe66511b6f1915ed67025c660f228",
   "requirements": [
     {
       "requirementId": "step:step.plan-before-activating",
@@ -254,7 +254,7 @@
         {
           "kind": "source.artifact",
           "path": "apps/admin/public/admin-service.js",
-          "sha256": "fc223c65f2a73e08068d6de2286c211b2dafdc5c1cb312e5f79a70f76870091f"
+          "sha256": "a982cc39bb5751055fa45693047fbfcffcc030acc215fe46674a2ddb657818ef"
         }
       ]
     }
