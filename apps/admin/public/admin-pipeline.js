@@ -96,7 +96,7 @@ export function createPipelineBoard(deps) {
     const box = el(doc, 'div', { class: 'panel' });
     box.appendChild(el(doc, 'p', { class: 'empty', text: message }));
     if (retry) {
-      const button = el(doc, 'button', { class: 'small secondary', text: 'Retry' });
+      const button = el(doc, 'button', { class: 'small secondary', text: 'Riprova' });
       button.addEventListener('click', retry);
       box.appendChild(button);
     }
@@ -131,7 +131,7 @@ export function createPipelineBoard(deps) {
     if (!recordId || !fromStage || toStage === fromStage) return;
     const record = cached.records.find((candidate) => candidate.id === recordId);
     if (!record || record.pipelineStage !== fromStage) {
-      toast('That card moved meanwhile — the board will refresh.', true);
+      toast('Questa card è cambiata nel frattempo — la pagina si aggiorna.', true);
       await renderBoard(pipeline.name);
       return;
     }
@@ -142,38 +142,38 @@ export function createPipelineBoard(deps) {
       if (controls) {
         controls.select.value = toStage;
         controls.reasonInput.setAttribute('class', '');
-        controls.errorNode.textContent = 'Enter a reason for Lost, then press Move.';
+        controls.errorNode.textContent = 'Scrivi il motivo della perdita, poi premi Sposta.';
         controls.errorNode.setAttribute('class', 'field-error');
         if (typeof controls.reasonInput.focus === 'function') controls.reasonInput.focus();
       } else {
-        toast('Moving to Lost needs a reason — open the card first.', true);
+        toast('Per la perdita serve un motivo — apri prima la card.', true);
       }
       return;
     }
     try {
       await postMove(pipeline, recordId, fromStage, toStage);
-      toast(`Moved to ${toStage}.`);
+      toast(`Spostata in ${toStage}.`);
       await renderBoard(pipeline.name); // re-render: server state is the truth
     } catch (error) {
-      toast(error?.message ?? 'Move failed', true);
+      toast(error?.message ?? 'Spostamento non riuscito', true);
     }
   }
 
   /** @param {string} pipelineName */
   async function renderBoard(pipelineName) {
     const token = ++renderToken;
-    showMessage('Loading…');
+    showMessage('Caricamento…');
     let pipeline;
     let records;
     try {
       const schema = await client.request('/api/schema');
       if (schema?.pipelineContract !== 1) {
-        showMessage('This Admin needs an update to render pipelines.');
+        showMessage('Questo pannello va aggiornato per mostrare le pipeline.');
         return;
       }
       pipeline = (schema.pipelines ?? []).find((candidate) => candidate.name === pipelineName);
       if (!pipeline) {
-        showMessage(`Pipeline not found: ${pipelineName}`);
+        showMessage(`Pipeline non trovata: ${pipelineName}`);
         return;
       }
       // The board currently supports the core opportunity module's list
@@ -235,13 +235,13 @@ export function createPipelineBoard(deps) {
     if (records.length >= BOARD_LIMIT) {
       titleBox.appendChild(el(doc, 'p', {
         class: 'hint',
-        text: `Showing the first ${BOARD_LIMIT} records only — later records are not on this board view.`,
+        text: `Mostro solo i primi ${BOARD_LIMIT} record — gli altri non sono in questa vista.`,
       }));
     }
     if (offPipeline > 0) {
       titleBox.appendChild(el(doc, 'p', {
         class: 'hint',
-        text: `${offPipeline} record${offPipeline === 1 ? '' : 's'} not on this pipeline (not shown).`,
+        text: `${offPipeline} record non in questa pipeline (non mostrato${offPipeline === 1 ? '' : 'i'}).`,
       }));
     }
     heading.appendChild(titleBox);
@@ -263,15 +263,15 @@ export function createPipelineBoard(deps) {
 
     if (offDefinition.length) {
       const drift = el(doc, 'div', { class: 'pipeline-drift', attrs: { 'data-drift': String(offDefinition.length) } });
-      drift.appendChild(el(doc, 'h3', { text: `Off-definition (${offDefinition.length})` }));
+      drift.appendChild(el(doc, 'h3', { text: `Fuori definizione (${offDefinition.length})` }));
       drift.appendChild(el(doc, 'p', {
         class: 'hint',
-        text: 'These records store a stage key that is not in the current pipeline definition. Stage keys are persistent identifiers: renaming or removing one requires an explicit data migration.',
+        text: 'Questi record hanno una fase che non è più nella definizione della pipeline. Le chiavi di fase sono identificativi stabili: rinominarne o toglierne una richiede una migrazione dati esplicita.',
       }));
       for (const record of offDefinition) {
         const row = el(doc, 'p', { class: 'drift-record' });
         row.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
-        row.appendChild(el(doc, 'span', { text: ` — stored stage: ${String(record.pipelineStage)}` }));
+        row.appendChild(el(doc, 'span', { text: ` — fase registrata: ${String(record.pipelineStage)}` }));
         drift.appendChild(row);
       }
       panel.appendChild(drift);
@@ -299,8 +299,8 @@ export function createPipelineBoard(deps) {
 
     const search = el(doc, 'input', {
       attrs: {
-        type: 'search', placeholder: 'Search name, company, contact',
-        'aria-label': 'Search records', 'data-filter': 'q', value: state.q,
+        type: 'search', placeholder: 'Cerca nome, azienda, contatto',
+        'aria-label': 'Cerca record', 'data-filter': 'q', value: state.q,
       },
     });
     search.value = state.q;
@@ -328,7 +328,7 @@ export function createPipelineBoard(deps) {
 
     const owners = [...new Set(onBoard.map((record) => record.owner).filter((owner) => typeof owner === 'string' && owner))].sort();
     const ownerSelect = el(doc, 'select', { attrs: { 'aria-label': 'Referente', 'data-filter': 'owner' } });
-    ownerSelect.appendChild(el(doc, 'option', { text: 'All referenti', attrs: { value: '' } }));
+    ownerSelect.appendChild(el(doc, 'option', { text: 'Tutti i referenti', attrs: { value: '' } }));
     for (const owner of owners) {
       const option = el(doc, 'option', { text: owner, attrs: { value: owner } });
       if (owner === state.owner) option.setAttribute('selected', 'selected');
@@ -342,7 +342,7 @@ export function createPipelineBoard(deps) {
     toolbar.appendChild(ownerSelect);
 
     const stageSelect = el(doc, 'select', { attrs: { 'aria-label': 'Stato', 'data-filter': 'stage' } });
-    stageSelect.appendChild(el(doc, 'option', { text: 'All stati', attrs: { value: '' } }));
+    stageSelect.appendChild(el(doc, 'option', { text: 'Tutti gli stati', attrs: { value: '' } }));
     for (const stage of pipeline.stages) {
       const option = el(doc, 'option', { text: stage.label ?? stage.key, attrs: { value: stage.key } });
       if (stage.key === state.stage) option.setAttribute('selected', 'selected');
@@ -359,7 +359,7 @@ export function createPipelineBoard(deps) {
       const input = el(doc, 'input', {
         attrs: {
           type: 'date',
-          'aria-label': bound === 'closeFrom' ? 'Expected close from' : 'Expected close to',
+          'aria-label': bound === 'closeFrom' ? 'Chiusura prevista da' : 'Chiusura prevista a',
           'data-filter': bound,
         },
       });
@@ -412,7 +412,7 @@ export function createPipelineBoard(deps) {
    */
   function renderForecast(pipeline, visible) {
     const box = el(doc, 'div', { class: 'pipeline-forecast', attrs: { 'data-forecast': 'estimate' } });
-    box.appendChild(el(doc, 'h3', { text: 'Forecast · stima' }));
+    box.appendChild(el(doc, 'h3', { text: 'Previsione · stima' }));
     const probabilityOf = new Map(pipeline.stages.map((stage) => [stage.key, stage.probability]));
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open').map((stage) => stage.key));
     const weighted = new Map();
@@ -425,7 +425,7 @@ export function createPipelineBoard(deps) {
       weighted.set(record.currency, (weighted.get(record.currency) ?? 0) + share);
     }
     if (!weighted.size) {
-      box.appendChild(el(doc, 'p', { class: 'hint', text: 'No open value to forecast — heuristic estimate from stage probabilities, not a commitment.' }));
+      box.appendChild(el(doc, 'p', { class: 'hint', text: 'Nessun valore aperto da stimare — stima euristica dalle probabilità di fase, non un impegno.' }));
       return box;
     }
     for (const [currency, total] of [...weighted.entries()].sort()) {
@@ -433,7 +433,7 @@ export function createPipelineBoard(deps) {
     }
     box.appendChild(el(doc, 'p', {
       class: 'hint',
-      text: 'Heuristic estimate from stage probabilities — not a commitment.',
+      text: 'Stima euristica dalle probabilità di fase — non un impegno.',
     }));
     return box;
   }
@@ -444,7 +444,7 @@ export function createPipelineBoard(deps) {
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Record', 'Stato', 'Referente', 'Expected close', 'Value']) {
+    for (const label of ['Record', 'Stato', 'Referente', 'Chiusura prevista', 'Valore']) {
       headRow.appendChild(el(doc, 'th', { text: label }));
     }
     head.appendChild(headRow);
@@ -463,7 +463,7 @@ export function createPipelineBoard(deps) {
     table.appendChild(body);
     wrap.appendChild(table);
     if (!visible.length) {
-      wrap.appendChild(el(doc, 'p', { class: 'empty', text: 'No records match the current filters.' }));
+      wrap.appendChild(el(doc, 'p', { class: 'empty', text: 'Nessun record corrisponde ai filtri attivi.' }));
     }
     return wrap;
   }
@@ -477,7 +477,7 @@ export function createPipelineBoard(deps) {
   function renderColumn(pipeline, stage, records, token) {
     const column = el(doc, 'div', { class: `pipeline-column type-${stage.type}`, attrs: { 'data-stage': stage.key } });
     const header = el(doc, 'div', { class: 'pipeline-column-header' });
-    const badge = stage.type === 'won' ? 'Won ✓' : stage.type === 'lost' ? 'Lost ✕' : 'Open';
+    const badge = stage.type === 'won' ? 'Vinta ✓' : stage.type === 'lost' ? 'Persa ✕' : 'Aperta';
     header.appendChild(el(doc, 'h3', { text: stage.label }));
     header.appendChild(el(doc, 'span', { class: `stage-type stage-${stage.type}`, text: badge }));
     header.appendChild(el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } }));
@@ -506,7 +506,7 @@ export function createPipelineBoard(deps) {
     column.__drop = (payload) => handleDrop(pipeline, stage.key, payload);
 
     if (!records.length) {
-      column.appendChild(el(doc, 'p', { class: 'empty', text: 'No records.' }));
+      column.appendChild(el(doc, 'p', { class: 'empty', text: 'Nessun record.' }));
       return column;
     }
     for (const record of records) {
@@ -543,7 +543,7 @@ export function createPipelineBoard(deps) {
 
     const controls = el(doc, 'div', { class: 'card-move' });
     const selectId = `move-${record.id}`;
-    const label = el(doc, 'label', { text: 'Move to', attrs: { for: selectId } });
+    const label = el(doc, 'label', { text: 'Sposta in', attrs: { for: selectId } });
     const select = el(doc, 'select', { attrs: { id: selectId } });
     for (const target of pipeline.stages) {
       if (target.key === stage.key) continue;
@@ -554,14 +554,14 @@ export function createPipelineBoard(deps) {
     }
     const reasonInput = el(doc, 'input', {
       class: 'hidden',
-      attrs: { type: 'text', placeholder: 'Reason (required for Lost)', 'aria-label': 'Close reason' },
+      attrs: { type: 'text', placeholder: 'Motivo (obbligatorio per la perdita)', 'aria-label': 'Motivo di chiusura' },
     });
     const lostStage = pipeline.stages.find((candidate) => candidate.type === 'lost');
     select.addEventListener('change', () => {
       const isLost = lostStage && select.value === lostStage.key;
       reasonInput.setAttribute('class', isLost ? '' : 'hidden');
     });
-    const moveButton = el(doc, 'button', { class: 'small primary', text: 'Move', attrs: { type: 'button' } });
+    const moveButton = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button' } });
     const errorNode = el(doc, 'small', { class: 'field-error hidden' });
     let busy = false;
     const submit = async () => {
@@ -576,13 +576,13 @@ export function createPipelineBoard(deps) {
           ? reasonInput.value
           : undefined;
         await postMove(pipeline, record.id, stage.key, select.value, reason);
-        toast(`Moved to ${select.value}.`);
+        toast(`Spostata in ${select.value}.`);
         await renderBoard(pipeline.name); // re-render: server state is the truth
       } catch (error) {
         busy = false;
         moveButton.disabled = false;
         moveButton.setAttribute('aria-busy', 'false');
-        errorNode.textContent = error?.message ?? 'Move failed';
+        errorNode.textContent = error?.message ?? 'Spostamento non riuscito';
         errorNode.setAttribute('class', 'field-error');
       }
     };
