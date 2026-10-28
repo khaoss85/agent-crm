@@ -36,9 +36,11 @@ export const REPORTING_CURRENCY = 'EUR';
 
 /**
  * Channel names and bar colors of the "Nuovi clienti per canale" card, as in
- * the prototype. Systems the table actually carries but this map does not
- * know render under their raw name in the fallback tint — visible, never
- * invented.
+ * the prototype. Colors read the :root tokens (never literals, per the
+ * authority-tokens contract) and paint through inline `background:var(--…)`,
+ * like the rest of this screen. Systems the table actually carries but this
+ * map does not know render under their raw name in the fallback tint —
+ * visible, never invented.
  */
 export const CHANNEL_LABELS = Object.freeze({
   whatsapp: 'WhatsApp',
@@ -50,15 +52,15 @@ export const CHANNEL_LABELS = Object.freeze({
 });
 
 export const CHANNEL_COLORS = Object.freeze({
-  whatsapp: '#22a06b',
-  instagram: '#d6336c',
-  facebook: '#2f6fed',
-  tiktok: '#232323',
-  email: '#c9b896',
-  phone: '#6b7280',
+  whatsapp: 'var(--accent)',
+  instagram: 'var(--human)',
+  facebook: 'var(--data)',
+  tiktok: 'var(--ink)',
+  email: 'var(--pending)',
+  phone: 'var(--muted)',
 });
 
-export const CHANNEL_FALLBACK_COLOR = '#9aa0a6';
+export const CHANNEL_FALLBACK_COLOR = 'var(--dim)';
 
 /** @param {string} channel */
 export function channelLabel(channel) {
