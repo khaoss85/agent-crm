@@ -917,7 +917,11 @@ const client = {
     if (path.startsWith('/api/space-packages/preview')) {
       return { headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [{ module: 'channel-connection', count: 1 }], uncomposed: [], writes: 0 };
     }
-    if (path.startsWith('/api/connectors?')) return { connectors: [] };
+    // A mixed state, like the prototype: two channels connected (✓), the rest to connect (+).
+    if (path.startsWith('/api/connectors?')) return { connectors: [
+      { channel: 'whatsapp', connectionKey: 'wa-demo', status: 'active' },
+      { channel: 'email', connectionKey: 'mail-demo', status: 'active' },
+    ] };
     throw new Error('unexpected request ' + path);
   },
 };
@@ -929,6 +933,8 @@ await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   hero: document.getElementById('view-module').textContent.includes('Kit social'),
   sections: (document.getElementById('view-module').textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
+  connected: document.querySelectorAll('[title="Collegato"]').length,
+  toConnect: document.querySelectorAll('button[aria-label^="Collega "]').length,
 });
 document.title = 'personalizzazione-ready';`;
     case 'catalogo': return `
@@ -1327,6 +1333,9 @@ export function assertProbe(name, probe) {
       if (probe.hero !== true) throw new Error('personalizzazione: the probe shows no Kit social hero');
       if (typeof probe.sections !== 'number' || probe.sections < 1) {
         throw new Error('personalizzazione: the probe shows no channel sections');
+      }
+      if (typeof probe.connected !== 'number' || probe.connected < 1 || typeof probe.toConnect !== 'number' || probe.toConnect < 1) {
+        throw new Error('personalizzazione: the probe must show both connected (✓) and to-connect (+) cards');
       }
       return;
     }
