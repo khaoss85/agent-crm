@@ -86,7 +86,7 @@ before a commenter gets to say them.
 >
 > If you want to judge it in a minute rather than read about it: clone and run `npm run tour`.
 > Install the checkout dependencies first. It composes the whole application from manifests —
-> 98 modules, 77 resources, 64 actions, 7 policies, 1 providers — drives it end to
+> 98 modules, 77 resources, 65 actions, 7 policies, 1 providers — drives it end to
 > end, and then prints the eleven things its own inspector says it cannot see. [C-22]
 >
 > If you would rather try to break it than read about it: `npm run falsify` removes five
