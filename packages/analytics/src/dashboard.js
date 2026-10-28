@@ -139,6 +139,32 @@ export function monthOf(value) {
 }
 
 /**
+ * The dashboard's report specs: plain data (metric, dimensions, filters) that
+ * names DECLARED registry entries only. Specs — never pre-compiled storage
+ * descriptors — are what crosses a trust boundary: the executor compiles
+ * them itself through {@link compileReport}, so a forged descriptor cannot
+ * reach storage (backlog:0e3e67eb review: an unvalidated compiled entry
+ * forwarded verbatim would bypass the registry allowlist for every future
+ * in-process caller of the facade).
+ * @param {{period: string, owner: string | null, currency: string}} query
+ */
+export function dashboardSpecs(query) {
+  const filters = query.owner === null ? {} : { 'opportunity.owner': query.owner };
+  return Object.freeze({
+    byStage: Object.freeze({
+      metric: 'pipeline_value_by_stage',
+      dimensions: Object.freeze(['opportunity.stage']),
+      filters: Object.freeze({ ...filters }),
+    }),
+    schedule: Object.freeze({
+      metric: 'pipeline_close_schedule',
+      dimensions: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate']),
+      filters: Object.freeze({ ...filters }),
+    }),
+  });
+}
+
+/**
  * Compile the dashboard's reports through the registry. The persona filter
  * is a declared `owner` filter on both metrics; the period is NOT a storage
  * filter (the registry groups exact dates) — the builder buckets the exact
@@ -146,18 +172,10 @@ export function monthOf(value) {
  * @param {{period: string, owner: string | null, currency: string}} query
  */
 export function dashboardCompilations(query) {
-  const filters = query.owner === null ? {} : { 'opportunity.owner': query.owner };
+  const specs = dashboardSpecs(query);
   return Object.freeze({
-    byStage: compileReport({
-      metric: 'pipeline_value_by_stage',
-      dimensions: ['opportunity.stage'],
-      filters,
-    }),
-    schedule: compileReport({
-      metric: 'pipeline_close_schedule',
-      dimensions: ['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate'],
-      filters,
-    }),
+    byStage: compileReport(specs.byStage),
+    schedule: compileReport(specs.schedule),
   });
 }
 

@@ -18,10 +18,10 @@ import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js'
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
-import { runReport } from '../../../packages/analytics/src/compiler.js';
+import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
   buildDashboardModel,
-  dashboardCompilations,
+  dashboardSpecs,
   parseDashboardQuery,
 } from '../../../packages/analytics/src/dashboard.js';
 
@@ -1070,6 +1070,13 @@ export function buildRouter(app) {
   // reporting bundle when composed. No storage query of its own, no write
   // surface: there is deliberately no POST under /api/reporting/*, so the
   // "Cosa noto" proposal the model carries can never reassign by itself.
+  // Portable compositions (backlog:0e3e67eb: the production /bo reader)
+  // carry no `database` handle, so the report specs execute through the
+  // application's closed-over runReportFromSpec instead — same registry,
+  // same numbers, empty data answering 200 with an empty model, never a
+  // 500. Specs cross the boundary, never pre-compiled descriptors: each
+  // executor compiles the spec itself, so a forged descriptor cannot reach
+  // storage through this route or through the facade.
   router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const dashboardQuery = parseDashboardQuery({
@@ -1077,9 +1084,12 @@ export function buildRouter(app) {
       owner: query.owner,
       currency: query.currency,
     });
-    const compiled = dashboardCompilations(dashboardQuery);
-    const byStage = await runReport(app.database, compiled.byStage);
-    const schedule = await runReport(app.database, compiled.schedule);
+    const specs = dashboardSpecs(dashboardQuery);
+    const executeReport = typeof app.runReportFromSpec === 'function'
+      ? (spec) => app.runReportFromSpec(spec)
+      : (spec) => runReport(app.database, compileReport(spec));
+    const byStage = await executeReport(specs.byStage);
+    const schedule = await executeReport(specs.schedule);
     let bundleRows = [];
     try {
       const reporting = requireCapability(resolveGeneratedModule(app, 'reporting'), 'list');
