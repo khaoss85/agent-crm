@@ -622,6 +622,7 @@ const calendarioView = createCalendarioView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
   toast,
 });
