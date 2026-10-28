@@ -19,8 +19,12 @@ import { humanReadError } from './admin-core.js';
  *   sync state, filterable per channel;
  * - right: AI summary, next steps, offer, next appointment.
  *
- * Every panel the composed packages cannot feed answers "not available" with
- * its reason — never an empty value that could be mistaken for "none". The
+ * Every panel the composed packages cannot feed stays in plain Italian: data
+ * panels with nothing readable show a short empty state, blocks whose
+ * package is not composed at all stay hidden instead of explaining
+ * themselves — never an empty value that could be mistaken for "none",
+ * never an English system reason, id or ISO date on screen (those live on
+ * in the API responses and the logs). The
  * reply composer (BO-F1-07) is deliberately not here: it is its own story
  * with its own gate (approval). The call summary with signals and
  * transcript (BO-F1-08) IS here, read from the call-intelligence
@@ -53,6 +57,82 @@ const SYNC_LABELS = Object.freeze({
   missed: 'persa',
   'no-answer': 'senza risposta',
 });
+
+/**
+ * Voce 1a066ddfe42a: the scheda speaks only plain Italian. The API reasons
+ * stay in English in the responses (the honest system phrases live there
+ * and in the logs) — the page never prints them. Dates render readable in
+ * Europe/Rome, ids and UUIDs never reach visible text.
+ */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (value) => UUID_SHAPE.test(String(value ?? '').trim());
+/**
+ * A handle readable by a human operator (a name or username), never a code:
+ * UUIDs, letter-digit codes (`c1`, `user-123`) and long digit runs stay out.
+ */
+const isHumanHandle = (value) => {
+  const text = String(value ?? '').trim();
+  if (text === '' || isUuid(text)) return false;
+  if (/[0-9]{4,}/.test(text)) return false;
+  if (/^[a-zÀ-ÿ]*\d+$/i.test(text)) return false;
+  if (/^[a-zÀ-ÿ]+-\d+$/i.test(text)) return false;
+  return true;
+};
+
+const dateTimeParts = (value) => {
+  const ms = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('it-IT', {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+    timeZone: 'Europe/Rome',
+  }).format(new Date(ms));
+};
+
+const dateParts = (value) => {
+  const ms = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('it-IT', {
+    day: 'numeric', month: 'short', year: 'numeric',
+    timeZone: 'Europe/Rome',
+  }).format(new Date(ms));
+};
+
+const dayParts = (value) => {
+  const ms = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('it-IT', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    timeZone: 'Europe/Rome',
+  }).format(new Date(ms));
+};
+
+const timeParts = (value) => {
+  const ms = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('it-IT', {
+    hour: '2-digit', minute: '2-digit',
+    timeZone: 'Europe/Rome',
+  }).format(new Date(ms));
+};
+
+const STATUS_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
+const statusLabel = (value) => STATUS_LABELS[String(value ?? '').toLowerCase()]
+  ?? String(value ?? 'Contatto').replace(/^./, (first) => first.toUpperCase());
+
+const OFFER_STATUS_LABELS = Object.freeze({
+  sent: 'inviata', draft: 'bozza', approved: 'approvata', rejected: 'rifiutata',
+  open: 'aperta', won: 'vinta', lost: 'persa', expired: 'scaduta', accepted: 'accettata',
+});
+const offerStatusLabel = (status) => OFFER_STATUS_LABELS[String(status ?? '').toLowerCase()] ?? null;
+
+const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
+const packageStatusLabel = (status) => PACKAGE_STATUS_LABELS[String(status ?? '').toLowerCase()] ?? null;
+
+const RESOURCE_LABELS = Object.freeze({ contact: 'Contatto', company: 'Azienda' });
+const resourceLabel = (resource) => RESOURCE_LABELS[String(resource ?? '').toLowerCase()] ?? 'Scheda';
+
+const ROLE_LABELS = Object.freeze({ canonical: 'scheda principale', alias: 'scheda collegata' });
+const roleLabel = (role) => ROLE_LABELS[String(role ?? '').toLowerCase()] ?? null;
 
 const channelLabel = (channel) => CHANNEL_LABELS[String(channel ?? '').toLowerCase()] ?? String(channel ?? 'canale');
 const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? String(sync ?? 'stato ignoto');
@@ -150,7 +230,7 @@ export function createCustomerCardView(deps) {
     head.appendChild(avatar);
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
-    titles.appendChild(el('span', 'bo-scheda-badge', card?.status?.value ?? 'contatto'));
+    titles.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
     head.appendChild(titles);
     panel.appendChild(head);
     if (card?.company?.name) panel.appendChild(el('p', 'bo-scheda-sub', card.company.name));
@@ -164,7 +244,8 @@ export function createCustomerCardView(deps) {
       const call = link(`tel:${dialable === '' ? card.phone.value : dialable}`, `Chiama ${card.phone.value}`, 'call-customer');
       row.appendChild(call);
     } else {
-      row.appendChild(el('span', 'bo-scheda-disabled', card?.phone?.reason ?? 'telefono non disponibile'));
+      // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
+      row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
     }
     if (typeof card?.email === 'string' && card.email !== '') {
       row.appendChild(link(`mailto:${card.email}`, `Scrivi a ${card.email}`, 'mail-customer'));
@@ -175,6 +256,9 @@ export function createCustomerCardView(deps) {
   }
 
   function linkedIdentities(box, profile) {
+    // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
+    // label and a role label, never a bare id or UUID. The English cluster
+    // note stays in the API response, never on screen.
     box.appendChild(el('h4', undefined, 'Identità collegate'));
     const cluster = profile?.canonicalIdentity;
     if (!cluster) {
@@ -184,16 +268,14 @@ export function createCustomerCardView(deps) {
     const members = Array.isArray(cluster.members) ? cluster.members : [];
     box.appendChild(el('p', 'bo-muted',
       cluster.linked === true
-        ? `${members.length} record uniti da una persona`
-        : 'un solo record: nessuna unione registrata'));
-    if (typeof cluster.note === 'string' && cluster.note !== '') {
-      box.appendChild(el('p', 'bo-muted', cluster.note));
-    }
+        ? `${members.length} schede unite da una persona`
+        : 'una sola scheda: nessuna unione registrata'));
     for (const member of members) {
       const line = el('p', 'bo-scheda-identity');
       line.setAttribute('data-member', `${member?.resource ?? ''}:${member?.id ?? ''}`);
-      line.appendChild(el('strong', undefined, `${member?.resource ?? '?'} ${member?.id ?? '?'}`));
-      if (member?.role) line.appendChild(el('span', undefined, ` · ${member.role}`));
+      const role = roleLabel(member?.role);
+      line.appendChild(el('strong', undefined,
+        role ? `${resourceLabel(member?.resource)} · ${role}` : resourceLabel(member?.resource)));
       // BO-F1-06: the motivation the decider recorded, with who and when —
       // never a bare id the operator has to trust.
       if (typeof member?.reason === 'string' && member.reason !== '') {
@@ -201,9 +283,10 @@ export function createCustomerCardView(deps) {
       } else {
         line.appendChild(el('span', 'bo-muted', ' — motivazione non registrata'));
       }
-      if (member?.decidedBy?.id) {
-        const when = typeof member?.decidedAt === 'string' && member.decidedAt !== '' ? ` il ${member.decidedAt}` : '';
-        line.appendChild(el('span', 'bo-muted', ` (da ${member.decidedBy.id}${when})`));
+      const when = dateParts(member?.decidedAt);
+      if (isHumanHandle(member?.decidedBy?.id) || when) {
+        const who = isHumanHandle(member?.decidedBy?.id) ? `da ${String(member.decidedBy.id).trim()}` : 'da un operatore';
+        line.appendChild(el('span', 'bo-muted', ` (${when ? `${who} il ${when}` : who})`));
       }
       box.appendChild(line);
     }
@@ -220,14 +303,28 @@ export function createCustomerCardView(deps) {
     fact('Nome', card?.name ?? '—');
     if (card?.company?.name) fact('Azienda', card.company.name);
     fact('Email', card?.email ?? 'non disponibile');
-    fact('Telefono', card?.phone?.available === true ? String(card.phone.value) : (card?.phone?.reason ?? 'non disponibile'));
-    fact('Stato', card?.status?.value ?? 'contatto');
-    if (card?.status?.reason) box.appendChild(el('p', 'bo-muted', card.status.reason));
+    // Voce 1a066ddfe42a: plain Italian empty states; the English card reasons
+    // stay in the API response, never on screen.
+    fact('Telefono', card?.phone?.available === true && card.phone.value
+      ? String(card.phone.value)
+      : 'Nessun telefono collegato');
+    fact('Stato', statusLabel(card?.status?.value));
+    box.appendChild(el('p', 'bo-muted', String(card?.status?.value ?? '').toLowerCase() === 'cliente'
+      ? 'Attività firmata collegata'
+      : 'Nessuna attività firmata collegata per ora'));
     const active = card?.activePackage;
-    if (active?.available === true && Array.isArray(active.active) && active.active.length > 0) {
-      for (const item of active.active) fact('Pacchetto', `${item?.name ?? item?.id ?? 'pacchetto'}${item?.status ? ` (${item.status})` : ''}`);
-    } else {
-      box.appendChild(el('p', 'bo-muted', active?.reason ?? 'pacchetto non disponibile'));
+    const activeItems = active?.available === true && Array.isArray(active.active) ? active.active : null;
+    if (activeItems && activeItems.length > 0) {
+      for (const item of activeItems) {
+        const itemStatus = packageStatusLabel(item?.status);
+        const itemName = typeof item?.name === 'string' && item.name !== '' ? item.name : 'pacchetto';
+        fact('Pacchetto', itemStatus ? `${itemName} (${itemStatus})` : itemName);
+      }
+    } else if (active?.available === true && active.truncated !== true && active.countIsComplete !== false) {
+      // A complete readable page with no active row: honestly none.
+      // Anything else (not composed, truncated, a floor count) hides the line
+      // instead of printing the English reason or a false "none".
+      box.appendChild(el('p', 'bo-muted', 'Nessun pacchetto attivo'));
     }
   }
 
@@ -250,7 +347,7 @@ export function createCustomerCardView(deps) {
       return;
     }
     if (enrichment?.optedOut) {
-      const when = String(enrichment.optedOut.optedOutAt ?? '').slice(0, 10);
+      const when = dateParts(enrichment.optedOut.optedOutAt);
       box.appendChild(el('p', 'bo-muted',
         `arricchimento disattivato${when ? ` il ${when}` : ''} (opt-out): nessun nuovo dato verrà salvato`));
     }
@@ -261,7 +358,7 @@ export function createCustomerCardView(deps) {
     for (const item of items) {
       const label = ENRICHED_FIELD_LABELS[String(item?.field ?? '')] ?? String(item?.field ?? 'dato');
       const source = ENRICHMENT_SOURCE_LABELS[String(item?.source ?? '')] ?? String(item?.source ?? 'fonte non registrata');
-      const when = String(item?.observedAt ?? '').slice(0, 10);
+      const when = dateParts(item?.observedAt);
       box.appendChild(el('p', 'bo-scheda-enriched',
         `${label}: ${String(item?.value ?? '—')} (fonte: ${source}${when ? ` · ${when}` : ''})`));
     }
@@ -298,7 +395,8 @@ export function createCustomerCardView(deps) {
       }
       let currentDay = null;
       for (const item of visible) {
-        const day = String(item?.occurredAt ?? '').slice(0, 10) || 'senza data';
+        // Voce 1a066ddfe42a: group and label by the readable Rome day.
+        const day = dayParts(item?.occurredAt) ?? 'senza data';
         if (day !== currentDay) {
           currentDay = day;
           list.appendChild(el('h5', 'bo-scheda-day', day));
@@ -307,10 +405,11 @@ export function createCustomerCardView(deps) {
         row.setAttribute('data-entry', String(item?.id ?? ''));
         const isOutbound = String(item?.direction ?? '') === 'outbound';
         const who = isOutbound
-          ? (item?.teamAuthorId ? `inviato da ${item.teamAuthorId}` : 'inviato dal team')
+          ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')
           : (item?.remoteHandle ? `da ${item.remoteHandle}` : 'ricevuto');
+        const when = dateTimeParts(item?.occurredAt);
         row.appendChild(el('p', 'bo-scheda-entry-head',
-          `${channelLabel(item?.channel)} · ${who} · ${String(item?.occurredAt ?? '')}`));
+          when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
         if (item?.entry === 'call') {
           const dur = item?.durationSec != null ? ` · ${item.durationSec}s` : '';
           row.appendChild(el('p', undefined, `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}${dur}`));
@@ -328,37 +427,40 @@ export function createCustomerCardView(deps) {
   }
 
   function nextSteps(box, profile) {
+    // Voce 1a066ddfe42a: an uncomposed work package hides the whole block
+    // instead of printing its English reason.
+    if (profile?.workTasks?.available !== true) return false;
     box.appendChild(el('h4', undefined, 'Prossimi passi'));
-    const tasks = profile?.workTasks?.available === true && Array.isArray(profile.workTasks.items)
-      ? profile.workTasks.items.filter((item) => item?.status !== 'done' && item?.status !== 'completed')
-      : null;
-    if (tasks === null) {
-      box.appendChild(el('p', 'bo-muted', profile?.workTasks?.reason ?? 'attività non disponibili'));
-      return;
-    }
+    const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
+    const tasks = items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
     if (tasks.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'nessun passo aperto'));
-      return;
+      return true;
     }
     for (const task of tasks.slice(0, 5)) {
-      box.appendChild(el('p', 'bo-scheda-step', `${task?.name ?? task?.id ?? 'attività'}${task?.status ? ` (${task.status})` : ''}`));
+      const name = typeof task?.name === 'string' && task.name !== '' ? task.name : 'attività';
+      box.appendChild(el('p', 'bo-scheda-step', name));
     }
+    return true;
   }
 
   function offer(box, profile) {
-    box.appendChild(el('h4', undefined, 'Offerta'));
-    const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items) ? profile.quotes.items : [];
+    // Voce 1a066ddfe42a: uncomposed offer packages hide the whole block;
+    // a composed-but-empty one reads «Nessuna offerta firmata».
+    const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items) ? profile.quotes.items : null;
     const opportunities = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
-      ? profile.opportunities.items : [];
-    const first = quotes[0] ?? opportunities[0] ?? null;
+      ? profile.opportunities.items : null;
+    if (quotes === null && opportunities === null) return false;
+    box.appendChild(el('h4', undefined, 'Offerta'));
+    const first = (quotes ?? []).concat(opportunities ?? [])[0] ?? null;
     if (!first) {
-      const reason = profile?.quotes?.available === true
-        ? 'nessuna offerta registrata'
-        : (profile?.quotes?.reason ?? 'offerte non disponibili');
-      box.appendChild(el('p', 'bo-muted', reason));
-      return;
+      box.appendChild(el('p', 'bo-muted', 'Nessuna offerta firmata'));
+      return true;
     }
-    box.appendChild(el('p', 'bo-scheda-offer', `${first?.name ?? first?.id ?? 'offerta'}${first?.status ? ` · ${first.status}` : ''}`));
+    const name = typeof first?.name === 'string' && first.name !== '' ? first.name : 'offerta';
+    const offerStatus = offerStatusLabel(first?.status);
+    box.appendChild(el('p', 'bo-scheda-offer', offerStatus ? `${name} · ${offerStatus}` : name));
+    return true;
   }
 
   // Terminal booking states, mirroring APPOINTMENT_TERMINAL in
@@ -382,10 +484,20 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
       return;
     }
-    // Soonest slot first, like the timeline projection.
+    // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
+    // the slot reads as a plain Italian date — no ISO instants, no member id.
     const next = upcoming[0];
-    const when = `${next?.startsAt ?? ''}${next?.endsAt ? `–${next.endsAt}` : ''}`;
-    box.appendChild(el('p', 'bo-scheda-appt', `${when}${next?.teamMemberId ? ` · ${next.teamMemberId}` : ''}`));
+    const start = dateTimeParts(next?.startsAt);
+    if (!start) {
+      box.appendChild(el('p', 'bo-scheda-appt', 'data non disponibile'));
+      return;
+    }
+    const endTime = timeParts(next?.endsAt);
+    const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
+    const when = endTime && endTime !== timeParts(next?.startsAt)
+      ? (sameDay ? `${start}–${endTime}` : `${start} – ${dateTimeParts(next?.endsAt)}`)
+      : start;
+    box.appendChild(el('p', 'bo-scheda-appt', when));
   }
 
   const SIGNAL_LABELS = Object.freeze({
@@ -422,7 +534,7 @@ export function createCustomerCardView(deps) {
       return;
     }
     const [latest, ...older] = items;
-    const when = String(latest?.recordedAt ?? '').slice(0, 10);
+    const when = dateParts(latest?.recordedAt);
     box.appendChild(el('p', 'bo-scheda-call-head',
       `ultima chiamata${latest?.channel ? ` · ${channelLabel(latest.channel)}` : ''}${when ? ` · ${when}` : ''}`));
     if (typeof latest?.summary === 'string' && latest.summary !== '') {
