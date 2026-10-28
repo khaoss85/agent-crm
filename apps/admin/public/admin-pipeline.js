@@ -1,8 +1,11 @@
 // @ts-check
 
-// Pipeline board (ADR-014) for BO-F2-01. Rendered entirely from /api/schema
-// `pipelines` metadata plus the target module's list endpoint — no
-// per-pipeline code. Every value is inserted through textContent/setAttribute,
+// Pipeline board (ADR-014) for BO-F2-01, restyled to the BO-F6-10 prototype
+// (specs/pipeline.md, fetta 1: intestazione e riepilogo). Rendered entirely
+// from /api/schema `pipelines` metadata plus the target module's list
+// endpoint — no per-pipeline code. Page chrome follows the spec's fixed
+// Italian texts (`Pipeline` / `Offerte`); stage labels, counts and totals
+// stay data-driven. Every value is inserted through textContent/setAttribute,
 // never innerHTML, so hostile stage labels or record names are inert text.
 //
 // Views: Kanban columns plus a Lista table over the same filtered records.
@@ -217,11 +220,15 @@ export function createPipelineBoard(deps) {
     const panel = el(doc, 'section', { class: 'panel panel-wide pipeline-board-panel' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
     const titleBox = el(doc, 'div');
+    // BO-F6-10 C1/C2: fixed page chrome from the spec. The pipeline label
+    // is not painted: the /bo voice is the offers board, and the nav already
+    // names the routed pipeline. Unknown pipelines still fail honestly in
+    // renderBoard (`Pipeline not found`), where the name aids diagnosis.
     titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Pipeline' }));
-    titleBox.appendChild(el(doc, 'h2', { text: pipeline.label }));
+    titleBox.appendChild(el(doc, 'h2', { text: 'Offerte' }));
     titleBox.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: `${placed.length} record${placed.length === 1 ? '' : 's'} on this board`,
+      text: "Apri una card per vedere com'è composta e costruire l'offerta. Trascinala per cambiarne lo stato.",
     }));
     // Honest bounds: the board loads at most BOARD_LIMIT records, and records
     // not on this pipeline are excluded by documented behavior, not hidden.
@@ -389,7 +396,8 @@ export function createPipelineBoard(deps) {
       if (!Number.isSafeInteger(record.valueCents)) continue;
       totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
     }
-    const parts = [`${visible.length} record${visible.length === 1 ? '' : 's'}`];
+    // BO-F6-10 C9: `<n> offerte · <totale>`, updated by every filter/search.
+    const parts = [`${visible.length} offert${visible.length === 1 ? 'a' : 'e'}`];
     for (const [currency, total] of [...totals.entries()].sort()) {
       parts.push(formatMinorUnits(total, currency));
     }

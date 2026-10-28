@@ -146,9 +146,7 @@ test('drifted records are shown in an explicit off-definition section, never hid
   assert.ok(drift.textContent.includes('Deal b'));
   assert.ok(drift.textContent.includes('renamed-away'), 'the stored stage key is shown verbatim');
   assert.ok(drift.textContent.includes('persistent identifiers'), 'the migration guidance is shown');
-  // The header count reflects PLACED records only; the drifted one is not
-  // silently counted into any stage column.
-  assert.ok(mount.textContent.includes('2 records on this board'));
+  // The drifted record is not silently counted into any stage column.
   const countOf = (stage) => mount.findAll('span').find((n) => n.getAttribute('data-count') === stage).textContent;
   assert.equal(countOf('discovery'), '1');
   assert.equal(countOf('demo'), '1');
@@ -188,9 +186,16 @@ test('hostile stage labels and record values render as inert text', async () => 
   };
   const board = createPipelineBoard({ doc, mount, client });
   await board.renderBoard('b2b-sales');
+  // BO-F6-10 C1: page chrome is fixed spec text, never pipeline data — the
+  // hostile pipeline label must not reach the heading.
   const heading = mount.findAll('h2')[0];
-  assert.equal(heading.textContent, hostile, 'label is inert text');
-  assert.equal(heading.childNodes.length, 0, 'no elements parsed out of the hostile label');
+  assert.equal(heading.textContent, 'Offerte', 'the title is fixed spec text');
+  for (const chrome of [...mount.findAll('h2'), ...mount.findAll('p').filter((node) => ['kicker', 'lede'].includes(node.getAttribute('class')))]) {
+    assert.ok(!chrome.textContent.includes(hostile), 'pipeline data never reaches the page chrome');
+  }
+  const hostileHeader = mount.findAll('h3').find((node) => node.textContent === hostile);
+  assert.ok(hostileHeader, 'the hostile stage label paints as a column header');
+  assert.equal(hostileHeader.childNodes.length, 0, 'no elements parsed out of the hostile label');
   const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   assert.ok(card.textContent.includes(hostile));
 });
@@ -261,40 +266,40 @@ test('search, Referente, Stato and close-date filters narrow both views', async 
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
   await board.renderBoard('b2b-sales');
-  assert.match(summaryText(mount), /5 records/);
+  assert.match(summaryText(mount), /5 offerte/);
 
   const search = filterInput(mount, 'q');
   search.value = 'acme';
   search.dispatch('input');
-  assert.match(summaryText(mount), /5 records/, 'every fixture record matches its company');
+  assert.match(summaryText(mount), /5 offerte/, 'every fixture record matches its company');
 
   search.value = 'anna';
   search.dispatch('input');
-  assert.match(summaryText(mount), /1 record/, 'contact-name search narrows to one card');
+  assert.match(summaryText(mount), /1 offerta/, 'contact-name search narrows to one card');
   search.value = '';
   search.dispatch('input');
 
   const owner = filterInput(mount, 'owner');
   owner.value = 'bob';
   owner.dispatch('change');
-  assert.match(summaryText(mount), /2 records/, 'Referente filter keeps only bob’s cards');
+  assert.match(summaryText(mount), /2 offerte/, 'Referente filter keeps only bob’s cards');
 
   const stage = filterInput(mount, 'stage');
   stage.value = 'discovery';
   stage.dispatch('change');
-  assert.match(summaryText(mount), /1 record/, 'Stato filter intersects with Referente');
+  assert.match(summaryText(mount), /1 offerta/, 'Stato filter intersects with Referente');
 
   const from = filterInput(mount, 'closeFrom');
   from.value = '2026-12-01';
   from.dispatch('change');
-  assert.match(summaryText(mount), /1 record/, 'close-from keeps the December card');
+  assert.match(summaryText(mount), /1 offerta/, 'close-from keeps the December card');
   const to = filterInput(mount, 'closeTo');
   to.value = '2026-12-31';
   to.dispatch('change');
-  assert.match(summaryText(mount), /1 record/, 'close-to still matches December');
+  assert.match(summaryText(mount), /1 offerta/, 'close-to still matches December');
   to.value = '2026-12-01';
   to.dispatch('change');
-  assert.match(summaryText(mount), /0 records/, 'a range excluding every date empties the board');
+  assert.match(summaryText(mount), /0 offerte/, 'a range excluding every date empties the board');
 });
 
 test('Azzera filtri resets search and every filter', async () => {
@@ -307,10 +312,10 @@ test('Azzera filtri resets search and every filter', async () => {
   filterInput(mount, 'q').dispatch('input');
   filterInput(mount, 'owner').value = 'alice';
   filterInput(mount, 'owner').dispatch('change');
-  assert.match(summaryText(mount), /1 record/);
+  assert.match(summaryText(mount), /1 offerta/);
 
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'clear-filters').dispatch('click');
-  assert.match(summaryText(mount), /5 records/, 'every record is back');
+  assert.match(summaryText(mount), /5 offerte/, 'every offer is back');
   assert.equal(filterInput(mount, 'q').value, '');
   assert.equal(filterInput(mount, 'owner').value, '');
   assert.equal(filterInput(mount, 'stage').value, '');
@@ -326,7 +331,7 @@ test('summary totals the filtered set per currency without mixing', async () => 
   owner.value = 'alice';
   owner.dispatch('change');
   const text = summaryText(mount);
-  assert.match(text, /3 records/);
+  assert.match(text, /3 offerte/);
   assert.ok(text.includes('EUR 2,000.00'), `alice EUR total (${text})`);
   assert.ok(text.includes('USD 25.00'), `alice USD total stays separate (${text})`);
 });
@@ -429,7 +434,7 @@ test('search typing restores focus through the real-DOM query API only', async (
   assert.deepEqual(current.__selection, [4, 4], 'the caret is restored at the end of the typed text');
   assert.equal(current.value, 'anna', 'the typed text survives the rebuild');
   const summary = mount.querySelector('.pipeline-summary');
-  assert.match(summary.textContent, /1 record/, 'the filter narrows to the matching card');
+  assert.match(summary.textContent, /1 offerta/, 'the filter narrows to the matching card');
 });
 
 test('switching pipelines resets the previous board’s filters', async () => {
@@ -463,11 +468,14 @@ test('switching pipelines resets the previous board’s filters', async () => {
   filterInput(mount, 'owner').dispatch('change');
   filterInput(mount, 'stage').value = 'discovery';
   filterInput(mount, 'stage').dispatch('change');
-  assert.match(summaryText(mount), /1 record/, 'board A is filtered to one card');
+  assert.match(summaryText(mount), /1 offerta/, 'board A is filtered to one card');
 
   await board.renderBoard('b2b-enterprise');
-  assert.match(summaryText(mount), /1 record/, 'board B shows its own healthy record');
-  assert.ok(mount.textContent.includes('B2B Enterprise'), 'board B is rendered');
+  assert.match(summaryText(mount), /1 offerta/, 'board B shows its own healthy record');
+  assert.ok(
+    mount.findAll('div').some((node) => node.getAttribute('data-stage') === 'qualify'),
+    'board B columns are rendered',
+  );
   assert.equal(filterInput(mount, 'q').value, '', 'search does not leak across pipelines');
   assert.equal(filterInput(mount, 'owner').value, '', 'Referente does not leak across pipelines');
   assert.equal(filterInput(mount, 'stage').value, '', 'Stato does not leak across pipelines');
@@ -481,4 +489,60 @@ test('pipeline routes parse canonically; hostile routes are invalid', () => {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
   assert.equal(parseModuleRoute('#/modules/lead').view, 'list', 'module routes unchanged');
+});
+
+test('header follows the BO-F6-10 spec: kicker, title, description, offers summary (C1, C2, C9)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  const kicker = mount.findAll('p').find((node) => node.getAttribute('class') === 'kicker');
+  assert.equal(kicker?.textContent, 'Pipeline', 'C1: sovratitolo');
+  // C1: sovratitolo, titolo e descrizione nell'ordine corretto.
+  const siblings = kicker.parentNode.childNodes.filter((node) => typeof node.tagName === 'string');
+  assert.deepEqual(
+    siblings.slice(0, 3).map((node) => `${node.tagName}:${node.textContent}`),
+    [
+      'P:Pipeline',
+      'H2:Offerte',
+      'P:Apri una card per vedere com\u0027\u00e8 composta e costruire l\u0027offerta. Trascinala per cambiarne lo stato.',
+    ],
+    'C1/C2: kicker, title and description in order',
+  );
+
+  // C9: `<n> offerte · <totale>`, aggiornato da filtri e ricerca.
+  assert.match(summaryText(mount), /^5 offerte · /, 'summary pattern with count first');
+  filterInput(mount, 'owner').value = 'alice';
+  filterInput(mount, 'owner').dispatch('change');
+  assert.match(summaryText(mount), /^3 offerte · /, 'the summary follows the filter');
+  filterInput(mount, 'owner').value = '';
+  filterInput(mount, 'owner').dispatch('change');
+  assert.match(summaryText(mount), /^5 offerte · /, 'clearing the filter restores the full count');
+});
+
+test('the pipeline board renders no raw control', async () => {
+  // BO-F6-10 acceptance: nessun button/select/input senza le classi del
+  // sistema visivo nella schermata. Every control reaches the DOM through
+  // the shared `el` library, which normalizes legacy classes onto `ui-*`.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+  // Lista view too: its rows and the rebuilt toolbar stay normalized.
+  mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
+
+  const raw = [];
+  const walk = (node) => {
+    const tag = String(node.tagName ?? '').toLowerCase();
+    if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+      const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) {
+        raw.push(`${tag}[${classes.join('.')}]`);
+      }
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(mount);
+  assert.deepEqual(raw, [], 'every pipeline control carries a ui-* system class');
 });
