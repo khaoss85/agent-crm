@@ -17,7 +17,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError } from './admin-core.js';
+import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
@@ -782,19 +782,32 @@ export function createCalendarioView(deps) {
   /** @param {{resource: string, id: string, key: string}} linked */
   async function loadSubjectName(linked) {
     // The cache is keyed, not selection-bound: a late answer stays valid
-    // data for its key whatever is selected meanwhile, so no token guard —
-    // the repaint below simply re-renders the current selection.
+    // data for its key whatever is selected meanwhile — the repaint below
+    // only refreshes the calendar while it is still the mounted view.
     try {
       const profile = await client.request(
         `/api/customer-data/profile/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`,
       );
       state.profiles[linked.key] = nameFromProfile(profile);
-    } catch {
-      // Unavailable (not composed, unknown customer, offline): the card
-      // keeps the row label or id. A missing name is never an error screen.
+    } catch (error) {
+      // Unavailable (not composed, unknown customer, stale Admin bundle):
+      // the card keeps the row label or id. Anything else — a network fault,
+      // an HTTP 5xx — is unexpected: log the sanitized cause with the active
+      // space, never the message or personal data, and keep the soft
+      // fallback (AGENTS.md: a swallowed 5xx without a log blocks review).
+      if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
+        console.warn(
+          'bo-calendario profile unreadable:',
+          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+          `spaceId=${readSpace()}`,
+        );
+      }
       state.profiles[linked.key] = null;
     }
-    if (state.selectedId !== null) renderAll();
+    // The operator may have opened the customer card while the read was in
+    // flight: that view clears this same mount, so no calendar wrap means
+    // the calendar is gone and repainting would wipe the card in its place.
+    if (state.selectedId !== null && mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**

@@ -1193,3 +1193,138 @@ test('the detail card falls back honestly when the profile is unavailable', asyn
   card.findAll('button').find((node) => node.textContent === 'Apri scheda cliente').dispatch('click');
   assert.deepEqual(seen, ['#/customer-card/contact/c9%3Cscript%3E'], 'the hostile id travels encoded');
 });
+
+// A profile answer that lands after the operator left for the customer card
+// must not repaint: the card owns the shared mount by then, and a calendar
+// repaint would wipe it while the URL still names the card.
+test('a late profile answer never repaints over the customer card', async () => {
+  let releaseProfile = () => {};
+  const gate = new Promise((resolve) => { releaseProfile = resolve; });
+  const client = {
+    async request(path) {
+      if (path.startsWith('/api/customer-data/profile/')) {
+        await gate;
+        return { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } };
+      }
+      if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  // The customer card takes the shared mount, like renderCard does: it
+  // clears the calendar wrap and paints its own node.
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const card = doc.createElement('div');
+  card.setAttribute('data-role', 'customer-card');
+  mount.appendChild(card);
+  releaseProfile();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mount.querySelector('.cal-wrap'), null, 'no calendar repaint over the card');
+  assert.equal(
+    mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length,
+    0,
+    'no detail card painted over the customer card',
+  );
+  assert.equal(mount.firstChild, card, 'the customer card stays mounted');
+  // Back on the calendar the late answer is still valid data for its key.
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(reopened.textContent.includes('Ada Rossi'), 'the late name paints on return');
+});
+
+// An unexpected profile failure (HTTP 5xx, network fault) keeps the soft
+// fallback but is logged with a sanitized cause and the active space —
+// never the message, which may carry provider text or personal data.
+test('an unexpected profile failure is logged with the space, never the message', async () => {
+  const failure = { status: 500, code: 'UPSTREAM_BOOM', message: 'provider outage REF-123 involving Ada Rossi' };
+  const client = {
+    async request(path) {
+      if (path.startsWith('/api/customer-data/profile/')) throw failure;
+      if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({
+      doc,
+      mount,
+      client,
+      storage: { getItem: () => 'space-9' },
+      now: () => new Date('2026-10-21T08:40:00Z'),
+    });
+    await view.render();
+    const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+    filter.value = 'marco';
+    clickButton(mount, 'Mostra settimana');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+    assert.ok(card.textContent.includes('Ada'), 'the row label still falls back');
+    assert.equal(warnings.length, 1, 'one diagnostic: neither silence nor a screen');
+    const flat = warnings[0].map(String).join(' ');
+    assert.ok(flat.includes('bo-calendario'), 'the log is scoped to the calendar');
+    assert.ok(flat.includes('UPSTREAM_BOOM'), 'the sanitized code travels');
+    assert.ok(flat.includes('space-9'), 'the active space travels');
+    assert.ok(!flat.includes('REF-123') && !flat.includes('Ada Rossi'), 'no message, no personal data');
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+// An unknown customer stays silent: no log, label fallback, never a screen.
+test('a missing profile stays silent while the card falls back', async () => {
+  const failure = { status: 404, code: 'NOT_FOUND', message: 'no such customer' };
+  const client = {
+    async request(path) {
+      if (path.startsWith('/api/customer-data/profile/')) throw failure;
+      if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
+    await view.render();
+    const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+    filter.value = 'marco';
+    clickButton(mount, 'Mostra settimana');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+    assert.ok(card.textContent.includes('Ada'), 'the row label still falls back');
+    assert.equal(warnings.length, 0, 'an expected miss logs nothing');
+  } finally {
+    console.warn = originalWarn;
+  }
+});
