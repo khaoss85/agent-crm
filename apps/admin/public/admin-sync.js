@@ -437,8 +437,9 @@ export function grantExpiring(iso, nowMs = Date.now()) {
  * stated one, and every syncable binding stays pullable. Channels outside
  * the nine render after them with the catalog label, never in their place.
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
+ * @param {number} [nowMs]
  */
-export function syncChannelTable(activity) {
+export function syncChannelTable(activity, nowMs = Date.now()) {
   const entries = entriesOf(activity);
   const byChannel = new Map();
   for (const entry of entries) {
@@ -477,10 +478,12 @@ export function syncChannelTable(activity) {
   const rows = SYNC_CHANNELS.map((fixed) => {
     const agg = aggregate(fixed.id, byChannel.get(fixed.id) ?? []);
     const connected = agg.list.length > 0;
+    // A blocked binding never poses as importing: the expiry and the
+    // running import read only on bindings that are otherwise calm.
     const pill = connected
-      ? (agg.expiringAt !== null && grantExpiring(agg.expiringAt)
+      ? (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
         ? { text: 'Permesso in scadenza', tone: 'permesso' }
-        : agg.importing
+        : agg.importing && agg.worst === 'ok'
           ? { text: 'Importazione', tone: 'importazione' }
           : agg.worst === 'ok'
             ? { text: 'Attivo', tone: 'attivo' }
@@ -502,9 +505,9 @@ export function syncChannelTable(activity) {
   for (const [channel, list] of byChannel) {
     if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
     const agg = aggregate(channel, list);
-    const pill = agg.expiringAt !== null && grantExpiring(agg.expiringAt)
+    const pill = agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
       ? { text: 'Permesso in scadenza', tone: 'permesso' }
-      : agg.importing
+      : agg.importing && agg.worst === 'ok'
         ? { text: 'Importazione', tone: 'importazione' }
         : agg.worst === 'ok'
           ? { text: 'Attivo', tone: 'attivo' }
@@ -970,6 +973,7 @@ export function createSyncView(deps) {
     }
     table.appendChild(head);
     for (const row of rows) {
+      const ago = row.lastAt === null ? null : syncAgo(row.lastAt);
       const line = doc.createElement('tr');
       const name = doc.createElement('td');
       name.setAttribute('class', 'bo-sync-name');
@@ -985,7 +989,7 @@ export function createSyncView(deps) {
         doc,
         'td',
         undefined,
-        !row.connected ? 'non collegato' : row.lastAt === null ? '—' : `agg. ${syncAgo(row.lastAt) === 'adesso' ? 'ora' : syncAgo(row.lastAt)}`,
+        !row.connected ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
       line.appendChild(el(doc, 'td', undefined, !row.connected ? '—' : `${row.received} eventi oggi`));
       const stateCell = doc.createElement('td');
