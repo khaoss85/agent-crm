@@ -98,6 +98,11 @@ test('every limit renders as content, in the ordinary state', async () => {
   // The deferred track has one home, and it is named.
   assert.ok(text.includes('Customer Data Operations v2'));
   assert.ok(text.includes('global search'));
+  // The server still describes the import in English (META.import): the
+  // view renders its own Italian copy and never the raw server text.
+  assert.ok(!text.includes(META.import.preview), 'the raw server preview text never renders');
+  assert.ok(!text.includes('the mapping fingerprint'), 'the raw server mapping text never renders');
+  assert.ok(!text.includes('keep the good rows'), 'the raw server acceptance text never renders');
   // No CDP claim anywhere on the surface.
   assert.doesNotMatch(text, /\bCDP\b/i, 'the Admin must never call this a CDP');
   assert.doesNotMatch(text, /customer data platform/i);
@@ -120,8 +125,8 @@ test('a preview states plainly that it wrote nothing, and shows every receipt', 
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const text = mount.textContent;
-  assert.ok(text.includes('nothing — this is a preview'), text.slice(0, 200));
-  assert.ok(text.includes('row 0'), 'each receipt is rendered');
+  assert.ok(text.includes('L\u2019anteprima non ha scritto nulla.'), text.slice(0, 200));
+  assert.ok(text.includes('riga 0'), 'each receipt is rendered');
   assert.ok(text.includes('INVALID_EMAIL'), 'including the rejected one');
   assert.ok(text.includes('rejected'), 'and its outcome');
 
@@ -175,18 +180,18 @@ test('a list that could not be read says so, and never renders as zero', async (
   await createCustomerDataView({ doc, mount, client }).render();
   const text = mount.textContent;
 
-  for (const label of ['Import runs', 'Duplicate candidates', 'Data quality']) {
-    assert.ok(text.includes(`${label} (could not be read)`), `${label} must not claim a count it does not have`);
+  for (const label of ['Importazioni', 'Possibili doppioni', 'Qualità dei dati']) {
+    assert.ok(text.includes(`${label} (non leggibile)`), `${label} must not claim a count it does not have`);
   }
-  assert.ok(text.includes('That is not a claim that there are none.'));
-  assert.doesNotMatch(text, /Import runs \(0\)/);
-  assert.doesNotMatch(text, /\(0 unresolved\)/);
-  assert.doesNotMatch(text, /\(0 open\)/);
+  assert.ok(text.includes('Non è detto che sia vuota.'));
+  assert.doesNotMatch(text, /Importazioni \(0\)/);
+  assert.doesNotMatch(text, /\(0 da decidere\)/);
+  assert.doesNotMatch(text, /\(0 aperte\)/);
   // A full human sentence in the view's language, never a parenthesized
   // fragment: the technical detail stays in the console.
   assert.doesNotMatch(text, /\(la lettura non è riuscita\)/);
-  assert.ok(text.includes('This list could not be read, so it is not shown.'));
-  assert.ok(text.includes('Try again later.'));
+  assert.ok(text.includes('Questa lista non si è potuta leggere e non viene mostrata.'));
+  assert.ok(text.includes('Riprova più tardi.'));
 
   // Each unreadable list offers its own retry, and the retry re-reads.
   const retries = mount.findAll('button')
@@ -209,7 +214,7 @@ test('a duplicate candidate offers a human decision, never an automatic one', as
 
   assert.ok(text.includes('Globex Srl'), 'both sides of the candidate are named');
   assert.ok(text.includes('company-name-domain'), 'with the rule that produced it');
-  assert.ok(text.includes('logical canonical merge'), 'and what linking actually means');
+  assert.ok(text.includes('collegare non cancella nulla'), 'and what linking actually means');
 
   const link = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'link-canonical-identity');
   const dismiss = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'dismiss-duplicate-candidate');
@@ -232,7 +237,7 @@ test('the data-quality queue records a decision and says the finding is kept', a
   const client = stubClient();
   const mount = await render(client);
   assert.ok(mount.textContent.includes('invalid_email'));
-  assert.ok(mount.textContent.includes('The finding and its evidence are kept.'));
+  assert.ok(mount.textContent.includes('La segnalazione e le sue prove restano.'));
 
   const govern = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'govern-data-quality-issue');
   govern.dispatch('click');
@@ -271,7 +276,7 @@ test('the profile renders an absent package as "not available", never as zero', 
 
   const quotes = mount.findAll('p').find((node) => node.getAttribute('data-section') === 'quotes');
   assert.equal(quotes.getAttribute('data-available'), 'false');
-  assert.ok(quotes.textContent.includes('not available'), quotes.textContent);
+  assert.ok(quotes.textContent.includes('non disponibile'), quotes.textContent);
   assert.ok(!/:\s*0\b/.test(quotes.textContent), 'an absent package must never render as a zero count');
   assert.ok(quotes.textContent.includes('not a claim that there are none'));
 
