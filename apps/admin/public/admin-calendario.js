@@ -21,6 +21,41 @@ import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { uiButton } from './admin-ui.js';
+
+/**
+ * The currently open "Nuovo appuntamento" menu, if any: one live view at a
+ * time, so one closer slot is enough. Set when a menu opens, cleared when it
+ * closes — a stale closer only hides a detached menu, never live content.
+ * @type {{ wrap: any, close: () => void } | null}
+ */
+let openMenu = null;
+
+/** The document the single outside-click closer is installed on, if any. */
+let outsideInstalledOn = null;
+
+/**
+ * Install once per document: a click outside the open menu closes it. The
+ * containment walk uses parentNode, so the dependency-free fake DOM used by
+ * the unit tests behaves like a real Element. Documents without
+ * addEventListener (the fake document) skip the closer; the toggle button,
+ * the voices and Escape still work there.
+ * @param {any} doc
+ */
+function installOutsideCloser(doc) {
+  if (outsideInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
+  outsideInstalledOn = doc;
+  doc.addEventListener('click', (event) => {
+    const current = openMenu;
+    if (!current) return;
+    let node = event?.target ?? null;
+    while (node) {
+      if (node === current.wrap) return;
+      node = node.parentNode ?? null;
+    }
+    current.close();
+  });
+}
 
 /** Rome week (Monday..Sunday) containing `now`, as YYYY-MM-DD keys. */
 export function romeWeekKeys(now = new Date()) {
@@ -96,6 +131,7 @@ export function createCalendarioView(deps) {
   const storage = deps.storage ?? null;
   const clock = typeof deps.now === 'function' ? deps.now : () => new Date();
   let renderToken = 0;
+  installOutsideCloser(doc);
 
   const readSpace = () => {
     try {
@@ -126,6 +162,10 @@ export function createCalendarioView(deps) {
     manual: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
+    /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
+    phraseInput: null,
+    /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
+    manualFirst: null,
   };
 
   function clear() {
@@ -156,8 +196,8 @@ export function createCalendarioView(deps) {
     state.slots = [];
     state.slotsNote = '';
     // The pager moves the window but keeps the named members: reload for
-    // them like the "Questa settimana" button does, so browsing never drops
-    // back to the "name someone" prompt mid-week.
+    // them like the "Oggi" button does, so browsing never drops back to the
+    // "name someone" prompt mid-week.
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) void loadWeek(members);
     else renderAll();
@@ -216,18 +256,103 @@ export function createCalendarioView(deps) {
     mount.appendChild(wrap);
   }
 
+  /**
+   * BO-F6-11 fetta 2 (specs/calendario.md C3): the "Nuovo appuntamento" menu.
+   * The dropdown mechanics reuse the shared shell pattern (the same classes
+   * as the clienti menus, no new CSS): a relative wrap, an absolutely
+   * positioned menu, `hidden` to close. Every voice carries only system
+   * classes through `el` normalization; subtitles reuse `ui-hint`.
+   */
+  function renderNewMenu() {
+    const wrap = el(doc, 'div', { className: 'bo-clienti-menuwrap' });
+    const toggle = uiButton(doc, {
+      variant: 'cta',
+      small: true,
+      label: 'Nuovo appuntamento ▾',
+      attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false' },
+    });
+    const menu = el(doc, 'div', { className: 'bo-clienti-menu hidden stack' });
+    menu.setAttribute('role', 'menu');
+    /** @type {{ wrap: any, close: () => void }} */
+    const handle = { wrap, close: () => {} };
+    const close = () => {
+      menu.classList.toggle('hidden', true);
+      toggle.setAttribute('aria-expanded', 'false');
+      if (openMenu === handle) openMenu = null;
+    };
+    handle.close = close;
+    const open = () => {
+      if (openMenu && openMenu !== handle) openMenu.close();
+      menu.classList.toggle('hidden', false);
+      toggle.setAttribute('aria-expanded', 'true');
+      openMenu = handle;
+    };
+    toggle.addEventListener('click', () => {
+      if (menu.classList.contains('hidden')) open();
+      else close();
+    });
+    wrap.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') {
+        close();
+        if (typeof toggle.focus === 'function') toggle.focus();
+      }
+    });
+    const voices = [
+      {
+        title: "Crea con l'AI",
+        sub: "Trovo gli slot liberi e invio l'invito",
+        focus: () => state.phraseInput,
+      },
+      {
+        title: 'Compila manualmente',
+        sub: 'Giorno, ora, cliente e partecipanti',
+        focus: () => state.manualFirst,
+      },
+    ];
+    for (const voice of voices) {
+      const item = el(doc, 'button', { className: 'secondary', attrs: { type: 'button', role: 'menuitem' } });
+      item.appendChild(el(doc, 'span', { text: voice.title }));
+      item.appendChild(el(doc, 'span', { className: 'ui-hint', text: voice.sub }));
+      item.addEventListener('click', () => {
+        close();
+        const target = voice.focus();
+        if (target && typeof target.focus === 'function') target.focus();
+        if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
+      });
+      menu.appendChild(item);
+    }
+    wrap.appendChild(toggle);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+
   function renderHeader() {
     const head = el(doc, 'div', { className: 'panel-heading' });
     const titleBox = el(doc, 'div');
-    titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Backoffice' }));
-    titleBox.appendChild(el(doc, 'h2', { text: 'Calendario' }));
+    // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome — the
+    // eyebrow and title never carry data. The lede stays because the
+    // bo:shots probe reads the pinned week from it (`.cal-wrap .lede`).
+    titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Calendario condiviso' }));
+    titleBox.appendChild(el(doc, 'h2', { text: 'Agenda del team' }));
     const label = weekLabel(state.weekKeys);
     if (label) titleBox.appendChild(el(doc, 'p', { className: 'lede', text: `La settimana del team · ${label}` }));
     head.appendChild(titleBox);
     const nav = el(doc, 'div', { className: 'actions' });
-    const prev = el(doc, 'button', { className: 'secondary small', text: '‹ Settimana prima' });
+    // BO-F6-11 fetta 2 (C2): ‹ interval › Oggi Nuovo-appuntamento, in order.
+    const prev = el(doc, 'button', {
+      className: 'secondary small',
+      text: '‹',
+      attrs: { type: 'button', 'aria-label': 'Settimana prima', title: 'Settimana prima' },
+    });
     prev.addEventListener('click', () => shiftWeek(-7));
-    const today = el(doc, 'button', { className: 'secondary small', text: 'Questa settimana' });
+    const interval = el(doc, 'span', { attrs: { 'data-role': 'week-interval' }, text: label ?? '' });
+    const next = el(doc, 'button', {
+      className: 'secondary small',
+      text: '›',
+      attrs: { type: 'button', 'aria-label': 'Settimana dopo', title: 'Settimana dopo' },
+    });
+    next.addEventListener('click', () => shiftWeek(7));
+    const today = el(doc, 'button', { className: 'secondary small', text: 'Oggi', attrs: { type: 'button' } });
     today.addEventListener('click', () => {
       state.weekKeys = romeWeekKeys(clock());
       state.week = null;
@@ -237,11 +362,11 @@ export function createCalendarioView(deps) {
       if (members.length > 0) void loadWeek(members);
       else renderAll();
     });
-    const next = el(doc, 'button', { className: 'secondary small', text: 'Settimana dopo ›' });
-    next.addEventListener('click', () => shiftWeek(7));
     nav.appendChild(prev);
-    nav.appendChild(today);
+    nav.appendChild(interval);
     nav.appendChild(next);
+    nav.appendChild(today);
+    nav.appendChild(renderNewMenu());
     head.appendChild(nav);
     const filterRow = el(doc, 'div', { className: 'cal-filter' });
     const input = el(doc, 'input', { attrs: { type: 'text', name: 'members', placeholder: 'Persone del team: marco, sara' } });
@@ -389,6 +514,7 @@ export function createCalendarioView(deps) {
     const input = el(doc, 'input', {
       attrs: { type: 'text', name: 'phrase', placeholder: '«giovedì alle 18 con Marco per il taglio»' },
     });
+    state.phraseInput = input;
     const send = el(doc, 'button', { className: 'primary small', text: 'Interpreta' });
     send.addEventListener('click', () => void submitPhrase(String(input.value ?? '')));
     row.appendChild(input);
@@ -565,6 +691,7 @@ export function createCalendarioView(deps) {
       inputs[name] = input;
       form.appendChild(input);
     }
+    state.manualFirst = inputs.customerResource ?? null;
     if (state.draftFill) {
       const draft = state.draftFill;
       if (draft.teamMemberId) inputs.teamMemberId.value = String(draft.teamMemberId);
