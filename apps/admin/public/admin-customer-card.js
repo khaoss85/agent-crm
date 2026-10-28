@@ -430,8 +430,9 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
-        const mark = CARD_CHANNEL_MARKS[String(item?.channel ?? '').toLowerCase()] ?? '·';
-        row.appendChild(el('span', `bo-scheda-chan bo-tile-${String(item?.channel ?? '').toLowerCase()}`, mark));
+        const channelKey = String(item?.channel ?? '').trim().toLowerCase();
+        const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
+        row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
         const isOutbound = String(item?.direction ?? '') === 'outbound';
         const who = isOutbound
           ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')

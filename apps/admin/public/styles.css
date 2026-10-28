@@ -520,6 +520,10 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-scheda-card-offer .bo-scheda-offer { font-size: 16px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
+@media (max-width: 1100px) {
+  .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
+}
 @media (max-width: 700px) {
   .bo-scheda-grid { grid-template-columns: minmax(0, 1fr); }
 }
@@ -1391,7 +1395,7 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
   .bo-rep-grid { grid-template-columns: minmax(0, 1fr); }
   .bo-rep-grid > * , .bo-rep-grid > .bo-rep-wide, .bo-rep-grid > .bo-rep-narrow, .bo-rep-grid > .bo-rep-third { grid-column: 1 / -1; }
 }
-.bo-rep .metric strong { font-size: 26px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bo-rep .metric strong { font-size: clamp(20px, 2.2vw, 26px); line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .bo-rep-grid .forecast-total { font-size: 15px; letter-spacing: 0; }
 .bo-rep-grid > .pipeline-forecast .lede, .bo-rep-grid > .pipeline-forecast p:not(.forecast-total) { font-size: 13px; }
 .bo-rep-rows.panel { margin-top: 4px; border-radius: 16px; border: 1px solid var(--line-soft); box-shadow: none; }
