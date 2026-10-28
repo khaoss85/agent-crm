@@ -15,18 +15,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  SYNC_CHANNELS,
+  SYNC_GRANT_EXPIRING_DAYS,
   SYNC_ROUTE,
   channelLabel,
   createSyncView,
   directionLabel,
+  feedClockTime,
   feedKindLabel,
+  grantDaysLeft,
+  grantExpiring,
   healthAuthority,
   healthLabel,
   healthTone,
   syncAgo,
   syncChannelRows,
+  syncChannelTable,
   syncFeedItems,
   syncFixItems,
+  syncGrantCards,
+  syncIdentityCards,
   syncIndicator,
   timeAgo,
 } from '../apps/admin/public/admin-sync.js';
@@ -75,7 +83,7 @@ const activityOf = (over = {}) => ({
 
 const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
-function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [] } = {}) {
+function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [] } = {}) {
   const calls = [];
   return {
     calls,
@@ -87,6 +95,7 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
           if (body?.connectionKey === 'boom') throw new Error('pull esploso');
           return { pulled: 1 };
         }
+        if (path.includes('/actions/dismiss-duplicate-candidate')) return { candidate: { id: 'c-1', status: 'dismissed' } };
         throw new Error(`unexpected mutation ${path}`);
       }
       if (path === '/api/schema') return schema;
@@ -95,7 +104,7 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
         return activity;
       }
       if (path.startsWith('/api/modules/data-quality-issue/records')) return { items: qualityIssues };
-      if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: [] };
+      if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: candidates };
       throw new Error(`unexpected GET ${path}`);
     },
   };
@@ -280,7 +289,9 @@ test('feed lists newest-first events without payload or provider wording', () =>
     ],
   }));
   assert.equal(items.length, 2);
-  assert.deepEqual(items[0], { at: '2026-10-25T11:30:00.000Z', arrow: '←', channel: 'WhatsApp', text: 'registrato' });
+  assert.deepEqual(items[0], {
+    at: '2026-10-25T11:30:00.000Z', clock: '12:30:00', arrow: '←', channel: 'WhatsApp', text: 'registrato',
+  });
   assert.equal(items[1].text, 'invio fermo');
   assert.deepEqual(syncFeedItems(null), []);
 });
@@ -399,11 +410,12 @@ test('Sincronizza ora pulls once per click and reloads the screen', async () => 
   });
   await view.render();
   await flush();
-  // The failed import owns two row-level controls with one job: the
-  // fix-item action and the table row button (the hero pull is the third
+  // The failed import owns one row-level control (the fix-item action):
+  // the prototype pulls globally from the hero, never per row, so the
+  // table carries no pull buttons (the hero pull is the other
   // `Sincronizza ora` on screen, with data-action="sync-all").
   const buttons = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now');
-  assert.equal(buttons.length, 2);
+  assert.equal(buttons.length, 1);
   // A double click on the same control joins the pending pull: one request.
   buttons[0].dispatch('click');
   buttons[0].dispatch('click');
@@ -440,7 +452,7 @@ test('a successful pull releases the guard so the next click pulls again', async
   // click performs a second pull instead of staying disabled for the
   // session.
   const rebuilt = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now');
-  assert.equal(rebuilt.length, 2);
+  assert.equal(rebuilt.length, 1);
   rebuilt[0].dispatch('click');
   await flush(12);
   assert.equal(pulls().length, 2);
@@ -558,4 +570,310 @@ test('badge count adds the sync attention rows when a space is selected', async 
   // A failed sync read keeps the quality count instead of failing the badge.
   const syncDown = fakeClient({ failActivity: new Error('giù') });
   assert.equal(await loadFixCount(syncDown, { spaceId: 'prova' }), 0);
+});
+
+test('the Canali card lists the nine fixed prototype channels', () => {
+  assert.equal(SYNC_CHANNELS.length, 9);
+  assert.deepEqual(SYNC_CHANNELS.map((row) => row.id), [
+    'whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form', 'calendar', 'stripe',
+  ]);
+  const byId = new Map(SYNC_CHANNELS.map((row) => [row.id, row]));
+  assert.equal(byId.get('whatsapp').name, 'WhatsApp');
+  assert.equal(byId.get('voice').name, 'Telefono');
+  assert.equal(byId.get('site-form').name, 'Form sito');
+  assert.equal(byId.get('calendar').name, 'Google Calendar');
+  assert.deepEqual(SYNC_CHANNELS.map((row) => row.mark), ['WA', 'IG', 'FB', 'TT', '@', 'TEL', 'WEB', 'CAL', 'S']);
+  assert.equal(byId.get('tiktok').direction, '← in entrata');
+  assert.equal(byId.get('site-form').direction, '← in entrata');
+  assert.equal(byId.get('stripe').direction, '↔ pagamenti e link');
+  assert.equal(byId.get('whatsapp').direction, '↔ bidirezionale');
+});
+
+test('grant expiry reads whole days and the pill window', () => {
+  assert.equal(SYNC_GRANT_EXPIRING_DAYS, 7);
+  assert.equal(grantDaysLeft('2026-10-28T12:00:00.000Z', NOW), 3);
+  assert.equal(grantDaysLeft('2026-10-18T12:00:00.000Z', NOW), -7);
+  assert.equal(grantDaysLeft(null, NOW), null);
+  assert.equal(grantDaysLeft('not-a-date', NOW), null);
+  assert.equal(grantExpiring('2026-10-28T12:00:00.000Z', NOW), true);
+  assert.equal(grantExpiring('2026-11-01T12:00:00.000Z', NOW), true);
+  assert.equal(grantExpiring('2026-11-02T12:00:00.000Z', NOW), false);
+  assert.equal(grantExpiring(null, NOW), false);
+});
+
+test('the channel table aggregates one row per fixed channel', () => {
+  const rows = syncChannelTable(activityOf({
+    connections: [
+      entryOf(),
+      entryOf({
+        connectionKey: 'ig-1', channel: 'instagram', inbox: inboxOf({ received: 4, lastReceivedAt: '2026-10-25T11:45:00.000Z' }),
+      }),
+      entryOf({
+        connectionKey: 'sms-1', channel: 'sms', inbox: inboxOf({ received: 1, lastReceivedAt: '2026-10-25T10:00:00.000Z' }),
+      }),
+    ],
+  }));
+  // Nine fixed rows plus the connected outsider, never in their place.
+  assert.equal(rows.length, 10);
+  assert.deepEqual(rows.slice(0, 9).map((row) => row.channel), SYNC_CHANNELS.map((row) => row.id));
+  assert.equal(rows[9].channel, 'sms');
+  const wa = rows[0];
+  assert.equal(wa.label, 'WhatsApp');
+  assert.equal(wa.mark, 'WA');
+  assert.equal(wa.direction, '↔ bidirezionale');
+  assert.equal(wa.connected, true);
+  assert.equal(wa.received, 10);
+  assert.equal(wa.lastAt, '2026-10-25T11:30:00.000Z');
+  assert.deepEqual(wa.pill, { text: 'Attivo', tone: 'attivo' });
+  assert.deepEqual(wa.keys, ['wa-1']);
+  const email = rows.find((row) => row.channel === 'email');
+  assert.equal(email.connected, false);
+  assert.equal(email.pill, null);
+  assert.equal(email.direction, '↔ bidirezionale');
+  assert.deepEqual(email.keys, []);
+  // Two bindings of one channel aggregate: events sum, latest wins.
+  const merged = syncChannelTable(activityOf({
+    connections: [
+      entryOf({ inbox: inboxOf({ received: 10, lastReceivedAt: '2026-10-25T09:00:00.000Z' }) }),
+      entryOf({ connectionKey: 'wa-2', inbox: inboxOf({ received: 5, lastReceivedAt: '2026-10-25T11:00:00.000Z' }) }),
+    ],
+  }));
+  assert.equal(merged[0].received, 15);
+  assert.equal(merged[0].lastAt, '2026-10-25T11:00:00.000Z');
+  assert.deepEqual(merged[0].keys.sort(), ['wa-1', 'wa-2']);
+  // No connections: nine unconnected rows, zero invented.
+  const empty = syncChannelTable(activityOf({ connections: [] }));
+  assert.equal(empty.length, 9);
+  assert.ok(empty.every((row) => row.connected === false && row.pill === null));
+  assert.deepEqual(syncChannelTable(null).length, 9);
+});
+
+test('the channel pill names expiry and import before the calm Attivo', () => {
+  const expiring = syncChannelTable(activityOf({
+    connections: [entryOf({ channel: 'instagram', connectionKey: 'ig-1', grantExpiresAt: '2026-10-28T12:00:00.000Z' })],
+  }));
+  assert.deepEqual(expiring.find((row) => row.channel === 'instagram').pill, { text: 'Permesso in scadenza', tone: 'permesso' });
+  // A far-future expiry stays calm.
+  const calm = syncChannelTable(activityOf({
+    connections: [entryOf({ grantExpiresAt: '2026-12-25T12:00:00.000Z' })],
+  }));
+  assert.deepEqual(calm[0].pill, { text: 'Attivo', tone: 'attivo' });
+  // A running import reads Importazione even without an expiry.
+  const importing = syncChannelTable(activityOf({
+    connections: [entryOf({ sync: { status: 'running' }, health: 'ok' })],
+  }));
+  assert.deepEqual(importing[0].pill, { text: 'Importazione', tone: 'importazione' });
+  // Off-prototype health never poses as Attivo: it names its verdict.
+  const down = syncChannelTable(activityOf({
+    connections: [entryOf({ status: 'suspended', health: 'down' })],
+  }));
+  assert.equal(down[0].pill.text, 'Bloccato');
+  assert.equal(down[0].pill.tone, 'altro');
+});
+
+test('the yellow grant cards use the prototype wording, soonest first', () => {
+  const cards = syncGrantCards(activityOf({
+    connections: [
+      entryOf({ connectionKey: 'ig-1', channel: 'instagram', grantExpiresAt: '2026-10-28T12:00:00.000Z' }),
+      entryOf({ connectionKey: 'tt-1', channel: 'tiktok', grantExpiresAt: '2026-10-26T12:00:00.000Z' }),
+      entryOf({ status: 'pending', health: 'idle' }),
+      entryOf({ connectionKey: 'wa-far', grantExpiresAt: '2026-12-25T12:00:00.000Z' }),
+    ],
+  }), NOW);
+  // Only active bindings inside the window: the far-future grant, the
+  // expiry-less whatsapp and the pending row stay out.
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].title, 'Il permesso di TikTok scade domani');
+  assert.equal(cards[0].route, '#/connettori/tiktok');
+  assert.equal(cards[1].title, 'Il permesso di Instagram scade tra 3 giorni');
+  assert.equal(cards[1].detail, 'Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.');
+  assert.equal(cards[1].route, '#/connettori/instagram');
+  const others = syncGrantCards(activityOf({
+    connections: [entryOf({ connectionKey: 'wa-1', grantExpiresAt: '2026-10-25T18:00:00.000Z' })],
+  }), NOW);
+  assert.equal(others[0].title, 'Il permesso di WhatsApp scade oggi');
+  assert.equal(others[0].detail, 'Rinnovalo ora per non perdere i nuovi arrivi nelle schede clienti.');
+  const past = syncGrantCards(activityOf({
+    connections: [entryOf({ connectionKey: 'wa-1', grantExpiresAt: '2026-10-20T12:00:00.000Z' })],
+  }), NOW);
+  assert.equal(past[0].title, 'Il permesso di WhatsApp è scaduto');
+  assert.deepEqual(syncGrantCards(null, NOW), []);
+});
+
+test('the purple identity cards name people, never record codes', () => {
+  const cards = syncIdentityCards([
+    { id: 'c-1', status: 'unresolved', leftLabel: 'Paolo Esposito', rightLabel: 'Paolo Esposito' },
+    { id: 'c-2', status: 'unresolved', leftLabel: 'Paolo Esposito', rightLabel: '+39 333 0000000' },
+    { id: 'c-3', status: 'dismissed', leftLabel: 'X', rightLabel: 'Y' },
+    { id: 'c-4', status: 'unresolved', leftId: 'contatto-1' },
+    { status: 'unresolved' },
+    null,
+  ]);
+  assert.equal(cards.length, 3);
+  assert.equal(cards[0].title, 'Paolo Esposito potrebbe avere due schede');
+  assert.equal(cards[1].title, 'Paolo Esposito e +39 333 0000000 potrebbero essere la stessa persona');
+  assert.equal(cards[2].title, 'contatto-1 potrebbe avere una seconda scheda');
+  for (const card of cards) {
+    assert.ok(!card.title.includes('duplicate-candidate'));
+    assert.ok(!card.title.includes('task-'));
+  }
+  assert.deepEqual(syncIdentityCards(null), []);
+});
+
+test('the live feed reads the Rome clock, never UTC', () => {
+  assert.equal(feedClockTime('2026-07-15T10:30:00.000Z'), '12:30:00');
+  assert.equal(feedClockTime('not-a-date'), '—');
+  assert.equal(feedClockTime(null), '—');
+  assert.equal(feedClockTime(''), '—');
+});
+
+test('the indicator counts candidates and grants with the channel fixes', () => {
+  const withCandidates = syncIndicator(activityOf(), NOW, { extraCount: 2 });
+  assert.equal(withCandidates.tone, 'fix');
+  assert.equal(withCandidates.title, 'Quasi tutto sincronizzato');
+  assert.equal(withCandidates.count, 2);
+  // An expiring grant alone turns the hero even with no other fix.
+  const grantOnly = syncIndicator(activityOf({
+    connections: [entryOf({ grantExpiresAt: '2026-10-28T12:00:00.000Z' })],
+  }), NOW);
+  assert.equal(grantOnly.tone, 'fix');
+  assert.equal(grantOnly.count, 1);
+});
+
+test('the table renders nine rows with the count, agg and pills', async () => {
+  const { mount, view } = renderView({
+    client: {
+      activity: activityOf({
+        connections: [
+          entryOf(),
+          entryOf({ connectionKey: 'ig-1', channel: 'instagram', grantExpiresAt: new Date(Date.now() + 3.5 * 86400000).toISOString() }),
+        ],
+      }),
+    },
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('2 di 9 collegati'), 'the card counts the connected nine');
+  for (const name of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
+    assert.ok(text.includes(name), `the table names ${name}`);
+  }
+  assert.ok(text.includes('↔ bidirezionale'));
+  assert.ok(text.includes('↔ pagamenti e link'));
+  assert.ok(text.includes('← in entrata'));
+  assert.ok(text.includes('10 eventi oggi'));
+  assert.ok(text.includes('Permesso in scadenza'));
+  assert.ok(text.includes('Attivo'));
+  // Every unconnected channel offers the guided flow, none invents data.
+  const collega = mount.findAll('a').filter((node) => node.textContent === 'Collega');
+  assert.equal(collega.length, 7);
+  assert.deepEqual(collega.map((node) => node.getAttribute('href')).sort(), [
+    '#/connettori/calendar', '#/connettori/email', '#/connettori/facebook',
+    '#/connettori/site-form', '#/connettori/stripe', '#/connettori/tiktok', '#/connettori/voice',
+  ]);
+  // No per-row pull: the table carries no sync-now buttons.
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now').length, 0);
+});
+
+test('the empty space still lists nine connectable rows', async () => {
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }) },
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('0 di 9 collegati'));
+  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 9);
+});
+
+test('a failed read offers Riprova and retries on click', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = fakeClient({ failActivity: new Error('giù') });
+  const view = createSyncView({
+    doc, mount, client, storage: { getItem: () => 'prova', setItem: () => {}, removeItem: () => {} },
+    navigate: () => {}, toast: () => {},
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('non è riuscita'));
+  assert.ok(!mount.textContent.includes('giù'));
+  const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'retry');
+  assert.equal(retry.textContent, 'Riprova');
+  retry.dispatch('click');
+  await flush(12);
+  assert.ok(client.calls.filter((call) => call.path.startsWith('/api/connectors/activity')).length >= 2);
+});
+
+test('the observer watches without touching', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const client = fakeClient({
+    activity: activityOf({
+      connections: [entryOf({ sync: { status: 'failed', lastErrorCode: 'X' }, health: 'attention', needsFix: 0 })],
+    }),
+    candidates: [{ id: 'c-1', status: 'unresolved', leftLabel: 'Paolo Esposito', rightLabel: 'Paolo Esposito' }],
+  });
+  const view = createSyncView({
+    doc, mount, client, role: () => 'observer',
+    storage: { getItem: () => 'prova', setItem: () => {}, removeItem: () => {} },
+    navigate: () => {}, toast: (message, isError = false) => toasts.push({ message, isError }),
+  });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  // Data stays visible; the purple card keeps its honest title.
+  assert.ok(text.includes('Paolo Esposito potrebbe avere due schede'));
+  assert.ok(text.includes('Decido io'));
+  assert.ok(text.includes('Sola lettura (Osservatore)'));
+  // Every write control hides: hero pull, fix pull, keep-both, Collega.
+  assert.ok(mount.findAll('button').every((node) => node.textContent !== 'Sincronizza ora' || node.getAttribute('hidden') !== null));
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now').length, 0);
+  assert.equal(mount.findAll('button').filter((node) => node.textContent === 'Sì, tienili entrambi').length, 0);
+  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 0);
+});
+
+test('keep-both dismisses through the record action, decide routes to quality', async () => {
+  const { mount, client, view, toasts } = renderView({
+    client: {
+      candidates: [{ id: 'c-1', status: 'unresolved', leftLabel: 'Paolo Esposito', rightLabel: 'Paolo Esposito' }],
+    },
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Da sistemare 1'));
+  assert.ok(mount.textContent.includes('Paolo Esposito potrebbe avere due schede'));
+  const keep = mount.findAll('button').find((node) => node.textContent === 'Sì, tienili entrambi');
+  assert.ok(keep);
+  keep.dispatch('click');
+  await flush(12);
+  const dismissed = client.calls.filter((call) => call.path.includes('/actions/dismiss-duplicate-candidate'));
+  assert.equal(dismissed.length, 1);
+  assert.ok(dismissed[0].path.includes('/api/modules/duplicate-candidate/records/c-1/'));
+  assert.ok(!toasts.some((toast) => toast.isError));
+  const decide = mount.findAll('a').find((node) => node.textContent === 'Decido io');
+  assert.equal(decide.getAttribute('href'), '#/customer-data');
+});
+
+test('the yellow card renews through the connector detail', async () => {
+  const { mount, view, navigated } = renderView({
+    client: {
+      activity: activityOf({
+        connections: [entryOf({
+          connectionKey: 'ig-1', channel: 'instagram', account: 'palestra.esempio',
+          grantExpiresAt: new Date(Date.now() + 3.5 * 86400000).toISOString(),
+        })],
+      }),
+    },
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Il permesso di Instagram scade tra 3 giorni'));
+  assert.ok(mount.textContent.includes('Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.'));
+  const renew = mount.findAll('a').find((node) => node.textContent === 'Rinnova in un clic');
+  assert.equal(renew.getAttribute('href'), '#/connettori/instagram');
+  renew.dispatch('click');
+  await flush();
+  assert.deepEqual(navigated, ['#/connettori/instagram']);
 });
