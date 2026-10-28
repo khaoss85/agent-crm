@@ -353,12 +353,15 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
 }
 
 // ---------------------------------------------------------------------------
-// Triage. "Fatto" and "A domani" are decisions on the suggestion, and both
-// are reversible with "Annulla": the map holds only decided suggestions, so
-// a reload recomputes every suggestion from its record and drops the ones
-// whose record is gone or closed. Session-local on purpose (same precedent
-// as the assistant panel history): the durable facts live in the cited
-// records, and triage never invents domain state.
+// Triage. "Fatto" and "Rimandato a domani" are decisions on the suggestion,
+// and both are reversible with "Annulla": the map holds only decided
+// suggestions, so a reload recomputes every suggestion from its record and
+// drops the ones whose record is gone or closed. "Domani" on a follow-up is
+// durable — it runs the work-task `postpone` action, moving the due date and
+// writing a timeline note — and the triage flag is only the attenuated paint.
+// Session-local on purpose (same precedent as the assistant panel history):
+// the durable facts live in the cited records, and triage never invents
+// domain state.
 // ---------------------------------------------------------------------------
 
 /**
@@ -850,7 +853,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
     const done = el(doc, 'div', 'bo-oggi-btns');
     done.appendChild(el(
       doc, 'span', 'bo-oggi-state',
-      state === 'done' ? 'Fatto' : 'A domani',
+      state === 'done' ? 'Fatto' : 'Rimandato a domani',
     ));
     const undo = el(doc, 'button', 'small secondary', 'Annulla');
     undo.setAttribute('data-triage', 'undo');
@@ -1100,6 +1103,8 @@ export function createOggiView(deps) {
   let triage = {};
   /** Last loaded data, repainted on triage without re-reading. */
   let last = null;
+  /** Last advisor list, so Domani finds the suggestion it defers. */
+  let lastBuilt = null;
   let lastMeta = { spaceName: '', userName: '', links: [], now: new Date() };
   let error = '';
   let busy = false;
@@ -1107,6 +1112,7 @@ export function createOggiView(deps) {
   function paint() {
     if (!last) return;
     const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now });
+    lastBuilt = built;
     const agenda = buildTodayAgenda(last.appointments, lastMeta.now);
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls })
@@ -1137,9 +1143,7 @@ export function createOggiView(deps) {
         disabled: busy,
         events: {
           onPostpone: (actionId) => {
-            triage = applyTriageDecision(triage, actionId, 'postpone');
-            error = '';
-            paint();
+            void postpone(actionId);
           },
           onUndo: (actionId) => {
             triage = undoTriage(triage, actionId);
@@ -1152,6 +1156,48 @@ export function createOggiView(deps) {
         },
       },
     });
+  }
+
+  /**
+   * "Domani" on a follow-up suggestion: the durable work-task `postpone`
+   * action, with the same fresh re-read that guards every execution — the
+   * row attenuates as "Rimandato a domani" only after the deferral commits,
+   * and a refusal keeps the row open with the reason on screen. A suggestion
+   * with no deferrable record (the pre-call prep only navigates) keeps the
+   * previous session-only flag: there is nothing durable to write for it.
+   * @param {unknown} actionId
+   */
+  async function postpone(actionId) {
+    const action = (lastBuilt?.actions ?? []).find((candidate) => candidate?.id === actionId);
+    if (!action) return;
+    if (action?.run !== 'complete-task') {
+      triage = applyTriageDecision(triage, actionId, 'postpone');
+      error = '';
+      paint();
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    error = '';
+    paint();
+    try {
+      await executeAdvisorAction(bound, action, (checked) => bound.request(
+        `/api/modules/work-task/records/${encodeURIComponent(checked.record.id)}/actions/postpone`,
+        { method: 'POST', body: JSON.stringify({}) },
+      ));
+      triage = applyTriageDecision(triage, action.id, 'postpone');
+    } catch (failure) {
+      error = failure?.message ?? 'Azione non riuscita.';
+    } finally {
+      busy = false;
+    }
+    // The task stays open with its new due date: reload so the row re-sorts
+    // instead of lingering on stale data.
+    if (error === '') {
+      await refresh();
+    } else {
+      paint();
+    }
   }
 
   async function execute(action) {

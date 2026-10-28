@@ -473,6 +473,7 @@ test('full home renders every section with clickable sources', () => {
 
   mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
   assert.ok(mount.textContent.includes('1 di 2'), 'progress counts the postponed suggestion');
+  assert.ok(mount.textContent.includes('Rimandato a domani'), 'the postponed card names its state');
   assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears after postponing');
   mount.querySelector('button[data-triage="undo"]').dispatch('click', {});
   assert.ok(mount.textContent.includes('0 di 2'), 'undo restores the suggestion');
@@ -581,6 +582,49 @@ test('Oggi view completes a task with a fresh read, then drops its row', async (
   assert.ok(client.posts[0].path.endsWith('/records/task-1/actions/complete'), 'same server action as Work');
   await settle(() => !mount.textContent.includes('Richiama per il preventivo'));
   assert.ok(mount.textContent.includes('Prepara la call'), 'the prep row survives on its own record');
+});
+
+test('Oggi view postpones through the work-task action, then keeps the open row', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let postponedAt = null;
+  const client = {
+    posts: [],
+    async request(path, options = {}) {
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        this.posts.push({ path, body: options.body });
+        postponedAt = '2026-10-20T07:00:00.000Z';
+        return { task: { ...TASK_OPEN, dueAt: postponedAt }, activity: { kind: 'note' }, replayed: false };
+      }
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+      if (path.startsWith('/api/modules/work-task/records/')) {
+        return postponedAt === null ? { ...TASK_OPEN } : { ...TASK_OPEN, dueAt: postponedAt };
+      }
+      if (path.startsWith('/api/modules/work-task/records')) {
+        return { items: [{ ...TASK_OPEN, ...(postponedAt === null ? {} : { dueAt: postponedAt }) }] };
+      }
+      if (path.startsWith('/api/modules/appointment/records')) return { items: [APPT_TODAY] };
+      if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const view = createOggiView({ doc, mount, client, navigate: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'));
+
+  mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
+  await settle(() => client.posts.length > 0);
+  assert.ok(client.posts[0].path.endsWith('/records/task-1/actions/postpone'), 'Domani runs the durable action');
+  await settle(() => mount.textContent.includes('Rimandato a domani'));
+  // The task stays open with its new due date: the row attenuates, it does
+  // not disappear, and Annulla restores it.
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'), 'the postponed row stays');
+  assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears after postponing');
+  mount.querySelector('button[data-triage="undo"]').dispatch('click', {});
+  assert.ok(mount.querySelector('button[data-triage="postpone"]'), 'undo restores Domani');
 });
 
 test('Oggi view keeps the row open and shows the refusal on stale data', async () => {
