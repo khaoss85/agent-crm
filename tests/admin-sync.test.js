@@ -473,6 +473,54 @@ test('the view follows a space switch instead of keeping the old activity', asyn
   assert.ok(reads()[1].path.includes('spaceId=nuova'));
 });
 
+test('the live session space drives the view when storage is empty', async () => {
+  // Under a space mount the session names the space; the stored local pick
+  // is empty on a fresh browser, and the screen must still show the current
+  // space's state instead of asking to choose one (backlog:e5fec544).
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = fakeClient();
+  const view = createSyncView({
+    doc,
+    mount,
+    client,
+    storage: { getItem: () => '', setItem: () => {}, removeItem: () => {} },
+    spaceId: () => 'spazio-sessione',
+    navigate: () => {},
+    toast: () => {},
+  });
+  await view.render();
+  await flush();
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
+  assert.equal(reads().length, 1);
+  assert.ok(reads()[0].path.includes('spaceId=spazio-sessione'));
+  assert.ok(mount.textContent.includes('Tutto sincronizzato'));
+  assert.ok(!mount.textContent.includes('Scegli uno spazio'));
+});
+
+test('an explicit live space wins over a stale stored one', async () => {
+  // The live session space wins (admin-shell resolveBadgeSpaceId counts the
+  // badge the same way): a stored pick from another identity never steers
+  // this screen.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = fakeClient();
+  const view = createSyncView({
+    doc,
+    mount,
+    client,
+    storage: { getItem: () => 'vecchio', setItem: () => {}, removeItem: () => {} },
+    spaceId: () => 'sessione',
+    navigate: () => {},
+    toast: () => {},
+  });
+  await view.render();
+  await flush();
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
+  assert.equal(reads().length, 1);
+  assert.ok(reads()[0].path.includes('spaceId=sessione'));
+});
+
 test('the view degrades honestly: no space, no channels, failed read', async () => {
   const noSpace = renderView({ spaceId: '' });
   await noSpace.view.render();
