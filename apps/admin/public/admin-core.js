@@ -493,7 +493,15 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
   const record = error !== null && typeof error === 'object' ? error : {};
   const code = typeof record.code === 'string' ? record.code : 'UNKNOWN';
   const status = typeof record.status === 'number' ? record.status : null;
-  const message = error instanceof Error ? error.message : String(error ?? '');
+  // A plain rejection object ({code, status, message}) carries the message on
+  // the record, not on an Error prototype: read it there first, so the log
+  // keeps the real cause instead of '[object Object]'. A message-less object
+  // (e.g. a bare {status: 404}) logs as JSON, never String(object).
+  const message = typeof record.message === 'string' && record.message !== ''
+    ? record.message
+    : (error instanceof Error
+      ? error.message
+      : (error !== null && typeof error === 'object' ? JSON.stringify(error) : String(error ?? '')));
   const report = typeof log === 'function'
     ? log
     : (typeof console !== 'undefined' && typeof console.error === 'function'

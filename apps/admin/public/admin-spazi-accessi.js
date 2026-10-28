@@ -247,10 +247,24 @@ export function createSpaziAccessiView(deps) {
     toast(message, isError);
   }
 
-  /** @param {unknown} error */
+  /**
+   * Normalize a client rejection without losing what the page branches on.
+   * A rejection with a code passes through untouched; anything else becomes
+   * {code: 'UNKNOWN', ...} keeping the record's own status and message, so a
+   * status-only 404 still reads as not-composed and the log keeps the cause.
+   * @param {unknown} error
+   */
   function errorOf(error) {
     if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') return error;
-    return { code: 'UNKNOWN', message: error instanceof Error ? error.message : String(error) };
+    if (error instanceof Error) {
+      /** @type {{code: string, message: string, status?: number}} */
+      const normalized = { code: 'UNKNOWN', message: error.message };
+      const status = /** @type {any} */ (error).status;
+      if (typeof status === 'number') normalized.status = status;
+      return normalized;
+    }
+    if (error && typeof error === 'object') return { ...error, code: 'UNKNOWN' };
+    return { code: 'UNKNOWN', message: String(error) };
   }
 
   async function load() {

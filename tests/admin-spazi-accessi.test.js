@@ -228,6 +228,46 @@ test('missing permission rows render an honest note, never invented switches', a
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0);
 });
 
+test('a status-only 404 on the switches reads as not composed, never transient', async () => {
+  // The rejection carries no code, only a status: the normalization must
+  // keep it, or the page would answer the transient 'retry later' instead
+  // of the not-composed note.
+  const { mount, view: v } = view({ client: stubClient({ fail: { overrides: { status: 404 } } }) });
+  await v.render();
+  await flush();
+  assert.match(text(mount), /non sono attivi in questo spazio/);
+  assert.doesNotMatch(text(mount), /Riprova più tardi/);
+});
+
+test('a status-only 403 on the team reads as a refusal, not an empty team', async () => {
+  const { mount, view: v } = view({ client: stubClient({ fail: { members: { status: 403 } } }) });
+  await v.render();
+  await flush();
+  assert.match(text(mount), /ha rifiutato la lettura/);
+  assert.doesNotMatch(text(mount), /Nessun membro oltre a te/);
+});
+
+test('a plain server failure reaches the page as a human note while the log keeps its message', async () => {
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const { mount, view: v } = view({ client: stubClient({ fail: { members: new Error('boom') } }) });
+    await v.render();
+    await flush();
+    const rendered = text(mount);
+    assert.match(rendered, /Il team non si è potuto leggere/);
+    assert.doesNotMatch(rendered, /boom/);
+    assert.doesNotMatch(rendered, /UNKNOWN/);
+    const entry = logged.find((args) => String(args[0]).includes('[bo] lettura fallita'));
+    assert.ok(entry, 'the failure is logged for the operator console');
+    assert.equal(entry[1]?.code, 'UNKNOWN');
+    assert.equal(entry[1]?.message, 'boom', 'the log keeps the real message, not [object Object]');
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test('inviting names subject, role and reason; removal asks twice with a reason', async () => {
   const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
   const calls = [];
