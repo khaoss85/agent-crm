@@ -726,6 +726,10 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-pager button.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .bo-clienti-pager button[disabled] { opacity: .45; cursor: default; }
 .bo-clienti-gap { font-size: 13px; color: var(--dim); }
+.bo-clienti-thead { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); padding: 2px 14px 0; }
+.bo-clienti-range { font-size: 13px; color: var(--dim); margin-right: 4px; }
+.bo-clienti-sizeslabel { font-size: 12px; color: var(--dim); margin-left: 6px; }
+.bo-clienti-searchclear { font-size: 12px; border: 0; background: transparent; color: var(--accent); cursor: pointer; white-space: nowrap; }
 
 @media (max-width: 700px) {
   .bo-clienti-toolbar { align-items: stretch; }
