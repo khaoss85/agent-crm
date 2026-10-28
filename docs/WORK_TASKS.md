@@ -103,9 +103,14 @@ caused it.
 ```text
 open       → completed        work-task.complete   human actor
 open       → cancelled        work-task.cancel     human actor, reason required
+open       → open (dueAt +24h, timeline note)  work-task.postpone  human actor
 completed  → nothing
 cancelled  → nothing
 ```
+
+`postpone` is not a transition: the task stays `open`, so "Domani" survives a
+reload without a new status or a migration. A repeat decided the same day
+replays the existing note instead of writing another one.
 
 Published in `/api/schema` and in `crm app inspect --json` through each action's
 `fromStates` / `toState`. It is a table, not a rank: every move out of a terminal
@@ -243,10 +248,10 @@ composing `work` is refused **at startup** with the unmet edge named.
 
 ## Human-actor boundary
 
-`complete`, `cancel` and `add-note` require `actor.type === 'user'`; an agent is
-refused `403 HUMAN_APPROVAL_REQUIRED`. **Not RBAC, not authentication, not secure
-assignment** — a local caller sets its own actor header. What it buys is that an
-agent cannot silently close somebody's work.
+`complete`, `cancel`, `postpone` and `add-note` require `actor.type === 'user'`;
+an agent is refused `403 HUMAN_APPROVAL_REQUIRED`. **Not RBAC, not authentication,
+not secure assignment** — a local caller sets its own actor header. What it buys
+is that an agent cannot silently close somebody's work.
 
 Automatic creation through `follow-up@1` does not require a human actor: the
 consuming action's own boundary already decided that, and re-deciding it here

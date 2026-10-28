@@ -81,7 +81,7 @@ async function leadProject(t, file, clock) {
 // The declaration
 // ---------------------------------------------------------------------------
 
-test('the package declares two records, three actions, one capability and no dependency', () => {
+test('the package declares two records, four actions, one capability and no dependency', () => {
   const pkg = createWorkPackage();
   assert.equal(pkg.name, 'work');
   assert.deepEqual([...pkg.resources].sort(), ['work-activity', 'work-task']);
@@ -90,7 +90,7 @@ test('the package declares two records, three actions, one capability and no dep
   assert.deepEqual(pkg.requires, []);
   assert.deepEqual(pkg.capabilities.map((c) => `${c.name}@${c.version}`), ['follow-up@1']);
   assert.deepEqual(pkg.actions.map((a) => `${a.module}.${a.name}`).sort(), [
-    'work-task.add-note', 'work-task.cancel', 'work-task.complete',
+    'work-task.add-note', 'work-task.cancel', 'work-task.complete', 'work-task.postpone',
   ]);
   assert.deepEqual(pkg.policies, [], 'v1 needs no versioned policy: two consumers share no rule');
   // It owns neither a Lead nor any other package's record: those are subjects.
@@ -285,7 +285,7 @@ test('the transition table is the whole answer, and both terminals are terminal'
 
   // Every move out of a terminal state is refused, by the table and not a rank.
   for (const task of [completing, cancelling]) {
-    for (const action of ['complete', 'cancel']) {
+    for (const action of ['complete', 'cancel', 'postpone']) {
       await assert.rejects(
         () => run(app, 'work-task', action, task.id, { reason: 'changed my mind' }),
         (error) => error.status === 409 && error.code === 'INVALID_STATE',
@@ -296,9 +296,11 @@ test('the transition table is the whole answer, and both terminals are terminal'
   // There is no reopen: no action exists that could produce one.
   const schema = await context.client.schema();
   const meta = schema.generatedModules.find((m) => m.name === 'work-task');
-  assert.deepEqual(meta.actions.map((a) => a.name).sort(), ['add-note', 'cancel', 'complete']);
+  assert.deepEqual(meta.actions.map((a) => a.name).sort(), ['add-note', 'cancel', 'complete', 'postpone']);
   assert.deepEqual(meta.actions.find((a) => a.name === 'complete').fromStates, ['open']);
   assert.deepEqual(meta.actions.find((a) => a.name === 'cancel').fromStates, ['open']);
+  assert.deepEqual(meta.actions.find((a) => a.name === 'postpone').fromStates, ['open'],
+    'postpone is open-only, like every other state-changing write');
   assert.ok(!meta.actions.find((a) => a.name === 'add-note').fromStates,
     'a note is legitimate on a closed task and is not a transition');
 });
@@ -312,7 +314,7 @@ test('every writing action is a human decision, and an agent is refused each one
   await run(app, 'lead', 'qualify', lead.id, { dueAt: '2026-08-12T09:00:00Z' });
   const task = app.modules.get('work-task').service.listWhere({ subjectId: lead.id })[0];
   for (const [action, input] of [
-    ['complete', {}], ['cancel', { reason: 'no' }], ['add-note', { body: 'bot opinion' }],
+    ['complete', {}], ['cancel', { reason: 'no' }], ['postpone', {}], ['add-note', { body: 'bot opinion' }],
   ]) {
     await assert.rejects(
       () => run(app, 'work-task', action, task.id, input, AGENT),
@@ -617,4 +619,61 @@ test('dueAt never moves a task: the clock is stepped past it and the row is byte
   const overdue = after.dueAt !== null && after.dueAt < instant;
   assert.equal(overdue, true);
   assert.deepEqual(app.modules.get('work-task').service.get(before.id), before);
+});
+
+// ---------------------------------------------------------------------------
+// BO-F6-07 (backlog:aede607c82a2): postpone — a durable "Domani"
+// ---------------------------------------------------------------------------
+
+test('postpone moves the due date one day and records the deferral on the timeline', async (t) => {
+  let instant = '2026-08-10T09:00:00.000Z';
+  const { context } = await leadProject(t, 'postpone.sqlite', () => instant);
+  const { app } = context;
+  const lead = await app.modules.get('lead').service.create(
+    { firstName: 'Rinvia', lastName: 'Domani', email: 'rinvia@x.example' }, { actor: ACTOR },
+  );
+  await run(app, 'lead', 'qualify', lead.id, { dueAt: '2026-08-12T09:00:00.000Z' });
+  const task = app.modules.get('work-task').service.listWhere({ subjectId: lead.id })[0];
+
+  const postponed = await run(app, 'work-task', 'postpone', task.id, {});
+  assert.equal(postponed.result.replayed, false);
+  assert.equal(postponed.result.task.status, 'open', 'postpone is not a transition');
+  assert.equal(postponed.result.task.dueAt, '2026-08-11T09:00:00.000Z', 'exactly one day ahead');
+  assert.equal(postponed.result.activity.kind, 'note');
+  assert.equal(postponed.result.activity.body, 'Rimandato a domani.');
+  assert.equal(postponed.result.activity.sourcePackage, 'work');
+  assert.equal(postponed.result.activity.sourceAction, 'postpone');
+  assert.equal(postponed.result.activity.taskId, task.id);
+
+  const timeline = sortTimeline(app.modules.get('work-activity').service.listWhere({ taskId: task.id }));
+  assert.deepEqual(timeline.map((row) => row.kind), ['task_created', 'note']);
+});
+
+test('postpone replays on the same day and defers again another day', async (t) => {
+  let instant = '2026-08-10T09:00:00.000Z';
+  const { context } = await leadProject(t, 'postpone-replay.sqlite', () => instant);
+  const { app } = context;
+  const lead = await app.modules.get('lead').service.create(
+    { firstName: 'Doppio', lastName: 'Click', email: 'doppio@x.example' }, { actor: ACTOR },
+  );
+  await run(app, 'lead', 'qualify', lead.id, { dueAt: '2026-08-10T09:00:00.000Z' });
+  const task = app.modules.get('work-task').service.listWhere({ subjectId: lead.id })[0];
+
+  const first = await run(app, 'work-task', 'postpone', task.id, {});
+  assert.equal(first.result.replayed, false);
+  // A lost retry decided the same day: no second note, no second move.
+  const replay = await run(app, 'work-task', 'postpone', task.id, {});
+  assert.equal(replay.result.replayed, true);
+  assert.equal(replay.result.activity.id, first.result.activity.id);
+  assert.equal(replay.result.task.dueAt, first.result.task.dueAt);
+  assert.equal(app.modules.get('work-activity').service.listWhere({ taskId: task.id }).length, 2,
+    'creation plus one deferral note');
+
+  // Decided another day, it is a new deferral with its own evidence.
+  instant = '2026-08-11T09:00:00.000Z';
+  const second = await run(app, 'work-task', 'postpone', task.id, {});
+  assert.equal(second.result.replayed, false);
+  assert.notEqual(second.result.activity.id, first.result.activity.id);
+  assert.equal(second.result.task.dueAt, '2026-08-12T09:00:00.000Z');
+  assert.equal(app.modules.get('work-activity').service.listWhere({ taskId: task.id }).length, 3);
 });

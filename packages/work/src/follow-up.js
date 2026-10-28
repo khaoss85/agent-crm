@@ -582,6 +582,38 @@ export const creationKey = (taskId) => `work-activity:task-created:${taskId}`;
 export const closingKey = (taskId, state) => `work-activity:task-${state}:${taskId}`;
 
 /**
+ * One deferral lasts one day: the due date moves exactly 24 hours ahead.
+ * Timezone-free on purpose — Rome, DST and "start of day" live in the views
+ * that render `dueAt`, never in this package (the same reason the package
+ * compares timelines by code point rather than locale collation).
+ */
+const POSTPONE_DELAY_MS = 24 * 60 * 60 * 1000;
+
+/** The user-facing note a deferral leaves on the subject timeline. */
+export const POSTPONE_NOTE_BODY = 'Rimandato a domani.';
+
+/**
+ * The idempotency key of one day's deferral: the task plus the UTC day the
+ * new due date lands on. Same-day repeats replay instead of writing another
+ * note; postponing again tomorrow is a new deferral with its own evidence.
+ * @param {string} taskId @param {string} day 'YYYY-MM-DD' in UTC
+ */
+export const postponeKey = (taskId, day) => `work-activity:task-postponed:${taskId}:${day}`;
+
+/**
+ * The new due date of a deferral decided at `nowIso`: 24 hours ahead, stored
+ * canonically in UTC like every other `dueAt` in this package.
+ * @param {unknown} nowIso
+ */
+export function postponeDueAt(nowIso) {
+  const at = typeof nowIso === 'string' ? Date.parse(nowIso) : NaN;
+  if (!Number.isFinite(at)) {
+    throw new ValidationError('now is not a valid instant', { field: 'now' });
+  }
+  return new Date(at + POSTPONE_DELAY_MS).toISOString();
+}
+
+/**
  * Append one Activity row. Append-only in the strict sense: nothing in this
  * package updates or deletes one, and the module has no public write path at
  * all.
