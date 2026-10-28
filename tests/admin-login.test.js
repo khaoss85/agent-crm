@@ -143,6 +143,14 @@ test('the login copy never leaks machinery: no codes, no English internals', () 
   }
 });
 
+test('the enhancement replaces native validation only when it installs', () => {
+  const input = page.match(/<input\b[^>]*>/i)?.[0] ?? '';
+  assert.ok(/\brequired\b/.test(input), 'no-JS visitors keep the required gate');
+  assert.ok(/type="email"/.test(input), 'no-JS visitors keep the email keyboard and shape check');
+  const { form } = wireFakeLogin(async () => true);
+  assert.equal(form.noValidate, true, 'wired pages show the Italian guidance, never the browser bubble');
+});
+
 test('isSendableLoginEmail mirrors the server bounds without normalizing', () => {
   assert.equal(isSendableLoginEmail('elena@studioaurora.it'), true);
   assert.equal(isSendableLoginEmail('  Elena@StudioAurora.it  '), true, 'casing and padding pass: the server normalizes');

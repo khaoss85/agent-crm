@@ -117,6 +117,11 @@ export function createLoginForm(nodes) {
   // hooks, so drift fails there instead of dying inside a submit.
   const noop = async () => {};
   if (!doc || !form || !email || !submit || typeof request !== 'function') return { onSubmit: noop };
+  // The custom handler owns validation from here on: native constraint
+  // validation would stop the submit event and show the browser bubble
+  // instead of the Italian inline guidance. Without JavaScript this line
+  // never runs, so `required` + `type="email"` still guard the plain POST.
+  form.noValidate = true;
   let busy = false;
   let statusNode = null;
   const idleLabel = String(submit.textContent ?? '');
