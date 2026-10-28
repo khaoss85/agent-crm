@@ -1001,7 +1001,36 @@ select.bo-spazi-input { flex: none; }
 @media (prefers-reduced-motion: no-preference) {
   .bo-sync-hero-dot { animation: bo-sync-pulse 2.2s ease-in-out infinite; }
 }
-.bo-sync-hero-title { margin: 0; font-size: 30px; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.bo-sync-hero-title { margin: 0; font-size: clamp(32px, 4.4vw, 46px); line-height: 1.05; letter-spacing: -.03em; overflow-wrap: anywhere; }
+/* Supervisor design pass: Stato sync like prototype 03. */
+.bo-sync-hero-sub { font-size: 16px !important; }
+.bo-sync > h3 { margin: 8px 0 0; font-size: 18px; }
+.bo-sync-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr); gap: 18px; align-items: start; }
+.bo-sync-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+.bo-sync-card > h3, .bo-sync-cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0; padding: 18px 20px 12px; font-size: 18px; }
+.bo-sync-cardhead h3 { margin: 0; font-size: 18px; }
+.bo-sync-cardhead .bo-sync-legend { font-family: var(--mono); font-size: 11px; color: var(--data-ink); }
+.bo-sync-channels .bo-sync-tablewrap { border: none; border-radius: 0; }
+.bo-sync-channels .bo-sync-table tr:first-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.bo-sync-channels .bo-sync-table td { padding: 12px 10px; border-bottom: none; border-top: 1px solid var(--line-faint); vertical-align: middle; }
+.bo-sync-channels .bo-sync-table td:first-child { padding-left: 20px; }
+.bo-sync-channels .bo-sync-table td:last-child { padding-right: 20px; text-align: right; }
+.bo-sync-channels .bo-sync-table td:nth-child(2) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); padding: 0; }
+.bo-sync-channels .bo-sync-table td .ui-btn { height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
+.bo-sync-namewrap { display: flex; align-items: center; gap: 12px; min-width: 170px; }
+.bo-sync-channels .bo-sync-table td { white-space: nowrap; }
+.bo-sync-channels .bo-sync-table td:nth-child(5) { white-space: normal; min-width: 140px; }
+.bo-sync-tile { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
+.bo-sync-nametext { display: flex; flex-direction: column; min-width: 0; }
+.bo-sync-nametext strong { font-size: 15px; }
+.bo-sync-dir { font-family: var(--mono); font-size: 11px; color: var(--data-ink); }
+.bo-sync-dircell { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.bo-sync-channels .bo-sync-table td:nth-child(2), .bo-sync-channels .bo-sync-table td:nth-child(4), .bo-sync-channels .bo-sync-table td:nth-child(5) { color: var(--muted); font-size: 13px; }
+.bo-sync-live .bo-sync-note { padding: 0 20px 18px; }
+.bo-sync-live .bo-sync-feed { gap: 0; padding: 0 20px 6px; }
+.bo-sync-live .bo-sync-feed-line { display: grid; grid-template-columns: 70px 20px minmax(0, 1fr); gap: 6px; padding: 10px 0; border-top: 1px solid var(--line-faint); font-size: 14px; line-height: 1.4; }
+.bo-sync-live .bo-sync-feed-time { margin: 0; font-size: 11px; padding-top: 2px; }
+.bo-sync-feed-arrow { color: var(--data-ink); font-family: var(--mono); font-size: 12px; }
 .bo-sync-hero-sub { margin: 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
 .bo-sync-hero-pull { flex: none; align-self: center; }
 .bo-sync-spin { display: inline-block; width: 12px; height: 12px; margin-left: 8px; border-radius: 99px; border: 2px solid currentColor; border-top-color: transparent; vertical-align: -1px; }
@@ -1010,7 +1039,8 @@ select.bo-spazi-input { flex: none; }
 }
 @keyframes bo-sync-spin { to { transform: rotate(360deg); } }
 @media (max-width: 700px) {
-  .bo-sync-hero-title { font-size: 24px; }
+  .bo-sync-hero-title { font-size: 30px; }
+  .bo-sync-cols { grid-template-columns: minmax(0, 1fr); }
   .bo-sync-hero-pull { width: 100%; }
 }
 /* Impostazioni tab row on the sync screen (BO-F6-16): the section label over
