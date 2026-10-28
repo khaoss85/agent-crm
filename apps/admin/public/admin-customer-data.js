@@ -48,7 +48,8 @@ const MAX_PREVIEW_ROWS = 25;
 function acceptanceLabel(mode) {
   if (mode === 'partial') return 'parziale';
   if (mode === 'all_or_nothing') return 'tutto o niente';
-  return String(mode ?? '');
+  if (mode == null || mode === '') return 'non specificata';
+  return String(mode);
 }
 
 function block(el, panel, meta) {

@@ -465,6 +465,13 @@ test('full home renders every section with clickable sources', () => {
     '#/customer-card/lead/lead-1', '#/connettori']) {
     assert.ok(byHref(href), `source opens its record: ${href}`);
   }
+  // The advisor title opens its record through the shell router.
+  const advisorTitle = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-title');
+  assert.ok(advisorTitle, 'advisor title is a link');
+  const navigations = seen.length;
+  advisorTitle.dispatch('click', { preventDefault: () => {} });
+  assert.equal(seen[navigations], advisorTitle.getAttribute('href'), 'title click navigates to its record');
+  seen.pop(); // Keep the shared log clean for the execute assertions below.
 
   const buttons = mount.findAll('button');
   assert.ok(buttons.some((button) => button.textContent === 'Domani'), 'postpone offered');
@@ -528,7 +535,9 @@ test('home with nothing open says the day is done', () => {
     },
   });
   assert.ok(mount.textContent.includes('Hai finito per oggi'));
-  assert.ok(mount.textContent.includes('Clienti'), 'delivered-screen links still follow below');
+  // The prototype's home ends with the channel invite: no module shortcut
+  // list below (the sidebar already links every screen).
+  assert.ok(!mount.textContent.includes('Clienti'), 'no module shortcut list under the home');
 });
 
 test('loadOggiData degrades honestly without packages', async () => {

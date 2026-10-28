@@ -207,6 +207,20 @@ test('a list that could not be read says so, and never renders as zero', async (
   for (const sentence of CUSTOMER_DATA_DISCLAIMERS) assert.ok(mount.textContent.includes(sentence));
 });
 
+test('a run without a stored acceptance names it, never blanks it', async () => {
+  const runs = [
+    { id: 'run-null', system: 'crm-export', rowCount: 5, acceptedCount: 3, rejectedCount: 1, skippedCount: 1, acceptance: null },
+    { id: 'run-undef', system: 'crm-export', rowCount: 2, acceptedCount: 2, rejectedCount: 0, skippedCount: 0 },
+  ];
+  const mount = await render(stubClient({ rows: { 'customer-import-run': runs } }));
+  for (const run of runs) {
+    const row = mount.findAll('p').find((node) => node.getAttribute('data-run') === run.id);
+    assert.ok(row, `run ${run.id} renders`);
+    assert.ok(row.textContent.endsWith('non specificata'), `unknown acceptance renders named, got: ${JSON.stringify(row.textContent)}`);
+    assert.ok(!row.textContent.endsWith('· '), 'no trailing blank after the separator');
+  }
+});
+
 test('a duplicate candidate offers a human decision, never an automatic one', async () => {
   const client = stubClient();
   const mount = await render(client);

@@ -39,7 +39,7 @@ import { createMarketingView } from '../apps/admin/public/admin-marketing.js';
 import { createSpineView } from '../apps/admin/public/admin-spine.js';
 import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
 import { createAssistantPanel, runSuggestion } from '../apps/admin/public/admin-assistant.js';
-import { loadOggiData } from '../apps/admin/public/admin-oggi.js';
+import { loadOggiData, renderOggi } from '../apps/admin/public/admin-oggi.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /** Technical detail the production screens leaked: never rendered, only logged. */
@@ -547,7 +547,8 @@ test('sequenze view: a failed read never renders the message', async () => {
  * healthy state mount healthy (customer-data with the server still sending
  * its English metadata, nuovo modulo, the assistant guide, spine); every
  * other view mounts with failing reads, which still renders all its static
- * chrome. If any phrase reappears anywhere, this test fails.
+ * chrome (oggi renders its frame directly, the same static chrome the router
+ * paints). If any phrase reappears anywhere, this test fails.
  */
 const LISTED_BO_PHRASES = Object.freeze([
   'a preview writes nothing at all — not a business record, not an import run',
@@ -676,6 +677,13 @@ test('le frasi elencate non appaiono in nessuna vista montata', async () => {
 
   // Every other mounted view, with failing reads: the static chrome renders.
   const failingMounts = [
+    ['oggi', async (doc, mount) => {
+      renderOggi({
+        doc, mount, spaceName: 'Spazio di prova', userName: 'Elena',
+        links: [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }],
+        navigate: () => {}, now: new Date('2026-10-27T09:00:00+01:00'),
+      });
+    }],
     ['catalogo', async (doc, mount) => { await createCatalogView({ doc, mount, client: failingClient() }).renderTable({}); }],
     ['spazi e accessi', async (doc, mount) => {
       await createSpaziAccessiView({
