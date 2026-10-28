@@ -270,10 +270,12 @@ async function portableAppFor(t, options = {}) {
 }
 
 test('public surfaces do not leak the portable facade', () => {
-  // The factories plus the Admin shell mount exports (#307), on purpose.
+  // The factories plus the Admin shell mount exports (#307), on purpose, plus
+  // the session profile export BO-F6-03 needs (#360): the embedding host
+  // injects the operator/space profile into the served shell with it.
   assert.deepEqual(
     Object.keys(publicApp).sort(),
-    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase'],
+    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase', 'injectSessionProfile'],
   );
   assert.equal(Object.hasOwn(publicApp, 'startPortableSqliteApp'), false);
   assert.equal(Object.hasOwn(publicApp, 'startPortableHttpServer'), false);

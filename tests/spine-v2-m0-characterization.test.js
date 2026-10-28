@@ -213,9 +213,13 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   // values but is delivered asynchronously, so record-backed v2 packages can
   // share the interface. The synchronous-delivery pin became a settled-value
   // pin; see the ExecPlan decision log.
+  // `postpone` joined v1 with #380 (durable deferral of an open task, Oggi
+  // "Domani" runs it): the frozen v1 declaration moves deliberately here,
+  // the way #319 moved the public-surface lists for the #307 mount exports.
   assert.deepEqual(work.actions.map(({ name, actionContract }) => ({ name, actionContract })), [
     { name: 'complete', actionContract: 1 },
     { name: 'cancel', actionContract: 1 },
+    { name: 'postpone', actionContract: 1 },
     { name: 'add-note', actionContract: 1 },
   ]);
 });

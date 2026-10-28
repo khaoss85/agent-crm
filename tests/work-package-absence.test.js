@@ -126,7 +126,9 @@ test('attach, detach and reattach: the surface goes and comes back, the rows nev
   assert.equal(attached.hasWork, true);
   assert.equal(attached.tasks, 1);
   assert.equal(attached.activities, 1);
-  assert.deepEqual(attached.actions, ['add-note', 'cancel', 'complete']);
+  // `postpone` joined the work surface with #380: attach and reattach carry
+  // it like every other declared action.
+  assert.deepEqual(attached.actions, ['add-note', 'cancel', 'complete', 'postpone']);
   assert.equal(attached.rows.length, 1);
 
   // 2. detached — a fresh process against a composition that no longer names it
@@ -142,7 +144,7 @@ test('attach, detach and reattach: the surface goes and comes back, the rows nev
   compose(root, true);
   const reattached = phase(root, dbPath, READ_ONLY, 'reattached');
   assert.equal(reattached.hasWork, true);
-  assert.deepEqual(reattached.workActions, ['add-note', 'cancel', 'complete']);
+  assert.deepEqual(reattached.workActions, ['add-note', 'cancel', 'complete', 'postpone']);
   assert.deepEqual(reattached.rows, attached.rows, 'the same rows are still the same rows');
 });
 
