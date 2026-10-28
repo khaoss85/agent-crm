@@ -65,13 +65,14 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, failWith = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, failWith = null, failConfirmWith = null } = {}) {
   const calls = [];
   return {
     calls,
     async request(path, options = {}) {
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (failWith) throw failWith;
+      if (path === '/api/appointments/confirm' && failConfirmWith) throw failConfirmWith;
       if (path === '/api/appointments/propose' || path === '/api/appointments/confirm') {
         const body = payload({ body: options.body });
         if (path === '/api/appointments/propose') {
@@ -234,7 +235,21 @@ test('uncomposed package renders an honest placeholder, never a blank screen', a
   assert.ok(texts(mount, 'p').some((text) => text.includes('non è composto')));
 });
 
-test('phrase drafts into the manual form with the interpreted date and time', async () => {
+// BO-F6-11 fetta 3 (specs/calendario.md C4): the AI card carries a
+// textarea and «Trova slot liberi».
+test('the AI card shows a textarea and Trova slot liberi', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const field = mount.querySelector('textarea[name="phrase"]');
+  assert.ok(field, 'C4: the phrase is a textarea');
+  assert.equal(field.getAttribute('rows'), '3', 'C4: three rows');
+  const find = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
+  assert.ok(find, 'C4: the search button');
+});
+
+test('Trova slot liberi interprets the phrase, then lists proposals with Conferma and ghosts', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -244,50 +259,198 @@ test('phrase drafts into the manual form with the interpreted date and time', as
     endsAt: '2026-10-22T16:30:00.000Z',
     notes: 'taglio per Ada',
   };
-  const client = stubClient({ phrase: draft });
+  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  const client = stubClient({ phrase: draft, slots });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
-  const phraseInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'phrase');
-  phraseInput.value = 'giovedì alle 18 con marco per il taglio';
-  clickButton(mount, 'Interpreta');
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-  const propose = client.calls.find((call) => call.path === '/api/appointments/phrase');
-  assert.equal(payload(propose).phrase, 'giovedì alle 18 con marco per il taglio');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Bozza: marco')));
-  // The draft prefills the manual form (Rome wall time back into the inputs).
-  const byName = Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
-  assert.equal(byName.teamMemberId.value, 'marco');
-  assert.equal(byName.serviceKey.value, 'taglio');
-  assert.equal(byName.date.value, '2026-10-22');
-  assert.equal(byName.start.value, '18:00');
-  assert.equal(byName.end.value, '18:30');
+  // The ghosts need the loaded week: name the member first.
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  const flush = async (n = 7) => {
+    for (let round = 0; round < n; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await flush();
+  const field = mount.querySelector('textarea[name="phrase"]');
+  field.value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flush();
+  const interpreted = client.calls.find((call) => call.path === '/api/appointments/phrase');
+  assert.equal(payload(interpreted).phrase, 'trova 45 minuti con marco');
+  const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
+  assert.ok(suggest, 'the phrase feeds a slot search');
+  assert.ok(suggest.path.includes('teamMemberIds=marco'), 'the drafted person is searched');
+  assert.ok(suggest.path.includes('slotMinutes=30'), 'the drafted duration is searched');
+  assert.ok(suggest.path.includes('from=2026-10-18T22'), 'the search covers the shown week');
+  // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
+  const list = mount.querySelector('.cal-slots');
+  assert.ok(list, 'the proposal rows render');
+  assert.ok(list.textContent.includes('22 ott · 18:00–18:30'), 'C5: the row names the Rome slot');
+  const confirms = list.findAll('button').filter((node) => node.textContent === 'Conferma');
+  assert.equal(confirms.length, 1, 'C5: one Conferma per row');
+  // C5: one dashed ghost per slot on its Rome day, clickable to confirm.
+  const grid = mount.querySelector('.cal-grid');
+  assert.ok(grid && grid.textContent.includes('✦ Proposta 18:00'), 'C5: the ghost names the Rome time');
+  const ghost = mount.findAll('button').find((node) => node.textContent === '✦ Proposta 18:00');
+  assert.ok((ghost.getAttribute('class') ?? '').split(/\s+/).includes('bo-add-button'), 'the ghost reuses the shared dashed control');
+  // The draft still prefills the manual form (Rome wall time back into the inputs).
+  const form = byName();
+  assert.equal(form.teamMemberId.value, 'marco');
+  assert.equal(form.serviceKey.value, 'taglio');
+  assert.equal(form.date.value, '2026-10-22');
+  assert.equal(form.start.value, '18:00');
+  assert.equal(form.end.value, '18:30');
 });
 
-test('slot search lists free slots and one click fills the form', async () => {
+test('a proposal Conferma books through confirm with the manual claim', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
-  const client = stubClient({ slots });
+  const client = stubClient({ phrase: draft, slots });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
-  byName().slotMember.value = 'marco';
-  byName().slotDay.value = '2026-10-22';
-  clickButton(mount, 'Trova slot');
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
-  const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
-  assert.ok(suggest.path.includes('teamMemberIds=marco'));
-  const pick = mount.findAll('button').find((node) => node.textContent.includes('18:00'));
-  assert.ok(pick, 'slot button shows the Rome time');
-  pick.dispatch('click');
-  await new Promise((resolve) => setImmediate(resolve));
-  const after = byName();
-  assert.equal(after.teamMemberId.value, 'marco');
-  assert.equal(after.date.value, '2026-10-22');
-  assert.equal(after.start.value, '18:00');
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  const flush = async (n = 7) => {
+    for (let round = 0; round < n; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await flush();
+  // The operator names the customer once; the slot brings person and time.
+  const form = byName();
+  form.customerId.value = 'c1';
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  const confirm = mount.querySelector('.cal-slots').findAll('button')
+    .find((node) => node.textContent === 'Conferma');
+  confirm.dispatch('click');
+  await flush();
+  const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(confirms.length, 1, 'Conferma calls confirmBooking');
+  const body = payload(confirms[0]);
+  assert.equal(body.confirmed, true);
+  assert.equal(body.teamMemberId, 'marco');
+  assert.equal(body.startsAt, '2026-10-22T16:00:00.000Z');
+  assert.equal(body.endsAt, '2026-10-22T16:30:00.000Z');
+  assert.equal(body.priceCents, 4500);
+  assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T16:00:00.000Z:c1');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+  assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
+});
+
+test('zero slots say so in plain words', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const client = stubClient({ phrase: draft, slots: [] });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(
+    texts(mount, 'p').includes('Nessuno slot libero questa settimana, prova con altri giorni.'),
+    'the spec sentence, no code',
+  );
+  assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal rows, only the manual Conferma');
+});
+
+test('a failed search says so in plain words, never a code', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient({ failWith: new Error('backend down') }), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const notes = texts(mount, 'p');
+  assert.ok(notes.includes('Ricerca non riuscita. Riprova più tardi.'));
+  assert.ok(!notes.some((text) => text.includes('backend down')), 'no raw error leaks to the operator');
+});
+
+test('a failed Conferma names the manual form, never a code', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  // No customer, service or price: the confirm fails closed on the server.
+  const confirm = mount.querySelector('.cal-slots').findAll('button')
+    .find((node) => node.textContent === 'Conferma');
+  confirm.dispatch('click');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const notes = texts(mount, 'p');
+  assert.ok(notes.includes('Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.'));
+  assert.ok(!notes.some((text) => text.includes('serviceKey')), 'no validation jargon leaks to the operator');
+});
+
+test('the search button stays disabled while searching', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const client = stubClient({ phrase: draft, slots: [] });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  const searching = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
+  assert.equal(searching.getAttribute('disabled'), 'true', 'the button is disabled in flight');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Cerco gli slot liberi')), 'a short wait, no jargon');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const done = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
+  assert.notEqual(done.getAttribute('disabled'), 'true', 'the button is usable again');
+});
+
+test('a phrase without a person says who is missing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ phrase: { serviceKey: 'taglio' } });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(client.calls.every((call) => !call.path.startsWith('/api/appointments/suggest-slots')), 'no search for nobody');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Dalla frase non capisco la persona')));
 });
 
 test('propose plans, confirm books: nothing is written before Conferma', async () => {
@@ -493,7 +656,7 @@ test('the voices focus the phrase field and the manual form', async () => {
   const menu = mount.querySelector('.bo-clienti-menu');
   const items = menu.findAll('button');
   const ai = items.find((node) => node.textContent.includes("Crea con l'AI"));
-  const phrase = mount.querySelector('input[name="phrase"]');
+  const phrase = mount.querySelector('textarea[name="phrase"]');
   let focused = null;
   phrase.focus = () => { focused = 'phrase'; };
   ai.dispatch('click');

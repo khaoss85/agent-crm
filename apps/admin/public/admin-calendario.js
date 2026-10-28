@@ -127,7 +127,6 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 export function createCalendarioView(deps) {
   const { doc, mount } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
-  const toast = deps.toast ?? (() => {});
   const storage = deps.storage ?? null;
   const clock = typeof deps.now === 'function' ? deps.now : () => new Date();
   let renderToken = 0;
@@ -149,9 +148,16 @@ export function createCalendarioView(deps) {
     week: null,
     weekError: null,
     unavailable: false,
-    /** @type {Array<any>} */
-    slots: [],
-    slotsNote: '',
+    /** Free-text phrase, kept in the AI card field across re-renders. */
+    phrase: '',
+    /** Week proposals from "Trova slot liberi": real free slots, never invented. @type {Array<any>} */
+    proposals: [],
+    /** The AI search is in flight: the button stays disabled, no jargon. */
+    aiLoading: false,
+    /** Latest AI card note: zero slots, missing person, confirm outcome. */
+    aiNote: '',
+    /** Live manual form nodes, so a slot Conferma books the claim the operator sees. @type {any} */
+    manualNodes: null,
     /** @type {any} */
     draft: null,
     draftNote: '',
@@ -193,8 +199,9 @@ export function createCalendarioView(deps) {
     const next = new Date(base + days * 24 * 3600 * 1000);
     state.weekKeys = romeWeekKeys(next);
     state.week = null;
-    state.slots = [];
-    state.slotsNote = '';
+    // A moved week drops its proposals: ghosts belong to the searched week.
+    state.proposals = [];
+    state.aiNote = '';
     // The pager moves the window but keeps the named members: reload for
     // them like the "Oggi" button does, so browsing never drops back to the
     // "name someone" prompt mid-week.
@@ -250,8 +257,7 @@ export function createCalendarioView(deps) {
       return;
     }
     wrap.appendChild(renderWeek());
-    wrap.appendChild(renderPhrase());
-    wrap.appendChild(renderSlots());
+    wrap.appendChild(renderAi());
     wrap.appendChild(renderManual());
     mount.appendChild(wrap);
   }
@@ -356,8 +362,8 @@ export function createCalendarioView(deps) {
     today.addEventListener('click', () => {
       state.weekKeys = romeWeekKeys(clock());
       state.week = null;
-      state.slots = [];
-      state.slotsNote = '';
+      state.proposals = [];
+      state.aiNote = '';
       const members = parseMemberFilter(state.memberFilter);
       if (members.length > 0) void loadWeek(members);
       else renderAll();
@@ -435,6 +441,20 @@ export function createCalendarioView(deps) {
       for (const row of rows) {
         col.appendChild(renderEvent(row));
       }
+      // BO-F6-11 fetta 3 (specs/calendario.md C5): the "✦ Proposta" ghosts.
+      // One dashed ghost per searched slot on its Rome day, clickable to
+      // confirm like the card rows. The dashed `bo-add-button` is the shared
+      // shell control for add-an-item blocks, not a new style.
+      for (const slot of state.proposals) {
+        if (romeDayKey(slot?.startsAt) !== key) continue;
+        const ghost = el(doc, 'button', {
+          className: 'bo-add-button',
+          attrs: { type: 'button' },
+          text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
+        });
+        ghost.addEventListener('click', () => void confirmSlot(slot));
+        col.appendChild(ghost);
+      }
       grid.appendChild(col);
     }
     panel.appendChild(grid);
@@ -503,56 +523,151 @@ export function createCalendarioView(deps) {
     anchor.appendChild(box);
   }
 
-  function renderPhrase() {
+  /**
+   * BO-F6-11 fetta 3 (specs/calendario.md C4, C5): the "✦ Fissa con una
+   * frase" card. The phrase interprets to a draft (person, day, duration);
+   * "Trova slot liberi" reads that person's free slots over the shown week
+   * — never invented — and renders one row plus one grid ghost per slot.
+   * Every Conferma (row or ghost) books through confirmBooking with the
+   * claim the manual form below holds; a missing customer, service or price
+   * fails closed with a plain sentence naming the manual form.
+   */
+  function renderAi() {
     const panel = el(doc, 'div', { className: 'panel' });
-    panel.appendChild(el(doc, 'h2', { text: 'Fissa con una frase' }));
+    panel.appendChild(el(doc, 'h2', { text: '✦ Fissa con una frase' }));
     panel.appendChild(el(doc, 'p', {
       className: 'lede',
-      text: 'Scrivi come lo diresti: la frase diventa una bozza con data e ora interpretate. La bozza compila il modulo qui sotto — la prenotazione la confermi tu.',
+      text: 'Scrivi come lo diresti: dalla frase leggo persona e durata, poi mostro gli slot liberi di quella persona nella settimana. Ogni Conferma prenota davvero.',
     }));
     const row = el(doc, 'div', { className: 'cal-filter' });
-    const input = el(doc, 'input', {
-      attrs: { type: 'text', name: 'phrase', placeholder: '«giovedì alle 18 con Marco per il taglio»' },
+    const input = el(doc, 'textarea', {
+      attrs: { name: 'phrase', rows: '3', placeholder: '«trova 45 minuti con Marco»' },
     });
+    input.value = state.phrase;
+    input.addEventListener('input', () => { state.phrase = String(input.value ?? ''); });
     state.phraseInput = input;
-    const send = el(doc, 'button', { className: 'primary small', text: 'Interpreta' });
-    send.addEventListener('click', () => void submitPhrase(String(input.value ?? '')));
+    const find = el(doc, 'button', { className: 'primary small', text: 'Trova slot liberi' });
+    if (state.aiLoading) find.setAttribute('disabled', 'true');
+    else find.addEventListener('click', () => void submitAi(String(input.value ?? '')));
     row.appendChild(input);
-    row.appendChild(send);
+    row.appendChild(find);
     panel.appendChild(row);
-    if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
+    if (state.aiLoading) {
+      panel.appendChild(el(doc, 'p', { className: 'empty', text: 'Cerco gli slot liberi…' }));
+    }
+    if (state.aiNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.aiNote }));
     if (state.draft) panel.appendChild(renderDraft(state.draft));
+    if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
+    if (state.proposals.length > 0) {
+      const list = el(doc, 'div', { className: 'cal-slots' });
+      for (const slot of state.proposals.slice(0, 24)) {
+        const item = el(doc, 'div');
+        item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
+        const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
+        confirm.addEventListener('click', () => void confirmSlot(slot));
+        item.appendChild(confirm);
+        list.appendChild(item);
+      }
+      panel.appendChild(list);
+    }
     return panel;
   }
 
+  /** Proposal row label: `<ddd> <n> · <hh:mm>–<hh:mm>`, the grid's own words. */
+  function slotLabel(slot) {
+    return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
+  }
+
+  /** Draft duration in whole minutes when the suggest path accepts it, else the default step. @param {any} draft */
+  function draftMinutes(draft) {
+    const from = draft?.startsAt ? Date.parse(draft.startsAt) : NaN;
+    const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
+    const minutes = Math.round((to - from) / 60000);
+    return [15, 30, 45, 60, 90, 120].includes(minutes) ? minutes : 30;
+  }
+
+  /** Suggest window over the shown Rome week, with the day-margin idiom of the booking path. */
+  function suggestBounds() {
+    if (!Array.isArray(state.weekKeys) || state.weekKeys.length === 0) return null;
+    const first = Date.parse(`${state.weekKeys[0]}T00:00:00Z`);
+    const last = Date.parse(`${state.weekKeys[state.weekKeys.length - 1]}T00:00:00Z`);
+    if (Number.isNaN(first) || Number.isNaN(last)) return null;
+    return {
+      from: new Date(first - 2 * 3600 * 1000).toISOString(),
+      to: new Date(last + 26 * 3600 * 1000).toISOString(),
+    };
+  }
+
   /** @param {string} phrase */
-  async function submitPhrase(phrase) {
-    if (phrase.trim() === '') {
+  async function submitAi(phrase) {
+    state.phrase = String(phrase ?? '');
+    if (state.phrase.trim() === '') {
       state.draft = null;
-      state.draftNote = 'Scrivi prima la frase.';
+      state.draftNote = '';
+      state.proposals = [];
+      state.aiNote = 'Scrivi prima la frase.';
       renderAll();
       return;
     }
-    state.draftNote = 'Interpretazione…';
+    state.aiLoading = true;
     state.draft = null;
+    state.draftNote = '';
+    state.proposals = [];
+    state.aiNote = '';
     renderAll();
     try {
       const answer = await client.request('/api/appointments/phrase', {
         method: 'POST',
-        body: { spaceId: readSpace(), phrase },
+        body: { spaceId: readSpace(), phrase: state.phrase },
       });
-      state.draft = answer?.draft ?? null;
-      state.draftNote = state.draft
-        ? 'Bozza pronta: controlla i campi nel modulo e conferma.'
-        : 'Nessuna bozza dalla frase: usa il modulo qui sotto.';
+      const draft = answer?.draft ?? null;
+      state.draft = draft;
+      if (!draft) {
+        state.draftNote = 'Nessuna bozza dalla frase: usa il modulo qui sotto.';
+        return;
+      }
+      const member = typeof draft.teamMemberId === 'string' ? draft.teamMemberId : '';
+      if (member === '') {
+        state.draftNote = '';
+        state.draft = null;
+        state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
+        return;
+      }
+      const bounds = suggestBounds();
+      if (!bounds) {
+        state.aiNote = 'Settimana non valida.';
+        return;
+      }
+      const found = await client.request(
+        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(member)}`
+        + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
+        + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
+      );
+      const groups = Array.isArray(found?.members) ? found.members : [];
+      const kept = [];
+      for (const group of groups) {
+        for (const slot of group?.slots ?? []) {
+          if (!slot?.startsAt || !slot?.endsAt) continue;
+          kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: group.teamMemberId ?? member });
+        }
+      }
+      // One row and one ghost per slot, like the week grid caps its own
+      // columns: the first 24 carry the search, never an invented rest.
+      state.proposals = kept.slice(0, 24);
+      state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      state.aiNote = kept.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
     } catch (error) {
       state.draft = null;
-      state.draftNote = humanReadError(error, {
-        failed: 'Interpretazione non riuscita: usa il modulo qui sotto.',
-        notComposed: 'Il calendario non è composto in questo spazio: usa il modulo qui sotto.',
+      state.draftNote = '';
+      state.proposals = [];
+      state.aiNote = humanReadError(error, {
+        failed: 'Ricerca non riuscita. Riprova più tardi.',
+        notComposed: 'Il calendario non è composto in questo spazio.',
       });
+    } finally {
+      state.aiLoading = false;
+      renderAll();
     }
-    renderAll();
     if (state.draft) fillManual(state.draft);
   }
 
@@ -566,96 +681,72 @@ export function createCalendarioView(deps) {
     return box;
   }
 
-  function renderSlots() {
-    const panel = el(doc, 'div', { className: 'panel' });
-    panel.appendChild(el(doc, 'h2', { text: 'Slot liberi' }));
-    panel.appendChild(el(doc, 'p', {
-      className: 'lede',
-      text: 'Fasce lette dalle prenotazioni reali, mai inventate. Un click compila il modulo con quello slot — la conferma resta tua.',
-    }));
-    const row = el(doc, 'div', { className: 'cal-filter' });
-    const member = el(doc, 'input', { attrs: { type: 'text', name: 'slotMember', placeholder: 'Persona: marco' } });
-    const day = el(doc, 'input', { attrs: { type: 'date', name: 'slotDay' } });
-    const minutes = el(doc, 'input', { attrs: { type: 'number', name: 'slotMinutes', placeholder: '30' } });
-    const find = el(doc, 'button', { className: 'secondary small', text: 'Trova slot' });
-    find.addEventListener('click', () => void submitSlots(
-      String(member.value ?? ''),
-      String(day.value ?? ''),
-      String(minutes.value ?? ''),
-    ));
-    row.appendChild(member);
-    row.appendChild(day);
-    row.appendChild(minutes);
-    row.appendChild(find);
-    panel.appendChild(row);
-    if (state.slotsNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.slotsNote }));
-    if (state.slots.length > 0) {
-      const list = el(doc, 'div', { className: 'cal-slots' });
-      for (const slot of state.slots.slice(0, 24)) {
-        const pick = el(doc, 'button', {
-          className: 'small secondary',
-          text: `${romeShortDay(slot.startsAt) ?? ''} ${romeTime(slot.startsAt) ?? ''}–${romeTime(slot.endsAt) ?? ''} · ${slot.teamMemberId ?? ''}`,
-        });
-        pick.addEventListener('click', () => useSlot(slot));
-        list.appendChild(pick);
-      }
-      panel.appendChild(list);
-    }
-    return panel;
+  /** Live manual values, from the rendered inputs when present. @param {string} name */
+  function manualValue(name) {
+    const node = state.manualNodes?.[name];
+    if (node && typeof node.value === 'string') return node.value;
+    const kept = state.manual?.[name];
+    return typeof kept === 'string' ? kept : '';
   }
 
-  async function submitSlots(member, day, minutes) {
-    const members = parseMemberFilter(member);
-    if (members.length === 0 || day === '') {
-      state.slots = [];
-      state.slotsNote = 'Indica persona e giorno per cercare gli slot.';
+  /** Price text to integer minor units, or null when empty — the manual form's own rule. @param {unknown} raw */
+  function priceToCents(raw) {
+    const price = String(raw ?? '').replace(',', '.');
+    return price === '' ? null : Math.round(Number(price) * 100);
+  }
+
+  /**
+   * A proposal Conferma (row or ghost) books through confirmBooking: the
+   * claim is the manual form the operator sees, with the slot's person and
+   * times. The source key binds member, slot and customer, so a retry or a
+   * double click replays instead of double-booking.
+   * @param {{teamMemberId?: unknown, startsAt?: unknown, endsAt?: unknown}} slot
+   */
+  async function confirmSlot(slot) {
+    const member = typeof slot?.teamMemberId === 'string' ? slot.teamMemberId : '';
+    const startsAt = typeof slot?.startsAt === 'string' ? slot.startsAt : '';
+    const endsAt = typeof slot?.endsAt === 'string' ? slot.endsAt : '';
+    if (member === '' || startsAt === '' || endsAt === '') {
+      state.aiNote = 'Questo slot non è più valido: cerca di nuovo gli slot.';
       renderAll();
       return;
     }
-    const dayStart = Date.parse(`${day}T00:00:00Z`);
-    if (Number.isNaN(dayStart)) {
-      state.slots = [];
-      state.slotsNote = 'Giorno non valido.';
-      renderAll();
-      return;
-    }
-    const slotMinutes = minutes.trim() === '' ? 30 : Number.parseInt(minutes, 10);
+    const customerId = manualValue('customerId');
+    const claim = {
+      spaceId: readSpace(),
+      subject: { resource: manualValue('customerResource') || 'contact', id: customerId, owner: 'host' },
+      teamMemberId: member,
+      serviceKey: manualValue('serviceKey'),
+      priceCents: priceToCents(manualValue('price')),
+      currency: 'EUR',
+      startsAt,
+      endsAt,
+      notes: manualValue('notes') === '' ? null : manualValue('notes'),
+      sourceKey: `calendario:${member}:${startsAt}:${customerId === '' ? 'senza-cliente' : customerId}`,
+      source: { package: 'host', action: 'calendar-book' },
+    };
     try {
-      const answer = await client.request(
-        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(members.join(','))}`
-        + `&from=${encodeURIComponent(new Date(dayStart - 2 * 3600 * 1000).toISOString())}`
-        + `&to=${encodeURIComponent(new Date(dayStart + 26 * 3600 * 1000).toISOString())}`
-        + `&slotMinutes=${encodeURIComponent(String(slotMinutes))}`,
-      );
-      const groups = Array.isArray(answer?.members) ? answer.members : [];
-      const kept = [];
-      for (const group of groups) {
-        for (const slot of group?.slots ?? []) {
-          if (romeDayKey(slot.startsAt) === day) kept.push({ ...slot, teamMemberId: group.teamMemberId });
-        }
+      const booked = await client.request('/api/appointments/confirm', {
+        method: 'POST',
+        body: { ...claim, confirmed: true },
+      });
+      if (booked?.decision === 'booked') {
+        state.confirmed = booked.appointment ?? claim;
+        state.proposals = [];
+        state.aiNote = '';
+        state.bookingNote = '';
+      } else {
+        state.aiNote = 'Registrata come proposta: lo spazio non fissa in automatico.';
       }
-      state.slots = kept;
-      state.slotsNote = kept.length === 0
-        ? 'Nessuno slot libero quel giorno: prova un altro giorno o un passo diverso.'
-        : '';
     } catch (error) {
-      state.slots = [];
-      state.slotsNote = humanReadError(error, {
-        failed: 'Ricerca non riuscita. Riprova più tardi.',
+      state.aiNote = humanReadError(error, {
+        failed: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.',
         notComposed: 'Il calendario non è composto in questo spazio.',
       });
     }
     renderAll();
-  }
-
-  /** One click fills the manual form with the slot — confirmation stays manual. */
-  function useSlot(slot) {
-    fillManual({
-      teamMemberId: slot.teamMemberId,
-      startsAt: slot.startsAt,
-      endsAt: slot.endsAt,
-    });
-    toast('Slot nel modulo: completa cliente e prezzo, poi conferma.');
+    const members = parseMemberFilter(state.memberFilter);
+    if (members.length > 0 && state.confirmed) void loadWeek(members);
   }
 
   function renderManual() {
@@ -691,6 +782,9 @@ export function createCalendarioView(deps) {
       inputs[name] = input;
       form.appendChild(input);
     }
+    // Live nodes for the slot Conferma: it books the claim the operator
+    // sees, not a stale snapshot.
+    state.manualNodes = inputs;
     state.manualFirst = inputs.customerResource ?? null;
     if (state.draftFill) {
       const draft = state.draftFill;
@@ -745,8 +839,7 @@ export function createCalendarioView(deps) {
     const end = read('end');
     const startsAt = day !== '' && start !== '' ? romeInstant(day, start) : null;
     const endsAt = day !== '' && end !== '' ? romeInstant(day, end) : null;
-    const price = read('price').replace(',', '.');
-    const priceCents = price === '' ? null : Math.round(Number(price) * 100);
+    const priceCents = priceToCents(read('price'));
     const member = read('teamMemberId');
     return {
       claim: {
