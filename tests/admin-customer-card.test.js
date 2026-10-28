@@ -632,6 +632,7 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
   assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
+  assert.ok(text.includes('verifiche non complete'), 'unreadable evidence never reads as a definitive none');
 });
 
 test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
@@ -659,4 +660,27 @@ test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di 
   assert.ok(!text.includes(UUID_B), 'an offer without a name never falls back to its id');
   assert.ok(text.includes('approvata'), 'the offer status reads in Italian');
   assert.ok(text.includes('attivo'), 'the package status reads in Italian');
+});
+
+test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', async () => {
+  const mount = await renderCard(stubClient({
+    card: { ...CARD_BARE, activePackage: { available: true, count: 0, countIsComplete: true, active: [], items: [] } },
+    timeline: TIMELINE_BARE,
+    profile: {
+      ...PROFILE_BARE,
+      orders: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      contracts: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      subscriptions: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      workTasks: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      opportunities: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    },
+    enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'proven-empty card');
+  assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
+  assert.ok(!text.includes('verifiche non complete'), 'proven absence carries no hedge');
+  assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
+  assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
 });

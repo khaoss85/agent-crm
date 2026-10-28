@@ -119,6 +119,23 @@ const STATUS_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' }
 const statusLabel = (value) => STATUS_LABELS[String(value ?? '').toLowerCase()]
   ?? String(value ?? 'Contatto').replace(/^./, (first) => first.toUpperCase());
 
+/**
+ * The Italian line under the stato: a definitive «none» only when the three
+ * evidence sections are readable with exact zero counts — the same
+ * absence-proof discipline the API verdict follows. Otherwise the line stays
+ * honest about the unreadable checks.
+ */
+const EVIDENCE_KEYS = Object.freeze(['orders', 'contracts', 'subscriptions']);
+const statusMicrocopy = (card, profile) => {
+  if (String(card?.status?.value ?? '').toLowerCase() === 'cliente') return 'Attività firmata collegata';
+  const proven = EVIDENCE_KEYS.every((key) => profile?.[key]?.available === true
+    && (profile[key]?.count ?? 0) === 0
+    && profile[key]?.countIsComplete !== false);
+  return proven
+    ? 'Nessuna attività firmata collegata'
+    : 'Nessuna attività firmata visibile (verifiche non complete)';
+};
+
 const OFFER_STATUS_LABELS = Object.freeze({
   sent: 'inviata', draft: 'bozza', approved: 'approvata', rejected: 'rifiutata',
   open: 'aperta', won: 'vinta', lost: 'persa', expired: 'scaduta', accepted: 'accettata',
@@ -292,7 +309,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function details(box, card) {
+  function details(box, card, profile) {
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const fact = (label, value) => {
       const row = el('p', 'bo-scheda-fact');
@@ -309,9 +326,10 @@ export function createCustomerCardView(deps) {
       ? String(card.phone.value)
       : 'Nessun telefono collegato');
     fact('Stato', statusLabel(card?.status?.value));
-    box.appendChild(el('p', 'bo-muted', String(card?.status?.value ?? '').toLowerCase() === 'cliente'
-      ? 'Attività firmata collegata'
-      : 'Nessuna attività firmata collegata per ora'));
+    // Voce 1a066ddfe42a, P2 di review: «nessuna attività» è definitivo solo a
+    // prove complete (le tre sezioni leggibili con conteggio esatto a zero),
+    // altrimenti l'italiano resta onesto sulle verifiche mancanti.
+    box.appendChild(el('p', 'bo-muted', statusMicrocopy(card, profile)));
     const active = card?.activePackage;
     const activeItems = active?.available === true && Array.isArray(active.active) ? active.active : null;
     if (activeItems && activeItems.length > 0) {
@@ -601,7 +619,7 @@ export function createCustomerCardView(deps) {
     const right = el('div', 'bo-scheda-col');
     quickActions(left, card);
     linkedIdentities(left, profile);
-    details(left, card);
+    details(left, card, profile);
     enriched(left, enrichment);
     timelineBox(center, timeline);
     aiSummary(right, calls);
