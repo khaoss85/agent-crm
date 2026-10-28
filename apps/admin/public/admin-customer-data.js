@@ -67,9 +67,17 @@ export function createCustomerDataView(deps) {
   // re-rendering), so it owns a stable mount re-attached on every render.
   const listBox = doc.createElement('div');
   listBox.setAttribute('class', 'customer-data-list');
+  // The list's "Compila manualmente" entry focuses this section's governed
+  // import form — the single surface that writes customers (preview first,
+  // then apply), never a parallel record creation of its own.
+  let importRowsControl = null;
   const customerList = createCustomerListView({
     doc, mount: listBox, client, navigate, notify,
     spaceId: deps.spaceId, onAskAi: deps.onAskAi ?? null, storage: deps.storage ?? null,
+    onManualAdd: () => {
+      importRowsControl?.focus?.();
+      importRowsControl?.scrollIntoView?.({ block: 'center' });
+    },
   });
   const el = elFor(doc); // BO-F6-02: shared element builder.
   const fact = (label, value) => {
@@ -161,6 +169,7 @@ export function createCustomerDataView(deps) {
     const rowsInput = el('textarea');
     rowsInput.setAttribute('name', 'rows');
     rowsInput.setAttribute('placeholder', '[{"externalId":"CRM-1","email":"ada@example.com","companyName":"Acme","domain":"acme.example"}]');
+    importRowsControl = rowsInput;
     const acceptance = el('select');
     acceptance.setAttribute('name', 'acceptance');
     for (const mode of meta.import?.acceptance ?? ['partial', 'all_or_nothing']) {

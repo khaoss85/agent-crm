@@ -294,3 +294,19 @@ test('hostile server text renders as text, never as markup', async () => {
   assert.deepEqual(mount.findAll('img'), [], 'and no element was created from it');
   assert.deepEqual(mount.findAll('script'), []);
 });
+
+test('Compila manualmente focuses the governed import form', async () => {
+  // The list owns no record creation: manual entry is a focus move to the
+  // section's preview-then-apply import, never a second write surface.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerDataView({ doc, mount, client: stubClient() }).render();
+  for (let i = 0; i < 12; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  const rowsBox = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'rows');
+  assert.ok(rowsBox, 'the import rows field renders');
+  let focused = false;
+  rowsBox.focus = () => { focused = true; };
+  mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-manual').dispatch('click');
+  assert.equal(focused, true, 'manual entry lands on the import rows field');
+});

@@ -299,8 +299,9 @@ test('BO-F6-08 fetta 1: a filled page shows its interval in the pager', async ()
 });
 
 test('Aggiungi cliente opens a menu with the two prototype entries', async () => {
-  let navigated = null;
-  const { mount } = await render(stubClient(), { navigate: (hash) => { navigated = hash; } });
+  let manualCalls = 0;
+  let notified = null;
+  const { mount } = await render(stubClient(), { onManualAdd: () => { manualCalls += 1; } });
   const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
   assert.ok(add, 'the add button renders beside the title');
   assert.equal(add.getAttribute('aria-haspopup'), 'true');
@@ -314,8 +315,12 @@ test('Aggiungi cliente opens a menu with the two prototype entries', async () =>
   assert.ok(menus[0].textContent.includes('Compila manualmente'));
   assert.ok(menus[0].textContent.includes('Nome, recapiti e canale di provenienza'));
   byAttr(mount, 'button', 'data-action', 'add-manual').dispatch('click');
-  assert.equal(navigated, '#/modules/contact/new', 'manual entry is the host contact module factory');
+  assert.equal(manualCalls, 1, 'manual entry routes to the governed import form, never a parallel creation');
   assert.ok(menus[0].classList.contains('hidden'), 'choosing an entry closes the menu');
+  const plain = await render(stubClient(), { notify: (message) => { notified = message; } });
+  plain.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  byAttr(plain.mount, 'button', 'data-action', 'add-manual').dispatch('click');
+  assert.ok(notified, 'without the section hook the entry explains itself instead of a dead link');
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {

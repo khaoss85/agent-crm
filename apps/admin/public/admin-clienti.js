@@ -81,7 +81,8 @@ export function pageNumbers(pages, page) {
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
  *   notify?: (message: string) => void, spaceId?: string | (() => (string | null | undefined)),
- *   onAskAi?: ((question: string) => void) | null, storage?: any}} deps
+ *   onAskAi?: ((question: string) => void) | null,
+ *   onManualAdd?: (() => void) | null, storage?: any}} deps
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
@@ -264,7 +265,11 @@ export function createCustomerListView(deps) {
         }
       });
       addItem('add-manual', 'Compila manualmente', 'Nome, recapiti e canale di provenienza', () => {
-        navigate('#/modules/contact/new');
+        if (typeof deps.onManualAdd === 'function') {
+          deps.onManualAdd();
+        } else {
+          notify('Aggiungi il cliente dal form Import qui sotto: una riga con nome, recapiti e canale di provenienza.');
+        }
       });
     }, 'Aggiungi cliente', 'bo-clienti-menubutton ui-btn-primary'));
     panel.appendChild(headRow);
