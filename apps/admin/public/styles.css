@@ -1108,7 +1108,8 @@ select.bo-spazi-input { flex: none; }
 .plist .ui-hero-text { font-size: 15px; }
 .plist .ui-hero-tiles .ui-chip { width: 64px; height: 64px; display: grid; place-items: center; padding: 0; border-radius: 14px; font-size: 13px; }
 .plist .ui-hero-tiles .ui-chip:nth-child(even) { transform: translateY(12px); width: 52px; height: 52px; }
-.plist .ui-hero-dots { position: absolute; left: 0; right: 0; bottom: -22px; color: var(--ink); }
+/* No carousel controls behind the dots: the hero is one static banner. */
+.plist .ui-hero-dots { display: none; }
 .plist .ui-conn-head { align-items: center; margin: 40px 0 14px; }
 .plist .ui-conn-head h3 { font-size: 18px; letter-spacing: -.01em; }
 .plist .ui-conn-count { padding: 1px 7px; border-radius: 99px; background: var(--surface-soft); }

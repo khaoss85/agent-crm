@@ -119,9 +119,18 @@ export function crumb(spaceName, screenLabel) {
  * real count of things to fix: zero (or unknown) renders no badge at all.
  * @param {unknown} fixCount
  */
-/** The last «things to fix» count the shell painted, so every IMPOSTAZIONI
- * tab row shows the Stato sync badge, not only the sync screen's own. */
-let lastKnownFixCount = null;
+/** The last «things to fix» count the shell painted, keyed by the space it
+ * was painted for, so every IMPOSTAZIONI tab row shows the Stato sync badge
+ * of the current space — never a count left over from another space. */
+let lastKnownFix = { space: null, count: null };
+function currentSpaceKey() {
+  try { return globalThis.localStorage?.getItem?.(ACTIVE_SPACE_KEY) ?? null; } catch { return null; }
+}
+function knownFixCount() {
+  // Under the /w/<space>/bo mount the space rides the URL and storage may be
+  // empty on both sides: one page load is one space, so null matches null.
+  return lastKnownFix.space === currentSpaceKey() ? lastKnownFix.count : null;
+}
 
 export function settingsBadge(fixCount) {
   if (typeof fixCount !== 'number' || !Number.isInteger(fixCount) || fixCount <= 0) return '';
@@ -687,7 +696,7 @@ export function createShellView({
 
   return {
     update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
-      if (fixCount !== undefined) { state.fixCount = fixCount; lastKnownFixCount = fixCount; }
+      if (fixCount !== undefined) { state.fixCount = fixCount; lastKnownFix = { space: currentSpaceKey(), count: fixCount }; }
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
@@ -785,7 +794,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
  * @param {any} doc
  * @param {{ activeId?: string, fixCount?: unknown, navigate?: (hash: string) => void }} [options]
  */
-export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = lastKnownFixCount, navigate = () => {} } = {}) {
+export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = knownFixCount(), navigate = () => {} } = {}) {
   const wrap = el(doc, 'div', 'bo-settings-tabs');
   wrap.appendChild(el(doc, 'p', 'bo-settings-label', 'IMPOSTAZIONI'));
   const bar = uiTabs(doc, SETTINGS_AREAS.map((area) => ({
