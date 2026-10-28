@@ -99,12 +99,17 @@ export function normalizeControlClass(tag, className) {
   const incoming = String(className ?? '').split(/\s+/).filter(Boolean);
   const out = [...incoming];
   const hasSystem = (prefix) => out.some((cls) => cls === 'ui' || cls.startsWith(prefix));
+  // An explicit ui-btn-* variant on the call site wins: legacy mappings never
+  // add a second competing variant beside it (only the ui-btn base).
+  const hasExplicitVariant = incoming.some((cls) => cls.startsWith('ui-btn-'));
   if (tag === 'button') {
     for (const cls of incoming) {
       const mapped = LEGACY_BUTTON_MAP[cls];
       if (mapped) {
         for (const piece of mapped.split(' ')) {
-          if (piece && !out.includes(piece)) out.push(piece);
+          if (!piece || out.includes(piece)) continue;
+          if (hasExplicitVariant && piece.startsWith('ui-btn-') && !incoming.includes(piece)) continue;
+          out.push(piece);
         }
       }
     }
