@@ -314,7 +314,7 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.equal(shot.width, 1280, 'the PNG is the desktop viewport');
   assert.ok(shot.bytes > 30000, `the week paints real pixels (${shot.bytes} bytes)`);
   const probe = readProbe(dom);
-  assert.equal(probe.days, 7, 'the week holds seven day columns');
+  assert.equal(probe.days, 5, 'the week holds five work-day columns');
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
   assert.ok(probe.events.includes('taglio'), 'the desktop render lists the week events');
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);

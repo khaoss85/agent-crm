@@ -3,8 +3,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  channelOf,
   createCalendarioView,
+  dayHead,
+  displayKeys,
+  gridRowsFor,
+  lanesFor,
+  memberColorIndex,
+  memberInitials,
   parseMemberFilter,
+  romeMinutes,
   romeWeekKeys,
   weekLabel,
   weekWindow,
@@ -147,7 +155,8 @@ test('calendario route resolves, deeper paths stay invalid', () => {
   assert.deepEqual(parseModuleRoute('#/calendario/marco'), { view: 'invalid' });
 });
 
-test('week renders seven day columns with real Rome-time events', async () => {
+// BO-F6-11 fetta 4 (specs/calendario.md C13): the work week is five columns.
+test('week renders five day columns with real Rome-time events', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
@@ -163,15 +172,24 @@ test('week renders seven day columns with real Rome-time events', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
-  assert.equal(days.length, 7);
+  assert.equal(days.length, 5);
+  const heads = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day-head'));
+  assert.equal(heads.length, 5);
+  assert.ok(heads[0].textContent.includes('lun 19'), 'C13: the first head reads <ddd> <n>');
+  assert.ok(heads[4].textContent.includes('ven 23'), 'C13: five work days, Mon..Fri');
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
   assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
   assert.ok(texts(mount, 'strong').includes('taglio'));
   // Cancelled rows stay listed with their status.
   assert.ok(texts(mount, 'span').includes('cancelled'));
-  // Customer link points at the scheda, never at a raw id.
+  // No customer link paints before a selection: the card owns it (fetta 5).
+  assert.equal(mount.findAll('a').length, 0);
+  // Selecting the block opens the card, and the card links at the scheda.
+  const block = mount.findAll('button').find((node) => node.textContent.includes('taglio'));
+  assert.ok(block, 'the taglio block is a button');
+  block.dispatch('click');
   const links = mount.findAll('a').map((node) => node.getAttribute('href'));
-  assert.ok(links.includes('#/customer-card/contact/c1'));
+  assert.ok(links.includes('#/customer-card/contact/c1'), 'the card links at the scheda, never a raw id');
 });
 
 test('the week pager reloads the named members instead of blanking the week', async () => {
@@ -199,9 +217,9 @@ test('the week pager reloads the named members instead of blanking the week', as
   assert.ok(weeks()[1].path.includes('teamMemberIds=marco'));
   assert.ok(weeks()[1].path.includes('from=2026-10-25T00'), `second window starts after the first week: ${weeks()[1].path}`);
   // The stub week holds no events in the new window, so the reloaded panel
-  // honestly shows seven empty days — never the "name someone" prompt.
+  // honestly shows five empty work days — never the "name someone" prompt.
   const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
-  assert.equal(days.length, 7);
+  assert.equal(days.length, 5);
   assert.ok(texts(mount, 'p').some((text) => text.includes('26 ott')), 'the nav labels the moved week');
   assert.ok(!texts(mount, 'p').some((text) => text.includes('Scegli le persone')));
 });
@@ -593,7 +611,7 @@ test('the week bar shows pager, interval, today and booking menu in order', asyn
   const nav = mount.querySelector('.actions');
   assert.ok(nav, 'the header has an actions bar');
   const text = nav.textContent;
-  const order = ['‹', '19 ott – 25 ott 2026', '›', 'Oggi', 'Nuovo appuntamento'];
+  const order = ['‹', '19 ott – 23 ott 2026', '›', 'Oggi', 'Nuovo appuntamento'];
   let from = -1;
   for (const part of order) {
     const at = text.indexOf(part, from + 1);
@@ -602,7 +620,7 @@ test('the week bar shows pager, interval, today and booking menu in order', asyn
   }
   // The interval is its own element with the spec pattern, not a button label.
   const interval = nav.querySelector('span[data-role="week-interval"]');
-  assert.equal(interval?.textContent, '19 ott – 25 ott 2026', 'C2: interval pattern');
+  assert.equal(interval?.textContent, '19 ott – 23 ott 2026', 'C2: interval pattern');
 });
 
 // BO-F6-11 fetta 2 (C3): the booking menu opens with both voices.
@@ -705,6 +723,12 @@ test('the calendario view renders no raw control', async () => {
   const mount = createMount();
   const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
+  // Blocks paint too, so the week loads before the walk.
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
 
   const raw = [];
   const walk = (node) => {
@@ -719,4 +743,197 @@ test('the calendario view renders no raw control', async () => {
   };
   walk(mount);
   assert.deepEqual(raw, [], 'every calendario control carries a ui-* system class');
+});
+
+// BO-F6-11 fetta 4 (specs/calendario.md C13): the painted columns are the
+// Mon..Fri work week against an 09:00–18:00 hour axis.
+test('the time grid shows five work days against the 09:00–18:00 axis', async () => {
+  assert.deepEqual(
+    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']),
+    ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23'],
+  );
+  assert.equal(dayHead('2026-10-19'), 'lun 19');
+  assert.equal(dayHead('2026-10-23'), 'ven 23');
+  assert.equal(dayHead('nope'), null);
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const hours = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-hour'));
+  assert.equal(hours.length, 10, 'C13: ten hour labels');
+  assert.equal(hours[0].textContent, '09:00');
+  assert.equal(hours[9].textContent, '18:00');
+  // Blocks sit on their Rome half-hour rows: taglio Thu 18:00–18:30 Rome
+  // clamps to the last row; barba Fri 11:00–11:30 Rome sits on row 5.
+  const blocks = mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-event'));
+  assert.equal(blocks.length, 2, 'two held events paint two blocks');
+  const taglio = blocks.find((node) => node.textContent.includes('taglio'));
+  assert.ok(taglio.getAttribute('style').includes('grid-row: 18 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
+  // The barba row carries hostile notes, which become its title (inert text):
+  // find it by its Rome time, Fri 11:00–11:30.
+  const barba = blocks.find((node) => node.textContent.includes('11:00–11:30'));
+  assert.ok(barba, 'the barba block paints with its Rome time');
+  assert.ok(barba.getAttribute('style').includes('grid-row: 5 / span 1'), `barba sits on its row: ${barba.getAttribute('style')}`);
+  // Colour and initials come from the opaque member id, never a name.
+  assert.match(taglio.getAttribute('class'), /cal-m[0-4]/, 'the block carries its member tint');
+  assert.ok(taglio.textContent.includes('MA'), 'the block carries member initials');
+  assert.ok(!taglio.textContent.includes('marco'), 'the member id is not printed in full');
+});
+
+// Grid placement clamps out-of-hours bookings at the painted edge.
+test('gridRowsFor clamps outside hours and never drops a booking', () => {
+  assert.deepEqual(gridRowsFor('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), { row: 18, span: 1 });
+  assert.deepEqual(gridRowsFor('2026-10-23T07:00:00.000Z', '2026-10-23T07:30:00.000Z'), { row: 1, span: 1 });
+  // 08:00Z–09:00Z is 10:00–11:00 Rome in October: a two-row span mid-grid.
+  assert.deepEqual(gridRowsFor('2026-10-23T08:00:00.000Z', '2026-10-23T09:00:00.000Z'), { row: 3, span: 2 });
+  // 06:00Z–07:00Z is 08:00–09:00 Rome: clamps to the first row, never dropped.
+  assert.deepEqual(gridRowsFor('2026-10-23T06:00:00.000Z', '2026-10-23T07:00:00.000Z'), { row: 1, span: 1 });
+  assert.deepEqual(gridRowsFor('2026-10-23T06:00:00.000Z', '2026-10-23T06:30:00.000Z'), { row: 1, span: 1 });
+  assert.deepEqual(gridRowsFor('nope', 'nope'), { row: 1, span: 1 });
+  assert.equal(romeMinutes('2026-10-22T16:00:00.000Z'), 18 * 60);
+  assert.equal(romeMinutes('nope'), null);
+});
+
+// Overlaps split the day width instead of painting over each other.
+test('lanesFor splits overlapping events into side-by-side lanes', () => {
+  const a = { id: 'a', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T15:00:00.000Z' };
+  const b = { id: 'b', startsAt: '2026-10-22T14:30:00.000Z', endsAt: '2026-10-22T15:30:00.000Z' };
+  const c = { id: 'c', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const lanes = lanesFor([a, b, c]);
+  assert.equal(lanes.get(a).lane, 0);
+  assert.equal(lanes.get(b).lane, 1);
+  assert.equal(lanes.get(c).lane, 0, 'a later event reuses the freed lane');
+  assert.equal(lanes.get(a).lanes, 2);
+});
+
+// BO-F6-11 fetta 4 (C6, C9): a block click opens the detail card; × closes it.
+test('selecting a block opens the detail card and × deselects it', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // Wednesday 21 Oct 2026 08:40Z is 10:40 in Rome: the now-line paints.
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-21T08:40:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const findCards = () => mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.equal(findCards().length, 0, 'no card before a selection');
+  const findBlock = () => mount.findAll('button').find((node) => node.textContent.includes('taglio'));
+  const block = findBlock();
+  assert.ok(block, 'the taglio block is a button');
+  block.dispatch('click');
+  // A click rebuilds the DOM: re-query the painted block, never the detached one.
+  const selected = findBlock();
+  const card = findCards()[0];
+  assert.ok(card, 'C6: the click opens the detail card');
+  assert.ok(card.textContent.includes('taglio'), 'C6: the card carries the title');
+  assert.ok(card.textContent.includes('Giovedì 22 ott · 18:00–18:30'), 'C6: the card carries the day · time row');
+  assert.ok(card.textContent.includes('marco, Ada'), 'C6: the card names the participants');
+  assert.ok(selected.getAttribute('class').includes('cal-selected'), 'C9: the selected block reads selected');
+  assert.equal(selected.getAttribute('aria-pressed'), 'true');
+  const close = card.findAll('button').find((node) => node.textContent === '×');
+  assert.ok(close, 'C9: the card carries a close ×');
+  close.dispatch('click');
+  assert.equal(findCards().length, 0, 'C9: × hides the card');
+  // A second click on the block toggles the selection off as well.
+  const reopen = mount.findAll('button').find((node) => node.textContent.includes('taglio'));
+  reopen.dispatch('click');
+  assert.equal(findCards().length, 1);
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  assert.equal(findCards().length, 0, 'clicking the selected block deselects it');
+});
+
+// BO-F6-11 fetta 4 (C15): the red now-line crosses the current day only.
+test('the now-line paints on the current day inside painted hours', async () => {
+  const load = async (now) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ doc, mount, client: stubClient(), now });
+    await view.render();
+    const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+    filter.value = 'marco';
+    clickButton(mount, 'Mostra settimana');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    return mount;
+  };
+  // Wednesday 21 Oct 08:40Z is 10:40 Rome: (100/540) = 18.52% down the day.
+  const midweek = await load(() => new Date('2026-10-21T08:40:00Z'));
+  const lines = midweek.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-now'));
+  assert.equal(lines.length, 1, 'C15: one now-line on the current day');
+  assert.ok(lines[0].getAttribute('style').includes('top: 18.52%'), `the line sits at the Rome time: ${lines[0].getAttribute('style')}`);
+  const sunday = await load(() => new Date('2026-10-25T10:00:00Z'));
+  assert.equal(
+    sunday.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-now')).length,
+    0,
+    'no now-line when today is outside the work week',
+  );
+  const night = await load(() => new Date('2026-10-21T03:00:00Z'));
+  assert.equal(
+    night.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-now')).length,
+    0,
+    'no now-line outside the painted hours',
+  );
+});
+
+// BO-F6-11 fetta 4 (C14): the WA badge paints only from an explicit channel
+// marker — live team-week rows carry none, so they never guess.
+test('the WA badge is fail-closed on the row channel marker', async () => {
+  assert.equal(channelOf({ channel: 'whatsapp' }), 'whatsapp');
+  assert.equal(channelOf({}), null, 'no marker, no badge');
+  assert.equal(channelOf({ channel: '<img src=x>' }), null, 'a hostile channel value never paints');
+  assert.equal(channelOf(null), null);
+
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'w1',
+        status: 'booked',
+        startsAt: '2026-10-22T16:00:00.000Z',
+        endsAt: '2026-10-22T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        channel: 'whatsapp',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const calls = [];
+  const view = createCalendarioView({
+    doc,
+    mount,
+    client: { calls, async request(path) { calls.push(path); return week; } },
+    now: () => new Date('2026-10-25T10:00:00Z'),
+  });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const marked = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-wa'));
+  assert.equal(marked.length, 1, 'C14: the marked block carries the WA badge');
+  assert.equal(marked[0].textContent, 'WA');
+});
+
+// Member tint and initials are deterministic per identity.
+test('memberColorIndex and memberInitials never print a name', () => {
+  assert.ok(memberColorIndex('marco') >= 0 && memberColorIndex('marco') < 5);
+  assert.equal(memberColorIndex('marco'), memberColorIndex('marco'), 'stable per identity');
+  assert.equal(memberInitials('marco'), 'MA');
+  assert.equal(memberInitials('sara'), 'SA');
+  assert.equal(memberInitials(null), '··');
 });
