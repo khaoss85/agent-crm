@@ -416,6 +416,11 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-scheda { display: grid; gap: 12px; }
 .bo-scheda-name { margin: 0; font-size: 20px; }
 .bo-scheda-sub { margin: 2px 0 0; }
+.bo-scheda-back { margin-bottom: 4px; }
+.bo-scheda-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bo-scheda-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--surface-soft); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; flex: none; }
+.bo-scheda-titles { display: grid; gap: 4px; }
+.bo-scheda-badge { display: inline-block; justify-self: start; font-size: 12px; font-weight: 700; border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; background: var(--surface); color: var(--ink); }
 .bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; }
 .bo-scheda-col { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
 .bo-scheda-col h4 { margin: 0; font-size: 14px; }
