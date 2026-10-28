@@ -135,6 +135,9 @@ test('personalizzazione: a failed catalog read renders a human error with retry,
     navigate: () => {},
     spaceId: () => 'spazio-1',
   });
+  // The catalog-backed tabs: Skill AI and Pacchetti read the catalog, so a
+  // failed read lands there (the Connettori tab owns its own state).
+  view.test.state.tab = 'pacchetti';
   await view.render();
   await flush();
   const text = mount.textContent;
@@ -147,6 +150,34 @@ test('personalizzazione: a failed catalog read renders a human error with retry,
   assert.ok(!text.includes('Prova a cambiare ricerca'), 'a failed read never suggests searching');
   const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
   assert.ok(retry, 'the failed read offers a retry');
+});
+
+test('personalizzazione: a catalog outage never hides the connectors directory', async () => {
+  const connectorsOk = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') throw opFail(NASTY_MESSAGE, 'BOOM', 500);
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors')) {
+        return { connectors: [{ name: 'instagram', state: 'connected' }] };
+      }
+      throw opFail(NASTY_MESSAGE, 'BOOM', 500);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createPersonalizzazioneView({
+    doc,
+    mount,
+    client: connectorsOk,
+    navigate: () => {},
+    spaceId: () => 'spazio-1',
+  });
+  view.test.state.tab = 'connettori';
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  checkHumanText(text, 'personalizzazione');
+  assert.ok(!text.includes('non si è potuta leggere'), 'the connectors tab is not blocked by the catalog');
 });
 
 test('personalizzazione: the retry reloads the catalog after a failure', async () => {
@@ -172,6 +203,7 @@ test('personalizzazione: the retry reloads the catalog after a failure', async (
     navigate: () => {},
     spaceId: () => 'spazio-1',
   });
+  view.test.state.tab = 'pacchetti';
   await view.render();
   await flush();
   assert.ok(

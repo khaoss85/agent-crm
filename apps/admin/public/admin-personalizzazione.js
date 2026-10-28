@@ -518,6 +518,13 @@ export function createPersonalizzazioneView(deps) {
       mount.appendChild(box);
       return;
     }
+    // The connectors tab owns its own directory and connection state: an
+    // unrelated catalog outage must not hide it, so it renders first.
+    if (state.tab === 'connettori') {
+      renderConnectorsTab(box);
+      mount.appendChild(box);
+      return;
+    }
     if (state.unitsError !== null) {
       box.appendChild(el(doc, 'p', { text: state.unitsError, cls: 'empty' }));
       const retry = uiButton(doc, { variant: 'secondary', label: 'Riprova', attrs: { type: 'button' } });
@@ -526,20 +533,14 @@ export function createPersonalizzazioneView(deps) {
         state.units = null;
         state.rows = null;
         renderList();
-        // Same reload as the first paint: catalog, rows, and connectors on
-        // the connectors tab.
+        // Same reload as the first paint: catalog and rows (connectors only
+        // reload on their own tab, which never reaches this branch).
         void (async () => {
           await load();
-          if (state.tab === 'connettori') await loadConnectors();
           render();
         })();
       });
       box.appendChild(retry);
-      mount.appendChild(box);
-      return;
-    }
-    if (state.tab === 'connettori') {
-      renderConnectorsTab(box);
       mount.appendChild(box);
       return;
     }
