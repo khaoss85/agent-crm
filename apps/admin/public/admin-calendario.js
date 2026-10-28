@@ -17,8 +17,8 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { formatMinorUnits, humanReadError } from './admin-core.js';
-import { romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
+import { humanReadError } from './admin-core.js';
+import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { uiButton } from './admin-ui.js';
@@ -118,6 +118,143 @@ export function weekLabel(weekKeys) {
   return `${first} ${firstYear} – ${last} ${lastYear}`;
 }
 
+/**
+ * BO-F6-11 fetta 4 (specs/calendario.md C13): the prototype shows a work
+ * week — Monday..Friday against an 09:00–18:00 hour axis. The loaded week
+ * stays Monday..Sunday (the pager and the window do not move); only the
+ * painted columns are the first five keys.
+ * @param {Array<string>} weekKeys
+ */
+export function displayKeys(weekKeys) {
+  return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
+}
+
+/** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
+export const GRID_START_MINUTES = 9 * 60;
+export const GRID_END_MINUTES = 18 * 60;
+export const GRID_SLOT_MINUTES = 30;
+export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
+
+/** Column header `<ddd> <n>` ("lun 19"), null when unparsable. */
+export function dayHead(key) {
+  if (typeof key !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return null;
+  try {
+    return new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', weekday: 'short', day: 'numeric',
+    }).format(new Date(`${key}T12:00:00Z`)).replace(/\./g, '');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Member colour, deterministic per identity: the same member keeps the same
+ * tint across days and renders. No roster exists (space-permissions stores
+ * no members), so the tint hashes the opaque member id — never a name.
+ * @param {unknown} memberId
+ */
+export function memberColorIndex(memberId) {
+  const id = typeof memberId === 'string' ? memberId : '';
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1) {
+    hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
+  }
+  return hash % 5;
+}
+
+/** Avatar initials from the opaque member id ("marco" → "MA"). Never a name. @param {unknown} memberId */
+export function memberInitials(memberId) {
+  if (typeof memberId !== 'string') return '··';
+  const letters = memberId.replace(/[^a-zA-Z]/g, '').slice(0, 2).toUpperCase();
+  return letters === '' ? '··' : letters;
+}
+
+/**
+ * WhatsApp origin marker, fail-closed: only an explicit 'whatsapp' channel
+ * on the row paints the WA badge. Team-week rows carry no channel today, so
+ * live rows show no badge and never a guess — the origin capability
+ * (interaction-log/timeline) plugs in here when it is composed.
+ * @param {any} row
+ */
+export function channelOf(row) {
+  return row && row.channel === 'whatsapp' ? 'whatsapp' : null;
+}
+
+/**
+ * Rome wall minutes since midnight for an instant, or null when the instant
+ * does not parse. Presentation only: the server stays the write authority.
+ * @param {unknown} value
+ */
+export function romeMinutes(value) {
+  const instant = value instanceof Date && !Number.isNaN(value.getTime()) ? value : new Date(String(value ?? ''));
+  if (Number.isNaN(instant.getTime())) return null;
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(instant);
+    const get = (type) => Number(parts.find((part) => part.type === type)?.value);
+    const hour = get('hour') % 24;
+    const minute = get('minute');
+    if (!Number.isInteger(hour) || !Number.isInteger(minute)) return null;
+    return hour * 60 + minute;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Half-hour grid rows (1-based, inside the day column) for an event: start
+ * row and span, clamped into the 09:00–18:00 body so an out-of-hours booking
+ * still paints at the edge with its exact time in the label — never dropped.
+ * @param {unknown} startsAt @param {unknown} endsAt
+ */
+export function gridRowsFor(startsAt, endsAt) {
+  const startMin = romeMinutes(startsAt);
+  const endMin = romeMinutes(endsAt);
+  if (startMin === null || endMin === null || endMin <= startMin) {
+    return { row: 1, span: 1 };
+  }
+  const clampedStart = Math.min(Math.max(startMin, GRID_START_MINUTES), GRID_END_MINUTES);
+  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_SLOT_MINUTES), GRID_END_MINUTES);
+  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES), GRID_ROWS - 1) + 1;
+  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_SLOT_MINUTES)) / GRID_SLOT_MINUTES));
+  return { row, span: Math.min(span, GRID_ROWS - row + 1) };
+}
+
+/**
+ * Overlap lanes per day column: events sharing Rome time split the column
+ * width instead of painting over each other. Greedy by start time, keyed by
+ * the row objects of this render pass, so every entry carries its lane and
+ * the column lane count.
+ * @param {Array<any>} rows
+ * @returns {Map<any, {lane: number, lanes: number}>}
+ */
+export function lanesFor(rows) {
+  const ordered = [...rows].sort((a, b) => (
+    String(a?.startsAt ?? '').localeCompare(String(b?.startsAt ?? ''))
+    || String(a?.endsAt ?? '').localeCompare(String(b?.endsAt ?? ''))
+  ));
+  /** @type {Array<number>} */
+  const laneEnd = [];
+  /** @type {Map<any, {lane: number, lanes: number}>} */
+  const placed = new Map();
+  for (const row of ordered) {
+    const startMin = romeMinutes(row?.startsAt) ?? GRID_START_MINUTES;
+    const endMin = romeMinutes(row?.endsAt) ?? (startMin + GRID_SLOT_MINUTES);
+    let lane = laneEnd.findIndex((end) => end <= startMin);
+    if (lane === -1) {
+      lane = laneEnd.length;
+      laneEnd.push(endMin);
+    } else {
+      laneEnd[lane] = endMin;
+    }
+    placed.set(row, { lane, lanes: 0 });
+  }
+  const lanes = Math.max(1, laneEnd.length);
+  for (const entry of placed.values()) entry.lanes = lanes;
+  return placed;
+}
+
 /** @param {any} doc @param {string} tag @param {{text?: string, className?: string, attrs?: Record<string,string>}} [options] */
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
@@ -144,6 +281,8 @@ export function createCalendarioView(deps) {
   const state = {
     memberFilter: '',
     weekKeys: romeWeekKeys(clock()),
+    /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
+    selectedId: null,
     /** @type {any} */
     week: null,
     weekError: null,
@@ -242,6 +381,19 @@ export function createCalendarioView(deps) {
     renderAll();
   }
 
+  /** The selected row, when it is still in the loaded week. */
+  function selectedRow() {
+    if (state.selectedId === null || !state.week) return null;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        if (row && String(row.id ?? '') === state.selectedId) {
+          return { ...row, teamMemberId: group.teamMemberId };
+        }
+      }
+    }
+    return null;
+  }
+
   function renderAll() {
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
@@ -256,6 +408,12 @@ export function createCalendarioView(deps) {
       mount.appendChild(wrap);
       return;
     }
+    // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
+    // the grid while a block stays selected — the left-column home of fetta 5
+    // (with Team and booking cards) arrives with fette 6–7.
+    const selected = selectedRow();
+    if (selected) wrap.appendChild(renderDetailCard(selected));
+    else state.selectedId = null;
     wrap.appendChild(renderWeek());
     wrap.appendChild(renderAi());
     wrap.appendChild(renderManual());
@@ -338,9 +496,11 @@ export function createCalendarioView(deps) {
     // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome — the
     // eyebrow and title never carry data. The lede stays because the
     // bo:shots probe reads the pinned week from it (`.cal-wrap .lede`).
+    // Fetta 4: the label names the painted work week (Mon..Fri), not the
+    // loaded seven days.
     titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Calendario condiviso' }));
     titleBox.appendChild(el(doc, 'h2', { text: 'Agenda del team' }));
-    const label = weekLabel(state.weekKeys);
+    const label = weekLabel(displayKeys(state.weekKeys));
     if (label) titleBox.appendChild(el(doc, 'p', { className: 'lede', text: `La settimana del team · ${label}` }));
     head.appendChild(titleBox);
     const nav = el(doc, 'div', { className: 'actions' });
@@ -398,10 +558,10 @@ export function createCalendarioView(deps) {
     return box;
   }
 
-  /** Group the loaded week rows by Rome day key, in week order. */
+  /** Group the loaded week rows by Rome day key, in work-week order (Mon..Fri). */
   function weekColumns() {
     /** @type {Map<string, Array<any>>} */
-    const byDay = new Map(state.weekKeys.map((key) => [key, []]));
+    const byDay = new Map(displayKeys(state.weekKeys).map((key) => [key, []]));
     for (const group of state.week?.members ?? []) {
       for (const row of group?.appointments ?? []) {
         const key = romeDayKey(row.startsAt);
@@ -414,6 +574,14 @@ export function createCalendarioView(deps) {
     return [...byDay.entries()];
   }
 
+  /**
+   * BO-F6-11 fetta 4 (specs/calendario.md C13–C16): the prototype time grid —
+   * an 09:00–18:00 hour gutter beside five work-day columns, event blocks on
+   * their Rome half-hour rows, the red now-line on the current day. Empty
+   * days paint their empty timeline, never a message. DOM order interleaves
+   * each day head with its column, so the narrow-screen stack (heads above
+   * their day, hours hidden) needs no extra markup.
+   */
   function renderWeek() {
     const panel = el(doc, 'div', { className: 'panel' });
     panel.appendChild(el(doc, 'h2', { text: 'Settimana del team' }));
@@ -429,34 +597,74 @@ export function createCalendarioView(deps) {
       return panel;
     }
     const grid = el(doc, 'div', { className: 'cal-grid' });
-    for (const [key, rows] of weekColumns()) {
-      const col = el(doc, 'div', { className: 'cal-day' });
-      const head = el(doc, 'div', { className: 'cal-day-head' });
-      head.appendChild(el(doc, 'strong', { text: dayName(key) }));
-      head.appendChild(el(doc, 'span', { text: romeShortDay(`${key}T12:00:00Z`) ?? key }));
-      col.appendChild(head);
-      if (rows.length === 0) {
-        col.appendChild(el(doc, 'p', { className: 'cal-empty', text: '—' }));
+    grid.appendChild(el(doc, 'div', { className: 'cal-corner', attrs: { 'aria-hidden': 'true' } }));
+    for (let hour = GRID_START_MINUTES / 60; hour <= GRID_END_MINUTES / 60; hour += 1) {
+      const label = el(doc, 'div', {
+        className: 'cal-hour',
+        attrs: { 'aria-hidden': 'true', style: `grid-row: ${(hour - 9) * 2 + 2} / span 2` },
+        text: `${String(hour).padStart(2, '0')}:00`,
+      });
+      grid.appendChild(label);
+    }
+    // Today in Rome, once per render: heads and the now-line share it.
+    const now = clock();
+    const nowMin = romeMinutes(now);
+    const columns = weekColumns();
+    columns.forEach(([key, rows], dayIndex) => {
+      const head = el(doc, 'div', {
+        className: 'cal-day-head',
+        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },
+      });
+      const headText = dayHead(key) ?? key;
+      if (isTodayInRome(`${key}T12:00:00Z`, now)) {
+        // Today reads as a black disc with a light number, like the prototype.
+        const disc = el(doc, 'span', { className: 'cal-today', text: headText });
+        disc.setAttribute('aria-current', 'date');
+        head.appendChild(disc);
+      } else {
+        head.appendChild(el(doc, 'span', { text: headText }));
       }
+      grid.appendChild(head);
+      const col = el(doc, 'div', {
+        className: 'cal-day',
+        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
+      });
+      const lanes = lanesFor(rows);
+      const laneCount = lanes.size === 0 ? 1 : Math.max(...[...lanes.values()].map((entry) => entry.lanes));
+      col.setAttribute('style', `${col.getAttribute('style')}; --lanes: ${laneCount}`);
       for (const row of rows) {
-        col.appendChild(renderEvent(row));
+        col.appendChild(renderEvent(row, lanes.get(row) ?? { lane: 0, lanes: 1 }));
       }
       // BO-F6-11 fetta 3 (specs/calendario.md C5): the "✦ Proposta" ghosts.
       // One dashed ghost per searched slot on its Rome day, clickable to
       // confirm like the card rows. The dashed `bo-add-button` is the shared
-      // shell control for add-an-item blocks, not a new style.
+      // shell control for add-an-item blocks, not a new style. Fetta 4 seats
+      // each ghost on its time rows, spanning the day width.
       for (const slot of state.proposals) {
         if (romeDayKey(slot?.startsAt) !== key) continue;
+        const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const ghost = el(doc, 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button' },
+          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: 1 / -1` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
         ghost.addEventListener('click', () => void confirmSlot(slot));
         col.appendChild(ghost);
       }
+      // The red now-line crosses the current day at the current Rome time,
+      // only while the time falls inside the painted hours.
+      if (isTodayInRome(`${key}T12:00:00Z`, now) && nowMin !== null && nowMin >= GRID_START_MINUTES && nowMin < GRID_END_MINUTES) {
+        const line = el(doc, 'div', {
+          className: 'cal-now',
+          attrs: {
+            'aria-hidden': 'true',
+            style: `top: ${(((nowMin - GRID_START_MINUTES) / (GRID_END_MINUTES - GRID_START_MINUTES)) * 100).toFixed(2)}%`,
+          },
+        });
+        col.appendChild(line);
+      }
       grid.appendChild(col);
-    }
+    });
     panel.appendChild(grid);
     return panel;
   }
@@ -472,24 +680,48 @@ export function createCalendarioView(deps) {
     }
   }
 
-  function renderEvent(row) {
-    const item = el(doc, 'div', { className: `cal-event cal-status-${String(row.status ?? 'booked')}` });
+  /**
+   * A week block: the whole block is one button, so a click selects it and
+   * opens the detail card (C6). Colour and initials come from the opaque
+   * member id; gray stays reserved for multi-participant rows, which
+   * team-week never returns (one member per booking), so it never paints.
+   * @param {any} row @param {{lane: number, lanes: number}} lane
+   */
+  function renderEvent(row, lane) {
+    const placed = gridRowsFor(row?.startsAt, row?.endsAt);
+    const classes = ['cal-event', `cal-m${memberColorIndex(row?.teamMemberId)}`];
+    const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
+    if (selected) classes.push('cal-selected');
+    const status = String(row?.status ?? 'booked');
+    const cancelled = status !== 'booked' && status !== 'confirmed';
+    if (cancelled) classes.push('cal-cancelled');
+    const item = el(doc, 'button', {
+      className: classes.join(' '),
+      attrs: {
+        type: 'button',
+        style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`,
+        'aria-pressed': selected ? 'true' : 'false',
+      },
+    });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
     item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
     item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
-    item.appendChild(el(doc, 'span', { className: 'cal-meta', text: String(row.teamMemberId ?? '') }));
-    item.appendChild(el(doc, 'span', { className: 'badge', text: String(row.status ?? 'booked') }));
-    const subject = row.subject;
-    if (subject && typeof subject.id === 'string' && typeof subject.resource === 'string') {
-      const link = el(doc, 'a', {
-        text: `Scheda ${subject.label ?? subject.id}`,
-        attrs: { href: `#/customer-card/${subject.resource}/${subject.id}` },
-      });
-      item.appendChild(link);
+    const foot = el(doc, 'span', { className: 'cal-day-foot', attrs: { 'aria-hidden': 'true' } });
+    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(row?.teamMemberId) }));
+    if (channelOf(row) === 'whatsapp') {
+      foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     }
-    const detail = el(doc, 'button', { className: 'small secondary', text: 'Dettaglio' });
-    detail.addEventListener('click', () => renderDetail(item, row));
-    item.appendChild(detail);
+    // A cancelled booking still reads as cancelled: the tint alone must
+    // never pass a dead booking as held.
+    if (cancelled) {
+      foot.appendChild(el(doc, 'span', { className: 'badge', text: status }));
+    }
+    item.appendChild(foot);
+    const id = String(row?.id ?? '');
+    item.addEventListener('click', () => {
+      state.selectedId = state.selectedId === id ? null : id;
+      renderAll();
+    });
     return item;
   }
 
@@ -500,27 +732,45 @@ export function createCalendarioView(deps) {
     return 'Appuntamento';
   }
 
-  /** Who, where, origin and sync key — the sync state itself lives in calendar-sync, not here. */
-  function renderDetail(anchor, row) {
-    let existing = null;
-    for (const child of anchor.childNodes) {
-      if (child.getAttribute && child.getAttribute('class') === 'cal-detail') existing = child;
+  /**
+   * The selected-event card (C6, C9): title, day · time row, participant
+   * names and a close × that deselects. No location paints because
+   * team-week rows carry none — the row names day and time only. The pill,
+   * the sync row and the customer button arrive with fetta 5.
+   * @param {any} row
+   */
+  function renderDetailCard(row) {
+    const card = el(doc, 'div', { className: 'panel', attrs: { 'data-role': 'event-detail' } });
+    const head = el(doc, 'div', { className: 'panel-heading' });
+    head.appendChild(el(doc, 'h2', { text: titleOf(row) }));
+    const close = el(doc, 'button', {
+      className: 'small secondary',
+      attrs: { type: 'button', 'aria-label': 'Chiudi dettaglio' },
+      text: '×',
+    });
+    close.addEventListener('click', () => {
+      state.selectedId = null;
+      renderAll();
+    });
+    head.appendChild(close);
+    card.appendChild(head);
+    const key = romeDayKey(row?.startsAt);
+    const when = `${key ? `${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}` : '?'} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`;
+    card.appendChild(el(doc, 'p', { text: when }));
+    const customer = row?.subject && typeof row.subject.id === 'string' ? (row.subject.label ?? row.subject.id) : null;
+    const participants = [row?.teamMemberId, customer].filter((part) => typeof part === 'string' && part !== '');
+    if (participants.length > 0) {
+      card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
     }
-    if (existing) {
-      anchor.removeChild(existing);
-      return;
+    const subject = row?.subject ?? {};
+    if (typeof subject.id === 'string' && typeof subject.resource === 'string') {
+      const link = el(doc, 'a', {
+        text: `Scheda ${subject.label ?? subject.id}`,
+        attrs: { href: `#/customer-card/${subject.resource}/${subject.id}` },
+      });
+      card.appendChild(link);
     }
-    const box = el(doc, 'div', { className: 'cal-detail' });
-    const subject = row.subject ?? {};
-    box.appendChild(el(doc, 'p', { text: `Chi: ${subject.resource ?? '?'} ${subject.id ?? '?'}` }));
-    box.appendChild(el(doc, 'p', { text: `Dove: con ${row.teamMemberId ?? '?'}` }));
-    box.appendChild(el(doc, 'p', { text: `Stato: ${row.status ?? 'booked'}` }));
-    box.appendChild(el(doc, 'p', { text: `Origine: ${row.sourceKey ?? '—'}` }));
-    const price = typeof row.priceCents === 'number'
-      ? formatMinorUnits(row.priceCents, row.currency ?? 'EUR')
-      : '—';
-    box.appendChild(el(doc, 'p', { text: `Prezzo concordato: ${price}` }));
-    anchor.appendChild(box);
+    return card;
   }
 
   /**

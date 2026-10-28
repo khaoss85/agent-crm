@@ -538,7 +538,7 @@ export const SCREENS = Object.freeze([
   { name: 'clienti', module: 'admin-clienti.js', ready: 'clienti-ready', expect: ['Marco Rossi', 'Anna Bianchi'] },
   { name: 'cliente', module: 'admin-customer-card.js', ready: 'cliente-ready', expect: ['Guido Presti', 'Ciao, vorrei prenotare una prova'] },
   { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Proposta'] },
-  { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['Scheda Ada', 'cal-event'] },
+  { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
@@ -1252,7 +1252,7 @@ export function readProbe(stdout, name) {
 /**
  * Fails a screen whose probe proves an empty or half-painted render, using
  * the same invariants the `*-shots` tests assert on the same views: the
- * calendario week holds seven day columns with the demo events, the AI
+ * calendario week holds five work-day columns with the demo events, the AI
  * proposal rows with their ghosts and a prefilled manual form, sequenze lists both sequences with detail and
  * steps, the catalog holds the product table with its Stripe state and
  * price-rule bands, spazi-accessi holds both spaces with both members,
@@ -1288,7 +1288,7 @@ export function assertProbe(name, probe) {
       return;
     }
     case 'calendario': {
-      if (probe.days !== 7) throw new Error(`calendario: the probe holds ${String(probe.days)} day columns, expected 7`);
+      if (probe.days !== 5) throw new Error(`calendario: the probe holds ${String(probe.days)} day columns, expected 5`);
       const events = Array.isArray(probe.events) ? probe.events : [];
       if (!events.includes('taglio')) {
         throw new Error('calendario: the probe lists no week events (expected taglio)');

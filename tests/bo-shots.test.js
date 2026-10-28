@@ -183,11 +183,13 @@ test('calendario expects are dynamic-only: static chrome alone must fail them', 
   // serves the static 'Mostra settimana' button and the manual-form
   // placeholder '...per il taglio', so expects built from those substrings
   // pass on a painted-but-empty grid. Every calendario expect must be a
-  // string the static page can never contain: a painted event marker.
+  // string the static page can never contain: a painted event marker. Since
+  // fetta 4 the customer link lives in the detail card (painted only after a
+  // block click), the painted proof is the Rome time range of a held event.
   const calendario = SCREENS.find((screen) => screen.name === 'calendario');
   assert.ok(calendario, 'the calendario screen exists');
   assert.ok(!calendario.expect.includes('Mostra settimana'), 'the static button is not an expect');
-  assert.ok(calendario.expect.includes('Scheda Ada'), 'a painted subject link is expected');
+  assert.ok(calendario.expect.includes('18:00–18:30'), 'a painted Rome time range is expected');
   assert.ok(calendario.expect.includes('cal-event'), 'a painted event marker is expected');
 });
 
@@ -257,7 +259,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('cliente', { name: true }));
   assert.doesNotThrow(() => assertProbe('pipeline', { deals: 5 }));
   assert.doesNotThrow(() => assertProbe('calendario', {
-    days: 7, events: ['taglio', 'barba'], lede: 'La settimana del team · 19 – 25 ott 2026', filled: 'marco|2026-10-22|09:00',
+    days: 5, events: ['taglio', 'barba'], lede: 'La settimana del team · 19 – 23 ott 2026', filled: 'marco|2026-10-22|09:00',
     proposals: 2, ghosts: 2,
   }));
   assert.doesNotThrow(() => assertProbe('sequenze', {
