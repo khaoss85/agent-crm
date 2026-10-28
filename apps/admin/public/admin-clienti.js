@@ -201,20 +201,40 @@ export function createCustomerListView(deps) {
   }
 
   // Pop-up menus: one open at a time, Escape closes, a click outside closes.
-  // The outside click is a guarded enhancement: the test double has no
-  // document-level events, so it stays off there and single-open + Escape
-  // carry the behavior under test.
+  // Each view instance owns its handler (no global doc flag): the handler
+  // only touches this view's menus, so navigation away/back never leaves a
+  // view without outside-close. Clicks inside a menu wrap (including the
+  // opening click, which bubbles to the document in a real browser) are
+  // ignored via the wrap guard plus stopPropagation on the toggles.
   const openMenus = [];
-  if (doc && typeof doc.addEventListener === 'function' && !doc.__boClientiOutside) {
-    doc.__boClientiOutside = true;
-    doc.addEventListener('click', () => {
-      for (const entry of openMenus) entry.classList.add('hidden');
+  const isInsideMenuWrap = (node) => {
+    let current = node ?? null;
+    while (current) {
+      const classes = typeof current.getAttribute === 'function'
+        ? String(current.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+        : [];
+      if (classes.includes('bo-clienti-menuwrap')) return true;
+      current = current.parentNode ?? null;
+    }
+    return false;
+  };
+  const syncAllMenus = () => {
+    for (const entry of openMenus) entry.sync();
+  };
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('click', (event) => {
+      if (isInsideMenuWrap(event?.target ?? null)) return;
+      for (const entry of openMenus) entry.menu.classList.add('hidden');
+      syncAllMenus();
     });
   }
 
   function closeMenus(except = null) {
     for (const entry of openMenus) {
-      if (entry !== except) entry.classList.add('hidden');
+      if (entry.menu !== except) {
+        entry.menu.classList.add('hidden');
+        entry.sync();
+      }
     }
   }
 
@@ -225,11 +245,12 @@ export function createCustomerListView(deps) {
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('title', title ?? label);
     const menu = el('div', 'bo-clienti-menu hidden');
-    openMenus.push(menu);
     const syncExpanded = () => {
       button.setAttribute('aria-expanded', menu.classList.contains('hidden') ? 'false' : 'true');
     };
-    button.addEventListener('click', () => {
+    openMenus.push({ menu, sync: syncExpanded });
+    button.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
       const willOpen = menu.classList.contains('hidden');
       closeMenus(menu);
       menu.classList.toggle('hidden', !willOpen);
@@ -243,6 +264,9 @@ export function createCustomerListView(deps) {
     };
     button.addEventListener('keydown', closeOnEscape);
     menu.addEventListener('keydown', closeOnEscape);
+    menu.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
+    });
     build(menu, () => {
       menu.classList.add('hidden');
       syncExpanded();

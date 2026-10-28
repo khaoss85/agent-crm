@@ -349,6 +349,58 @@ test('only one menu opens at a time, and Escape closes it', async () => {
   assert.ok(menus()[2].classList.contains('hidden'), 'Escape closes the open menu');
 });
 
+test('the opening click does not close the menu via the document handler', async () => {
+  // P1 regression: in a real browser the opening click bubbles to the
+  // document handler, which used to hide the just-opened menu at once.
+  const doc = createFakeDocument();
+  const docClicks = [];
+  const docWithOutside = {
+    ...doc,
+    addEventListener: (type, handler) => {
+      if (type === 'click') docClicks.push(handler);
+    },
+  };
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
+  const view = createCustomerListView({ doc: docWithOutside, mount, client: stubClient(), storage: store, notify: () => {} });
+  await view.render();
+  assert.ok(docClicks.length >= 1, 'the view installs a per-instance document handler');
+  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  add.dispatch('click', { target: add, stopPropagation: () => {} });
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the menu stays open after its own opening click');
+  // The bubbled opening click reaches the document handler with the button
+  // as target (inside .bo-clienti-menuwrap): it must be ignored.
+  for (const handler of docClicks) handler({ target: add });
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the bubbled opening click does not close the menu');
+  assert.equal(add.getAttribute('aria-expanded'), 'true');
+  // An outside click closes and syncs aria-expanded.
+  for (const handler of docClicks) handler({ target: mount });
+  assert.ok(menus()[0].classList.contains('hidden'), 'an outside click closes the menu');
+  assert.equal(add.getAttribute('aria-expanded'), 'false');
+});
+
+test('opening a second menu syncs the first button back to closed', async () => {
+  // P2: aria-expanded desynchronised when another menu opened.
+  const { mount } = await render(stubClient());
+  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label);
+  const filtersButton = opener('Filtri');
+  const sortButton = opener('Ordina');
+  filtersButton.dispatch('click');
+  assert.equal(filtersButton.getAttribute('aria-expanded'), 'true');
+  sortButton.dispatch('click');
+  assert.equal(sortButton.getAttribute('aria-expanded'), 'true', 'the newly opened button reports expanded');
+  assert.equal(filtersButton.getAttribute('aria-expanded'), 'false', 'the closed menu button reports collapsed');
+});
+
+test('Aggiungi cliente carries a single ui-btn-* variant', async () => {
+  // P2: the add button rendered both ui-btn-primary and ui-btn-secondary.
+  const { mount } = await render(stubClient());
+  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
+  const variants = String(add.getAttribute('class') ?? '').split(/\s+/).filter((cls) => cls.startsWith('ui-btn-'));
+  assert.deepEqual(variants, ['ui-btn-primary'], 'a single primary variant, never primary plus secondary');
+});
+
 test('the columns menu names its title and the always-visible Cliente row', async () => {
   const { mount } = await render(stubClient());
   mount.findAll('button').find((node) => node.textContent === 'Colonne 4/8').dispatch('click');

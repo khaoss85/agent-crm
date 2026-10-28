@@ -82,6 +82,17 @@ test('el() normalizes every control onto the system, keeping legacy hooks', () =
   );
 });
 
+test('an explicit ui-btn-* variant wins over the legacy mapping, never doubling', () => {
+  const doc = createFakeDocument();
+  const explicit = el(doc, 'button', 'bo-clienti-menubutton ui-btn-primary', 'Aggiungi cliente');
+  const classes = explicit.getAttribute('class').split(/\s+/).filter(Boolean);
+  assert.ok(classes.includes('ui-btn'), 'the base stays');
+  assert.ok(classes.includes('ui-btn-primary'), 'the explicit primary stays');
+  assert.ok(!classes.includes('ui-btn-secondary'), 'the legacy secondary is not added beside an explicit variant');
+  const legacy = el(doc, 'button', 'bo-clienti-menubutton', 'Filtri');
+  assert.ok(legacy.getAttribute('class').split(/\s+/).includes('ui-btn-secondary'), 'without an explicit variant the legacy mapping still applies');
+});
+
 test('el() supports the options-object signature of the migrated views', () => {
   const doc = createFakeDocument();
   const node = el(doc, 'select', { className: 'bo-filter', attrs: { name: 'stato' } });
