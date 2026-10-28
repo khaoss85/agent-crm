@@ -119,6 +119,10 @@ export function crumb(spaceName, screenLabel) {
  * real count of things to fix: zero (or unknown) renders no badge at all.
  * @param {unknown} fixCount
  */
+/** The last «things to fix» count the shell painted, so every IMPOSTAZIONI
+ * tab row shows the Stato sync badge, not only the sync screen's own. */
+let lastKnownFixCount = null;
+
 export function settingsBadge(fixCount) {
   if (typeof fixCount !== 'number' || !Number.isInteger(fixCount) || fixCount <= 0) return '';
   return String(fixCount);
@@ -683,7 +687,7 @@ export function createShellView({
 
   return {
     update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
-      if (fixCount !== undefined) state.fixCount = fixCount;
+      if (fixCount !== undefined) { state.fixCount = fixCount; lastKnownFixCount = fixCount; }
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
@@ -781,7 +785,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
  * @param {any} doc
  * @param {{ activeId?: string, fixCount?: unknown, navigate?: (hash: string) => void }} [options]
  */
-export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = null, navigate = () => {} } = {}) {
+export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = lastKnownFixCount, navigate = () => {} } = {}) {
   const wrap = el(doc, 'div', 'bo-settings-tabs');
   wrap.appendChild(el(doc, 'p', 'bo-settings-label', 'IMPOSTAZIONI'));
   const bar = uiTabs(doc, SETTINGS_AREAS.map((area) => ({

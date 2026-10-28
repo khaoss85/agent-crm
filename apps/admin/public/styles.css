@@ -514,6 +514,12 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 a.bo-oggi-title { color: var(--ink); text-decoration: none; align-self: flex-start; }
 a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-why { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); }
+.bo-oggi-note { margin: 0; font-size: 13px; color: var(--agent-ink); }
+.bo-oggi-mono.bo-tile-whatsapp, .bo-oggi-mono.bo-tile-calendar { background: var(--accent-soft); color: var(--accent); }
+.bo-oggi-mono.bo-tile-instagram { background: var(--human-soft); color: var(--human-ink); }
+.bo-oggi-mono.bo-tile-facebook, .bo-oggi-mono.bo-tile-sms { background: var(--data-soft); color: var(--data-ink); }
+.bo-oggi-mono.bo-tile-stripe { background: var(--agent-soft); color: var(--agent-ink); }
+.bo-oggi-cta { align-self: flex-start; margin-top: 4px; display: inline-flex; align-items: center; height: 34px; padding: 0 12px; border-radius: 9px; background: var(--agent-ink); color: #fff; font-size: 13px; font-weight: 700; text-decoration: none; }
 .bo-oggi-btns { display: flex; align-items: center; gap: 6px; flex: none; }
 .bo-oggi-btns .ui-btn, .bo-oggi-btns button { height: 38px; padding: 0 16px; border-radius: 10px; font-size: 14px; font-weight: 700; }
 .bo-oggi-btns .ghost { padding: 0 12px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; box-shadow: none; }

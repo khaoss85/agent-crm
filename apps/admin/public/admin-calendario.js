@@ -1221,7 +1221,7 @@ export function createCalendarioView(deps) {
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM, so a draft can still prefill it.
-    const panel = el(doc, 'div', { className: `panel cal-manual${state.manualOpen || state.draft || state.manual ? ' open' : ''}` });
+    const panel = el(doc, 'div', { className: `panel cal-manual${state.manualOpen || state.draftFill || state.manual ? ' open' : ''}` });
     state.manualPanel = panel;
     panel.appendChild(el(doc, 'h2', { text: 'Nuovo appuntamento' }));
     panel.appendChild(el(doc, 'p', {
@@ -1259,6 +1259,7 @@ export function createCalendarioView(deps) {
     state.manualNodes = inputs;
     state.manualFirst = inputs.customerResource ?? null;
     if (state.draftFill) {
+      state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) inputs.teamMemberId.value = String(draft.teamMemberId);
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);

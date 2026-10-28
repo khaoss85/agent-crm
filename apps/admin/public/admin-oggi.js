@@ -259,6 +259,12 @@ function subjectDisplayLabel(row) {
  * action is about), never a record id or a kind code.
  * @param {unknown} label
  */
+const OGGI_CHANNEL_TILES = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', phone: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', stripe: 'S', calendar: 'CAL' });
+/** The prototype's channel tile mark, or null when the channel is unknown. */
+function channelTile(channel) {
+  return OGGI_CHANNEL_TILES[String(channel ?? '').toLowerCase()] ?? null;
+}
+
 function badgeInitials(label) {
   const words = String(label ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   const marks = words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase());
@@ -275,7 +281,9 @@ function followupAction(task) {
   return Object.freeze({
     id: `bo04:followup:${id}`,
     kind: 'followup',
-    mono: badgeInitials(label),
+    mono: channelTile(task?.channel) ?? badgeInitials(label),
+    channel: nonEmptyText(task?.channel) ?? null,
+    note: nonEmptyText(task?.note) ?? null,
     title,
     why,
     cta: 'Completa',
@@ -309,7 +317,8 @@ function appointmentPrepAction(appointment) {
   return Object.freeze({
     id: `bo04:appointment:${id}`,
     kind: 'appointment-prep',
-    mono: badgeInitials(label),
+    mono: 'CAL',
+    channel: 'calendar',
     title: `Prepara la call con ${label}`,
     why: `Appuntamento oggi alle ${time} con ${label}.`,
     cta: 'Apri scheda',
@@ -850,7 +859,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   const row = el(doc, 'div', 'bo-oggi-row');
   row.setAttribute('data-action', String(action?.id ?? ''));
   if (state !== 'open') row.setAttribute('data-state', state);
-  row.appendChild(el(doc, 'span', 'bo-oggi-mono', String(action?.mono ?? '')));
+  row.appendChild(el(doc, 'span', `bo-oggi-mono${action?.channel ? ` bo-tile-${String(action.channel).toLowerCase()}` : ''}`, String(action?.mono ?? '')));
   const body = el(doc, 'div', 'bo-oggi-body');
   // The prototype's title opens the record the suggestion is about.
   const href = typeof action?.href === 'string' && action.href !== '' ? action.href : null;
@@ -858,6 +867,9 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   if (href) title.setAttribute('href', href);
   body.appendChild(title);
   body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
+  // The prototype's violet third line: the AI's prepared next step, only
+  // when the action carries one — never an invented suggestion.
+  if (typeof action?.note === 'string' && action.note !== '') body.appendChild(el(doc, 'p', 'bo-oggi-note', `✦ ${action.note}`));
   row.appendChild(body);
   if (state === 'open') {
     const controls = el(doc, 'div', 'bo-oggi-btns');
@@ -1056,7 +1068,8 @@ export function renderOggi({
     if (Array.isArray(home.brief.sources) && home.brief.sources.length > 0) {
       const sources = el(doc, 'p', 'bo-oggi-sources');
       sources.appendChild(el(doc, 'span', undefined, 'Fonti: '));
-      home.brief.sources.forEach((source, index) => {
+      const cardSource = home.brief.sources.find((source) => source?.label === 'Apri la scheda') ?? null;
+      home.brief.sources.filter((source) => source !== cardSource).forEach((source, index) => {
         if (index > 0) sources.appendChild(el(doc, 'span', undefined, ' · '));
         const anchor = el(doc, 'a', 'bo-setting-link', String(source?.label ?? ''));
         anchor.setAttribute('href', String(source?.href ?? ''));
@@ -1067,6 +1080,16 @@ export function renderOggi({
         sources.appendChild(anchor);
       });
       brief.appendChild(sources);
+      if (cardSource) {
+        // The prototype's violet CTA under the sources.
+        const open = el(doc, 'a', 'bo-oggi-cta', 'Apri la scheda');
+        open.setAttribute('href', String(cardSource.href ?? ''));
+        open.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate(String(cardSource.href ?? ''));
+        });
+        brief.appendChild(open);
+      }
     }
     pair.appendChild(brief);
   }
