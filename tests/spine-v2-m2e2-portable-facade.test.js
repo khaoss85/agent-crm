@@ -40,6 +40,7 @@ const FACADE_KEYS = Object.freeze([
   'providers',
   'reconcileWrite',
   'runAction',
+  'runReport',
   'schema',
   'services',
   'storage',

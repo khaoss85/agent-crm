@@ -1070,6 +1070,10 @@ export function buildRouter(app) {
   // reporting bundle when composed. No storage query of its own, no write
   // surface: there is deliberately no POST under /api/reporting/*, so the
   // "Cosa noto" proposal the model carries can never reassign by itself.
+  // Portable compositions (backlog:0e3e67eb: the production /bo reader)
+  // carry no `database` handle, so the compiled reports execute through
+  // the application's closed-over runReport instead — same registry, same
+  // numbers, empty data answering 200 with an empty model, never a 500.
   router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const dashboardQuery = parseDashboardQuery({
@@ -1078,8 +1082,11 @@ export function buildRouter(app) {
       currency: query.currency,
     });
     const compiled = dashboardCompilations(dashboardQuery);
-    const byStage = await runReport(app.database, compiled.byStage);
-    const schedule = await runReport(app.database, compiled.schedule);
+    const executeReport = typeof app.runReport === 'function'
+      ? (entry) => app.runReport(entry)
+      : (entry) => runReport(app.database, entry);
+    const byStage = await executeReport(compiled.byStage);
+    const schedule = await executeReport(compiled.schedule);
     let bundleRows = [];
     try {
       const reporting = requireCapability(resolveGeneratedModule(app, 'reporting'), 'list');
