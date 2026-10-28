@@ -75,14 +75,35 @@
           <!-- Google sign-in is deployment-owned: this entry targets the deployment's
                OAuth entry, which the control plane already serves. The framework adds
                no handler, no client and no secret here (see tests/admin-login.test.js). -->
-          <a class="login-google" href="/auth/google"><span class="g">G</span>Continua con Google</a>
+          <a class="login-google ui-btn ui-btn-secondary" href="/auth/google"><span class="g">G</span>Continua con Google</a>
           <div class="login-or">oppure</div>
           <form class="login-magic" method="post" action="/api/auth/magic-link/request">
             <label class="login-field" for="login-email">Email di lavoro
-              <input id="login-email" name="email" type="email" autocomplete="email" required maxlength="200" placeholder="elena@studioaurora.it" />
+              <input class="ui-field" id="login-email" name="email" type="email" autocomplete="email" required maxlength="200" placeholder="elena@studioaurora.it" />
             </label>
-            <button class="login-submit" type="submit" style="width:100%;margin-top:20px">Ricevi il link di accesso</button>
+            <button class="login-submit ui-btn ui-btn-cta" type="submit" style="width:100%;margin-top:20px">Ricevi il link di accesso</button>
           </form>
+          <script type="module">
+            import { createLoginForm, postMagicLinkRequest } from './login.js';
+            // No fetch, no enhancement: the plain POST below stays the page.
+            const form = typeof window.fetch === 'function'
+              ? document.querySelector('form.login-magic')
+              : null;
+            if (form) {
+              createLoginForm({
+                doc: document,
+                form,
+                email: form.querySelector('#login-email'),
+                submit: form.querySelector('.login-submit'),
+                google: document.querySelector('.login-google'),
+                request: (email) => postMagicLinkRequest(
+                  form.getAttribute('action') || '/api/auth/magic-link/request',
+                  email,
+                  window.fetch.bind(window),
+                ),
+              });
+            }
+          </script>
           <p class="login-note">Niente password: ti inviamo un link valido 10 minuti.</p>
           <div class="login-signup">Nuovo su Accordo? <a href="/signup">Crea uno spazio gratuito</a></div>
         </div>
