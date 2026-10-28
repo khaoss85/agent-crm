@@ -97,7 +97,7 @@ const probe = {
   table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
-  stripe: (document.querySelector('.catalog-stripe-ok') ?? { textContent: null }).textContent,
+  stripe: (document.querySelector('.catalog-stripe') ?? { textContent: null }).textContent,
   rules: (document.querySelector('.catalog-rule-bands') ?? { textContent: null }).textContent,
 };
 document.getElementById('probe').textContent = JSON.stringify(probe);
@@ -227,7 +227,7 @@ test('the catalog table renders in a real browser: phone PNG without sideways sc
   const probeHtml = dom.match(/<div id="probe">(.*?)<\/div>/)?.[1] ?? '';
   const probe = JSON.parse(probeHtml.replace(/&quot;/g, '"'));
   assert.ok(probe.table?.includes('Pacchetto 10 lezioni'), 'the phone render holds the product table');
-  assert.ok(probe.stripe?.includes('Stripe collegato'), 'the phone render holds the Stripe state');
+  assert.ok(probe.stripe?.includes('Collegato a Stripe'), 'the phone render holds the Stripe state');
   assert.ok(probe.rules?.includes('10%'), 'the phone render holds the price-rule bands');
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
   console.log(`catalog phone PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);

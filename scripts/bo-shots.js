@@ -542,7 +542,7 @@ export const SCREENS = Object.freeze([
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
-  { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
+  { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
   { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Cosa succede quando colleghi:', 'Collega in 3 passi'] },
@@ -948,8 +948,8 @@ const client = {
 const view = createCatalogView({ doc: document, mount: document.getElementById('view-module'), client });
 await view.renderTable({});
 document.getElementById('probe').textContent = JSON.stringify({
-  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
-  stripe: (document.querySelector('.catalog-stripe-ok') ?? { textContent: null }).textContent,
+  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 200) : null,
+  stripe: (document.querySelector('.catalog-stripe') ?? { textContent: null }).textContent,
   rules: (document.querySelector('.catalog-rule-bands') ?? { textContent: null }).textContent,
 });
 document.title = 'catalogo-ready';`;
@@ -1334,7 +1334,7 @@ export function assertProbe(name, probe) {
       if (typeof probe.table !== 'string' || !probe.table.includes('Pacchetto 10 lezioni')) {
         throw new Error('catalogo: the probe holds no product table');
       }
-      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Stripe collegato')) {
+      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Collegato a Stripe')) {
         throw new Error('catalogo: the probe holds no Stripe state');
       }
       if (typeof probe.rules !== 'string' || !probe.rules.includes('10%')) {

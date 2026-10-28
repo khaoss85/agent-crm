@@ -254,6 +254,17 @@ function subjectDisplayLabel(row) {
  * record that opened it.
  * @param {Record<string, any>} task an open work-task row
  */
+/**
+ * The prototype's row badge: a short human mark (initials of the person the
+ * action is about), never a record id or a kind code.
+ * @param {unknown} label
+ */
+function badgeInitials(label) {
+  const words = String(label ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
+  const marks = words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase());
+  return marks.join('') || '·';
+}
+
 function followupAction(task) {
   const id = nonEmptyText(task?.id);
   if (!id) return null;
@@ -264,7 +275,7 @@ function followupAction(task) {
   return Object.freeze({
     id: `bo04:followup:${id}`,
     kind: 'followup',
-    mono: `follow-up · ${id.length > 12 ? `${id.slice(0, 12)}…` : id}`,
+    mono: badgeInitials(label),
     title,
     why,
     cta: 'Completa',
@@ -298,7 +309,7 @@ function appointmentPrepAction(appointment) {
   return Object.freeze({
     id: `bo04:appointment:${id}`,
     kind: 'appointment-prep',
-    mono: `ore ${time}`,
+    mono: badgeInitials(label),
     title: `Prepara la call con ${label}`,
     why: `Appuntamento oggi alle ${time} con ${label}.`,
     cta: 'Apri scheda',
@@ -838,12 +849,19 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   const row = el(doc, 'div', 'bo-oggi-row');
   row.setAttribute('data-action', String(action?.id ?? ''));
-  row.appendChild(el(doc, 'p', 'bo-oggi-mono', String(action?.mono ?? '')));
-  row.appendChild(el(doc, 'p', 'bo-oggi-title', String(action?.title ?? '')));
-  row.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
+  if (state !== 'open') row.setAttribute('data-state', state);
+  row.appendChild(el(doc, 'span', 'bo-oggi-mono', String(action?.mono ?? '')));
+  const body = el(doc, 'div', 'bo-oggi-body');
+  // The prototype's title opens the record the suggestion is about.
+  const href = typeof action?.href === 'string' && action.href !== '' ? action.href : null;
+  const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(action?.title ?? ''));
+  if (href) title.setAttribute('href', href);
+  body.appendChild(title);
+  body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
+  row.appendChild(body);
   if (state === 'open') {
     const controls = el(doc, 'div', 'bo-oggi-btns');
-    const postpone = el(doc, 'button', 'small secondary', 'Domani');
+    const postpone = el(doc, 'button', 'small ghost', 'Domani');
     postpone.setAttribute('data-triage', 'postpone');
     postpone.disabled = disabled;
     postpone.addEventListener('click', () => events.onPostpone?.(action.id));
@@ -916,20 +934,23 @@ export function renderOggi({
   home = null,
 } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
+  // The prototype's Oggi is one centred 900 px column (data-screen-label "00 Oggi").
+  const page = el(doc, 'div', 'bo-oggi');
+  mount.appendChild(page);
   const person = nonEmptyText(userName) ?? (typeof spaceName === 'string' && spaceName !== '' ? spaceName : 'il tuo spazio');
   const hour = now instanceof Date ? now.getHours() : NaN;
 
-  mount.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
-  mount.appendChild(el(doc, 'h2', undefined, `${greetingForHour(hour)}, ${person}`));
+  page.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
+  page.appendChild(el(doc, 'h2', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
 
   if (home == null) {
-    mount.appendChild(el(
+    page.appendChild(el(
       doc,
       'p',
       'bo-muted',
       'Le schermate pronte del tuo spazio, in un posto solo.',
     ));
-    appendLinkList(doc, mount, links, navigate);
+    appendLinkList(doc, page, links, navigate);
     return;
   }
 
@@ -939,7 +960,7 @@ export function renderOggi({
   const actions = Array.isArray(home.actions) ? home.actions : [];
 
   if (typeof home.recap === 'string' && home.recap !== '') {
-    mount.appendChild(el(doc, 'p', 'bo-oggi-recap', home.recap));
+    page.appendChild(el(doc, 'p', 'bo-oggi-recap', home.recap));
   }
 
   // ---- Advisor ----
@@ -947,8 +968,6 @@ export function renderOggi({
   const head = el(doc, 'div', 'bo-oggi-head');
   head.appendChild(el(doc, 'h3', undefined, '✦ Il tuo advisor'));
   const progress = advisorProgress(actions, triage);
-  head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total}`));
-  advisor.appendChild(head);
   if (progress.total > 0) {
     const bar = el(doc, 'div', 'bo-oggi-bar');
     bar.setAttribute('role', 'progressbar');
@@ -959,8 +978,10 @@ export function renderOggi({
     const ratio = progress.handled / progress.total;
     fill.setAttribute('style', `width: ${Math.round(ratio * 100)}%`);
     bar.appendChild(fill);
-    advisor.appendChild(bar);
+    head.appendChild(bar);
   }
+  head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total} fatte`));
+  advisor.appendChild(head);
   if (actions.length === 0) {
     advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi: niente azioni aperte.'));
   } else {
@@ -976,10 +997,12 @@ export function renderOggi({
   if (home.availability?.work === false) {
     advisor.appendChild(el(doc, 'p', 'bo-muted', 'I follow-up non sono composti in questo spazio: niente azioni da proporre.'));
   }
-  mount.appendChild(advisor);
+  page.appendChild(advisor);
 
-  // ---- Agenda ----
-  const agenda = el(doc, 'section', 'bo-oggi-section');
+  // ---- Agenda and pre-call brief: two cards side by side ----
+  const pair = el(doc, 'div', 'bo-oggi-pair');
+  page.appendChild(pair);
+  const agenda = el(doc, 'section', 'bo-oggi-card');
   agenda.appendChild(el(doc, 'h3', undefined, 'Agenda di oggi'));
   const rows = Array.isArray(home.agenda) ? home.agenda : [];
   if (home.availability?.appointments === false) {
@@ -1006,11 +1029,20 @@ export function renderOggi({
     }
     agenda.appendChild(list);
   }
-  mount.appendChild(agenda);
+  if (home.availability?.appointments !== false) {
+    const toCalendar = el(doc, 'a', 'bo-oggi-more', 'Apri il calendario →');
+    toCalendar.setAttribute('href', '#/calendario');
+    toCalendar.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate('#/calendario');
+    });
+    agenda.appendChild(toCalendar);
+  }
+  pair.appendChild(agenda);
 
   // ---- Pre-call brief ----
   if (home.brief != null) {
-    const brief = el(doc, 'section', 'bo-oggi-section');
+    const brief = el(doc, 'section', 'bo-oggi-card bo-oggi-ai');
     brief.appendChild(el(doc, 'h3', undefined, '✦ Prima della prossima call'));
     brief.appendChild(el(
       doc, 'p', 'bo-oggi-brief-who',
@@ -1036,7 +1068,7 @@ export function renderOggi({
       });
       brief.appendChild(sources);
     }
-    mount.appendChild(brief);
+    pair.appendChild(brief);
   }
 
   // ---- Missing channels ----
@@ -1044,7 +1076,7 @@ export function renderOggi({
   if (home.availability?.channels === false) {
     const note = el(doc, 'section', 'bo-oggi-section');
     note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono composti in questo spazio.'));
-    mount.appendChild(note);
+    page.appendChild(note);
   } else if (missing.length > 0) {
     const invite = el(doc, 'section', 'bo-oggi-section');
     const names = missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
@@ -1055,14 +1087,13 @@ export function renderOggi({
       navigate('#/connettori');
     });
     invite.appendChild(anchor);
-    mount.appendChild(invite);
+    page.appendChild(invite);
   }
 
   if (typeof home.error === 'string' && home.error !== '') {
-    mount.appendChild(el(doc, 'p', 'field-error', home.error));
+    page.appendChild(el(doc, 'p', 'field-error', home.error));
   }
 
-  appendLinkList(doc, mount, links, navigate);
 }
 
 /**

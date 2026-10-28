@@ -181,7 +181,7 @@ test('the table renders products with amounts, and the Stripe invite when no sou
   const text = mount.textContent;
   assert.ok(text.includes('Catalogo prodotti'), 'the screen names itself');
   assert.ok(text.includes('Pacchetto 10 lezioni'), 'the product renders');
-  assert.ok(text.includes('Fonte: manual'), 'the source renders');
+  assert.ok(text.includes('Manuale'), 'the source renders as a pill');
   assert.ok(text.includes('EUR 99.00'), 'the server amount renders');
   assert.ok(text.includes('Stripe non è collegato'), 'the connect-Stripe invite renders when no source is connected');
   assert.ok(!text.includes('sola lettura'), 'manual rows carry no read-only note');
@@ -250,9 +250,10 @@ test('a connected Stripe source names its provider with a confirm-gated sync', a
   const view = createCatalogView({ doc, mount, client });
   await view.renderTable({});
 
-  assert.ok(mount.textContent.includes('Stripe collegato: stripe-test'), 'the connected state names the provider');
-  clickButton(mount, 'Sincronizza ora (stripe-test)');
-  assert.ok(mount.textContent.includes('Sincronizzare i prodotti da stripe-test?'), 'sync asks for confirmation first');
+  assert.ok(mount.textContent.includes('Collegato a Stripe'), 'the connected state renders');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute?.('data-provider') === 'stripe-test'), 'the sync button carries the provider');
+  clickButton(mount, 'Sincronizza');
+  assert.ok(mount.textContent.includes('Sincronizzare i prodotti da Stripe?'), 'sync asks for confirmation first');
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent before confirmation');
   clickButton(mount, 'Conferma');
   await flush();
@@ -269,7 +270,8 @@ test('the price rules section reads the live bands from the schema', async () =>
   await view.renderTable({});
 
   assert.ok(mount.textContent.includes('Regole di prezzo'), 'the rules section renders');
-  assert.ok(mount.textContent.includes('catalog-price-rules@1'), 'the policy identity renders');
+  assert.ok(!mount.textContent.includes('catalog-price-rules@1'), 'the policy identity is not customer text');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute?.('data-policy') === 'catalog-price-rules@1'), 'the policy identity rides an attribute');
   assert.ok(mount.textContent.includes('fino al 10%'), 'the auto-approve band renders');
   assert.ok(mount.textContent.includes('fino al 30%'), 'the owner band renders');
   assert.ok(mount.textContent.includes('bloccano anche l'), 'the AI-blocking note renders');
