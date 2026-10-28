@@ -164,7 +164,7 @@ export function createCustomerDataView(deps) {
     // ── import ────────────────────────────────────────────────────────────
     const importBox = el('div', 'customer-data-import');
     importBox.appendChild(el('h4', undefined, 'Importazione'));
-        const mappingName = meta.import?.mapping?.name ?? 'customer-rows';
+    const mappingName = meta.import?.mapping?.name ?? 'customer-rows';
     const mappingVersion = meta.import?.mapping?.version ?? 1;
     const maxRows = meta.import?.maxRows ?? 500;
     importBox.appendChild(el('p', 'muted', `Origine ${mappingName} versione ${mappingVersion}: al massimo ${maxRows} righe per volta.`));
