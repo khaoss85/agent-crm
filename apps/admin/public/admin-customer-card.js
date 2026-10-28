@@ -382,13 +382,17 @@ export function createCustomerCardView(deps) {
     const fromQuote = quotes.length > 0;
     const first = fromQuote ? quotes[0] : (opportunities[0] ?? null);
     if (!first) {
-      // No linked offer: when the hop itself was readable (either section
-      // available, even empty) the customer plainly has none; otherwise the
-      // commercial records cannot be read from here — say so with the reason.
-      const canRead = profile?.quotes?.available === true || profile?.opportunities?.available === true;
-      box.appendChild(el('p', 'bo-muted', canRead
-        ? 'nessuna offerta registrata'
-        : (profile?.quotes?.reason ?? profile?.opportunities?.reason ?? 'offerte non disponibili')));
+      // No linked offer: only when BOTH commercial sections were readable
+      // (even empty) the customer plainly has none. An empty opportunities
+      // read never proves there are no quotes when the quotes read itself
+      // failed — the unavailable reason reads instead, never a confirmed
+      // absence.
+      const quotesOk = profile?.quotes?.available === true;
+      const opportunitiesOk = profile?.opportunities?.available === true;
+      const reason = !quotesOk
+        ? (profile?.quotes?.reason ?? 'offerte non disponibili')
+        : (profile?.opportunities?.reason ?? 'offerte non disponibili');
+      box.appendChild(el('p', 'bo-muted', (quotesOk && opportunitiesOk) ? 'nessuna offerta registrata' : reason));
       return;
     }
     const name = fromQuote

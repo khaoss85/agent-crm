@@ -546,6 +546,20 @@ test('the offer panel names the quote after its opportunity, with the state in I
   assert.ok(!text.includes('approved'), 'the raw English state is never shown');
 });
 
+test('an unreadable quotes section keeps its reason, never a confirmed no-offer', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      quotes: { available: false, items: null, reason: 'preventivi non leggibili' },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('preventivi non leggibili'), 'the quotes failure reason reads');
+  assert.ok(!text.includes('nessuna offerta registrata'),
+    'an empty opportunities read never proves there are no quotes');
+});
+
 test('a customer with no linked offer reads none registered, never another customer offer', async () => {
   const mount = await renderCard(stubClient({
     profile: {
