@@ -23,13 +23,12 @@
  *   `admin-customer-data.js` (loaded by no harness page, only by app.js).
  *   Only the global stylesheet moved since (#406), so these show the same
  *   screens and demo data in the previous dressing.
- * - login: pending. #408 restyled the login files after every committed
- *   login render, and the account artifact quota is full (`Failed to
- *   CreateArtifact: Artifact storage quota has been hit`, recalculated
- *   every 6-12 h), so no fresh login render can be stored right now. The
- *   login pair lands in a follow-up once the quota frees: re-run
- *   `gh workflow run bo-shots.yml`, copy `login-*.png` here, and drop the
- *   PENDING_LOGIN exception below.
+ * - login: rendered by the CI `bo-shots` workflow on the self-hosted Mac
+ *   runner for this PR (see the PR body for the run id). The account
+ *   artifact quota is full (`Failed to CreateArtifact: Artifact storage
+ *   quota has been hit`), so the workflow commits the login pair straight
+ *   to this branch instead of uploading an artifact. The render is
+ *   probe-gated on painted demo data like every other screen.
  */
 
 import test from 'node:test';
@@ -41,18 +40,16 @@ import { DESKTOP, PHONE, SCREEN_NAMES, readPngSize } from '../scripts/bo-shots.j
 
 const proofDir = join(fileURLToPath(new URL('.', import.meta.url)), 'fixtures', 'bo-shots-proof');
 
-// Screens whose proof PNGs are committed. `login` stays out until the
-// quota-blocked CI upload can store a render of the current tree (see header).
-const PENDING_LOGIN = ['login'];
-const PROVEN_SCREENS = SCREEN_NAMES.filter((name) => !PENDING_LOGIN.includes(name));
+// All fourteen screens carry committed proof PNGs, login included.
+const PROVEN_SCREENS = [...SCREEN_NAMES];
 
 test('bo:shots proof fixtures show every committed screen filled at both widths', () => {
   assert.deepEqual(
-    [...PROVEN_SCREENS, ...PENDING_LOGIN].sort(),
+    [...PROVEN_SCREENS].sort(),
     [...SCREEN_NAMES].sort(),
-    'the proof set plus the pending login pair covers the whole registry',
+    'the proof set covers the whole screen registry',
   );
-  assert.equal(PROVEN_SCREENS.length, 13, 'thirteen screens carry committed proof');
+  assert.equal(PROVEN_SCREENS.length, 14, 'fourteen screens carry committed proof');
   for (const name of PROVEN_SCREENS) {
     for (const [viewport, floor] of [[DESKTOP, 20000], [PHONE, 10000]]) {
       const file = `${name}-${viewport.width}x${viewport.height}.png`;
@@ -63,5 +60,3 @@ test('bo:shots proof fixtures show every committed screen filled at both widths'
     }
   }
 });
-
-test.todo('bo:shots proof fixtures for login (quota-blocked CI upload, see file header)');

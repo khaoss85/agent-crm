@@ -37,6 +37,11 @@ jobs:
     # job at start (0 steps, "account is locked due to a billing issue").
     runs-on: [self-hosted, accordo-ci]
     timeout-minutes: 20
+    # One-off (BO-F6-05, backlog:5acdfd87): the account artifact quota is
+    # full, so a manual dispatch commits the fresh login pair straight to
+    # the branch instead of uploading an artifact. Reverted before merge.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -57,3 +62,19 @@ jobs:
           path: ${{ runner.temp }}/bo-shots/
           if-no-files-found: warn
           retention-days: 3
+      # One-off commit-back (BO-F6-05, backlog:5acdfd87): manual dispatch
+      # only. Copies the fresh login pair into the proof fixtures and
+      # pushes to the dispatched branch. Reverted before merge.
+      - name: Commit fresh login PNGs to the branch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -e
+          git config user.name "accordo-ci"
+          git config user.email "accordo-ci@example.invalid"
+          git fetch origin "${{ github.ref_name }}"
+          git checkout "${{ github.ref_name }}"
+          mkdir -p tests/fixtures/bo-shots-proof
+          cp "${RUNNER_TEMP}/bo-shots/login-1440x1800.png" tests/fixtures/bo-shots-proof/login-1440x1800.png
+          cp "${RUNNER_TEMP}/bo-shots/login-390x1600.png" tests/fixtures/bo-shots-proof/login-390x1600.png
+          git add tests/fixtures/bo-shots-proof/login-1440x1800.png tests/fixtures/bo-shots-proof/login-390x1600.png
+          git diff --cached --quiet && echo "login PNGs unchanged" || (git commit -m "backlog:5acdfd87 fresh login proof PNGs from CI bo-shots" && git push origin "HEAD:${{ github.ref_name }}")
