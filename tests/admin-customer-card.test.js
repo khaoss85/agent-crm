@@ -712,16 +712,17 @@ test('the offer panel names the quote after its opportunity, with the state in I
   assert.ok(!text.includes('approved'), 'the raw English state is never shown');
 });
 
-test('an unreadable quotes section keeps its reason, never a confirmed no-offer', async () => {
+test('an unreadable quotes section reads unavailable in Italian, never a confirmed no-offer', async () => {
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
       opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
-      quotes: { available: false, items: null, reason: 'preventivi non leggibili' },
+      quotes: { available: false, items: null, reason: 'the commercial package is not composed in this application, so quotes are not available — this is not a claim that there are none' },
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('preventivi non leggibili'), 'the quotes failure reason reads');
+  assertCustomerItalian(text, 'unavailable quotes section');
+  assert.ok(text.includes('offerte non disponibili'), 'the unavailable commercial section reads a fixed Italian line');
   assert.ok(!text.includes('Nessuna offerta firmata'),
     'an empty opportunities read never proves there are no quotes');
 });

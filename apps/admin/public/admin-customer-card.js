@@ -493,10 +493,10 @@ export function createCustomerCardView(deps) {
         box.appendChild(el('p', 'bo-muted', 'Nessuna offerta firmata'));
         return true;
       }
-      const reason = quotes === null
-        ? (profile?.quotes?.reason ?? 'offerte non disponibili')
-        : (profile?.opportunities?.reason ?? 'offerte non disponibili');
-      box.appendChild(el('p', 'bo-muted', reason));
+      // The unavailable reason stays in the API response and the logs, never
+      // on screen: production reasons are English system phrases, and the
+      // scheda reads only fixed Italian (voce 1a066ddf).
+      box.appendChild(el('p', 'bo-muted', 'offerte non disponibili'));
       return true;
     }
     const rawName = fromQuote ? (first?.opportunityName ?? first?.name) : first?.name;
