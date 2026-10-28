@@ -221,7 +221,8 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   assert.ok(text.includes('Richiamare per la prova'), 'the open task is a next step');
   assert.ok(!text.includes('Inviare il listino'), 'a done task is not a next step');
   assert.ok(text.includes('Preventivo 10 ingressi'), 'the offer is shown');
-  assert.ok(text.includes('coach-guido'), 'the next appointment names its owner');
+  assert.ok(text.includes('23 ott'), 'the next appointment reads as a plain Italian date');
+  assert.ok(text.includes('18:00–19:00'), 'the slot shows its readable time range, no ISO instant');
 });
 
 test('BO-F6-09 fetta 2a: the header shows back, avatar initials, H1 name and the stato pill', async () => {
@@ -254,7 +255,7 @@ test('BO-F6-09 fetta 2a: the header shows back, avatar initials, H1 name and the
 
   const badge = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-badge');
   assert.ok(badge, 'the stato pill exists');
-  assert.equal(badge.textContent, 'contatto', 'the pill shows the card stato');
+  assert.equal(badge.textContent, 'Contatto', 'the pill shows the card stato in Italian, not a lowercase code');
 });
 
 test('BO-F6-09 fetta 2a: a hostile name stays text in the H1 and the avatar', async () => {
@@ -308,8 +309,10 @@ test('the next appointment skips cancelled, past and done bookings', async () =>
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('coach-guido'), 'the future booked slot is the next appointment');
+  assert.ok(text.includes('23 ott'), 'the future booked slot is the next appointment, as a readable date');
+  assert.ok(text.includes('18:00–19:00'), 'the readable slot shows its time range');
   assert.ok(!text.includes('coach-old'), 'no cancelled, done or past slot is ever labelled next');
+  assert.ok(!text.includes('coach-guido'), 'the slot never prints the internal member id');
 });
 
 test('with no upcoming booking the scheda says none is booked', async () => {
@@ -469,8 +472,8 @@ test('BO-F4-03: every enriched datum cites its free source and date', async () =
   assert.ok(enrichedPath.includes('/contact/c1'), 'the read names the scheda subject');
 
   assert.ok(text.includes("Arricchito dall'AI"), 'the enriched section exists');
-  assert.ok(text.includes('Ruolo: Istruttore (fonte: firma email · 2026-10-20)'), 'each datum cites its own source and date');
-  assert.ok(text.includes('Nome: Guido (fonte: Contatti Google · 2026-10-21)'), 'the second source is cited beside its datum');
+  assert.ok(text.includes('Ruolo: Istruttore (fonte: firma email · 20 ott 2026)'), 'each datum cites its own source and date');
+  assert.ok(text.includes('Nome: Guido (fonte: Contatti Google · 21 ott 2026)'), 'the second source is cited beside its datum');
 });
 
 test('BO-F4-03: an opted-out customer reads as opted out, never as empty', async () => {
@@ -484,7 +487,7 @@ test('BO-F4-03: an opted-out customer reads as opted out, never as empty', async
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('arricchimento disattivato il 2026-10-21 (opt-out)'), 'the opt-out is shown with its date');
+  assert.ok(text.includes('arricchimento disattivato il 21 ott 2026 (opt-out)'), 'the opt-out is shown with its date');
   assert.ok(text.includes('nessun nuovo dato verrà salvato'), 'no further save is promised');
 });
 
@@ -519,6 +522,169 @@ test('BO-F4-03: a failing enrichment read is an error, never a quiet "no data"',
   assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
   assert.ok(!mount.textContent.includes('nessun dato arricchito registrato'),
     'a 500 never reads as no enriched data');
+});
+
+// Voce cc525cd6a3c5: the offer-naming and offer-scoping tests moved below,
+// after the 1a066ddf Italian-only block, so both sides of the merge stay.
+// Voce 1a066ddfe42a: la scheda mostra solo italiano semplice — mai parole di
+// sistema inglesi, mai UUID, mai date ISO. Vale con dati e senza dati.
+const UUID_A = 'd394d386-4a1b-4c2d-8e3f-267581100b32';
+const UUID_B = '8d8f1d4d-25c1-4641-8836-267581100b32';
+
+const CARD_BARE = {
+  customerCardContract: 1,
+  subject: { resource: 'contact', id: UUID_A },
+  name: 'Ada Rossi',
+  company: null,
+  phone: {
+    available: false, value: null, system: null,
+    reason: 'no phone-bearing channel identity (WhatsApp, SMS, voice) is held beside this record — this is not a claim the customer has no phone',
+  },
+  email: null,
+  socials: [],
+  status: {
+    value: 'contatto',
+    reason: 'no signed business found in the composed packages (orders: not readable here; contracts: not readable here; subscriptions: not readable here) — the evidence packages are not all readable here, so this is not a claim none exist',
+  },
+  activePackage: {
+    available: false, count: null, countIsComplete: true, countNote: null, truncated: false,
+    active: [], items: [],
+    reason: 'subscriptions are not composed in this application — this is not a claim the customer holds no package',
+  },
+  notes: { available: false, items: null, reason: 'this application composes no notes record for customers' },
+  history: { available: false, items: [], count: 0, truncated: false, completeTimeline: false, reason: 'no history' },
+};
+
+const PROFILE_BARE = {
+  customerProfileContract: 1,
+  subject: { resource: 'contact', id: UUID_A },
+  canonicalIdentity: {
+    linked: false,
+    clusterKey: null,
+    canonical: { resource: 'contact', id: UUID_A, role: 'canonical' },
+    members: [Object.freeze({
+      resource: 'contact', id: UUID_A, role: 'canonical',
+      decisionId: null, decidedAt: '2026-10-18T15:33:11.774Z', reason: null,
+      decidedBy: { type: 'user', id: UUID_B },
+    })],
+    note: 'no canonical identity decision has been recorded for this record; it stands for itself',
+  },
+  identity: { company: null, contact: { id: UUID_A, email: null, firstName: 'Ada', lastName: 'Rossi' } },
+  externalIdentities: [],
+  opportunities: { available: false, reason: 'not composed', items: null, count: null },
+  quotes: {
+    available: false,
+    reason: 'the contracts package is not composed in this application, so subscriptions are not available — this is not a claim that there are none',
+    items: null, count: null,
+  },
+  orders: { available: false, reason: 'not composed', items: null, count: null },
+  contracts: { available: false, reason: 'not composed', items: null, count: null },
+  subscriptions: { available: false, reason: 'not composed', items: null, count: null },
+  deliveryProjects: { available: false, reason: 'not composed', items: null, count: null },
+  serviceCoverages: { available: false, reason: 'not composed', items: null, count: null },
+  supportCases: { available: false, reason: 'not composed', items: null, count: null },
+  workTasks: { available: false, reason: 'not composed', items: null, count: null },
+  successions: { available: false, reason: 'not composed', items: null, count: null },
+  dataQualityIssues: [],
+  duplicateCandidates: [],
+  completeTimeline: false,
+  timelineNote: 'This profile spans Accordo-managed records only.',
+  limitations: [],
+};
+
+const TIMELINE_BARE = {
+  customerTimelineContract: 1,
+  subject: { resource: 'contact', id: UUID_A },
+  conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+  entries: {
+    available: true, count: 1, truncated: false,
+    items: [{
+      entry: 'message', id: UUID_B, conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+      sync: 'received', body: 'Buongiorno, vorrei informazioni', teamAuthorId: null,
+      remoteHandle: '+39 333 0000000', errorCode: null, occurredAt: '2026-10-18T15:33:11.774Z',
+    }],
+  },
+  appointments: {
+    available: true, count: 1, truncated: false,
+    items: [{
+      id: UUID_B, status: 'booked', startsAt: '2099-10-23T16:00:00.000Z', endsAt: '2099-10-23T17:00:00.000Z',
+      serviceKey: 'pt-single', teamMemberId: UUID_A, priceCents: 4000, currency: 'EUR', notes: null,
+    }],
+  },
+  contactPoints: { available: true, count: 0, items: [] },
+  timelineNote: 'Accordo-managed threads and bookings only.',
+};
+
+const SYSTEM_ENGLISH = /\b(claim|record|composed|canonical|readable)\b/i;
+const UUID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const ISO_DATETIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+function assertCustomerItalian(text, label) {
+  assert.ok(!SYSTEM_ENGLISH.test(text), `${label}: no English system words on screen`);
+  assert.ok(!UUID_SHAPE.test(text), `${label}: no UUID on screen`);
+  assert.ok(!ISO_DATETIME.test(text), `${label}: no ISO datetime on screen`);
+}
+
+test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta italiana', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: PROFILE_BARE, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'bare card');
+  assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
+  assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
+  assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
+  assert.ok(text.includes('verifiche non complete'), 'unreadable evidence never reads as a definitive none');
+});
+
+test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
+  const mount = await renderCard(stubClient({
+    card: {
+      ...CARD,
+      status: { value: 'cliente', reason: 'signed business on record: orders' },
+      activePackage: {
+        available: true, count: 1, countIsComplete: true, countNote: null, truncated: false,
+        active: [{ id: UUID_B, name: null, status: 'active' }],
+        items: [{ id: UUID_B, name: null, status: 'active' }],
+        reason: null,
+      },
+    },
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true,
+        items: [{ id: UUID_B, status: 'approved', name: null }], truncated: false,
+      },
+    },
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'full card');
+  assert.ok(!text.includes(UUID_B), 'an offer without a name never falls back to its id');
+  assert.ok(text.includes('approvata'), 'the offer status reads in Italian');
+  assert.ok(text.includes('attivo'), 'the package status reads in Italian');
+});
+
+test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', async () => {
+  const mount = await renderCard(stubClient({
+    card: { ...CARD_BARE, activePackage: { available: true, count: 0, countIsComplete: true, active: [], items: [] } },
+    timeline: TIMELINE_BARE,
+    profile: {
+      ...PROFILE_BARE,
+      orders: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      contracts: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      subscriptions: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      workTasks: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      opportunities: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    },
+    enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'proven-empty card');
+  assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
+  assert.ok(!text.includes('verifiche non complete'), 'proven absence carries no hedge');
+  assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
+  assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
 });
 
 test('the offer panel names the quote after its opportunity, with the state in Italian', async () => {
@@ -556,7 +722,7 @@ test('an unreadable quotes section keeps its reason, never a confirmed no-offer'
   }));
   const text = mount.textContent;
   assert.ok(text.includes('preventivi non leggibili'), 'the quotes failure reason reads');
-  assert.ok(!text.includes('nessuna offerta registrata'),
+  assert.ok(!text.includes('Nessuna offerta firmata'),
     'an empty opportunities read never proves there are no quotes');
 });
 
@@ -569,6 +735,6 @@ test('a customer with no linked offer reads none registered, never another custo
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('nessuna offerta registrata'), 'the empty offer panel says so');
+  assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
 });

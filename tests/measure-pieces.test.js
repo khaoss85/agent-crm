@@ -91,7 +91,7 @@ test('a piece that would run nothing refuses: bare node --test would discover th
   assert.throws(() => planShards(fileNames(2), 5), MeasurementError);
 });
 
-test('the dealing carries no per-piece maximum: every piece declares the same 900 s', () => {
+test('the dealing carries no per-piece maximum: every piece declares the same 1800 s', () => {
   const plan = planShards(fileNames(30), 6);
   for (const piece of plan) {
     assert.deepEqual(Object.keys(piece).sort(), ['files', 'shard'], `a piece carries a key the driver does not read: ${Object.keys(piece)}`);
@@ -113,7 +113,7 @@ test('the 6-piece dealing covers exactly the committed corpus: same files, none 
 });
 
 test('the six oracle slices land in six distinct pieces at every supported shard count', () => {
-  // The load-bearing assumption of the 900 s uniform maximum: each full
+  // The load-bearing assumption of the 1800 s uniform maximum: each full
   // oracle slice must run alone in its piece. Round-robin dealing separates
   // consecutive filenames by accident of adjacency, so this pins the fact
   // over the committed corpus — a rename, a reorder or a seventh oracle
@@ -436,18 +436,18 @@ test('pieces queue one at a time: the driver never holds two lock waiters', () =
   }
 });
 
-test('every piece declares the same machine-lock maximum: 900 s', () => {
+test('every piece declares the same machine-lock maximum: 1800 s', () => {
   const shadow = mkdtempSync(join(tmpdir(), 'accordo-measure-driver-test-'));
   try {
     writeShadowTree(shadow);
     const { status, log } = runDriver(shadow, { shards: 6 });
     assert.equal(status, 0, `driver must stay green:\n${log}`);
-    assert.equal(maxOf(log, 'measure-check'), '900');
+    assert.equal(maxOf(log, 'measure-check'), '1800');
     // No heavy piece: the full shell-oracle corpus is sliced one grouping
     // per file (tests/shell-oracle-a/b/c/d/e/f.test.js, backlog:664d5f481a96),
-    // so no piece needs more than the common 900 s.
+    // so no piece needs more than the common 1800 s.
     for (let i = 1; i <= 6; i += 1) {
-      assert.equal(maxOf(log, `measure-${i}-of-6`), '900');
+      assert.equal(maxOf(log, `measure-${i}-of-6`), '1800');
     }
   } finally {
     rmSync(shadow, { recursive: true, force: true });

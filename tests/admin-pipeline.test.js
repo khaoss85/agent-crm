@@ -82,7 +82,7 @@ test('board renders columns in stage order with counts, badges and per-currency 
 
   // Badges distinguish types with text, not color alone.
   const badges = mount.findAll('span').filter((n) => (n.getAttribute('class') ?? '').includes('stage-type')).map((n) => n.textContent);
-  assert.deepEqual(badges, ['Open', 'Open', 'Won ✓', 'Lost ✕']);
+  assert.deepEqual(badges, ['Aperta', 'Aperta', 'Vinta ✓', 'Persa ✕']);
 
   // Per-currency totals: EUR and USD never summed together.
   const totals = mount.findAll('p').filter((n) => (n.getAttribute('class') ?? '') === 'stage-total').map((n) => n.textContent);
@@ -145,7 +145,7 @@ test('drifted records are shown in an explicit off-definition section, never hid
   assert.equal(drift.getAttribute('data-drift'), '1');
   assert.ok(drift.textContent.includes('Deal b'));
   assert.ok(drift.textContent.includes('renamed-away'), 'the stored stage key is shown verbatim');
-  assert.ok(drift.textContent.includes('persistent identifiers'), 'the migration guidance is shown');
+  assert.ok(drift.textContent.includes('migrazione dati esplicita'), 'the migration guidance is shown');
   // The drifted record is not silently counted into any stage column.
   const countOf = (stage) => mount.findAll('span').find((n) => n.getAttribute('data-count') === stage).textContent;
   assert.equal(countOf('discovery'), '1');
@@ -160,8 +160,21 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
   await board.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('Showing the first 200 records only'), 'truncation disclosed');
-  assert.ok(mount.textContent.includes('1 record not on this pipeline (not shown)'), 'exclusion disclosed');
+  assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
+  assert.ok(mount.textContent.includes('1 record non in questa pipeline (non mostrato)'), 'exclusion disclosed');
+});
+
+test('the off-pipeline disclosure uses the Italian plural for several records', async () => {
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'discovery'), pipelineKey: 'other' },
+    { ...record('y', 'discovery'), pipelineKey: 'other' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  assert.ok(mount.textContent.includes('2 record non in questa pipeline (non mostrati).'), 'plural exclusion disclosed');
 });
 
 test('hostile stage labels and record values render as inert text', async () => {
@@ -208,11 +221,11 @@ test('unsupported contract and unknown pipeline fail gracefully', async () => {
     client: { async request() { return { pipelineContract: 99, pipelines: [] }; } },
   });
   await boardOld.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('needs an update'));
+  assert.ok(mount.textContent.includes('va aggiornato'));
 
   const boardMissing = createPipelineBoard({ doc, mount, client: stubClient([]) });
   await boardMissing.renderBoard('ghost-pipeline');
-  assert.ok(mount.textContent.includes('Pipeline not found'));
+  assert.ok(mount.textContent.includes('Pipeline non trovata'));
 });
 
 function filterInput(mount, name) {
@@ -345,7 +358,7 @@ test('forecast is labeled as a stima and weights open stages by probability', as
   const box = forecastBox(mount);
   assert.ok(box, 'a forecast section exists');
   assert.match(box.textContent, /stima/i, 'the forecast is labeled as an estimate');
-  assert.match(box.textContent, /not a commitment/i, 'no guaranteed outcome is promised');
+  assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
   // discovery 100_000 @10% = 10_000 plus 50_000 @10% = 5_000 → EUR 150.00;
   // demo USD 2_500 @30% = 750 → USD 7.50; won/lost stages never forecast.
   assert.ok(box.textContent.includes('EUR 150.00'), `EUR weighted total (${box.textContent})`);
@@ -368,7 +381,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
   const post = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.equal(post.path, '/api/modules/opportunity/records/a/actions/move-stage');
   assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
-  assert.ok(toasts.some((message) => message.includes('Moved to demo')), 'success is toasted');
+  assert.ok(toasts.some((message) => message.includes('Spostata in demo')), 'success is toasted');
 });
 
 test('same-stage drops post nothing; drops onto lost ask for a reason first', async () => {
@@ -388,7 +401,7 @@ test('same-stage drops post nothing; drops onto lost ask for a reason first', as
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without a reason');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
   assert.equal(card.__reason.getAttribute('class'), '', 'the reason input is revealed');
-  assert.match(card.findAll('small')[0].textContent, /reason for Lost/i);
+  assert.match(card.findAll('small')[0].textContent, /motivo della perdita/i);
 });
 
 test('hostile owner names render as inert option text', async () => {
@@ -545,4 +558,146 @@ test('the pipeline board renders no raw control', async () => {
   };
   walk(mount);
   assert.deepEqual(raw, [], 'every pipeline control carries a ui-* system class');
+});
+
+test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', async () => {
+  // Production accordo-sales stages already carry Italian labels; the board
+  // chrome around them must be Italian too. Every string the supervisor saw
+  // in English on the production Pipeline page is banned from the render.
+  const ITALIAN = {
+    pipelineContract: 1,
+    name: 'vendita',
+    label: 'Vendita',
+    module: 'opportunity',
+    defaultStage: 'richiesta',
+    movePath: '/api/modules/opportunity/records/:id/actions/move-stage',
+    stages: [
+      { key: 'richiesta', label: 'Richiesta', order: 10, type: 'open', probability: 10 },
+      { key: 'attesa', label: 'Attesa', order: 20, type: 'open', probability: 30 },
+      { key: 'vinta', label: 'Vinta', order: 50, type: 'won', probability: 100 },
+      { key: 'persa', label: 'Persa', order: 60, type: 'lost', probability: 0 },
+    ],
+  };
+  const records = [
+    { id: 'a', name: 'Offerta A', companyName: 'Rossi', currency: 'EUR', pipelineKey: 'vendita', pipelineStage: 'richiesta' },
+    { id: 'b', name: 'Offerta B', companyName: 'Bianchi', currency: 'EUR', pipelineKey: 'vendita', pipelineStage: 'svincolata' },
+    { id: 'c', name: 'Offerta C', companyName: 'Verdi', currency: 'EUR', pipelineKey: 'altra', pipelineStage: 'richiesta' },
+  ];
+  const toasts = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [ITALIAN] };
+      if (options.method === 'POST') return { ok: true };
+      return { items: records };
+    },
+  };
+  const board = createPipelineBoard({ doc, mount, client, toast: (message) => toasts.push(message) });
+  await board.renderBoard('vendita');
+
+  const BANNED = [
+    'not on this pipeline',
+    'Search name, company, contact',
+    'Search records',
+    'All referenti',
+    'All stati',
+    'No open value to forecast',
+    'No records',
+    'not a commitment',
+    'Heuristic estimate',
+    'Forecast',
+    'Moving to Lost',
+    'reason for Lost',
+    'Move to',
+    'Move failed',
+    'Moved to',
+    'That card moved meanwhile',
+    'Enter a reason',
+    'Expected close',
+    'This Admin needs an update',
+    'needs an update to render pipelines',
+    'Pipeline not found',
+    'Showing the first',
+    'not on this board view',
+    'Off-definition',
+    'stored stage',
+    'persistent identifiers',
+    'Loading…',
+    'Close reason',
+    'Reason (required for Lost)',
+    'Retry',
+    'Open',
+    'Won',
+    'Lost',
+  ];
+
+  /** Painted text: rendered copy plus the attributes a customer reads. */
+  const painted = () => {
+    const seen = [mount.textContent, ...toasts];
+    const walkAttrs = (node) => {
+      if (typeof node.getAttribute === 'function') {
+        for (const attr of ['placeholder', 'aria-label']) {
+          const value = node.getAttribute(attr);
+          if (value) seen.push(value);
+        }
+      }
+      for (const child of node.childNodes ?? []) walkAttrs(child);
+    };
+    walkAttrs(mount);
+    return seen.join('\n');
+  };
+  const assertNoEnglish = (where) => {
+    const text = painted();
+    for (const banned of BANNED) {
+      assert.ok(!text.includes(banned), `${where}: no «${banned}» renders`);
+    }
+  };
+
+  // Kanban: badges, filters, forecast, exclusion, drift and the move control.
+  const badges = mount.findAll('span').filter((n) => (n.getAttribute('class') ?? '').includes('stage-type')).map((n) => n.textContent);
+  assert.deepEqual(badges, ['Aperta', 'Aperta', 'Vinta ✓', 'Persa ✕'], 'column badges are Italian');
+  assertNoEnglish('kanban');
+  for (const italian of [
+    'Tutti i referenti',
+    'Tutti gli stati',
+    'Cerca nome, azienda, contatto',
+    'Previsione · stima',
+    'Nessun valore aperto da stimare',
+    'non un impegno',
+    'Nessun record.',
+    '1 record non in questa pipeline (non mostrato).',
+    'Fuori definizione (1)',
+    'fase registrata: svincolata',
+    'Sposta in',
+    'Sposta',
+    'Motivo (obbligatorio per la perdita)',
+    '1 offerta',
+  ]) {
+    assert.ok(painted().includes(italian), `kanban shows «${italian}»`);
+  }
+
+  // Move toast and the lost-reason reveal are customer-facing too.
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  card.__select.value = 'attesa';
+  await card.__move();
+  assert.ok(toasts.some((message) => message.includes('Spostata in attesa.')), 'move success is toasted in Italian');
+  assertNoEnglish('after move');
+  const lostColumn = mount.findAll('div').find((n) => n.getAttribute('data-stage') === 'persa');
+  await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'richiesta' }));
+  const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.equal(fresh.__reason.getAttribute('class'), '', 'the reason input is revealed');
+  assert.match(fresh.findAll('small')[0].textContent, /motivo della perdita/, 'the reason prompt is Italian');
+  assertNoEnglish('after lost reveal');
+
+  // Lista: headers and the empty-filter message.
+  mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
+  assert.ok(painted().includes('Chiusura prevista'), 'lista header is Italian');
+  assert.ok(painted().includes('Valore'), 'lista header is Italian');
+  assertNoEnglish('lista');
+  const search = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
+  search.value = 'zzz';
+  search.dispatch('input');
+  assert.ok(painted().includes('Nessun record corrisponde ai filtri attivi.'), 'empty lista is Italian');
+  assertNoEnglish('lista filtered');
 });

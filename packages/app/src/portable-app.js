@@ -2,6 +2,7 @@
 
 import { startPostgresqlLifecycle, startPostgresqlReaderLifecycle, startSqliteLifecycle } from './async-lifecycle.js';
 import { createProductionOperations } from './production-operations.js';
+import { compileReport, runReport as executeRegistryReport } from '../../analytics/src/index.js';
 import { AppError } from '../../core/src/errors.js';
 import { scheduledAskStorageReady } from '../../core/src/domain-timers.js';
 import { assertIdentityTenant, describePortableTenantBinding } from '../../core/src/tenant-binding.js';
@@ -606,6 +607,22 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
         actor: params.actor,
       });
     },
+    /**
+     * Declared-registry reads on compositions that carry no `database`
+     * handle (backlog:0e3e67eb): the /bo reporting dashboard passes its
+     * dashboardSpecs entries and this method compiles them itself, against
+     * the same owned storage the services read — never an ad-hoc query,
+     * and only declared metrics (anything else fails closed in the
+     * compiler before anything is read). The boundary takes a spec, never
+     * a pre-compiled descriptor: a forged descriptor handed to this method
+     * dies in compileReport instead of reaching storage. A closed-over
+     * method, not a handle: instance fields such as `database` stay off
+     * the facade (see closeOver).
+     * @param {unknown} spec a compileReport spec ({ metric, dimensions, filters, limit? })
+     */
+    runReportFromSpec(spec) {
+      return executeRegistryReport(handle, compileReport(spec));
+    },
     now,
     schema: CRM_SCHEMA,
     config,
@@ -775,6 +792,11 @@ export async function startPortableSqliteApp(options = {}) {
     events: graph.events,
     providers: graph.providers,
     notifications: graph.notifications,
+    // Declared-registry reads for the /bo reporting dashboard
+    // (backlog:0e3e67eb): this composition carries no `database` handle.
+    // The boundary takes a spec and compiles it inside, so a forged
+    // descriptor can never reach storage.
+    runReportFromSpec: graph.runReportFromSpec,
     runAction: graph.runAction,
     reconcileWrite: graph.reconcileWrite,
     lookupWrite: graph.lookupWrite,
@@ -881,6 +903,11 @@ export async function startPortablePostgresqlApp(options) {
     events: graph.events,
     providers: graph.providers,
     notifications: graph.notifications,
+    // Declared-registry reads for the /bo reporting dashboard
+    // (backlog:0e3e67eb): this composition carries no `database` handle.
+    // The boundary takes a spec and compiles it inside, so a forged
+    // descriptor can never reach storage.
+    runReportFromSpec: graph.runReportFromSpec,
     runAction: graph.runAction,
     reconcileWrite: graph.reconcileWrite,
     lookupWrite: graph.lookupWrite,
@@ -1002,6 +1029,12 @@ export async function startPortablePostgresqlReaderApp(options) {
     // A read of the write-outcome ledger is still a read.
     lookupWrite: graph.lookupWrite,
     listUnacknowledgedWrites: graph.listUnacknowledgedWrites,
+    // Declared-registry reads are reads too: the /bo reporting dashboard
+    // (backlog:0e3e67eb) passes dashboardSpecs entries that compile here,
+    // against the same owned storage the services read. Present, not
+    // absent: a generic consumer (the framework's own HTTP surface does
+    // exactly that) calls it without asking whether it exists.
+    runReportFromSpec: graph.runReportFromSpec,
     now: graph.now,
     schema: graph.schema,
     config: graph.config,
