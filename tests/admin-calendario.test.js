@@ -190,7 +190,7 @@ test('the week pager reloads the named members instead of blanking the week', as
   await flush();
   const weeks = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week'));
   assert.equal(weeks().length, 1);
-  clickButton(mount, 'Settimana dopo');
+  mount.findAll('button').find((node) => node.textContent === '›').dispatch('click');
   await flush();
   // The pager moves the window AND reloads it for the still-named members:
   // the operator never falls back to the "name someone" prompt mid-browse.
@@ -408,4 +408,152 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).startsAt, '2026-10-22T16:00:00.000Z');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+});
+
+// BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome.
+test('the header carries the prototype eyebrow and title', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const eyebrow = mount.findAll('p').find((node) => node.getAttribute('class') === 'eyebrow');
+  assert.equal(eyebrow?.textContent, 'Calendario condiviso', 'C1: eyebrow');
+  assert.equal(mount.findAll('h2')[0]?.textContent, 'Agenda del team', 'C1: title');
+});
+
+// BO-F6-11 fetta 2 (C2): ‹, interval, ›, Oggi, Nuovo appuntamento — in order.
+test('the week bar shows pager, interval, today and booking menu in order', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const nav = mount.querySelector('.actions');
+  assert.ok(nav, 'the header has an actions bar');
+  const text = nav.textContent;
+  const order = ['‹', '19 ott – 25 ott 2026', '›', 'Oggi', 'Nuovo appuntamento'];
+  let from = -1;
+  for (const part of order) {
+    const at = text.indexOf(part, from + 1);
+    assert.ok(at > from, `C2: "${part}" comes after the previous control`);
+    from = at;
+  }
+  // The interval is its own element with the spec pattern, not a button label.
+  const interval = nav.querySelector('span[data-role="week-interval"]');
+  assert.equal(interval?.textContent, '19 ott – 25 ott 2026', 'C2: interval pattern');
+});
+
+// BO-F6-11 fetta 2 (C3): the booking menu opens with both voices.
+test('Nuovo appuntamento opens the two voices with their subtitles', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
+  assert.ok(toggle, 'the booking menu toggle exists');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'the menu starts closed');
+  toggle.dispatch('click');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true', 'the toggle opens the menu');
+  const menu = mount.querySelector('.bo-clienti-menu');
+  assert.ok(menu && !menu.classList.contains('hidden'), 'the menu is visible');
+  assert.ok(menu.textContent.includes("Crea con l'AI"), 'voice 1 title');
+  assert.ok(menu.textContent.includes("Trovo gli slot liberi e invio l'invito"), 'voice 1 subtitle');
+  assert.ok(menu.textContent.includes('Compila manualmente'), 'voice 2 title');
+  assert.ok(menu.textContent.includes('Giorno, ora, cliente e partecipanti'), 'voice 2 subtitle');
+  toggle.dispatch('click');
+  assert.ok(menu.classList.contains('hidden'), 'the toggle closes the menu');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+});
+
+// BO-F6-11 fetta 2 (C3): Escape closes the menu and returns focus.
+test('Escape closes the booking menu and returns focus to the toggle', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
+  toggle.dispatch('click');
+  const wrap = mount.querySelector('.bo-clienti-menuwrap');
+  const menu = mount.querySelector('.bo-clienti-menu');
+  assert.ok(!menu.classList.contains('hidden'), 'the menu is open');
+  let focused = null;
+  toggle.focus = () => { focused = 'toggle'; };
+  wrap.dispatch('keydown', { key: 'Escape' });
+  assert.ok(menu.classList.contains('hidden'), 'Escape closes the menu');
+  assert.equal(focused, 'toggle', 'focus returns to the toggle');
+});
+
+// BO-F6-11 fetta 2 (C3): each voice closes the menu and focuses its target.
+test('the voices focus the phrase field and the manual form', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
+  toggle.dispatch('click');
+  const menu = mount.querySelector('.bo-clienti-menu');
+  const items = menu.findAll('button');
+  const ai = items.find((node) => node.textContent.includes("Crea con l'AI"));
+  const phrase = mount.querySelector('input[name="phrase"]');
+  let focused = null;
+  phrase.focus = () => { focused = 'phrase'; };
+  ai.dispatch('click');
+  assert.equal(focused, 'phrase', 'the AI voice focuses the phrase field');
+  assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
+  toggle.dispatch('click');
+  const manual = menu.findAll('button').find((node) => node.textContent.includes('Compila manualmente'));
+  const first = mount.querySelector('input[name="customerResource"]');
+  first.focus = () => { focused = 'manual'; };
+  manual.dispatch('click');
+  assert.equal(focused, 'manual', 'the manual voice focuses the booking form');
+  assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
+});
+
+// BO-F6-11 fetta 2 (C3): a click outside the open menu closes it.
+test('a click outside the booking menu closes it', async () => {
+  const base = createFakeDocument();
+  const handlers = Object.create(null);
+  const doc = {
+    createElement: (...args) => base.createElement(...args),
+    createElementNS: (...args) => base.createElementNS(...args),
+    addEventListener: (type, handler) => { (handlers[type] ??= []).push(handler); },
+    fire: (type, event) => { for (const handler of handlers[type] ?? []) handler(event); },
+  };
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
+  const wrap = mount.querySelector('.bo-clienti-menuwrap');
+  const menu = mount.querySelector('.bo-clienti-menu');
+  toggle.dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'the menu is open');
+  doc.fire('click', { target: toggle });
+  assert.ok(!menu.classList.contains('hidden'), 'a click inside the menu keeps it open');
+  doc.fire('click', { target: mount });
+  assert.ok(menu.classList.contains('hidden'), 'a click outside closes the menu');
+  assert.ok(wrap, 'the wrap is the outside-click boundary');
+});
+
+test('the calendario view renders no raw control', async () => {
+  // BO-F6-11 acceptance: nessun button/select/input senza le classi del
+  // sistema visivo nella schermata. Every control reaches the DOM through
+  // the shared `el` library (or the uiButton builder), which normalizes
+  // legacy classes onto `ui-*`.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+
+  const raw = [];
+  const walk = (node) => {
+    const tag = String(node.tagName ?? '').toLowerCase();
+    if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+      const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) {
+        raw.push(`${tag}[${classes.join('.')}]`);
+      }
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(mount);
+  assert.deepEqual(raw, [], 'every calendario control carries a ui-* system class');
 });
