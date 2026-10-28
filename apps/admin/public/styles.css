@@ -265,6 +265,42 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-table th, .pipeline-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .pipeline-table th { font-size: 11px; color: var(--dim); }
 .pipeline-card .card-owner, .pipeline-card .card-close { margin: 2px 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+/* Supervisor design pass: Pipeline like prototype 06. */
+.pipeline-board-panel.panel { border: none; background: transparent; box-shadow: none; padding: 0; }
+.pipeline-board-panel > .panel-heading { align-items: flex-end; gap: 24px; margin-bottom: 20px; }
+.pipeline-board-panel .kicker { text-transform: uppercase; margin-bottom: 10px; }
+.pipeline-board-panel .panel-heading h2 { margin: 0; font-size: clamp(34px, 4.4vw, 50px); line-height: 1; letter-spacing: -.03em; }
+.pipeline-board-panel .panel-heading .lede { margin: 12px 0 0; font-size: 16px; max-width: 560px; }
+.pipeline-board-panel .panel-heading .hint { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
+.pipeline-board-panel .pipeline-forecast { flex: 0 1 380px; margin: 0; padding: 18px 20px; border-radius: 16px; background: var(--agent-card); border: 1px solid var(--agent-line); }
+.pipeline-forecast h3 { margin: 0 0 6px; font-size: 13px; color: var(--agent-ink); }
+.pipeline-forecast .forecast-total { margin: 0; font-size: 28px; letter-spacing: -.02em; }
+.pipeline-forecast .hint { margin: 6px 0 0; font-size: 12.5px; color: var(--agent-ink); }
+.pipeline-board-panel .pipeline-toolbar { flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.pipeline-toolbar input, .pipeline-toolbar select { height: 36px; padding: 0 10px; border-radius: 10px; width: auto; font-size: 13px; }
+.pipeline-toolbar input[type="search"], .pipeline-toolbar input[type="text"] { flex: 0 1 240px; }
+.pipeline-toolbar .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
+.pipeline-toolbar .pipeline-summary { margin: 0 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.pipeline-board { gap: 14px; }
+.pipeline-column { min-width: 236px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
+.pipeline-column.type-won { background: var(--accent-soft); }
+.pipeline-column.type-lost { background: var(--human-soft); }
+.pipeline-column-header h3 { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.pipeline-column-header h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--pending); }
+.pipeline-column.type-won .pipeline-column-header h3::before { background: var(--accord); }
+.pipeline-column.type-lost .pipeline-column-header h3::before { background: var(--human); }
+.pipeline-column .stage-type { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); padding: 0; border: 0; }
+.pipeline-column .stage-total { margin: 4px 0 10px; font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--pending-ink); }
+.pipeline-column.type-won .stage-total { color: var(--accent); }
+.pipeline-column.type-lost .stage-total { color: var(--human-ink); }
+.pipeline-card { padding: 12px 14px; border-radius: 12px; border-color: var(--line-soft); }
+.pipeline-card strong { font-size: 14px; }
+.pipeline-card .card-company { font-size: 13px; }
+.pipeline-card .card-value { margin: 6px 0 2px; font-size: 15px; }
+.card-move { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-faint); }
+.card-move label { flex-basis: 100%; font-size: 10.5px; }
+.card-move select { flex: 1 1 100px; height: 30px; padding: 0 8px; font-size: 12px; border-radius: 8px; }
+.card-move .ui-btn { height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
 
 /* Quote builder (ADR-016) */
 .quote-create, .quote-add-line, .quote-submit, .quote-decide, .quote-revise { margin: 14px 0; padding: 12px; background: var(--surface-soft); border-radius: 9px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -436,33 +472,48 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
  * timeline center; AI summary, next steps, offer and next appointment
  * right. One column under 700px so the page stays fluid on a phone.
  */
-.bo-scheda { display: grid; gap: 12px; }
-.bo-scheda-name { margin: 0; font-size: 20px; }
-.bo-scheda-sub { margin: 2px 0 0; }
-.bo-scheda-back { margin-bottom: 4px; }
-.bo-scheda-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.bo-scheda-avatar { width: 44px; height: 44px; border-radius: 50%; background: var(--surface-soft); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; flex: none; }
-.bo-scheda-titles { display: grid; gap: 4px; }
-.bo-scheda-badge { display: inline-block; justify-self: start; font-size: 12px; font-weight: 700; border: 1px solid var(--line); border-radius: 99px; padding: 2px 10px; background: var(--surface); color: var(--ink); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr); gap: 12px; align-items: start; }
-.bo-scheda-col { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
-.bo-scheda-col h4 { margin: 0; font-size: 14px; }
-.bo-scheda-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
-.bo-scheda-actions a { font-size: 13px; font-weight: 700; color: var(--accent); }
-.bo-scheda-disabled { font-size: 12px; }
-.bo-scheda-fact { margin: 4px 0; font-size: 13px; }
-.bo-scheda-fact-label { font-weight: 700; }
-.bo-scheda-identity { margin: 6px 0; font-size: 13px; }
-.bo-scheda-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
-.bo-scheda-chips button { font-size: 12px; font-weight: 700; border: 1px solid var(--line); border-radius: 99px; background: var(--surface); color: var(--ink); padding: 4px 10px; cursor: pointer; }
-.bo-scheda-chips button[data-active="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.bo-scheda-timeline { display: grid; gap: 8px; }
-.bo-scheda-day { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
-.bo-scheda-entry { border-top: 1px solid var(--line); padding-top: 6px; }
-.bo-scheda-entry-head { margin: 0; font-size: 12px; color: var(--muted); }
-.bo-scheda-entry p { margin: 4px 0; font-size: 13px; }
-.bo-scheda-sync { font-size: 12px; color: var(--muted); }
-.bo-scheda-step, .bo-scheda-offer, .bo-scheda-appt { margin: 4px 0; font-size: 13px; }
+/* Supervisor design pass: Scheda cliente like prototype 05. */
+.bo-scheda { display: flex; flex-direction: column; gap: 20px; }
+.bo-scheda-back.ui-btn { align-self: flex-start; height: auto; padding: 0; border: none; background: transparent; box-shadow: none; color: var(--muted); font-size: 14px; font-weight: 600; }
+.bo-scheda-back.ui-btn:hover { color: var(--ink); transform: none; }
+.bo-scheda-head { display: flex; gap: 18px; align-items: center; }
+.bo-scheda-avatar { width: 64px; height: 64px; border-radius: 50%; background: var(--line-soft); color: var(--ink); display: grid; place-items: center; font-weight: 700; font-size: 20px; flex: none; }
+.bo-scheda-titles { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.bo-scheda-name { margin: 0; font-size: clamp(30px, 3.6vw, 40px); line-height: 1; letter-spacing: -.03em; }
+.bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
+.bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 270px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+.bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.bo-scheda-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bo-scheda-card h4 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
+.bo-scheda-ai { background: var(--agent-card); border-color: var(--agent-line); }
+.bo-scheda-ai h4 { color: var(--agent-ink); font-size: 14px; }
+.bo-scheda-ai h4::before { content: "✦ "; }
+.bo-scheda-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.bo-scheda-tile { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 58px; padding: 8px; border-radius: 12px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.bo-scheda-tile:hover { border-color: var(--ink); }
+.bo-scheda-disabled { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 58px; padding: 8px; border-radius: 12px; border: 1px dashed var(--line); color: var(--dim); font-size: 12px; }
+.bo-scheda-fact { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 9px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
+.bo-scheda-fact-label { font-weight: 400; color: var(--muted); }
+.bo-scheda-fact > span:last-child { text-align: right; font-weight: 600; overflow-wrap: anywhere; }
+.bo-scheda-identity { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 13px; }
+.bo-scheda-card-timeline { padding: 0; }
+.bo-scheda-card-timeline > h4 { padding: 18px 20px 0; font-size: 18px; }
+.bo-scheda-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0 20px 14px; border-bottom: 1px solid var(--line-faint); }
+.bo-scheda-chips .ui-btn { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; }
+.bo-scheda-chips .ui-btn[data-active="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.bo-scheda-timeline { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 20px; }
+.bo-scheda-day { margin: 6px 0 0; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.bo-scheda-entry { display: grid; grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; border: none; padding: 0; }
+.bo-scheda-entry > :not(.bo-scheda-chan) { grid-column: 2; }
+.bo-scheda-chan { grid-row: 1 / span 4; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
+.bo-scheda-entry-head { margin: 0; padding: 12px 14px 0; font-size: 13px; color: var(--muted); border: 1px solid var(--line-soft); border-bottom: none; border-radius: 14px 14px 0 0; background: var(--surface); }
+.bo-scheda-entry p:not(.bo-scheda-entry-head):not(.bo-scheda-sync) { margin: 0; padding: 6px 14px 0; font-size: 14.5px; line-height: 1.5; border-left: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); background: var(--surface); }
+.bo-scheda-sync { margin: 0; padding: 6px 14px 12px; font-family: var(--mono); font-size: 11px; color: var(--data-ink); border: 1px solid var(--line-soft); border-top: none; border-radius: 0 0 14px 14px; background: var(--surface); }
+.bo-scheda-step, .bo-scheda-appt { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
+.bo-scheda-offer { margin: 0; font-size: 14px; }
+.bo-scheda-card-offer .bo-scheda-offer { font-size: 16px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
 @media (max-width: 700px) {
@@ -1303,3 +1354,35 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-conn-lines { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
 .ui-conn-state { margin-left: auto; flex-shrink: 0; }
 @media (max-width: 700px) { .ui-conn-grid { grid-template-columns: 1fr; } }
+
+/* Supervisor design pass: Reporting like prototype 09. */
+.bo-rep { display: flex; flex-direction: column; gap: 18px; }
+.bo-rep-top .kicker { margin-bottom: 10px; color: var(--agent-ink); text-transform: uppercase; }
+.bo-rep-title { margin: 0; font-size: clamp(34px, 4.4vw, 50px); line-height: 1; letter-spacing: -.03em; }
+.bo-rep > .actions { gap: 4px; }
+.bo-rep > .actions .ui-btn { height: 32px; padding: 0 12px; border-radius: 9px; font-size: 13px; }
+.bo-rep > .lede { margin: 0; font-size: 13px; color: var(--muted); }
+.bo-rep .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.bo-rep .metric { padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); box-shadow: none; }
+.bo-rep-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.bo-rep-grid > * { grid-column: span 2; min-width: 0; }
+.bo-rep-grid > .bo-rep-wide { grid-column: span 4; }
+.bo-rep-grid > .bo-rep-narrow { grid-column: span 2; }
+.bo-rep-grid > .bo-rep-third { grid-column: span 2; }
+.bo-rep-grid > .bo-rep-full { grid-column: 1 / -1; }
+.bo-rep-grid > .panel, .bo-rep-grid > .pipeline-forecast { margin: 0; padding: 18px 20px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); box-shadow: none; }
+.bo-rep-grid > .panel h3 { margin: 0; font-size: 16px; }
+.bo-rep-grid > .panel > .lede { margin: 2px 0 8px; font-size: 12.5px; color: var(--muted); }
+.bo-rep-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.bo-rep-sub { margin: 0; font-size: 12.5px; color: var(--muted); }
+.bo-rep-grid > .bo-rep-narrow:last-child { background: var(--agent-card); border-color: var(--agent-line); }
+@media (max-width: 900px) {
+  .bo-rep-grid { grid-template-columns: minmax(0, 1fr); }
+  .bo-rep-grid > * , .bo-rep-grid > .bo-rep-wide, .bo-rep-grid > .bo-rep-narrow, .bo-rep-grid > .bo-rep-third { grid-column: 1 / -1; }
+}
+.bo-rep .metric strong { font-size: 26px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bo-rep-grid .forecast-total { font-size: 15px; letter-spacing: 0; }
+.bo-rep-grid > .pipeline-forecast .lede, .bo-rep-grid > .pipeline-forecast p:not(.forecast-total) { font-size: 13px; }
+.bo-rep-rows.panel { margin-top: 4px; border-radius: 16px; border: 1px solid var(--line-soft); box-shadow: none; }
+.bo-rep-rows .panel-heading h2 { font-size: 18px; }
+.bo-rep-rows > .lede { font-size: 13px; }
