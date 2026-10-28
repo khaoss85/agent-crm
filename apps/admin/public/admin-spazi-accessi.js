@@ -52,28 +52,28 @@ import { bindAdminMutations } from './admin-submission.js';
 export const SPAZI_AI_SWITCHES = Object.freeze([
   {
     key: 'merge-duplicates',
-    label: 'Unire i duplicati',
-    line: 'Da spenta, ogni possibile doppione diventa una proposta da approvare.',
+    label: 'Unire i contatti duplicati',
+    line: 'Solo quando nome, recapiti e richiesta coincidono. Negli altri casi ti chiedo.',
   },
   {
     key: 'drafts',
-    label: 'Preparare bozze',
-    line: 'Da spenta, nessuna bozza nasce senza la tua approvazione.',
+    label: 'Scrivere bozze di risposta',
+    line: 'Le trovi gi\u00E0 pronte nel campo di risposta del cliente.',
   },
   {
     key: 'send-without-approval',
-    label: 'Inviare senza approvazione',
-    line: 'Spenta all\u2019inizio: da accesa, i messaggi partono da soli.',
+    label: 'Inviare risposte senza approvazione',
+    line: 'Se \u00E8 spento, ogni messaggio aspetta il tuo ok.',
   },
   {
     key: 'book-appointments',
-    label: 'Fissare appuntamenti',
-    line: 'Da spenta, ogni proposta di orario diventa una proposta da approvare.',
+    label: 'Fissare appuntamenti negli slot liberi',
+    line: 'Solo con chi l\u2019ha chiesto, nel calendario condiviso.',
   },
   {
     key: 'move-offers',
-    label: 'Spostare offerte',
-    line: 'Da spenta, ogni avanzamento dell\u2019offerta aspetta il tuo ok.',
+    label: 'Spostare offerte nella pipeline',
+    line: 'Se \u00E8 spento, ti propongo lo spostamento.',
   },
 ]);
 
@@ -323,7 +323,7 @@ export function createSpaziAccessiView(deps) {
     box.appendChild(el(doc, 'p', { text: 'Spazi e accessi', cls: 'bo-kicker' }));
     box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro' }));
     box.appendChild(el(doc, 'p', {
-      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali e clienti, e nessuno vede i dati degli altri; il team invece \u00E8 uno solo per tutta l\u2019organizzazione.',
+      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.',
       cls: 'bo-muted',
     }));
   }

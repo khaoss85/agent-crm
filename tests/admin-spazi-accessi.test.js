@@ -207,7 +207,7 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   }
   const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
   assert.equal(toggles.length, 5);
-  assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare senza approvazione')?.getAttribute('aria-checked'), 'false');
+  assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione')?.getAttribute('aria-checked'), 'false');
 });
 
 test('a refused team read renders as a refusal, not an empty team', async () => {
@@ -305,10 +305,10 @@ test('a late answer never repaints over the screen that replaced it', async () =
 test('flipping a switch confirms first, then runs set-permission', async () => {
   const calls = [];
   const overrides = [];
-  const { mount, view: v } = view({ client: stubClient({ calls, overrides }) });
+  const { mount, seen, view: v } = view({ client: stubClient({ calls, overrides }) });
   await v.render();
   await flush();
-  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare senza approvazione');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
   await toggle.listeners.click[0]();
   await flush();
   assert.match(text(mount), /Accendere/, 'the flip asks before writing');
@@ -318,9 +318,9 @@ test('flipping a switch confirms first, then runs set-permission', async () => {
   await flush(20);
   const flip = calls.find((call) => call.path === '/api/space-permissions/set-permission');
   assert.deepEqual(flip?.body, { spaceId: SPACE, permission: 'send-without-approval', enabled: 'on' });
-  assert.match(text(mount), /accesa/, 'the flip is said aloud');
+  assert.ok(seen.toast.some((row) => !row.error && /accesa/.test(row.message)), 'the flip is said aloud');
   const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
-  assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare senza approvazione')?.getAttribute('aria-checked'), 'true');
+  assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione')?.getAttribute('aria-checked'), 'true');
 });
 
 test('a refused flip renders the server refusal and keeps the screen usable', async () => {
@@ -338,7 +338,7 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
   const { mount, seen, view: v } = view({ client: refusing });
   await v.render();
   await flush();
-  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Preparare bozze');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
   await toggle.listeners.click[0]();
   await flush();
   const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
@@ -346,4 +346,85 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
   await flush(20);
   assert.ok(seen.toast.some((row) => row.error && /human user actor/.test(row.message)), 'the refusal is said aloud');
   assert.ok(mount.findAll('button').some((node) => node.getAttribute('role') === 'switch'), 'the switches stay usable');
+});
+
+test('the switches and the header speak the prototype verbatim (BO-F6-17 slices 1-2)', async () => {
+  // specs/account.md fixed copy: the five titles and descriptions plus the
+  // header paragraph and the AI subtitle pattern. Keys and defaults stay
+  // owned by packages/space-permissions — only the view words move.
+  assert.deepEqual(SPAZI_AI_SWITCHES.map((entry) => entry.label), [
+    'Unire i contatti duplicati',
+    'Scrivere bozze di risposta',
+    'Inviare risposte senza approvazione',
+    'Fissare appuntamenti negli slot liberi',
+    'Spostare offerte nella pipeline',
+  ]);
+  assert.deepEqual(SPAZI_AI_SWITCHES.map((entry) => entry.line), [
+    'Solo quando nome, recapiti e richiesta coincidono. Negli altri casi ti chiedo.',
+    'Le trovi già pronte nel campo di risposta del cliente.',
+    'Se è spento, ogni messaggio aspetta il tuo ok.',
+    'Solo con chi l\u2019ha chiesto, nel calendario condiviso.',
+    'Se è spento, ti propongo lo spostamento.',
+  ]);
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, view: v } = view({
+    client: stubClient({ members }),
+    spaces: [{ id: SPACE, name: 'Negozio', initials: 'NE' }],
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /Spazi e accessi/);
+  assert.match(rendered, /Spazi di lavoro/);
+  assert.ok(
+    rendered.includes('Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.'),
+    'the header paragraph is the prototype verbatim',
+  );
+  assert.ok(
+    rendered.includes('Vale per tutto lo spazio Negozio. Quello che \u00E8 spento diventa una proposta da approvare.'),
+    'the AI subtitle names the current space and the off-means-proposal rule',
+  );
+  for (const label of [
+    'Unire i contatti duplicati',
+    'Scrivere bozze di risposta',
+    'Inviare risposte senza approvazione',
+    'Fissare appuntamenti negli slot liberi',
+    'Spostare offerte nella pipeline',
+  ]) {
+    const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === label);
+    assert.ok(toggle, `switch "${label}" exposes its title as its accessible name`);
+    assert.equal(toggle.getAttribute('role'), 'switch', `switch "${label}" keeps the switch role`);
+  }
+});
+
+test('the spazi screen renders no raw control', async () => {
+  // BO-F6-17 acceptance: nessun button/select/input senza le classi del
+  // sistema visivo nella schermata. Every control reaches the DOM through
+  // the shared `el` library, which normalizes legacy classes onto `ui-*`
+  // (the same sweep admin-pipeline.test.js runs for its board).
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  // Open every confirm path too: the flip confirm and the removal confirm
+  // add their own buttons and inputs, and they must stay normalized.
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('role') === 'switch');
+  await toggle.listeners.click[0]();
+  await flush();
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi');
+  await remove.listeners.click[0]();
+  await flush();
+  const raw = [];
+  const walk = (node) => {
+    const tag = String(node.tagName ?? '').toLowerCase();
+    if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+      const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+      if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) {
+        raw.push(`${tag}[${classes.join('.')}]`);
+      }
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(mount);
+  assert.deepEqual(raw, [], 'every spazi control carries a ui-* system class');
 });
