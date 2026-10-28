@@ -420,7 +420,11 @@ function errorOf(error) {
 /**
  * A view controller for the Stato sync screen. Injecting `doc`, `mount`,
  * `client`, `storage` and `navigate` keeps it testable without a browser.
- * @param {{ doc: any, mount: any, client: { request: (path: string, options?: object) => Promise<any> }, navigate?: (hash: string) => void, storage?: any, toast?: (message: string, isError?: boolean) => void, submissions?: any }} deps
+ * `spaceId` names the live space (the session's space under a mount, the
+ * same input every other space-scoped view takes); it wins over the stored
+ * pick, and the stored pick still applies without it, so local development
+ * reads exactly as today.
+ * @param {{ doc: any, mount: any, client: { request: (path: string, options?: object) => Promise<any> }, navigate?: (hash: string) => void, storage?: any, spaceId?: () => string | null, toast?: (message: string, isError?: boolean) => void, submissions?: any }} deps
  */
 export function createSyncView(deps) {
   const { doc, mount, navigate } = deps;
@@ -434,6 +438,17 @@ export function createSyncView(deps) {
   const go = typeof navigate === 'function' ? navigate : () => {};
 
   const readSpace = () => {
+    // The live session space wins (the badge counts it the same way in
+    // admin-shell resolveBadgeSpaceId): under a space mount the stored
+    // local pick is empty — or another identity's — and reading only it
+    // leaves the current space's screen asking to choose one.
+    try {
+      const live = typeof deps.spaceId === 'function' ? deps.spaceId() : null;
+      if (typeof live === 'string' && live !== '') return live;
+    } catch {
+      // A broken live reader never breaks the resolution: storage still
+      // applies below, like a caller that passed nothing.
+    }
     try {
       const stored = storage !== null ? storage.getItem(ACTIVE_SPACE_KEY) : null;
       return typeof stored === 'string' ? stored : '';

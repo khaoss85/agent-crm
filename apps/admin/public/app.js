@@ -595,6 +595,10 @@ const syncView = createSyncView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The shell's live space, read late like every other space-scoped view:
+  // under a session mount the stored pick is empty and the screen must
+  // still show the current space's state, never ask to choose one.
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   toast,
 });
 
