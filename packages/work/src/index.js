@@ -387,7 +387,6 @@ export function createWorkPackage(options = {}) {
     actions: [
       buildCompleteTaskAction(options.modules),
       buildCancelTaskAction(options.modules),
-      buildPostponeTaskAction(options.modules),
       buildAddNoteAction(options.modules),
     ],
     // None. A versioned policy earns its fingerprint when two consumers share a
