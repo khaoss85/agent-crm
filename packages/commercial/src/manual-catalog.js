@@ -4,12 +4,14 @@ import { randomUUID } from 'node:crypto';
 import {
   AppError,
   CHARGE_TYPES,
+  MAX_QUANTITY,
   PRICING_MODELS,
   ValidationError,
   computeDefinitionFingerprint,
   normalizeError,
   nowIso,
   requireActor,
+  requireBps,
   writeTrace,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
@@ -62,6 +64,95 @@ function requireBoolean(value, field) {
     throw new ValidationError(`${field} must be a boolean when present`);
   }
   return value;
+}
+
+/**
+ * The backoffice row unit ("a corpo", "ml", "m²", ...): short free text, or
+ * null when the product has no unit to show. Empty and overlong units refuse
+ * fail-closed, like every other row field.
+ * @param {unknown} value @param {string} field
+ */
+function optionalUnit(value, field) {
+  if (value === undefined || value === null) return null;
+  return requireText(value, field, 40);
+}
+
+/**
+ * The backoffice "sconto max" row ceiling: null (no ceiling declared) or
+ * integer basis points in the commercial 0–10000 idiom (1000 = 10%).
+ * @param {unknown} value @param {string} field
+ */
+function optionalDiscountBps(value, field) {
+  if (value === undefined || value === null) return null;
+  return requireBps(value, field);
+}
+
+/**
+ * The backoffice stock row: null means a service with no stock to count,
+ * otherwise a non-negative integer (0 counts: sold out, still orderable).
+ * @param {unknown} value @param {string} field
+ */
+function optionalStockQuantity(value, field) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > MAX_QUANTITY) {
+    throw new ValidationError(`${field} must be an integer between 0 and ${MAX_QUANTITY} when present`);
+  }
+  return value;
+}
+
+/**
+ * The three backoffice row fields as one validated bundle: unit (free text),
+ * discount ceiling (basis points) and stock (null = service). Shared by the
+ * manual writer and catalog sync so both gates refuse the same garbage.
+ * @param {{unit?: unknown, maxDiscountBps?: unknown, stockQuantity?: unknown}} input @param {string} label
+ */
+export function normalizeRowFields(input, label) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return {
+    unit: optionalUnit(source.unit, `${label}.unit`),
+    maxDiscountBps: optionalDiscountBps(source.maxDiscountBps, `${label}.maxDiscountBps`),
+    stockQuantity: optionalStockQuantity(source.stockQuantity, `${label}.stockQuantity`),
+  };
+}
+
+/**
+ * The commercial snapshot a product version carries, in the shape r2
+ * fingerprints (sku, name, description, category plus the three backoffice
+ * row fields, null when absent). Legacy rows stored before r2 have no row
+ * columns: they normalize to the same nulls, so an identical provider
+ * catalog never opens a new version only because three nulls appeared.
+ * @param {{sku?: unknown, name?: unknown, description?: unknown, category?: unknown, unit?: unknown, maxDiscountBps?: unknown, stockQuantity?: unknown} | null | undefined} row
+ */
+export function normalizeStoredCommercial(row) {
+  const source = row && typeof row === 'object' ? row : {};
+  return {
+    sku: source.sku,
+    name: source.name,
+    description: source.description ?? null,
+    category: source.category ?? null,
+    unit: source.unit ?? null,
+    maxDiscountBps: source.maxDiscountBps ?? null,
+    stockQuantity: source.stockQuantity ?? null,
+  };
+}
+
+/**
+ * Legacy-tolerant unchanged check: a stored `sourceFingerprint` computed
+ * before r2 (four keys, no row fields) never matches an r2 fingerprint of
+ * the same product (seven keys with three nulls), so comparing fingerprints
+ * alone would version every product on the first sync after the upgrade and
+ * — because offers pin `productVersionId` — revise every offer. Recompute
+ * the stored row in the r2 shape and compare that too: equal content stays
+ * a no-op, any real change still opens a new version.
+ * @param {{sourceFingerprint?: unknown} | null | undefined} storedRow @param {string} incomingFingerprint
+ */
+export function isUnchangedCommercial(storedRow, incomingFingerprint) {
+  if (storedRow?.sourceFingerprint === incomingFingerprint) return true;
+  try {
+    return computeDefinitionFingerprint(normalizeStoredCommercial(storedRow)) === incomingFingerprint;
+  } catch {
+    return false;
+  }
 }
 
 /** @param {unknown} value @param {string} field */
@@ -407,7 +498,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
     } else {
       book = await manualBookFor(currency, context);
     }
-    const commercialData = { sku, name, description, category };
+    const commercialData = { sku, name, description, category, ...normalizeRowFields(input, 'row') };
     const product = await products.createManaged(
       { sourceKey: `manual:product:${randomUUID()}`, sourceKind: 'internal', provider: MANUAL_PROVIDER, externalId: null, active: input.active === undefined ? true : requireBoolean(input.active, 'active') },
       context,
@@ -476,14 +567,20 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
         if (!current) {
           throw new AppError(`Product "${product.id}" has no current version`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
         }
+        const rowFields = normalizeRowFields({
+          unit: input.unit === undefined ? current?.unit ?? null : input.unit,
+          maxDiscountBps: input.maxDiscountBps === undefined ? current?.maxDiscountBps ?? null : input.maxDiscountBps,
+          stockQuantity: input.stockQuantity === undefined ? current?.stockQuantity ?? null : input.stockQuantity,
+        }, 'row');
         const commercialData = {
           sku: input.sku === undefined ? current?.sku : requireText(input.sku, 'sku', 100),
           name: input.name === undefined ? current?.name : requireText(input.name, 'name', 200),
           description: input.description === undefined ? current?.description ?? null : optionalText(input.description, 'description'),
           category: input.category === undefined ? current?.category ?? null : optionalText(input.category, 'category', 100),
+          ...rowFields,
         };
         const sourceFingerprint = computeDefinitionFingerprint(commercialData);
-        if (current.sourceFingerprint === sourceFingerprint) {
+        if (isUnchangedCommercial(current, sourceFingerprint)) {
           return { product: { id: product.id, version: current.version }, unchanged: true };
         }
         const nextNumber = (await versions.countWhere({ productId: product.id })) + 1;
@@ -688,6 +785,9 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
           name: version.name,
           description: version.description,
           category: version.category,
+          unit: version.unit ?? null,
+          maxDiscountBps: version.maxDiscountBps ?? null,
+          stockQuantity: version.stockQuantity ?? null,
           source: productSource,
           priceReadOnly: !isManual,
           active: product.active,

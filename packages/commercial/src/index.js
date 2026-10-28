@@ -278,6 +278,9 @@ export function createCommercialDomain(options = {}) {
           { name: 'currency', type: 'string', required: true, hint: 'Uppercase three-letter currency code.' },
           { name: 'priceBookId', type: 'string', required: false, hint: 'Manual price book id; omitted finds or creates the manual book of the currency.' },
           { name: 'offers', type: 'json', required: false, hint: 'Offer list with price components; or shorthand components for one offer.' },
+          { name: 'unit', type: 'string', required: false, hint: 'Backoffice row unit ("a corpo", "ml", "m²"); null when the row shows none.' },
+          { name: 'maxDiscountBps', type: 'json', required: false, hint: 'Backoffice "sconto max" ceiling in basis points (1000 = 10%); null for no ceiling.' },
+          { name: 'stockQuantity', type: 'json', required: false, hint: 'Backoffice stock count; null means a service with no stock to count.' },
         ],
         create(runtime) {
           const manual = manualFor(runtime, config);
@@ -290,10 +293,13 @@ export function createCommercialDomain(options = {}) {
         label: 'Update manual product',
         appMethod: 'updateManualProduct',
         description:
-          'Edit a manually managed product description (sku, name, description, category): opens version n+1, never rewrites. Provider-owned products refuse.',
+          'Edit a manually managed product description (sku, name, description, category, unit, maxDiscountBps, stockQuantity): opens version n+1, never rewrites. Provider-owned products refuse.',
         input: [
           { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
           { name: 'name', type: 'string', required: false, hint: 'New product name.' },
+          { name: 'unit', type: 'string', required: false, hint: 'New backoffice row unit; null clears it.' },
+          { name: 'maxDiscountBps', type: 'json', required: false, hint: 'New "sconto max" ceiling in basis points; null clears it.' },
+          { name: 'stockQuantity', type: 'json', required: false, hint: 'New stock count; null marks a service.' },
         ],
         create(runtime) {
           const manual = manualFor(runtime, config);
