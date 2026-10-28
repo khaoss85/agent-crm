@@ -568,6 +568,84 @@ export function withKernelBoundaryTests(
 }
 
 /**
+ * The package declaration freeze tests: the suites that pin a package's
+ * declared surface exactly — its action names, its attach/detach surface,
+ * its public export keys — so a PR that changes a declaration without
+ * updating the freeze fails here instead of on `main`. Twice `main` turned
+ * red after green-alone PRs that the import mapping could not hold onto:
+ * #360 added the `injectSessionProfile` export behind a 96-test fan-in and
+ * #380 added the `postpone` work action behind a 95-test fan-in, so both
+ * fell into the warned oversized fallback (the PR's own tests plus the
+ * guards) and the freezes that pin those declarations never ran
+ * (backlog:86652c07). `tests/work-package-absence.test.js` is unreachable
+ * by mapping at all: it asserts on a scratch composition it shells out to,
+ * never on a relative import.
+ *
+ * They run conditionally, on top of a mapped or fallback selection (and so
+ * inside the warned fallback too, where the two PRs above were lost):
+ * whenever the diff touches `packages/**`, where every declaration they
+ * freeze lives. A docs-only diff never touches those paths, so — unlike
+ * `REPO_WIDE_GUARDS` — it never selects them. They are not always-run
+ * guards: the six files cost a few seconds together (measured ~3 s
+ * locally), and an unconditional join would still tax every docs-only PR
+ * for a check that cannot flip it. Pure: unit-tested, including both
+ * acceptance directions.
+ */
+export const PACKAGE_DECLARATION_FREEZE_TESTS = Object.freeze([
+  // Pins the work v1 action set (complete, cancel, postpone, add-note) plus
+  // the factories, MCP tools, CLI commands and migration checksums.
+  'tests/spine-v2-m0-characterization.test.js',
+  // Pins the attach/detach/reattach surface, including the work action list
+  // on a scratch composition the mapping never reaches.
+  'tests/work-package-absence.test.js',
+  // Pin the exact `packages/app` export keys (factories plus the Admin
+  // shell mount exports) from four angles; a new export must update all four.
+  'tests/spine-v2-m2e2-portable-http.test.js',
+  'tests/spine-v2-m2e2-portable-facade.test.js',
+  'tests/spine-v2-m2e2-async-lifecycle.test.js',
+  'tests/spine-v2-m2e3-public-async-factory.test.js',
+]);
+
+/** Whether a repository-relative path lives under the declared packages. */
+function isPackagePath(/** @type {string} */ file) {
+  const normalized = normalize(file).replace(/\\/g, '/');
+  return normalized === 'packages' || normalized.startsWith('packages/');
+}
+
+/**
+ * Add the package declaration freeze tests
+ * (`PACKAGE_DECLARATION_FREEZE_TESTS`) on top of a mapped or fallback
+ * selection when the diff touches a declared package.
+ *
+ * - a diff with no `packages/**` path (docs-only included) returns the
+ *   selection unchanged — but only after the missing check below, so a PR
+ *   deleting a listed freeze test without touching a package still fails
+ *   red naming it instead of passing with a stale list;
+ * - an empty diff stays empty;
+ * - a listed freeze test missing from `testContents` throws instead of
+ *   silently shrinking the gate, the way `withKernelBoundaryTests` does;
+ * - duplicates collapse: a freeze test the mapping already selected runs
+ *   once.
+ */
+export function withPackageDeclarationFreezeTests(
+  /** @type {string[]} */ selectedTests,
+  /** @type {Map<string, string>} */ testContents,
+  /** @type {string[]} */ changedFiles,
+  /** @type {readonly string[]} */ freezeTests = PACKAGE_DECLARATION_FREEZE_TESTS,
+) {
+  if (changedFiles.length === 0) return [...selectedTests].sort();
+  const missing = freezeTests.filter((freeze) => !testContents.has(freeze));
+  if (missing.length > 0) {
+    throw new Error(
+      'package declaration freeze test(s) listed in PACKAGE_DECLARATION_FREEZE_TESTS but absent from tests/: '
+      + `${missing.join(', ')}. A PR deleting a freeze test updates the list in the same PR.`,
+    );
+  }
+  if (!changedFiles.some(isPackagePath)) return [...selectedTests].sort();
+  return [...new Set([...selectedTests, ...freezeTests])].sort();
+}
+
+/**
  * The characterization staleness suites: each `tests/characterization/*-baseline.json`
  * freezes the behaviour of the source files its `source` map digests, and the
  * paired `*-characterization.test.js` fails red when a digested file moves
@@ -970,8 +1048,12 @@ async function main() {
   const applyAlwaysRunGuards = (tests) => {
     try {
       return withCharacterizationTests(
-        withKernelBoundaryTests(
-          withRepoWideGuards(tests, contents, allChanged),
+        withPackageDeclarationFreezeTests(
+          withKernelBoundaryTests(
+            withRepoWideGuards(tests, contents, allChanged),
+            contents,
+            allChanged,
+          ),
           contents,
           allChanged,
         ),
@@ -1017,6 +1099,11 @@ async function main() {
     ? []
     : plan.tests.filter(
       (test) => !preGuardTests.includes(test) && CHARACTERIZATION_TESTS.includes(test),
+    );
+  const addedDeclaration = plan.kind === 'refuse'
+    ? []
+    : plan.tests.filter(
+      (test) => !preGuardTests.includes(test) && PACKAGE_DECLARATION_FREEZE_TESTS.includes(test),
     );
 
   // Selected tests the plan does not run, after the guards joined: a
@@ -1086,6 +1173,11 @@ async function main() {
   if (addedCharacterization.length > 0) {
     process.stdout.write(
       `ci-touched-tests: plus ${addedCharacterization.length} characterization test(s): ${addedCharacterization.join(', ')}.\n`,
+    );
+  }
+  if (addedDeclaration.length > 0) {
+    process.stdout.write(
+      `ci-touched-tests: plus ${addedDeclaration.length} declaration freeze test(s): ${addedDeclaration.join(', ')}.\n`,
     );
   }
 

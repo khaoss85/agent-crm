@@ -61,10 +61,12 @@ function isAsyncContract(error) {
 }
 
 test('public surfaces do not leak lifecycle symbols', () => {
-  // The factories plus the Admin shell mount exports (#307), on purpose.
+  // The factories plus the Admin shell mount exports (#307), on purpose, plus
+  // the session profile export BO-F6-03 needs (#360): the embedding host
+  // injects the operator/space profile into the served shell with it.
   assert.deepEqual(
     Object.keys(publicApp).sort(),
-    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase'],
+    ['createAccordoApp', 'createAccordoAppAsync', 'createAdminShellMount', 'injectAdminBase', 'injectSessionProfile'],
   );
   assert.equal(Object.hasOwn(publicApp, 'preflightSelectedGraph'), false);
   assert.equal(Object.hasOwn(publicApp, 'startSqliteLifecycle'), false);
