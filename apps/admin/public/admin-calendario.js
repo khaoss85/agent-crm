@@ -21,7 +21,7 @@ import { humanReadError } from './admin-core.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { uiButton } from './admin-ui.js';
+import { uiButton, uiChannelChip } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -259,10 +259,10 @@ export function lanesFor(rows) {
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
- * @param {{doc: any, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, storage?: any, now?: () => Date}} deps
+ * @param {{doc: any, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, storage?: any, now?: () => Date, navigate?: (hash: string) => void}} deps
  */
 export function createCalendarioView(deps) {
-  const { doc, mount } = deps;
+  const { doc, mount, navigate = () => {} } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
   const storage = deps.storage ?? null;
   const clock = typeof deps.now === 'function' ? deps.now : () => new Date();
@@ -283,6 +283,8 @@ export function createCalendarioView(deps) {
     weekKeys: romeWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
+    /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
+    profiles: {},
     /** @type {any} */
     week: null,
     weekError: null,
@@ -735,10 +737,81 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * The selected-event card (C6, C9): title, day · time row, participant
-   * names and a close × that deselects. No location paints because
-   * team-week rows carry none — the row names day and time only. The pill,
-   * the sync row and the customer button arrive with fetta 5.
+   * The linked customer of a week row, or null: resource and id must both be
+   * non-empty strings, so a half envelope never builds a scheda route.
+   * @param {any} row
+   */
+  function subjectKeyOf(row) {
+    const subject = row?.subject ?? {};
+    const resource = typeof subject.resource === 'string' ? subject.resource : '';
+    const id = typeof subject.id === 'string' ? subject.id : '';
+    if (resource === '' || id === '') return null;
+    return { resource, id, key: `${resource}:${id}` };
+  }
+
+  /**
+   * Display name from a read-only customer profile: the contact's full name,
+   * else the company name. The email is deliberately not a "nome", and an
+   * unknown customer resolves to null (the card falls back to the row label
+   * or id) — never a guessed name. @param {any} profile
+   */
+  function nameFromProfile(profile) {
+    const contact = profile?.identity?.contact ?? null;
+    const full = [contact?.firstName, contact?.lastName]
+      .filter((part) => typeof part === 'string' && part.trim() !== '')
+      .join(' ').trim();
+    if (full !== '') return full;
+    const company = typeof profile?.identity?.company?.name === 'string'
+      ? profile.identity.company.name.trim() : '';
+    return company !== '' ? company : null;
+  }
+
+  /**
+   * The customer display name: the cached profile name first, then the row
+   * label the server attached — never the raw id, which is not a name. Pure
+   * read: the caller fetches an uncached profile once (read-only,
+   * fail-soft). @param {any} row @param {{resource: string, id: string, key: string} | null} linked
+   */
+  function displayNameOf(row, linked) {
+    const cached = linked ? state.profiles[linked.key] : undefined;
+    if (typeof cached === 'string' && cached !== '') return cached;
+    const label = typeof row?.subject?.label === 'string' ? row.subject.label.trim() : '';
+    return label !== '' ? label : null;
+  }
+
+  /** @param {{resource: string, id: string, key: string}} linked */
+  async function loadSubjectName(linked) {
+    // The cache is keyed, not selection-bound: a late answer stays valid
+    // data for its key whatever is selected meanwhile, so no token guard —
+    // the repaint below simply re-renders the current selection.
+    try {
+      const profile = await client.request(
+        `/api/customer-data/profile/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`,
+      );
+      state.profiles[linked.key] = nameFromProfile(profile);
+    } catch {
+      // Unavailable (not composed, unknown customer, offline): the card
+      // keeps the row label or id. A missing name is never an error screen.
+      state.profiles[linked.key] = null;
+    }
+    if (state.selectedId !== null) renderAll();
+  }
+
+  /**
+   * BO-F6-11 fetta 5 (specs/calendario.md C7, C8): the selected-event card —
+   * title, day · time row, participant names, the channel pill and the
+   * customer button. No location paints because team-week rows carry none;
+   * the row names day and time only. The customer name resolves through the
+   * read-only customer profile (the map's own read), falling back to the row
+   * label or id when the profile is unavailable. The WA pill paints only
+   * from the explicit row marker (fetta 4's fail-closed rule) with the
+   * shared channel chip; anything else carries no pill because rows record
+   * no origin — an "✦ Fissato con l'AI" line would be invented. The Google
+   * sync row stays out for the same reason: appointments declares calendar
+   * synchronization notModeled and no row carries sync state, so any
+   * "invito inviato" line would be a guess (missing capability, nominated in
+   * the PR: adapter calendario). "Apri scheda cliente" is the dark primary
+   * button over the shared customer-card route, only for linked events.
    * @param {any} row
    */
   function renderDetailCard(row) {
@@ -759,18 +832,41 @@ export function createCalendarioView(deps) {
     const key = romeDayKey(row?.startsAt);
     const when = `${key ? `${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}` : '?'} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`;
     card.appendChild(el(doc, 'p', { text: when }));
-    const customer = row?.subject && typeof row.subject.id === 'string' ? (row.subject.label ?? row.subject.id) : null;
+    const linked = subjectKeyOf(row);
+    if (linked && !(linked.key in state.profiles)) {
+      // In flight: the label or id paints meanwhile, and one request serves
+      // every re-render until it resolves.
+      state.profiles[linked.key] = null;
+      void loadSubjectName(linked);
+    }
+    const display = displayNameOf(row, linked);
+    const customer = display ?? (linked ? linked.id : null);
     const participants = [row?.teamMemberId, customer].filter((part) => typeof part === 'string' && part !== '');
     if (participants.length > 0) {
       card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
     }
-    const subject = row?.subject ?? {};
-    if (typeof subject.id === 'string' && typeof subject.resource === 'string') {
-      const link = el(doc, 'a', {
-        text: `Scheda ${subject.label ?? subject.id}`,
-        attrs: { href: `#/customer-card/${subject.resource}/${subject.id}` },
+    if (channelOf(row) === 'whatsapp') {
+      const pill = el(doc, 'p');
+      pill.appendChild(uiChannelChip(doc, 'WA'));
+      // Leading space: the chip and the sentence are sibling inline boxes. A
+      // raw id is not a name, so the pill degrades to the nameless sentence
+      // instead of printing one.
+      pill.appendChild(el(doc, 'span', {
+        text: display ? ` Prenotato da ${display} su WhatsApp` : ' Prenotato su WhatsApp',
+      }));
+      card.appendChild(pill);
+    }
+    if (linked) {
+      const open = uiButton(doc, {
+        variant: 'primary',
+        small: true,
+        label: 'Apri scheda cliente',
+        attrs: { type: 'button' },
       });
-      card.appendChild(link);
+      open.addEventListener('click', () => {
+        navigate(`#/customer-card/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`);
+      });
+      card.appendChild(open);
     }
     return card;
   }

@@ -73,13 +73,23 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, failWith = null, failConfirmWith = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null } = {}) {
   const calls = [];
+  const notFound = () => {
+    const error = new Error('not composed');
+    error.code = 'NOT_FOUND';
+    error.status = 404;
+    return error;
+  };
   return {
     calls,
     async request(path, options = {}) {
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (failWith) throw failWith;
+      if (path.startsWith('/api/customer-data/profile/')) {
+        if (profiles && Object.hasOwn(profiles, path)) return profiles[path];
+        throw notFound();
+      }
       if (path === '/api/appointments/confirm' && failConfirmWith) throw failConfirmWith;
       if (path === '/api/appointments/propose' || path === '/api/appointments/confirm') {
         const body = payload({ body: options.body });
@@ -182,14 +192,14 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(texts(mount, 'strong').includes('taglio'));
   // Cancelled rows stay listed with their status.
   assert.ok(texts(mount, 'span').includes('cancelled'));
-  // No customer link paints before a selection: the card owns it (fetta 5).
+  // No customer control paints before a selection: the card owns it (fetta 5).
   assert.equal(mount.findAll('a').length, 0);
-  // Selecting the block opens the card, and the card links at the scheda.
+  // Selecting the block opens the card, and the card buttons at the scheda.
   const block = mount.findAll('button').find((node) => node.textContent.includes('taglio'));
   assert.ok(block, 'the taglio block is a button');
   block.dispatch('click');
-  const links = mount.findAll('a').map((node) => node.getAttribute('href'));
-  assert.ok(links.includes('#/customer-card/contact/c1'), 'the card links at the scheda, never a raw id');
+  const open = mount.findAll('button').find((node) => node.textContent === 'Apri scheda cliente');
+  assert.ok(open, 'the card buttons at the scheda, never a raw id');
 });
 
 test('the week pager reloads the named members instead of blanking the week', async () => {
@@ -936,4 +946,250 @@ test('memberColorIndex and memberInitials never print a name', () => {
   assert.equal(memberInitials('marco'), 'MA');
   assert.equal(memberInitials('sara'), 'SA');
   assert.equal(memberInitials(null), '··');
+});
+
+// BO-F6-11 fetta 5 (specs/calendario.md C7): the detail card carries a dark
+// primary "Apri scheda cliente" button for linked events, riding the shared
+// customer-card route; unlinked events carry no button.
+test('the detail card opens the customer card for linked events only', async () => {
+  const profilePath = '/api/customer-data/profile/contact/c1';
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createCalendarioView({
+    doc,
+    mount,
+    client: stubClient({
+      profiles: {
+        [profilePath]: { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } },
+      },
+    }),
+    navigate: (hash) => { seen.push(hash); },
+    now: () => new Date('2026-10-21T08:40:00Z'),
+  });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  // The profile read fires once, read-only, on selection.
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card, 'C7: the card opens');
+  assert.ok(card.textContent.includes('marco, Ada Rossi'), 'C7: the participants name the resolved customer');
+  const open = card.findAll('button').find((node) => node.textContent === 'Apri scheda cliente');
+  assert.ok(open, 'C7: the linked card carries Apri scheda cliente');
+  assert.match(open.getAttribute('class') ?? '', /ui-btn-primary/, 'the button is the dark primary action');
+  open.dispatch('click');
+  assert.deepEqual(seen, ['#/customer-card/contact/c1'], 'C7: the button opens the customer scheda route');
+});
+
+// A half envelope never builds a scheda route: no button without both parts.
+test('the detail card hides the customer button without a linked customer', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'solo',
+        status: 'booked',
+        startsAt: '2026-10-22T16:00:00.000Z',
+        endsAt: '2026-10-22T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        sourceKey: 'calendario:marco:solo:senza-cliente',
+        subject: null,
+      }],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    doc, mount, client: stubClient({ week }), navigate: () => { throw new Error('must not navigate'); },
+    now: () => new Date('2026-10-21T08:40:00Z'),
+  });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card, 'the card opens for the team-only event');
+  assert.equal(
+    card.findAll('button').filter((node) => node.textContent === 'Apri scheda cliente').length,
+    0,
+    'C7: no customer button without a linked customer',
+  );
+  assert.ok(!card.textContent.includes('Google Calendar'), 'no sync claim without sync state');
+});
+
+// BO-F6-11 fetta 5 (specs/calendario.md C8): the WA pill names the resolved
+// customer with the shared channel chip; a non-WA event carries no pill and
+// no sync row, because rows record no origin and no sync state.
+test('the channel pill is fail-closed with the resolved customer name', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'w1',
+        status: 'booked',
+        startsAt: '2026-10-22T16:00:00.000Z',
+        endsAt: '2026-10-22T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        channel: 'whatsapp',
+        sourceKey: 'calendario:marco:w1:c1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null },
+      }],
+    }],
+  };
+  const profilePath = '/api/customer-data/profile/contact/c1';
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    doc,
+    mount,
+    client: stubClient({
+      week,
+      profiles: {
+        [profilePath]: { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } },
+      },
+    }),
+    now: () => new Date('2026-10-21T08:40:00Z'),
+  });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card.textContent.includes('Prenotato da Ada Rossi su WhatsApp'), 'C8: the pill names the customer');
+  const chips = card.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('ui-chip-wa'));
+  assert.equal(chips.length, 1, 'C8: the pill reuses the shared WA channel chip');
+});
+
+// A late profile answer stays valid data for its own key: selecting a
+// second event while the first profile is in flight drops neither name.
+test('overlapping profile reads cache under their own keys', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [
+        {
+          id: 'w1', status: 'booked', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'marco', sourceKey: 'k1',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null },
+        },
+        {
+          id: 'w2', status: 'booked', startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z',
+          serviceKey: 'barba', teamMemberId: 'marco', sourceKey: 'k2',
+          subject: { resource: 'contact', id: 'c2', owner: 'host', ownerPackage: null },
+        },
+      ],
+    }],
+  };
+  let releaseProfiles = () => {};
+  const gate = new Promise((resolve) => { releaseProfiles = resolve; });
+  const calls = [];
+  const client = {
+    calls,
+    async request(path) {
+      calls.push(path);
+      if (path.startsWith('/api/customer-data/profile/')) {
+        await gate;
+        const id = path.split('/').pop();
+        return { identity: { contact: { id, firstName: `Nome-${id}`, lastName: '' }, company: null } };
+      }
+      if (path.startsWith('/api/appointments/team-week')) return week;
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => node.textContent.includes('barba')).dispatch('click');
+  releaseProfiles();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  // Back to the first event: its late answer cached under its own key.
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card.textContent.includes('marco, Nome-c1'), 'the first name survives the second selection');
+  assert.equal(
+    calls.filter((path) => path.startsWith('/api/customer-data/profile/')).length,
+    2,
+    'one profile read per customer, never a refetch',
+  );
+});
+
+// An unavailable profile never breaks the card: label, then id, never an
+// error line — and a hostile profile name stays inert text.
+test('the detail card falls back honestly when the profile is unavailable', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'w1',
+        status: 'booked',
+        startsAt: '2026-10-22T16:00:00.000Z',
+        endsAt: '2026-10-22T16:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        channel: 'whatsapp',
+        sourceKey: 'calendario:marco:w1:c9',
+        subject: { resource: 'contact', id: 'c9<script>', owner: 'host', ownerPackage: null },
+      }],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createCalendarioView({
+    doc,
+    mount,
+    client: stubClient({ week }),
+    navigate: (hash) => { seen.push(hash); },
+    now: () => new Date('2026-10-21T08:40:00Z'),
+  });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card, 'the card opens without a profile');
+  assert.ok(card.textContent.includes('c9<script>'), 'the id falls back as inert text');
+  assert.ok(card.textContent.includes('Prenotato su WhatsApp'), 'the WA pill degrades without inventing a name');
+  assert.ok(!card.textContent.includes('NOT_FOUND') && !card.textContent.includes('404'), 'C22: no technical text');
+  card.findAll('button').find((node) => node.textContent === 'Apri scheda cliente').dispatch('click');
+  assert.deepEqual(seen, ['#/customer-card/contact/c9%3Cscript%3E'], 'the hostile id travels encoded');
 });
