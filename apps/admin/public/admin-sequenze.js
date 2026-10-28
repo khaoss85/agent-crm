@@ -230,7 +230,6 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFaile
         order: Number.isInteger(step?.stepOrder) ? step.stepOrder : null,
         dayLabel: sequenceDayLabel(step?.dayOffset),
         channel: nonEmptyText(step?.channel) ?? '',
-        channel: String(step?.channel ?? ''),
         channelLabel: sequenceChannelLabel(step?.channel),
         templateName: nonEmptyText(step?.templateName) ?? 'Modello da decidere',
         templateLanguage: nonEmptyText(step?.templateLanguage) ?? '',

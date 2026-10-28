@@ -852,7 +852,11 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   if (state !== 'open') row.setAttribute('data-state', state);
   row.appendChild(el(doc, 'span', 'bo-oggi-mono', String(action?.mono ?? '')));
   const body = el(doc, 'div', 'bo-oggi-body');
-  body.appendChild(el(doc, 'p', 'bo-oggi-title', String(action?.title ?? '')));
+  // The prototype's title opens the record the suggestion is about.
+  const href = typeof action?.href === 'string' && action.href !== '' ? action.href : null;
+  const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(action?.title ?? ''));
+  if (href) title.setAttribute('href', href);
+  body.appendChild(title);
   body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
   row.appendChild(body);
   if (state === 'open') {
