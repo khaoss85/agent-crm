@@ -8,7 +8,7 @@
  * actions, pipelines, intelligence, commercial and signature.
  *
  * This repository ships the reference CRM composition (customer-data,
- * space-permissions, channels, sequences, work). A generated project starts
+ * space-permissions, channels, sequences, work, magic-link). A generated project starts
  * empty instead: `create-accordo` overwrites this copied file with the empty
  * composition, because composition is one line a human adds deliberately.
  *
@@ -25,6 +25,7 @@
 import { createCustomerDataPackage } from '../../customer-data/src/index.js';
 import { createSpacePermissionsDomain } from '../../space-permissions/src/index.js';
 import { createChannelsPackage } from '../../channels/src/index.js';
+import { createMagicLinkPackage, createMemoryMagicLinkStore } from '../../magic-link/src/index.js';
 import { createSequencesPackage } from '../../sequences/src/index.js';
 import { createWorkPackage } from '../../work/src/index.js';
 
@@ -32,6 +33,13 @@ export const generatedDomains = [
   createCustomerDataPackage(),
   createSpacePermissionsDomain(),
   createChannelsPackage(),
+  // BO-F6-06 slice 1 (backlog:ed4bbd35883a): local composition only. The
+  // memory store lets the reference app boot with the login domain; the
+  // deployment-owned edges (directory, outbox, secret custody) stay unwired,
+  // so request refuses with MAGIC_LINK_NOT_CONFIGURED and an unknown token
+  // stays MAGIC_LINK_INVALID until the deployment wires them. No
+  // credentials, no transport, no Google machinery.
+  createMagicLinkPackage({ store: createMemoryMagicLinkStore() }),
   createSequencesPackage(),
   createWorkPackage(),
 ];

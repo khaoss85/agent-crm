@@ -261,10 +261,13 @@ test('createAccordoApp stays synchronous and does not import bundled v2 graphs',
   try {
     assert.equal(app instanceof Promise, false);
     assert.equal(typeof app.then, 'undefined');
-    // The reference application composes its five contract-1 CRM packages
+    // The reference application composes its six contract-1 CRM packages
     // through the checked-in index; the factory itself stays synchronous.
+    // magic-link joined the composition in BO-F6-06 slice 1
+    // (backlog:ed4bbd35883a): store-only, operations refuse until the
+    // deployment wires its edges.
     assert.deepEqual([...app.domains.names()].sort(), [
-      'channels', 'customer-data', 'sequences', 'space-permissions', 'work',
+      'channels', 'customer-data', 'magic-link', 'sequences', 'space-permissions', 'work',
     ]);
     assert.deepEqual(app.services.companies.list(), []);
   } finally {
