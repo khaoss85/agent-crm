@@ -390,10 +390,24 @@ test('BO-F1-08: the scheda shows the AI summary, the signals and the openable tr
   assert.ok(text.includes('Tempi'), 'the timing signal label is shown');
   assert.ok(text.includes('il budget massimo è 800 euro'), 'the signal excerpt quotes the transcript');
 
-  const details = mount.findAll('details');
-  assert.equal(details.length, 1, 'the transcript is openable');
-  assert.ok(details[0].textContent.includes('Trascrizione'), 'the opener names the transcript');
-  assert.ok(details[0].textContent.includes('Operatrice: buongiorno'), 'the transcript text is inside the opener');
+  assert.ok(text.includes('Aggiornato 20 ott, 14:00'), 'the summary carries its <quando aggiornato> row');
+
+  // Voce 59def6cb805d (C20): the prototype toggle with its exact texts.
+  const toggles = mount.findAll('button').filter((node) => node.textContent === 'Mostra trascrizione');
+  assert.equal(toggles.length, 1, 'the transcript toggle reads Mostra trascrizione while closed');
+  assert.ok(!text.includes('Operatrice: buongiorno'), 'a closed transcript shows none of its content');
+  toggles[0].dispatch('click');
+  assert.equal(toggles[0].textContent, 'Nascondi trascrizione', 'the open toggle reads Nascondi trascrizione');
+  const rows = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-transcript-row');
+  assert.equal(rows.length, 2, 'one speaker row per transcript line');
+  assert.ok(rows[0].textContent.includes('Operatrice: buongiorno'), 'the speaker rows carry the transcript text');
+  toggles[0].dispatch('click');
+  assert.equal(toggles[0].textContent, 'Mostra trascrizione', 'closing restores the exact text');
+  assert.deepEqual(
+    mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-transcript-row'),
+    [],
+    'a closed transcript mounts no speaker row',
+  );
 });
 
 test('BO-F1-08: a purged transcript reads as erased, never as missing, and wiped excerpts read as erased', async () => {
@@ -411,7 +425,11 @@ test('BO-F1-08: a purged transcript reads as erased, never as missing, and wiped
   assert.ok(text.includes('non disponibile: nessun riepilogo registrato'), 'no summary is invented after erasure');
   assert.ok(text.includes('Dubbi'), 'the surviving signal label is shown');
   assert.ok(text.includes('citazione cancellata: retention scaduta'), 'the wiped excerpt reads as erased, never as an empty quote');
-  assert.deepEqual(mount.findAll('details'), [], 'an erased transcript has no opener');
+  assert.deepEqual(
+    mount.findAll('button').filter((node) => (node.textContent ?? '').includes('trascrizione')),
+    [],
+    'an erased transcript has no toggle',
+  );
   assert.ok(text.includes('cancellata il 2027-10-01 (retention scaduta)'), 'the erasure reads as erased with its date');
 });
 
@@ -683,4 +701,74 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   assert.ok(!text.includes('verifiche non complete'), 'proven absence carries no hedge');
   assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
+});
+
+// Voce 59def6cb805d: la colonna centrale parla come il prototipo — titolo,
+// giorni in maiuscolo, righe sync con freccia, durate `<m:ss>`, empty state.
+test('59def6cb805d: the timeline reads like the prototype (C14, C16, C17, C19)', async () => {
+  const mount = await renderCard(stubClient());
+  const text = mount.textContent;
+
+  // C14: the section title is the prototype's, and Tutti starts selected.
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(titles.includes('Tutti i contatti'), 'the center title reads Tutti i contatti');
+  assert.ok(!titles.includes('Cronologia'), 'the record-kind title is gone');
+  const tutti = mount.findAll('button').find((node) => node.textContent === 'Tutti');
+  assert.ok(tutti, 'a Tutti chip exists');
+  assert.equal(tutti.getAttribute('data-active'), 'true', 'Tutti starts selected');
+
+  // C16: day groups read uppercase, like `<GIORNO> <DATA>`.
+  const days = mount.findAll('h5').map((node) => node.textContent);
+  assert.ok(days.length > 0, 'the timeline groups by day');
+  assert.ok(days.includes('MARTEDÌ 20 OTTOBRE 2026'), 'the day reads uppercase');
+  assert.ok(!days.some((day) => day !== day.toUpperCase()), 'no lowercase day header');
+
+  // C17: every card names channel, direction detail and `<hh:mm>`, and the
+  // sync row reads `←/→ <canale> · <stato>`.
+  assert.ok(text.includes('WhatsApp · da +39 333 1234567 · 11:00'), 'inbound card with its hour');
+  assert.ok(text.includes('WhatsApp · inviato da elena · 11:05'), 'outbound card with its hour');
+  assert.ok(text.includes('← WhatsApp · ricevuto'), 'inbound sync row with its arrow');
+  assert.ok(text.includes('→ WhatsApp · consegnato'), 'outbound sync row with its arrow');
+  assert.ok(text.includes('→ Telefono · completata'), 'call sync row with its arrow and outcome');
+
+  // C19: the call duration reads `<m:ss>`, never raw seconds.
+  assert.ok(text.includes('chiamata in uscita · 6:12'), '372 seconds read as 6:12');
+  assert.ok(!text.includes('372s'), 'no raw second count on the card');
+});
+
+test('59def6cb805d: passages of today carry the OGGI prefix (C16)', async () => {
+  const now = new Date();
+  const romeToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+  const [year, month, day] = romeToday.split('-').map(Number);
+  const occurredAt = new Date(Date.UTC(year, month - 1, day, 10, 0, 0)).toISOString();
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      entries: {
+        available: true, count: 1, truncated: false,
+        items: [{
+          entry: 'message', id: 'm-today', conversationId: 't1', channel: 'whatsapp',
+          direction: 'inbound', sync: 'received', body: 'Ciao di oggi',
+          teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null, occurredAt,
+        }],
+      },
+    },
+  }));
+  const days = mount.findAll('h5').map((node) => node.textContent);
+  assert.equal(days.length, 1, 'one day group');
+  assert.ok(days[0].startsWith('OGGI · '), `today reads with the OGGI prefix, got ${days[0]}`);
+  assert.equal(days[0], days[0].toUpperCase(), 'the OGGI header stays uppercase');
+});
+
+test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27)', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: { ...TIMELINE, entries: { available: true, count: 0, truncated: false, items: [] } },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Nessun messaggio qui'), 'the empty title is exact');
+  assert.ok(text.includes('Prova un altro canale oppure scrivi il primo messaggio qui sotto.'),
+    'the empty hint is exact');
+  assert.ok(!text.includes('nessun passaggio'), 'no technical empty sentence remains');
 });
