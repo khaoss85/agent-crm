@@ -694,3 +694,31 @@ test('the invite menu shows the verbatim C21 voices; manual opens the spine form
   const subject = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare');
   assert.ok(subject, 'manual opens the existing inline spine form');
 });
+
+test('the invite toggle closes the inline form and aria-expanded tracks menu or form', async () => {
+  // Review findings on #428 (P2 regression + P2 aria-expanded): reopening the
+  // toggle with the manual form open must close the form, and aria-expanded
+  // must stay true while either the menu or the form is open.
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const { mount, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  const toggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const formOpen = () => mount.findAll('div').some((node) => {
+    const cls = (node.getAttribute('class') ?? '').split(/\s+/);
+    return cls.includes('bo-spazi-invite') && cls.includes('open');
+  });
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'collapsed when menu and form are closed');
+  await toggle().listeners.click[0]();
+  await flush();
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'expanded while the menu is open');
+  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  await manual.listeners.click[0]();
+  await flush();
+  assert.ok(formOpen(), 'manual opens the inline form and closes the menu');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'expanded while the form is open with the menu closed');
+  await toggle().listeners.click[0]();
+  await flush();
+  assert.ok(!formOpen(), 'the toggle closes the inline form again');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'collapsed once menu and form are both closed');
+});

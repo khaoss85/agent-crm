@@ -580,9 +580,15 @@ export function createSpaziAccessiView(deps) {
     // C21: «Invita persona» opens a two-voice menu with verbatim subtitles.
     // Manual entry opens the existing inline spine form below; the AI voice
     // stays honest (no invention) until a capability exists.
-    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': state.inviteMenuOpen ? 'true' : 'false' } });
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
     inviteToggle.addEventListener('click', () => {
-      state.inviteMenuOpen = !state.inviteMenuOpen;
+      if (state.inviteMenuOpen) {
+        state.inviteMenuOpen = false;
+      } else if (state.inviteOpen) {
+        state.inviteOpen = false;
+      } else {
+        state.inviteMenuOpen = true;
+      }
       render();
     });
     teamHead.appendChild(inviteToggle);
