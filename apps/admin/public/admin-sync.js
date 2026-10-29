@@ -23,6 +23,7 @@
 // hostile channel, account or adapter label is inert text, never markup.
 
 import { humanReadError } from './admin-core.js';
+import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -312,7 +313,7 @@ export function syncFixItems(activity) {
           ? `1 messaggio di ${who} aspetta una decisione`
           : `${quarantined} messaggi di ${who} aspettano una decisione`,
         detail: 'Decidili nella coda qualità: nessuno viene unito da solo.',
-        action: { kind: 'route', label: 'Apri la coda qualità', route: '#/customer-data' },
+        action: { kind: 'route', label: 'Apri la coda qualità', route: CLIENTI_IMPORT_ROUTE },
       });
     }
     if (dead > 0) {
@@ -925,7 +926,7 @@ export function createSyncView(deps) {
         });
         node.appendChild(keep);
       }
-      renderRouteLink(node, 'Decido io', '#/customer-data');
+      renderRouteLink(node, 'Decido io', CLIENTI_IMPORT_ROUTE);
       list.appendChild(node);
     }
     for (const item of items) {

@@ -335,6 +335,33 @@ test('the Clienti screen carries no import tool', async () => {
   }
 });
 
+test('a list read still in flight dies when the operator leaves the list', async () => {
+  // backlog:80b25fb0: the list paints straight into the shell's shared
+  // mount, so the shell invalidates it on every other route — a late
+  // response must not clear the screen the operator just opened.
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
+  const client = {
+    async request() {
+      await gate;
+      return {
+        customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+      };
+    },
+  };
+  const view = createCustomerListView({ doc, mount, client, storage: store, notify: () => {} });
+  const pending = view.render();
+  view.invalidate();
+  release();
+  await pending;
+  await flush();
+  assert.ok(!mount.textContent.includes('Marco Rossi'), 'the late list response never paints over the new screen');
+});
+
 test("a contact from the site form shows 'Form sito' in Ultimo contatto", async () => {
   // backlog:80b25fb0: the site-forms package logs its inbound as the
   // website-form channel; the list shows the Italian label, never the raw id.

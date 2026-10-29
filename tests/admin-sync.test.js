@@ -38,6 +38,7 @@ import {
   syncIndicator,
   timeAgo,
 } from '../apps/admin/public/admin-sync.js';
+import { CLIENTI_IMPORT_ROUTE } from '../apps/admin/public/admin-clienti.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { SETTINGS_AREAS, loadFixCount } from '../apps/admin/public/admin-shell.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -218,7 +219,7 @@ test('a broken channel says what to do, with a real destination', () => {
   assert.deepEqual(byKey.get('d').action, { kind: 'sync-now', label: 'Sincronizza ora', connectionKey: 'd' });
   assert.ok(byKey.get('d').title.includes('si è fermata'));
   assert.ok(!byKey.get('d').title.includes('IMPORT_PROVIDER_FAILED'));
-  assert.equal(byKey.get('e:quarantena').action.route, '#/customer-data');
+  assert.equal(byKey.get('e:quarantena').action.route, CLIENTI_IMPORT_ROUTE);
   assert.ok(byKey.get('f:invii').action.route.startsWith('#/connettori/'));
   // The merely waiting voice connection is not broken: no item.
   assert.ok(!items.some((item) => item.key === 'g'));
@@ -853,7 +854,7 @@ test('keep-both dismisses through the record action, decide routes to quality', 
   assert.ok(dismissed[0].path.includes('/api/modules/duplicate-candidate/records/c-1/'));
   assert.ok(!toasts.some((toast) => toast.isError));
   const decide = mount.findAll('a').find((node) => node.textContent === 'Decido io');
-  assert.equal(decide.getAttribute('href'), '#/customer-data');
+  assert.equal(decide.getAttribute('href'), CLIENTI_IMPORT_ROUTE);
 });
 
 test('the yellow card renews through the connector detail', async () => {

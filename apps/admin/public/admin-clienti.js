@@ -671,5 +671,16 @@ export function createCustomerListView(deps) {
     panel.appendChild(pager);
   }
 
-  return { render: load, reload, getState: () => ({ ...state }) };
+  /**
+   * Drops a pending list read (backlog:80b25fb0): the list renders straight
+   * into the shell's shared mount, so a late response must not repaint a
+   * screen the operator already left. The shell calls this on every route
+   * that is not the list; the render token already covers overlapping list
+   * reads, never navigation.
+   */
+  function invalidate() {
+    renderToken += 1;
+  }
+
+  return { render: load, reload, invalidate, getState: () => ({ ...state }) };
 }

@@ -993,6 +993,7 @@ function targetForHash(hash) {
 async function route() {
   const hash = window.location.hash || '#/';
   if (targetForHash(hash).view === 'settings') {
+    clientiListView.invalidate();
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
     renderSettingsPanel({
@@ -1007,6 +1008,10 @@ async function route() {
   }
   const target = targetForHash(hash);
   syncShell(target);
+  // backlog:80b25fb0: the list paints straight into the shared mount, so a
+  // list read still in flight must die when the operator leaves the list —
+  // otherwise its late response clears the screen just opened.
+  if (target.view !== 'customer-data') clientiListView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
     // Space home (BO-F3-04): the Oggi screen, never the demo. The
