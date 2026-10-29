@@ -540,17 +540,21 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       companyIds: new Set(company ? [company.id] : []),
       contactIds: new Set(contact ? [contact.id] : []),
     };
+    const subject = { resource, id };
     // This customer's own opportunities first (company/contact reference),
     // so the opportunity hop below is scoped to this customer: an order
     // that names another customer's opportunity must not promote this one.
+    // On a contact row a company match alone never pulls in another
+    // contact's contact-scoped record, or every card in the company shares
+    // the same offer.
     const myOpportunities = opportunities.rows.filter((row) => belongsToCustomer(row, {
       ...directIds,
       opportunityIds: new Set(),
-    }));
+    }, subject));
     const mine = (row) => belongsToCustomer(row, {
       ...directIds,
       opportunityIds: new Set(myOpportunities.map((entry) => entry?.id).filter((entry) => entry != null)),
-    });
+    }, subject);
     const statusBySubject = new Map([[key, deriveCustomerStatus({
       orders: sectionSummary(evidenceReads.orders, mine),
       contracts: sectionSummary(evidenceReads.contracts, mine),

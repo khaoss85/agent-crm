@@ -881,3 +881,55 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
   assert.equal(seen[0].error, true, 'the failure toasts as an error');
   assert.ok(seen[0].message.includes('Riprova'), 'the failure toasts the Italian retry');
 });
+test('the offer panel names the quote after its opportunity, with the state in Italian', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', name: 'Pacchetto 10 ingressi' }],
+      },
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: '8d8f1d4d-25c1-4641-8836-267581100b32', status: 'approved', name: null,
+          opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+        }],
+      },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Pacchetto 10 ingressi · approvata'),
+    'the offer reads with its opportunity name and the Italian state');
+  assert.ok(!text.includes('8d8f1d4d-25c1-4641-8836-267581100b32'),
+    'a bare record id is never the offer name');
+  assert.ok(!text.includes('approved'), 'the raw English state is never shown');
+});
+
+test('an unreadable quotes section reads unavailable in Italian, never a confirmed no-offer', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      quotes: { available: false, items: null, reason: 'the commercial package is not composed in this application, so quotes are not available — this is not a claim that there are none' },
+    },
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'unavailable quotes section');
+  assert.ok(text.includes('offerte non disponibili'), 'the unavailable commercial section reads a fixed Italian line');
+  assert.ok(!text.includes('Nessuna offerta firmata'),
+    'an empty opportunities read never proves there are no quotes');
+});
+
+test('a customer with no linked offer reads none registered, never another customer offer', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
+  assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
+});

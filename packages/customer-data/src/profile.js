@@ -134,10 +134,17 @@ export async function profileFor({ modules, core, names, subject }) {
   let opportunityRead = null;
   if (opportunityService && typeof opportunityService.list === 'function') {
     try {
-      opportunityRead = await readSectionRows(opportunityService, { companyIds, contactIds, opportunityIds: new Set() });
+      // Shaped for this subject: on a contact card a company match must not
+      // pull in another contact's contact-scoped opportunity (and, through
+      // the hop below, its quotes) — or every card shows the same offer.
+      opportunityRead = await readSectionRows(
+        opportunityService, { companyIds, contactIds, opportunityIds: new Set() }, subject);
     } catch { opportunityRead = null; }
   }
   const opportunityIds = new Set((opportunityRead?.rows ?? []).map((row) => row.id));
+  // A quote carries no human name of its own; the scheda names it after the
+  // opportunity it was made for, resolved here from the same read above.
+  const opportunityNames = new Map((opportunityRead?.rows ?? []).map((row) => [row.id, row.name ?? null]));
   const references = { companyIds, contactIds, opportunityIds };
 
   const sections = {};
@@ -185,6 +192,16 @@ export async function profileFor({ modules, core, names, subject }) {
       }),
       items: Object.freeze(rows.slice(0, 50).map((row) => Object.freeze({
         id: row.id, status: row.status ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
+        // Quotes only: the explicit hop this profile followed, kept on the
+        // item so the scheda can name the quote after its opportunity and a
+        // reader can see which opportunity each quote belongs to. Other
+        // sections keep exactly the shape they always had.
+        ...(section.key === 'quotes' ? {
+          opportunityId: row.opportunityId ?? null,
+          opportunityName: row.opportunityId != null
+            ? (opportunityNames.get(row.opportunityId) ?? null)
+            : null,
+        } : {}),
       }))),
       truncated: rows.length > 50,
     });
@@ -277,8 +294,9 @@ async function readIdentity({ modules, subject, cluster }) {
  *
  * @param {any} service
  * @param {{companyIds: Set<string>, contactIds: Set<string>, opportunityIds: Set<string>}} references
+ * @param {{resource: string, id: string} | null} [subject] the card being shaped (narrows contact-scoped rows on contact cards)
  */
-async function readSectionRows(service, references) {
+async function readSectionRows(service, references, subject = null) {
   const shapes = [
     { companyId: [...references.companyIds] },
     { contactId: [...references.contactIds] },
@@ -304,7 +322,7 @@ async function readSectionRows(service, references) {
   }
   return {
     readable: true,
-    rows: (await service.list({ limit: 500 })).filter((row) => belongsToCustomer(row, references)),
+    rows: (await service.list({ limit: 500 })).filter((row) => belongsToCustomer(row, references, subject)),
     complete: false,
   };
 }
@@ -315,8 +333,23 @@ async function readSectionRows(service, references) {
  * guesses is a projection that quietly attributes somebody else's contract.
  * Shared with the customer list (BO-F1-05), which attributes the same batched
  * rows to the same customers by the same rule.
+ *
+ * A row scoped to one contact (its `contactId` set) belongs to that contact's
+ * card only: on a contact card a company match must not leak somebody else's
+ * contact-scoped record, or every card in the company shows the same offer.
+ * The explicit contact link wins over the company one (the opportunity record
+ * itself enforces that its contact belongs to its company at creation, so a
+ * matching contact implies a consistent company). Company cards keep the
+ * wider rule: a company sees everything under it, contact-scoped included.
+ *
+ * @param {{resource: string, id: string} | null} [subject]
+ *   The card being shaped. Omit it (or pass a company subject) for the wide
+ *   rule; pass the contact subject to narrow contact-scoped rows to it.
  */
-export function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }) {
+export function belongsToCustomer(row, { companyIds, contactIds, opportunityIds }, subject = null) {
+  if (subject?.resource === 'contact' && row.contactId != null && row.contactId !== '') {
+    return contactIds.has(row.contactId);
+  }
   if (row.companyId && companyIds.has(row.companyId)) return true;
   if (row.contactId && contactIds.has(row.contactId)) return true;
   if (row.opportunityId && opportunityIds.has(row.opportunityId)) return true;

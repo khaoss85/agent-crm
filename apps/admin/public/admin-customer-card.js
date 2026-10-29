@@ -70,6 +70,10 @@ const SYNC_LABELS = Object.freeze({
 });
 
 /**
+ * Voce cc525cd6a3c5: the quote and opportunity-fallback stages share the
+ * Italian-only table below (anything unknown reads back as null, never raw
+ * English) — kept as one table with the 1a066ddf labels, not two.
+ *
  * Voce 1a066ddfe42a: the scheda speaks only plain Italian. The API reasons
  * stay in English in the responses (the honest system phrases live there
  * and in the logs) — the page never prints them. Dates render readable in
@@ -184,6 +188,8 @@ const statusMicrocopy = (card, profile) => {
 const OFFER_STATUS_LABELS = Object.freeze({
   sent: 'inviata', draft: 'bozza', approved: 'approvata', rejected: 'rifiutata',
   open: 'aperta', won: 'vinta', lost: 'persa', expired: 'scaduta', accepted: 'accettata',
+  pending_approval: 'in attesa di approvazione', approval_pending: 'in attesa di approvazione',
+  discovery: 'scoperta', qualification: 'qualificazione', proposal: 'proposta', negotiation: 'trattativa',
 });
 const offerStatusLabel = (status) => OFFER_STATUS_LABELS[String(status ?? '').toLowerCase()] ?? null;
 
@@ -195,7 +201,6 @@ const resourceLabel = (resource) => RESOURCE_LABELS[String(resource ?? '').toLow
 
 const ROLE_LABELS = Object.freeze({ canonical: 'scheda principale', alias: 'scheda collegata' });
 const roleLabel = (role) => ROLE_LABELS[String(role ?? '').toLowerCase()] ?? null;
-
 const channelLabel = (channel) => CHANNEL_LABELS[String(channel ?? '').toLowerCase()] ?? String(channel ?? 'canale');
 const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? String(sync ?? 'stato ignoto');
 
@@ -569,6 +574,12 @@ export function createCustomerCardView(deps) {
   }
 
   function offer(box, profile) {
+    // Voce cc525cd6a3c5: the offer panel shows one commercial line for THIS
+    // customer only — the profile behind it is already scoped to the customer
+    // (contact-scoped records never leak onto a company-mate's card), so the
+    // first row here is this customer's own. A quote carries no human name of
+    // its own, so it reads after the opportunity it was made for; the state
+    // reads in Italian, never a raw English status or a bare record id.
     // Voce 1a066ddfe42a: uncomposed offer packages hide the whole block;
     // a composed-but-empty one reads «Nessuna offerta firmata».
     const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items) ? profile.quotes.items : null;
@@ -576,12 +587,26 @@ export function createCustomerCardView(deps) {
       ? profile.opportunities.items : null;
     if (quotes === null && opportunities === null) return false;
     box.appendChild(el('h4', undefined, 'Offerta'));
-    const first = (quotes ?? []).concat(opportunities ?? [])[0] ?? null;
+    const fromQuote = (quotes ?? []).length > 0;
+    const first = fromQuote ? quotes[0] : ((opportunities ?? [])[0] ?? null);
     if (!first) {
-      box.appendChild(el('p', 'bo-muted', 'Nessuna offerta firmata'));
+      // No linked offer: only when BOTH commercial sections were readable
+      // (even empty) the customer plainly has none. An empty opportunities
+      // read never proves there are no quotes when the quotes read itself
+      // failed — the unavailable reason reads instead, never a confirmed
+      // absence.
+      if (quotes !== null && opportunities !== null) {
+        box.appendChild(el('p', 'bo-muted', 'Nessuna offerta firmata'));
+        return true;
+      }
+      // The unavailable reason stays in the API response and the logs, never
+      // on screen: production reasons are English system phrases, and the
+      // scheda reads only fixed Italian (voce 1a066ddf).
+      box.appendChild(el('p', 'bo-muted', 'offerte non disponibili'));
       return true;
     }
-    const name = typeof first?.name === 'string' && first.name !== '' ? first.name : 'offerta';
+    const rawName = fromQuote ? (first?.opportunityName ?? first?.name) : first?.name;
+    const name = typeof rawName === 'string' && rawName !== '' ? rawName : 'offerta';
     const offerStatus = offerStatusLabel(first?.status);
     box.appendChild(el('p', 'bo-scheda-offer', offerStatus ? `${name} · ${offerStatus}` : name));
     return true;
