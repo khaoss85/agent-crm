@@ -12,7 +12,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  REPORTING_BADGES,
+  REPORTING_CODE_FILES,
+  REPORTING_CODE_LEDE,
   REPORTING_CURRENCY,
+  REPORTING_PROMPT_TEXT,
   barWidth,
   createReportingView,
   currentPeriod,
@@ -91,13 +95,14 @@ const MODEL = {
 const BUNDLE_ROWS = [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }];
 
 /**
- * @param {{dashboard?: any, requests?: string[], downloads?: any[], logLines?: any[]}} [options]
+ * @param {{dashboard?: any, requests?: string[], downloads?: any[], copies?: any[], logLines?: any[]}} [options]
  */
 function harness(options = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const requests = options.requests ?? [];
   const downloads = options.downloads ?? [];
+  const copies = options.copies ?? null;
   const logLines = options.logLines ?? [];
   const dashboard = options.dashboard ?? MODEL;
   const view = createReportingView({
@@ -116,6 +121,9 @@ function harness(options = {}) {
     navigate: () => {},
     log: (message, cause) => logLines.push([message, cause]),
     download: (input) => downloads.push(input),
+    // A clipboard spy only when the test asks for one: otherwise the view
+    // keeps its production default (false without a real clipboard).
+    ...(copies === null ? {} : { copy: async (input) => { copies.push(input); return true; } }),
   });
   return { doc, mount, view, requests, downloads, logLines };
 }
@@ -223,6 +231,86 @@ test('without a proposal the button says so honestly, still with zero requests',
   assert.equal(requests.length, before);
   const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
   assert.match(text, /Nessuna ridistribuzione da proporre/);
+});
+
+test('header shows the bundle badges under the title (C2)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const badges = mount.findAll('span').map((node) => node.textContent);
+  assert.deepEqual(REPORTING_BADGES, [
+    'reporting@1.2.0',
+    'Bundle separato dal kernel',
+    'Generato dal tuo agente di coding · 3 giorni fa',
+  ]);
+  for (const badge of REPORTING_BADGES) {
+    assert.ok(badges.includes(badge), `badge renders: ${badge}`);
+  }
+});
+
+test('code card documents the module with files, prompt and CSV (C17)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const text = [...mount.findAll('p'), ...mount.findAll('li'), ...mount.findAll('code')]
+    .map((node) => node.textContent)
+    .join(' | ');
+  assert.match(text, /Questo modulo è codice tuo/);
+  assert.ok(text.includes(REPORTING_CODE_LEDE), 'the fixed lede renders');
+  for (const file of REPORTING_CODE_FILES) {
+    assert.ok(text.includes(file), `code card lists ${file}`);
+  }
+  assert.ok(text.includes(REPORTING_PROMPT_TEXT), 'the starter prompt renders as text');
+  const buttons = mount.findAll('button').map((node) => node.textContent);
+  assert.ok(buttons.includes('Copia il prompt'), 'copy button renders');
+  assert.ok(buttons.includes('Esporta CSV'), 'CSV download moved into the code card');
+});
+
+test('Copia il prompt copies the exact starter bytes and confirms', async () => {
+  const copies = [];
+  const { mount, view } = harness({ copies });
+  await view.renderReporting();
+  const copyButton = mount.findAll('button').find((node) => node.textContent === 'Copia il prompt');
+  assert.ok(copyButton, 'copy button renders');
+  copyButton.dispatch('click', {});
+  await tick(10);
+  assert.equal(copies.length, 1, 'one clipboard write');
+  assert.equal(copies[0].text, REPORTING_PROMPT_TEXT, 'the exact starter bytes');
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.match(text, /Prompt copiato negli appunti/, 'confirmation renders');
+  copyButton.dispatch('click', {});
+  await tick(10);
+  assert.equal(copies.length, 1, 'a second click copies nothing twice');
+});
+
+test('without a clipboard the copy button says so honestly', async () => {
+  const { doc, mount, view, logLines } = harness();
+  assert.equal(doc.defaultView ?? null, null, 'the fake DOM carries no clipboard');
+  await view.renderReporting();
+  const copyButton = mount.findAll('button').find((node) => node.textContent === 'Copia il prompt');
+  assert.ok(copyButton, 'copy button renders');
+  copyButton.dispatch('click', {});
+  await tick(10);
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.match(text, /Appunti non disponibili/, 'honest fallback, never a silent no-op');
+  assert.ok(!logLines.some(([message]) => message === 'reporting copy to clipboard failed'),
+    'a missing clipboard is not a failure: no log line');
+});
+
+test('a denied clipboard logs a sanitized cause and still falls back', async () => {
+  const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError', code: null });
+  const { doc, mount, view, logLines } = harness();
+  doc.defaultView = { navigator: { clipboard: { writeText: async () => { throw denied; } } } };
+  await view.renderReporting();
+  const copyButton = mount.findAll('button').find((node) => node.textContent === 'Copia il prompt');
+  assert.ok(copyButton, 'copy button renders');
+  copyButton.dispatch('click', {});
+  await tick(10);
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.match(text, /Appunti non disponibili/, 'the operator still gets the manual path');
+  const logged = logLines.filter(([message]) => message === 'reporting copy to clipboard failed');
+  assert.equal(logged.length, 1, 'one diagnostic log line');
+  assert.equal(logged[0][1]?.name, 'NotAllowedError', 'the cause names the failure');
+  assert.ok(!JSON.stringify(logged[0][1] ?? {}).includes(REPORTING_PROMPT_TEXT),
+    'the cause never carries the clipboard contents');
 });
 
 test('Esporta CSV downloads the exact model bytes', async () => {

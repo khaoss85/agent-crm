@@ -176,6 +176,41 @@ export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 export const REPORTING_LIMIT = 100;
 
 /**
+ * Badge row under the Reporting title (spec checklist C2): the bundle
+ * identity, fixed text. The version names the composed bundle
+ * (`bundles/reporting/1.2.0/bundle.json`); a new bundle version updates
+ * this list, never a silent drift.
+ */
+export const REPORTING_BADGES = Object.freeze([
+  'reporting@1.2.0',
+  'Bundle separato dal kernel',
+  'Generato dal tuo agente di coding · 3 giorni fa',
+]);
+
+/**
+ * File list of the "Questo modulo è codice tuo" card (spec checklist C17):
+ * fixed structure, indicative versions. It documents the custom module,
+ * never a data state.
+ */
+export const REPORTING_CODE_FILES = Object.freeze([
+  'modules/reporting/',
+  'manifest.json',
+  'queries.ts',
+  'charts/',
+  'access.ts',
+]);
+
+/** Lede of the code card (spec C17): fixed Italian text, never technical codes. */
+export const REPORTING_CODE_LEDE = 'I moduli personalizzati sono bundle separati dal kernel: li aggiorni o li togli senza toccare clienti, pipeline e calendario. Per cambiarlo chiedi al tuo agente di coding, per esempio «aggiungi il tempo medio di risposta per canale».';
+
+/**
+ * Starter prompt copied by «Copia il prompt» (spec C17). Fixed text so the
+ * operator sends the same honest request every time: what to change, and
+ * the boundary it must not cross.
+ */
+export const REPORTING_PROMPT_TEXT = 'Nel modulo reporting del /bo aggiungi il tempo medio di risposta per canale, senza toccare clienti, pipeline e calendario.';
+
+/**
  * Exact CLI commands for one bundle lifecycle step, as text. The agent runs
  * them; the screen never pretends to run them. `createdBy` names who runs
  * the create: the AI path shows `--created-by ai`, the manual path shows
@@ -262,6 +297,26 @@ export function createReportingView(deps) {
   const onAskAi = deps.onAskAi ?? (() => {});
   const log = deps.log ?? ((message, cause) => console.error(message, cause));
   const download = deps.download ?? downloadCsv;
+  // Clipboard write, injected so tests pass a spy: the fake DOM has no
+  // navigator.clipboard. Resolves true when the prompt reached the
+  // clipboard, false when the operator must copy by hand.
+  const copy = deps.copy ?? (async ({ text }) => {
+    try {
+      const view = /** @type {any} */ (doc.defaultView ?? null);
+      const write = view?.navigator?.clipboard?.writeText;
+      if (typeof write !== 'function') return false;
+      await write.call(view.navigator.clipboard, text);
+      return true;
+    } catch (error) {
+      // A denied clipboard must stay diagnosable (AGENTS.md: swallowed
+      // exceptions log the cause): name/code only, never the contents.
+      const cause = error && typeof error === 'object'
+        ? { name: error.name ?? 'Error', code: error.code ?? null }
+        : { name: 'Error', code: null };
+      log('reporting copy to clipboard failed', cause);
+      return false;
+    }
+  });
 
   /** Dashboard filter state: every change refetches (ricalcolo), never slices cached rows. */
   const dashboard = { period: currentPeriod(), owner: '' };
@@ -537,7 +592,7 @@ export function createReportingView(deps) {
     }
     // The proposal is revealed client-side with zero requests: there is no
     // write surface behind it, so it can propose but never reassign by itself.
-    const propose = el(doc, 'button', { class: 'secondary', text: 'Proponi ridistribuzione dei lead' });
+    const propose = el(doc, 'button', { class: 'primary', text: 'Proponi ridistribuzione dei lead' });
     propose.setAttribute('data-action', 'proponi-ridistribuzione');
     propose.addEventListener('click', () => {
       // No double reveal: a second click changes nothing.
@@ -558,12 +613,51 @@ export function createReportingView(deps) {
       panel.appendChild(el(doc, 'p', { class: 'lede', text: model.proposal.note }));
     });
     panel.appendChild(propose);
+    section.appendChild(panel);
+  }
+
+  /**
+   * "Questo modulo è codice tuo" (BO-F6-13, checklist C17): the custom
+   * module documented as files, never as data state. «Copia il prompt»
+   * copies the fixed starter prompt and shows a confirmation; «Esporta
+   * CSV» downloads the exact dashboard bytes. Both buttons travel the
+   * visual system through `el` (legacy `secondary` maps to `ui-btn`).
+   */
+  function codePanel(section, model) {
+    const panel = el(doc, 'section', { class: 'panel' });
+    panel.appendChild(el(doc, 'p', { class: 'kicker', text: 'Questo modulo è codice tuo' }));
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: REPORTING_CODE_LEDE }));
+    const list = el(doc, 'ul');
+    for (const file of REPORTING_CODE_FILES) {
+      list.appendChild(el(doc, 'li', { text: file }));
+    }
+    panel.appendChild(list);
+    const prompt = el(doc, 'pre');
+    prompt.appendChild(el(doc, 'code', { text: REPORTING_PROMPT_TEXT }));
+    panel.appendChild(prompt);
+    const actions = el(doc, 'div', { class: 'actions' });
+    const copyButton = el(doc, 'button', { class: 'primary', text: 'Copia il prompt' });
+    copyButton.setAttribute('data-action', 'copia-prompt');
+    copyButton.addEventListener('click', async () => {
+      // No double copy: a second click changes nothing.
+      if (copyButton.getAttribute('data-done') === 'true') return;
+      const done = await copy({ doc, text: REPORTING_PROMPT_TEXT });
+      copyButton.setAttribute('data-done', 'true');
+      panel.appendChild(el(doc, 'p', {
+        class: 'lede',
+        text: done
+          ? 'Prompt copiato negli appunti.'
+          : 'Appunti non disponibili: seleziona e copia il testo qui sopra.',
+      }));
+    });
+    actions.appendChild(copyButton);
     const csv = el(doc, 'button', { class: 'secondary', text: 'Esporta CSV' });
     csv.setAttribute('data-action', 'esporta-csv');
     csv.addEventListener('click', () => {
       download({ doc, filename: model.csv.filename, content: model.csv.content });
     });
-    panel.appendChild(csv);
+    actions.appendChild(csv);
+    panel.appendChild(actions);
     section.appendChild(panel);
   }
 
@@ -625,6 +719,7 @@ export function createReportingView(deps) {
     forecastPanel(grid, model); tag('bo-rep-full');
     teamTable(grid, model); tag('bo-rep-wide');
     insightsPanel(grid, model); tag('bo-rep-narrow');
+    codePanel(grid, model); tag('bo-rep-narrow');
   }
 
   async function renderReporting() {
@@ -668,6 +763,14 @@ export function createReportingView(deps) {
     const top = el(doc, 'div', { class: 'bo-rep-top' });
     top.appendChild(el(doc, 'p', { class: 'kicker', text: 'Modulo personalizzato' }));
     top.appendChild(el(doc, 'h1', { class: 'bo-rep-title', text: 'Reporting' }));
+    // Badge row (checklist C2): bundle identity under the title. The
+    // `.kicker` paints uppercase through CSS, so the source keeps the
+    // sentence case the shell owns; badges stay mono through `.badge`.
+    const badges = el(doc, 'div', { class: 'actions' });
+    for (const badge of REPORTING_BADGES) {
+      badges.appendChild(el(doc, 'span', { class: 'badge', text: badge }));
+    }
+    top.appendChild(badges);
     dashHost.appendChild(top);
     await renderDashboard(dashHost);
     if (token !== renderToken) return;
