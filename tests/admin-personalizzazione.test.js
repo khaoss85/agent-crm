@@ -276,7 +276,9 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   assert.ok(add, 'the green CTA renders on the Connettori tab');
   assert.ok(add.getAttribute('class').split(/\s+/).includes('ui-btn-cta'), 'Aggiungi stays the green accord CTA');
   add.dispatch('click');
-  const afterOpen = mount.findAll('button');
+  const addMenu = mount.querySelector('.ui-conn-addmenu');
+  assert.ok(addMenu, 'the Aggiungi menu renders');
+  const afterOpen = addMenu.childNodes.filter((node) => node.tagName === 'BUTTON');
   const voices = afterOpen.filter((node) => node.getAttribute('role') === 'menuitem').map((node) => node.textContent);
   assert.deepEqual(voices, ['Crea con l\u2019AI', 'Configura manualmente'], 'Aggiungi opens the two-voice menu (spec C9)');
   const manual = afterOpen.find((node) => node.textContent === 'Configura manualmente');
@@ -427,35 +429,57 @@ test('the Stato and Ordina menus list the prototype voci in order (spec C22-C23)
   const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
   await view.render();
   await flush();
-  const selects = mount.findAll('select');
-  const byLabel = (name) => selects.find((node) => node.getAttribute('aria-label') === name);
-  const stato = byLabel('Stato');
-  const ordina = byLabel('Ordina per');
-  assert.ok(stato, 'the Stato menu renders');
-  assert.ok(ordina, 'the Ordina per menu renders');
+  // Spec C8: the Connettori toolbar shows two icon-buttons, not selects.
+  assert.equal(mount.findAll('select').length, 0, 'the Connettori toolbar uses icon-buttons, like the prototype');
+  const toggleFor = (name) => mount.findAll('button')
+    .find((node) => String(node.getAttribute('aria-label') ?? '').startsWith(name));
+  const menuVoices = (name) => {
+    const menu = mount.querySelector(`div[aria-label="${name}"]`);
+    assert.ok(menu, `the ${name} menu renders`);
+    return menu.childNodes.filter((node) => node.tagName === 'BUTTON');
+  };
+  const menuWraps = () => mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-menuwrap'));
+  const cardLabels = () => mount.findAll('strong').map((node) => node.textContent);
+  const stato = toggleFor('Stato');
+  const ordina = toggleFor('Ordina per');
+  assert.ok(stato, 'the Stato icon-button renders');
+  assert.ok(ordina, 'the Ordina per icon-button renders');
+  assert.equal(stato.getAttribute('aria-label'), 'Stato: Tutti', 'the Stato toggle names its voice');
+  assert.ok(stato.findAll('svg').length > 0, 'the Stato toggle shows the filter glyph, not text');
+  assert.ok(ordina.findAll('svg').length > 0, 'the Ordina toggle shows the sort glyph, not text');
+  stato.dispatch('click');
   assert.deepEqual(
-    stato.childNodes.map((node) => node.textContent),
+    menuVoices('Stato').map((node) => node.textContent),
     ['Tutti', 'Attivi', 'Da attivare'],
     'the Stato voci match the prototype in order',
   );
+  ordina.dispatch('click');
+  const statoMenu = mount.querySelector('div[aria-label="Stato"]');
+  assert.ok(String(statoMenu.getAttribute('class')).split(/\s+/).includes('hidden'), 'opening Ordina per closes Stato');
   assert.deepEqual(
-    ordina.childNodes.map((node) => node.textContent),
+    menuVoices('Ordina per').map((node) => node.textContent),
     ['Più usati', 'Nome A–Z'],
     'the Ordina voci match the prototype in order',
   );
-  const cardLabels = () => mount.findAll('strong').map((node) => node.textContent);
-  view.test.state.stato = 'attivi';
-  await view.render();
+  menuWraps()[1].dispatch('keydown', { key: 'Escape' });
+  const ordinaMenu = mount.querySelector('div[aria-label="Ordina per"]');
+  assert.ok(String(ordinaMenu.getAttribute('class')).split(/\s+/).includes('hidden'), 'Escape closes the menu');
+  toggleFor('Stato').dispatch('click');
+  menuVoices('Stato').find((node) => node.textContent === 'Attivi').dispatch('click');
   await flush();
   assert.deepEqual(cardLabels(), ['WhatsApp'], 'Attivi keeps only connected cards');
-  view.test.state.stato = 'da-attivare';
-  await view.render();
+  assert.equal(toggleFor('Stato').getAttribute('aria-label'), 'Stato: Attivi', 'the Stato toggle names the picked voice');
+  toggleFor('Stato').dispatch('click');
+  menuVoices('Stato').find((node) => node.textContent === 'Da attivare').dispatch('click');
   await flush();
   assert.ok(!cardLabels().includes('WhatsApp'), 'Da attivare hides connected cards');
   assert.equal(cardLabels().length, 8, 'Da attivare keeps the other eight');
-  view.test.state.stato = 'tutti';
-  view.test.state.sort = 'piu-usati';
-  await view.render();
+  toggleFor('Stato').dispatch('click');
+  menuVoices('Stato').find((node) => node.textContent === 'Tutti').dispatch('click');
+  await flush();
+  toggleFor('Ordina per').dispatch('click');
+  menuVoices('Ordina per').find((node) => node.textContent === 'Più usati').dispatch('click');
   await flush();
   assert.equal(cardLabels()[0], 'WhatsApp', 'Più usati keeps the prototype order');
 });
@@ -474,7 +498,9 @@ test('the Aggiungi menu closes with Escape and explains the AI voice honestly (s
   await flush();
   const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi ▾');
   add.dispatch('click');
-  let menu = mount.findAll('button').filter((node) => node.getAttribute('role') === 'menuitem');
+  const addMenu = mount.querySelector('.ui-conn-addmenu');
+  assert.ok(addMenu, 'the Aggiungi menu renders');
+  let menu = addMenu.childNodes.filter((node) => node.tagName === 'BUTTON');
   assert.equal(menu.length, 2, 'the menu opens with two voices');
   const wrap = mount.querySelector('.ui-conn-addwrap');
   assert.ok(wrap, 'the menu lives in its own wrap');
@@ -741,11 +767,10 @@ test('switching tabs normalizes the shared sort so the toolbar never lies', asyn
   const tabButton = (label) => mount.findAll('button')
     .find((node) => node.getAttribute('role') === 'tab' && node.textContent.includes(label));
   const selectedSort = () => {
-    const sort = mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Ordina per');
-    assert.ok(sort, 'the sort select renders');
-    const selected = sort.childNodes.filter((node) => node.getAttribute('selected') === 'selected');
-    assert.equal(selected.length, 1, 'exactly one sort voice stays selected');
-    return selected[0].textContent;
+    const sort = mount.findAll('button')
+      .find((node) => String(node.getAttribute('aria-label') ?? '').startsWith('Ordina per'));
+    assert.ok(sort, 'the sort menu renders');
+    return sort.getAttribute('aria-label');
   };
   // On Pacchetti the toolbar leaves sort at 'stato'; entering Connettori,
   // which has no stato voice, must coerce it instead of displaying Nome A-Z
@@ -757,7 +782,7 @@ test('switching tabs normalizes the shared sort so the toolbar never lies', asyn
   tabButton('Connettori').dispatch('click', {});
   await flush();
   assert.equal(view.test.state.sort, 'nome', 'entering Connettori coerces stato to nome');
-  assert.equal(selectedSort(), 'Nome A–Z', 'the Connettori toolbar shows the real sort');
+  assert.equal(selectedSort(), 'Ordina per: Nome A–Z', 'the Connettori toolbar shows the real sort');
   // The reverse leak: Piu usati is Connettori-only and must not survive the
   // trip back to Skill AI.
   view.test.state.sort = 'piu-usati';
@@ -766,7 +791,11 @@ test('switching tabs normalizes the shared sort so the toolbar never lies', asyn
   tabButton('Skill AI').dispatch('click', {});
   await flush();
   assert.equal(view.test.state.sort, 'nome', 'leaving Connettori coerces piu-usati to nome');
-  assert.equal(selectedSort(), 'Ordina: nome', 'the Skill toolbar shows the real sort');
+  const skillSort = mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Ordina per');
+  assert.ok(skillSort, 'the Skill sort select renders');
+  const skillSelected = skillSort.childNodes.filter((node) => node.getAttribute('selected') === 'selected');
+  assert.equal(skillSelected.length, 1, 'exactly one Skill sort voice stays selected');
+  assert.equal(skillSelected[0].textContent, 'Ordina: nome', 'the Skill toolbar shows the real sort');
 });
 
 test('without permission the hero Inizia, Configura manualmente and Mostra tutto answer in Italian and stay', async () => {

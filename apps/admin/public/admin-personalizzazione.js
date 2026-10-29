@@ -152,27 +152,27 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiBadge, uiButton, uiChannelChip, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBadge, uiButton, uiChannelChip, uiIcon, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
- * The open Aggiungi menu, if any. One menu per view, like the clienti and
- * calendario menus: opening one closes the other, Escape and a click
- * outside close it. Documents without addEventListener (the dependency-free
- * fake DOM of the unit tests) skip the outside closer; the toggle voices
- * and Escape still work there.
+ * The open toolbar menu, if any (Aggiungi, Stato, Ordina per). One menu per
+ * view, like the clienti and calendario menus: opening one closes the
+ * other, Escape and a click outside close it. Documents without
+ * addEventListener (the dependency-free fake DOM of the unit tests) skip
+ * the outside closer; the toggle voices and Escape still work there.
  * @type {{ wrap: any, close: () => void } | null}
  */
-let openAggiungiMenu = null;
+let openToolbarMenu = null;
 
 /** The document the single outside-click closer is installed on, if any. */
-let aggiungiCloserDoc = null;
+let toolbarMenuCloserDoc = null;
 
 /** @param {any} doc */
-function installAggiungiCloser(doc) {
-  if (aggiungiCloserDoc === doc || typeof doc?.addEventListener !== 'function') return;
-  aggiungiCloserDoc = doc;
+function installToolbarMenuCloser(doc) {
+  if (toolbarMenuCloserDoc === doc || typeof doc?.addEventListener !== 'function') return;
+  toolbarMenuCloserDoc = doc;
   doc.addEventListener('click', (event) => {
-    const current = openAggiungiMenu;
+    const current = openToolbarMenu;
     if (!current) return;
     let node = event?.target ?? null;
     while (node) {
@@ -181,6 +181,25 @@ function installAggiungiCloser(doc) {
     }
     current.close();
   });
+}
+
+/**
+ * Track an open toolbar menu, closing whatever was open. The Aggiungi menu
+ * predates this helper and keeps its own wrap classes; Stato and Ordina
+ * per share the same slot so only one menu is ever open.
+ * @param {{ wrap: any, close: () => void }} handle
+ */
+function trackToolbarMenu(handle) {
+  if (openToolbarMenu && openToolbarMenu !== handle) openToolbarMenu.close();
+  openToolbarMenu = handle;
+}
+
+/**
+ * Forget a toolbar menu handle once it closes by itself.
+ * @param {{ wrap: any, close: () => void }} handle
+ */
+function untrackToolbarMenu(handle) {
+  if (openToolbarMenu === handle) openToolbarMenu = null;
 }
 
 /**
@@ -606,21 +625,71 @@ export function createPersonalizzazioneView(deps) {
   }
 
   /**
-   * A labelled select for the Connettori toolbar: Stato (spec C22) or
-   * Ordina per (spec C23). A native select is keyboard-operable with no new
-   * CSS; the voci match the prototype verbatim and in order.
-   * @param {string} name @param {Array<[string, string]>} voices @param {string} current
+   * An icon-button for the Connettori toolbar (spec C8) with its menu:
+   * Stato (spec C22) or Ordina per (spec C23). The toggle shows the
+   * prototype's filter/sort glyph and names the current voice; the menu
+   * lists the voci verbatim and in prototype order. Esc and a click
+   * outside close it, like the Aggiungi menu; opening one toolbar menu
+   * closes the others.
+   * @param {any} bar
+   * @param {{ name: string, icon: string, voices: Array<[string, string]>, current: string, onPick: (value: string) => void }} options
    */
-  function renderConnettoriSelect(name, voices, current) {
-    const select = el(doc, 'select', { cls: 'sort', attrs: { 'aria-label': name } });
+  function renderConnettoriMenu(bar, { name, icon, voices, current, onPick }) {
+    installToolbarMenuCloser(doc);
+    const labelOf = (value) => {
+      const voice = voices.find(([voiceValue]) => voiceValue === value);
+      return voice ? voice[1] : '';
+    };
+    const wrap = el(doc, 'div', { cls: 'ui-conn-menuwrap' });
+    const toggle = uiButton(doc, {
+      variant: 'secondary', small: true,
+      attrs: {
+        type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false',
+        'aria-label': `${name}: ${labelOf(current)}`, title: labelOf(current),
+      },
+    });
+    toggle.appendChild(uiIcon(doc, icon));
+    toggle.disabled = state.busy;
+    const menu = el(doc, 'div', { cls: 'ui-conn-menu hidden', attrs: { role: 'menu', 'aria-label': name } });
+    /** @type {{ wrap: any, close: () => void }} */
+    const handle = { wrap, close: () => {} };
+    const close = () => {
+      menu.classList.toggle('hidden', true);
+      toggle.setAttribute('aria-expanded', 'false');
+      untrackToolbarMenu(handle);
+    };
+    handle.close = close;
+    const open = () => {
+      trackToolbarMenu(handle);
+      menu.classList.toggle('hidden', false);
+      toggle.setAttribute('aria-expanded', 'true');
+    };
+    toggle.addEventListener('click', () => {
+      if (menu.classList.contains('hidden')) open();
+      else close();
+    });
+    wrap.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') {
+        close();
+        if (typeof toggle.focus === 'function') toggle.focus();
+      }
+    });
     for (const [value, label] of voices) {
-      const option = el(doc, 'option', { text: label, attrs: { value } });
-      if (current === value) option.setAttribute('selected', 'selected');
-      select.appendChild(option);
+      const item = el(doc, 'button', {
+        text: label,
+        cls: 'ui-conn-menuvoice',
+        attrs: { type: 'button', role: 'menuitem' },
+      });
+      if (value === current) item.setAttribute('aria-current', 'true');
+      item.addEventListener('click', () => {
+        close();
+        onPick(value);
+      });
+      menu.appendChild(item);
     }
-    // A real select element reports its choice; the fake keeps first.
-    try { select.value = current; } catch { /* keep rendered order */ }
-    return select;
+    wrap.appendChild(toggle);
+    wrap.appendChild(menu);
+    bar.appendChild(wrap);
   }
 
   /**
@@ -630,7 +699,7 @@ export function createPersonalizzazioneView(deps) {
    * @param {any} bar
    */
   function renderConnettoriAdd(bar) {
-    installAggiungiCloser(doc);
+    installToolbarMenuCloser(doc);
     const wrap = el(doc, 'div', { cls: 'ui-conn-addwrap' });
     const toggle = uiButton(doc, {
       variant: 'cta', label: 'Aggiungi ▾',
@@ -643,14 +712,13 @@ export function createPersonalizzazioneView(deps) {
     const close = () => {
       menu.classList.toggle('hidden', true);
       toggle.setAttribute('aria-expanded', 'false');
-      if (openAggiungiMenu === handle) openAggiungiMenu = null;
+      untrackToolbarMenu(handle);
     };
     handle.close = close;
     const open = () => {
-      if (openAggiungiMenu && openAggiungiMenu !== handle) openAggiungiMenu.close();
+      trackToolbarMenu(handle);
       menu.classList.toggle('hidden', false);
       toggle.setAttribute('aria-expanded', 'true');
-      openAggiungiMenu = handle;
     };
     toggle.addEventListener('click', () => {
       if (menu.classList.contains('hidden')) open();
@@ -722,19 +790,24 @@ export function createPersonalizzazioneView(deps) {
     search.addEventListener('input', () => { state.query = String(search.value ?? ''); renderList(); });
     bar.appendChild(search);
     if (state.tab === 'connettori') {
-      const stato = renderConnettoriSelect('Stato', [['tutti', 'Tutti'], ['attivi', 'Attivi'], ['da-attivare', 'Da attivare']], state.stato);
-      stato.addEventListener('change', () => {
-        const next = String(stato.value ?? 'tutti');
-        state.stato = next === 'attivi' || next === 'da-attivare' ? next : 'tutti';
-        renderList();
+      renderConnettoriMenu(bar, {
+        name: 'Stato', icon: 'filtri',
+        voices: [['tutti', 'Tutti'], ['attivi', 'Attivi'], ['da-attivare', 'Da attivare']],
+        current: state.stato,
+        onPick: (next) => {
+          state.stato = next === 'attivi' || next === 'da-attivare' ? next : 'tutti';
+          render();
+        },
       });
-      bar.appendChild(stato);
-      const sort = renderConnettoriSelect('Ordina per', [['piu-usati', 'Più usati'], ['nome', 'Nome A–Z']], state.sort === 'stato' ? 'nome' : state.sort);
-      sort.addEventListener('change', () => {
-        state.sort = String(sort.value === 'nome' ? 'nome' : 'piu-usati');
-        renderList();
+      renderConnettoriMenu(bar, {
+        name: 'Ordina per', icon: 'ordina',
+        voices: [['piu-usati', 'Più usati'], ['nome', 'Nome A–Z']],
+        current: state.sort === 'stato' ? 'nome' : state.sort,
+        onPick: (next) => {
+          state.sort = next === 'nome' ? 'nome' : 'piu-usati';
+          render();
+        },
       });
-      bar.appendChild(sort);
       renderConnettoriAdd(bar);
     } else {
       // The Connettori-only 'piu-usati' sort is invalid here: show it as
@@ -1155,7 +1228,7 @@ export function createPersonalizzazioneView(deps) {
   function render() {
     clear();
     // A rebuilt tree drops every open menu with it.
-    openAggiungiMenu = null;
+    openToolbarMenu = null;
     // Supervisor design pass: the prototype's IMPOSTAZIONI tab row above the
     // page (vestito del supervisore, #406): kept as-is, functional code below.
     mount.appendChild(settingsTabs(doc, { activeId: 'personalizzazione', navigate: go }));
