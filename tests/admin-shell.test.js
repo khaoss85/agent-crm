@@ -60,7 +60,8 @@ test('every sidebar voice has its own icon (BO-F6-01)', () => {
   const { sidebar } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
   const voices = [...sidebar.findAll('a'), ...sidebar.findAll('span')]
     .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-item'));
-  assert.ok(voices.length >= SHELL_ITEMS.length, `each voice renders (${voices.length} shown)`);
+  // nuovo-modulo has no voice (design pass 6): the dashed button is its entry.
+  assert.ok(voices.length >= SHELL_ITEMS.filter((item) => item.nav !== false).length, `each voice renders (${voices.length} shown)`);
   for (const voice of voices) {
     assert.equal(voice.findAll('svg').length, 1, `${voice.textContent} carries its icon`);
   }
@@ -359,6 +360,20 @@ function renderShell(overrides = {}) {
   });
   return { doc, sidebar, topbar, view, seen };
 }
+
+test('"+ Nuovo modulo" is the only entry: two prototype options, the manual one opens the form screen', () => {
+  const { sidebar, seen } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  // Design pass 6: no "Nuovo modulo" voice under Moduli personalizzati.
+  const voices = sidebar.findAll('a').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-item'));
+  assert.ok(!voices.some((node) => node.getAttribute('href') === '#/nuovo-modulo'), 'no sidebar voice links #/nuovo-modulo');
+  const options = sidebar.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-add-option'));
+  assert.deepEqual(options.map((node) => node.findAll('span').find((span) => span.getAttribute('class') === 'bo-add-title').textContent),
+    ['Crea con l’AI', 'Compila manualmente']);
+  assert.ok(options[1].textContent.includes('Nome, dati usati e chi può vederlo'), 'the manual option says what it asks');
+  options[1].dispatch('click', {});
+  assert.deepEqual(seen.navigated, ['#/nuovo-modulo'], 'the manual option opens the form screen');
+  assert.deepEqual(seen.notified, [], 'no command line is shown to the owner');
+});
 
 test('shell renders sidebar voices, groups, add-module entry and logout', () => {
   const { sidebar, topbar } = renderShell();

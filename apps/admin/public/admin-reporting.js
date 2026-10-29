@@ -284,7 +284,7 @@ export function reportingSummary(rows) {
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
@@ -835,55 +835,74 @@ export function createReportingView(deps) {
     // panel over the Nuovo modulo screen.
     renderToken += 1;
     clear();
-    const panel = kicker('Moduli personalizzati', 'Nuovo modulo');
-    panel.appendChild(el(doc, 'p', {
+    // Design pass 6: the prototype's "Nuovo modulo personalizzato" form — four
+    // questions an owner can answer, the green "Genera il modulo", and the
+    // AI shortcut. The answers travel to the assistant's guided path as one
+    // description (the same handoff as "Crea con l'AI"): nothing is generated
+    // or saved here. The developer steps stay one click away, closed.
+    const card = el(doc, 'section', { class: 'panel bo-modulo-form' });
+    card.appendChild(el(doc, 'p', { class: 'kicker', text: 'Moduli personalizzati' }));
+    card.appendChild(el(doc, 'h2', { text: 'Nuovo modulo personalizzato' }));
+    card.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Due strade, uno stesso formato (docs/BUNDLES.md): il pacchetto nativo del kernel con capability dichiarata.',
+      text: 'Diventa un bundle separato dal kernel: il tuo agente di coding lo genera nel progetto e lo puoi togliere quando vuoi.',
     }));
-    mount.appendChild(panel);
-    const ai = el(doc, 'section', { class: 'panel' });
-    ai.appendChild(el(doc, 'h3', { text: 'Crea con l\u2019AI' }));
-    ai.appendChild(el(doc, 'p', {
-      class: 'lede',
-      text: 'Descrivi il modulo: l\u2019assistente apre il percorso guidato e prepara tutto, senza simulare niente.',
-    }));
-    const label = el(doc, 'label', { text: 'Descrivi il modulo' });
-    const area = doc.createElement('textarea');
-    area.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
-    area.setAttribute('name', 'descrizione-modulo');
-    area.setAttribute('rows', '3');
-    area.setAttribute('placeholder', 'un modulo sonde per i KPI del pilota (etichetta + conteggio)');
-    label.appendChild(area);
-    ai.appendChild(label);
-    const ask = el(doc, 'button', { class: 'primary', text: 'Chiedi all\u2019assistente' });
-    ask.setAttribute('data-action', 'chiedi-assistente');
-    // The typed description travels with the handoff: the assistant panel
-    // opens on the nuovo-modulo screen with the textarea prefilled, so the
-    // user never retypes it there (P2 admin-reporting.js:289).
-    ask.addEventListener('click', () => onAskAi('nuovo-modulo', area.value));
-    ai.appendChild(ask);
-    mount.appendChild(ai);
+    const questions = [
+      ['nome', 'Nome del modulo', 'Es. Magazzino campioni'],
+      ['cosa', 'Cosa deve mostrare o fare', 'Es. campioni prestati ai clienti e date di rientro'],
+      ['dati', 'Dati usati', 'Clienti, offerte, appuntamenti…'],
+      ['chi', 'Chi può vederlo', 'Titolare, Vendite…'],
+    ];
+    /** @type {Record<string, any>} */
+    const inputs = {};
+    for (const [name, text, placeholder] of questions) {
+      const label = el(doc, 'label', { class: 'bo-modulo-field', text });
+      const input = doc.createElement('input');
+      input.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
+      input.setAttribute('name', `modulo-${name}`);
+      input.setAttribute('placeholder', placeholder);
+      label.appendChild(input);
+      card.appendChild(label);
+      inputs[name] = input;
+    }
+    const footer = el(doc, 'div', { class: 'bo-modulo-actions' });
+    const ai = el(doc, 'button', { class: 'bo-modulo-ai', text: '✦ Preferisco farlo con l\u2019AI' });
+    ai.setAttribute('data-action', 'chiedi-assistente');
+    ai.addEventListener('click', () => onAskAi('nuovo-modulo', ''));
+    footer.appendChild(ai);
+    const generate = uiButton(doc, { variant: 'cta', label: 'Genera il modulo', attrs: { 'data-action': 'genera-modulo' } });
+    generate.addEventListener('click', () => {
+      const lines = [];
+      for (const [name, text] of questions) {
+        const value = String(inputs[name].value ?? '').trim();
+        if (value !== '') lines.push(`${text}: ${value}`);
+      }
+      onAskAi('nuovo-modulo', lines.join('\n'));
+    });
+    footer.appendChild(generate);
+    card.appendChild(footer);
+    mount.appendChild(card);
 
-    const manual = el(doc, 'section', { class: 'panel' });
-    manual.appendChild(el(doc, 'h3', { text: 'Crea manuale' }));
-    manual.appendChild(el(doc, 'p', {
+    const dev = el(doc, 'details', { class: 'panel bo-modulo-dev' });
+    dev.appendChild(el(doc, 'summary', { text: 'Per chi sviluppa: il manifest e i comandi' }));
+    dev.appendChild(el(doc, 'p', {
       class: 'lede',
-      text: 'Scrivi il manifest (docs/MODULE_MANIFEST.md) ed esegui gli stessi comandi dell\u2019agente:',
+      text: 'Stesso formato dell\u2019agente (docs/MODULE_MANIFEST.md, docs/BUNDLES.md): scrivi il manifest ed esegui i suoi comandi.',
     }));
     const steps = el(doc, 'ol');
     for (const item of manualSteps().checklist) {
       steps.appendChild(el(doc, 'li', { text: item }));
     }
-    manual.appendChild(steps);
+    dev.appendChild(steps);
     const commands = manualSteps().commands;
     for (const command of [commands.create, commands.verify, commands.install]) {
       const code = el(doc, 'pre');
       code.appendChild(el(doc, 'code', { text: command }));
-      manual.appendChild(code);
+      dev.appendChild(code);
     }
-    manual.appendChild(el(doc, 'p', { class: 'lede', text: manualSteps().proof }));
-    mount.appendChild(manual);
-    mount.appendChild(sviluppaCard());
+    dev.appendChild(el(doc, 'p', { class: 'lede', text: manualSteps().proof }));
+    dev.appendChild(sviluppaCard());
+    mount.appendChild(dev);
   }
 
   return { renderReporting, renderNuovoModulo };

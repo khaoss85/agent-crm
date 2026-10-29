@@ -47,7 +47,10 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze' },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
-  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01', icon: 'nuovo-modulo' },
+  // No voice of its own (prototype, design pass 6): the dashed "+ Nuovo modulo"
+  // button under the voices is the entry, and its "Compila manualmente" opens
+  // this route. Kept here so the route still resolves to a known screen.
+  { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01', icon: 'nuovo-modulo', nav: false },
   { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02', icon: 'impostazioni' },
 ]);
 
@@ -535,7 +538,7 @@ export function createShellView({
     function appendGroups(container, groupIds) {
       for (const group of SHELL_GROUPS.filter((candidate) => groupIds.includes(candidate.id))) {
         if (group.header !== null) container.appendChild(el(doc, 'div', 'bo-nav-header', group.header));
-        for (const item of state.items.filter((candidate) => candidate.group === group.id)) {
+        for (const item of state.items.filter((candidate) => candidate.group === group.id && candidate.nav !== false)) {
           appendVoice(container, item);
         }
       }
@@ -550,7 +553,20 @@ export function createShellView({
     const addButton = el(doc, 'button', 'bo-add-button', '+ Nuovo modulo');
     addButton.setAttribute('aria-haspopup', 'true');
     const addMenu = el(doc, 'div', 'bo-add-menu hidden');
-    const aiOption = el(doc, 'button', 'bo-add-option', '✦ Crea con l\u2019AI');
+    // Prototype: a tile, a title and one line under it, per option.
+    function addOption(tileClass, tile, title, line) {
+      const option = el(doc, 'button', 'bo-add-option');
+      const box = el(doc, 'span', `bo-add-tile ${tileClass}`, typeof tile === 'string' ? tile : undefined);
+      if (typeof tile !== 'string') box.appendChild(tile);
+      option.appendChild(box);
+      const words = el(doc, 'span', 'bo-add-words');
+      words.appendChild(el(doc, 'span', 'bo-add-title', title));
+      words.appendChild(el(doc, 'span', 'bo-add-line', line));
+      option.appendChild(words);
+      return option;
+    }
+    const aiOption = addOption('bo-add-tile-ai', '✦', 'Crea con l\u2019AI',
+      'Descrivi il modulo, il tuo agente di coding lo genera come bundle separato');
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {
@@ -560,10 +576,11 @@ export function createShellView({
         notify('Descrivi il modulo nella barra AI e premi Invio.');
       }
     });
-    const manualOption = el(doc, 'button', 'bo-add-option', 'Compila manualmente');
+    const manualOption = addOption('bo-add-tile-manual', uiIcon(doc, 'matita'), 'Compila manualmente',
+      'Nome, dati usati e chi può vederlo');
     manualOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
-      notify('Modulo manuale: npm run crm -- module create <modulo>.module.json --apply (vedi docs/ADMIN.md).');
+      navigate('#/nuovo-modulo');
     });
     addMenu.appendChild(aiOption);
     addMenu.appendChild(manualOption);

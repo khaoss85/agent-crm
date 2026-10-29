@@ -58,7 +58,7 @@ test('bo:shots proof fixtures show every committed screen filled at both widths'
     [...SCREEN_NAMES].sort(),
     'the proof set covers the whole screen registry',
   );
-  assert.equal(PROVEN_SCREENS.length, 14, 'fourteen screens carry committed proof');
+  assert.equal(PROVEN_SCREENS.length, 15, 'fifteen screens carry committed proof');
   for (const name of PROVEN_SCREENS) {
     for (const [viewport, floor] of [[DESKTOP, 20000], [PHONE, 10000]]) {
       const file = `${name}-${viewport.width}x${viewport.height}.png`;
