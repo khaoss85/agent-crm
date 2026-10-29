@@ -181,10 +181,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
   };
 }
 
-const renderCard = async (client, spaceId = undefined) => {
+const renderCard = async (client, spaceId = undefined, toast = undefined) => {
   const doc = createFakeDocument();
   const mount = createMount();
-  await createCustomerCardView({ doc, mount, client, spaceId }).renderCard('contact', 'c1');
+  await createCustomerCardView({ doc, mount, client, spaceId, toast }).renderCard('contact', 'c1');
   return mount;
 };
 
@@ -771,4 +771,113 @@ test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27
   assert.ok(text.includes('Prova un altro canale oppure scrivi il primo messaggio qui sotto.'),
     'the empty hint is exact');
   assert.ok(!text.includes('nessun passaggio'), 'no technical empty sentence remains');
+});
+
+// Voce 59def6cb805d (C15/C17) + voce 19c2e22a64a1 (6): every channel badge the
+// scheda can paint has an Italian label — no raw channel key on screen.
+test('59def6cb805d: every channel badge reads its Italian label (C15, C17)', async () => {
+  const channels = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'gmail',
+    'outlook', 'phone', 'tel', 'mobile', 'voice', 'sms', 'messenger', 'web', 'form', 'calendar'];
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      entries: {
+        available: true, count: channels.length, truncated: false,
+        items: channels.map((channel, index) => ({
+          entry: 'message', id: `mx-${index}`, conversationId: 't1', channel,
+          direction: 'inbound', sync: 'received', body: `corpo ${channel}`,
+          teamAuthorId: null, remoteHandle: '+39 333 0000000', errorCode: null,
+          occurredAt: '2026-10-20T15:33:11.774Z',
+        })),
+      },
+    },
+  }));
+  const text = mount.textContent;
+  for (const label of ['WhatsApp', 'Instagram', 'Messenger', 'TikTok', 'Email', 'Gmail',
+    'Outlook', 'Telefono', 'SMS', 'Sito', 'Form sito', 'Google Calendar']) {
+    assert.ok(text.includes(label), `the Italian label ${label} is on screen`);
+  }
+  for (const raw of ['outlook', 'messenger', 'calendar']) {
+    assert.ok(!text.includes(`· ${raw} ·`), `no raw ${raw} key in a sync row`);
+    assert.ok(!text.includes(`da ${raw} ·`) && !text.includes(`${raw} · da `),
+      `no raw ${raw} key in a card head`);
+  }
+});
+
+// Voce 59def6cb805d (C13): `Arricchito dall'AI` carries the ghost `Aggiorna`
+// button; the click re-reads the enrichment and reports through the toast.
+test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13)', async () => {
+  const seen = [];
+  const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
+  const mount = await renderCard(stubClient(), undefined, toast);
+  const refresh = mount.findAll('button').find((node) => node.textContent === 'Aggiorna');
+  assert.ok(refresh, 'the Aggiorna button is in the enriched section');
+  assert.ok(
+    String(refresh.getAttribute('class') ?? '').split(/\s+/).some((cls) => cls === 'ui' || cls.startsWith('ui-')),
+    'Aggiorna carries the visual system',
+  );
+  refresh.dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(seen, [{ message: 'Nessun dato nuovo', error: false }],
+    'an unchanged re-read toasts Nessun dato nuovo');
+});
+
+test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', async () => {
+  const seen = [];
+  const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
+  let current = {
+    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
+    linked: false, optedOut: null, items: [],
+  };
+  const client = {
+    async request(path) {
+      if (path.startsWith('/api/customer-data/enriched/')) return current;
+      return stubClient().request(path);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('nessun dato arricchito registrato'), 'the section starts empty');
+  current = {
+    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
+    linked: false, optedOut: null,
+    items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
+  };
+  mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(mount.textContent.includes('Nome: Guido (fonte: Contatti Google'),
+    'the re-read rows render with source and date');
+  assert.deepEqual(seen, [{ message: 'Dati aggiornati', error: false }],
+    'a changed re-read toasts Dati aggiornati');
+});
+
+test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)', async () => {
+  const seen = [];
+  const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
+  let fail = false;
+  const enriched = {
+    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
+    linked: false, optedOut: null,
+    items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
+  };
+  const client = {
+    async request(path) {
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        if (fail) throw Object.assign(new Error('boom'), { status: 500 });
+        return enriched;
+      }
+      return stubClient().request(path);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
+  fail = true;
+  mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(mount.textContent.includes('Nome: Guido'), 'the previous rows stay on screen');
+  assert.equal(seen.length, 1, 'one toast for the failed re-read');
+  assert.equal(seen[0].error, true, 'the failure toasts as an error');
+  assert.ok(seen[0].message.includes('Riprova'), 'the failure toasts the Italian retry');
 });
