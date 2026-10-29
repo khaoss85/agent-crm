@@ -407,10 +407,14 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
   assert.ok(mount.findAll('button').some((node) => node.getAttribute('role') === 'switch'), 'the switches stay usable');
 });
 
-test('the switches and the header speak the prototype verbatim (BO-F6-17 slices 1-2)', async () => {
+test('the switches speak the prototype verbatim, the header states the honest team scope (BO-F6-17 slices 1-2)', async () => {
   // specs/account.md fixed copy: the five titles and descriptions plus the
-  // header paragraph and the AI subtitle pattern. Keys and defaults stay
-  // owned by packages/space-permissions — only the view words move.
+  // AI subtitle pattern. Keys and defaults stay owned by
+  // packages/space-permissions — only the view words move.
+  // The header paragraph is NOT the prototype verbatim on purpose: the
+  // prototype promises a per-space team ('e team') while the screen
+  // discloses a single org-wide shared team, so the header states the
+  // honest scope until slice 4 confirms the model (review P2 on bb3a3b6).
   assert.deepEqual(SPAZI_AI_SWITCHES.map((entry) => entry.label), [
     'Unire i contatti duplicati',
     'Scrivere bozze di risposta',
@@ -436,8 +440,8 @@ test('the switches and the header speak the prototype verbatim (BO-F6-17 slices 
   assert.match(rendered, /Spazi e accessi/);
   assert.match(rendered, /Spazi di lavoro/);
   assert.ok(
-    rendered.includes('Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.'),
-    'the header paragraph is the prototype verbatim',
+    rendered.includes('Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali e clienti, e nessuno vede i dati degli altri; il team invece \u00E8 uno solo per tutta l\u2019organizzazione.'),
+    'the header paragraph states the honest team scope, not the prototype verbatim',
   );
   assert.ok(
     rendered.includes('Vale per tutto lo spazio Negozio. Quello che \u00E8 spento diventa una proposta da approvare.'),
