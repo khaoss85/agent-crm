@@ -516,7 +516,8 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-scheda-sync { margin: 0; padding: 6px 14px 12px; font-family: var(--mono); font-size: 11px; color: var(--data-ink); border: 1px solid var(--line-soft); border-top: none; border-radius: 0 0 14px 14px; background: var(--surface); }
 .bo-scheda-step, .bo-scheda-appt { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-offer { margin: 0; font-size: 14px; }
-.bo-scheda-card-offer .bo-scheda-offer { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 15px; font-weight: 700; }
+.bo-scheda-card-offer .bo-scheda-offer { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 6px 8px; font-size: 15px; font-weight: 700; }
+.bo-scheda-offer-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .bo-scheda-sep { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .bo-scheda-offer-state { flex: none; padding: 3px 9px; border-radius: 99px; background: var(--pending-soft); color: var(--pending-ink, var(--ink)); font-size: 11.5px; font-weight: 700; }
 .bo-scheda-card-offer > h4, .bo-scheda-card-appt > h4 { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
