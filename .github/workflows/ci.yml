@@ -133,9 +133,9 @@ jobs:
       - name: PR gate under one machine lock (check, touched, smoke, recipe, gtm, truth)
         env:
           BASE_REF: ${{ github.base_ref }}
-          # The Linux runner has the Accordo lane to itself: phases in parallel
-          # there (scripts/ci-fast.sh); sequential on the shared Mac.
-          CI_FAST_PARALLEL: ${{ runner.os == 'Linux' && '1' || '' }}
+          # At most 4 lanes at once on the Linux runner (scripts/ci-fast.sh);
+          # sequential on the shared Mac.
+          CI_FAST_PARALLEL: ${{ runner.os == 'Linux' && '4' || '' }}
         run: HEAVY_JOB_MAX_SEC=540 scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh
 
   # Full history here, not the default fetch-depth: 1. The measure itself needs
