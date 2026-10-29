@@ -210,10 +210,10 @@ function mkdirTmp() {
 }
 
 test('the catalog table renders in a real browser: desktop PNG', { skip: CHROMIUM ? false : 'no Chromium binary (set CHROMIUM_BIN)' }, async () => {
-  const { out, dom } = await runBrowser({ width: 1280, height: 900 });
+  const { out, dom } = await runBrowser({ width: 1440, height: 900 });
   assert.ok(dom.includes('<title>catalog-ready</title>'), 'the harness module ran to completion in the page');
   const shot = pngSize(out);
-  assert.equal(shot.width, 1280, 'the PNG is the desktop viewport');
+  assert.equal(shot.width, 1440, 'the PNG is the desktop viewport');
   assert.ok(shot.bytes > 30000, `the table paints real pixels (${shot.bytes} bytes)`);
   console.log(`catalog desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });

@@ -446,7 +446,7 @@ export function createCatalogView(deps) {
     mount.appendChild(page);
     const top = el('div', 'catalog-top');
     top.appendChild(el('h2', 'panel-title', 'Catalogo prodotti'));
-    top.appendChild(el('p', 'catalog-lede', 'Prodotti e servizi che usi nelle offerte. Prezzi e regole di sconto si applicano da soli quando aggiungi una voce.'));
+    top.appendChild(el('p', 'catalog-lede', 'Prodotti e servizi che usi nelle offerte. Prezzi, unità e sconti si applicano da soli quando aggiungi una voce.'));
     page.appendChild(top);
     const status = el('p', 'muted catalog-status', 'Caricamento catalogo…');
     page.appendChild(status);

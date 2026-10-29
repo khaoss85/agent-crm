@@ -373,3 +373,38 @@ test('the nav gate reads the same domains block the view gates on', () => {
   assert.equal(commercialBlock({}), undefined);
   assert.equal(commercialBlock(null), undefined);
 });
+
+test('the catalog screen renders no raw control', async () => {
+  // BO-F6-15 acceptance (spec catalogo.md C10): nessun button/select/input
+  // senza le classi del sistema visivo nella schermata. Every control
+  // reaches the DOM through the shared `el` library, which normalizes
+  // legacy classes onto `ui-*` (see admin-calendario.test.js:735).
+  const rawControls = (root) => {
+    const out = [];
+    const walk = (node) => {
+      const tag = String(node.tagName ?? '').toLowerCase();
+      if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+        const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+        if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) out.push(`${tag}[${classes.join('.')}]`);
+      }
+      for (const child of node.childNodes ?? []) walk(child);
+    };
+    walk(root);
+    return out;
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient() });
+  await view.renderTable({});
+  assert.deepEqual(rawControls(mount), [], 'every catalog control of the list carries a ui-* class');
+  clickButton(mount, 'Modifica prezzi');
+  await flush();
+  assert.deepEqual(rawControls(mount), [], 'the price editor form adds no raw control');
+  const stripeDoc = createFakeDocument();
+  const stripeMount = createMount();
+  const stripeView = createCatalogView({ doc: stripeDoc, mount: stripeMount, client: stubClient({ tables: { '': STRIPE_TABLE } }) });
+  await stripeView.renderTable({});
+  assert.deepEqual(rawControls(stripeMount), [], 'every catalog control of the Stripe state carries a ui-* class');
+  clickButton(stripeMount, 'Sincronizza');
+  assert.deepEqual(rawControls(stripeMount), [], 'the sync confirm dialog adds no raw control');
+});
