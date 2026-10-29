@@ -32,6 +32,15 @@ import { NotFoundError, ValidationError } from '../../core/index.js';
  * - active package: the subscriptions section of the profile;
  * - notes: this application composes no notes record for customers, so the
  *   card reports the field as unavailable rather than inventing one;
+ * - headline: the header meta line (`<città> · <provenienza> · la segue
+ *   <referente>`). The origin is the earliest-observed channel identity
+ *   still held beside the record, language-neutral (system key plus first
+ *   seen) so the view maps it to its own Italian label. City and referente
+ *   have no record yet (the contact record carries no city; enrichment fills
+ *   firstName, lastName, role, companyName and phone only; no assignment
+ *   names a referente), so the card reports them unavailable with the
+ *   reason — the view reads `Da raccogliere` from that, never an
+ *   invented meta;
  * - history: the profile sections flattened into one list, newest first
  *   within each section, capped like the profile itself.
  */
@@ -247,6 +256,34 @@ export function shapeCustomerCard(profile, subject) {
     reason: 'this application composes no notes record for customers, so the card reports none rather than an empty list',
   });
 
+  // BO-F6-09 fetta C3 (backlog:f84626a0): the header meta line. The origin
+  // is the earliest first-observed identity, so a newer channel never hides
+  // the one the customer arrived from; undated or system-less rows cannot
+  // promote a channel. City and referente stay unavailable with the reason
+  // until a record names them — the view renders `Da raccogliere` there.
+  const datedIdentities = identities.filter((row) => typeof row?.system === 'string'
+    && row.system !== '' && Number.isFinite(Date.parse(String(row?.firstObservedAt ?? ''))));
+  datedIdentities.sort((a, b) => Date.parse(String(a.firstObservedAt)) - Date.parse(String(b.firstObservedAt)));
+  const firstSeen = datedIdentities[0] ?? null;
+  const headline = Object.freeze({
+    city: Object.freeze({
+      available: false, value: null,
+      reason: 'the contact record carries no city and enrichment fills firstName, lastName, role, companyName and phone only — this is not a claim the customer has no city',
+    }),
+    origin: firstSeen
+      ? Object.freeze({
+        available: true, system: firstSeen.system, firstObservedAt: firstSeen.firstObservedAt, reason: null,
+      })
+      : Object.freeze({
+        available: false, system: null, firstObservedAt: null,
+        reason: 'no channel identity with a recorded first observation is held beside this record — this is not a claim the customer arrived from nowhere',
+      }),
+    assignee: Object.freeze({
+      available: false, value: null,
+      reason: 'no assignment record names a referente for this customer — this is not a claim nobody follows them',
+    }),
+  });
+
   const readable = HISTORY_SECTIONS.filter((key) => profile[key]?.available === true);
   const historyItems = [];
   // Truncated means rows were actually left out: the cap stopped the loop
@@ -283,6 +320,7 @@ export function shapeCustomerCard(profile, subject) {
     customerCardContract: CUSTOMER_CARD_CONTRACT,
     subject: Object.freeze({ resource, id }),
     name,
+    headline,
     company: company ? Object.freeze({ id: company.id, name: company.name }) : null,
     phone,
     email,

@@ -288,7 +288,10 @@ export function createCustomerCardView(deps) {
     // and the stato pill. The meta line (città · provenienza · referente) is
     // NOT rendered: no record holds it yet (the contact record has no city,
     // nothing names a referente), so the header shows the company instead —
-    // never an invented meta. The data operation is the follow-up.
+    // never an invented meta. Fetta C3 (backlog:f84626a0) renders it now:
+    // the origin is the earliest-observed identity the card reports; city
+    // and referente have no record yet, so those segments read
+    // `Da raccogliere` — never an invented meta.
     void resource;
     void id;
     const back = el('button', 'bo-scheda-back', '← Clienti');
@@ -304,7 +307,21 @@ export function createCustomerCardView(deps) {
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
     const meta = el('div', 'bo-scheda-meta');
     meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
-    if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    // C3: `<città> · <provenienza> · la segue <referente>`. Only a system
+    // the prototype names reads as its Italian label; an unknown or hostile
+    // key reads `Da raccogliere` like every other segment without a record.
+    // Every segment is text, so a hostile value stays inert.
+    const headline = card?.headline ?? null;
+    const city = headline?.city?.available === true
+      && typeof headline.city.value === 'string' && headline.city.value !== ''
+      ? headline.city.value : 'Da raccogliere';
+    const originSystem = headline?.origin?.available === true
+      ? String(headline.origin.system ?? '').toLowerCase() : '';
+    const origin = CHANNEL_LABELS[originSystem] ?? 'Da raccogliere';
+    const follow = headline?.assignee?.available === true
+      && typeof headline.assignee.value === 'string' && headline.assignee.value !== ''
+      ? headline.assignee.value : 'Da raccogliere';
+    meta.appendChild(el('span', 'bo-scheda-sub', `${city} · ${origin} · la segue ${follow}`));
     titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);

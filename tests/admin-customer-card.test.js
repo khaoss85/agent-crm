@@ -32,6 +32,11 @@ const CARD = {
   },
   notes: { available: false, items: null, reason: 'this application composes no notes record' },
   history: { available: false, items: [], count: 0, truncated: false, completeTimeline: false, reason: 'no history' },
+  headline: {
+    city: { available: false, value: null, reason: 'no city on record' },
+    origin: { available: true, system: 'whatsapp', firstObservedAt: '2026-10-19T10:00:00.000Z', reason: null },
+    assignee: { available: false, value: null, reason: 'no referente on record' },
+  },
 };
 
 const TIMELINE = {
@@ -266,6 +271,31 @@ test('BO-F6-09 fetta 2a: a hostile name stays text in the H1 and the avatar', as
   const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
   assert.ok(avatar, 'the avatar still renders');
   assert.ok(!String(avatar.textContent).includes('<'), 'the initials carry no markup');
+});
+
+test('BO-F6-09 fetta C3 (backlog:f84626a0): the header shows città · provenienza · la segue referente', async () => {
+  const mount = await renderCard(stubClient());
+  const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
+  assert.ok(sub, 'the meta line exists under the H1 next to the stato pill');
+  assert.equal(sub.textContent, 'Da raccogliere · WhatsApp · la segue Da raccogliere',
+    'the origin reads its Italian label, the missing city and referente read Da raccogliere');
+});
+
+test('BO-F6-09 fetta C3: an unknown origin channel reads Da raccogliere, never the raw key', async () => {
+  const mount = await renderCard(stubClient({
+    card: {
+      ...CARD,
+      headline: {
+        city: { available: false, value: null, reason: 'no city on record' },
+        origin: { available: true, system: 'pigeon-post', firstObservedAt: '2026-10-19T10:00:00.000Z', reason: null },
+        assignee: { available: false, value: null, reason: 'no referente on record' },
+      },
+    },
+  }));
+  const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
+  assert.ok(sub, 'the meta line exists');
+  assert.ok(!sub.textContent.includes('pigeon-post'), 'no raw channel key on screen');
+  assert.equal(sub.textContent, 'Da raccogliere · Da raccogliere · la segue Da raccogliere');
 });
 
 test('BO-F6-09: every control on the scheda carries the visual system', async () => {

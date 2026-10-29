@@ -301,6 +301,49 @@ test('a profile without the status verdict still renders (legacy customer-profil
   assert.match(signed.status.reason, /subscriptions/);
 });
 
+test('BO-F6-09 fetta C3 (backlog:f84626a0): the headline names the earliest-observed channel as the origin', () => {
+  const section = (available, count) => ({ available, count, items: [] });
+  const identity = { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null };
+  const subject = (resource, id) => ({ resource, id });
+  const base = {
+    identity,
+    externalIdentities: [
+      {
+        system: 'instagram', externalId: 'a.b', subject: subject('contact', 'c1'),
+        firstObservedAt: '2026-10-21T10:00:00.000Z', lastObservedAt: '2026-10-21T10:00:00.000Z',
+      },
+      {
+        system: 'whatsapp', externalId: '+393331234567', subject: subject('contact', 'c1'),
+        firstObservedAt: '2026-10-19T10:00:00.000Z', lastObservedAt: '2026-10-21T10:00:00.000Z',
+      },
+      // Undated and system-less rows can never promote a channel.
+      {
+        system: 'sms', externalId: '+393330000000', subject: subject('contact', 'c1'),
+        firstObservedAt: null, lastObservedAt: null,
+      },
+      {
+        system: '', externalId: 'ghost', subject: subject('contact', 'c1'),
+        firstObservedAt: '2026-10-18T10:00:00.000Z', lastObservedAt: '2026-10-18T10:00:00.000Z',
+      },
+    ],
+    subscriptions: section(false, 0), orders: section(false, 0), contracts: section(false, 0),
+    opportunities: section(true, 1), quotes: section(true, 2),
+  };
+  const card = shapeCustomerCard(withStatus(base), { resource: 'contact', id: 'c1' });
+  assert.equal(card.headline.origin.available, true);
+  assert.equal(card.headline.origin.system, 'whatsapp',
+    'the first channel wins, not the newest row');
+  assert.equal(card.headline.origin.firstObservedAt, '2026-10-19T10:00:00.000Z');
+  assert.equal(card.headline.city.available, false,
+    'no record holds a city yet, so the headline cannot invent one');
+  assert.match(card.headline.city.reason, /no city/);
+  assert.equal(card.headline.assignee.available, false,
+    'no assignment names a referente yet, so the headline cannot invent one');
+  const bare = shapeCustomerCard(withStatus({ ...base, externalIdentities: [] }), { resource: 'contact', id: 'c1' });
+  assert.equal(bare.headline.origin.available, false);
+  assert.match(bare.headline.origin.reason, /no channel identity/);
+});
+
 test('the card renders as one self-contained phone page', async (t) => {
   const root = projectWithHub(t);
   const context = await boot(root, join(root, 'data', 'hub-render.sqlite'));
