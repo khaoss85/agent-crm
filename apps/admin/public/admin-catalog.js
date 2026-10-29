@@ -443,10 +443,30 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Render the product table. Filters mirror the read's own vocabulary
-   * (category exact, active flag, source name); empty values read unfiltered.
+   * The prototype's search filters the visible rows by product name and
+   * code (spec catalogo.md C9/C21): the read vocabulary has no search
+   * param, so the match runs client-side over the loaded page, like the
+   * category chips derivation below. Anything but non-empty text reads
+   * unfiltered.
+   * @param {any} product
+   * @param {unknown} query
    */
-  async function renderTable({ category = '', active = '', source = '' } = {}) {
+  function matchesSearch(product, query) {
+    const q = String(query ?? '').trim().toLowerCase();
+    if (q === '') return true;
+    const hay = [product?.name, product?.sku]
+      .filter((value) => typeof value === 'string')
+      .map((value) => value.toLowerCase());
+    return hay.some((text) => text.includes(q));
+  }
+
+  /**
+   * Render the product table. Filters mirror the read's own vocabulary
+   * (category exact, active flag, source name); the search field filters
+   * the loaded page client-side by name and code. Empty values read
+   * unfiltered.
+   */
+  async function renderTable({ category = '', active = '', source = '', search = '' } = {}) {
     const token = ++renderToken;
     clear();
     mount.appendChild(settingsTabs(doc, { activeId: 'catalogo', navigate: go }));
@@ -483,10 +503,7 @@ export function createCatalogView(deps) {
     }
     const summary = table.summary ?? {};
     page.appendChild(renderStripeBlock(summary));
-    const shown = table.products.length;
-    status.textContent = shown >= LIST_LIMIT
-      ? `Mostrati i primi ${LIST_LIMIT} prodotti.`
-      : `${shown} ${shown === 1 ? 'prodotto' : 'prodotti'}.`;
+    const loaded = table.products;
 
     const filters = el('div', 'catalog-filters');
     const categoryInput = el('input');
@@ -510,10 +527,22 @@ export function createCatalogView(deps) {
     sourceInput.value = typeof source === 'string' ? source : '';
     const applyButton = el('button', undefined, 'Filtra');
     const filterError = el('small', 'field-error', '');
+    // The prototype's search (spec catalogo.md C9): exact placeholder,
+    // live client-side match on name and code, never a server param.
+    const searchInput = el('input', 'catalog-search');
+    searchInput.setAttribute('type', 'search');
+    searchInput.setAttribute('name', 'search');
+    searchInput.setAttribute('aria-label', 'Cerca prodotto o codice');
+    searchInput.setAttribute('placeholder', 'Cerca prodotto o codice');
+    searchInput.value = typeof search === 'string' ? search : '';
+    const readSearch = () => searchInput.value ?? '';
+    const repaint = () => { paintList(readSearch()); };
+    searchInput.addEventListener('input', repaint);
+    searchInput.addEventListener('search', repaint);
     applyButton.addEventListener('click', async () => {
       applyButton.disabled = true;
       try {
-        await renderTable({ category: categoryInput.value, active: activeSelect.value, source: sourceInput.value });
+        await renderTable({ category: categoryInput.value, active: activeSelect.value, source: sourceInput.value, search: readSearch() });
       } catch (error) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
       } finally {
@@ -524,6 +553,7 @@ export function createCatalogView(deps) {
     filters.appendChild(activeSelect);
     filters.appendChild(sourceInput);
     filters.appendChild(applyButton);
+    filters.appendChild(searchInput);
     filters.appendChild(filterError);
     // Category chips from the read itself, like the prototype's tabs.
     const counts = new Map();
@@ -536,7 +566,7 @@ export function createCatalogView(deps) {
     const chip = (label, value, count) => {
       const button = el('button', `catalog-chip${(category ?? '') === value ? ' active' : ''}`, label);
       if (count !== null) button.appendChild(el('span', 'catalog-chip-count', String(count)));
-      button.addEventListener('click', () => { void renderTable({ category: value, active, source }); });
+      button.addEventListener('click', () => { void renderTable({ category: value, active, source, search: readSearch() }); });
       chips.appendChild(button);
     };
     chip('Tutti', '', category ? null : table.products.length);
@@ -546,10 +576,7 @@ export function createCatalogView(deps) {
     page.appendChild(bar);
 
     const list = el('div', 'catalog-list');
-    const head = el('div', 'catalog-thead');
-    for (const label of ['Prodotto', 'Categoria', 'Prezzo', 'Fonte', 'Attivo']) head.appendChild(el('span', undefined, label));
-    list.appendChild(head);
-    for (const product of table.products) {
+    const buildRow = (product) => {
       const row = el('div', 'catalog-row');
       if (product.productId !== undefined) row.setAttribute('data-product', String(product.productId));
       const cell = el('div', 'catalog-cell-name');
@@ -590,9 +617,40 @@ export function createCatalogView(deps) {
         priceCell.appendChild(renderPriceEditor(product));
         switchCell.appendChild(renderActiveToggle(product));
       }
-      list.appendChild(row);
-    }
+      return row;
+    };
+    // Search repaints the rows in place (no refetch, focus stays in the
+    // field); a search with no match is a gentle note with an action
+    // (spec catalogo.md C19), never a blank table or a technical text.
+    const paintList = (query) => {
+      const q = String(query ?? '').trim();
+      const rows = loaded.filter((product) => matchesSearch(product, query));
+      while (list.firstChild) list.removeChild(list.firstChild);
+      const head = el('div', 'catalog-thead');
+      for (const label of ['Prodotto', 'Categoria', 'Prezzo', 'Fonte', 'Attivo']) head.appendChild(el('span', undefined, label));
+      list.appendChild(head);
+      if (rows.length === 0 && q !== '') {
+        const empty = el('div', 'catalog-no-results');
+        empty.appendChild(el('p', undefined, `Nessun risultato per «${q}». Prova con un altro nome o codice.`));
+        const clearSearch = el('button', 'catalog-clear-search', 'Cancella ricerca');
+        clearSearch.addEventListener('click', () => {
+          searchInput.value = '';
+          paintList('');
+        });
+        empty.appendChild(clearSearch);
+        list.appendChild(empty);
+      } else {
+        for (const product of rows) list.appendChild(buildRow(product));
+      }
+      const n = rows.length;
+      status.textContent = q !== ''
+        ? `${n} ${n === 1 ? 'risultato' : 'risultati'} per «${q}».`
+        : (loaded.length >= LIST_LIMIT
+          ? `Mostrati i primi ${LIST_LIMIT} prodotti.`
+          : `${loaded.length} ${loaded.length === 1 ? 'prodotto' : 'prodotti'}.`);
+    };
     page.appendChild(list);
+    paintList(search);
     page.appendChild(renderRulesBlock(schema));
   }
 
