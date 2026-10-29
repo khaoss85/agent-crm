@@ -519,9 +519,11 @@ function countNoun(count, singular, plural) {
 /**
  * One-sentence recap of the day, verbatim from the prototype: open chores
  * and today's appointments with a minute estimate, or the no-pending line.
- * AI stays out of it: without a configured key the llm package is dry-run
- * only, and a recap must never read as generated insight — it is arithmetic
- * over records.
+ * The closing promise names prepared messages only when a task actually
+ * carries a draft note — a manual call with no draft must never read as
+ * prepared work. AI stays out of it: without a configured key the llm
+ * package is dry-run only, and a recap must never read as generated
+ * insight — it is arithmetic over records.
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date }} input
  */
 export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date() } = {}) {
@@ -536,7 +538,9 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   if (tasks.length === 0) {
     return `Niente in sospeso. Ti restano ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
-  return `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${countNoun(today.length, 'appuntamento', 'appuntamenti')}. Ti servono circa ${tasks.length * 3} minuti: ho già preparato i messaggi.`;
+  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${countNoun(today.length, 'appuntamento', 'appuntamenti')}. Ti servono circa ${tasks.length * 3} minuti`;
+  const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
+  return drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
 }
 
 /**
@@ -691,6 +695,36 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
  * headline count, so the total is a fixed constant, never metadata.
  */
 export const OGGI_TOTAL_CHANNELS = 9;
+
+/**
+ * The nine counted channel ids, in Stato sync order. Mirrors SYNC_CHANNELS
+ * in admin-sync.js (the table owner): the lead catalog and the nine differ
+ * (SMS is a lead channel but not one of the nine; Calendar and Stripe are
+ * nine but not lead), so the count must read the nine, never the catalog.
+ * Kept as ids here so Oggi never imports another screen's view module; the
+ * test pins the two lists together.
+ */
+export const OGGI_NINE_CHANNELS = Object.freeze([
+  'whatsapp', 'instagram', 'facebook', 'tiktok', 'email',
+  'voice', 'site-form', 'calendar', 'stripe',
+]);
+
+/**
+ * Distinct connected channels among the nine: active rows only, one vote
+ * per channel, capped at the nine. A channel outside the nine never moves
+ * this count.
+ * @param {Array<Record<string, any>>} [connections]
+ */
+export function countConnectedNine(connections = []) {
+  const active = new Set();
+  for (const row of Array.isArray(connections) ? connections : []) {
+    if (row == null || row.status !== 'active') continue;
+    if (typeof row.channel !== 'string' || row.channel === '') continue;
+    if (!OGGI_NINE_CHANNELS.includes(row.channel)) continue;
+    active.add(row.channel);
+  }
+  return Math.min(active.size, OGGI_TOTAL_CHANNELS);
+}
 
 /**
  * Lead channels with no active connection, in catalog order with catalog
@@ -940,6 +974,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     agenda?: Array<{ id: unknown, time: unknown, title: unknown, who?: unknown, href: unknown }>,
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
+ *     connections?: Array<{ channel?: unknown, status?: unknown }>,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
  *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void },
@@ -1127,11 +1162,14 @@ export function renderOggi({
     const invite = el(doc, 'section', 'bo-oggi-section');
     const names = missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
     // The prototype's headline count: connected of the 9 backoffice
-    // channels. Derived from the missing lead list (9 minus missing), so it
-    // never needs a live count read; the exact per-channel table lives in
-    // Stato sync.
+    // channels, read from the actual connections. Hand-built homes without
+    // connections (tests) fall back to nine minus the missing lead list;
+    // the live view always carries connections, so production never guesses.
+    const connected = Array.isArray(home.connections)
+      ? countConnectedNine(home.connections)
+      : OGGI_TOTAL_CHANNELS - missing.length;
     const anchor = el(doc, 'a', 'bo-oggi-invite', '');
-    anchor.appendChild(el(doc, 'strong', undefined, `${OGGI_TOTAL_CHANNELS - missing.length} di ${OGGI_TOTAL_CHANNELS} collegati`));
+    anchor.appendChild(el(doc, 'strong', undefined, `${connected} di ${OGGI_TOTAL_CHANNELS} collegati`));
     anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} per non perdere nessun lead →`));
     anchor.setAttribute('href', '#/connettori');
     anchor.addEventListener('click', (event) => {
@@ -1229,6 +1267,7 @@ export function createOggiView(deps) {
         agenda,
         brief,
         missing,
+        connections: last.connections,
         availability: {
           work: last.workAvailable,
           appointments: last.appointmentsAvailable,

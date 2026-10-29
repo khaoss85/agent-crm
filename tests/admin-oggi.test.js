@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import {
   ADVISOR_ACTION_LIMIT,
   DEMO_STRINGS,
+  OGGI_NINE_CHANNELS,
   OGGI_TOTAL_CHANNELS,
   applyTriageDecision,
   advisorProgress,
@@ -17,6 +19,7 @@ import {
   isSpaceMount,
   isTodayInRome,
   loadOggiData,
+  countConnectedNine,
   missingLeadChannels,
   nextAppointment,
   oggiDateLine,
@@ -356,9 +359,10 @@ test('stale detection compares only the cited snapshot', () => {
 });
 
 test('recap follows the prototype sentence with real counts', () => {
+  const drafted = { ...TASK_OPEN, note: '✦ Ho preparato una bozza: la vedi prima di inviarla' };
   const recap = buildTodayRecap({
     appointments: [APPT_TODAY, APPT_TOMORROW],
-    openTasks: [TASK_OPEN, TASK_DONE],
+    openTasks: [drafted, TASK_DONE],
     now: OGGI_NOW,
   });
   assert.equal(
@@ -367,7 +371,7 @@ test('recap follows the prototype sentence with real counts', () => {
   );
   assert.equal(
     buildTodayRecap({ appointments: [APPT_TODAY], openTasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-9' }], now: OGGI_NOW }),
-    'Oggi hai 2 cose da fare e 1 appuntamento. Ti servono circa 6 minuti: ho già preparato i messaggi.',
+    'Oggi hai 2 cose da fare e 1 appuntamento. Ti servono circa 6 minuti.',
   );
   assert.equal(
     buildTodayRecap({ appointments: [], openTasks: [], now: OGGI_NOW }),
@@ -461,7 +465,7 @@ test('full home renders every section with clickable sources', () => {
 
   const text = mount.textContent;
   assert.ok(text.includes('Buongiorno, Elena'), 'greets the person');
-  assert.ok(text.includes('Oggi hai 1 cosa da fare e 1 appuntamento. Ti servono circa 3 minuti'), 'one-sentence recap');
+  assert.ok(text.includes('Oggi hai 1 cosa da fare e 1 appuntamento. Ti servono circa 3 minuti.'), 'one-sentence recap');
   assert.ok(text.includes('✦ Il tuo advisor'), 'advisor header');
   assert.ok(text.includes('0 di 2'), 'progress starts at zero');
   assert.ok(text.includes('Agenda di oggi') && text.includes('10:00'), 'agenda with Rome time');
@@ -632,8 +636,43 @@ test('brief CTA is a button opening the customer scheda', () => {
   assert.deepEqual(seen, ['#/customer-card/lead/lead-1'], 'the button navigates to the scheda');
 });
 
+test('the nine counted channels are the Stato sync nine', async () => {
+  const { SYNC_CHANNELS } = await import('../apps/admin/public/admin-sync.js');
+  assert.deepEqual(
+    [...OGGI_NINE_CHANNELS],
+    SYNC_CHANNELS.map((row) => row.id),
+    'oggi counts the same nine channels as the sync table',
+  );
+});
+
+test('connected count reads actual connections against the nine', () => {
+  assert.equal(countConnectedNine([]), 0, 'no connections, zero connected');
+  assert.equal(
+    countConnectedNine([
+      { channel: 'whatsapp', status: 'active' },
+      { channel: 'whatsapp', status: 'active' },
+      { channel: 'calendar', status: 'active' },
+      { channel: 'stripe', status: 'active' },
+      { channel: 'sms', status: 'active' },
+      { channel: 'facebook', status: 'suspended' },
+      { channel: '', status: 'active' },
+    ]),
+    3,
+    'distinct active nine-channels only: sms is not one of the nine, suspended and blank stay out',
+  );
+});
+
 test('channel invite counts connected of nine, and hides when all nine connect', () => {
   assert.equal(OGGI_TOTAL_CHANNELS, 9, 'the prototype counts nine backoffice channels');
+  const connections = [
+    { channel: 'whatsapp', status: 'active' },
+    { channel: 'instagram', status: 'active' },
+    { channel: 'email', status: 'active' },
+    { channel: 'voice', status: 'active' },
+    { channel: 'site-form', status: 'active' },
+    { channel: 'calendar', status: 'active' },
+    { channel: 'stripe', status: 'active' },
+  ];
   const doc = createFakeDocument();
   const mount = createMount();
   renderOggi({
@@ -644,14 +683,16 @@ test('channel invite counts connected of nine, and hides when all nine connect',
     now: new Date(2026, 9, 19, 9),
     home: {
       recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
-      missing: [{ channel: 'facebook', label: 'Facebook' }, { channel: 'tiktok', label: 'TikTok' }],
+      missing: missingLeadChannels(connections),
+      connections,
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  assert.ok(mount.textContent.includes('7 di 9 collegati'), 'nine minus the two missing');
-  assert.ok(mount.textContent.includes('Collega Facebook, TikTok per non perdere nessun lead'), 'invite names the missing');
+  assert.ok(mount.textContent.includes('7 di 9 collegati'), 'seven nine-channels active, whatever the lead list says');
+  assert.ok(mount.textContent.includes('Collega Facebook, TikTok, SMS per non perdere nessun lead'), 'invite names the missing lead channels');
 
   const full = createMount();
+  const fullConnections = CONNECTOR_CATALOG.map((entry) => ({ channel: entry.channel, status: 'active' }));
   renderOggi({
     doc,
     mount: full,
@@ -659,11 +700,13 @@ test('channel invite counts connected of nine, and hides when all nine connect',
     links: [],
     now: new Date(2026, 9, 19, 9),
     home: {
-      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: missingLeadChannels(fullConnections),
+      connections: fullConnections,
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  assert.ok(!full.textContent.includes('collegati'), 'no invite once every channel connects');
+  assert.ok(!full.textContent.includes('collegati'), 'no invite once every lead channel connects');
 });
 
 test('no technical resource-id label reaches the Oggi screen', () => {

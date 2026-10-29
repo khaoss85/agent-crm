@@ -721,7 +721,7 @@ await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: n
 const oggiViewText = document.getElementById('view-module').textContent;
 const oggiTitles = [...document.querySelectorAll('#view-module .bo-oggi-title')].map((node) => node.textContent);
 document.getElementById('probe').textContent = JSON.stringify({
-  recap: oggiViewText.includes('Oggi hai 2 appuntamenti'),
+  recap: oggiViewText.includes('Oggi hai 2 cose da fare e 2 appuntamenti'),
   tasks: oggiTitles.filter((title) => title === 'Richiama per il preventivo' || title === 'Prepara la call con i prezzi del pacchetto').length,
 });
 document.title = 'oggi-ready';`;
