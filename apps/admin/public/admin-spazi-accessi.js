@@ -460,7 +460,7 @@ export function createSpaziAccessiView(deps) {
     box.appendChild(el(doc, 'p', { text: 'Spazi e accessi', cls: 'bo-kicker' }));
     box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro', cls: 'bo-spazi-title' }));
     box.appendChild(el(doc, 'p', {
-      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.',
+      text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali e clienti, e nessuno vede i dati degli altri; il team invece \u00E8 uno solo per tutta l\u2019organizzazione.',
       cls: 'bo-muted bo-spazi-lede',
     }));
   }
