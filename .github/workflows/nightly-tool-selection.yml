@@ -24,6 +24,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
       - run: npm ci
       - run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
