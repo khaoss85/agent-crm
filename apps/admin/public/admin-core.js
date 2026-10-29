@@ -309,6 +309,13 @@ export function parseModuleRoute(hash) {
     if (subjectId === null || subjectId === '') return { view: 'invalid' };
     return { view: 'customer-profile', resource, subjectId };
   }
+  // Customer import route: #/import-clienti (backlog:80b25fb0). The governed
+  // JSON import and quality queues live here, not below the Clienti table:
+  // the prototype's Clienti screen carries no import tool.
+  if (rawParts.length && rawParts[0] === 'import-clienti') {
+    if (rawParts.some((part) => part === '') || rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'customer-import' };
+  }
   // Customer scheda route: #/customer-card/<resource>/<id> (BO-F1-06). The
   // three-column customer view, a read-only projection over the hub. Same
   // canonical discipline as the profile route above.

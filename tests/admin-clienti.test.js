@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CLIENTI_COLUMNS_KEY, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
+import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -300,7 +300,6 @@ test('BO-F6-08 fetta 1: a filled page shows its interval in the pager', async ()
 
 test('Aggiungi cliente opens a menu with the two prototype entries', async () => {
   let manualCalls = 0;
-  let notified = null;
   const { mount } = await render(stubClient(), { onManualAdd: () => { manualCalls += 1; } });
   const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
   assert.ok(add, 'the add button renders beside the title');
@@ -317,10 +316,71 @@ test('Aggiungi cliente opens a menu with the two prototype entries', async () =>
   byAttr(mount, 'button', 'data-action', 'add-manual').dispatch('click');
   assert.equal(manualCalls, 1, 'manual entry routes to the governed import form, never a parallel creation');
   assert.ok(menus[0].classList.contains('hidden'), 'choosing an entry closes the menu');
-  const plain = await render(stubClient(), { notify: (message) => { notified = message; } });
+  let navigated = null;
+  const plain = await render(stubClient(), { navigate: (hash) => { navigated = hash; } });
   plain.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
   byAttr(plain.mount, 'button', 'data-action', 'add-manual').dispatch('click');
-  assert.ok(notified, 'without the section hook the entry explains itself instead of a dead link');
+  assert.equal(navigated, CLIENTI_IMPORT_ROUTE, 'without the section hook the entry navigates to the import screen');
+});
+
+test('the Clienti screen carries no import tool', async () => {
+  // backlog:80b25fb0: the prototype's Clienti screen has no JSON import, so
+  // the list renders without the Dati dei clienti section or its vocabulary.
+  const { mount } = await render(stubClient());
+  assert.deepEqual(mount.findAll('div').filter((node) =>
+    (node.getAttribute('class') ?? '').split(/\s+/).includes('customer-data-section')), [],
+  'no import section renders on the Clienti screen');
+  for (const marker of ['Dati dei clienti', 'Righe (JSON)', 'customer-rows', 'Applica importazione', 'Anteprima (non scrive nulla)']) {
+    assert.ok(!mount.textContent.includes(marker), `the Clienti screen never names ${JSON.stringify(marker)}`);
+  }
+});
+
+test('a list read still in flight dies when the operator leaves the list', async () => {
+  // backlog:80b25fb0: the list paints straight into the shell's shared
+  // mount, so the shell invalidates it on every other route — a late
+  // response must not clear the screen the operator just opened.
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
+  const client = {
+    async request() {
+      await gate;
+      return {
+        customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+      };
+    },
+  };
+  const view = createCustomerListView({ doc, mount, client, storage: store, notify: () => {} });
+  const pending = view.render();
+  view.invalidate();
+  release();
+  await pending;
+  await flush();
+  assert.ok(!mount.textContent.includes('Marco Rossi'), 'the late list response never paints over the new screen');
+});
+
+test("a contact from the site form shows 'Form sito' in Ultimo contatto", async () => {
+  // backlog:80b25fb0: the site-forms package logs its inbound as the
+  // website-form channel; the list shows the Italian label, never the raw id.
+  const siteRow = {
+    ...ROW_ANNA, channels: ['website-form'],
+    lastContactAt: '2026-10-24T09:00:00.000Z', lastContactChannel: 'website-form',
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [siteRow], total: 1, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const card = mount.findAll('article')[0];
+  assert.ok(card.textContent.includes('Form sito'), 'the site-form channel reads as Form sito');
+  assert.ok(!card.textContent.includes('website-form'), 'the raw channel id never leaks into the row');
+  const tile = card.findAll('span').find((node) =>
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-tile'));
+  assert.equal(tile?.getAttribute('title'), 'Form sito', 'the channel tile names Form sito too');
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {
@@ -574,7 +634,7 @@ test('the shell storage initializes before the views that read it', () => {
   const source = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
   const initialized = source.indexOf('const shellStorage = guardedStorage();');
   assert.ok(initialized !== -1, 'shell storage has one initialization');
-  for (const use of ['createCustomerCardView({', 'createCustomerDataView({', 'createConnectorsView({']) {
+  for (const use of ['createCustomerCardView({', 'createCustomerListView({', 'createCustomerDataView({', 'createConnectorsView({']) {
     const at = source.indexOf(use);
     assert.ok(at !== -1, `${use} is constructed in the shell`);
     assert.ok(initialized < at, `shell storage initializes before ${use}, never in a temporal dead zone`);

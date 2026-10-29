@@ -314,18 +314,19 @@ test('hostile server text renders as text, never as markup', async () => {
   assert.deepEqual(mount.findAll('script'), []);
 });
 
-test('Compila manualmente focuses the governed import form', async () => {
-  // The list owns no record creation: manual entry is a focus move to the
-  // section's preview-then-apply import, never a second write surface.
+test('the import tool renders alone, without the customer list', async () => {
+  // backlog:80b25fb0: the tool left the Clienti screen for #/import-clienti,
+  // so it renders its rows field without fetching or embedding the list.
+  const client = stubClient();
   const doc = createFakeDocument();
   const mount = createMount();
-  await createCustomerDataView({ doc, mount, client: stubClient() }).render();
+  await createCustomerDataView({ doc, mount, client }).render();
   for (let i = 0; i < 12; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
   const rowsBox = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'rows');
   assert.ok(rowsBox, 'the import rows field renders');
-  let focused = false;
-  rowsBox.focus = () => { focused = true; };
-  mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-manual').dispatch('click');
-  assert.equal(focused, true, 'manual entry lands on the import rows field');
+  assert.ok(!client.calls.some((call) => String(call.path).includes('/api/customer-data/customers')),
+    'the tool never fetches the customer list');
+  assert.deepEqual(mount.findAll('article').filter((node) =>
+    (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-row')), [],
+  'no customer row renders on the import screen');
 });

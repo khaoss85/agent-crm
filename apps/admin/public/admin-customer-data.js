@@ -2,16 +2,18 @@
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 
-import { createCustomerListView } from './admin-clienti.js';
 import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
- * **The Customer Data Foundation section (ADR-037).**
+ * **The Customer Data import and governance tool (ADR-037).**
  *
- * The BO-F1-05 customer list ("Elenco Clienti") renders first: it is the
- * screen the backoffice shell names "Clienti", and the import/quality work
- * below stays where the operators who govern it expect it.
+ * Since backlog:80b25fb0 this is its own screen (`#/import-clienti`), not a
+ * section below the Clienti table: the prototype's Clienti screen carries no
+ * JSON import, so the list (`admin-clienti.js`, route `#/customer-data`)
+ * renders alone and its "Compila manualmente" entry navigates here. The tool
+ * reaches this screen only through that entry — there is no sidebar voice
+ * for it, like the prototype.
  *
  * It renders only while `/api/schema` publishes `domains['customer-data']`;
  * an absent package names itself in the view (like every other uncomposed
@@ -73,24 +75,9 @@ function block(el, panel, meta) {
  */
 export function createCustomerDataView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {} } = deps;
+  void navigate;
+  void notify;
   const { client } = bindAdminMutations(deps.client, deps);
-  // BO-F1-05: the list keeps its own state across the section re-renders
-  // (a filter the operator just set must survive the import preview below
-  // re-rendering), so it owns a stable mount re-attached on every render.
-  const listBox = doc.createElement('div');
-  listBox.setAttribute('class', 'customer-data-list');
-  // The list's "Compila manualmente" entry focuses this section's governed
-  // import form — the single surface that writes customers (preview first,
-  // then apply), never a parallel record creation of its own.
-  let importRowsControl = null;
-  const customerList = createCustomerListView({
-    doc, mount: listBox, client, navigate, notify,
-    spaceId: deps.spaceId, onAskAi: deps.onAskAi ?? null, storage: deps.storage ?? null,
-    onManualAdd: () => {
-      importRowsControl?.focus?.();
-      importRowsControl?.scrollIntoView?.({ block: 'center' });
-    },
-  });
   const el = elFor(doc); // BO-F6-02: shared element builder.
   const fact = (label, value) => {
     const row = el('p', 'fact');
@@ -144,24 +131,6 @@ export function createCustomerDataView(deps) {
       return;
     }
 
-    // BO-F1-05: the customer list renders first and owns its refresh; the
-    // section below re-renders without resetting the operator's filters.
-    // It mounts only here, past the composed-package gate above; an absent
-    // package names itself above instead of a blank screen.
-    mount.appendChild(listBox);
-    // The list renders its own request errors (unknown space, offline
-    // package) inside listBox; this catch is only for an unexpected throw,
-    // which must still read as an honest line, never a blank box.
-    void customerList.render().catch((error) => {
-      listBox.textContent = '';
-      const fallback = doc.createElement('p');
-      fallback.setAttribute('class', 'bo-muted');
-      fallback.textContent = humanReadError(error, {
-        failed: 'Clienti non disponibili: la lettura non è riuscita. Riprova più tardi.',
-      });
-      listBox.appendChild(fallback);
-    });
-
     const panel = el('div', 'customer-data-section');
     panel.setAttribute('data-contract', String(meta.customerDataContract ?? ''));
     panel.appendChild(el('h3', undefined, 'Dati dei clienti'));
@@ -184,7 +153,6 @@ export function createCustomerDataView(deps) {
     const rowsInput = el('textarea');
     rowsInput.setAttribute('name', 'rows');
     rowsInput.setAttribute('placeholder', '[{"externalId":"CRM-1","email":"ada@example.com","companyName":"Acme","domain":"acme.example"}]');
-    importRowsControl = rowsInput;
     const acceptance = el('select');
     acceptance.setAttribute('name', 'acceptance');
     for (const mode of meta.import?.acceptance ?? ['partial', 'all_or_nothing']) {
