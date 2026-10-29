@@ -299,7 +299,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('connettori', { rows: 8, previews: 8, flows: 8 }));
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));
   assert.doesNotThrow(() => assertProbe('spazi-accessi', {
-    spaces: 2, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2, switches: 5,
+    spaces: 3, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2, switches: 5,
   }));
   assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
   assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
@@ -324,7 +324,7 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
     () => assertProbe('catalogo', { table: 'Pacchetto 10 lezioni', stripe: null, rules: null }),
     /Stripe state/,
   );
-  assert.throws(() => assertProbe('spazi-accessi', { spaces: 2, members: 0, switches: 5 }), /members/);
+  assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 5 }), /members/);
   assert.throws(() => assertProbe('connettori', { rows: 0, previews: 0, flows: 0 }), /channel rows/);
 });
 

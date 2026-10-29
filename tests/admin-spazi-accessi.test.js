@@ -584,3 +584,141 @@ test('an inexact customer total omits the statistic instead of a floor', async (
   await flush();
   assert.doesNotMatch(text(mount), /canali ·/);
 });
+
+test('the statistic counts rendered team rows, not raw membership items', async () => {
+  // Review follow-up on #419 (P3 :420): a malformed or offboarded row must
+  // never leak into the card number. The count equals buildTeamRows().length.
+  const members = [
+    { subject: 'owner-1', role: 'owner', status: 'active' },
+    { subject: '', role: 'operator', status: 'active' },
+    { role: 'observer', status: 'active' },
+    { subject: 'marco', role: 'operator', status: 'active' },
+  ];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+    }),
+  });
+  await v.render();
+  await flush();
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'only the two rendered rows count');
+});
+
+test('the card statistic qualifies the organization-wide numbers', async () => {
+  // Review follow-up on #419 (P3 :452): persone/clienti repeat on every card
+  // because they are organization-wide. Visible text keeps the C7 pattern;
+  // the title says which numbers are org-wide.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+    }),
+  });
+  await v.render();
+  await flush();
+  const stats = mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-stat'));
+  assert.equal(stats.length, 1, 'one statistic row on the single card');
+  assert.equal(stats[0].textContent, '1 canale · 1 persona · 3 clienti', 'visible text keeps the C7 pattern');
+  assert.match(stats[0].getAttribute('title') ?? '', /organizzazione/, 'the title qualifies the org-wide numbers');
+});
+
+test('the dashed new-space box stays last and opens the verbatim C20 menu', async () => {
+  // specs/account.md C11 + C20 (fetta 5): riquadro after the cards, menu with
+  // the two verbatim voices and subtitles. Picking a voice invents nothing:
+  // creation lives in the control plane, the page only says so.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const calls = [];
+  const { mount, seen, view: v } = view({ client: stubClient({ members, calls }) });
+  await v.render();
+  await flush();
+  const grids = mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-grid'));
+  assert.equal(grids.length, 1, 'one space grid');
+  const cells = Array.from(grids[0].childNodes ?? []).filter((node) => node.tagName);
+  assert.ok(cells.length >= 2, 'at least one card plus the dashed box');
+  assert.match(cells[cells.length - 1].textContent ?? '', /\+ Nuovo spazio di lavoro/, 'the box stays last');
+  const adderToggle = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  assert.ok(adderToggle, 'the dashed box opens a menu');
+  assert.equal(adderToggle.getAttribute('aria-haspopup'), 'true');
+  await adderToggle.listeners.click[0]();
+  await flush();
+  const opened = text(mount);
+  assert.ok(opened.includes('Crea con l\u2019AI'), 'C20 AI voice is verbatim');
+  assert.ok(opened.includes('Descrivi l\u2019attivit\u00E0, propongo canali e team'), 'C20 AI subtitle is verbatim');
+  assert.ok(opened.includes('Compila manualmente'), 'C20 manual voice is verbatim');
+  assert.ok(opened.includes('Nome e settore'), 'C20 manual subtitle is verbatim');
+  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  assert.ok(manual, 'the manual voice is a menu item');
+  await manual.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /control plane/, 'manual is honest: no space is invented here');
+  assert.ok(!calls.some((call) => String(call.path).includes('space') && call.method === 'POST'), 'no space creation call exists');
+  assert.ok(seen.toast.length >= 0, 'toast channel stays available');
+});
+
+test('the invite menu shows the verbatim C21 voices; manual opens the spine form', async () => {
+  // specs/account.md C21 (fetta 5): «Invita persona» opens Crea con l'AI /
+  // Compila manualmente with verbatim subtitles. Manual reuses the existing
+  // inline spine form (the only real write); AI stays honest with a toast.
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const calls = [];
+  const { mount, seen, view: v } = view({ client: stubClient({ members, calls }) });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  assert.ok(toggle, 'the team head carries the invite menu toggle');
+  await toggle.listeners.click[0]();
+  await flush();
+  const opened = text(mount);
+  assert.ok(opened.includes('Crea con l\u2019AI'), 'C21 AI voice is verbatim');
+  assert.ok(opened.includes('Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB'), 'C21 AI subtitle is verbatim');
+  assert.ok(opened.includes('Compila manualmente'), 'C21 manual voice is verbatim');
+  assert.ok(opened.includes('Email e ruolo'), 'C21 manual subtitle is verbatim');
+  const ai = mount.findAll('button').find((node) => node.textContent === 'Crea con l\u2019AI');
+  assert.ok(ai, 'the AI voice is a menu item');
+  await ai.listeners.click[0]();
+  await flush();
+  assert.ok(seen.toast.some((row) => !row.error && /Compila manualmente/.test(row.message)), 'AI voice stays honest with a toast');
+  assert.ok(!calls.some((call) => call.path === '/api/spine/memberships' && call.method === 'POST'), 'AI voice invents no invite');
+  const reopen = mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  await reopen.listeners.click[0]();
+  await flush();
+  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  await manual.listeners.click[0]();
+  await flush();
+  const subject = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare');
+  assert.ok(subject, 'manual opens the existing inline spine form');
+});
+
+test('the invite toggle closes the inline form and aria-expanded tracks menu or form', async () => {
+  // Review findings on #428 (P2 regression + P2 aria-expanded): reopening the
+  // toggle with the manual form open must close the form, and aria-expanded
+  // must stay true while either the menu or the form is open.
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const { mount, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  const toggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const formOpen = () => mount.findAll('div').some((node) => {
+    const cls = (node.getAttribute('class') ?? '').split(/\s+/);
+    return cls.includes('bo-spazi-invite') && cls.includes('open');
+  });
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'collapsed when menu and form are closed');
+  await toggle().listeners.click[0]();
+  await flush();
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'expanded while the menu is open');
+  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  await manual.listeners.click[0]();
+  await flush();
+  assert.ok(formOpen(), 'manual opens the inline form and closes the menu');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'expanded while the form is open with the menu closed');
+  await toggle().listeners.click[0]();
+  await flush();
+  assert.ok(!formOpen(), 'the toggle closes the inline form again');
+  assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'collapsed once menu and form are both closed');
+});

@@ -276,6 +276,12 @@ export function createSpaziAccessiView(deps) {
   const state = {
     /** The invite form opens in place from the team card head. */
     inviteOpen: false,
+    /** The invite menu (C21) opens above the inline form. */
+    inviteMenuOpen: false,
+    /** The new-space menu (C20) opens from the dashed box (C11). */
+    newSpaceMenuOpen: false,
+    /** @type {string|null} honest note when space creation is picked */
+    newSpaceNote: null,
     /** @type {string|null} my membership role, or null when unknown */
     myRole: null,
     /** @type {Array<string>|null} roles the server advertises, or null */
@@ -380,6 +386,9 @@ export function createSpaziAccessiView(deps) {
     state.confirmRemove = null;
     state.confirmFlip = null;
     state.refusal = null;
+    state.inviteMenuOpen = false;
+    state.newSpaceMenuOpen = false;
+    state.newSpaceNote = null;
     if (space === '') return;
     try {
       const context = await client.request('/api/spine/context');
@@ -417,7 +426,9 @@ export function createSpaziAccessiView(deps) {
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
-    const memberCount = Array.isArray(state.members) ? state.members.length : null;
+    // The statistic counts what the team list shows: rendered rows only, so a
+    // malformed membership never leaks into the card number.
+    const memberCount = Array.isArray(state.members) ? buildTeamRows(state.members).length : null;
     const ids = readSpaces()
       .filter((entry) => entry !== null && typeof entry === 'object'
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
@@ -477,7 +488,13 @@ export function createSpaziAccessiView(deps) {
       cell.appendChild(head);
       const stat = state.stats.get(card.id) ?? null;
       if (stat !== null) {
-        cell.appendChild(el(doc, 'div', { text: stat, cls: 'bo-spazi-stat bo-muted' }));
+        // Visible text keeps the prototype pattern (C7); the title qualifies
+        // the org-wide numbers so no card reads as per-space customers.
+        cell.appendChild(el(doc, 'div', {
+          text: stat,
+          cls: 'bo-spazi-stat bo-muted',
+          attrs: { title: 'canali di questo spazio; persone e clienti dell\u2019intera organizzazione' },
+        }));
       }
       if (card.active) {
         cell.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
@@ -493,6 +510,64 @@ export function createSpaziAccessiView(deps) {
       }
       grid.appendChild(cell);
     }
+    // C11: the dashed box stays last; its menu carries the verbatim C20
+    // voices. Creation itself lives in the control plane (no capability
+    // here), so picking a voice never invents a space.
+    const adder = el(doc, 'div', { cls: 'bo-spazi-card' });
+    const adderToggle = el(doc, 'button', {
+      text: '+ Nuovo spazio di lavoro',
+      cls: 'bo-spazi-quiet',
+      attrs: {
+        type: 'button',
+        'aria-haspopup': 'true',
+        'aria-expanded': state.newSpaceMenuOpen ? 'true' : 'false',
+      },
+    });
+    adderToggle.disabled = state.busy;
+    adderToggle.addEventListener('click', () => {
+      state.newSpaceMenuOpen = !state.newSpaceMenuOpen;
+      state.newSpaceNote = null;
+      render();
+    });
+    adder.appendChild(adderToggle);
+    if (state.newSpaceMenuOpen) {
+      const menu = el(doc, 'div', { attrs: { role: 'menu', 'aria-label': 'Nuovo spazio di lavoro' } });
+      const aiVoice = el(doc, 'button', {
+        text: 'Crea con l\u2019AI',
+        cls: 'bo-spazi-quiet',
+        attrs: { type: 'button', role: 'menuitem' },
+      });
+      aiVoice.addEventListener('click', () => {
+        state.newSpaceMenuOpen = false;
+        state.newSpaceNote = null;
+        say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
+        render();
+      });
+      const aiHint = el(doc, 'div', {
+        text: 'Descrivi l\u2019attivit\u00E0, propongo canali e team',
+        cls: 'bo-muted',
+      });
+      const manualVoice = el(doc, 'button', {
+        text: 'Compila manualmente',
+        cls: 'bo-spazi-quiet',
+        attrs: { type: 'button', role: 'menuitem' },
+      });
+      manualVoice.addEventListener('click', () => {
+        state.newSpaceMenuOpen = false;
+        state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
+        render();
+      });
+      const manualHint = el(doc, 'div', { text: 'Nome e settore', cls: 'bo-muted' });
+      menu.appendChild(aiVoice);
+      menu.appendChild(aiHint);
+      menu.appendChild(manualVoice);
+      menu.appendChild(manualHint);
+      adder.appendChild(menu);
+    }
+    if (state.newSpaceNote !== null) {
+      adder.appendChild(el(doc, 'p', { text: state.newSpaceNote, cls: 'bo-muted' }));
+    }
+    grid.appendChild(adder);
     box.appendChild(grid);
   }
 
@@ -502,10 +577,55 @@ export function createSpaziAccessiView(deps) {
     // which opens the invite form in place.
     const teamHead = el(doc, 'div', { cls: 'bo-spazi-teamhead' });
     teamHead.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
-    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-expanded': state.inviteOpen ? 'true' : 'false' } });
-    inviteToggle.addEventListener('click', () => { state.inviteOpen = !state.inviteOpen; render(); });
+    // C21: «Invita persona» opens a two-voice menu with verbatim subtitles.
+    // Manual entry opens the existing inline spine form below; the AI voice
+    // stays honest (no invention) until a capability exists.
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
+    inviteToggle.addEventListener('click', () => {
+      if (state.inviteMenuOpen) {
+        state.inviteMenuOpen = false;
+      } else if (state.inviteOpen) {
+        state.inviteOpen = false;
+      } else {
+        state.inviteMenuOpen = true;
+      }
+      render();
+    });
     teamHead.appendChild(inviteToggle);
     section.appendChild(teamHead);
+    if (state.inviteMenuOpen) {
+      const inviteMenu = el(doc, 'div', { attrs: { role: 'menu', 'aria-label': 'Invita persona' } });
+      const inviteAi = el(doc, 'button', {
+        text: 'Crea con l\u2019AI',
+        cls: 'bo-spazi-quiet',
+        attrs: { type: 'button', role: 'menuitem' },
+      });
+      inviteAi.addEventListener('click', () => {
+        state.inviteMenuOpen = false;
+        say('Gli inviti con l\u2019AI non sono ancora disponibili: usa Compila manualmente.');
+        render();
+      });
+      const inviteAiHint = el(doc, 'div', {
+        text: 'Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB',
+        cls: 'bo-muted',
+      });
+      const inviteManual = el(doc, 'button', {
+        text: 'Compila manualmente',
+        cls: 'bo-spazi-quiet',
+        attrs: { type: 'button', role: 'menuitem' },
+      });
+      inviteManual.addEventListener('click', () => {
+        state.inviteMenuOpen = false;
+        state.inviteOpen = true;
+        render();
+      });
+      const inviteManualHint = el(doc, 'div', { text: 'Email e ruolo', cls: 'bo-muted' });
+      inviteMenu.appendChild(inviteAi);
+      inviteMenu.appendChild(inviteAiHint);
+      inviteMenu.appendChild(inviteManual);
+      inviteMenu.appendChild(inviteManualHint);
+      section.appendChild(inviteMenu);
+    }
     section.appendChild(el(doc, 'p', {
       text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
       cls: 'bo-muted',
