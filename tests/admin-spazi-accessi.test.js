@@ -19,8 +19,11 @@ import {
   SPAZI_AI_SWITCHES,
   buildSpaziCards,
   buildTeamRows,
+  countSpaceChannels,
+  countSpaceCustomers,
   createSpaziAccessiView,
   effectiveSwitches,
+  formatSpaceStat,
   memberInitials,
   spaceRoleLabel,
 } from '../apps/admin/public/admin-spazi-accessi.js';
@@ -37,7 +40,7 @@ const flush = async (rounds = 12) => {
 
 const SPACE = 'spazio-1';
 
-function stubClient({ context = null, members = [], overrides = [], calls = null, fail = {} } = {}) {
+function stubClient({ context = null, members = [], overrides = [], calls = null, fail = {}, connectorsBySpace = null, customersBySpace = null } = {}) {
   return {
     async request(path, options = {}) {
       const rawBody = options?.body ?? null;
@@ -74,6 +77,22 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
         if (found) found.enabled = body.enabled === 'on';
         else overrides.push({ spaceId: body.spaceId, permission: body.permission, enabled: body.enabled === 'on' });
         return { spaceId: body.spaceId, permission: body.permission, enabled: body.enabled === 'on' };
+      }
+      if (path.startsWith('/api/connectors')) {
+        if (fail.connectors) throw fail.connectors;
+        const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? SPACE;
+        const connectors = connectorsBySpace !== null && Object.hasOwn(connectorsBySpace, spaceId)
+          ? connectorsBySpace[spaceId]
+          : [];
+        return { spaceId, connectors };
+      }
+      if (path.startsWith('/api/customer-data/customers')) {
+        if (fail.customers) throw fail.customers;
+        const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? SPACE;
+        const shaped = customersBySpace !== null && Object.hasOwn(customersBySpace, spaceId)
+          ? customersBySpace[spaceId]
+          : { total: 0, totalIsExact: true };
+        return { items: [], page: 1, pageSize: 10, pages: 0, ...shaped };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -467,4 +486,101 @@ test('the spazi screen renders no raw control', async () => {
   };
   walk(mount);
   assert.deepEqual(raw, [], 'every spazi control carries a ui-* system class');
+});
+
+test('formatSpaceStat speaks the prototype pattern with real counts, null when unknown', () => {
+  // specs/account.md C7: `<n> canali · <m> persone · <k> clienti`, with
+  // Italian singulars; any unknown count omits the row instead of inventing.
+  assert.equal(formatSpaceStat({ channels: 2, members: 2, customers: 3 }), '2 canali · 2 persone · 3 clienti');
+  assert.equal(formatSpaceStat({ channels: 1, members: 1, customers: 1 }), '1 canale · 1 persona · 1 cliente');
+  assert.equal(formatSpaceStat({ channels: 0, members: 0, customers: 0 }), '0 canali · 0 persone · 0 clienti');
+  assert.equal(formatSpaceStat({ channels: null, members: 2, customers: 3 }), null);
+  assert.equal(formatSpaceStat({ channels: 2, members: null, customers: 3 }), null);
+  assert.equal(formatSpaceStat({ channels: 2, members: 2, customers: null }), null);
+  assert.equal(formatSpaceStat({ channels: Number.NaN, members: 2, customers: 3 }), null);
+  assert.equal(formatSpaceStat({ channels: -1, members: 2, customers: 3 }), null);
+});
+
+test('countSpaceChannels counts active connections, countSpaceCustomers needs an exact total', () => {
+  assert.equal(countSpaceChannels({ connectors: [
+    { connectionKey: 'a', status: 'active' },
+    { connectionKey: 'b', status: 'suspended' },
+    { connectionKey: 'c', status: 'active' },
+  ] }), 2);
+  assert.equal(countSpaceChannels({ connectors: [] }), 0);
+  assert.equal(countSpaceChannels({}), null);
+  assert.equal(countSpaceChannels(null), null);
+  assert.equal(countSpaceCustomers({ total: 3, totalIsExact: true }), 3);
+  assert.equal(countSpaceCustomers({ total: 3, totalIsExact: false }), null);
+  assert.equal(countSpaceCustomers({ items: [] }), null);
+  assert.equal(countSpaceCustomers(null), null);
+});
+
+test('space cards show the real statistic from the composed reads (BO-F6-17 slice 3)', async () => {
+  const members = [
+    { subject: 'owner-1', role: 'owner', status: 'active' },
+    { subject: 'marco', role: 'operator', status: 'active' },
+  ];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'wa', status: 'active' },
+          { connectionKey: 'ig', status: 'active' },
+        ],
+      },
+      customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+    }),
+  });
+  await v.render();
+  await flush();
+  assert.match(text(mount), /2 canali · 2 persone · 3 clienti/);
+});
+
+test('an unreadable count omits the statistic, never an invented row', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const notFound = Object.assign(new Error('not found'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({ client: stubClient({ members, fail: { connectors: notFound } }) });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.doesNotMatch(rendered, /canali ·/);
+  assert.doesNotMatch(rendered, /NOT_FOUND/);
+  assert.match(rendered, /Stai lavorando qui/, 'the card still names the role without its statistic');
+});
+
+test('a failed statistic read logs its cause with the space before omitting the row', async () => {
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const down = Object.assign(new Error('down'), { code: 'CHANNELS_DOWN', status: 500 });
+    const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+    const { mount, view: v } = view({ client: stubClient({ members, fail: { connectors: down } }) });
+    await v.render();
+    await flush();
+    assert.doesNotMatch(text(mount), /canali ·/, 'no invented row');
+    assert.doesNotMatch(text(mount), /CHANNELS_DOWN/, 'no technical code on the page');
+    const entry = logged.find((args) => String(args[0]).includes('[bo] lettura fallita'));
+    assert.ok(entry, 'the failed read leaves a diagnostic');
+    assert.equal(entry[1]?.code, 'CHANNELS_DOWN', 'the log keeps the error code');
+    assert.equal(entry[1]?.spaceId, SPACE, 'the log names the space');
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test('an inexact customer total omits the statistic instead of a floor', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      customersBySpace: { [SPACE]: { total: 3, totalIsExact: false } },
+    }),
+  });
+  await v.render();
+  await flush();
+  assert.doesNotMatch(text(mount), /canali ·/);
 });
