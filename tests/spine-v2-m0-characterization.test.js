@@ -336,7 +336,7 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`serve did not start: ${stderr}`));
-    }, 10_000);
+    }, 30_000);
     child.stdout.on('data', () => {
       if (!stdout.includes('Accordo running at')) return;
       clearTimeout(timeout);

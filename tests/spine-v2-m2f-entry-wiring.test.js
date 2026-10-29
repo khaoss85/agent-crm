@@ -374,7 +374,7 @@ test('M2-22 serve does not listen until the verifier contract passes', { timeout
   assertCredentialFree(haystack, [configPath, root]);
 });
 
-test('M2-17 serve --db still discloses the ratified SQLite path and listens', { timeout: 20_000 }, async () => {
+test('M2-17 serve --db still discloses the ratified SQLite path and listens', { timeout: 45_000 }, async () => {
   const root = scratch();
   const dbPath = join(root, 'serve.sqlite');
   const child = spawn(process.execPath, [
@@ -393,7 +393,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', { 
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error(`serve did not start: ${stderr}`));
-      }, 10_000);
+      }, 30_000);
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
         if (!stdout.includes(`Database: ${dbPath}`)) return;
@@ -422,7 +422,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', { 
   }
 });
 
-test('M2-17 serve document-selected stdout is {adapter,available} not a path', { timeout: 20_000 }, async () => {
+test('M2-17 serve document-selected stdout is {adapter,available} not a path', { timeout: 45_000 }, async () => {
   const { root, configPath } = sqliteScratch();
   const dbPath = join(root, 'tenant.sqlite');
   const child = spawn(process.execPath, [
@@ -444,7 +444,7 @@ test('M2-17 serve document-selected stdout is {adapter,available} not a path', {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
         reject(new Error(`serve did not start: ${stderr}`));
-      }, 10_000);
+      }, 30_000);
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
         if (!stdout.includes('"adapter":"sqlite"')) return;

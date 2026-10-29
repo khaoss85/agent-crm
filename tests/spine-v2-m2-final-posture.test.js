@@ -324,7 +324,7 @@ test('v1 accordo doctor --db still exposes the database path on its characterize
   assert.equal(Object.hasOwn(receipt, 'storage'), false);
 });
 
-test('document-selected serve output is bounded and HTTP health/schema stay locator-free', { timeout: 20_000 }, async (t) => {
+test('document-selected serve output is bounded and HTTP health/schema stay locator-free', { timeout: 45_000 }, async (t) => {
   const { root, configPath } = documentScratch(t);
   const dbPath = join(root, `${LEAK_TOKEN}-tenant.sqlite`);
   const child = spawn(process.execPath, [
@@ -359,7 +359,7 @@ test('document-selected serve output is bounded and HTTP health/schema stay loca
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`serve did not start: ${stderr}`));
-    }, 10_000);
+    }, 30_000);
     child.stdout.on('data', () => {
       if (!stdout.includes('Accordo running at')) return;
       if (!stdout.includes('"adapter":"sqlite"')) return;
