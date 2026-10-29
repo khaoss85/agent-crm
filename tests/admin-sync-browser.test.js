@@ -1,9 +1,10 @@
 // @ts-check
 /**
- * Backoffice BO-F1-03 — Stato sync in a real browser (backlog:63af493dea0a).
+ * Backoffice BO-F6-16 — Stato sync in a real browser (backlog:08f42565,
+ * eredita BO-F1-03 backlog:63af493dea0a).
  *
  * The headless Chromium shell loads a harness page that renders the real
- * `admin-sync.js` view (desktop 1280px and phone 390px, ok and attention
+ * `admin-sync.js` view (desktop 1440px and phone 390px, ok and attention
  * states), captures a PNG per combination and dumps the DOM. The test then
  * proves the content is on screen, the phone width has no page-level sideways
  * scroll, and every PNG is a real render rather than a blank page.
@@ -282,7 +283,7 @@ test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, tim
   try {
     const port = server.address().port;
     for (const state of ['ok', 'fix']) {
-      for (const width of [1280, 390]) {
+      for (const width of [1440, 390]) {
         const url = `http://127.0.0.1:${port}/__harness.html?state=${state}`;
         const png = join(shots, `stato-sync-${state}-${width}.png`);
         await t.test(`screenshot ${state} at ${width}px`, async () => {
@@ -307,6 +308,8 @@ test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, tim
           assert.ok(html.includes('data-sync-ready="yes"'), 'the view finished rendering');
           assert.ok(html.includes('Stato sync'), 'the screen title is on screen');
           assert.ok(html.includes('bo-sync-table'), 'the channel table is on screen');
+          assert.ok(html.includes('In tempo reale'), 'the live feed card is on screen');
+          assert.ok(html.includes('entra'), 'the feed legend is on screen');
           if (state === 'ok') {
             assert.ok(html.includes('Tutto sincronizzato'), 'the ok indicator is on screen');
             assert.ok(html.includes('Niente da sistemare'), 'the empty fix list is on screen');
@@ -315,13 +318,13 @@ test('Stato sync renders in a real browser with PNG evidence', { skip: SKIP, tim
             assert.ok(html.includes('Riattiva da Connettori'), 'the broken channel says what to do');
             assert.ok(html.includes('Sincronizza ora'), 'the pull button is on screen');
           }
-          if (width === 390) {
-            assert.ok(html.includes('data-overflow="ok"'), 'no page-level sideways scroll under 700px');
-          }
+          // Spec C23 (1440 affiancato) e C24 (390 una colonna): in nessun caso
+          // la pagina sborda a livello di documento.
+          assert.ok(html.includes('data-overflow="ok"'), `no page-level sideways scroll at ${width}px`);
         });
       }
     }
-    writeFileSync(join(shots, 'README.txt'), `Stato sync browser evidence (backlog:63af493dea0a), ${new Date().toISOString()}\n`);
+    writeFileSync(join(shots, 'README.txt'), `Stato sync browser evidence (backlog:08f42565), ${new Date().toISOString()}\n`);
     console.log(`Stato sync PNGs: ${shots}`);
   } finally {
     server.close();
