@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatMinorUnits, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 import { settingsTabs } from './admin-shell.js';
 
@@ -99,7 +99,9 @@ export function createCatalogView(deps) {
     : (hash) => { if (globalThis.location) globalThis.location.hash = hash; };
   const SOURCE_LABELS = { manual: 'Manuale' };
   const sourceLabel = (source) => SOURCE_LABELS[source] ?? (String(source ?? '').toLowerCase().includes('stripe') ? 'Stripe' : String(source ?? '—'));
-  const money = (cents, currency) => (typeof cents === 'number' ? formatMinorUnits(cents, currency) : '—');
+  const INTERVAL_LABELS = { day: 'giorno', week: 'settimana', month: 'mese', year: 'anno' };
+  const PRICING_MODEL_LABELS = { tiered: 'a scaglioni', volume: 'a volume', package: 'a pacchetto' };
+  const money = (cents, currency) => (typeof cents === 'number' ? formatAmount(cents, currency) : '—');
 
   /** Quantity-tier labels ("etichette sconto quantità"): bounded ranges read as text. */
   function tierLabel(tier, currency) {
@@ -112,8 +114,11 @@ export function createCatalogView(deps) {
     const base = component.pricingModel === 'flat_fee'
       ? money(component.flatAmountCents, currency)
       : money(component.unitAmountCents, currency);
-    const per = component.pricingModel === 'per_unit' || component.pricingModel === 'flat_fee' ? '' : ` (${component.pricingModel})`;
-    const every = component.interval ? ` / ${component.interval}` : '';
+    // Stripe's interval and pricing model are machine words: the screen says them in Italian, and an unknown one is left out rather than shown raw.
+    const model = PRICING_MODEL_LABELS[component.pricingModel];
+    const per = model ? ` (${model})` : '';
+    const interval = INTERVAL_LABELS[component.interval];
+    const every = interval ? ` / ${interval}` : '';
     const schedule = Array.isArray(component.tiers) && component.tiers.length > 0
       ? ` — ${component.tiers.map((tier) => tierLabel(tier, currency)).join(' · ')}`
       : '';

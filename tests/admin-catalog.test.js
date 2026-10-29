@@ -182,7 +182,7 @@ test('the table renders products with amounts, and the Stripe invite when no sou
   assert.ok(text.includes('Catalogo prodotti'), 'the screen names itself');
   assert.ok(text.includes('Pacchetto 10 lezioni'), 'the product renders');
   assert.ok(text.includes('Manuale'), 'the source renders as a pill');
-  assert.ok(text.includes('EUR 99.00'), 'the server amount renders');
+  assert.ok(text.includes('99 €'), 'the server amount renders');
   assert.ok(text.includes('Stripe non è collegato'), 'the connect-Stripe invite renders when no source is connected');
   assert.ok(!text.includes('sola lettura'), 'manual rows carry no read-only note');
 });
@@ -197,9 +197,9 @@ test('provider rows render read-only with tier labels and no invite once Stripe 
   const text = mount.textContent;
   assert.ok(!text.includes('Stripe non è collegato'), 'no invite once a Stripe source is connected');
   assert.ok(text.includes('sola lettura'), 'provider rows say prices are read-only');
-  assert.ok(text.includes('EUR 49.00 / month'), 'the recurring amount renders with its interval');
-  assert.ok(text.includes('fino a 10: EUR 12.00'), 'quantity tier labels render');
-  assert.ok(text.includes('oltre: EUR 10.00'), 'the open-ended tier renders');
+  assert.ok(text.includes('49 € / mese'), 'the recurring amount renders with its interval');
+  assert.ok(text.includes('fino a 10: 12 €'), 'quantity tier labels render');
+  assert.ok(text.includes('oltre: 10 €'), 'the open-ended tier renders');
   assert.equal(mount.findAll('input').length, 2, 'the only fields are the filters — prices are text, never inputs');
   assert.equal(mount.findAll('select').length, 1, 'the active filter is a bounded select');
 });
@@ -296,7 +296,7 @@ test('manual rows edit prices through review and confirmation, provider rows nev
   assert.equal(amount.value, '99.00', 'the field starts from the server amount');
   amount.value = '120,50';
   clickButton(mount, 'Rivedi');
-  assert.ok(mount.textContent.includes('EUR 99.00 → EUR 120.50'), 'the review shows old then new');
+  assert.ok(mount.textContent.includes('99 € → 120,50 €'), 'the review shows old then new');
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'review sends nothing');
   clickButton(mount, 'Conferma');
   await flush();

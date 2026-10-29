@@ -1436,3 +1436,20 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }
 .pipeline-toolbar select.ui-field, .pipeline-toolbar input[type="date"].ui-field { border-color: var(--line-soft); background: var(--surface); color: var(--ink); font-weight: 600; }
 .pipeline-forecast .forecast-total { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 4px 0 0; }
+
+/* Calendario, passaggio 4: nel prototipo il Team è l'elenco delle persone;
+   il campo per sceglierle scende sotto l'elenco e diventa secondario. */
+.cal-team { display: flex; flex-direction: column; }
+.cal-team > .cal-filter { order: 2; flex-direction: row; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line-faint); }
+.cal-team > .cal-filter input { flex: 1 1 140px; width: auto; height: 32px; padding: 0 10px; font-size: 12.5px; }
+.cal-team > .cal-filter .ui-btn { width: auto; height: 32px; padding: 0 10px; background: var(--surface); color: var(--ink); border: 1px solid var(--line-soft); font-size: 12.5px; font-weight: 600; }
+.cal-week .cal-day-head span { text-transform: capitalize; }
+.cal-booking > p:not(.empty) { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.cal-booking > p.empty { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--surface-soft); font-size: 12.5px; }
+.cal-slots > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cal-slots .ui-btn { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+/* Clienti, passaggio 4: «Aggiungi cliente» è il bottone verde del prototipo. */
+.bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary { display: inline-flex; align-items: center; gap: 8px; height: 42px; padding: 0 14px 0 16px; border: none; border-radius: 12px; background: var(--accent); color: var(--paper); font-size: 14px; font-weight: 700; white-space: nowrap; }
+.bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary::after { content: "⌄"; font-size: 14px; line-height: 1; transform: translateY(-3px); }
+.bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary:hover { background: var(--accent-strong, var(--accent)); }
