@@ -72,7 +72,7 @@ function nonEmptyText(value) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian label for a sequence state; unknown states say so, never blank.
@@ -731,13 +731,11 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       }
     });
     wrap.appendChild(button);
-    const menu = el(documentNode, 'div', state.menuOpen ? 'bo-seq-menu' : 'bo-seq-menu hidden');
+    const menu = el(documentNode, 'div', state.menuOpen ? 'bo-seq-menu ui-add-menu' : 'bo-seq-menu ui-add-menu hidden');
     menu.setAttribute('role', 'menu');
     const addItem = (action, label, hint, pick) => {
-      const item = el(documentNode, 'button', 'bo-seq-item', label);
-      item.setAttribute('data-action', action);
-      item.setAttribute('role', 'menuitem');
-      item.appendChild(el(documentNode, 'span', 'bo-muted', hint));
+      const item = uiAddOption(documentNode, { kind: action === 'new-ai' ? 'ai' : 'manual', title: label, line: hint,
+        attrs: { 'data-action': action } });
       item.addEventListener('click', () => {
         state.menuOpen = false;
         state.menuHint = pick;

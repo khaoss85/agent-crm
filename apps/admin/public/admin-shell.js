@@ -1,7 +1,7 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
-import { el, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -552,21 +552,9 @@ export function createShellView({
     const addWrap = el(doc, 'div', 'bo-add');
     const addButton = el(doc, 'button', 'bo-add-button', '+ Nuovo modulo');
     addButton.setAttribute('aria-haspopup', 'true');
-    const addMenu = el(doc, 'div', 'bo-add-menu hidden');
-    // Prototype: a tile, a title and one line under it, per option.
-    function addOption(tileClass, tile, title, line) {
-      const option = el(doc, 'button', 'bo-add-option');
-      const box = el(doc, 'span', `bo-add-tile ${tileClass}`, typeof tile === 'string' ? tile : undefined);
-      if (typeof tile !== 'string') box.appendChild(tile);
-      option.appendChild(box);
-      const words = el(doc, 'span', 'bo-add-words');
-      words.appendChild(el(doc, 'span', 'bo-add-title', title));
-      words.appendChild(el(doc, 'span', 'bo-add-line', line));
-      option.appendChild(words);
-      return option;
-    }
-    const aiOption = addOption('bo-add-tile-ai', '✦', 'Crea con l\u2019AI',
-      'Descrivi il modulo, il tuo agente di coding lo genera come bundle separato');
+    const addMenu = el(doc, 'div', 'bo-add-menu ui-add-menu hidden');
+    const aiOption = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI',
+      line: 'Descrivi il modulo, il tuo agente di coding lo genera come bundle separato' });
     aiOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       if (typeof onAiSubmit === 'function') {
@@ -576,8 +564,8 @@ export function createShellView({
         notify('Descrivi il modulo nella barra AI e premi Invio.');
       }
     });
-    const manualOption = addOption('bo-add-tile-manual', uiIcon(doc, 'matita'), 'Compila manualmente',
-      'Nome, dati usati e chi può vederlo');
+    const manualOption = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente',
+      line: 'Nome, dati usati e chi può vederlo' });
     manualOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
       navigate('#/nuovo-modulo');

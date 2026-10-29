@@ -152,7 +152,7 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiBadge, uiButton, uiChannelChip, uiIcon, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * The open toolbar menu, if any (Aggiungi, Stato, Ordina per). One menu per
@@ -706,7 +706,7 @@ export function createPersonalizzazioneView(deps) {
       attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false' },
     });
     toggle.disabled = state.busy;
-    const menu = el(doc, 'div', { cls: 'ui-conn-addmenu hidden', attrs: { role: 'menu' } });
+    const menu = el(doc, 'div', { cls: 'ui-conn-addmenu ui-add-menu hidden', attrs: { role: 'menu' } });
     /** @type {{ wrap: any, close: () => void }} */
     const handle = { wrap, close: () => {} };
     const close = () => {
@@ -733,10 +733,14 @@ export function createPersonalizzazioneView(deps) {
     const voices = [
       {
         label: 'Crea con l\u2019AI',
+        line: 'Descrivi cosa vuoi automatizzare',
+        kind: 'ai',
         run: () => say('La creazione con l\u2019AI non \u00e8 ancora disponibile: usa Configura manualmente.'),
       },
       {
         label: 'Configura manualmente',
+        line: 'Webhook, API o connettore personalizzato',
+        kind: 'manual',
         run: () => {
           // Same 403 guard as the card and its +: without permission the
           // page answers in Italian instead of leaving for a flow that can
@@ -750,11 +754,7 @@ export function createPersonalizzazioneView(deps) {
       },
     ];
     for (const voice of voices) {
-      const item = el(doc, 'button', {
-        text: voice.label,
-        cls: 'ui-conn-addvoice',
-        attrs: { type: 'button', role: 'menuitem' },
-      });
+      const item = uiAddOption(doc, { kind: voice.kind, title: voice.label, line: voice.line });
       item.addEventListener('click', () => {
         close();
         voice.run();

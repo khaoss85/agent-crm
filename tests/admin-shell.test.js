@@ -366,8 +366,8 @@ test('"+ Nuovo modulo" is the only entry: two prototype options, the manual one 
   // Design pass 6: no "Nuovo modulo" voice under Moduli personalizzati.
   const voices = sidebar.findAll('a').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-item'));
   assert.ok(!voices.some((node) => node.getAttribute('href') === '#/nuovo-modulo'), 'no sidebar voice links #/nuovo-modulo');
-  const options = sidebar.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-add-option'));
-  assert.deepEqual(options.map((node) => node.findAll('span').find((span) => span.getAttribute('class') === 'bo-add-title').textContent),
+  const options = sidebar.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-add-option'));
+  assert.deepEqual(options.map((node) => node.findAll('span').find((span) => span.getAttribute('class') === 'ui-add-title').textContent),
     ['Crea con l’AI', 'Compila manualmente']);
   assert.ok(options[1].textContent.includes('Nome, dati usati e chi può vederlo'), 'the manual option says what it asks');
   options[1].dispatch('click', {});

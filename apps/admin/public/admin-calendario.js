@@ -22,7 +22,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { spaceRoleLabel } from './admin-spazi-accessi.js';
-import { uiButton, uiChannelChip } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -577,7 +577,7 @@ export function createCalendarioView(deps) {
       label: 'Nuovo appuntamento ▾',
       attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false' },
     });
-    const menu = el(doc, 'div', { className: 'bo-clienti-menu hidden stack' });
+    const menu = el(doc, 'div', { className: 'bo-clienti-menu ui-add-menu hidden' });
     menu.setAttribute('role', 'menu');
     /** @type {{ wrap: any, close: () => void }} */
     const handle = { wrap, close: () => {} };
@@ -622,9 +622,8 @@ export function createCalendarioView(deps) {
       },
     ];
     for (const voice of voices) {
-      const item = el(doc, 'button', { className: 'secondary', attrs: { type: 'button', role: 'menuitem' } });
-      item.appendChild(el(doc, 'span', { text: voice.title }));
-      item.appendChild(el(doc, 'span', { className: 'ui-hint', text: voice.sub }));
+      const item = uiAddOption(doc, { kind: voice.title === 'Compila manualmente' ? 'manual' : 'ai',
+        title: voice.title, line: voice.sub });
       item.addEventListener('click', () => {
         close();
         const target = voice.focus();
