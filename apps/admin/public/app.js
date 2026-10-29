@@ -418,6 +418,7 @@ import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
+import { CLIENTI_IMPORT_ROUTE, createCustomerListView } from './admin-clienti.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
@@ -520,14 +521,13 @@ const customerCardView = createCustomerCardView({
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
 });
 
-// Customer Data Foundation (ADR-037): import, duplicate candidates, the data
-// quality queue and the read-only profile. Renders only while the server
-// publishes the customer-data package.
-const customerDataView = createCustomerDataView({
+// Clienti list (BO-F1-05, backlog:80b25fb0): the table alone, no import tool.
+// Manual entry navigates to the governed import screen below — the list
+// itself never writes.
+const clientiListView = createCustomerListView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
-  submissions,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
   // BO-F1-05: the space the calls read stays space-explicit, and the AI
@@ -538,7 +538,22 @@ const customerDataView = createCustomerDataView({
     if (assistantPanel) void assistantPanel.open('clienti');
     else toast('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
   },
+  onManualAdd: () => { window.location.hash = CLIENTI_IMPORT_ROUTE; },
   storage: shellStorage,
+});
+
+// Customer Data import and governance tool (ADR-037, backlog:80b25fb0):
+// the JSON import, duplicate candidates and the data quality queue. It lives
+// on its own screen (#/import-clienti), reached from the list's
+// "Aggiungi cliente → Compila manualmente" entry. Renders only while the
+// server publishes the customer-data package; the read-only profile below
+// renders on the scheda route.
+const customerDataView = createCustomerDataView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
 });
 
 // Connectors (BO-F1-02).
@@ -779,6 +794,7 @@ function shellScreenFor(target) {
     case 'customer-data':
     case 'customer-profile':
     case 'customer-card': return { id: 'clienti', label: 'Clienti' };
+    case 'customer-import': return { id: 'clienti', label: 'Importazione clienti' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
@@ -1018,7 +1034,7 @@ async function route() {
       (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
-      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card') && link.getAttribute('href') === '#/customer-data')
+      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card' || target.view === 'customer-import') && link.getAttribute('href') === '#/customer-data')
       || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);
@@ -1044,7 +1060,8 @@ async function route() {
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
     else if (target.view === 'spine') await spineView.render();
-    else if (target.view === 'customer-data') await customerDataView.render();
+    else if (target.view === 'customer-data') await clientiListView.render();
+    else if (target.view === 'customer-import') await customerDataView.render();
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
     else if (target.view === 'sync') await syncView.render();

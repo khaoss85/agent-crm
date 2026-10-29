@@ -22,6 +22,13 @@ import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library
 
 import { humanReadError } from './admin-core.js';
 
+/**
+ * Where the governed JSON import lives since the Clienti screen stopped
+ * embedding it (backlog:80b25fb0): the list never writes, so manual entry
+ * navigates there instead of focusing a form below the table.
+ */
+export const CLIENTI_IMPORT_ROUTE = '#/import-clienti';
+
 const CHANNEL_LABELS = Object.freeze({
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
@@ -29,6 +36,7 @@ const CHANNEL_LABELS = Object.freeze({
   tiktok: 'TikTok',
   email: 'Email',
   phone: 'Telefono',
+  'website-form': 'Form sito',
 });
 
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
@@ -102,7 +110,6 @@ export function pageNumbers(pages, page) {
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
-  void navigate;
   const { client } = deps;
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
@@ -310,7 +317,7 @@ export function createCustomerListView(deps) {
         if (typeof deps.onManualAdd === 'function') {
           deps.onManualAdd();
         } else {
-          notify('Aggiungi il cliente dal form Import qui sotto: una riga con nome, recapiti e canale di provenienza.');
+          navigate(CLIENTI_IMPORT_ROUTE);
         }
       });
     }, 'Aggiungi cliente', 'bo-clienti-menubutton ui-btn-primary'));

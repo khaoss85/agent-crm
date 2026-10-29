@@ -124,6 +124,18 @@ test('parseModuleRoute routes Stato sync to its own screen', () => {
   }
 });
 
+test('parseModuleRoute routes the customer import tool to its own screen', () => {
+  // backlog:80b25fb0: the JSON import left the Clienti table for #/import-clienti.
+  assert.deepEqual(parseModuleRoute('#/import-clienti'), { view: 'customer-import' });
+  assert.deepEqual(parseModuleRoute('#/import-clienti/'), { view: 'customer-import' });
+  for (const hash of [
+    '#/import-clienti/extra',
+    '#/import-clienti//',
+  ]) {
+    assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
+  }
+});
+
 test('parseModuleRoute routes the customer scheda to its three-column view', () => {
   assert.deepEqual(parseModuleRoute('#/customer-card/contact/c1'), { view: 'customer-card', resource: 'contact', subjectId: 'c1' });
   for (const hash of [
