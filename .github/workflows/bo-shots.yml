@@ -57,15 +57,3 @@ jobs:
           path: ${{ runner.temp }}/bo-shots/
           if-no-files-found: warn
           retention-days: 3
-      # TEMPORARY commit-back (account artifact quota full, same as #414):
-      # stores the catalogo pair straight on the branch. Reverted before
-      # the PR; the final diff carries no workflow change.
-      - name: Store the catalogo pair on the branch (temporary, quota full)
-        run: |
-          cp "${{ runner.temp }}/bo-shots/catalogo-1440x1800.png" tests/fixtures/bo-shots-proof/catalogo-1440x1800.png
-          cp "${{ runner.temp }}/bo-shots/catalogo-390x1600.png" tests/fixtures/bo-shots-proof/catalogo-390x1600.png
-          git config user.name "accordo-minimal"
-          git config user.email "accordo-minimal@local"
-          git add tests/fixtures/bo-shots-proof/catalogo-1440x1800.png tests/fixtures/bo-shots-proof/catalogo-390x1600.png
-          git commit -m "chore(shots): catalogo pair from CI render (temporary commit-back)" || exit 0
-          git push origin "HEAD:${{ github.ref_name }}"

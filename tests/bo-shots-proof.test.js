@@ -92,6 +92,39 @@ function sha256Hex(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
+// The catalogo proof pair (BO-F6-15, backlog:11f49cab2517) carries the same
+// freshness gate as login: the committed PNGs must differ from the #413-era
+// blobs (rendered for the #406 restyle, before the #426 spec-exact lede) AND
+// come from the current catalog view sources, so a view restyle without a
+// fresh `npm run bo:shots -- --screen catalogo` render fails here first.
+const STALE_CATALOGO_BLOBS = Object.freeze({
+  'catalogo-1440x1800.png': 'f4cad2199d044aa14c275fc573dbcd6e6a96cfaf2ec3b3a3ec821447a83bf501',
+  'catalogo-390x1600.png': '1a79a8e3a6465a7f3faf3d82f6bb01b2ef18e2b991aa505606b47c4f041c8365',
+});
+
+const CATALOGO_SOURCES = Object.freeze({
+  'apps/admin/public/admin-catalog.js': '1b1ebca802e3233cfc4f376b7924a63a3d03a68a4fdf3c3386aa9e2d7636fe8c',
+});
+
+test('the catalogo proof pair is a render of the current tree, never the pre-#426 pair', () => {
+  for (const [file, stale] of Object.entries(STALE_CATALOGO_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale pre-#426 render: re-run \`npm run bo:shots -- --screen catalogo\`, copy the pair here and record the new source fingerprints`,
+    );
+  }
+  const current = {};
+  for (const relative of Object.keys(CATALOGO_SOURCES)) {
+    current[relative] = sha256Hex(join(repoRoot, relative));
+  }
+  assert.deepEqual(
+    current,
+    { ...CATALOGO_SOURCES },
+    'a catalogo source moved without a fresh render: re-run `npm run bo:shots -- --screen catalogo`, copy the pair here and record the new fingerprints deliberately',
+  );
+});
+
 test('the login proof pair is a render of the current tree, never the stale pre-#408 pair', () => {
   for (const [file, stale] of Object.entries(STALE_LOGIN_BLOBS)) {
     assert.notEqual(
