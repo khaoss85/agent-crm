@@ -34,8 +34,11 @@
 # independent phases start together and the gate takes about its longest
 # phase (~145 s) instead of their sum (~506 s, run 40909551725). Each phase
 # writes its own log; the logs print in the order above once all are done,
-# and every failing phase is named. On the shared Mac the phases stay
-# sequential, behind the one lock, as described above.
+# and every failing phase is named, the exit code being the first failing
+# phase's. The phases are independent: PostgreSQL fixtures mint a random
+# schema each, scratch goes to mktemp, and check.js skips the site build the
+# gtm phase rewrites. On the shared Mac the phases stay sequential, behind
+# the one lock, as described above.
 set -euo pipefail
 
 : "${BASE_REF:?ci-fast.sh needs BASE_REF (the PR base branch short name)}"
@@ -111,14 +114,20 @@ run_phase 'checked-in plan pins still bind' bash -c 'node --no-warnings --test -
 
 if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
   failed=()
+  first_code=0
   for i in "${!pids[@]}"; do
-    wait "${pids[$i]}" || failed+=("${phases[$i]}")
+    code=0
+    wait "${pids[$i]}" || code=$?
+    if [ "$code" != 0 ]; then
+      failed+=("${phases[$i]}")
+      [ "$first_code" != 0 ] || first_code=$code
+    fi
   done
   for i in "${!phases[@]}"; do cat "$logs_dir/$i.log"; done
   rm -rf "$logs_dir"
   if [ "${#failed[@]}" -gt 0 ]; then
-    echo "ci-fast: ${#failed[@]} of ${#phases[@]} phases failed in parallel after $((SECONDS - started))s: ${failed[*]}"
-    exit 1
+    echo "::error::ci-fast: ${#failed[@]} of ${#phases[@]} phases failed in parallel after $((SECONDS - started))s: ${failed[*]}"
+    exit "$first_code"
   fi
 fi
 
