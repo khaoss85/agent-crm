@@ -54,6 +54,7 @@ const EXPECTED_SCREENS = [
   'personalizzazione',
   'catalogo',
   'stato-sync',
+  'profilo',
   'spazi-accessi',
   'connettori',
   'componenti',
@@ -146,6 +147,7 @@ test('every screen photographs with its shell identity from the /bo router', () 
     catalogo: { id: '', label: 'Catalogo prodotti' },
     'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
     'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+    profilo: { id: '', label: 'Profilo' },
     connettori: { id: 'impostazioni', label: 'Connettori' },
     componenti: { id: '', label: 'Componenti' },
   });

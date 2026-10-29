@@ -29,16 +29,19 @@
 # stops the gate with a `::error::` annotation, the way a red Actions step
 # used to stop the job: later phases never run after a failure.
 #
-# CI_FAST_PARALLEL=1 (set by ci.yml on the Linux runner only, 2026-10-29):
-# that runner has 12 cores and the Accordo lane to itself, so the eight
-# independent phases start together and the gate takes about its longest
-# phase (~145 s) instead of their sum (~506 s, run 40909551725). Each phase
-# writes its own log; the logs print in the order above once all are done,
+# CI_FAST_PARALLEL=N (set by ci.yml on the Linux runner only, 2026-10-29):
+# that runner has 12 cores, so up to N independent lanes run at once and the
+# gate takes about its longest phase (~145 s) instead of their sum (~506 s,
+# run 40909551725). N is 4, not all seven: two Accordo runners plus the
+# core's suite on one server pushed the load to 33 on 12 cores, and a test
+# that waits for a process missed its window (#447, #448). Each lane writes
+# its own log; the logs print in the order above once all are done,
 # and every failing phase is named, the exit code being the first failing
 # phase's. The lanes are independent: PostgreSQL fixtures mint a random
 # schema each, scratch goes to mktemp, check.js skips the site build, and the
-# two phases that rebuild site/dist (touched tests, gtm) share one lane. On the shared Mac the phases stay sequential, behind
-# the one lock, as described above.
+# two phases that rebuild site/dist (touched tests, gtm) share one lane. On
+# the shared Mac the phases stay sequential, behind the one lock, as
+# described above.
 set -euo pipefail
 
 : "${BASE_REF:?ci-fast.sh needs BASE_REF (the PR base branch short name)}"
@@ -51,31 +54,41 @@ started=$SECONDS
 
 phases=()
 logs_dir=''
-pids=()
+
+# CI_FAST_PARALLEL=N (N >= 2): at most N lanes at once; empty or 1: in order.
+parallel_cap() {
+  case "${CI_FAST_PARALLEL:-}" in
+    ''|*[!0-9]*) echo 1 ;;
+    *) echo "$CI_FAST_PARALLEL" ;;
+  esac
+}
+
+# Parallel mode: start one lane (one log, one exit code, one name in the
+# failure list) once fewer than the cap are running.
+launch() {
+  local name="$1"
+  shift
+  [ -n "$logs_dir" ] || logs_dir=$(mktemp -d)
+  while [ "$(jobs -rp | wc -l)" -ge "$(parallel_cap)" ]; do wait -n 2>/dev/null || sleep 1; done
+  local i=${#phases[@]}
+  phases+=("$name")
+  ( code=0; "$@" > "$logs_dir/$i.log" 2>&1 || code=$?; echo "$code" > "$logs_dir/$i.code" ) &
+}
 
 run_phase() {
-  if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
-    [ -n "$logs_dir" ] || logs_dir=$(mktemp -d)
-    local log="$logs_dir/${#phases[@]}.log"
-    phases+=("$1")
-    run_phase_now "$@" > "$log" 2>&1 &
-    pids+=($!)
+  if [ "$(parallel_cap)" -gt 1 ]; then
+    launch "$1" run_phase_now "$@"
     return 0
   fi
   run_phase_now "$@"
 }
 
-# Parallel mode: one function as one lane (one log, one name in the failure
-# list); sequential mode: just the function.
+# One function as one lane in parallel mode; sequential mode: just the function.
 run_lane() {
   local name="$1"
   shift
-  if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
-    [ -n "$logs_dir" ] || logs_dir=$(mktemp -d)
-    local log="$logs_dir/${#phases[@]}.log"
-    phases+=("$name")
-    "$@" > "$log" 2>&1 &
-    pids+=($!)
+  if [ "$(parallel_cap)" -gt 1 ]; then
+    launch "$name" "$@"
     return 0
   fi
   "$@"
@@ -135,12 +148,12 @@ run_phase 'verifier fixture still reaches exit 0' node --no-warnings --test --te
 # fingerprint, and update the paired evidence pins.
 run_phase 'checked-in plan pins still bind' bash -c 'node --no-warnings --test --test-name-pattern="the shipped example is current against this repository, and check says so" tests/solution-plan.test.js && node --no-warnings --test --test-name-pattern="the shipped Service solution plan validates, and checks against a composed project" tests/service-operations-integration.test.js && node --no-warnings --test --test-name-pattern="the shipped M14b2 solution plan validates, and checks against a composed project" tests/delivery-change-acceptance-integration.test.js && node --no-warnings --test --test-name-pattern="every source artifact the checked-in documents cite is present with exactly that hash" tests/solution-verify.test.js'
 
-if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
+if [ "$(parallel_cap)" -gt 1 ]; then
+  wait
   failed=()
   first_code=0
-  for i in "${!pids[@]}"; do
-    code=0
-    wait "${pids[$i]}" || code=$?
+  for i in "${!phases[@]}"; do
+    code=$(cat "$logs_dir/$i.code" 2>/dev/null || echo 1)
     if [ "$code" != 0 ]; then
       failed+=("${phases[$i]}")
       [ "$first_code" != 0 ] || first_code=$code

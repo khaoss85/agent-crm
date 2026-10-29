@@ -242,7 +242,7 @@ export function effectiveSwitches(spaceId, overrideRows = []) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Spazi e accessi screen. Injecting `doc`,
@@ -531,37 +531,22 @@ export function createSpaziAccessiView(deps) {
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
-      const menu = el(doc, 'div', { attrs: { role: 'menu', 'aria-label': 'Nuovo spazio di lavoro' } });
-      const aiVoice = el(doc, 'button', {
-        text: 'Crea con l\u2019AI',
-        cls: 'bo-spazi-quiet',
-        attrs: { type: 'button', role: 'menuitem' },
-      });
+      const menu = el(doc, 'div', { cls: 'ui-add-menu', attrs: { role: 'menu', 'aria-label': 'Nuovo spazio di lavoro' } });
+      const aiVoice = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Descrivi l\u2019attivit\u00E0, propongo canali e team' });
       aiVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = null;
         say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
         render();
       });
-      const aiHint = el(doc, 'div', {
-        text: 'Descrivi l\u2019attivit\u00E0, propongo canali e team',
-        cls: 'bo-muted',
-      });
-      const manualVoice = el(doc, 'button', {
-        text: 'Compila manualmente',
-        cls: 'bo-spazi-quiet',
-        attrs: { type: 'button', role: 'menuitem' },
-      });
+      const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
         render();
       });
-      const manualHint = el(doc, 'div', { text: 'Nome e settore', cls: 'bo-muted' });
       menu.appendChild(aiVoice);
-      menu.appendChild(aiHint);
       menu.appendChild(manualVoice);
-      menu.appendChild(manualHint);
       adder.appendChild(menu);
     }
     if (state.newSpaceNote !== null) {
@@ -594,36 +579,21 @@ export function createSpaziAccessiView(deps) {
     teamHead.appendChild(inviteToggle);
     section.appendChild(teamHead);
     if (state.inviteMenuOpen) {
-      const inviteMenu = el(doc, 'div', { attrs: { role: 'menu', 'aria-label': 'Invita persona' } });
-      const inviteAi = el(doc, 'button', {
-        text: 'Crea con l\u2019AI',
-        cls: 'bo-spazi-quiet',
-        attrs: { type: 'button', role: 'menuitem' },
-      });
+      const inviteMenu = el(doc, 'div', { cls: 'ui-add-menu bo-spazi-invite-menu', attrs: { role: 'menu', 'aria-label': 'Invita persona' } });
+      const inviteAi = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB' });
       inviteAi.addEventListener('click', () => {
         state.inviteMenuOpen = false;
         say('Gli inviti con l\u2019AI non sono ancora disponibili: usa Compila manualmente.');
         render();
       });
-      const inviteAiHint = el(doc, 'div', {
-        text: 'Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB',
-        cls: 'bo-muted',
-      });
-      const inviteManual = el(doc, 'button', {
-        text: 'Compila manualmente',
-        cls: 'bo-spazi-quiet',
-        attrs: { type: 'button', role: 'menuitem' },
-      });
+      const inviteManual = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Email e ruolo' });
       inviteManual.addEventListener('click', () => {
         state.inviteMenuOpen = false;
         state.inviteOpen = true;
         render();
       });
-      const inviteManualHint = el(doc, 'div', { text: 'Email e ruolo', cls: 'bo-muted' });
       inviteMenu.appendChild(inviteAi);
-      inviteMenu.appendChild(inviteAiHint);
       inviteMenu.appendChild(inviteManual);
-      inviteMenu.appendChild(inviteManualHint);
       section.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {

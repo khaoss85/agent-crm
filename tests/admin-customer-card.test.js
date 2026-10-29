@@ -273,15 +273,31 @@ test('BO-F6-09 fetta 2a: a hostile name stays text in the H1 and the avatar', as
   assert.ok(!String(avatar.textContent).includes('<'), 'the initials carry no markup');
 });
 
-test('BO-F6-09 fetta C3 (backlog:f84626a0): the header shows città · provenienza · la segue referente', async () => {
+test('BO-F6-09 fetta C3 (backlog:f84626a0): the header shows only the segments a record holds', async () => {
   const mount = await renderCard(stubClient());
   const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
   assert.ok(sub, 'the meta line exists under the H1 next to the stato pill');
-  assert.equal(sub.textContent, 'Da raccogliere · WhatsApp · la segue Da raccogliere',
-    'the origin reads its Italian label, the missing city and referente read Da raccogliere');
+  assert.equal(sub.textContent, 'via WhatsApp',
+    'the origin reads as the prototype (via <canale>); the missing city and referente are left out');
+  assert.ok(!sub.textContent.includes('Da raccogliere'), 'no placeholder in the header');
 });
 
-test('BO-F6-09 fetta C3: an unknown origin channel reads Da raccogliere, never the raw key', async () => {
+test('BO-F6-09 fetta C3: with city, origin and referente the line reads as the prototype', async () => {
+  const mount = await renderCard(stubClient({
+    card: {
+      ...CARD,
+      headline: {
+        city: { available: true, value: 'Milano', reason: null },
+        origin: { available: true, system: 'instagram', firstObservedAt: '2026-10-19T10:00:00.000Z', reason: null },
+        assignee: { available: true, value: 'Marco', reason: null },
+      },
+    },
+  }));
+  const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
+  assert.equal(sub.textContent, 'Milano · via Instagram · la segue Marco');
+});
+
+test('BO-F6-09 fetta C3: an unknown origin channel is left out, never the raw key', async () => {
   const mount = await renderCard(stubClient({
     card: {
       ...CARD,
@@ -295,10 +311,10 @@ test('BO-F6-09 fetta C3: an unknown origin channel reads Da raccogliere, never t
   const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
   assert.ok(sub, 'the meta line exists');
   assert.ok(!sub.textContent.includes('pigeon-post'), 'no raw channel key on screen');
-  assert.equal(sub.textContent, 'Da raccogliere · Da raccogliere · la segue Da raccogliere');
+  assert.equal(sub.textContent, 'Palestra Esempio', 'nothing known: the line keeps the company');
 });
 
-test('BO-F6-09 fetta C3: a prototype-named origin reads Da raccogliere, never Object source', async () => {
+test('BO-F6-09 fetta C3: a prototype-named origin is left out, never Object source', async () => {
   for (const system of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
     const mount = await renderCard(stubClient({
       card: {
@@ -312,8 +328,8 @@ test('BO-F6-09 fetta C3: a prototype-named origin reads Da raccogliere, never Ob
     }));
     const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
     assert.ok(sub, `the meta line exists for system ${system}`);
-    assert.equal(sub.textContent, 'Da raccogliere · Da raccogliere · la segue Da raccogliere',
-      `a prototype-named origin (${system}) falls back, never Object.prototype`);
+    assert.equal(sub.textContent, 'Palestra Esempio',
+      `a prototype-named origin (${system}) falls back to the company, never Object.prototype`);
     assert.ok(!sub.textContent.includes('function'), 'no function source on screen');
   }
 });

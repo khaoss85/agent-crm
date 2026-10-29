@@ -297,8 +297,7 @@ export function createCustomerCardView(deps) {
     // nothing names a referente), so the header shows the company instead —
     // never an invented meta. Fetta C3 (backlog:f84626a0) renders it now:
     // the origin is the earliest-observed identity the card reports; city
-    // and referente have no record yet, so those segments read
-    // `Da raccogliere` — never an invented meta.
+    // and referente have no record yet, so those segments are left out.
     void resource;
     void id;
     const back = el('button', 'bo-scheda-back', '← Clienti');
@@ -314,21 +313,26 @@ export function createCustomerCardView(deps) {
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
     const meta = el('div', 'bo-scheda-meta');
     meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
-    // C3: `<città> · <provenienza> · la segue <referente>`. Only a system
-    // the prototype names reads as its Italian label; an unknown or hostile
-    // key reads `Da raccogliere` like every other segment without a record.
-    // Every segment is text, so a hostile value stays inert.
+    // C3, as the prototype reads it: `<città> · via <canale> · la segue
+    // <referente>`. Only what a record holds is shown: a missing segment is
+    // left out, never written as `Da raccogliere` three times in a row
+    // (that amber word belongs to the profile fields below). With no segment
+    // at all the line keeps the company, as before C3. Only a system the
+    // prototype names reads as its Italian label; every segment is text.
     const headline = card?.headline ?? null;
     const city = headline?.city?.available === true
       && typeof headline.city.value === 'string' && headline.city.value !== ''
-      ? headline.city.value : 'Da raccogliere';
+      ? headline.city.value : null;
     const originSystem = headline?.origin?.available === true
       ? String(headline.origin.system ?? '').toLowerCase() : '';
-    const origin = ownLabel(CHANNEL_LABELS, originSystem) ?? 'Da raccogliere';
+    const origin = ownLabel(CHANNEL_LABELS, originSystem) ?? null;
     const follow = headline?.assignee?.available === true
       && typeof headline.assignee.value === 'string' && headline.assignee.value !== ''
-      ? headline.assignee.value : 'Da raccogliere';
-    meta.appendChild(el('span', 'bo-scheda-sub', `${city} · ${origin} · la segue ${follow}`));
+      ? headline.assignee.value : null;
+    const segments = [city, origin === null ? null : `via ${origin}`, follow === null ? null : `la segue ${follow}`]
+      .filter((segment) => segment !== null);
+    if (segments.length > 0) meta.appendChild(el('span', 'bo-scheda-sub', segments.join(' · ')));
+    else if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
     titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);

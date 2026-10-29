@@ -66,6 +66,7 @@ export const SCREEN_NAMES = Object.freeze([
   'personalizzazione',
   'catalogo',
   'stato-sync',
+  'profilo',
   'spazi-accessi',
   'connettori',
   'componenti',
@@ -552,6 +553,7 @@ export const SCREENS = Object.freeze([
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
+  { name: 'profilo', module: 'admin-profilo.js', ready: 'profilo-ready', expect: ['I tuoi collegamenti', 'Google Calendar'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
   { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Cosa succede quando colleghi:', 'Collega in 3 passi'] },
   { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
@@ -579,6 +581,7 @@ export const SHELL_SCREENS = Object.freeze({
   catalogo: { id: '', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
+  profilo: { id: '', label: 'Profilo' },
   // The connectors screen (BO-F6-02): the same sidebar voice and path the
   // app crumbs for it, exactly like shellScreenFor in app.js.
   connettori: { id: 'impostazioni', label: 'Connettori' },
@@ -929,6 +932,23 @@ document.getElementById('probe').textContent = JSON.stringify({
   devClosed: document.querySelector('details.bo-modulo-dev') ? !document.querySelector('details.bo-modulo-dev').open : false,
 });
 document.title = 'nuovo-modulo-ready';`;
+    case 'profilo': return `
+import { createProfiloView } from './admin-profilo.js';
+const client = { async request() { return {
+  member: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+  connections: { available: true, reason: null, items: [
+    { connector: 'calendar', status: 'connected', account: 'elena@studioaurora.it' },
+    { connector: 'gmail', status: 'disconnected', account: null },
+  ] },
+}; } };
+const view = createProfiloView({ doc: document, mount: document.getElementById('view-module'), client,
+  member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }) });
+await view.render();
+document.getElementById('probe').textContent = JSON.stringify({
+  rows: document.querySelectorAll('.bo-profilo-conn').length,
+  collega: document.querySelectorAll('.bo-profilo-collega').length,
+});
+document.title = 'profilo-ready';`;
     case 'personalizzazione': return `
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 const UNITS = ${JSON.stringify(DEMO_UNITS)};
@@ -1389,6 +1409,11 @@ export function assertProbe(name, probe) {
       if (probe.questions !== 4) throw new Error(`nuovo-modulo: the probe holds ${String(probe.questions)} questions, expected 4`);
       if (probe.cta !== true) throw new Error('nuovo-modulo: the probe shows no Genera il modulo');
       if (probe.devClosed !== true) throw new Error('nuovo-modulo: the developer steps are not closed');
+      return;
+    }
+    case 'profilo': {
+      if (probe.rows !== 2) throw new Error(`profilo: the probe holds ${String(probe.rows)} connections, expected 2`);
+      if (probe.collega !== 1) throw new Error('profilo: the probe shows no Collega on the disconnected connector');
       return;
     }
     case 'personalizzazione': {

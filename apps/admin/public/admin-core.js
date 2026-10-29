@@ -426,6 +426,12 @@ export function parseModuleRoute(hash) {
   // Spazi e accessi route: #/spazi-accessi (BO-F0-06). One screen — spaces,
   // team, AI switches — reached from Impostazioni; any deeper path is
   // invalid, not a lookup, like every route above.
+  // Profilo route: #/profilo (design pass 8). One screen — the person and
+  // their Google connections — so any deeper path is invalid.
+  if (rawParts.length && rawParts[0] === 'profilo') {
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'profilo' };
+  }
   if (rawParts.length && rawParts[0] === 'spazi-accessi') {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'spazi-accessi' };

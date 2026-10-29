@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 // BO-F1-05 — Elenco Clienti: viste rapide, ricerca, filtri raggruppati con
 // "Crea un filtro con l'AI", × sui filtri, ordinamento, colonne configurabili
@@ -296,10 +296,10 @@ export function createCustomerListView(deps) {
     // the plan-then-confirm surface below), manual entry is the host contact
     // module factory — the list owns no record creation of its own.
     headRow.appendChild(menuBox('Aggiungi cliente', (menu, closeMenu) => {
+      menu.classList.add('ui-add-menu');
       const addItem = (action, label, hint, onPick) => {
-        const item = el('button', 'bo-clienti-item', label);
-        item.setAttribute('data-action', action);
-        item.appendChild(el('span', 'bo-muted', hint));
+        const item = uiAddOption(doc, { kind: action === 'add-ai' ? 'ai' : 'manual', title: label, line: hint,
+          attrs: { 'data-action': action } });
         item.addEventListener('click', () => {
           closeMenu();
           onPick();
