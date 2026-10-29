@@ -81,7 +81,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
+          # No cache: npm on the self-hosted runners: ~/.npm stays on disk between
+          # runs, and restoring the 160 MB Actions cache cost ~70 s per job.
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -124,6 +125,9 @@ jobs:
       - name: PR gate under one machine lock (check, touched, smoke, recipe, gtm, truth)
         env:
           BASE_REF: ${{ github.base_ref }}
+          # The Linux runner has the Accordo lane to itself: phases in parallel
+          # there (scripts/ci-fast.sh); sequential on the shared Mac.
+          CI_FAST_PARALLEL: ${{ runner.os == 'Linux' && '1' || '' }}
         run: HEAVY_JOB_MAX_SEC=540 scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh
 
   # Full history here, not the default fetch-depth: 1. The measure itself needs
@@ -175,7 +179,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
       # Second half of "at most once per window, and only when the head
       # changed": when the committed ledger or the runner-local record of the
       # last successful measurement already names this head, every step below
@@ -358,7 +361,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
       - run: npm ci
       - run: npm run gtm:check
       # The Repository Truth Contract (ADR-039) agreement gate belongs in this
