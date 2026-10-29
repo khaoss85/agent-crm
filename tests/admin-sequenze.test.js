@@ -497,9 +497,8 @@ test('the opening click does not close the menu via the document handler', async
 });
 
 test('Escape at document level closes the menu when focus left the opener', async () => {
-  // Opening the menu repaints the whole view, so the focused opener is gone
-  // and focus falls back to the document body: Escape arrives at the document,
-  // never at the button or the menu listeners.
+  // Opening the menu moves focus to its first entry; the document-level
+  // Escape stays as the fallback for focus that left the view entirely.
   const docHandlers = [];
   const doc = {
     ...createFakeDocument(),
@@ -521,6 +520,30 @@ test('Escape at document level closes the menu when focus left the opener', asyn
   }
   await flush();
   assert.ok(menus()[0].classList.contains('hidden'), 'a document-level Escape closes the menu');
+  assert.equal(opener().__focused, true, 'a document-level Escape returns focus to the opener');
+});
+
+test('the menu keeps keyboard focus across its repaints', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  const firstEntry = () => mount.querySelector('button[data-action="new-ai"]');
+  const menu = () => mount.querySelector('.bo-seq-menu');
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  assert.equal(firstEntry().__focused, true, 'opening the menu moves focus to its first entry');
+  menu().dispatch('keydown', { key: 'Escape' });
+  await flush();
+  assert.ok(menu().classList.contains('hidden'), 'Escape closes the menu');
+  assert.equal(opener().__focused, true, 'Escape in the menu returns focus to the opener');
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  firstEntry().dispatch('click', {});
+  await flush();
+  assert.equal(opener().__focused, true, 'picking an entry returns focus to the opener');
 });
 
 test('picking a menu entry closes the menu and names the next step in Italian', async () => {

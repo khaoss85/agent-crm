@@ -667,6 +667,17 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     }
     return false;
   };
+  // Toggling the menu repaints the whole view, so the node that had keyboard
+  // focus is gone after paint(): opening moves focus to the first menu entry,
+  // closing returns it to the opener, and Tab continues from there. Only an
+  // outside pointer click leaves focus where the user put it.
+  function refocusMenu(intoMenu) {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const target = mount.querySelector(
+      intoMenu ? 'button[data-action="new-ai"]' : 'button[data-menu="nuova-sequenza"]',
+    );
+    if (target && typeof target.focus === 'function') target.focus();
+  }
   if (documentNode && typeof documentNode.addEventListener === 'function') {
     documentNode.addEventListener('click', (event) => {
       if (state.menuOpen && !isInsideMenuWrap(event?.target ?? null)) {
@@ -674,14 +685,14 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         paint();
       }
     });
-    // Opening the menu repaints the whole view, so the opener that had
-    // keyboard focus is gone and focus falls back to the document body: the
-    // Escape listeners on the button and the menu can no longer be reached.
-    // This document-level listener closes the menu even then.
+    // Fallback for focus that left the view (screen reader, devtools): the
+    // button and menu listeners above stay reachable because refocusMenu
+    // keeps focus on the opener or the first entry across repaints.
     documentNode.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' && state.menuOpen) {
         state.menuOpen = false;
         paint();
+        refocusMenu(false);
       }
     });
   }
@@ -710,11 +721,13 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       state.menuOpen = !state.menuOpen;
       state.menuHint = '';
       paint();
+      refocusMenu(state.menuOpen);
     });
     button.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' && state.menuOpen) {
         state.menuOpen = false;
         paint();
+        refocusMenu(false);
       }
     });
     wrap.appendChild(button);
@@ -729,6 +742,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         state.menuOpen = false;
         state.menuHint = pick;
         paint();
+        refocusMenu(false);
       });
       menu.appendChild(item);
     };
@@ -737,6 +751,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         state.menuOpen = false;
         state.menuHint = '';
         paint();
+        refocusMenu(false);
       }
     });
     menu.addEventListener('click', (event) => {

@@ -84,6 +84,13 @@ class FakeNode {
     for (const handler of this.listeners[type] ?? []) handler(event);
   }
 
+  // Keyboard-focus stand-in: production view code may call .focus() after a
+  // repaint replaced the focused node. The flag lets a test assert where
+  // focus landed; there is no focus ring, trap, or activeElement tracking.
+  focus() {
+    this.__focused = true;
+  }
+
   // Recursively collect descendants by tag name (test helper).
   findAll(tagName) {
     const wanted = tagName.toUpperCase();
