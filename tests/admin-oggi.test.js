@@ -300,6 +300,69 @@ test('advisor list is capped and says so', () => {
   assert.equal(capped, true);
 });
 
+test('advisor CTA speaks the channel verb, like the prototype', () => {
+  // CONFRONTO.md sezione Oggi (29/10): the primary button carries the
+  // channel verb — «Invia follow-up», «Rispondi», «Chiama», «Riscrivi»,
+  // «Invia promemoria» — never the generic «Completa» when the channel
+  // is known. The run behind the button is unchanged.
+  const verbs = {
+    email: 'Invia follow-up',
+    tiktok: 'Rispondi',
+    whatsapp: 'Rispondi',
+    sms: 'Rispondi',
+    phone: 'Chiama',
+    voice: 'Chiama',
+    instagram: 'Riscrivi',
+    stripe: 'Invia promemoria',
+  };
+  for (const [channel, verb] of Object.entries(verbs)) {
+    const [action] = buildAdvisorActions({
+      tasks: [{ ...TASK_OPEN, channel }],
+      appointments: [],
+      now: OGGI_NOW,
+    }).actions;
+    assert.equal(action.cta, verb, `${channel} says ${verb}`);
+    assert.equal(action.run, 'complete-task', 'the verb never changes the run');
+  }
+  const [generic] = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [], now: OGGI_NOW }).actions;
+  assert.equal(generic.cta, 'Completa', 'no channel keeps the generic verb');
+  assert.equal(generic.mono, 'GR', 'no channel keeps the client initials tile');
+  const [mailed] = buildAdvisorActions({
+    tasks: [{ ...TASK_OPEN, channel: 'email' }],
+    appointments: [],
+    now: OGGI_NOW,
+  }).actions;
+  assert.equal(mailed.mono, '@', 'a known channel paints its tile, not initials');
+});
+
+test('agenda titles paint as dark ink, never green links', () => {
+  // CONFRONTO.md sezione Oggi (29/10): the prototype's agenda title is
+  // dark text, not a green underlined link. The title stays clickable —
+  // only the hook changes, so the paint follows the prototype.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const agenda = buildTodayAgenda([APPT_TODAY], OGGI_NOW);
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    userName: 'Elena',
+    links: [],
+    navigate: (href) => seen.push(href),
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda, brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const title = mount.findAll('a').find((node) => node.textContent === 'Giulia Romano');
+  assert.ok(title, 'the agenda title renders');
+  assert.equal(title.getAttribute('class'), 'bo-oggi-title', 'dark ink hook, like the advisor titles');
+  title.dispatch('click', { preventDefault: () => {} });
+  assert.deepEqual(seen, ['#/customer-card/lead/lead-1'], 'the title still opens the scheda');
+});
+
 test('triage done and postpone are both reversible with undo', () => {
   let triage = {};
   triage = applyTriageDecision(triage, 'bo04:followup:task-1', 'done');

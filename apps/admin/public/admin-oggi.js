@@ -265,6 +265,29 @@ function channelTile(channel) {
   return OGGI_CHANNEL_TILES[String(channel ?? '').toLowerCase()] ?? null;
 }
 
+/**
+ * The prototype's primary-action verb per channel: the card does what the
+ * channel asks (reply, call, send), it never says the generic "Completa".
+ * Channels the prototype shows no card for keep the generic verb — the run
+ * behind the button is unchanged (the work-task `complete` action), only
+ * the word on it follows the prototype.
+ * @param {unknown} channel
+ */
+const OGGI_CHANNEL_CTA = Object.freeze({
+  email: 'Invia follow-up',
+  whatsapp: 'Rispondi',
+  sms: 'Rispondi',
+  tiktok: 'Rispondi',
+  phone: 'Chiama',
+  voice: 'Chiama',
+  instagram: 'Riscrivi',
+  stripe: 'Invia promemoria',
+});
+/** The prototype's CTA verb for the channel, or null when it has none. */
+function channelCta(channel) {
+  return OGGI_CHANNEL_CTA[String(channel ?? '').toLowerCase()] ?? null;
+}
+
 function badgeInitials(label) {
   const words = String(label ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   const marks = words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase());
@@ -286,7 +309,7 @@ function followupAction(task) {
     note: nonEmptyText(task?.note) ?? null,
     title,
     why,
-    cta: 'Completa',
+    cta: channelCta(task?.channel) ?? 'Completa',
     run: 'complete-task',
     href: `#/work/${segment(id)}`,
     record: Object.freeze({
@@ -1077,7 +1100,11 @@ export function renderOggi({
       item.appendChild(el(doc, 'span', 'bo-oggi-time', String(entry?.time ?? '')));
       const cell = el(doc, 'div');
       if (typeof entry?.href === 'string' && entry.href !== '') {
-        const anchor = el(doc, 'a', 'bo-setting-link', String(entry?.title ?? ''));
+        // The prototype's agenda title is dark ink, not a green underlined
+        // link: the same `bo-oggi-title` hook the advisor titles use (ink,
+        // underline on hover only). Navigation stays — a click still opens
+        // the scheda — only the paint follows the prototype. No new class.
+        const anchor = el(doc, 'a', 'bo-oggi-title', String(entry?.title ?? ''));
         anchor.setAttribute('href', entry.href);
         anchor.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
