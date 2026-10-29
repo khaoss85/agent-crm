@@ -550,6 +550,27 @@ test('an unreadable count omits the statistic, never an invented row', async () 
   assert.match(rendered, /Stai lavorando qui/, 'the card still names the role without its statistic');
 });
 
+test('a failed statistic read logs its cause with the space before omitting the row', async () => {
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const down = Object.assign(new Error('down'), { code: 'CHANNELS_DOWN', status: 500 });
+    const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+    const { mount, view: v } = view({ client: stubClient({ members, fail: { connectors: down } }) });
+    await v.render();
+    await flush();
+    assert.doesNotMatch(text(mount), /canali ·/, 'no invented row');
+    assert.doesNotMatch(text(mount), /CHANNELS_DOWN/, 'no technical code on the page');
+    const entry = logged.find((args) => String(args[0]).includes('[bo] lettura fallita'));
+    assert.ok(entry, 'the failed read leaves a diagnostic');
+    assert.equal(entry[1]?.code, 'CHANNELS_DOWN', 'the log keeps the error code');
+    assert.equal(entry[1]?.spaceId, SPACE, 'the log names the space');
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test('an inexact customer total omits the statistic instead of a floor', async () => {
   const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
   const { mount, view: v } = view({

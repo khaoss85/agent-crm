@@ -348,7 +348,22 @@ export function createSpaziAccessiView(deps) {
         members: memberCount,
         customers: countSpaceCustomers(customersAnswer),
       });
-    } catch {
+    } catch (error) {
+      // A missing row is not a page error, but a swallowed read nobody can
+      // diagnose is: log the safe fields (code/status plus the space id,
+      // never a message that could carry personal data), like AGENTS.md asks.
+      const record = error !== null && typeof error === 'object' ? error : {};
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] lettura fallita', {
+          code: typeof /** @type {{code?: unknown}} */ (record).code === 'string'
+            ? /** @type {{code?: unknown}} */ (record).code
+            : 'UNKNOWN',
+          status: typeof /** @type {{status?: unknown}} */ (record).status === 'number'
+            ? /** @type {{status?: unknown}} */ (record).status
+            : null,
+          spaceId,
+        });
+      }
       return null;
     }
   }
