@@ -119,6 +119,25 @@ test('person pills read In corso, Da approvare, Completata, Programmata', () => 
   assert.equal(personStatusLabel({ status: 'flying' }, { nowMs: now }), 'Stato sconosciuto');
 });
 
+test('a replied person stays Completata even with a leftover waiting-approval send', () => {
+  // stopIfReplied exits the enrollment while its send still waits: the stale
+  // send must not resurrect the person as Da approvare next to Uscita.
+  const now = Date.parse('2026-10-26T12:00:00.000Z');
+  assert.equal(personStatusLabel({ status: 'stopped-replied' }, { waitingApproval: true, nowMs: now }), 'Completata');
+  assert.equal(personStatusLabel({ status: 'completed' }, { waitingApproval: true, nowMs: now }), 'Completata');
+  const enrollments = [{ sourceKey: 'e-9', subjectLabel: 'Marco', status: 'stopped-replied', currentStep: 1, nextDueAt: null }];
+  const sends = [{ enrollmentSourceKey: 'e-9', sequenceSourceKey: 'seq-bentornato', status: 'waiting-approval' }];
+  const detail = buildSequenzaDettaglio({
+    sequence: SEQUENCE,
+    steps: STEPS,
+    enrollments,
+    sends,
+    nowMs: now,
+  });
+  assert.equal(detail.people[0].statusLabel, 'Completata');
+  assert.equal(detail.people[0].stepLabel, 'Uscita');
+});
+
 test('person progress reads Passo n di m, In attesa, Uscita', () => {
   assert.equal(personStepLabel({ status: 'active', currentStep: 0 }, 3), 'Passo 1 di 3');
   assert.equal(personStepLabel({ status: 'active', currentStep: 1 }, 3), 'Passo 2 di 3');
@@ -475,6 +494,33 @@ test('the opening click does not close the menu via the document handler', async
   for (const handler of docClicks) handler({ target: mount });
   await flush();
   assert.ok(menus()[0].classList.contains('hidden'), 'an outside click closes the menu');
+});
+
+test('Escape at document level closes the menu when focus left the opener', async () => {
+  // Opening the menu repaints the whole view, so the focused opener is gone
+  // and focus falls back to the document body: Escape arrives at the document,
+  // never at the button or the menu listeners.
+  const docHandlers = [];
+  const doc = {
+    ...createFakeDocument(),
+    addEventListener: (type, handler) => {
+      docHandlers.push({ type, handler });
+    },
+  };
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-seq-menu'));
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  assert.ok(!menus()[0].classList.contains('hidden'), 'click opens the menu');
+  for (const { type, handler } of docHandlers) {
+    if (type === 'keydown') handler({ key: 'Escape', target: mount });
+  }
+  await flush();
+  assert.ok(menus()[0].classList.contains('hidden'), 'a document-level Escape closes the menu');
 });
 
 test('picking a menu entry closes the menu and names the next step in Italian', async () => {

@@ -116,16 +116,19 @@ export function sequenceChannelLabel(channel) {
 
 /**
  * The prototype's person pill: `In corso` / `Da approvare` / `Completata` /
- * `Programmata`. A send waiting for a human on this enrollment wins over the
- * enrollment state; a held (paused) enrollment reads `Programmata`, never
- * `In corso`; an unknown state says so instead of borrowing a live pill.
+ * `Programmata`. A terminal enrollment (`completed`, `stopped-replied`) reads
+ * `Completata` even when a leftover send still waits for approval — the reply
+ * already exited the person, so the stale send must not resurrect them; a
+ * send waiting for a human on a live enrollment reads `Da approvare`; a held
+ * (paused) enrollment reads `Programmata`, never `In corso`; an unknown state
+ * says so instead of borrowing a live pill.
  * @param {any} enrollment
  * @param {{ waitingApproval?: boolean, nowMs?: number }} [options]
  */
 export function personStatusLabel(enrollment, { waitingApproval = false, nowMs = Date.now() } = {}) {
-  if (waitingApproval === true) return 'Da approvare';
   const status = enrollment?.status;
   if (status === 'completed' || status === 'stopped-replied') return 'Completata';
+  if (waitingApproval === true) return 'Da approvare';
   if (status === 'paused') return 'Programmata';
   if (status === 'active') {
     const raw = typeof enrollment?.nextDueAt === 'string' && enrollment.nextDueAt !== '' ? enrollment.nextDueAt : null;
@@ -667,6 +670,16 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   if (documentNode && typeof documentNode.addEventListener === 'function') {
     documentNode.addEventListener('click', (event) => {
       if (state.menuOpen && !isInsideMenuWrap(event?.target ?? null)) {
+        state.menuOpen = false;
+        paint();
+      }
+    });
+    // Opening the menu repaints the whole view, so the opener that had
+    // keyboard focus is gone and focus falls back to the document body: the
+    // Escape listeners on the button and the menu can no longer be reached.
+    // This document-level listener closes the menu even then.
+    documentNode.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' && state.menuOpen) {
         state.menuOpen = false;
         paint();
       }

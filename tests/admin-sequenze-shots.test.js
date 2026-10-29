@@ -136,7 +136,10 @@ document.querySelector('button[data-open]').click();
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-document.querySelector('button[data-action]').click();
+// Scoped to the dettaglio: the Nuova sequenza menu entries above it also
+// carry data-action, so an unscoped selector would pick the menu instead of
+// the write button.
+document.querySelector('.bo-seq-detail button[data-action]').click();
 await new Promise((r) => setTimeout(r, 100));
 const probe = {
   rows: document.querySelectorAll('.bo-seq-row').length,
