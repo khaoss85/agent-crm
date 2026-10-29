@@ -1139,9 +1139,12 @@ export function renderOggi({
       brief.appendChild(sources);
       if (cardSource) {
         // The prototype's violet CTA under the sources: a real button that
-        // navigates to the customer scheda, like the prototype. `el`
-        // normalizes it onto the ui-* system, so the raw-control test holds.
-        const open = el(doc, 'button', 'bo-oggi-cta', 'Apri la scheda');
+        // navigates to the customer scheda, like the prototype. The explicit
+        // `ui-btn` base (no `ui-btn-*` variant) keeps the `ui-*` contract
+        // the raw-control test enforces without letting the later
+        // `.ui-btn-secondary` rule override the violet `.bo-oggi-cta`
+        // background in styles.css (which this screen must not touch).
+        const open = el(doc, 'button', 'bo-oggi-cta ui-btn', 'Apri la scheda');
         open.setAttribute('type', 'button');
         open.addEventListener('click', () => {
           navigate(String(cardSource.href ?? ''));

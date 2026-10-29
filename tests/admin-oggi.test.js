@@ -632,6 +632,10 @@ test('brief CTA is a button opening the customer scheda', () => {
   const cta = mount.findAll('button').find((node) => node.textContent === 'Apri la scheda');
   assert.ok(cta, 'the brief ends with a real button, like the prototype');
   assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Apri la scheda').length, 0, 'no link CTA left');
+  const ctaClasses = String(cta.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  assert.ok(ctaClasses.includes('bo-oggi-cta'), 'the CTA keeps the violet prototype hook');
+  assert.ok(ctaClasses.some((cls) => cls === 'ui-btn' || cls.startsWith('ui-')), 'the CTA stays on the ui-* system');
+  assert.ok(!ctaClasses.includes('ui-btn-secondary'), 'no white secondary override on the violet CTA');
   cta.dispatch('click', {});
   assert.deepEqual(seen, ['#/customer-card/lead/lead-1'], 'the button navigates to the scheda');
 });
