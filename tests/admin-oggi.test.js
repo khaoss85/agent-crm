@@ -697,6 +697,26 @@ test('no technical resource-id label reaches the Oggi screen', () => {
   assert.ok(text.includes('il cliente'), 'an Italian fallback names the customer');
 });
 
+test('the greeting is the only h1 of the Oggi screen', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    userName: 'Elena',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const titles = mount.findAll('h1');
+  assert.equal(titles.length, 1, 'a single h1, like the prototype');
+  assert.ok(titles[0].textContent.includes('Buongiorno, Elena'), 'the h1 is the greeting');
+});
+
 test('the oggi screen renders no raw control', () => {
   // Acceptance: a button without a ui-* system class fails this screen.
   // Every control reaches the DOM through the shared `el` helper, which

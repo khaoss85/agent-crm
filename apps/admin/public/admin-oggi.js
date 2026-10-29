@@ -965,7 +965,9 @@ export function renderOggi({
   const hour = now instanceof Date ? now.getHours() : NaN;
 
   page.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
-  page.appendChild(el(doc, 'h2', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
+  // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
+  // scale is untouched — only the semantics change (C6).
+  page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
 
   if (home == null) {
     page.appendChild(el(
