@@ -1244,6 +1244,9 @@ select.bo-spazi-input { flex: none; }
 .catalog-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .catalog-filters input, .catalog-filters select { height: 36px; font-size: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 10px; width: auto; }
 .catalog-filters .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
+.catalog-search { flex: 1 1 180px; max-width: 300px; }
+.catalog-no-results { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 16px 20px; }
+.catalog-no-results p { margin: 0; font-size: 13px; color: var(--muted); }
 .catalog-list { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; overflow: hidden; }
 .catalog-thead, .catalog-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.6fr) 110px 70px; gap: 16px; align-items: center; padding: 12px 20px; }
 .catalog-thead { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
