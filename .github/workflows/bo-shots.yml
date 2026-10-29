@@ -57,3 +57,16 @@ jobs:
           path: ${{ runner.temp }}/bo-shots/
           if-no-files-found: warn
           retention-days: 3
+      # TEMPORARY evidence commit-back (BO-F6-14, backlog:195703d9fff1,
+      # reverted before merge): the account artifact quota is full, so the
+      # upload above is lost. Commit the fresh personalizzazione pair
+      # straight to the branch so the PR carries PNGs of its own tree.
+      - name: Commit the fresh personalizzazione pair to the branch
+        run: |
+          cp "${RUNNER_TEMP}/bo-shots/personalizzazione-1440x1800.png" tests/fixtures/bo-shots-proof/personalizzazione-1440x1800.png
+          cp "${RUNNER_TEMP}/bo-shots/personalizzazione-390x1600.png" tests/fixtures/bo-shots-proof/personalizzazione-390x1600.png
+          git config user.name "accordo-ci"
+          git config user.email "accordo-ci@users.noreply.github.com"
+          git add tests/fixtures/bo-shots-proof/personalizzazione-1440x1800.png tests/fixtures/bo-shots-proof/personalizzazione-390x1600.png
+          git commit -m "bo:shots personalizzazione pair rendered on the Mac runner" || echo "nothing to commit"
+          git push origin "HEAD:${{ github.ref_name }}"
