@@ -8,14 +8,17 @@
  * proves the content is on screen, the phone width has no page-level sideways
  * scroll, and every PNG is a real render rather than a blank page.
  *
- * The Chromium lookup mirrors scripts/site-shots.js (same candidate paths):
- * where no binary exists the tests skip with the reason instead of failing,
- * because shots are evidence, not a build gate.
+ * The Chromium lookup mirrors scripts/site-shots.js (same candidate paths),
+ * and the runnable probe mirrors scripts/bo-shots.js `chromiumRuns`
+ * (same probe as the `*-shots` tests): where no binary exists, or the
+ * binary cannot paint (sandboxed Mach bootstrap), the tests skip with the
+ * reason instead of failing, because shots are evidence, not a build gate.
+ * The Mac CI runner executes them for real.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
@@ -65,7 +68,32 @@ function findChromium() {
 }
 
 const BINARY = findChromium();
-const SKIP = BINARY ? false : 'no Chromium binary found (same lookup as scripts/site-shots.js)';
+
+/**
+ * A present binary is not a runnable one: sandboxed executors (and bare
+ * CI images) carry the Playwright cache while the OS refuses Chromium's
+ * Mach bootstrap, so every launch dies before painting. Probe once with a
+ * blank page: only an exit-0 HTML dump counts as runnable. Anywhere else
+ * the tests skip with their reason instead of faking a pass or failing the
+ * gate for the environment — the Mac CI runner that carries the cache runs
+ * them for real and writes the PNGs there (same probe as the *-shots
+ * tests, backlog:5acdfd87).
+ */
+function chromiumRuns(binary) {
+  if (!binary) return false;
+  try {
+    const probe = spawnSync(binary, ['--headless', '--disable-gpu', '--dump-dom', 'about:blank'], {
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    return probe.status === 0 && String(probe.stdout ?? '').includes('<html');
+  } catch {
+    return false;
+  }
+}
+
+const CHROMIUM_RUNS = chromiumRuns(BINARY);
+const SKIP = CHROMIUM_RUNS ? false : 'Chromium binary missing or unrunnable here (same probe as the *-shots tests); the Mac CI runner executes it for real';
 
 const inboxOf = (over = {}) => ({
   received: 14, applied: 12, quarantined: 0, ignored: 1, duplicate: 1, pending: 0,
