@@ -430,13 +430,12 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
       }),
     ]);
     const successes = [left, right].filter((item) => item.status === 200);
-    assert.ok(successes.length <= 1, `expected at most one commit, got ${successes.length}`);
-    assert.ok(
-      [left, right].every((item) => Number.isInteger(item.status) && (item.status === 200 || item.status >= 400)),
-      `expected each hop to settle, got ${left.status}/${right.status}`,
-    );
+    assert.equal(successes.length, 1, `expected exactly one commit, got ${successes.length} (left=${left.status}, right=${right.status})`);
+    const loser = left.status === 200 ? right : left;
+    assert.equal(loser.status, 409, `expected the loser to report 409, got ${loser.status}`);
     const current = await http(listening.url, `/api/opportunities/${opportunity.body.id}`);
-    assert.ok(['qualification', 'proposal', 'lost', 'approval_pending'].includes(current.body.stage));
+    const winnerTarget = left.status === 200 ? 'proposal' : 'lost';
+    assert.equal(current.body.stage, winnerTarget, `expected the final stage to be the winner's target ${winnerTarget}`);
     const traces = await http(listening.url, '/api/traces?workflowName=request-opportunity-stage-change');
     const completed = (traces.body.items ?? []).filter((item) => item.status === 'completed');
     assert.ok(completed.length <= 1);

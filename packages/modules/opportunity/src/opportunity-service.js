@@ -252,7 +252,11 @@ export class OpportunityService {
     // reports 409 instead of re-basing its intent onto the new stage.
     const from = context.expectedFromStage ?? opportunity.stage;
     if (from !== opportunity.stage) {
-      if (opportunity.stage === stage) return opportunity;
+      // Any pin mismatch loses, even when the current stage happens to equal
+      // the target: returning success there would report a commit this request
+      // never made (its policy ran against the stage it read, not the current
+      // one). Same-intent retries are replayed by idempotency key one layer up,
+      // never by stage equality here.
       throw new ConflictError(
         `Opportunity stage changed under this caller: ${from} → ${opportunity.stage} (wanted ${stage})`,
         { from, to: stage, current: opportunity.stage },
@@ -267,26 +271,37 @@ export class OpportunityService {
         allowed,
       });
     }
-    const updatedAt = nowIso();
-    // The committing write is a conditional claim gated on the pinned stage
-    // (the product-import `affectedRows` verdict idiom): the check above and
-    // this write are not atomic, so two writers that both passed the check
-    // still serialize here. Zero rows means a concurrent writer moved the
-    // opportunity first, so the loser re-reads and reports 409.
+    // The committing write is a conditional claim (the product-import
+    // `affectedRows` verdict idiom): the check above and this write are not
+    // atomic, so two writers that both passed the check still serialize here.
+    // The claim is fenced on (stage, updated_at), not the stage alone: the
+    // stage value is re-enterable (proposal ↔ negotiation …), so a stale
+    // intent must not commit after the opportunity cycled away and back
+    // (ABA). updated_at is bumped on every stage write and forced strictly
+    // monotonic here, so it acts as the row's generation token. Zero rows
+    // means a concurrent writer moved the opportunity first, so the loser
+    // re-reads for the error detail and reports 409 — never success, even
+    // when the current stage happens to equal the target.
+    const readUpdatedAt = typeof opportunity.updatedAt === 'string' ? opportunity.updatedAt : null;
+    let updatedAt = nowIso();
+    if (readUpdatedAt !== null && updatedAt <= readUpdatedAt) {
+      updatedAt = new Date(Date.parse(readUpdatedAt) + 1).toISOString();
+    }
+    const where = [
+      { column: 'id', op: 'eq', value: id },
+      { column: 'stage', op: 'eq', value: from },
+    ];
+    if (readUpdatedAt !== null) where.push({ column: 'updated_at', op: 'eq', value: readUpdatedAt });
     const write = {
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: stage }, { column: 'updated_at', value: updatedAt },
-      ], where: [
-        { column: 'id', op: 'eq', value: id },
-        { column: 'stage', op: 'eq', value: from },
-      ],
+      ], where,
     };
     let claimed;
     if (isSyncStorage(this.database)) claimed = this.database.storage.sync.execute(write);
     else claimed = await storageMutate(this.database, 'opportunity_stage', async (tx) => tx.execute(write));
     if (Number(claimed?.affectedRows ?? 0) !== 1) {
       const current = await Promise.resolve(this.get(id));
-      if (current.stage === stage) return current;
       throw new ConflictError(
         `Opportunity stage changed under this caller: ${opportunity.stage} → ${current.stage} (wanted ${stage})`,
         { from: opportunity.stage, to: stage, current: current.stage },
