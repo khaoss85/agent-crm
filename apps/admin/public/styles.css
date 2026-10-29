@@ -1469,3 +1469,40 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary { display: inline-flex; align-items: center; gap: 8px; height: 42px; padding: 0 14px 0 16px; border: none; border-radius: 12px; background: var(--accent); color: var(--paper); font-size: 14px; font-weight: 700; white-space: nowrap; }
 .bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary::after { content: "⌄"; font-size: 14px; line-height: 1; transform: translateY(-3px); }
 .bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary:hover { background: var(--accent-strong, var(--accent)); }
+
+/* Design pass 6 — "+ Nuovo modulo" (prototype): each option is a tile, a
+ * title and one line; the screen is the "Nuovo modulo personalizzato" form. */
+.bo-add-menu .bo-add-option, .bo-add-menu .bo-add-option.ui-btn {
+  align-items: flex-start; justify-content: flex-start; gap: 12px; padding: 10px; height: auto;
+  border: none; background: transparent; box-shadow: none; text-align: left; white-space: normal;
+}
+.bo-add-menu .bo-add-option:first-child:hover { background: var(--agent-card); }
+.bo-add-menu .bo-add-option:last-child:hover { background: var(--surface-soft); }
+.bo-add-tile {
+  width: 28px; height: 28px; border-radius: 8px; flex: none;
+  display: grid; place-items: center; font-size: 13px;
+}
+.bo-add-tile .bo-nav-icon, .bo-add-tile svg { width: 15px; height: 15px; }
+.bo-add-tile-ai { background: var(--agent); color: var(--surface); }
+.bo-add-tile-manual { background: var(--surface-soft); color: var(--ink); }
+.bo-add-words { display: flex; flex-direction: column; min-width: 0; }
+.bo-add-title { font-size: 14px; font-weight: 700; color: var(--ink); }
+.bo-add-line { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.bo-modulo-form {
+  max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;
+  border-radius: 20px; padding: 24px;
+}
+.bo-modulo-form h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+.bo-modulo-form .lede { margin: -8px 0 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.bo-modulo-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; color: var(--ink); }
+.bo-modulo-field .ui-field { height: 44px; font-weight: 400; }
+.bo-modulo-actions { display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.bo-modulo-ai {
+  border: none; background: transparent; padding: 0; font-size: 13px; font-weight: 600;
+  color: var(--agent-ink); cursor: pointer;
+}
+.bo-modulo-dev { max-width: 560px; margin: 16px auto 0; }
+.bo-modulo-dev summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); }
+.bo-modulo-dev .panel { box-shadow: none; border: none; padding: 0; margin-top: 12px; background: transparent; }
+.bo-modulo-hint { margin: -8px 0 0; font-size: 13px; color: var(--human-ink); }
+.bo-modulo-hint:empty { display: none; }

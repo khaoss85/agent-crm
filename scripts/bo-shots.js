@@ -7,7 +7,7 @@
  * demo fixtures and saves one PNG per backoffice screen, at 1440x1800 and
  * at 390x1600:
  *
- *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting,
+ *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting, nuovo-modulo,
  *   personalizzazione, catalogo, stato-sync, spazi-accessi, connettori,
  *   componenti (the F6-02 component catalog)
  *
@@ -62,6 +62,7 @@ export const SCREEN_NAMES = Object.freeze([
   'calendario',
   'sequenze',
   'reporting',
+  'nuovo-modulo',
   'personalizzazione',
   'catalogo',
   'stato-sync',
@@ -547,6 +548,7 @@ export const SCREENS = Object.freeze([
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
+  { name: 'nuovo-modulo', module: 'admin-reporting.js', ready: 'nuovo-modulo-ready', expect: ['Nuovo modulo personalizzato', 'Genera il modulo'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
@@ -572,6 +574,7 @@ export const SHELL_SCREENS = Object.freeze({
   calendario: { id: 'calendario', label: 'Calendario' },
   sequenze: { id: 'sequenze', label: 'Sequenze' },
   reporting: { id: 'reporting', label: 'Reporting' },
+  'nuovo-modulo': { id: 'nuovo-modulo', label: 'Nuovo modulo' },
   personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
   catalogo: { id: '', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
@@ -912,6 +915,20 @@ document.getElementById('probe').textContent = JSON.stringify({
   kpis: (document.getElementById('view-module').textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
 });
 document.title = 'reporting-ready';`;
+    case 'nuovo-modulo': return `
+import { createReportingView } from './admin-reporting.js';
+const client = { async request() { return { items: [] }; } };
+const view = createReportingView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, onAskAi: () => {}, log: () => {}, download: () => {} });
+view.renderNuovoModulo();
+// The prototype's "+ Nuovo modulo" menu, open, so the photo shows both options.
+const add = document.querySelector('.bo-add-button');
+if (add) add.click();
+document.getElementById('probe').textContent = JSON.stringify({
+  questions: document.querySelectorAll('.bo-modulo-field').length,
+  cta: [...document.querySelectorAll('button')].some((b) => b.textContent === 'Genera il modulo'),
+  devClosed: document.querySelector('details.bo-modulo-dev') ? !document.querySelector('details.bo-modulo-dev').open : false,
+});
+document.title = 'nuovo-modulo-ready';`;
     case 'personalizzazione': return `
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 const UNITS = ${JSON.stringify(DEMO_UNITS)};
@@ -1366,6 +1383,12 @@ export function assertProbe(name, probe) {
     }
     case 'reporting': {
       if (probe.kpis !== 3) throw new Error(`reporting: the probe holds ${String(probe.kpis)} KPIs, expected 3`);
+      return;
+    }
+    case 'nuovo-modulo': {
+      if (probe.questions !== 4) throw new Error(`nuovo-modulo: the probe holds ${String(probe.questions)} questions, expected 4`);
+      if (probe.cta !== true) throw new Error('nuovo-modulo: the probe shows no Genera il modulo');
+      if (probe.devClosed !== true) throw new Error('nuovo-modulo: the developer steps are not closed');
       return;
     }
     case 'personalizzazione': {

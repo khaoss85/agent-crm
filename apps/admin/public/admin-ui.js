@@ -201,6 +201,7 @@ const ICON_PATHS = Object.freeze({
   check: '<path d="M20 6L9 17l-5-5"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  matita: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
 });
 
 export const UI_ICONS = Object.freeze(Object.keys(ICON_PATHS));

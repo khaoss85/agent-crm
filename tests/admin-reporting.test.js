@@ -276,8 +276,8 @@ test('renderNuovoModulo invalidates an in-flight renderReporting', async () => {
   view.renderNuovoModulo();
   release();
   await pending;
-  const headings = mount.findAll('h3').map((node) => node.textContent);
-  assert.ok(headings.includes('Crea con l’AI'), `the nuovo-modulo screen stays, got ${JSON.stringify(headings)}`);
+  const headings = mount.findAll('h2').map((node) => node.textContent);
+  assert.ok(headings.includes('Nuovo modulo personalizzato'), `the nuovo-modulo screen stays, got ${JSON.stringify(headings)}`);
   const cells = mount.findAll('td').map((node) => node.textContent);
   assert.ok(!cells.includes('tardiva'), 'the stale reporting response never paints over the nuovo-modulo screen');
 });
@@ -310,7 +310,7 @@ test('a stale reporting response never overwrites the newer view', async () => {
   assert.equal(cells.filter((cell) => cell === 'tardiva').length, 1, 'the stale response renders exactly once');
 });
 
-test('nuovo modulo shows the double option and the Sviluppa card, AI forwards to the panel', () => {
+test('nuovo modulo is the prototype form: four questions, Genera il modulo, the AI shortcut, developer steps closed', () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const asked = [];
@@ -322,31 +322,44 @@ test('nuovo modulo shows the double option and the Sviluppa card, AI forwards to
     onAskAi: (screenId, description) => asked.push([screenId, description]),
   });
   view.renderNuovoModulo();
-  const headings = mount.findAll('h3').map((node) => node.textContent);
-  assert.ok(headings.includes('Crea con l’AI'), `the AI option is there, got ${JSON.stringify(headings)}`);
-  assert.ok(headings.includes('Crea manuale'), `the manual option is there, got ${JSON.stringify(headings)}`);
   const titles = mount.findAll('h2').map((node) => node.textContent);
-  assert.ok(titles.some((title) => /Sviluppa per Accordo|fuori dal processo condiviso/.test(title ?? '')),
-    `the Sviluppa card is there, got ${JSON.stringify(titles)}`);
-  const code = mount.findAll('code').map((node) => node.textContent).join('\n');
-  assert.match(code, /bundle create .* --created-by manual --apply/, 'the manual path shows the real create command with manual provenance');
-  assert.match(code, /bundle verify /, 'the manual path shows the real verify command');
-  assert.match(code, /bundle install /, 'the manual path shows the real install command');
-  const areas = mount.findAll('textarea');
-  assert.equal(areas.length, 1, 'the AI option has its description field');
-  const ask = mount.findAll('button').find((node) => node.textContent === 'Chiedi all’assistente');
-  assert.ok(ask, 'the AI option has its forward button');
-  // P2 admin-reporting.js:289: the typed description travels with the
-  // handoff — only the screen id was forwarded, the text was dropped.
-  areas[0].value = 'un modulo sonde per i KPI del pilota (etichetta + conteggio)';
-  ask.dispatch('click', {});
-  assert.deepEqual(asked, [['nuovo-modulo', 'un modulo sonde per i KPI del pilota (etichetta + conteggio)']],
-    'the typed description reaches the assistant panel with the screen');
-  // Hostile text travels as input text, never markup: the panel assigns it
-  // to the input value, it is never rendered as HTML.
-  areas[0].value = '<img src=x onerror=alert(1)>';
-  ask.dispatch('click', {});
-  assert.deepEqual(asked[1], ['nuovo-modulo', '<img src=x onerror=alert(1)>'], 'hostile text is forwarded verbatim as text');
+  assert.ok(titles.includes('Nuovo modulo personalizzato'), `the form title is there, got ${JSON.stringify(titles)}`);
+  const labels = mount.findAll('label').map((node) => node.textContent);
+  for (const question of ['Nome del modulo', 'Cosa deve mostrare o fare', 'Dati usati', 'Chi può vederlo']) {
+    assert.ok(labels.some((label) => (label ?? '').startsWith(question)), `${question} is asked, got ${JSON.stringify(labels)}`);
+  }
+  // The owner's screen names no repository file and no command: those wait,
+  // closed, under "Per chi sviluppa".
+  const details = mount.findAll('details');
+  assert.equal(details.length, 1, 'the developer steps sit in one closed details');
+  assert.equal(details[0].getAttribute('open'), null, 'closed by default');
+  const code = details[0].findAll('code').map((node) => node.textContent).join('\n');
+  assert.match(code, /bundle create .* --created-by manual --apply/, 'the manual path keeps the real create command with manual provenance');
+  assert.match(code, /bundle verify /, 'the manual path keeps the real verify command');
+  assert.match(code, /bundle install /, 'the manual path keeps the real install command');
+  const formText = mount.findAll('section').find((node) => (node.getAttribute('class') ?? '').includes('bo-modulo-form')).textContent;
+  assert.doesNotMatch(formText, /docs\/|\.md|npm run|manifest/i, `the form speaks the owner's words, got ${formText}`);
+
+  const generate = mount.findAll('button').find((node) => node.textContent === 'Genera il modulo');
+  assert.ok(generate, 'the green CTA is there');
+  assert.match(generate.getAttribute('class') ?? '', /ui-btn-cta/, 'Genera il modulo is the green CTA');
+  generate.dispatch('click', {});
+  assert.deepEqual(asked, [], 'an empty form hands nothing off');
+  assert.match(mount.findAll('p').map((node) => node.textContent).join('\n'), /Rispondi almeno a una domanda/, 'it asks for one answer');
+  const inputs = Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  inputs['modulo-nome'].value = 'Magazzino campioni';
+  inputs['modulo-cosa'].value = ' campioni prestati e date di rientro ';
+  inputs['modulo-chi'].value = '<img src=x onerror=alert(1)>';
+  generate.dispatch('click', {});
+  // The answers reach the assistant's guided path as one description; an
+  // empty answer is left out, hostile text travels as text.
+  assert.deepEqual(asked, [['nuovo-modulo',
+    'Nome del modulo: Magazzino campioni\nCosa deve mostrare o fare: campioni prestati e date di rientro\nChi può vederlo: <img src=x onerror=alert(1)>']]);
+
+  const ai = mount.findAll('button').find((node) => node.textContent === '✦ Preferisco farlo con l’AI');
+  assert.ok(ai, 'the AI shortcut is there');
+  ai.dispatch('click', {});
+  assert.deepEqual(asked[1], ['nuovo-modulo', ''], 'the AI shortcut opens the guided path empty');
 });
 
 test('reporting and nuovo-modulo routes resolve, deep paths are invalid', () => {
