@@ -307,7 +307,13 @@ export function createReportingView(deps) {
       if (typeof write !== 'function') return false;
       await write.call(view.navigator.clipboard, text);
       return true;
-    } catch {
+    } catch (error) {
+      // A denied clipboard must stay diagnosable (AGENTS.md: swallowed
+      // exceptions log the cause): name/code only, never the contents.
+      const cause = error && typeof error === 'object'
+        ? { name: error.name ?? 'Error', code: error.code ?? null }
+        : { name: 'Error', code: null };
+      log('reporting copy to clipboard failed', cause);
       return false;
     }
   });

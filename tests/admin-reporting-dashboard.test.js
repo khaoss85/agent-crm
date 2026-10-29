@@ -282,7 +282,8 @@ test('Copia il prompt copies the exact starter bytes and confirms', async () => 
 });
 
 test('without a clipboard the copy button says so honestly', async () => {
-  const { mount, view } = harness();
+  const { doc, mount, view, logLines } = harness();
+  assert.equal(doc.defaultView ?? null, null, 'the fake DOM carries no clipboard');
   await view.renderReporting();
   const copyButton = mount.findAll('button').find((node) => node.textContent === 'Copia il prompt');
   assert.ok(copyButton, 'copy button renders');
@@ -290,6 +291,26 @@ test('without a clipboard the copy button says so honestly', async () => {
   await tick(10);
   const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
   assert.match(text, /Appunti non disponibili/, 'honest fallback, never a silent no-op');
+  assert.ok(!logLines.some(([message]) => message === 'reporting copy to clipboard failed'),
+    'a missing clipboard is not a failure: no log line');
+});
+
+test('a denied clipboard logs a sanitized cause and still falls back', async () => {
+  const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError', code: null });
+  const { doc, mount, view, logLines } = harness();
+  doc.defaultView = { navigator: { clipboard: { writeText: async () => { throw denied; } } } };
+  await view.renderReporting();
+  const copyButton = mount.findAll('button').find((node) => node.textContent === 'Copia il prompt');
+  assert.ok(copyButton, 'copy button renders');
+  copyButton.dispatch('click', {});
+  await tick(10);
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.match(text, /Appunti non disponibili/, 'the operator still gets the manual path');
+  const logged = logLines.filter(([message]) => message === 'reporting copy to clipboard failed');
+  assert.equal(logged.length, 1, 'one diagnostic log line');
+  assert.equal(logged[0][1]?.name, 'NotAllowedError', 'the cause names the failure');
+  assert.ok(!JSON.stringify(logged[0][1] ?? {}).includes(REPORTING_PROMPT_TEXT),
+    'the cause never carries the clipboard contents');
 });
 
 test('Esporta CSV downloads the exact model bytes', async () => {
