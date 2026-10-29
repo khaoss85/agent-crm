@@ -594,7 +594,7 @@ export function createShellView({
     const initials = typeof member.name === 'string' && member.name.trim() !== ''
       ? member.name.trim().split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
       : 'LO';
-    userRow.appendChild(el(doc, 'span', 'bo-user-badge', initials));
+    const userBadge = el(doc, 'span', 'bo-user-badge', initials);
     const who = el(doc, 'div', 'bo-user-who');
     who.appendChild(el(doc, 'div', 'bo-user-name', typeof member.name === 'string' && member.name !== '' ? member.name : 'Operatore locale'));
     who.appendChild(el(doc, 'div', 'bo-user-email', typeof member.email === 'string' && member.email !== '' ? member.email : 'sviluppo locale'));
@@ -602,7 +602,19 @@ export function createShellView({
     // Osservatore). Absent without a session — never a development string.
     const roleLabel = sessionRoleLabel(member.role);
     if (roleLabel !== '') who.appendChild(el(doc, 'div', 'bo-user-role', roleLabel));
-    userRow.appendChild(who);
+    // Design pass 8: the person opens their profile (#/profilo); the exit
+    // stays its own button beside it.
+    const profileLink = el(doc, 'a', 'bo-user-link');
+    profileLink.setAttribute('href', '#/profilo');
+    profileLink.setAttribute('aria-label', 'Il tuo profilo');
+    profileLink.setAttribute('title', 'Il tuo profilo');
+    profileLink.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate('#/profilo');
+    });
+    profileLink.appendChild(userBadge);
+    profileLink.appendChild(who);
+    userRow.appendChild(profileLink);
     // BO-F6-01: the exit keeps the prototype's icon; the visible label names
     // the action (BO-F6-03 reviewed behavior), labelled for assistive tech.
     const logout = el(doc, 'button', 'bo-logout', 'Esci');
