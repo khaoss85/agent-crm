@@ -27,7 +27,7 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatMinorUnits, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 const BOARD_LIMIT = 200;
@@ -419,7 +419,7 @@ export function createPipelineBoard(deps) {
     // BO-F6-10 C9: `<n> offerte · <totale>`, updated by every filter/search.
     const parts = [`${visible.length} offert${visible.length === 1 ? 'a' : 'e'}`];
     for (const [currency, total] of [...totals.entries()].sort()) {
-      parts.push(formatMinorUnits(total, currency));
+      parts.push(formatAmount(total, currency));
     }
     summary.textContent = parts.join(' · ');
     return summary;
@@ -449,7 +449,7 @@ export function createPipelineBoard(deps) {
       return box;
     }
     for (const [currency, total] of [...weighted.entries()].sort()) {
-      box.appendChild(el(doc, 'p', { class: 'forecast-total', text: formatMinorUnits(total, currency) }));
+      box.appendChild(el(doc, 'p', { class: 'forecast-total', text: formatAmount(total, currency) }));
     }
     box.appendChild(el(doc, 'p', {
       class: 'hint',
@@ -484,7 +484,7 @@ export function createPipelineBoard(deps) {
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);
-      row.appendChild(el(doc, 'td', { text: formatMinorUnits(record.valueCents, record.currency) }));
+      row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
       row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
       row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
@@ -546,7 +546,7 @@ export function createPipelineBoard(deps) {
       totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
     }
     for (const [currency, total] of [...totals.entries()].sort()) {
-      column.appendChild(el(doc, 'p', { class: 'stage-total', text: formatMinorUnits(total, currency) }));
+      column.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
     }
 
     // BO-F6-10 C18: the drop target is marked while a card hovers it, so CSS
@@ -589,7 +589,7 @@ export function createPipelineBoard(deps) {
     });
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
     card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
-    card.appendChild(el(doc, 'p', { class: 'card-value', text: formatMinorUnits(record.valueCents, record.currency) }));
+    card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     if (typeof record.owner === 'string' && record.owner) {
       card.appendChild(el(doc, 'p', { class: 'card-owner', text: record.owner }));
     }

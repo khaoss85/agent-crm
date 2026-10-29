@@ -493,7 +493,6 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-scheda-card h4 { margin: 0; font-size: 16px; letter-spacing: -.01em; }
 .bo-scheda-ai { background: var(--agent-card); border-color: var(--agent-line); }
 .bo-scheda-ai h4 { color: var(--agent-ink); font-size: 14px; }
-.bo-scheda-ai h4::before { content: "✦ "; }
 .bo-scheda-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .bo-scheda-tile { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 58px; padding: 8px; border-radius: 12px; border: 1px solid var(--line-soft); background: var(--surface); color: var(--ink); font-size: 12.5px; font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
 .bo-scheda-tile:hover { border-color: var(--ink); }
@@ -622,7 +621,30 @@ a.bo-oggi-title:hover { text-decoration: underline; }
  * on a phone.
  */
 .bo-seq { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
-.bo-seq-top { max-width: 640px; }
+.bo-seq-top { display: grid; grid-template-columns: minmax(0, 640px) auto; justify-content: space-between; column-gap: 24px; align-items: end; }
+.bo-seq-top > :not(.bo-seq-menuwrap) { grid-column: 1; }
+.bo-seq-top > .bo-seq-menuwrap { grid-column: 2; grid-row: 1 / span 3; align-self: end; position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.bo-seq-menuwrap > .ui-btn-cta { height: 42px; padding: 0 14px 0 16px; border-radius: 12px; font-size: 14px; font-weight: 700; white-space: nowrap; }
+.bo-seq-menu { position: absolute; right: 0; top: 48px; z-index: 5; width: 300px; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 14px; border: 1px solid var(--line-soft); background: var(--surface); box-shadow: 0 12px 32px rgba(23, 25, 18, .12); }
+.bo-seq-menu.hidden { display: none; }
+.bo-seq-item.ui-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 10px 12px; border: none; border-radius: 10px; background: transparent; text-align: left; font-size: 14px; font-weight: 700; }
+.bo-seq-item.ui-btn:hover { background: var(--surface-soft); }
+.bo-seq-item .bo-muted { font-size: 12.5px; font-weight: 400; color: var(--muted); }
+.bo-seq-hint { margin: 0; max-width: 300px; font-size: 12.5px; color: var(--muted); text-align: right; }
+.bo-seq-quando { margin: 0; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.bo-seq-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.bo-seq-pill { margin: 0; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; }
+.bo-seq-pill-trigger { background: var(--data-soft); color: var(--data-ink); }
+.bo-seq-pill-stop { background: var(--accent-soft); color: var(--accent); }
+.bo-seq-kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.bo-seq-kpi-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 14px 16px; }
+.bo-seq-kpi-label { margin: 0; font-size: 12.5px; color: var(--muted); }
+.bo-seq-kpi-value { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.03em; }
+@media (max-width: 700px) {
+  .bo-seq-top { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
+  .bo-seq-top > .bo-seq-menuwrap { grid-column: 1; grid-row: auto; align-items: flex-start; }
+  .bo-seq-hint { text-align: left; }
+}
 .bo-seq-top .bo-kicker { margin-bottom: 10px; }
 .bo-seq-title { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
 .bo-seq-top .lede { margin: 12px 0 0; font-size: 16px; line-height: 1.5; }
@@ -1401,3 +1423,16 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep-rows.panel { margin-top: 4px; border-radius: 16px; border: 1px solid var(--line-soft); box-shadow: none; }
 .bo-rep-rows .panel-heading h2 { font-size: 18px; }
 .bo-rep-rows > .lede { font-size: 13px; }
+
+/* Pipeline, passaggio 4 (supervisore): la card resta quella del prototipo; il
+   «Sposta in» serve a tastiera e touch, non si vede col mouse (si trascina). */
+.pipeline-card .card-move { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.pipeline-card { position: relative; }
+.pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+@media (hover: none) {
+  .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+}
+.pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
+.pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }
+.pipeline-toolbar select.ui-field, .pipeline-toolbar input[type="date"].ui-field { border-color: var(--line-soft); background: var(--surface); color: var(--ink); font-weight: 600; }
+.pipeline-forecast .forecast-total { font-family: var(--mono); font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 4px 0 0; }
