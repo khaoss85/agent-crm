@@ -276,7 +276,9 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   assert.ok(add, 'the green CTA renders on the Connettori tab');
   assert.ok(add.getAttribute('class').split(/\s+/).includes('ui-btn-cta'), 'Aggiungi stays the green accord CTA');
   add.dispatch('click');
-  const afterOpen = mount.findAll('button');
+  const addMenu = mount.querySelector('.ui-conn-addmenu');
+  assert.ok(addMenu, 'the Aggiungi menu renders');
+  const afterOpen = addMenu.childNodes.filter((node) => node.tagName === 'BUTTON');
   const voices = afterOpen.filter((node) => node.getAttribute('role') === 'menuitem').map((node) => node.textContent);
   assert.deepEqual(voices, ['Crea con l\u2019AI', 'Configura manualmente'], 'Aggiungi opens the two-voice menu (spec C9)');
   const manual = afterOpen.find((node) => node.textContent === 'Configura manualmente');
@@ -496,7 +498,9 @@ test('the Aggiungi menu closes with Escape and explains the AI voice honestly (s
   await flush();
   const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi ▾');
   add.dispatch('click');
-  let menu = mount.findAll('button').filter((node) => node.getAttribute('role') === 'menuitem');
+  const addMenu = mount.querySelector('.ui-conn-addmenu');
+  assert.ok(addMenu, 'the Aggiungi menu renders');
+  let menu = addMenu.childNodes.filter((node) => node.tagName === 'BUTTON');
   assert.equal(menu.length, 2, 'the menu opens with two voices');
   const wrap = mount.querySelector('.ui-conn-addwrap');
   assert.ok(wrap, 'the menu lives in its own wrap');
