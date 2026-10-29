@@ -6,6 +6,9 @@ import { spawnSync } from 'node:child_process';
 
 const root = process.cwd();
 const ignored = new Set(['.git', 'node_modules', 'data']);
+// The gitignored site build: the gtm phase deletes and rebuilds it, and the
+// fast gate runs its phases in parallel on the Linux runner (scripts/ci-fast.sh).
+const ignoredPaths = new Set([join(root, 'site', 'dist')]);
 // `.mjs` too. The starter installer and the scenario journeys are checked-in
 // executable source that CI runs, and nothing was syntax-checking them: a typo
 // in one surfaced as a journey that "did not complete", minutes later, with the
@@ -30,6 +33,7 @@ function walk(directory) {
   for (const name of readdirSync(directory)) {
     if (ignored.has(name)) continue;
     const path = join(directory, name);
+    if (ignoredPaths.has(path)) continue;
     if (statSync(path).isDirectory()) results.push(...walk(path));
     else results.push(path);
   }
