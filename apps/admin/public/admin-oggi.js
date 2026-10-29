@@ -240,12 +240,12 @@ export function recordDetailHref(module, id) {
 
 /**
  * Label shown for the cited record: the stored snapshot label when present,
- * otherwise "resource · id" — never invented, never empty.
+ * otherwise a generic Italian name — never a technical `resource · id`
+ * (the screen must never print labels like "lead · lead-1").
  * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
  */
 function subjectDisplayLabel(row) {
-  return nonEmptyText(row?.subjectLabel)
-    ?? `${String(row?.subjectResource ?? '—')} · ${String(row?.subjectId ?? '—')}`;
+  return nonEmptyText(row?.subjectLabel) ?? 'il cliente';
 }
 
 /**
@@ -517,10 +517,13 @@ function countNoun(count, singular, plural) {
 }
 
 /**
- * One-sentence recap of the day from real counts: today's appointments, open
- * follow-ups, and the first appointment when there is one. AI stays out of
- * it: without a configured key the llm package is dry-run only, and a recap
- * must never read as generated insight — it is arithmetic over records.
+ * One-sentence recap of the day, verbatim from the prototype: open chores
+ * and today's appointments with a minute estimate, or the no-pending line.
+ * The closing promise names prepared messages only when a task actually
+ * carries a draft note — a manual call with no draft must never read as
+ * prepared work. AI stays out of it: without a configured key the llm
+ * package is dry-run only, and a recap must never read as generated
+ * insight — it is arithmetic over records.
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date }} input
  */
 export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date() } = {}) {
@@ -532,23 +535,12 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
     : [];
-  const parts = [];
-  if (today.length === 0 && tasks.length === 0) {
-    return 'Oggi non hai appuntamenti né follow-up aperti.';
+  if (tasks.length === 0) {
+    return `Niente in sospeso. Ti restano ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
-  parts.push(today.length === 0
-    ? 'Oggi non hai appuntamenti'
-    : `Oggi hai ${countNoun(today.length, 'appuntamento', 'appuntamenti')}`);
-  parts.push(tasks.length === 0
-    ? 'e nessun follow-up aperto'
-    : `e ${countNoun(tasks.length, 'follow-up aperto', 'follow-up aperti')}`);
-  let sentence = `${parts.join(' ')}.`;
-  if (today.length > 0) {
-    const first = today[0];
-    const time = romeTime(first?.startsAt);
-    if (time) sentence += ` Il primo è alle ${time} con ${subjectDisplayLabel(first)}.`;
-  }
-  return sentence;
+  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${countNoun(today.length, 'appuntamento', 'appuntamenti')}. Ti servono circa ${tasks.length * 3} minuti`;
+  const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
+  return drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
 }
 
 /**
@@ -567,10 +559,16 @@ export function buildTodayAgenda(appointments = [], now = new Date()) {
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
+    // The prototype's second line under each appointment ("chi"): who the
+    // appointment is with — the team member holding the slot, else a short
+    // honest cue from the notes. Never invented when neither exists.
+    const team = nonEmptyText(row?.teamMemberId);
+    const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     return Object.freeze({
       id,
       time: romeTime(row.startsAt),
       title: subjectDisplayLabel(row),
+      who: cue,
       status: row.status,
       href: cardHrefForSubject(row) ?? (id !== '' ? recordDetailHref('appointment', id) : null),
     });
@@ -689,6 +687,43 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
     sources: Object.freeze(sources.slice(0, 6)),
     cardHref: card,
   });
+}
+
+/**
+ * Channels the backoffice counts for the invite, per the prototype: 9.
+ * The exact per-channel table lives in Stato sync; Oggi only needs the
+ * headline count, so the total is a fixed constant, never metadata.
+ */
+export const OGGI_TOTAL_CHANNELS = 9;
+
+/**
+ * The nine counted channel ids, in Stato sync order. Mirrors SYNC_CHANNELS
+ * in admin-sync.js (the table owner): the lead catalog and the nine differ
+ * (SMS is a lead channel but not one of the nine; Calendar and Stripe are
+ * nine but not lead), so the count must read the nine, never the catalog.
+ * Kept as ids here so Oggi never imports another screen's view module; the
+ * test pins the two lists together.
+ */
+export const OGGI_NINE_CHANNELS = Object.freeze([
+  'whatsapp', 'instagram', 'facebook', 'tiktok', 'email',
+  'voice', 'site-form', 'calendar', 'stripe',
+]);
+
+/**
+ * Distinct connected channels among the nine: active rows only, one vote
+ * per channel, capped at the nine. A channel outside the nine never moves
+ * this count.
+ * @param {Array<Record<string, any>>} [connections]
+ */
+export function countConnectedNine(connections = []) {
+  const active = new Set();
+  for (const row of Array.isArray(connections) ? connections : []) {
+    if (row == null || row.status !== 'active') continue;
+    if (typeof row.channel !== 'string' || row.channel === '') continue;
+    if (!OGGI_NINE_CHANNELS.includes(row.channel)) continue;
+    active.add(row.channel);
+  }
+  return Math.min(active.size, OGGI_TOTAL_CHANNELS);
 }
 
 /**
@@ -877,8 +912,10 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   body.appendChild(title);
   body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
   // The prototype's violet third line: the AI's prepared next step, only
-  // when the action carries one — never an invented suggestion.
-  if (typeof action?.note === 'string' && action.note !== '') body.appendChild(el(doc, 'p', 'bo-oggi-note', `✦ ${action.note}`));
+  // when the action carries one — never an invented suggestion. The note
+  // renders verbatim: prototype notes already carry their own ✦ when they
+  // are AI suggestions, and prefixing one here would double it.
+  if (typeof action?.note === 'string' && action.note !== '') body.appendChild(el(doc, 'p', 'bo-oggi-note', action.note));
   row.appendChild(body);
   if (state === 'open') {
     const controls = el(doc, 'div', 'bo-oggi-btns');
@@ -934,9 +971,10 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     actions?: Array<any>,
  *     triage?: Record<string, string>,
  *     capped?: boolean,
- *     agenda?: Array<{ id: unknown, time: unknown, title: unknown, href: unknown }>,
+ *     agenda?: Array<{ id: unknown, time: unknown, title: unknown, who?: unknown, href: unknown }>,
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
+ *     connections?: Array<{ channel?: unknown, status?: unknown }>,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
  *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void },
@@ -962,7 +1000,9 @@ export function renderOggi({
   const hour = now instanceof Date ? now.getHours() : NaN;
 
   page.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
-  page.appendChild(el(doc, 'h2', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
+  // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
+  // scale is untouched — only the semantics change (C6).
+  page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
 
   if (home == null) {
     page.appendChild(el(
@@ -1004,7 +1044,7 @@ export function renderOggi({
   head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total} fatte`));
   advisor.appendChild(head);
   if (actions.length === 0) {
-    advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi: niente azioni aperte.'));
+    advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
   } else {
     const list = el(doc, 'div', 'bo-oggi-actions');
     for (const action of actions) {
@@ -1035,6 +1075,7 @@ export function renderOggi({
     for (const entry of rows) {
       const item = el(doc, 'div', 'bo-oggi-agenda-row');
       item.appendChild(el(doc, 'span', 'bo-oggi-time', String(entry?.time ?? '')));
+      const cell = el(doc, 'div');
       if (typeof entry?.href === 'string' && entry.href !== '') {
         const anchor = el(doc, 'a', 'bo-setting-link', String(entry?.title ?? ''));
         anchor.setAttribute('href', entry.href);
@@ -1042,10 +1083,17 @@ export function renderOggi({
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
           navigate(entry.href);
         });
-        item.appendChild(anchor);
+        cell.appendChild(anchor);
       } else {
-        item.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
+        cell.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
       }
+      // The prototype's "chi" line under every appointment: who holds the
+      // slot or what the appointment is about. A shared muted token (no new
+      // stylesheet); the supervisor dresses the exact spacing.
+      if (typeof entry?.who === 'string' && entry.who !== '') {
+        cell.appendChild(el(doc, 'div', 'bo-muted', entry.who));
+      }
+      item.appendChild(cell);
       list.appendChild(item);
     }
     agenda.appendChild(list);
@@ -1090,11 +1138,15 @@ export function renderOggi({
       });
       brief.appendChild(sources);
       if (cardSource) {
-        // The prototype's violet CTA under the sources.
-        const open = el(doc, 'a', 'bo-oggi-cta', 'Apri la scheda');
-        open.setAttribute('href', String(cardSource.href ?? ''));
-        open.addEventListener('click', (event) => {
-          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        // The prototype's violet CTA under the sources: a real button that
+        // navigates to the customer scheda, like the prototype. The explicit
+        // `ui-btn` base (no `ui-btn-*` variant) keeps the `ui-*` contract
+        // the raw-control test enforces without letting the later
+        // `.ui-btn-secondary` rule override the violet `.bo-oggi-cta`
+        // background in styles.css (which this screen must not touch).
+        const open = el(doc, 'button', 'bo-oggi-cta ui-btn', 'Apri la scheda');
+        open.setAttribute('type', 'button');
+        open.addEventListener('click', () => {
           navigate(String(cardSource.href ?? ''));
         });
         brief.appendChild(open);
@@ -1112,7 +1164,16 @@ export function renderOggi({
   } else if (missing.length > 0) {
     const invite = el(doc, 'section', 'bo-oggi-section');
     const names = missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
-    const anchor = el(doc, 'a', 'bo-oggi-invite', `Collega ${names.join(', ')} per non perdere nessun lead →`);
+    // The prototype's headline count: connected of the 9 backoffice
+    // channels, read from the actual connections. Hand-built homes without
+    // connections (tests) fall back to nine minus the missing lead list;
+    // the live view always carries connections, so production never guesses.
+    const connected = Array.isArray(home.connections)
+      ? countConnectedNine(home.connections)
+      : OGGI_TOTAL_CHANNELS - missing.length;
+    const anchor = el(doc, 'a', 'bo-oggi-invite', '');
+    anchor.appendChild(el(doc, 'strong', undefined, `${connected} di ${OGGI_TOTAL_CHANNELS} collegati`));
+    anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} per non perdere nessun lead →`));
     anchor.setAttribute('href', '#/connettori');
     anchor.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -1209,6 +1270,7 @@ export function createOggiView(deps) {
         agenda,
         brief,
         missing,
+        connections: last.connections,
         availability: {
           work: last.workAvailable,
           appointments: last.appointmentsAvailable,
