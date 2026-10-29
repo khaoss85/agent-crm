@@ -132,18 +132,24 @@ export function readPngSize(file) {
 // 2026 agendas) the whole backoffice is demoed against.
 // ---------------------------------------------------------------------------
 
+// The demo tasks carry the channel and the advisor note the prototype cards
+// show (channel tile, channel verb, violet third row): same optional fields
+// the unit tests already drive the view with. Titles, counts and the probe
+// stay untouched.
 const DEMO_TASKS = [
   {
     id: 'task-1', status: 'open', title: 'Richiama per il preventivo',
     subjectResource: 'lead', subjectId: 'lead-1', subjectOwner: 'host',
     subjectLabel: 'Giulia Romano', dueAt: '2026-10-19T00:00:00.000Z',
-    openedAt: '2026-10-18T08:00:00.000Z',
+    openedAt: '2026-10-18T08:00:00.000Z', channel: 'phone',
+    note: '✦ Ho preparato il testo per il richiamo: lo vedi prima di chiamare',
   },
   {
     id: 'task-2', status: 'open', title: 'Prepara la call con i prezzi del pacchetto',
     subjectResource: 'lead', subjectId: 'lead-1', subjectOwner: 'host',
     subjectLabel: 'Giulia Romano', dueAt: '2026-10-20T00:00:00.000Z',
-    openedAt: '2026-10-18T09:00:00.000Z',
+    openedAt: '2026-10-18T09:00:00.000Z', channel: 'email',
+    note: '✦ Ho preparato una email breve: la vedi prima di inviarla',
   },
 ];
 
