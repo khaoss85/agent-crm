@@ -343,6 +343,9 @@ test('nuovo modulo is the prototype form: four questions, Genera il modulo, the 
   const generate = mount.findAll('button').find((node) => node.textContent === 'Genera il modulo');
   assert.ok(generate, 'the green CTA is there');
   assert.match(generate.getAttribute('class') ?? '', /ui-btn-cta/, 'Genera il modulo is the green CTA');
+  generate.dispatch('click', {});
+  assert.deepEqual(asked, [], 'an empty form hands nothing off');
+  assert.match(mount.findAll('p').map((node) => node.textContent).join('\n'), /Rispondi almeno a una domanda/, 'it asks for one answer');
   const inputs = Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   inputs['modulo-nome'].value = 'Magazzino campioni';
   inputs['modulo-cosa'].value = ' campioni prestati e date di rientro ';

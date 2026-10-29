@@ -877,10 +877,21 @@ export function createReportingView(deps) {
         const value = String(inputs[name].value ?? '').trim();
         if (value !== '') lines.push(`${text}: ${value}`);
       }
+      // Nothing answered: ask for one answer instead of an empty handoff
+      // that would look exactly like the AI shortcut (Muse P3 on #447).
+      if (lines.length === 0) {
+        hint.textContent = 'Rispondi almeno a una domanda, oppure fallo con l\u2019AI.';
+        inputs.nome.focus?.();
+        return;
+      }
+      hint.textContent = '';
       onAskAi('nuovo-modulo', lines.join('\n'));
     });
     footer.appendChild(generate);
     card.appendChild(footer);
+    const hint = el(doc, 'p', { class: 'bo-modulo-hint' });
+    hint.setAttribute('role', 'status');
+    card.appendChild(hint);
     mount.appendChild(card);
 
     const dev = el(doc, 'details', { class: 'panel bo-modulo-dev' });
