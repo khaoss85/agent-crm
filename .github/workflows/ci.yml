@@ -71,7 +71,8 @@ jobs:
     runs-on: [self-hosted, accordo-ci]
     env:
       ACCORDO_TEST_POSTGRES: '1'
-      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
+      # ACCORDO_PG_TEST_URL is set by the PostgreSQL start step below: one
+      # cluster per runner, on the port the runner's .env names (ACCORDO_PG_PORT).
     steps:
       # Full history: the touched-file selection diffs against the PR base,
       # and the truth agreement check reads history like `public-claims` does.
@@ -81,7 +82,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
+          # No cache: npm on the self-hosted runners: ~/.npm stays on disk between
+          # runs, and restoring the 160 MB Actions cache cost ~70 s per job.
       - name: Fetch the PR base for touched-file selection
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -94,13 +96,20 @@ jobs:
           brew services start postgresql@16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
           pg_isready -h 127.0.0.1 -p 5432
+          echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:5432/accordo_test" >> "$GITHUB_ENV"
           psql -h /tmp -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER LOGIN; END IF; END \$\$;"
           psql -h /tmp -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'accordo_test'" | grep -q 1 || psql -h /tmp -d postgres -c "CREATE DATABASE accordo_test OWNER postgres;"
       - name: Start PostgreSQL 16 (GitHub-hosted Linux)
         if: runner.os == 'Linux'
         run: |
-          docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
-          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
+          # Two runners can share the Linux server: each names its own
+          # container and port in its .env (ACCORDO_PG_NAME, ACCORDO_PG_PORT).
+          # Loopback only: the cluster trusts every connection. A container a
+          # cancelled run left behind would refuse the name: removed first.
+          docker rm -f "${ACCORDO_PG_NAME:-accordo-pg}" >/dev/null 2>&1 || true
+          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
+          echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - run: npm ci
       # The whole gate behind one lock: `scripts/ci-fast.sh` runs the eight
       # phases sequentially (check, touched tests, smoke, recipe replay,
@@ -124,6 +133,9 @@ jobs:
       - name: PR gate under one machine lock (check, touched, smoke, recipe, gtm, truth)
         env:
           BASE_REF: ${{ github.base_ref }}
+          # The Linux runner has the Accordo lane to itself: phases in parallel
+          # there (scripts/ci-fast.sh); sequential on the shared Mac.
+          CI_FAST_PARALLEL: ${{ runner.os == 'Linux' && '1' || '' }}
         run: HEAVY_JOB_MAX_SEC=540 scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh
 
   # Full history here, not the default fetch-depth: 1. The measure itself needs
@@ -154,7 +166,8 @@ jobs:
     runs-on: [self-hosted, accordo-ci]
     env:
       ACCORDO_TEST_POSTGRES: '1'
-      ACCORDO_PG_TEST_URL: postgres://postgres@127.0.0.1:5432/accordo_test
+      # ACCORDO_PG_TEST_URL is set by the PostgreSQL start step below: one
+      # cluster per runner, on the port the runner's .env names (ACCORDO_PG_PORT).
       # The shell-classifier oracle runs its complete 26,880-cell cross-product
       # (plus the heredoc delimiter corpus) here; the default local run
       # covers a documented 10,080-cell subset plus a 120-cell heredoc sample,
@@ -175,7 +188,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
       # Second half of "at most once per window, and only when the head
       # changed": when the committed ledger or the runner-local record of the
       # last successful measurement already names this head, every step below
@@ -204,13 +216,20 @@ jobs:
           brew services start postgresql@16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 && break; sleep 2; done
           pg_isready -h 127.0.0.1 -p 5432
+          echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:5432/accordo_test" >> "$GITHUB_ENV"
           psql -h /tmp -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER LOGIN; END IF; END \$\$;"
           psql -h /tmp -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'accordo_test'" | grep -q 1 || psql -h /tmp -d postgres -c "CREATE DATABASE accordo_test OWNER postgres;"
       - name: Start PostgreSQL 16 (GitHub-hosted Linux)
         if: runner.os == 'Linux' && steps.guard.outputs.measure_needed == 'true'
         run: |
-          docker run -d --name accordo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16
-          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres && break; sleep 2; done
+          # Two runners can share the Linux server: each names its own
+          # container and port in its .env (ACCORDO_PG_NAME, ACCORDO_PG_PORT).
+          # Loopback only: the cluster trusts every connection. A container a
+          # cancelled run left behind would refuse the name: removed first.
+          docker rm -f "${ACCORDO_PG_NAME:-accordo-pg}" >/dev/null 2>&1 || true
+          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
+          echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - name: Install and verify PostgreSQL 16 backup client (Linux)
         if: runner.os == 'Linux' && steps.guard.outputs.measure_needed == 'true'
         run: |
@@ -358,7 +377,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-          cache: npm
       - run: npm ci
       - run: npm run gtm:check
       # The Repository Truth Contract (ADR-039) agreement gate belongs in this

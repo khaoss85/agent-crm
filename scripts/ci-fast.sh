@@ -28,6 +28,17 @@
 # is the live evidence for the ten-minute bound. The first failing phase
 # stops the gate with a `::error::` annotation, the way a red Actions step
 # used to stop the job: later phases never run after a failure.
+#
+# CI_FAST_PARALLEL=1 (set by ci.yml on the Linux runner only, 2026-10-29):
+# that runner has 12 cores and the Accordo lane to itself, so the eight
+# independent phases start together and the gate takes about its longest
+# phase (~145 s) instead of their sum (~506 s, run 40909551725). Each phase
+# writes its own log; the logs print in the order above once all are done,
+# and every failing phase is named, the exit code being the first failing
+# phase's. The lanes are independent: PostgreSQL fixtures mint a random
+# schema each, scratch goes to mktemp, check.js skips the site build, and the
+# two phases that rebuild site/dist (touched tests, gtm) share one lane. On the shared Mac the phases stay sequential, behind
+# the one lock, as described above.
 set -euo pipefail
 
 : "${BASE_REF:?ci-fast.sh needs BASE_REF (the PR base branch short name)}"
@@ -38,7 +49,47 @@ budget=${HEAVY_JOB_MAX_SEC:-540}
 
 started=$SECONDS
 
+phases=()
+logs_dir=''
+pids=()
+
 run_phase() {
+  if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
+    [ -n "$logs_dir" ] || logs_dir=$(mktemp -d)
+    local log="$logs_dir/${#phases[@]}.log"
+    phases+=("$1")
+    run_phase_now "$@" > "$log" 2>&1 &
+    pids+=($!)
+    return 0
+  fi
+  run_phase_now "$@"
+}
+
+# Parallel mode: one function as one lane (one log, one name in the failure
+# list); sequential mode: just the function.
+run_lane() {
+  local name="$1"
+  shift
+  if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
+    [ -n "$logs_dir" ] || logs_dir=$(mktemp -d)
+    local log="$logs_dir/${#phases[@]}.log"
+    phases+=("$name")
+    "$@" > "$log" 2>&1 &
+    pids+=($!)
+    return 0
+  fi
+  "$@"
+}
+
+# The touched tests can rebuild site/dist (tests/site-pages.test.js runs
+# scripts/site-build.js) and gtm:check rebuilds and reads it: one after the
+# other, never together, in one lane beside the others (Muse P2 on #444).
+touched_then_gtm() {
+  run_phase_now 'tests of the touched files' node scripts/ci-touched-tests.js --base FETCH_HEAD || return
+  run_phase_now 'public claims and packaging agree' npm run gtm:check
+}
+
+run_phase_now() {
   local name="$1"
   shift
   echo "::group::$name"
@@ -56,10 +107,9 @@ run_phase() {
 }
 
 run_phase 'npm run check' npm run check
-run_phase 'tests of the touched files' node scripts/ci-touched-tests.js --base FETCH_HEAD
+run_lane 'tests of the touched files, then public claims and packaging agree' touched_then_gtm
 run_phase 'smoke demo' npm run smoke
 run_phase 'published quote approval recipe' bash -c 'node --no-warnings examples/recipes/quote-approval/run.mjs "$RUNNER_TEMP/quote-approval-crm" && npm --prefix "$RUNNER_TEMP/quote-approval-crm" run verify'
-run_phase 'public claims and packaging agree' npm run gtm:check
 run_phase 'truth document agrees with its authorities' npm run repo:truth -- --check --drift-advisory --base "origin/$BASE_REF"
 # The composition drift detector. The checked-in verifier fixture pins the
 # composition its scenario composes; any change to the composed application
@@ -84,5 +134,24 @@ run_phase 'verifier fixture still reaches exit 0' node --no-warnings --test --te
 # fingerprint (`crm solution check <plan> --json`), recompute the plan
 # fingerprint, and update the paired evidence pins.
 run_phase 'checked-in plan pins still bind' bash -c 'node --no-warnings --test --test-name-pattern="the shipped example is current against this repository, and check says so" tests/solution-plan.test.js && node --no-warnings --test --test-name-pattern="the shipped Service solution plan validates, and checks against a composed project" tests/service-operations-integration.test.js && node --no-warnings --test --test-name-pattern="the shipped M14b2 solution plan validates, and checks against a composed project" tests/delivery-change-acceptance-integration.test.js && node --no-warnings --test --test-name-pattern="every source artifact the checked-in documents cite is present with exactly that hash" tests/solution-verify.test.js'
+
+if [ "${CI_FAST_PARALLEL:-}" = 1 ]; then
+  failed=()
+  first_code=0
+  for i in "${!pids[@]}"; do
+    code=0
+    wait "${pids[$i]}" || code=$?
+    if [ "$code" != 0 ]; then
+      failed+=("${phases[$i]}")
+      [ "$first_code" != 0 ] || first_code=$code
+    fi
+  done
+  for i in "${!phases[@]}"; do cat "$logs_dir/$i.log"; done
+  rm -rf "$logs_dir"
+  if [ "${#failed[@]}" -gt 0 ]; then
+    echo "::error::ci-fast: ${#failed[@]} of ${#phases[@]} phases failed in parallel after $((SECONDS - started))s: ${failed[*]}"
+    exit "$first_code"
+  fi
+fi
 
 echo "ci-fast: all 8 phases passed in $((SECONDS - started))s of the ${budget}s total lock budget"
