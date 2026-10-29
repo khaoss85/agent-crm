@@ -513,6 +513,7 @@ const customerCardView = createCustomerCardView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  toast,
   navigate: (hash) => { window.location.hash = hash; },
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).

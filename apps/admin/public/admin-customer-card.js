@@ -36,14 +36,25 @@ const CHANNEL_LABELS = Object.freeze({
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
   facebook: 'Messenger',
+  // Voce 19c2e22a64a1 (6): every CARD_CHANNEL_MARKS key reads Italian — the
+  // scheda never prints a raw channel key. `messenger` follows `facebook`
+  // (both paint FB); `calendar` follows the prototype chip (`Google
+  // Calendar`); `web`/`form` follow the Oggi tile note (`WEB (Form sito)` in
+  // admin-ui.js); `outlook` keeps its product name like `gmail` keeps Gmail.
+  // Voce 59def6cb805d: stessa copertura per C15/C17.
   tiktok: 'TikTok',
   email: 'Email',
   gmail: 'Gmail',
+  outlook: 'Outlook',
   sms: 'SMS',
   phone: 'Telefono',
   voice: 'Telefono',
   tel: 'Telefono',
   mobile: 'Telefono',
+  messenger: 'Messenger',
+  calendar: 'Google Calendar',
+  web: 'Sito',
+  form: 'Form sito',
 });
 
 /** Delivery/sync state, inbound or outbound, in the operator's words. */
@@ -200,6 +211,9 @@ const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', face
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
+  // The shell toast, like every sibling admin view: Aggiorna reports through
+  // it, never through a bare status line. Without a shell it stays a noop.
+  const toast = deps.toast ?? (() => {});
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
@@ -396,12 +410,40 @@ export function createCustomerCardView(deps) {
     'google-contacts': 'Contatti Google', 'email-signature': 'firma email',
   });
 
-  function enriched(box, enrichment) {
+  function enriched(box, enrichment, reload) {
     // BO-F4-03, ref "05 Scheda cliente": every enriched datum cites the free
     // source that filled it and its observation date; an opted-out customer
     // reads as opted out, never as empty; no row without a recorded source
     // is ever shown. Values are text, never markup.
+    // Voce 59def6cb805d (C13): the ghost `Aggiorna` button re-reads the
+    // enrichment through the same operation the card load uses and reports
+    // through the shell toast — `Dati aggiornati` when the re-read changed
+    // the section, `Nessun dato nuovo` when it did not. A failed re-read is
+    // the Italian retry sentence, and the section keeps its previous rows.
     box.appendChild(el('h4', undefined, "Arricchito dall'AI"));
+    if (typeof reload === 'function') {
+      const refresh = el('button', 'bo-scheda-refresh', 'Aggiorna');
+      refresh.setAttribute('type', 'button');
+      refresh.setAttribute('data-action', 'refresh-enrichment');
+      let busy = false;
+      refresh.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const fresh = await reload();
+          const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+          const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+          while (box.firstChild) box.removeChild(box.firstChild);
+          enriched(box, fresh, reload);
+          toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+        } finally {
+          busy = false;
+        }
+      });
+      box.appendChild(refresh);
+    }
     const items = Array.isArray(enrichment?.items) ? enrichment.items : null;
     if (items === null) {
       box.appendChild(el('p', 'bo-muted', 'non disponibile: dati arricchiti non leggibili per questo cliente'));
@@ -692,6 +734,14 @@ export function createCustomerCardView(deps) {
       return;
     }
     const { card, timeline, profile, enrichment, calls } = loaded;
+    // C13: the re-read behind `Aggiorna` — the same enriched route the load
+    // uses, with the same honest 404. Anything else still rejects, so the
+    // button toasts the Italian retry instead of inventing rows.
+    const enrichedPath = `/api/customer-data/enriched/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
+    const reloadEnrichment = () => client.request(enrichedPath).catch((error) => {
+      if (error && error.status === 404) return null;
+      throw error;
+    });
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -708,7 +758,7 @@ export function createCustomerCardView(deps) {
     section(left, '', quickActions, card);
     section(left, '', linkedIdentities, profile);
     section(left, '', details, card, profile);
-    section(left, '', enriched, enrichment);
+    section(left, '', enriched, enrichment, reloadEnrichment);
     section(center, 'bo-scheda-card-timeline', timelineBox, timeline);
     section(right, 'bo-scheda-ai', aiSummary, calls);
     section(right, '', callsBox, calls);
