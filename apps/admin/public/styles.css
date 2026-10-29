@@ -1521,3 +1521,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-add-option:focus-visible { outline: none; }
 /* «Invita persona»: the menu sits under its green button, on the right. */
 .bo-spazi-invite-menu { margin: 0 20px 12px auto; }
+/* Personalizzazione «Aggiungi ▾»: the menu opens over the page, under its
+ * button on the right, like every other add menu (Muse P3 on #452). */
+.ui-conn-addwrap { position: relative; }
+.ui-conn-addmenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; }
+@media (max-width: 720px) { .ui-conn-addmenu { position: static; margin-top: 8px; } }
