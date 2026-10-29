@@ -1526,3 +1526,54 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-conn-addwrap { position: relative; }
 .ui-conn-addmenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; }
 @media (max-width: 720px) { .ui-conn-addmenu { position: static; margin-top: 8px; } }
+
+/* Design pass 8 — Profilo (#/profilo). No prototype screen: built from the
+ * pieces every /bo screen already uses — kicker and display title, the
+ * Personalizzazione connector card (48 px tile, name, line, pill, action). */
+.bo-profilo { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+.bo-profilo-head { display: flex; align-items: center; gap: 20px; padding-top: 8px; }
+.bo-profilo-avatar {
+  width: 72px; height: 72px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  background: var(--ink); color: var(--paper); font-size: 24px; font-weight: 800; letter-spacing: .02em;
+}
+.bo-profilo-words { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.bo-profilo-words .bo-kicker { margin: 0; }
+.bo-profilo-name { margin: 0; font-size: 44px; line-height: 1.02; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.bo-profilo-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
+.bo-profilo-pill {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.bo-profilo-pill-role { background: var(--ink); color: var(--paper); }
+.bo-profilo-pill-ok { background: var(--accent-soft); color: var(--accent); }
+.bo-profilo-pill-muted { background: var(--surface-soft); color: var(--muted); }
+.bo-profilo-pill-warn { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-profilo-card { border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 6px; }
+.bo-profilo-card .bo-profilo-card-title { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.bo-profilo-card-lede { margin: 0 0 10px; font-size: 14px; color: var(--muted); line-height: 1.5; }
+.bo-profilo-conns { display: flex; flex-direction: column; }
+.bo-profilo-conn {
+  display: flex; align-items: center; gap: 16px; padding: 16px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.bo-profilo-tile.ui-chip {
+  width: 48px; height: 48px; flex: none; display: grid; place-items: center;
+  padding: 0; border-radius: 12px; font-size: 12px;
+}
+.bo-profilo-conn-words { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bo-profilo-conn-name { font-size: 16px; font-weight: 700; color: var(--ink); }
+.bo-profilo-conn-line { font-size: 13px; color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+.bo-profilo-conn-side { display: flex; align-items: center; gap: 12px; flex: none; }
+.bo-profilo-form { margin: 0; }
+.bo-profilo-collega { text-decoration: none; }
+.bo-profilo-loading, .bo-profilo-note { margin: 0; font-size: 13px; color: var(--muted); }
+.bo-profilo-note { padding-top: 12px; border-top: 1px solid var(--line-soft); }
+@media (max-width: 720px) {
+  .bo-profilo-head { align-items: flex-start; }
+  .bo-profilo-avatar { width: 56px; height: 56px; font-size: 19px; }
+  .bo-profilo-name { font-size: 32px; }
+  .bo-profilo-conn { flex-wrap: wrap; }
+  .bo-profilo-conn-side { width: 100%; justify-content: space-between; padding-left: 64px; }
+}
+.bo-user-link { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; color: inherit; text-decoration: none; border-radius: 10px; padding: 4px; margin: -4px; }
+.bo-user-link:hover { background: var(--surface-soft); }

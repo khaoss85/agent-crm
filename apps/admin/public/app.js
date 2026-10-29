@@ -428,6 +428,7 @@ import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
+import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
@@ -669,6 +670,14 @@ const spaziAccessiView = createSpaziAccessiView({
   storage: shellStorage,
   toast,
 });
+// Profilo (design pass 8): the session person and their Google connections.
+// The member is read lazily: the session profile is resolved just below.
+const profiloView = createProfiloView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  member: () => shellUser,
+});
 // BO-F6-03: the session profile the host injected (a real session under a
 // mount: space, role, name, email and the space logout URL), or null locally
 // without a verifier. With a session the shell shows the session's space and
@@ -808,6 +817,7 @@ function shellScreenFor(target) {
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
     case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
+    case 'profilo': return { id: '', label: 'Profilo' };
     case 'componenti': return { id: null, label: 'Componenti' };
     case 'invalid': return { id: null, label: 'Percorso non valido' };
     default: return { id: null, label: 'Vista' };
@@ -1069,6 +1079,7 @@ async function route() {
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
     else if (target.view === 'componenti') createUiCatalogView({ doc: document, mount: moduleView }).render();
     else if (target.view === 'spazi-accessi') await spaziAccessiView.render();
+    else if (target.view === 'profilo') await profiloView.render();
     else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
