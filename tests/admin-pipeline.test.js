@@ -798,6 +798,18 @@ test('empty kanban columns invite a drop and columns mark the hovered target (C1
     'leaving the column unmarks it',
   );
 
+  // Review finding on khaoss85/agent-crm#411 (P2): dragleave fires while the
+  // pointer moves onto a child card — the pointer still hovers the column,
+  // so the mark must stay instead of flickering.
+  const marked = (node) => String(node.getAttribute('class')).split(/\s+/).includes('drop-target');
+  const liveColumn = columns.find((node) => node.getAttribute('data-stage') === 'discovery');
+  const liveCard = liveColumn.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  liveColumn.dispatch('dragover', { preventDefault() {} });
+  liveColumn.dispatch('dragleave', { relatedTarget: liveCard });
+  assert.ok(marked(liveColumn), 'moving onto a child card keeps the column marked');
+  liveColumn.dispatch('dragleave', { relatedTarget: null });
+  assert.ok(!marked(liveColumn), 'leaving the column for good unmarks it');
+
   // C18: the dragged card is attenuated while it flies.
   const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
   card.dispatch('dragstart', { dataTransfer: { setData() {} } });
@@ -805,11 +817,17 @@ test('empty kanban columns invite a drop and columns mark the hovered target (C1
     String(card.getAttribute('class')).split(/\s+/).includes('dragging'),
     'C18: the dragged card is marked while it flies',
   );
+
+  // Review finding on khaoss85/agent-crm#411 (P2): cancelling the drag must
+  // not leave a column marked — dragend sweeps every hovered column.
+  demoColumn.dispatch('dragover', { preventDefault() {} });
+  liveColumn.dispatch('dragover', { preventDefault() {} });
   card.dispatch('dragend');
   assert.ok(
     !String(card.getAttribute('class')).split(/\s+/).includes('dragging'),
     'dropping the card unmarks it',
   );
+  assert.ok(!marked(demoColumn) && !marked(liveColumn), 'dragend unmarks every column');
 });
 
 test('Azzera filtri appears only while a filter or search is active (C11)', async () => {

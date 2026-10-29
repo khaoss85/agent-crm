@@ -90,6 +90,13 @@ export function createPipelineBoard(deps) {
   let filteredPipeline = null;
   /** Record id → live card controls (reason reveal on drops to lost). */
   const cardNodes = new Map();
+  /** Live stage columns of the current render: drop and dragend sweep their
+   * drop-target hook, so a cancelled drag never leaves a column marked. */
+  const columnNodes = [];
+  /** Clear the C18 drop-target hook from every live column. */
+  function unmarkDropTargets() {
+    for (const column of columnNodes) toggleHook(column, 'drop-target', false);
+  }
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -211,6 +218,7 @@ export function createPipelineBoard(deps) {
     const { pipeline, records } = cached;
     clear();
     cardNodes.clear();
+    columnNodes.length = 0;
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
     const stageKeys = new Set(pipeline.stages.map((stage) => stage.key));
@@ -543,14 +551,20 @@ export function createPipelineBoard(deps) {
 
     // BO-F6-10 C18: the drop target is marked while a card hovers it, so CSS
     // can paint the dashed outline; the dragged card is attenuated the same way.
+    columnNodes.push(column);
     column.addEventListener('dragover', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       toggleHook(column, 'drop-target', true);
     });
-    column.addEventListener('dragleave', () => toggleHook(column, 'drop-target', false));
+    column.addEventListener('dragleave', (event) => {
+      // Entering a child card still hovers this column: only a true exit
+      // unmarks it, otherwise the marker flickers while crossing children.
+      if (event?.relatedTarget && column.contains(event.relatedTarget)) return;
+      toggleHook(column, 'drop-target', false);
+    });
     column.addEventListener('drop', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      toggleHook(column, 'drop-target', false);
+      unmarkDropTargets();
       const payload = event?.dataTransfer?.getData?.('text/plain') ?? '';
       void handleDrop(pipeline, stage.key, payload);
     });
@@ -590,7 +604,10 @@ export function createPipelineBoard(deps) {
       event?.dataTransfer?.setData?.('text/plain', JSON.stringify({ id: record.id, fromStage: stage.key }));
       toggleHook(card, 'dragging', true);
     });
-    card.addEventListener('dragend', () => toggleHook(card, 'dragging', false));
+    card.addEventListener('dragend', () => {
+      toggleHook(card, 'dragging', false);
+      unmarkDropTargets();
+    });
 
     // Terminal stages have no move control (server enforces it regardless).
     if (stage.type !== 'open') return card;
