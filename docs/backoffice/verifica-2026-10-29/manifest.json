@@ -1,0 +1,229 @@
+{
+  "generatedAt": "2026-10-29T05:10:03.944Z",
+  "shots": [
+    {
+      "screen": "login",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/login-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 114507,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "login",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/login-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 86649,
+      "viewport": "phone"
+    },
+    {
+      "screen": "oggi",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/oggi-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 180337,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "oggi",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/oggi-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 129789,
+      "viewport": "phone"
+    },
+    {
+      "screen": "clienti",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/clienti-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 113065,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "clienti",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/clienti-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 76572,
+      "viewport": "phone"
+    },
+    {
+      "screen": "cliente",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/cliente-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 210046,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "cliente",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/cliente-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 119171,
+      "viewport": "phone"
+    },
+    {
+      "screen": "pipeline",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/pipeline-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 131029,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "pipeline",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/pipeline-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 92205,
+      "viewport": "phone"
+    },
+    {
+      "screen": "calendario",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/calendario-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 190467,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "calendario",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/calendario-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 109379,
+      "viewport": "phone"
+    },
+    {
+      "screen": "sequenze",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/sequenze-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 174704,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "sequenze",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/sequenze-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 101068,
+      "viewport": "phone"
+    },
+    {
+      "screen": "reporting",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/reporting-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 259205,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "reporting",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/reporting-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 105920,
+      "viewport": "phone"
+    },
+    {
+      "screen": "personalizzazione",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/personalizzazione-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 200941,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "personalizzazione",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/personalizzazione-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 109387,
+      "viewport": "phone"
+    },
+    {
+      "screen": "catalogo",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/catalogo-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 133713,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "catalogo",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/catalogo-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 108447,
+      "viewport": "phone"
+    },
+    {
+      "screen": "stato-sync",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/stato-sync-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 149064,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "stato-sync",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/stato-sync-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 118942,
+      "viewport": "phone"
+    },
+    {
+      "screen": "spazi-accessi",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/spazi-accessi-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 185979,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "spazi-accessi",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/spazi-accessi-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 129780,
+      "viewport": "phone"
+    },
+    {
+      "screen": "connettori",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/connettori-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 276767,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "connettori",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/connettori-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 135660,
+      "viewport": "phone"
+    },
+    {
+      "screen": "componenti",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/componenti-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 244329,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "componenti",
+      "file": "/private/tmp/claude-571075465/-Users-danielepelleri/3d2a4082-8b6d-461a-a71b-20cd168ada9b/scratchpad/verify/docs/backoffice/verifica-2026-10-29/componenti-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 124713,
+      "viewport": "phone"
+    }
+  ]
+}
