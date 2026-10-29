@@ -247,7 +247,9 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
 
   const trusted = grep('trustedSystemActor(')
     .filter((line) => !isComment(line) && !inActorModule(line) && !isReExport(line))
-    .map((line) => line.replace(/:\d+:/, ':<line>:'));
+    .map((line) => line.replace(/:\d+:/, ':<line>:'))
+    // grep -r walks in readdir order: stable on APFS, not on ext4.
+    .sort();
   assert.deepEqual(trusted, [
     // V3C. A scheduled ask is an instruction a person wrote: the human boundary
     // is enforced when it is written, and this authority only presents it at the
@@ -288,7 +290,7 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     // system actor attributes the write, while sends and connection changes
     // still require a human user actor (requireUser).
     "packages/channels/src/operations.js:<line>:const SYSTEM = () => trustedSystemActor('channel package internal write');",
-  ],
+  ].sort(),
     'a new trustedSystemActor call site is a new place the framework claims root — '
     + 'justify it here and update this expectation deliberately');
 
