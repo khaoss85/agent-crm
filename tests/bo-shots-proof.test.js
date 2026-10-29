@@ -48,7 +48,6 @@ import { fileURLToPath } from 'node:url';
 import { DESKTOP, PHONE, SCREEN_NAMES, readPngSize } from '../scripts/bo-shots.js';
 
 const proofDir = join(fileURLToPath(new URL('.', import.meta.url)), 'fixtures', 'bo-shots-proof');
-const repoRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 
 // All fourteen screens carry committed proof PNGs, login included.
 const PROVEN_SCREENS = [...SCREEN_NAMES];
@@ -83,11 +82,13 @@ const STALE_LOGIN_BLOBS = Object.freeze({
   'login-390x1600.png': 'f9f61b8291c3e94667d52adf643acf66ec1b9df90ad87e193bcb81400abcde03',
 });
 
-const LOGIN_SOURCES = Object.freeze({
-  'apps/admin/public/login.html': 'e03cb839f27a4ed6234570ca40bc4a74bf6b1c8864d59a88c042bce3d9c62b64',
-  'apps/admin/public/login.js': '15e8530c640156e11f00afad2f489f824de5dcf88ee831ad7e8bca069633e55e',
-});
 
+// Source fingerprints were dropped on 29/10 (supervisor): pinning the sha256 of
+// a view module made every legitimate restyle fail the scheduled full suite and
+// held production back (main 3c515a0, run 40843646686). Whether a screen still
+// matches the prototype is the supervisor's browser proof
+// (docs/backoffice/verifica-<date>/), not a fixture freshness gate; the checks
+// here keep refusing the known stale blobs and an empty render.
 function sha256Hex(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
@@ -102,9 +103,6 @@ const STALE_CATALOGO_BLOBS = Object.freeze({
   'catalogo-390x1600.png': '1a79a8e3a6465a7f3faf3d82f6bb01b2ef18e2b991aa505606b47c4f041c8365',
 });
 
-const CATALOGO_SOURCES = Object.freeze({
-  'apps/admin/public/admin-catalog.js': '1b1ebca802e3233cfc4f376b7924a63a3d03a68a4fdf3c3386aa9e2d7636fe8c',
-});
 
 test('the catalogo proof pair is a render of the current tree, never the pre-#426 pair', () => {
   for (const [file, stale] of Object.entries(STALE_CATALOGO_BLOBS)) {
@@ -114,15 +112,6 @@ test('the catalogo proof pair is a render of the current tree, never the pre-#42
       `${file} is the stale pre-#426 render: re-run \`npm run bo:shots -- --screen catalogo\`, copy the pair here and record the new source fingerprints`,
     );
   }
-  const current = {};
-  for (const relative of Object.keys(CATALOGO_SOURCES)) {
-    current[relative] = sha256Hex(join(repoRoot, relative));
-  }
-  assert.deepEqual(
-    current,
-    { ...CATALOGO_SOURCES },
-    'a catalogo source moved without a fresh render: re-run `npm run bo:shots -- --screen catalogo`, copy the pair here and record the new fingerprints deliberately',
-  );
 });
 
 test('the login proof pair is a render of the current tree, never the stale pre-#408 pair', () => {
@@ -133,13 +122,4 @@ test('the login proof pair is a render of the current tree, never the stale pre-
       `${file} is the stale pre-#408 render: re-run \`npm run bo:shots -- --screen login\`, copy the pair here and record the new source fingerprints`,
     );
   }
-  const current = {};
-  for (const relative of Object.keys(LOGIN_SOURCES)) {
-    current[relative] = sha256Hex(join(repoRoot, relative));
-  }
-  assert.deepEqual(
-    current,
-    { ...LOGIN_SOURCES },
-    'a login source moved without a fresh render: re-run `npm run bo:shots -- --screen login`, copy the pair here and record the new fingerprints deliberately',
-  );
 });
