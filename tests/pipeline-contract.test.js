@@ -5,7 +5,7 @@ import {
   validatePipelineDefinition,
   pipelineMetadata,
 } from '../packages/core/src/pipeline-registry.js';
-import { formatMinorUnits } from '../apps/admin/public/admin-core.js';
+import { formatAmount, formatMinorUnits } from '../apps/admin/public/admin-core.js';
 
 const deps = { moduleExists: (name) => ['opportunity', 'ticket'].includes(name) };
 
@@ -118,4 +118,15 @@ test('formatMinorUnits is deterministic and never locale-driven', () => {
   // Currency is rendered verbatim as inert text — casing preserved, unusual
   // shapes not validated here (the storage layer owns currency validation).
   assert.equal(formatMinorUnits(100, 'eur'), 'eur 1.00');
+});
+
+test('formatAmount writes Italian amounts like the prototype', () => {
+  assert.equal(formatAmount(2_712_000, 'EUR'), '27.120 €');
+  assert.equal(formatAmount(120_050, 'EUR'), '1.200,50 €');
+  assert.equal(formatAmount(2500, 'USD'), '25 USD');
+  assert.equal(formatAmount(750, 'USD'), '7,50 USD');
+  assert.equal(formatAmount(0, 'EUR'), '0 €');
+  assert.equal(formatAmount(-2500, 'EUR'), '-25 €');
+  assert.equal(formatAmount(1.5, 'EUR'), '—');
+  assert.equal(formatAmount(Number.MAX_SAFE_INTEGER + 2, 'EUR'), '—');
 });

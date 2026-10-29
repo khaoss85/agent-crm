@@ -86,8 +86,8 @@ test('board renders columns in stage order with counts, badges and per-currency 
 
   // Per-currency totals: EUR and USD never summed together.
   const totals = mount.findAll('p').filter((n) => (n.getAttribute('class') ?? '') === 'stage-total').map((n) => n.textContent);
-  assert.ok(totals.includes('EUR 1,500.00'), `discovery EUR total (${totals.join(' | ')})`);
-  assert.ok(totals.includes('USD 25.00'), 'demo USD total stays separate');
+  assert.ok(totals.includes('1.500 €'), `discovery EUR total (${totals.join(' | ')})`);
+  assert.ok(totals.includes('25 USD'), 'demo USD total stays separate');
 
   // Lost card shows its reason; terminal cards have no move control.
   const lostCard = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'e');
@@ -345,8 +345,8 @@ test('summary totals the filtered set per currency without mixing', async () => 
   owner.dispatch('change');
   const text = summaryText(mount);
   assert.match(text, /3 offerte/);
-  assert.ok(text.includes('EUR 2,000.00'), `alice EUR total (${text})`);
-  assert.ok(text.includes('USD 25.00'), `alice USD total stays separate (${text})`);
+  assert.ok(text.includes('2.000 €'), `alice EUR total (${text})`);
+  assert.ok(text.includes('25 USD'), `alice USD total stays separate (${text})`);
 });
 
 test('forecast is labeled as a stima and weights open stages by probability', async () => {
@@ -361,8 +361,8 @@ test('forecast is labeled as a stima and weights open stages by probability', as
   assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
   // discovery 100_000 @10% = 10_000 plus 50_000 @10% = 5_000 → EUR 150.00;
   // demo USD 2_500 @30% = 750 → USD 7.50; won/lost stages never forecast.
-  assert.ok(box.textContent.includes('EUR 150.00'), `EUR weighted total (${box.textContent})`);
-  assert.ok(box.textContent.includes('USD 7.50'), `USD weighted total (${box.textContent})`);
+  assert.ok(box.textContent.includes('150 €'), `EUR weighted total (${box.textContent})`);
+  assert.ok(box.textContent.includes('7,50 USD'), `USD weighted total (${box.textContent})`);
 });
 
 test('dropping a card posts the same move-stage action as the Move button', async () => {

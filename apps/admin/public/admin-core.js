@@ -476,6 +476,28 @@ export function formatMinorUnits(minorUnits, currency) {
 }
 
 /**
+ * Amount for the Italian screens, the way the prototype writes it:
+ * `27.120 €`, `1.200,50 €`, `25 USD`. Dot groups thousands, comma marks the
+ * cents and the cents show only when they are not zero; EUR is written `€`,
+ * every other currency keeps its code. Computed, never browser-locale, so
+ * tests and servers agree. Same 1/100-unit contract as formatMinorUnits,
+ * which stays the exact machine form for exports and logs.
+ *
+ * @param {number} minorUnits @param {string} currency
+ */
+export function formatAmount(minorUnits, currency) {
+  if (!Number.isSafeInteger(minorUnits)) return '—';
+  const sign = minorUnits < 0 ? '-' : '';
+  const abs = Math.abs(minorUnits);
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const cents = abs % 100;
+  const number = cents === 0 ? whole : `${whole},${String(cents).padStart(2, '0')}`;
+  const code = String(currency ?? '').trim();
+  const unit = code === 'EUR' ? '€' : code;
+  return `${sign}${number} ${unit}`.trim();
+}
+
+/**
  * Regola per tutte le schermate (backlog:9da124e5): un errore tecnico non si
  * mostra mai al cliente — niente codici (`NOT_FOUND`), niente nomi di
  * pacchetti (`space-permissions`), niente comandi (`npm run …`), niente
