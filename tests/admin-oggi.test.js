@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ADVISOR_ACTION_LIMIT,
   DEMO_STRINGS,
+  OGGI_TOTAL_CHANNELS,
   applyTriageDecision,
   advisorProgress,
   buildAdvisorActions,
@@ -354,16 +355,27 @@ test('stale detection compares only the cited snapshot', () => {
   assert.deepEqual(staleFields({ dueAt: null }, { dueAt: undefined }), []);
 });
 
-test('recap counts real records in one sentence', () => {
+test('recap follows the prototype sentence with real counts', () => {
   const recap = buildTodayRecap({
     appointments: [APPT_TODAY, APPT_TOMORROW],
     openTasks: [TASK_OPEN, TASK_DONE],
     now: OGGI_NOW,
   });
-  assert.equal(recap, 'Oggi hai 1 appuntamento e 1 follow-up aperto. Il primo è alle 10:00 con Giulia Romano.');
+  assert.equal(
+    recap,
+    'Oggi hai 1 cosa da fare e 1 appuntamento. Ti servono circa 3 minuti: ho già preparato i messaggi.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [APPT_TODAY], openTasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-9' }], now: OGGI_NOW }),
+    'Oggi hai 2 cose da fare e 1 appuntamento. Ti servono circa 6 minuti: ho già preparato i messaggi.',
+  );
   assert.equal(
     buildTodayRecap({ appointments: [], openTasks: [], now: OGGI_NOW }),
-    'Oggi non hai appuntamenti né follow-up aperti.',
+    'Niente in sospeso. Ti restano 0 appuntamenti.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [APPT_TODAY, APPT_TOMORROW], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso. Ti restano 1 appuntamento.',
   );
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
@@ -449,13 +461,14 @@ test('full home renders every section with clickable sources', () => {
 
   const text = mount.textContent;
   assert.ok(text.includes('Buongiorno, Elena'), 'greets the person');
-  assert.ok(text.includes('Oggi hai 1 appuntamento e 1 follow-up aperto'), 'one-sentence recap');
+  assert.ok(text.includes('Oggi hai 1 cosa da fare e 1 appuntamento. Ti servono circa 3 minuti'), 'one-sentence recap');
   assert.ok(text.includes('✦ Il tuo advisor'), 'advisor header');
   assert.ok(text.includes('0 di 2'), 'progress starts at zero');
   assert.ok(text.includes('Agenda di oggi') && text.includes('10:00'), 'agenda with Rome time');
   assert.ok(text.includes('✦ Prima della prossima call'), 'brief header');
   assert.ok(text.includes('Fonti:'), 'brief sources labeled');
   assert.ok(text.includes('Collega WhatsApp'), 'channel invite names the missing channel');
+  assert.ok(text.includes('di 9 collegati'), 'channel invite counts the connected channels');
   for (const banned of DEMO_STRINGS) {
     assert.ok(!text.includes(banned), `no demo text: ${banned}`);
   }
@@ -534,10 +547,197 @@ test('home with nothing open says the day is done', () => {
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  assert.ok(mount.textContent.includes('Hai finito per oggi'));
+  assert.ok(mount.textContent.includes('✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
   // The prototype's home ends with the channel invite: no module shortcut
   // list below (the sidebar already links every screen).
   assert.ok(!mount.textContent.includes('Clienti'), 'no module shortcut list under the home');
+});
+
+test('advisor note renders verbatim, never with a doubled AI mark', () => {
+  const aiNote = { ...TASK_OPEN, id: 'task-ai', channel: 'email', note: '✦ Ho preparato una bozza: la vedi prima di inviarla' };
+  const plainNote = { ...TASK_OPEN, id: 'task-plain', note: 'Ti avviso io alle 18:00' };
+  const { actions } = buildAdvisorActions({ tasks: [aiNote, plainNote], appointments: [], now: OGGI_NOW });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions, triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const notes = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-oggi-note');
+  assert.equal(notes.length, 2, 'one violet line per action carrying a note');
+  assert.equal(notes[0].textContent, '✦ Ho preparato una bozza: la vedi prima di inviarla');
+  assert.ok(!notes[0].textContent.startsWith('✦ ✦'), 'no doubled AI mark');
+  assert.equal(notes[1].textContent, 'Ti avviso io alle 18:00');
+  assert.ok(!notes[1].textContent.includes('✦'), 'a plain note gains no AI mark');
+});
+
+test('agenda rows carry the chi line from the team member or the notes', () => {
+  const withTeam = { ...APPT_TODAY, id: 'appt-team', teamMemberId: 'Marco' };
+  const withNotesOnly = { ...APPT_TODAY, id: 'appt-notes' };
+  const agenda = buildTodayAgenda([withTeam, withNotesOnly], OGGI_NOW);
+  assert.equal(agenda[0].who, 'Marco', 'team member first');
+  assert.ok(
+    agenda[1].who.includes('Vuole la scheda'),
+    'notes cue when no team member is stored',
+  );
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    userName: 'Elena',
+    links: [],
+    navigate: () => {},
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda, brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const text = mount.textContent;
+  assert.ok(text.includes('Marco'), 'chi line paints under the appointment');
+  assert.ok(text.includes('Vuole la scheda'), 'notes cue paints under the appointment');
+});
+
+test('brief CTA is a button opening the customer scheda', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const brief = buildPreCallBrief({ appointment: APPT_TODAY, messages: [MESSAGE_IN], calls: [] });
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    userName: 'Elena',
+    links: [],
+    navigate: (hash) => seen.push(hash),
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const cta = mount.findAll('button').find((node) => node.textContent === 'Apri la scheda');
+  assert.ok(cta, 'the brief ends with a real button, like the prototype');
+  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Apri la scheda').length, 0, 'no link CTA left');
+  cta.dispatch('click', {});
+  assert.deepEqual(seen, ['#/customer-card/lead/lead-1'], 'the button navigates to the scheda');
+});
+
+test('channel invite counts connected of nine, and hides when all nine connect', () => {
+  assert.equal(OGGI_TOTAL_CHANNELS, 9, 'the prototype counts nine backoffice channels');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [{ channel: 'facebook', label: 'Facebook' }, { channel: 'tiktok', label: 'TikTok' }],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(mount.textContent.includes('7 di 9 collegati'), 'nine minus the two missing');
+  assert.ok(mount.textContent.includes('Collega Facebook, TikTok per non perdere nessun lead'), 'invite names the missing');
+
+  const full = createMount();
+  renderOggi({
+    doc,
+    mount: full,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(!full.textContent.includes('collegati'), 'no invite once every channel connects');
+});
+
+test('no technical resource-id label reaches the Oggi screen', () => {
+  const unlabeledTask = {
+    id: 'task-nolabel', status: 'open', title: 'Richiama per il preventivo',
+    subjectResource: 'lead', subjectId: 'lead-1',
+    dueAt: '2026-10-19T00:00:00.000Z', openedAt: '2026-10-18T08:00:00.000Z',
+  };
+  const unlabeledAppt = {
+    id: 'appt-nolabel', status: 'booked', startsAt: '2026-10-19T08:00:00.000Z',
+    subjectResource: 'lead', subjectId: 'lead-1', subjectOwner: 'host',
+  };
+  const { actions } = buildAdvisorActions({ tasks: [unlabeledTask], appointments: [], now: OGGI_NOW });
+  const agenda = buildTodayAgenda([unlabeledAppt], OGGI_NOW);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: buildTodayRecap({ appointments: [unlabeledAppt], openTasks: [unlabeledTask], now: OGGI_NOW }),
+      actions, triage: {}, agenda, brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const text = mount.textContent;
+  assert.ok(!text.includes('lead · lead-1'), 'no technical label on screen');
+  assert.ok(text.includes('il cliente'), 'an Italian fallback names the customer');
+});
+
+test('the oggi screen renders no raw control', () => {
+  // Acceptance: a button without a ui-* system class fails this screen.
+  // Every control reaches the DOM through the shared `el` helper, which
+  // normalizes legacy classes onto `ui-*`.
+  const rawControls = (root) => {
+    const out = [];
+    const walk = (node) => {
+      const tag = String(node.tagName ?? '').toLowerCase();
+      if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+        const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+        if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) out.push(`${tag}[${classes.join('.')}]`);
+      }
+      for (const child of node.childNodes ?? []) walk(child);
+    };
+    walk(root);
+    return out;
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const { actions } = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [APPT_TODAY], now: OGGI_NOW });
+  const brief = buildPreCallBrief({ appointment: APPT_TODAY, messages: [MESSAGE_IN], calls: [] });
+  const agenda = buildTodayAgenda([APPT_TODAY], OGGI_NOW);
+  const paint = (triage) => renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    userName: 'Elena',
+    links: [],
+    navigate: () => {},
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions, triage, agenda, brief,
+      missing: missingLeadChannels([]),
+      availability: { work: true, appointments: true, channels: true },
+      events: { onPostpone: () => {}, onUndo: () => {}, onExecute: () => {} },
+    },
+  });
+  paint({});
+  assert.deepEqual(rawControls(mount), [], 'open rows carry no raw control');
+  paint({ 'bo04:followup:task-1': 'postpone', 'bo04:appointment:appt-1': 'done' });
+  assert.deepEqual(rawControls(mount), [], 'decided rows carry no raw control');
 });
 
 test('loadOggiData degrades honestly without packages', async () => {
