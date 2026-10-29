@@ -103,7 +103,10 @@ jobs:
         run: |
           # Two runners can share the Linux server: each names its own
           # container and port in its .env (ACCORDO_PG_NAME, ACCORDO_PG_PORT).
-          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "${ACCORDO_PG_PORT:-5432}:5432" postgres:16
+          # Loopback only: the cluster trusts every connection. A container a
+          # cancelled run left behind would refuse the name: removed first.
+          docker rm -f "${ACCORDO_PG_NAME:-accordo-pg}" >/dev/null 2>&1 || true
+          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - run: npm ci
@@ -218,7 +221,10 @@ jobs:
         run: |
           # Two runners can share the Linux server: each names its own
           # container and port in its .env (ACCORDO_PG_NAME, ACCORDO_PG_PORT).
-          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "${ACCORDO_PG_PORT:-5432}:5432" postgres:16
+          # Loopback only: the cluster trusts every connection. A container a
+          # cancelled run left behind would refuse the name: removed first.
+          docker rm -f "${ACCORDO_PG_NAME:-accordo-pg}" >/dev/null 2>&1 || true
+          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - name: Install and verify PostgreSQL 16 backup client (Linux)
