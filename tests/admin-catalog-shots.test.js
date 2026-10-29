@@ -7,57 +7,26 @@
  * size and pixel dimensions; the phone run additionally asserts, from inside
  * the page, that nothing scrolls sideways under 700px.
  *
- * The Chromium lookup mirrors scripts/site-shots.js (CHROMIUM_BIN, then the
- * Playwright headless-shell caches). Where no binary exists the test skips
- * with its reason instead of faking a pass: the CI runner is the Mac that
- * carries the cache, so the gate still sees a real browser.
+ * The Chromium gate reuses scripts/bo-shots.js (findChromium, then the
+ * chromiumRuns launch probe, like tests/bo-shots.test.js): a present binary
+ * is not a runnable one in a sandbox, so where Chromium does not actually
+ * run the test skips with its reason instead of faking a pass. The Mac CI
+ * runner carries a working Chromium, so the gate still sees a real browser.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-function readDirSafe(directory) {
-  try {
-    return readdirSync(directory);
-  } catch {
-    return [];
-  }
-}
-
-function findChromium() {
-  const candidates = [
-    process.env.CHROMIUM_BIN,
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (candidate && existsSync(candidate)) return candidate;
-  }
-  const bases = [
-    join(homedir(), '.cache', 'ms-playwright'),
-    join(homedir(), 'Library', 'Caches', 'ms-playwright'),
-  ];
-  for (const base of bases) {
-    for (const entry of readDirSafe(base)) {
-      for (const suffix of [
-        ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
-        ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
-        ['chrome-linux', 'headless_shell'],
-      ]) {
-        const path = join(base, entry, ...suffix);
-        if (existsSync(path)) return path;
-      }
-    }
-  }
-  return null;
-}
+import { chromiumRuns, findChromium } from '../scripts/bo-shots.js';
 
 const CHROMIUM = findChromium();
+const BROWSER_SKIP = chromiumRuns(CHROMIUM)
+  ? false
+  : 'no runnable Chromium here (set CHROMIUM_BIN); the Mac CI runner produces the PNGs';
 
 const FIXTURE_SCRIPT = `
 import { createCatalogView } from './admin-catalog.js';
@@ -209,16 +178,16 @@ function mkdirTmp() {
   return dir;
 }
 
-test('the catalog table renders in a real browser: desktop PNG', { skip: CHROMIUM ? false : 'no Chromium binary (set CHROMIUM_BIN)' }, async () => {
-  const { out, dom } = await runBrowser({ width: 1280, height: 900 });
+test('the catalog table renders in a real browser: desktop PNG', { skip: BROWSER_SKIP }, async () => {
+  const { out, dom } = await runBrowser({ width: 1440, height: 900 });
   assert.ok(dom.includes('<title>catalog-ready</title>'), 'the harness module ran to completion in the page');
   const shot = pngSize(out);
-  assert.equal(shot.width, 1280, 'the PNG is the desktop viewport');
+  assert.equal(shot.width, 1440, 'the PNG is the desktop viewport');
   assert.ok(shot.bytes > 30000, `the table paints real pixels (${shot.bytes} bytes)`);
   console.log(`catalog desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 
-test('the catalog table renders in a real browser: phone PNG without sideways scroll', { skip: CHROMIUM ? false : 'no Chromium binary (set CHROMIUM_BIN)' }, async () => {
+test('the catalog table renders in a real browser: phone PNG without sideways scroll', { skip: BROWSER_SKIP }, async () => {
   const { out, dom } = await runBrowser({ width: 390, height: 844 });
   const shot = pngSize(out);
   assert.equal(shot.width, 390, 'the PNG is the phone viewport');
