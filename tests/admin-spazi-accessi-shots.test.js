@@ -16,7 +16,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -60,6 +60,30 @@ function findChromium() {
 }
 
 const CHROMIUM = findChromium();
+
+/**
+ * A present binary is not a runnable one: sandboxed executors carry the
+ * Playwright cache while the OS refuses Chromium's Mach bootstrap, so every
+ * launch dies before painting (the same probe-gating the other *-shots
+ * tests use since #366). Probe once with a blank page: only an exit-0 HTML
+ * dump counts as runnable. Anywhere else the tests skip with their reason —
+ * the Mac CI runner runs them for real and writes the PNGs there.
+ */
+function chromiumRuns(binary) {
+  if (!binary) return false;
+  try {
+    const probe = spawnSync(binary, ['--headless', '--disable-gpu', '--dump-dom', 'about:blank'], {
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+    return probe.status === 0 && String(probe.stdout ?? '').includes('<html');
+  } catch {
+    return false;
+  }
+}
+
+const CHROMIUM_RUNS = chromiumRuns(CHROMIUM);
+const SHOTS_SKIP = CHROMIUM_RUNS ? false : 'Chromium binary missing or unrunnable here (set CHROMIUM_BIN); the Mac CI runner produces the PNGs';
 
 const FIXTURE_SCRIPT = `
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
@@ -240,7 +264,7 @@ function readProbe(html) {
   return JSON.parse(probeHtml.replace(/&quot;/g, '"'));
 }
 
-test('the spazi screen renders in a real browser: desktop PNG, team and AI side by side', { skip: CHROMIUM ? false : 'no Chromium binary (set CHROMIUM_BIN)' }, async () => {
+test('the spazi screen renders in a real browser: desktop PNG, team and AI side by side', { skip: SHOTS_SKIP }, async () => {
   const { out, dom } = await runBrowser({ width: 1280, height: 900 });
   assert.ok(dom.includes('<title>spazi-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
@@ -259,7 +283,7 @@ test('the spazi screen renders in a real browser: desktop PNG, team and AI side 
   console.log(`spazi desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 
-test('the spazi screen renders in a real browser: phone PNG without sideways scroll', { skip: CHROMIUM ? false : 'no Chromium binary (set CHROMIUM_BIN)' }, async () => {
+test('the spazi screen renders in a real browser: phone PNG without sideways scroll', { skip: SHOTS_SKIP }, async () => {
   const { out, dom } = await runBrowser({ width: 390, height: 844 });
   assert.ok(dom.includes('<title>spazi-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
