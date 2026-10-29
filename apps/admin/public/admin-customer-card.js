@@ -608,7 +608,14 @@ export function createCustomerCardView(deps) {
     const rawName = fromQuote ? (first?.opportunityName ?? first?.name) : first?.name;
     const name = typeof rawName === 'string' && rawName !== '' ? rawName : 'offerta';
     const offerStatus = offerStatusLabel(first?.status);
-    box.appendChild(el('p', 'bo-scheda-offer', offerStatus ? `${name} · ${offerStatus}` : name));
+    // Name and state read as one line for assistive tech and tests («nome · stato»); on screen the state is the prototype's pill.
+    const line = el('p', 'bo-scheda-offer');
+    line.appendChild(el('span', 'bo-scheda-offer-name', name));
+    if (offerStatus) {
+      line.appendChild(el('span', 'bo-scheda-sep', ' · '));
+      line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
+    }
+    box.appendChild(line);
     return true;
   }
 
@@ -789,7 +796,7 @@ export function createCustomerCardView(deps) {
     section(right, '', callsBox, calls);
     section(right, '', nextSteps, profile);
     section(right, 'bo-scheda-card-offer', offer, profile);
-    section(right, '', nextAppointment, timeline);
+    section(right, 'bo-scheda-card-appt', nextAppointment, timeline);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);
