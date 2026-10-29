@@ -88,6 +88,18 @@ test('hostile values stay text and an unknown connector status reads as to conne
   assert.deepEqual(mount.findAll('b'), []);
 });
 
+test('a prototype name as status reads as to connect, never Object.prototype', async () => {
+  for (const status of ['toString', '__proto__', 'constructor', 'hasOwnProperty']) {
+    const mount = await render({ member: {}, connections: { available: true, reason: null, items: [
+      { connector: 'calendar', status, account: null },
+    ] } });
+    const calendar = byClass(mount, 'div', 'bo-profilo-conn')[0];
+    assert.ok(calendar.textContent.includes('Da collegare'), status);
+    assert.ok(!calendar.textContent.includes('function'), status);
+    assert.equal(calendar.findAll('a')[0].textContent, 'Collega', status);
+  }
+});
+
 test('initials come from the name, else from the email', () => {
   assert.equal(profiloInitials('Elena Rinaldi', 'x@y.z'), 'ER');
   assert.equal(profiloInitials('', 'marco.rossi@example.com'), 'MR');

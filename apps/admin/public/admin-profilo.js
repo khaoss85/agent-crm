@@ -100,7 +100,10 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     if (!readable) {
       side.appendChild(el(doc, 'span', 'bo-profilo-pill bo-profilo-pill-muted', 'Non disponibile'));
     } else {
-      const status = STATUS_LABELS[item?.status] ?? STATUS_LABELS.disconnected;
+      // Own keys only: a prototype name (toString, __proto__) is an unknown
+      // status, read as «Da collegare» like any other (Muse P2 on #453).
+      const key = typeof item?.status === 'string' && Object.hasOwn(STATUS_LABELS, item.status) ? item.status : 'disconnected';
+      const status = STATUS_LABELS[key];
       side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${status.tone}`, status.text));
       if (item?.status === 'connected') {
         // Scollega revokes at Google: the pilot's same-origin POST, which
