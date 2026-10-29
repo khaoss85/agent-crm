@@ -237,28 +237,61 @@ export class OpportunityService {
    * Internal state mutation. Call from a named workflow, not directly from API/MCP.
    * @param {string} id
    * @param {string} targetStage
-   * @param {{actor?: unknown, workflowRunId?: string, bypassTransitionCheck?: boolean}} [context]
+   * @param {{actor?: unknown, workflowRunId?: string, bypassTransitionCheck?: boolean, expectedFromStage?: string}} [context]
+   *   expectedFromStage pins the intent to a previously read stage; when the
+   *   stored stage moved meanwhile the caller loses with 409 instead of
+   *   re-basing onto the new stage. Omit it only when the read above is the
+   *   intent (the committing write still claims exactly one winner).
    */
   async setStage(id, targetStage, context = {}) {
     const opportunity = await Promise.resolve(this.get(id));
     const stage = enumValue(targetStage, [...OPPORTUNITY_STAGES], 'targetStage');
+    // A caller acting on a stage it read earlier pins it via
+    // expectedFromStage: the intent is only valid from that stage. A fresh
+    // read that already moved means a concurrent writer won, so the loser
+    // reports 409 instead of re-basing its intent onto the new stage.
+    const from = context.expectedFromStage ?? opportunity.stage;
+    if (from !== opportunity.stage) {
+      if (opportunity.stage === stage) return opportunity;
+      throw new ConflictError(
+        `Opportunity stage changed under this caller: ${from} → ${opportunity.stage} (wanted ${stage})`,
+        { from, to: stage, current: opportunity.stage },
+      );
+    }
     if (opportunity.stage === stage) return opportunity;
-    const allowed = ALLOWED_TRANSITIONS[opportunity.stage] ?? [];
+    const allowed = ALLOWED_TRANSITIONS[from] ?? [];
     if (!context.bypassTransitionCheck && !allowed.includes(stage)) {
-      throw new ValidationError(`Invalid stage transition: ${opportunity.stage} → ${stage}`, {
-        from: opportunity.stage,
+      throw new ValidationError(`Invalid stage transition: ${from} → ${stage}`, {
+        from,
         to: stage,
         allowed,
       });
     }
     const updatedAt = nowIso();
+    // The committing write is a conditional claim gated on the pinned stage
+    // (the product-import `affectedRows` verdict idiom): the check above and
+    // this write are not atomic, so two writers that both passed the check
+    // still serialize here. Zero rows means a concurrent writer moved the
+    // opportunity first, so the loser re-reads and reports 409.
     const write = {
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: stage }, { column: 'updated_at', value: updatedAt },
-      ], where: [{ column: 'id', op: 'eq', value: id }],
+      ], where: [
+        { column: 'id', op: 'eq', value: id },
+        { column: 'stage', op: 'eq', value: from },
+      ],
     };
-    if (isSyncStorage(this.database)) this.database.storage.sync.execute(write);
-    else await storageMutate(this.database, 'opportunity_stage', async (tx) => { await tx.execute(write); });
+    let claimed;
+    if (isSyncStorage(this.database)) claimed = this.database.storage.sync.execute(write);
+    else claimed = await storageMutate(this.database, 'opportunity_stage', async (tx) => tx.execute(write));
+    if (Number(claimed?.affectedRows ?? 0) !== 1) {
+      const current = await Promise.resolve(this.get(id));
+      if (current.stage === stage) return current;
+      throw new ConflictError(
+        `Opportunity stage changed under this caller: ${opportunity.stage} → ${current.stage} (wanted ${stage})`,
+        { from: opportunity.stage, to: stage, current: current.stage },
+      );
+    }
     const updated = await Promise.resolve(this.get(id));
     await Promise.resolve(this.audit.record({
       actor: context.actor,

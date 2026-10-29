@@ -38,12 +38,16 @@ export const requestOpportunityStageChangeWorkflow = Object.freeze({
     {
       name: 'apply-stage-policy',
       async execute({ state, services, database, actor, runId }) {
+        // The intent is pinned to the stage load-opportunity saw: a retry or
+        // a concurrent winner must not re-base this request onto the new
+        // stage (two terminal changes would commit twice). setStage reports
+        // 409 when the pin no longer holds.
         return database.transactionAsync(async () => {
           if (!state.policy.requiresApproval) {
             const opportunity = await services.opportunities.setStage(
               state.opportunityId,
               state.targetStage,
-              { actor, workflowRunId: runId },
+              { actor, workflowRunId: runId, expectedFromStage: state.originalStage },
             );
             return { opportunity, approval: null, outcome: 'stage_changed' };
           }
@@ -51,7 +55,7 @@ export const requestOpportunityStageChangeWorkflow = Object.freeze({
           const opportunity = await services.opportunities.setStage(
             state.opportunityId,
             'approval_pending',
-            { actor, workflowRunId: runId },
+            { actor, workflowRunId: runId, expectedFromStage: state.originalStage },
           );
           const approval = await services.approvals.request(
             { opportunityId: state.opportunityId, reason: state.policy.reason },
