@@ -567,6 +567,12 @@ export function createPersonalizzazioneView(deps) {
       button.disabled = state.busy;
       button.addEventListener('click', () => {
         state.tab = tab;
+        // The sort is shared across tabs but each toolbar only offers its
+        // own voices: normalize on entry so the displayed voice never lies
+        // about the actual order ('stato' has no Connettori voice,
+        // 'piu-usati' has no Skill/Pacchetti voice).
+        if (tab === 'connettori' && state.sort === 'stato') state.sort = 'nome';
+        if (tab !== 'connettori' && state.sort === 'piu-usati') state.sort = 'nome';
         state.previewFor = null;
         state.preview = null;
         if (tab === 'connettori' && state.connectors === null && !state.connectorsMissing) {
@@ -663,7 +669,16 @@ export function createPersonalizzazioneView(deps) {
       },
       {
         label: 'Configura manualmente',
-        run: () => go('#/connettori'),
+        run: () => {
+          // Same 403 guard as the card and its +: without permission the
+          // page answers in Italian instead of leaving for a flow that can
+          // only error.
+          if (state.connectorsForbidden) {
+            say(CONNECTORS_PERMISSION_MESSAGE, true);
+            return;
+          }
+          go('#/connettori');
+        },
       },
     ];
     for (const voice of voices) {
@@ -1007,6 +1022,13 @@ export function createPersonalizzazioneView(deps) {
     const cta = uiButton(doc, { variant: 'secondary', label: slide.cta, attrs: { type: 'button' } });
     cta.addEventListener('click', () => {
       if (slide.cta === 'Inizia') {
+        // Same 403 guard as the card and its +: without permission the
+        // hero answers in Italian instead of leaving for a flow that can
+        // only error.
+        if (state.connectorsForbidden) {
+          say(CONNECTORS_PERMISSION_MESSAGE, true);
+          return;
+        }
         go('#/connettori');
         return;
       }
@@ -1050,7 +1072,16 @@ export function createPersonalizzazioneView(deps) {
       attrs: { 'aria-label': `${group.cards.length} canali` },
     }));
     const all = el(doc, 'button', { text: 'Mostra tutto →', cls: 'ui-conn-all', attrs: { type: 'button' } });
-    all.addEventListener('click', () => go('#/connettori'));
+    all.addEventListener('click', () => {
+      // Same 403 guard as the card and its +: without permission the
+      // section link answers in Italian instead of leaving for a flow
+      // that can only error.
+      if (state.connectorsForbidden) {
+        say(CONNECTORS_PERMISSION_MESSAGE, true);
+        return;
+      }
+      go('#/connettori');
+    });
     head.appendChild(all);
     box.appendChild(head);
     const grid = el(doc, 'div', { cls: 'ui-conn-grid' });
