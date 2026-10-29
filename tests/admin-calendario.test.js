@@ -1588,6 +1588,52 @@ test('a refused member list keeps the opaque toggles with no error', async () =>
   }
 });
 
+// A member list that resolves and then fails must not leave a stale
+// roster on screen. With nobody named no week reload repaints, so a
+// refused second read would keep showing the previous rows and their
+// Italian roles unless the failure path repaints the fallback itself.
+test('a failed member-list reload repaints the fallback, never a stale roster', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let refused = false;
+  const client = {
+    async request(path) {
+      if (path === '/api/spine/memberships') {
+        if (refused) {
+          const forbidden = new Error('forbidden');
+          forbidden.code = 'SPINE_MEMBERSHIP_FORBIDDEN';
+          forbidden.status = 403;
+          throw forbidden;
+        }
+        return { items: [{ subject: 'marco', role: 'operator' }, { subject: 'sara', role: 'owner' }] };
+      }
+      if (path.startsWith('/api/appointments/team-week')) return WEEK_TWO;
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(teamToggles(mount).length, 2, 'two roster toggles while the list resolves');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'the roster role paints while the list resolves');
+  refused = true;
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(teamToggles(mount).length, 0, 'no toggles without names or a list');
+  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'no stale role without a list');
+  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Proprietario')), 'no stale role without a list');
+  assert.ok(
+    texts(mount, 'p').some((text) => text.includes('Nomina le persone')),
+    'the honest prompt is back instead of the stale roster',
+  );
+  const body = texts(mount, 'p').join('\n') + texts(mount, 'strong').join('\n');
+  for (const banned of ['NOT_FOUND', 'non composto', 'SPINE_', '403', 'undefined']) {
+    assert.ok(!body.includes(banned), `no technical residue in the Team card: ${banned}`);
+  }
+});
+
 // An unexpected member-list failure is logged with the space, never the
 // message or personal data — the same rule as the profile read.
 test('an unexpected member-list failure is logged with the space, never the message', async () => {
