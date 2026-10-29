@@ -730,3 +730,86 @@ test('a refused Skill or Pacchetti action names no channel', async () => {
     assert.ok(said.includes(unitPermissionMessage(tab)), `the ${tab} refusal names what the owner must manage`);
   }
 });
+
+test('switching tabs normalizes the shared sort so the toolbar never lies', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  const tabButton = (label) => mount.findAll('button')
+    .find((node) => node.getAttribute('role') === 'tab' && node.textContent.includes(label));
+  const selectedSort = () => {
+    const sort = mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Ordina per');
+    assert.ok(sort, 'the sort select renders');
+    const selected = sort.childNodes.filter((node) => node.getAttribute('selected') === 'selected');
+    assert.equal(selected.length, 1, 'exactly one sort voice stays selected');
+    return selected[0].textContent;
+  };
+  // On Pacchetti the toolbar leaves sort at 'stato'; entering Connettori,
+  // which has no stato voice, must coerce it instead of displaying Nome A-Z
+  // over a stato-sorted grid.
+  view.test.state.tab = 'pacchetti';
+  view.test.state.sort = 'stato';
+  await view.render();
+  await flush();
+  tabButton('Connettori').dispatch('click', {});
+  await flush();
+  assert.equal(view.test.state.sort, 'nome', 'entering Connettori coerces stato to nome');
+  assert.equal(selectedSort(), 'Nome A–Z', 'the Connettori toolbar shows the real sort');
+  // The reverse leak: Piu usati is Connettori-only and must not survive the
+  // trip back to Skill AI.
+  view.test.state.sort = 'piu-usati';
+  await view.render();
+  await flush();
+  tabButton('Skill AI').dispatch('click', {});
+  await flush();
+  assert.equal(view.test.state.sort, 'nome', 'leaving Connettori coerces piu-usati to nome');
+  assert.equal(selectedSort(), 'Ordina: nome', 'the Skill toolbar shows the real sort');
+});
+
+test('without permission the hero Inizia, Configura manualmente and Mostra tutto answer in Italian and stay', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const said = [];
+  const navigated = [];
+  const client = {
+    async request(path) {
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors?')) throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const view = createPersonalizzazioneView({
+    doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId,
+    toast: (message) => said.push(message),
+  });
+  await view.render();
+  await flush();
+  // The hero Inizia CTA (third slide) must answer like the card and its +.
+  view.test.state.hero = 2;
+  await view.render();
+  await flush();
+  const inizia = mount.findAll('button').find((node) => node.textContent === 'Inizia');
+  assert.ok(inizia, 'the hero Inizia CTA renders');
+  inizia.dispatch('click', {});
+  assert.ok(said.includes('Chiedi al titolare di collegare questo canale.'), 'Inizia answers in Italian with no codes');
+  assert.deepEqual(navigated, [], 'Inizia never leaves the readable page');
+  // The Aggiungi voice Configura manualmente navigates: same guard.
+  const toggle = mount.findAll('button').find((node) => node.textContent.includes('Aggiungi'));
+  assert.ok(toggle, 'the Aggiungi toggle renders');
+  toggle.dispatch('click', {});
+  const manual = mount.findAll('button').find((node) => node.textContent === 'Configura manualmente');
+  assert.ok(manual, 'the Configura manualmente voice renders');
+  manual.dispatch('click', {});
+  assert.equal(said.filter((message) => message === 'Chiedi al titolare di collegare questo canale.').length, 2, 'Configura manualmente answers in Italian with no codes');
+  assert.deepEqual(navigated, [], 'Configura manualmente never leaves the readable page');
+  // Mostra tutto leaves for the same guided flow: same guard.
+  const all = mount.findAll('button').find((node) => node.textContent.includes('Mostra tutto'));
+  assert.ok(all, 'Mostra tutto renders');
+  all.dispatch('click', {});
+  assert.equal(said.filter((message) => message === 'Chiedi al titolare di collegare questo canale.').length, 3, 'Mostra tutto answers in Italian with no codes');
+  assert.deepEqual(navigated, [], 'Mostra tutto never leaves the readable page');
+});
