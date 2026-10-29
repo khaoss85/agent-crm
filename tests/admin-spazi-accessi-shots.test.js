@@ -268,7 +268,7 @@ test('the spazi screen renders in a real browser: desktop PNG, team and AI side 
   const { out, dom } = await runBrowser({ width: 1280, height: 900 });
   assert.ok(dom.includes('<title>spazi-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
-  assert.equal(probe.spaces, 2, 'both space cards render');
+  assert.equal(probe.spaces, 3, 'two space cards plus the dashed new-space box render');
   assert.match(probe.here ?? '', /Stai lavorando qui/, 'the active space is marked');
   assert.equal(probe.members, 2, 'both team members render');
   assert.equal(probe.avatars, 2, 'every member has an avatar');
