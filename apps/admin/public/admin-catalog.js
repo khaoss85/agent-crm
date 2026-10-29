@@ -100,7 +100,9 @@ export function createCatalogView(deps) {
   const SOURCE_LABELS = { manual: 'Manuale' };
   const sourceLabel = (source) => SOURCE_LABELS[source] ?? (String(source ?? '').toLowerCase().includes('stripe') ? 'Stripe' : String(source ?? '—'));
   const INTERVAL_LABELS = { day: 'giorno', week: 'settimana', month: 'mese', year: 'anno' };
-  const PRICING_MODEL_LABELS = { tiered: 'a scaglioni', volume: 'a volume', package: 'a pacchetto' };
+  // Keys are the contract's PRICING_MODELS (packages/core/src/money.js); flat_fee and per_unit need no marker.
+  const PRICING_MODEL_LABELS = { graduated: 'a scaglioni', volume: 'a volume' };
+  const INTERVAL_PLURALS = { day: 'giorni', week: 'settimane', month: 'mesi', year: 'anni' };
   const money = (cents, currency) => (typeof cents === 'number' ? formatAmount(cents, currency) : '—');
 
   /** Quantity-tier labels ("etichette sconto quantità"): bounded ranges read as text. */
@@ -118,7 +120,8 @@ export function createCatalogView(deps) {
     const model = PRICING_MODEL_LABELS[component.pricingModel];
     const per = model ? ` (${model})` : '';
     const interval = INTERVAL_LABELS[component.interval];
-    const every = interval ? ` / ${interval}` : '';
+    const count = Number.isInteger(component.intervalCount) && component.intervalCount > 1 ? component.intervalCount : 1;
+    const every = !interval ? '' : count === 1 ? ` / ${interval}` : ` / ogni ${count} ${INTERVAL_PLURALS[component.interval]}`;
     const schedule = Array.isArray(component.tiers) && component.tiers.length > 0
       ? ` — ${component.tiers.map((tier) => tierLabel(tier, currency)).join(' · ')}`
       : '';

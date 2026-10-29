@@ -408,3 +408,22 @@ test('the catalog screen renders no raw control', async () => {
   clickButton(stripeMount, 'Sincronizza');
   assert.deepEqual(rawControls(stripeMount), [], 'the sync confirm dialog adds no raw control');
 });
+
+test('Stripe pricing models and intervals read in Italian, unknown models stay out', async () => {
+  const table = structuredClone(STRIPE_TABLE);
+  const offers = (table.rows ?? table.items ?? table.products)[0].offers;
+  offers[0].components = [
+    { ...offers[0].components[0], label: 'Trimestrale', interval: 'month', intervalCount: 3, unitAmountCents: 4000 },
+    { label: 'Spazio', chargeType: 'recurring', pricingModel: 'graduated', interval: 'year', intervalCount: 1, unitAmountCents: null, flatAmountCents: null, externalPriceId: 'price_spazio', sourcePricingModel: 'stripe:recurring.graduated', tiers: [{ upTo: 5, unitAmountCents: 200, flatAmountCents: null }, { upTo: null, unitAmountCents: 100, flatAmountCents: null }] },
+    { label: 'Strano', chargeType: 'one_time', pricingModel: 'mystery', interval: 'fortnight', intervalCount: 1, unitAmountCents: 500, flatAmountCents: null, externalPriceId: 'price_strano', sourcePricingModel: 'stripe:x', tiers: [] },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+  const text = mount.textContent;
+  assert.ok(text.includes('40 € / ogni 3 mesi'), `a 3-month interval says so (${text})`);
+  assert.ok(text.includes('(a scaglioni) / anno'), 'graduated reads a scaglioni');
+  assert.ok(text.includes('Strano: 5 €'), 'an unknown model and interval are left out, the amount stays');
+  assert.ok(!/mystery|fortnight|graduated/.test(text), 'no machine word reaches the screen');
+});
