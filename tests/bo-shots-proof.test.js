@@ -114,6 +114,27 @@ test('the catalogo proof pair is a render of the current tree, never the pre-#42
   }
 });
 
+// The personalizzazione proof pair (BO-F6-14, backlog:195703d9fff1) carries
+// the same freshness gate as login and catalogo: the committed PNGs must
+// differ from the #413-era blobs (rendered before the #377 tab/default/text,
+// #410 toggle/menu/hero, #429 sort/guards and #437 icon-button toolbar
+// passes), so a restyle without a fresh
+// `npm run bo:shots -- --screen personalizzazione` render fails here first.
+const STALE_PERSONALIZZAZIONE_BLOBS = Object.freeze({
+  'personalizzazione-1440x1800.png': '69166334b210548c69458b9616186e3a5651865486213074a6ca9fb779db3dfc',
+  'personalizzazione-390x1600.png': '2781f06981a35fa62a4efc817075f21a1830ba6ba2d10e0a85a8605c77d83af7',
+});
+
+test('the personalizzazione proof pair is a render of the current tree, never the pre-#377 pair', () => {
+  for (const [file, stale] of Object.entries(STALE_PERSONALIZZAZIONE_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale pre-#377 render: re-run \`npm run bo:shots -- --screen personalizzazione\`, copy the pair here`,
+    );
+  }
+});
+
 test('the login proof pair is a render of the current tree, never the stale pre-#408 pair', () => {
   for (const [file, stale] of Object.entries(STALE_LOGIN_BLOBS)) {
     assert.notEqual(
