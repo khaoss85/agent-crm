@@ -6,9 +6,13 @@ import {
   createSequenzeView,
   loadSequenzeData,
   loadSequenzaSteps,
+  personStatusLabel,
+  personStepLabel,
   sequenceChannelLabel,
   sequenceDayLabel,
+  sequenceQuandoLine,
   sequenceStatusLabel,
+  sequenceTriggerPills,
   enrollmentStatusLabel,
   sequenzaOfferedAction,
 } from '../apps/admin/public/admin-sequenze.js';
@@ -80,13 +84,48 @@ test('sequence states read in Italian, unknown states say so', () => {
   assert.equal(enrollmentStatusLabel('completed'), 'Completata');
 });
 
-test('step day and channel read plainly: day zero fires at once', () => {
-  assert.equal(sequenceDayLabel(0), 'Giorno 0 · parte subito');
-  assert.equal(sequenceDayLabel(2), 'Giorno 2');
+test('step day and channel read like the prototype: Subito, +1 giorno, +N giorni', () => {
+  assert.equal(sequenceDayLabel(0), 'Subito');
+  assert.equal(sequenceDayLabel(1), '+1 giorno');
+  assert.equal(sequenceDayLabel(2), '+2 giorni');
   assert.equal(sequenceDayLabel('domani'), 'Giorno da decidere');
   assert.equal(sequenceChannelLabel('whatsapp'), 'WhatsApp');
   assert.equal(sequenceChannelLabel('piccione'), 'piccione');
   assert.equal(sequenceChannelLabel(''), 'Canale sconosciuto');
+});
+
+test('trigger lines and pills read the record labels, never invented triggers', () => {
+  assert.equal(sequenceQuandoLine({ triggerLabel: 'lead dal sito' }), 'Quando lead dal sito');
+  assert.equal(sequenceQuandoLine({}), 'Quando parte');
+  assert.deepEqual(sequenceTriggerPills({ triggerLabel: 'lead dal sito', stopLabel: 'alla prima risposta' }), {
+    trigger: 'Parte quando: lead dal sito',
+    stop: 'Si ferma quando: alla prima risposta',
+  });
+  assert.deepEqual(sequenceTriggerPills({}), {
+    trigger: 'Parte quando: da decidere',
+    stop: 'Si ferma quando: alla prima risposta',
+  });
+});
+
+test('person pills read In corso, Da approvare, Completata, Programmata', () => {
+  const now = Date.parse('2026-10-26T12:00:00.000Z');
+  assert.equal(personStatusLabel({ status: 'active', nextDueAt: '2026-10-26T09:00:00.000Z' }, { nowMs: now }), 'In corso');
+  assert.equal(personStatusLabel({ status: 'active', nextDueAt: '2026-10-27T09:00:00.000Z' }, { nowMs: now }), 'Programmata');
+  assert.equal(personStatusLabel({ status: 'active' }, { nowMs: now }), 'In corso');
+  assert.equal(personStatusLabel({ status: 'paused' }, { nowMs: now }), 'Programmata');
+  assert.equal(personStatusLabel({ status: 'stopped-replied' }, { nowMs: now }), 'Completata');
+  assert.equal(personStatusLabel({ status: 'completed' }, { nowMs: now }), 'Completata');
+  assert.equal(personStatusLabel({ status: 'active' }, { waitingApproval: true, nowMs: now }), 'Da approvare');
+  assert.equal(personStatusLabel({ status: 'flying' }, { nowMs: now }), 'Stato sconosciuto');
+});
+
+test('person progress reads Passo n di m, In attesa, Uscita', () => {
+  assert.equal(personStepLabel({ status: 'active', currentStep: 0 }, 3), 'Passo 1 di 3');
+  assert.equal(personStepLabel({ status: 'active', currentStep: 1 }, 3), 'Passo 2 di 3');
+  assert.equal(personStepLabel({ status: 'active' }, 3), 'In attesa');
+  assert.equal(personStepLabel({ status: 'stopped-replied', currentStep: 1 }, 3), 'Uscita');
+  assert.equal(personStepLabel({ status: 'completed', currentStep: 2 }, 3), 'Uscita');
+  assert.equal(personStepLabel({ status: 'active', currentStep: 0 }, 0), 'Passo 1');
 });
 
 test('elenco counts people and fires per sequence, never across sequences', () => {
@@ -103,17 +142,71 @@ test('elenco counts people and fires per sequence, never across sequences', () =
 });
 
 test('dettaglio orders steps by stepOrder with day and channel', () => {
-  const detail = buildSequenzaDettaglio({ sequence: SEQUENCE, steps: STEPS, enrollments: ENROLLMENTS, sends: SENDS });
+  const detail = buildSequenzaDettaglio({
+    sequence: SEQUENCE,
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
   assert.equal(detail.name, 'Bentornato in palestra');
   assert.equal(detail.statusLabel, 'Bozza');
   assert.equal(detail.steps.length, 2);
-  assert.equal(detail.steps[0].dayLabel, 'Giorno 0 · parte subito');
+  assert.equal(detail.steps[0].dayLabel, 'Subito');
   assert.equal(detail.steps[0].channelLabel, 'WhatsApp');
-  assert.equal(detail.steps[1].dayLabel, 'Giorno 2');
+  assert.equal(detail.steps[0].title, 'WhatsApp · Ciao, ci manchi');
+  assert.equal(detail.steps[1].dayLabel, '+2 giorni');
   assert.deepEqual(detail.steps[0].vars, ['name']);
   assert.equal(detail.people.length, 2);
   assert.equal(detail.people[0].name, 'Giulia Rossi');
-  assert.equal(detail.people[1].statusLabel, 'Fermata alla risposta');
+  assert.equal(detail.people[0].stepLabel, 'Passo 1 di 2');
+  assert.equal(detail.people[0].statusLabel, 'In corso');
+  assert.equal(detail.people[1].stepLabel, 'Uscita');
+  assert.equal(detail.people[1].statusLabel, 'Completata');
+});
+
+test('elenco rows carry Quando lines and reply-share stats, in pausa when held', () => {
+  const rows = buildSequenzeElenco({
+    sequences: [
+      { ...SEQUENCE, id: 7, status: 'active', triggerLabel: 'lead dal sito' },
+      { ...SEQUENCE, id: 8, sourceKey: 'seq-pausa', status: 'paused' },
+    ],
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+  });
+  assert.equal(rows[0].quando, 'Quando lead dal sito');
+  assert.equal(rows[0].stats, '2 persone · 50% risposte');
+  assert.equal(rows[0].replyPct, 50);
+  assert.equal(rows[1].quando, 'Quando parte');
+  assert.equal(rows[1].stats, 'in pausa');
+});
+
+test('dettaglio pills and KPI read the sequence labels and the counted rows', () => {
+  const detail = buildSequenzaDettaglio({
+    sequence: { ...SEQUENCE, status: 'active', triggerLabel: 'lead dal sito', stopLabel: 'quando risponde' },
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  assert.deepEqual(detail.pills, {
+    trigger: 'Parte quando: lead dal sito',
+    stop: 'Si ferma quando: quando risponde',
+  });
+  assert.deepEqual(detail.metrics.kpi, { inCorso: 1, risposte: 1, callFissate: null });
+});
+
+test('a waiting-approval send on an enrollment paints Da approvare', () => {
+  const enrollments = [{ sourceKey: 'e-1', subjectLabel: 'Anna', status: 'active', currentStep: 0, nextDueAt: null }];
+  const sends = [{ enrollmentSourceKey: 'e-1', sequenceSourceKey: 'seq-bentornato', status: 'waiting-approval' }];
+  const detail = buildSequenzaDettaglio({
+    sequence: SEQUENCE,
+    steps: STEPS,
+    enrollments,
+    sends,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  assert.equal(detail.people[0].statusLabel, 'Da approvare');
 });
 
 test('hostile names are inert text, never markup', () => {
@@ -141,9 +234,9 @@ test('full screen: elenco, dettaglio with passi, double-ask activate posts once'
   mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
   await flush();
   assert.ok(mount.textContent.includes('Passi'));
-  assert.ok(mount.textContent.includes('Giorno 0 · parte subito'));
-  assert.ok(mount.textContent.includes('WhatsApp'));
-  assert.ok(mount.textContent.includes('Giorno 2'));
+  assert.ok(mount.textContent.includes('Subito'));
+  assert.ok(mount.textContent.includes('WhatsApp · Ciao, ci manchi'));
+  assert.ok(mount.textContent.includes('+2 giorni'));
   assert.ok(mount.textContent.includes('Persone nella sequenza'));
   assert.ok(mount.textContent.includes('Giulia Rossi'));
   const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
@@ -257,7 +350,7 @@ test('a refused write says the state moved and reloads, never a raw error', asyn
   assert.ok(mount.textContent.includes('Lo stato è cambiato mentre decidevi'));
 });
 
-test('without the package the screen names its story, never a blank page', async () => {
+test('without the package the screen says so in Italian, never a blank page', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = { request: async (path) => {
@@ -268,8 +361,10 @@ test('without the package the screen names its story, never a blank page', async
   await view.renderSequenze();
   await flush();
   assert.ok(mount.textContent.includes('Sequenze'));
-  assert.ok(mount.textContent.includes('BO-F3-03'));
+  assert.ok(mount.textContent.includes('non sono composte in questo spazio'));
+  assert.ok(!mount.textContent.includes('BO-F3-03'));
   assert.ok(!mount.textContent.includes('undefined'));
+  assert.ok(!/NOT_FOUND|non composto/i.test(mount.textContent));
 });
 
 test('loadSequenzeData marks availability from the contract, not from rows', async () => {
@@ -281,8 +376,13 @@ test('loadSequenzeData marks availability from the contract, not from rows', asy
 });
 
 test('offered write follows the state: draft and paused activate, active pauses', () => {
-  assert.equal(sequenzaOfferedAction('draft').action, 'activate');
-  assert.equal(sequenzaOfferedAction('paused').button, 'Riattiva la sequenza');
+  assert.deepEqual(sequenzaOfferedAction('draft'), {
+    action: 'activate',
+    button: 'Attiva',
+    confirm: 'Attivare questa sequenza? I passi dovuti possono partire.',
+  });
+  assert.equal(sequenzaOfferedAction('paused').button, 'Riattiva');
+  assert.equal(sequenzaOfferedAction('active').button, 'Metti in pausa');
   assert.equal(sequenzaOfferedAction('active').action, 'pause');
   assert.equal(sequenzaOfferedAction('completed'), null);
   assert.equal(sequenzaOfferedAction('unknown'), null);
@@ -309,4 +409,197 @@ test('router owns #/sequenze; anything deeper is invalid, never a lookup', () =>
   assert.deepEqual(parseModuleRoute('#/sequenze/'), { view: 'sequenze' });
   assert.deepEqual(parseModuleRoute('#/sequenze/abc'), { view: 'invalid' });
   assert.deepEqual(parseModuleRoute('#/sequenze//'), { view: 'invalid' });
+});
+
+test('the header reads the prototype verbatim: eyebrow, title, subtitle', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  assert.ok(mount.textContent.includes('MODULO NATIVO'), 'the eyebrow is uppercase');
+  assert.ok(mount.textContent.includes('Sequenze'));
+  assert.ok(mount.textContent.includes(
+    'Follow-up che partono da soli quando succede qualcosa, sul canale giusto. Si fermano appena il cliente risponde.',
+  ), 'the subtitle is verbatim');
+});
+
+test('Nuova sequenza opens a two-entry menu and Escape closes it', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-seq-menu'));
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  assert.ok(menus()[0].classList.contains('hidden'), 'the menu starts closed');
+  assert.deepEqual(
+    String(opener().getAttribute('class') ?? '').split(/\s+/).filter((cls) => cls.startsWith('ui-btn-')),
+    ['ui-btn-cta'],
+    'Nuova sequenza is the single green CTA, like the prototype',
+  );
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  assert.ok(!menus()[0].classList.contains('hidden'), 'click opens the menu');
+  assert.ok(menus()[0].textContent.includes("Crea con l'AI"));
+  assert.ok(menus()[0].textContent.includes('Es. «lead dal sito: WhatsApp subito, email dopo 2 giorni»'));
+  assert.ok(menus()[0].textContent.includes('Compila manualmente'));
+  assert.ok(menus()[0].textContent.includes('Quando parte, passi e canali'));
+  assert.equal(opener().getAttribute('aria-expanded'), 'true');
+  menus()[0].dispatch('keydown', { key: 'Escape' });
+  await flush();
+  assert.ok(menus()[0].classList.contains('hidden'), 'Escape closes the menu');
+});
+
+test('the opening click does not close the menu via the document handler', async () => {
+  const doc = createFakeDocument();
+  const docClicks = [];
+  const docWithOutside = {
+    ...doc,
+    addEventListener: (type, handler) => {
+      if (type === 'click') docClicks.push(handler);
+    },
+  };
+  const mount = createMount();
+  const view = createSequenzeView({ doc: docWithOutside, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-seq-menu'));
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the menu stays open after its own opening click');
+  for (const handler of docClicks) handler({ target: opener() });
+  await flush();
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the bubbled opening click does not close the menu');
+  for (const handler of docClicks) handler({ target: mount });
+  await flush();
+  assert.ok(menus()[0].classList.contains('hidden'), 'an outside click closes the menu');
+});
+
+test('picking a menu entry closes the menu and names the next step in Italian', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  mount.findAll('button').find((node) => node.textContent.includes("Crea con l'AI")).dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('barra AI'), 'the AI entry points at the AI bar, in Italian');
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('la vedi qui appena è pronta'), 'the manual entry names the outcome, in Italian');
+});
+
+test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const sequences = [{ ...SEQUENCE, status: 'active', triggerLabel: 'lead dal sito', stopLabel: 'quando risponde' }];
+  const client = stubClient({ sequences });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Parte quando: lead dal sito'));
+  assert.ok(mount.textContent.includes('Si ferma quando: quando risponde'));
+  assert.ok(mount.textContent.includes('In corso'));
+  assert.ok(mount.textContent.includes('Risposte'));
+  assert.ok(mount.textContent.includes('Call fissate'));
+  assert.ok(mount.textContent.includes('—'), 'the call card stays an honest dash without appointments data');
+  assert.ok(mount.textContent.includes(
+    'Con «Inviare risposte senza approvazione» spento, ogni messaggio della sequenza aspetta il tuo ok prima di partire.',
+  ));
+  assert.ok(mount.textContent.includes('Quando lead dal sito'), 'the elenco names the trigger');
+});
+
+test('empty screens stay simple: no cards, no codes, no English', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient({ sequences: [] }) });
+  await view.renderSequenze();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessuna sequenza: creane una con il pulsante in alto.'));
+  const empty = stubClient({ sequences: [{ ...SEQUENCE, sourceKey: 'seq-vuota' }], steps: [] });
+  const doc3 = createFakeDocument();
+  const mount3 = createMount();
+  const view3 = createSequenzeView({ doc: doc3, mount: mount3, client: empty });
+  await view3.renderSequenze();
+  await flush();
+  mount3.querySelector('button[data-open="seq-vuota"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount3.textContent.includes('Nessuna persona in questa sequenza.'));
+  for (const text of [mount.textContent, mount3.textContent]) {
+    assert.ok(!/NOT_FOUND|undefined|NaN/.test(text), 'no technical residue');
+  }
+});
+
+test('pausing an active sequence offers Riattiva, the In pausa pill and in pausa stats', async () => {
+  let status = 'active';
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ sequences: [{ ...SEQUENCE, status: 'active' }] });
+  const client = {
+    calls: inner.calls,
+    request: async (path, options = {}) => {
+      if (options.method === 'POST' && path.includes('/actions/pause')) {
+        status = 'paused';
+        return { ok: true };
+      }
+      if (path.startsWith('/api/modules/sequence/records?')) {
+        return { items: [{ ...SEQUENCE, status }] };
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Metti in pausa'));
+  mount.querySelector('button[data-action="pause"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Mettere in pausa?'));
+  mount.querySelector('button[data-confirm="pause"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Riattiva'), 'after the pause the detail offers Riattiva');
+  assert.ok(mount.textContent.includes('In pausa'), 'after the pause the pill reads In pausa');
+  assert.ok(mount.textContent.includes('in pausa'), 'after the pause the elenco stats read in pausa');
+});
+
+test('the sequenze screen renders no raw control', async () => {
+  // Acceptance: a control without a ui-* system class fails this screen.
+  const rawControls = (root) => {
+    const out = [];
+    const walk = (node) => {
+      const tag = String(node.tagName ?? '').toLowerCase();
+      if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+        const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+        if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) out.push(`${tag}[${classes.join('.')}]`);
+
+      }
+      for (const child of node.childNodes ?? []) walk(child);
+    };
+    walk(root);
+    return out;
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  assert.deepEqual(rawControls(mount), [], 'every control of the header carries a ui-* class');
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  assert.deepEqual(rawControls(mount), [], 'the open menu adds no raw control');
+  mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
+  await flush();
+  assert.deepEqual(rawControls(mount), [], 'the dettaglio adds no raw control');
 });
