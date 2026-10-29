@@ -279,9 +279,10 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   const addMenu = mount.querySelector('.ui-conn-addmenu');
   assert.ok(addMenu, 'the Aggiungi menu renders');
   const afterOpen = addMenu.childNodes.filter((node) => node.tagName === 'BUTTON');
-  const voices = afterOpen.filter((node) => node.getAttribute('role') === 'menuitem').map((node) => node.textContent);
+  const voices = afterOpen.filter((node) => node.getAttribute('role') === 'menuitem')
+    .map((node) => node.findAll('span').find((span) => span.getAttribute('class') === 'ui-add-title').textContent);
   assert.deepEqual(voices, ['Crea con l\u2019AI', 'Configura manualmente'], 'Aggiungi opens the two-voice menu (spec C9)');
-  const manual = afterOpen.find((node) => node.textContent === 'Configura manualmente');
+  const manual = afterOpen.find((node) => String(node.textContent).startsWith('Configura manualmente'));
   manual.dispatch('click');
   assert.ok(navigated.includes('#/connettori'), 'Configura manualmente opens the wizard hub');
   for (const control of [...mount.findAll('button'), ...mount.findAll('select'), ...mount.findAll('input')]) {
@@ -508,7 +509,7 @@ test('the Aggiungi menu closes with Escape and explains the AI voice honestly (s
   const menuBox = mount.querySelector('.ui-conn-addmenu');
   assert.ok(menuBox && String(menuBox.getAttribute('class')).split(/\s+/).includes('hidden'), 'Escape closes the menu');
   add.dispatch('click');
-  const ai = mount.findAll('button').find((node) => node.textContent === 'Crea con l\u2019AI');
+  const ai = mount.findAll('button').find((node) => String(node.textContent).includes('Crea con l\u2019AI'));
   ai.dispatch('click');
   assert.ok(said.some((message) => message.includes('non \u00e8 ancora disponibile')), 'the AI voice says what is missing, in Italian');
   assert.deepEqual(navigated, [], 'the AI voice navigates nowhere');
@@ -830,7 +831,7 @@ test('without permission the hero Inizia, Configura manualmente and Mostra tutto
   const toggle = mount.findAll('button').find((node) => node.textContent.includes('Aggiungi'));
   assert.ok(toggle, 'the Aggiungi toggle renders');
   toggle.dispatch('click', {});
-  const manual = mount.findAll('button').find((node) => node.textContent === 'Configura manualmente');
+  const manual = mount.findAll('button').find((node) => String(node.textContent).startsWith('Configura manualmente'));
   assert.ok(manual, 'the Configura manualmente voice renders');
   manual.dispatch('click', {});
   assert.equal(said.filter((message) => message === 'Chiedi al titolare di collegare questo canale.').length, 2, 'Configura manualmente answers in Italian with no codes');

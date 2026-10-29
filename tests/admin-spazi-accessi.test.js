@@ -656,7 +656,7 @@ test('the dashed new-space box stays last and opens the verbatim C20 menu', asyn
   assert.ok(opened.includes('Descrivi l\u2019attivit\u00E0, propongo canali e team'), 'C20 AI subtitle is verbatim');
   assert.ok(opened.includes('Compila manualmente'), 'C20 manual voice is verbatim');
   assert.ok(opened.includes('Nome e settore'), 'C20 manual subtitle is verbatim');
-  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  const manual = mount.findAll('button').find((node) => String(node.textContent).startsWith('Compila manualmente'));
   assert.ok(manual, 'the manual voice is a menu item');
   await manual.listeners.click[0]();
   await flush();
@@ -683,7 +683,7 @@ test('the invite menu shows the verbatim C21 voices; manual opens the spine form
   assert.ok(opened.includes('Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB'), 'C21 AI subtitle is verbatim');
   assert.ok(opened.includes('Compila manualmente'), 'C21 manual voice is verbatim');
   assert.ok(opened.includes('Email e ruolo'), 'C21 manual subtitle is verbatim');
-  const ai = mount.findAll('button').find((node) => node.textContent === 'Crea con l\u2019AI');
+  const ai = mount.findAll('button').find((node) => String(node.textContent).includes('Crea con l\u2019AI'));
   assert.ok(ai, 'the AI voice is a menu item');
   await ai.listeners.click[0]();
   await flush();
@@ -692,7 +692,7 @@ test('the invite menu shows the verbatim C21 voices; manual opens the spine form
   const reopen = mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
   await reopen.listeners.click[0]();
   await flush();
-  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  const manual = mount.findAll('button').find((node) => String(node.textContent).startsWith('Compila manualmente'));
   await manual.listeners.click[0]();
   await flush();
   const subject = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare');
@@ -716,7 +716,7 @@ test('the invite toggle closes the inline form and aria-expanded tracks menu or 
   await toggle().listeners.click[0]();
   await flush();
   assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'expanded while the menu is open');
-  const manual = mount.findAll('button').find((node) => node.textContent === 'Compila manualmente');
+  const manual = mount.findAll('button').find((node) => String(node.textContent).startsWith('Compila manualmente'));
   await manual.listeners.click[0]();
   await flush();
   assert.ok(formOpen(), 'manual opens the inline form and closes the menu');

@@ -267,6 +267,45 @@ export function uiButton(doc, options = {}) {
   return node;
 }
 
+/**
+ * One voice of an "add" menu, the prototype's single pattern for every
+ * «+ Nuovo …» / «Aggiungi …» menu (cliente, modulo, sequenza, appuntamento,
+ * offerta, persona, spazio, prodotto): a 28 px tile, a bold title and one
+ * muted line under it. `kind` picks the tile: `ai` is the violet ✦, `manual`
+ * the pencil. Built without `el` normalization so a menu voice never picks
+ * up a chip or button class (design pass 7: every menu read in monospace).
+ *
+ * @param {any} doc
+ * @param {{ kind: 'ai' | 'manual', title: string, line: string, attrs?: Record<string, unknown> }} options
+ */
+export function uiAddOption(doc, options) {
+  const node = doc.createElement('button');
+  node.setAttribute('class', `ui-add-option ui-add-option-${options.kind === 'ai' ? 'ai' : 'manual'}`);
+  node.setAttribute('type', 'button');
+  node.setAttribute('role', 'menuitem');
+  for (const [key, value] of Object.entries(options.attrs ?? {})) {
+    if (value !== undefined && value !== null) node.setAttribute(key, String(value));
+  }
+  const tile = doc.createElement('span');
+  tile.setAttribute('class', 'ui-add-tile');
+  tile.setAttribute('aria-hidden', 'true');
+  if (options.kind === 'ai') tile.textContent = '\u2726';
+  else tile.appendChild(uiIcon(doc, 'matita'));
+  node.appendChild(tile);
+  const words = doc.createElement('span');
+  words.setAttribute('class', 'ui-add-words');
+  const title = doc.createElement('span');
+  title.setAttribute('class', 'ui-add-title');
+  title.textContent = String(options.title);
+  const line = doc.createElement('span');
+  line.setAttribute('class', 'ui-add-line');
+  line.textContent = String(options.line);
+  words.appendChild(title);
+  words.appendChild(line);
+  node.appendChild(words);
+  return node;
+}
+
 /** @param {any} doc @param {unknown} label */
 export function uiSecondaryButton(doc, label) {
   return uiButton(doc, { variant: 'secondary', label });

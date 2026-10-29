@@ -1470,24 +1470,35 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary::after { content: "⌄"; font-size: 14px; line-height: 1; transform: translateY(-3px); }
 .bo-clienti-bar > .bo-clienti-menuwrap > .bo-clienti-menubutton.ui-btn-primary:hover { background: var(--accent-strong, var(--accent)); }
 
-/* Design pass 6 — "+ Nuovo modulo" (prototype): each option is a tile, a
- * title and one line; the screen is the "Nuovo modulo personalizzato" form. */
-.bo-add-menu .bo-add-option, .bo-add-menu .bo-add-option.ui-btn {
-  align-items: flex-start; justify-content: flex-start; gap: 12px; padding: 10px; height: auto;
-  border: none; background: transparent; box-shadow: none; text-align: left; white-space: normal;
+/* Design pass 7 — the prototype's one "add" menu (cliente, modulo, sequenza,
+ * appuntamento, offerta, persona, spazio, prodotto): a 290 px card of
+ * voices, each a 28 px tile, a bold title and one muted line, in the body
+ * face. Screens keep their own positioning; the look is this. */
+.ui-add-menu {
+  width: 290px; max-width: min(78vw, 320px); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
 }
-.bo-add-menu .bo-add-option:first-child:hover { background: var(--agent-card); }
-.bo-add-menu .bo-add-option:last-child:hover { background: var(--surface-soft); }
-.bo-add-tile {
+.ui-add-menu.hidden { display: none; }
+.ui-add-option {
+  display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 10px;
+  border: none; border-radius: 9px; background: transparent; text-align: left;
+  font-family: inherit; color: var(--ink); cursor: pointer; white-space: normal;
+}
+.ui-add-option-ai:hover, .ui-add-option-ai:focus-visible { background: var(--agent-card); }
+.ui-add-option-manual:hover, .ui-add-option-manual:focus-visible { background: var(--surface-soft); }
+.ui-add-tile {
   width: 28px; height: 28px; border-radius: 8px; flex: none;
   display: grid; place-items: center; font-size: 13px;
 }
-.bo-add-tile .bo-nav-icon, .bo-add-tile svg { width: 15px; height: 15px; }
-.bo-add-tile-ai { background: var(--agent); color: var(--surface); }
-.bo-add-tile-manual { background: var(--surface-soft); color: var(--ink); }
-.bo-add-words { display: flex; flex-direction: column; min-width: 0; }
-.bo-add-title { font-size: 14px; font-weight: 700; color: var(--ink); }
-.bo-add-line { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.ui-add-option-ai .ui-add-tile { background: var(--agent); color: var(--surface); }
+.ui-add-option-manual .ui-add-tile { background: var(--surface-soft); color: var(--ink); }
+.ui-add-tile svg { width: 15px; height: 15px; }
+.ui-add-words { display: flex; flex-direction: column; min-width: 0; }
+.ui-add-title { font-size: 14px; font-weight: 700; line-height: 1.3; }
+.ui-add-line { margin-top: 2px; font-size: 12px; font-weight: 400; line-height: 1.4; color: var(--muted); }
+/* The other menus (Filtri, Ordina, Colonne): body face, never the chip mono. */
+.bo-clienti-item.ui-chip { font-family: inherit; font-weight: 600; letter-spacing: normal; }
 .bo-modulo-form {
   max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;
   border-radius: 20px; padding: 24px;
@@ -1506,3 +1517,7 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-modulo-dev .panel { box-shadow: none; border: none; padding: 0; margin-top: 12px; background: transparent; }
 .bo-modulo-hint { margin: -8px 0 0; font-size: 13px; color: var(--human-ink); }
 .bo-modulo-hint:empty { display: none; }
+/* Focus shows as the hover fill, never a second heavy ring on the card. */
+.ui-add-option:focus-visible { outline: none; }
+/* «Invita persona»: the menu sits under its green button, on the right. */
+.bo-spazi-invite-menu { margin: 0 20px 12px auto; }
