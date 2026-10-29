@@ -21,6 +21,7 @@ import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } fr
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { spaceRoleLabel } from './admin-spazi-accessi.js';
 import { uiButton, uiChannelChip } from './admin-ui.js';
 
 /**
@@ -201,6 +202,49 @@ export function teamRows(named, hidden) {
 }
 
 /**
+ * BO-F6-11 fetta 7 (specs/calendario.md C10): the Team toggle rows with the
+ * names and Italian roles the member list carries — only when such a list
+ * exists (`GET /api/spine/memberships`, read by the view). The roster is the
+ * union of the named filter ids and the membership subjects, so the operator
+ * picks from the real team instead of typing blind. Roles reuse
+ * `spaceRoleLabel` from the Spazi e accessi view (MEM_ACC_REUSE): the same
+ * Italian words for the same roles, no second vocabulary. A row without a
+ * membership keeps no role line, never an invented one; initials and tint
+ * stay the grid's own (`memberInitials`/`memberColorIndex`), so a block and
+ * its toggle always match.
+ * @param {unknown} named @param {unknown} hidden @param {unknown} members
+ */
+export function teamRowsWithRoles(named, hidden, members) {
+  const names = Array.isArray(named) ? named.filter((id) => typeof id === 'string' && id !== '') : [];
+  const subjects = Array.isArray(members)
+    ? members
+      .filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
+      .map((member) => member.subject)
+    : [];
+  const ids = [...new Set([...names, ...subjects])];
+  const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
+  const roles = new Map();
+  if (Array.isArray(members)) {
+    for (const member of members) {
+      if (member && typeof member.subject === 'string' && member.subject !== '' && !roles.has(member.subject)) {
+        roles.set(member.subject, member.role);
+      }
+    }
+  }
+  return ids.map((id) => {
+    const role = roles.get(id);
+    return {
+      id,
+      active: names.includes(id) && !off.has(id),
+      listed: names.includes(id),
+      color: memberColorIndex(id),
+      initials: memberInitials(id),
+      role: typeof role === 'string' && role !== '' ? spaceRoleLabel(role) : null,
+    };
+  });
+}
+
+/**
  * Rome wall minutes since midnight for an instant, or null when the instant
  * does not parse. Presentation only: the server stays the write authority.
  * @param {unknown} value
@@ -287,6 +331,8 @@ export function createCalendarioView(deps) {
   const storage = deps.storage ?? null;
   const clock = typeof deps.now === 'function' ? deps.now : () => new Date();
   let renderToken = 0;
+  /** Guards the member-list read, like renderToken guards the week. */
+  let memberToken = 0;
   installOutsideCloser(doc);
 
   const readSpace = () => {
@@ -302,6 +348,9 @@ export function createCalendarioView(deps) {
     memberFilter: '',
     /** Deselected opaque member ids: their events stay loaded but hidden (C11). @type {Array<string>} */
     hiddenMembers: [],
+    /** Organization team (`GET /api/spine/memberships` items), or null when
+     * unread or refused: the card then keeps its opaque named toggles. @type {any} */
+    members: null,
     weekKeys: romeWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
@@ -329,6 +378,12 @@ export function createCalendarioView(deps) {
     confirmed: null,
     /** Last manual form values, restored on every re-render. @type {any} */
     manual: null,
+    /** The manual form shows once asked for, or once a draft or an edit fills it. */
+    manualOpen: false,
+    /** The member filter row, painted inside the Team card. @type {any} */
+    filterRow: null,
+    /** The painted manual form panel, opened in place by the menu voice. @type {any} */
+    manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
@@ -413,6 +468,49 @@ export function createCalendarioView(deps) {
     renderAll();
   }
 
+  /**
+   * The organization team behind the Team card (specs/calendario.md C10):
+   * one toggle row per member with its Italian role, only when the server
+   * names a list. Any refusal — forbidden, uncomposed spine, network fault —
+   * keeps `members` null, so the card falls back to its opaque named
+   * toggles: no error where the week should be, no invented roster, and the
+   * same fallback the Spazi e accessi screen states in words. A late answer
+   * repaints only while the calendar is still mounted (same guard as the
+   * profile read below).
+   */
+  async function loadMembers() {
+    const token = ++memberToken;
+    try {
+      const answer = await client.request('/api/spine/memberships');
+      if (token !== memberToken) return;
+      state.members = Array.isArray(answer?.items) ? answer.items : [];
+    } catch (error) {
+      if (token !== memberToken) return;
+      // Fail-soft UI, but a failure nobody can diagnose blocks review
+      // (AGENTS.md): record the sanitized cause with the active space —
+      // never the message or personal data, like the profile read below.
+      // A refused list (403) or an uncomposed spine (404) is an expected
+      // absence, not a fault: silent.
+      const refused = error?.code === 'SPINE_MEMBERSHIP_FORBIDDEN' || error?.status === 403;
+      if (!refused && !isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
+        console.warn(
+          'bo-calendario members unreadable:',
+          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+          `spaceId=${readSpace()}`,
+        );
+      }
+      // A failed reload repaints too: without it the card would keep
+      // showing the previous roster and its Italian roles instead of
+      // falling back to the opaque named toggles (same mount guard as
+      // the success path, so a late answer never paints over another
+      // screen sharing the mount).
+      state.members = null;
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
+    if (mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
+
   /** The selected row, when it is still in the loaded week. */
   function selectedRow() {
     if (state.selectedId === null || !state.week) return null;
@@ -442,15 +540,25 @@ export function createCalendarioView(deps) {
     }
     // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
     // the grid while a block stays selected. Fetta 6 seats the Team toggles
-    // between the detail and the grid they filter; the booking card follows
-    // with fetta 7 (its final left-column home lands with fetta 8).
+    // between the detail and the grid they filter; fetta 7 adds the honest
+    // booking card at the rail end (its final left-column home lands with
+    // the responsive pass, fetta 8).
+    // Supervisor design pass: the prototype's two columns — a 300 px rail
+    // (selected block, phrase, team, manual form when asked) beside the grid.
+    const layout = el(doc, 'div', { className: 'cal-layout' });
+    const rail = el(doc, 'div', { className: 'cal-rail' });
+    const main = el(doc, 'div', { className: 'cal-main' });
     const selected = selectedRow();
-    if (selected) wrap.appendChild(renderDetailCard(selected));
+    if (selected) rail.appendChild(renderDetailCard(selected));
     else state.selectedId = null;
-    wrap.appendChild(renderTeam());
-    wrap.appendChild(renderWeek());
-    wrap.appendChild(renderAi());
-    wrap.appendChild(renderManual());
+    rail.appendChild(renderAi());
+    rail.appendChild(renderTeam());
+    rail.appendChild(renderManual());
+    rail.appendChild(renderBooking());
+    main.appendChild(renderWeek());
+    layout.appendChild(rail);
+    layout.appendChild(main);
+    wrap.appendChild(layout);
     mount.appendChild(wrap);
   }
 
@@ -504,7 +612,13 @@ export function createCalendarioView(deps) {
       {
         title: 'Compila manualmente',
         sub: 'Giorno, ora, cliente e partecipanti',
-        focus: () => state.manualFirst,
+        focus: () => {
+          // Open the painted form in place: a re-render would swap the
+          // field the operator is about to type in.
+          state.manualOpen = true;
+          state.manualPanel?.classList?.add('open');
+          return state.manualFirst;
+        },
       },
     ];
     for (const voice of voices) {
@@ -586,9 +700,9 @@ export function createCalendarioView(deps) {
     });
     filterRow.appendChild(input);
     filterRow.appendChild(show);
+    state.filterRow = filterRow;
     const box = el(doc, 'div');
     box.appendChild(head);
-    box.appendChild(filterRow);
     return box;
   }
 
@@ -613,39 +727,63 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * BO-F6-11 fetta 6 (specs/calendario.md C10, C11): the Team card — one
-   * toggle row per named member, in filter order. No roster exists in the
-   * framework, so rows name opaque identities, never people; the checkbox
-   * tint and avatar reuse the member's grid colour and initials. A click
-   * hides that member's blocks (C11) with no reload; hiding the selected
-   * block's member closes the detail card, since its selection border is
-   * gone. Every row is a button, so the raw-control walk stays green.
+   * BO-F6-11 fetta 6+7 (specs/calendario.md C10, C11): the Team card — one
+   * toggle row per team member. Without a member list the rows name the
+   * opaque filter identities, never people (fetta 6); when the server names
+   * the organization team the roster joins in and each row carries its
+   * Italian role, reused from Spazi e accessi (fetta 7). The checkbox tint
+   * and avatar reuse the member's grid colour and initials either way. A
+   * click on a listed member hides that member's blocks (C11) with no
+   * reload; a click on a roster member nobody named yet lists them and
+   * loads their week instead of typing blind. Hiding the selected block's
+   * member closes the detail card, since its selection border is gone.
+   * Every row is a button, so the raw-control walk stays green.
    */
   function renderTeam() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    const panel = el(doc, 'div', { className: 'panel cal-team' });
     panel.appendChild(el(doc, 'h2', { text: 'Team' }));
+    if (state.filterRow) panel.appendChild(state.filterRow);
     const named = parseMemberFilter(state.memberFilter);
-    if (named.length === 0) {
+    const rows = teamRowsWithRoles(named, state.hiddenMembers, state.members);
+    if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
         text: 'Nomina le persone del team sopra: qui compaiono come interruttori per filtrare la settimana.',
       }));
       return panel;
     }
-    for (const row of teamRows(named, state.hiddenMembers)) {
+    for (const row of rows) {
       const toggle = el(doc, 'button', {
         className: 'secondary small',
         attrs: {
           type: 'button',
           'aria-pressed': row.active ? 'true' : 'false',
-          title: row.active ? `Nascondi ${row.id} dalla settimana` : `Mostra ${row.id} nella settimana`,
+          title: row.listed
+            ? (row.active ? `Nascondi ${row.id} dalla settimana` : `Mostra ${row.id} nella settimana`)
+            : `Mostra ${row.id} nella settimana`,
         },
       });
       const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });
       toggle.appendChild(box);
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
       toggle.appendChild(el(doc, 'span', { text: row.id }));
+      // The role paints only when a membership names one — an honest second
+      // line in the card's own hint voice, never an invented job title.
+      if (typeof row.role === 'string' && row.role !== '') {
+        toggle.appendChild(el(doc, 'span', { className: 'ui-hint', text: row.role }));
+      }
       toggle.addEventListener('click', () => {
+        const current = parseMemberFilter(state.memberFilter);
+        if (!current.includes(row.id)) {
+          // A roster member nobody named yet: list them and load their week,
+          // like «Mostra settimana» does for typed names.
+          state.memberFilter = [...current, row.id].join(', ');
+          state.hiddenMembers = state.hiddenMembers.filter((id) => id !== row.id);
+          const next = parseMemberFilter(state.memberFilter);
+          if (next.length > 0) void loadWeek(next);
+          else renderAll();
+          return;
+        }
         const hidden = new Set(state.hiddenMembers);
         if (row.active) {
           hidden.add(row.id);
@@ -664,6 +802,31 @@ export function createCalendarioView(deps) {
   }
 
   /**
+   * BO-F6-11 fetta 7 (specs/calendario.md C12): the «Prenotazione online»
+   * card — the prototype's title and fixed line, nothing else invented. The
+   * package books from an online link token (`bookFromLink`) but nothing
+   * issues or publishes `accordo.dev/p/<slug>` to /bo, and the space id is
+   * opaque: so no URL is guessed and no `Copia` paints with nothing to copy
+   * (a fake copy button would be a control without a function). When a link
+   * source exists the card will show the link beside a `Copia` button; until
+   * then the honest Italian line below states it. Every booking made from a
+   * link lands on the customer card through the booking's subject, like the
+   * manual form's bookings do.
+   */
+  function renderBooking() {
+    const panel = el(doc, 'div', { className: 'panel cal-booking' });
+    panel.appendChild(el(doc, 'h2', { text: 'Prenotazione online' }));
+    panel.appendChild(el(doc, 'p', {
+      text: 'I clienti vedono solo gli slot liberi del team. Ogni prenotazione finisce nella loro scheda.',
+    }));
+    panel.appendChild(el(doc, 'p', {
+      className: 'empty',
+      text: 'Il link pubblico non è configurato per questo spazio.',
+    }));
+    return panel;
+  }
+
+  /**
    * BO-F6-11 fetta 4 (specs/calendario.md C13–C16): the prototype time grid —
    * an 09:00–18:00 hour gutter beside five work-day columns, event blocks on
    * their Rome half-hour rows, the red now-line on the current day. Empty
@@ -672,7 +835,7 @@ export function createCalendarioView(deps) {
    * their day, hours hidden) needs no extra markup.
    */
   function renderWeek() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    const panel = el(doc, 'div', { className: 'panel cal-week' });
     panel.appendChild(el(doc, 'h2', { text: 'Settimana del team' }));
     if (state.weekError) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: state.weekError }));
@@ -981,7 +1144,7 @@ export function createCalendarioView(deps) {
    * fails closed with a plain sentence naming the manual form.
    */
   function renderAi() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    const panel = el(doc, 'div', { className: 'panel cal-ai' });
     panel.appendChild(el(doc, 'h2', { text: '✦ Fissa con una frase' }));
     panel.appendChild(el(doc, 'p', {
       className: 'lede',
@@ -1198,7 +1361,10 @@ export function createCalendarioView(deps) {
   }
 
   function renderManual() {
-    const panel = el(doc, 'div', { className: 'panel' });
+    // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
+    // form stays in the DOM, so a draft can still prefill it.
+    const panel = el(doc, 'div', { className: `panel cal-manual${state.manualOpen || state.draftFill || state.manual ? ' open' : ''}` });
+    state.manualPanel = panel;
     panel.appendChild(el(doc, 'h2', { text: 'Nuovo appuntamento' }));
     panel.appendChild(el(doc, 'p', {
       className: 'lede',
@@ -1235,6 +1401,7 @@ export function createCalendarioView(deps) {
     state.manualNodes = inputs;
     state.manualFirst = inputs.customerResource ?? null;
     if (state.draftFill) {
+      state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) inputs.teamMemberId.value = String(draft.teamMemberId);
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
@@ -1413,6 +1580,9 @@ export function createCalendarioView(deps) {
 
   async function render() {
     renderAll();
+    // The roster arrives beside the week and enriches the Team card once it
+    // lands; its failure is silent by design (opaque toggles stay).
+    void loadMembers();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
   }

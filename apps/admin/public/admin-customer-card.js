@@ -36,14 +36,25 @@ const CHANNEL_LABELS = Object.freeze({
   whatsapp: 'WhatsApp',
   instagram: 'Instagram',
   facebook: 'Messenger',
+  // Voce 19c2e22a64a1 (6): every CARD_CHANNEL_MARKS key reads Italian — the
+  // scheda never prints a raw channel key. `messenger` follows `facebook`
+  // (both paint FB); `calendar` follows the prototype chip (`Google
+  // Calendar`); `web`/`form` follow the Oggi tile note (`WEB (Form sito)` in
+  // admin-ui.js); `outlook` keeps its product name like `gmail` keeps Gmail.
+  // Voce 59def6cb805d: stessa copertura per C15/C17.
   tiktok: 'TikTok',
   email: 'Email',
   gmail: 'Gmail',
+  outlook: 'Outlook',
   sms: 'SMS',
   phone: 'Telefono',
   voice: 'Telefono',
   tel: 'Telefono',
   mobile: 'Telefono',
+  messenger: 'Messenger',
+  calendar: 'Google Calendar',
+  web: 'Sito',
+  form: 'Form sito',
 });
 
 /** Delivery/sync state, inbound or outbound, in the operator's words. */
@@ -119,6 +130,40 @@ const timeParts = (value) => {
   }).format(new Date(ms));
 };
 
+/**
+ * Voce 59def6cb805d (C16): the Rome calendar day of an instant, as
+ * `YYYY-MM-DD`, so the timeline can mark the passages of today with the
+ * prototype's `OGGI · ` prefix. Day-level only — never an instant on screen.
+ */
+const romeDayKey = (ms) => {
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(ms));
+};
+
+/**
+ * Voce 59def6cb805d (C19): a call duration in `<m:ss>` for the timeline
+ * card (`372` → `6:12`). Null when the data holds no usable duration — the
+ * card then shows no duration instead of an invented one.
+ */
+const durationParts = (sec) => {
+  const total = typeof sec === 'number' ? Math.floor(sec) : Number.NaN;
+  if (!Number.isFinite(total) || total < 0) return null;
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+};
+
+/**
+ * Voce 59def6cb805d (C17): the sync-row arrow of the prototype
+ * (`↔/←/→ <canale> · <stato>`). Inbound `←`, outbound `→`; a passage with
+ * no recorded direction carries no arrow instead of an invented one.
+ */
+const syncArrow = (direction) => {
+  if (direction === 'inbound') return '← ';
+  if (direction === 'outbound') return '→ ';
+  return '';
+};
+
 const STATUS_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
 const statusLabel = (value) => STATUS_LABELS[String(value ?? '').toLowerCase()]
   ?? String(value ?? 'Contatto').replace(/^./, (first) => first.toUpperCase());
@@ -166,9 +211,14 @@ const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? Str
  * stays space-explicit, never inferred. Without it the calls section stays
  * honestly unavailable.
  */
+const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
+  // The shell toast, like every sibling admin view: Aggiorna reports through
+  // it, never through a bare status line. Without a shell it stays a noop.
+  const toast = deps.toast ?? (() => {});
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
@@ -252,25 +302,32 @@ export function createCustomerCardView(deps) {
     head.appendChild(avatar);
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
-    titles.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    const meta = el('div', 'bo-scheda-meta');
+    meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);
-    if (card?.company?.name) panel.appendChild(el('p', 'bo-scheda-sub', card.company.name));
   }
 
   function quickActions(box, card) {
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
-    const row = el('p', 'bo-scheda-actions');
+    const row = el('div', 'bo-scheda-actions');
     if (card?.phone?.available === true && card.phone.value) {
       const dialable = String(card.phone.value).replaceAll(/[^\d+]/g, '');
-      const call = link(`tel:${dialable === '' ? card.phone.value : dialable}`, `Chiama ${card.phone.value}`, 'call-customer');
+      const call = link(`tel:${dialable === '' ? card.phone.value : dialable}`, 'Chiama', 'call-customer');
+      call.setAttribute('class', 'bo-scheda-tile');
+      call.setAttribute('title', `Chiama ${card.phone.value}`);
       row.appendChild(call);
     } else {
       // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
     }
     if (typeof card?.email === 'string' && card.email !== '') {
-      row.appendChild(link(`mailto:${card.email}`, `Scrivi a ${card.email}`, 'mail-customer'));
+      const mail = link(`mailto:${card.email}`, 'Email', 'mail-customer');
+      mail.setAttribute('class', 'bo-scheda-tile');
+      mail.setAttribute('title', `Scrivi a ${card.email}`);
+      row.appendChild(mail);
     } else {
       row.appendChild(el('span', 'bo-scheda-disabled', 'email non disponibile'));
     }
@@ -290,7 +347,7 @@ export function createCustomerCardView(deps) {
     const members = Array.isArray(cluster.members) ? cluster.members : [];
     box.appendChild(el('p', 'bo-muted',
       cluster.linked === true
-        ? `${members.length} schede unite da una persona`
+        ? `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`
         : 'una sola scheda: nessuna unione registrata'));
     for (const member of members) {
       const line = el('p', 'bo-scheda-identity');
@@ -318,7 +375,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const fact = (label, value) => {
       const row = el('p', 'bo-scheda-fact');
-      row.appendChild(el('span', 'bo-scheda-fact-label', `${label}: `));
+      row.appendChild(el('span', 'bo-scheda-fact-label', label));
       row.appendChild(el('span', undefined, value));
       box.appendChild(row);
     };
@@ -358,12 +415,40 @@ export function createCustomerCardView(deps) {
     'google-contacts': 'Contatti Google', 'email-signature': 'firma email',
   });
 
-  function enriched(box, enrichment) {
+  function enriched(box, enrichment, reload) {
     // BO-F4-03, ref "05 Scheda cliente": every enriched datum cites the free
     // source that filled it and its observation date; an opted-out customer
     // reads as opted out, never as empty; no row without a recorded source
     // is ever shown. Values are text, never markup.
+    // Voce 59def6cb805d (C13): the ghost `Aggiorna` button re-reads the
+    // enrichment through the same operation the card load uses and reports
+    // through the shell toast — `Dati aggiornati` when the re-read changed
+    // the section, `Nessun dato nuovo` when it did not. A failed re-read is
+    // the Italian retry sentence, and the section keeps its previous rows.
     box.appendChild(el('h4', undefined, "Arricchito dall'AI"));
+    if (typeof reload === 'function') {
+      const refresh = el('button', 'bo-scheda-refresh', 'Aggiorna');
+      refresh.setAttribute('type', 'button');
+      refresh.setAttribute('data-action', 'refresh-enrichment');
+      let busy = false;
+      refresh.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const fresh = await reload();
+          const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+          const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+          while (box.firstChild) box.removeChild(box.firstChild);
+          enriched(box, fresh, reload);
+          toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+        } finally {
+          busy = false;
+        }
+      });
+      box.appendChild(refresh);
+    }
     const items = Array.isArray(enrichment?.items) ? enrichment.items : null;
     if (items === null) {
       box.appendChild(el('p', 'bo-muted', 'non disponibile: dati arricchiti non leggibili per questo cliente'));
@@ -388,7 +473,9 @@ export function createCustomerCardView(deps) {
   }
 
   function timelineBox(box, timeline) {
-    box.appendChild(el('h4', undefined, 'Cronologia'));
+    // Voce 59def6cb805d (C14): the prototype names this section, not the
+    // record kind behind it.
+    box.appendChild(el('h4', undefined, 'Tutti i contatti'));
     const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     const chips = el('p', 'bo-scheda-chips');
@@ -411,35 +498,54 @@ export function createCustomerCardView(deps) {
       while (list.firstChild) list.removeChild(list.firstChild);
       const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
       if (visible.length === 0) {
-        list.appendChild(el('p', 'bo-muted', channelFilter === 'all'
-          ? 'nessun passaggio registrato su nessun canale'
-          : `nessun passaggio su ${channelLabel(channelFilter)}`));
+        // Voce 59def6cb805d (C27): the exact empty state of the prototype,
+        // never a technical sentence.
+        list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
+        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale oppure scrivi il primo messaggio qui sotto.'));
         return;
       }
+      const todayKey = romeDayKey(Date.now());
       let currentDay = null;
       for (const item of visible) {
         // Voce 1a066ddfe42a: group and label by the readable Rome day.
-        const day = dayParts(item?.occurredAt) ?? 'senza data';
-        if (day !== currentDay) {
-          currentDay = day;
-          list.appendChild(el('h5', 'bo-scheda-day', day));
+        // Voce 59def6cb805d (C16): the day reads uppercase, like the
+        // prototype (`LUNEDÌ 20 OTTOBRE 2026`), with the `OGGI · ` prefix on
+        // the passages of today.
+        const occurredMs = Date.parse(String(item?.occurredAt ?? ''));
+        const dayKey = romeDayKey(occurredMs);
+        const day = (dayParts(item?.occurredAt) ?? 'senza data').toUpperCase();
+        const dayLabel = dayKey !== null && dayKey === todayKey ? `OGGI · ${day}` : day;
+        if (dayLabel !== currentDay) {
+          currentDay = dayLabel;
+          list.appendChild(el('h5', 'bo-scheda-day', dayLabel));
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        const channelKey = String(item?.channel ?? '').trim().toLowerCase();
+        const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
+        row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
         const isOutbound = String(item?.direction ?? '') === 'outbound';
         const who = isOutbound
           ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')
           : (item?.remoteHandle ? `da ${item.remoteHandle}` : 'ricevuto');
-        const when = dateTimeParts(item?.occurredAt);
+        // Voce 59def6cb805d (C17): the day already heads the group, so the
+        // card shows the hour only (`<hh:mm>`) beside channel and direction.
+        const when = timeParts(item?.occurredAt);
         row.appendChild(el('p', 'bo-scheda-entry-head',
           when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
         if (item?.entry === 'call') {
-          const dur = item?.durationSec != null ? ` · ${item.durationSec}s` : '';
-          row.appendChild(el('p', undefined, `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}${dur}`));
+          // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
+          // audio URL in the data no player is rendered (never a dead one).
+          const dur = durationParts(item?.durationSec);
+          row.appendChild(el('p', undefined,
+            dur ? `chiamata ${isOutbound ? 'in uscita' : 'in entrata'} · ${dur}` : `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`));
         } else if (typeof item?.body === 'string' && item.body !== '') {
           row.appendChild(el('p', undefined, item.body));
         }
-        row.appendChild(el('p', 'bo-scheda-sync', syncLabel(item?.sync)));
+        // Voce 59def6cb805d (C17): the sync row of the prototype,
+        // `←/→ <canale> · <stato>`.
+        row.appendChild(el('p', 'bo-scheda-sync',
+          `${syncArrow(item?.direction)}${channelLabel(item?.channel)} · ${syncLabel(item?.sync)}`));
         list.appendChild(row);
       }
     };
@@ -555,12 +661,16 @@ export function createCustomerCardView(deps) {
   function aiSummary(box, calls) {
     // BO-F1-08: the per-customer AI summary is the latest summarized call.
     // Without a recorded source it stays unavailable — never an invented one.
-    box.appendChild(el('h4', undefined, 'Riepilogo AI'));
+    // Voce 59def6cb805d (C23): the prototype's `<quando aggiornato>` row —
+    // when the summarized call was recorded, never an invented freshness.
+    box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
     const latest = latestSummarized(calls);
     if (!latest) {
       box.appendChild(el('p', 'bo-muted', 'non disponibile: nessun riepilogo registrato per questo cliente'));
       return;
     }
+    const updated = dateTimeParts(latest?.recordedAt);
+    if (updated) box.appendChild(el('p', 'bo-scheda-summary-when', `Aggiornato ${updated}`));
     box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
   }
 
@@ -601,14 +711,27 @@ export function createCustomerCardView(deps) {
     }
     const transcript = latest?.transcript;
     if (transcript?.available === true) {
-      const openable = doc.createElement('details');
-      const caption = doc.createElement('summary');
-      caption.textContent = 'Trascrizione';
-      openable.appendChild(caption);
-      const body = doc.createElement('p');
-      body.textContent = String(transcript.text ?? '');
-      openable.appendChild(body);
-      box.appendChild(openable);
+      // Voce 59def6cb805d (C20): the prototype's toggle with its exact
+      // texts — one speaker row per transcript line. The rows mount only
+      // while open, so a closed transcript shows nothing of its content.
+      const toggle = el('button', 'bo-scheda-transcript-toggle', 'Mostra trascrizione');
+      toggle.setAttribute('type', 'button');
+      toggle.setAttribute('aria-expanded', 'false');
+      const body = el('div', 'bo-scheda-transcript');
+      toggle.addEventListener('click', () => {
+        const open = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.textContent = open ? 'Nascondi trascrizione' : 'Mostra trascrizione';
+        while (body.firstChild) body.removeChild(body.firstChild);
+        if (open) {
+          for (const line of String(transcript.text ?? '').split('\n')) {
+            if (line.trim() === '') continue;
+            body.appendChild(el('p', 'bo-scheda-transcript-row', line));
+          }
+        }
+      });
+      box.appendChild(toggle);
+      box.appendChild(body);
     } else {
       box.appendChild(el('p', 'bo-muted',
         typeof transcript?.reason === 'string' && transcript.reason !== ''
@@ -636,22 +759,37 @@ export function createCustomerCardView(deps) {
       return;
     }
     const { card, timeline, profile, enrichment, calls } = loaded;
+    // C13: the re-read behind `Aggiorna` — the same enriched route the load
+    // uses, with the same honest 404. Anything else still rejects, so the
+    // button toasts the Italian retry instead of inventing rows.
+    const enrichedPath = `/api/customer-data/enriched/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
+    const reloadEnrichment = () => client.request(enrichedPath).catch((error) => {
+      if (error && error.status === 404) return null;
+      throw error;
+    });
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
     const left = el('div', 'bo-scheda-col');
     const center = el('div', 'bo-scheda-col');
     const right = el('div', 'bo-scheda-col');
-    quickActions(left, card);
-    linkedIdentities(left, profile);
-    details(left, card, profile);
-    enriched(left, enrichment);
-    timelineBox(center, timeline);
-    aiSummary(right, calls);
-    callsBox(right, calls);
-    nextSteps(right, profile);
-    offer(right, profile);
-    nextAppointment(right, timeline);
+    // Supervisor design pass: every section is its own card, like the
+    // prototype; a section that hides itself (returns false) leaves no card.
+    const section = (col, cls, fn, ...args) => {
+      const box = el('section', `bo-scheda-card${cls ? ` ${cls}` : ''}`);
+      const shown = fn(box, ...args);
+      if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
+    };
+    section(left, '', quickActions, card);
+    section(left, '', linkedIdentities, profile);
+    section(left, '', details, card, profile);
+    section(left, '', enriched, enrichment, reloadEnrichment);
+    section(center, 'bo-scheda-card-timeline', timelineBox, timeline);
+    section(right, 'bo-scheda-ai', aiSummary, calls);
+    section(right, '', callsBox, calls);
+    section(right, '', nextSteps, profile);
+    section(right, 'bo-scheda-card-offer', offer, profile);
+    section(right, '', nextAppointment, timeline);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);

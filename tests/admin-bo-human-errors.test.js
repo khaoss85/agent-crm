@@ -38,8 +38,8 @@ import { createWorkView } from '../apps/admin/public/admin-work.js';
 import { createMarketingView } from '../apps/admin/public/admin-marketing.js';
 import { createSpineView } from '../apps/admin/public/admin-spine.js';
 import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
-import { createAssistantPanel } from '../apps/admin/public/admin-assistant.js';
-import { loadOggiData } from '../apps/admin/public/admin-oggi.js';
+import { createAssistantPanel, runSuggestion } from '../apps/admin/public/admin-assistant.js';
+import { loadOggiData, renderOggi } from '../apps/admin/public/admin-oggi.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /** Technical detail the production screens leaked: never rendered, only logged. */
@@ -283,7 +283,7 @@ test('customer-data: schema, list and profile failures never render the message'
     const text = mount.textContent;
     checkHumanText(text, 'customer-data');
     assert.ok(
-      text.includes('This list could not be read, so it is not shown.')
+      text.includes('Questa lista non si è potuta leggere')
         || text.includes('non composto')
         || text.includes('non si è potuto leggere'),
       'a failed customer-data read says so in human words, never silently',
@@ -316,7 +316,7 @@ test('customer-data: schema, list and profile failures never render the message'
   await flush();
   const text = mount.textContent;
   // Targeted leak assertions instead of the blanket checkHumanText: the
-  // healthy import form labels its textarea 'Rows (JSON):', a static format
+  // healthy import form labels its textarea 'Righe (JSON):', a static format
   // name that trips the blanket parenthesized-code heuristic without
   // leaking anything. What must never render is the server's error.
   for (const marker of TECHNICAL_MARKERS) {
@@ -325,7 +325,7 @@ test('customer-data: schema, list and profile failures never render the message'
   assert.ok(!text.includes(NASTY_MESSAGE), 'customer-data renders the raw server message');
   assert.ok(!text.includes('(BOOM)'), 'customer-data renders the parenthesized error code');
   assert.ok(
-    text.includes('This list could not be read, so it is not shown.'),
+    text.includes('Questa lista non si è potuta leggere e non viene mostrata.'),
     'an unreadable module list says so in a full sentence',
   );
   const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'retry-customer-data-list');
@@ -535,4 +535,232 @@ test('sequenze view: a failed read never renders the message', async () => {
   await view.renderSequenze();
   await flush();
   checkHumanText(mount.textContent, 'sequenze view');
+});
+
+/**
+ * Backoffice "niente inglese tecnico in pagina" (backlog:de45d1b1).
+ *
+ * What the supervisor saw in production on 2026-10-28: inside the customer
+ * sheet an English block about contact import and merge, and on Nuovo modulo
+ * technical bundle-verify sentences. None of the listed phrases may appear
+ * in any rendered /bo view. The views that carry the phrases in their
+ * healthy state mount healthy (customer-data with the server still sending
+ * its English metadata, nuovo modulo, the assistant guide, spine); every
+ * other view mounts with failing reads, which still renders all its static
+ * chrome (oggi renders its frame directly, the same static chrome the router
+ * paints). If any phrase reappears anywhere, this test fails.
+ */
+const LISTED_BO_PHRASES = Object.freeze([
+  'a preview writes nothing at all — not a business record, not an import run',
+  'Mapping customer-rows@1',
+  'at most 500 rows',
+  'the mapping fingerprint',
+  'partial — keep the good rows, receipt the rest',
+  'Deciding these is a human judgement. Linking is a logical canonical merge: nothing is deleted.',
+  'What this does not do',
+  'Matching is exact only',
+  'No warehouse, no activation and no external system is written',
+  'Deciding here requires a signed-in user actor',
+  'None of this is a GDPR, consent, retention or erasure claim',
+  'bundle verify avvia',
+]);
+
+const listedSweepMeta = () => ({
+  customerDataContract: 1,
+  records: [],
+  import: {
+    mapping: { name: 'customer-rows', version: 1, fingerprint: 'a'.repeat(64) },
+    maxRows: 500,
+    acceptance: ['partial', 'all_or_nothing'],
+    preview: 'a preview writes nothing at all — not a business record, not an import run',
+    idempotency: 'derived from the system, the mapping fingerprint and the sorted row digests',
+  },
+  deferred: { track: 'Customer Data Operations v2', items: ['global search'] },
+});
+
+function listedSweepCustomerDataClient() {
+  return {
+    async request(path, options = {}) {
+      if (path === '/api/schema') {
+        return { domains: { 'customer-data': { metadata: listedSweepMeta() } } };
+      }
+      if (path.startsWith('/api/customer-data/profile/')) {
+        return {
+          subject: { resource: 'contact', id: 'c1' },
+          identity: {}, canonicalIdentity: { linked: false, members: [] },
+          externalIdentities: [], dataQualityIssues: [],
+        };
+      }
+      if (options.method === 'POST') {
+        if (path === '/api/customer-data/import/preview') {
+          return {
+            mode: 'preview', runId: null,
+            writes: 'nothing — this is a preview, and it records neither business data nor an import run',
+            counts: { rows: 1, accepted: 1, rejected: 0, skipped: 0 },
+            receipts: [{ index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok' }],
+          };
+        }
+        return { ok: true, result: {} };
+      }
+      return { items: [] };
+    },
+  };
+}
+
+function listedSweepSpineClient() {
+  return {
+    async request(path, options = {}) {
+      if (options.method === 'POST') return { ok: true };
+      if (path === '/api/spine/context') {
+        return {
+          spineContract: 1, mode: 'production', warning: null,
+          tenantStrategy: 'one-tenant-per-instance',
+          boundTenant: { slug: 'tenant-a' },
+          tenantIsolation: { crmDataPlaneEnforced: true, sharedDatabaseMultiTenancy: false },
+          roles: { owner: ['records.read'] }, permissions: [],
+          identity: { kind: 'verified-user', subject: 'alice', issuer: 'issuer', method: 'oidc' },
+          organization: { name: 'Tenant A', slug: 'tenant-a' },
+          membership: { role: 'viewer' },
+          limitations: [], notModeled: [],
+        };
+      }
+      if (path === '/api/spine/memberships') return { items: [] };
+      return {};
+    },
+  };
+}
+
+test('le frasi elencate non appaiono in nessuna vista montata', async () => {
+  const texts = [];
+  const collect = (name, text) => texts.push([name, String(text ?? '')]);
+  const fresh = () => ({ doc: createFakeDocument(), mount: createMount() });
+
+  // The customer-data section mounts healthy while the server still sends
+  // its English metadata: the view must render its own Italian copy.
+  {
+    const { doc, mount } = fresh();
+    const view = createCustomerDataView({
+      doc, mount, client: listedSweepCustomerDataClient(),
+      navigate: () => {}, notify: () => {}, spaceId: 'spazio-1', storage: memStore(),
+    });
+    await view.render();
+    await flush();
+    const rows = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'rows');
+    const system = mount.findAll('input').find((node) => node.getAttribute('name') === 'system');
+    system.value = 'crm-export';
+    rows.value = JSON.stringify([{ email: 'a@b.example' }]);
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'preview-customer-import').dispatch('click');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    collect('dati clienti', mount.textContent);
+    await view.renderProfile('contact', 'c1');
+    await flush();
+    collect('profilo cliente', mount.textContent);
+  }
+
+  // Nuovo modulo mounts healthy; the assistant guide answers as text.
+  {
+    const { doc, mount } = fresh();
+    createReportingView({ doc, mount, client: { request: async () => ({ items: [] }) }, navigate: () => {}, onAskAi: () => {} }).renderNuovoModulo();
+    await flush();
+    collect('nuovo modulo', mount.textContent);
+    const answer = await runSuggestion({ request: async () => ({}) }, 'bo05:nuovo-modulo:crea-ai');
+    collect('assistente nuovo modulo', answer.lines.join(' '));
+  }
+
+  // Spine mounts healthy: its limits block shares one listed heading.
+  {
+    const { doc, mount } = fresh();
+    await createSpineView({ doc, mount, client: listedSweepSpineClient() }).render();
+    await flush();
+    collect('identità e accessi', mount.textContent);
+  }
+
+  // Every other mounted view, with failing reads: the static chrome renders.
+  const failingMounts = [
+    ['oggi', async (doc, mount) => {
+      renderOggi({
+        doc, mount, spaceName: 'Spazio di prova', userName: 'Elena',
+        links: [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }],
+        navigate: () => {}, now: new Date('2026-10-27T09:00:00+01:00'),
+      });
+    }],
+    ['catalogo', async (doc, mount) => { await createCatalogView({ doc, mount, client: failingClient() }).renderTable({}); }],
+    ['spazi e accessi', async (doc, mount) => {
+      await createSpaziAccessiView({
+        doc, mount, client: failingClient(), navigate: () => {},
+        spaces: () => [{ id: 'spazio-1', name: 'Negozio', initials: 'NE' }],
+        activeSpaceId: () => 'spazio-1', toast: () => {},
+      }).render();
+    }],
+    ['personalizzazione', async (doc, mount) => {
+      await createPersonalizzazioneView({
+        doc, mount, client: failingClient(), navigate: () => {}, spaceId: () => 'spazio-1',
+      }).render();
+    }],
+    ['clienti', async (doc, mount) => {
+      await createCustomerListView({ doc, mount, client: failingClient(), storage: memStore(), notify: () => {} }).render();
+    }],
+    ['calendario', async (doc, mount) => {
+      await createCalendarioView({ doc, mount, client: failingClient(), now: () => new Date('2026-10-27T10:00:00Z') }).render();
+    }],
+    ['pipeline', async (doc, mount) => { await createPipelineBoard({ doc, mount, client: failingClient() }).renderBoard('b2b-sales'); }],
+    ['reporting', async (doc, mount) => {
+      await createReportingView({ doc, mount, client: failingClient(), navigate: () => {} }).renderReporting();
+    }],
+    ['stato sync', async (doc, mount) => {
+      await createSyncView({
+        doc, mount, client: failingClient(),
+        storage: { getItem: () => 'spazio-1', setItem: () => {}, removeItem: () => {} },
+        navigate: () => {}, toast: () => {},
+      }).render();
+    }],
+    ['scheda cliente', async (doc, mount) => {
+      await createCustomerCardView({ doc, mount, client: failingClient(), navigate: () => {}, spaceId: 'spazio-1' }).renderCard('customer', 'c1');
+    }],
+    ['connettori', async (doc, mount) => {
+      await createConnectorsView({
+        doc, mount, client: failingClient(), navigate: () => {},
+        storage: { getItem: () => 'spazio-1', setItem: () => {}, removeItem: () => {} },
+      }).render();
+    }],
+    ['dettaglio connettore', async (doc, mount) => {
+      await createConnectorDetailView({
+        doc, mount, client: failingClient(),
+        storage: { getItem: () => 'spazio-1', setItem: () => {}, removeItem: () => {} },
+        navigate: () => {},
+      }).render('whatsapp');
+    }],
+    ['preventivi', async (doc, mount) => { await createQuoteView({ doc, mount, client: failingClient() }).renderQuoteDetail('q1'); }],
+    ['lavoro', async (doc, mount) => { await createWorkView({ doc, mount, client: failingClient(), navigate: () => {} }).renderQueue(); }],
+    ['proposte', async (doc, mount) => { await createMarketingView({ doc, mount, client: failingClient(), navigate: () => {} }).renderProposalList(); }],
+    ['nuovo modulo (elenco)', async (doc, mount) => {
+      await createModuleAdmin({ doc, mount, client: failingClient(), navigate: () => {}, storage: memStore() }).renderList('partner');
+    }],
+    ['assistente', async (doc, mount) => {
+      await createAssistantPanel({ doc, mount, client: failingClient(), navigate: () => {}, notify: () => {} }).open('clienti');
+    }],
+    ['sequenze vista', async (doc, mount) => {
+      await createSequenzeView({
+        doc, mount, client: failingClient(),
+        submissions: { submit: async () => { throw opFail(); } },
+        storage: memStore(), spaceId: 'spazio-1',
+      }).renderSequenze();
+    }],
+  ];
+  for (const [name, mountIt] of failingMounts) {
+    const { doc, mount } = fresh();
+    await mountIt(doc, mount);
+    await flush();
+    collect(name, mount.textContent);
+  }
+  collect('sequenze dati', JSON.stringify(await loadSequenzeData(failingClient(), 'spazio-1')));
+  collect('oggi dati', JSON.stringify(await loadOggiData(failingClient(), new Date('2026-10-27T09:00:00+01:00'))));
+
+  assert.ok(texts.length > 20, `the sweep covers every mounted view, got ${texts.length}`);
+  for (const [name, text] of texts) {
+    assert.ok(text.length > 0, `${name} renders something`);
+    for (const phrase of LISTED_BO_PHRASES) {
+      assert.ok(!text.includes(phrase), `${name} renders the listed phrase ${JSON.stringify(phrase)}`);
+    }
+  }
 });

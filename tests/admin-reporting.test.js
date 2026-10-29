@@ -66,7 +66,8 @@ test('bundle commands are exact, versioned and never floating', () => {
   const steps = manualSteps();
   assert.ok(steps.checklist.length >= 3, 'the manual path names what a manifest needs');
   assert.ok(steps.checklist.some((line) => /kernel/i.test(line)), 'the checklist refuses kernel tables');
-  assert.ok(/non si avvia e non serve/.test(steps.proof), 'verify is the proof, never a simulation');
+  assert.ok(/si apre davvero/.test(steps.proof), 'verify is the proof, never a simulation');
+  assert.ok(/non esiste/.test(steps.proof), 'a module that does not open does not exist');
   // P2 admin-reporting.js:119: a future caller threading user input into
   // createdBy renders a second shell command in the copy-pasteable text.
   // Only the CLI contract values pass; anything else throws, never
@@ -364,8 +365,9 @@ test('assistant guides the AI bundle path with real steps and screen links', asy
   assert.equal(aiPlaceholder('nuovo-modulo'), 'Descrivi: «un modulo sonde per i KPI del pilota»');
   // The guide reads no records, but the gate still wants a client shape.
   const answer = await runSuggestion({ request: async () => ({}) }, 'bo05:nuovo-modulo:crea-ai');
-  assert.match(answer.lines.join(' '), /bundle verify/, 'the guide names the installability proof');
+  assert.match(answer.lines.join(' '), /provato davvero|mostra un record/, 'the guide names the installability proof');
   assert.match(answer.lines.join(' '), /mai nel kernel|non esiste/, 'the guide refuses simulation');
+  assert.ok(!answer.lines.join(' ').includes('bundle verify'), 'the guide never names the CLI command');
   const hrefs = answer.actions.filter((action) => action.kind === 'navigate').map((action) => action.href);
   assert.ok(hrefs.includes('#/nuovo-modulo'), 'the guide links back to the screen');
   assert.ok(hrefs.includes('#/reporting'), 'the guide links to reporting');

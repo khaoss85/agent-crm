@@ -74,6 +74,19 @@ test('every harness module parses (top-level await included)', () => {
     const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 });
     assert.equal(checked.status, 0, `${name}: harness module parses (${(checked.stderr ?? '').slice(-300)})`);
   }
+  {
+    const login = harnessHtml('login', publicDir);
+    const modules = login.split('<script type="module">').slice(1)
+      .map((part) => part.split('</script>')[0]);
+    assert.equal(modules.length, 2, 'login serves its enhancement plus the harness probe');
+    for (const [index, code] of modules.entries()) {
+      const dir = mkdtempSync(join(tmpdir(), 'bo-shots-parse-login-'));
+      const file = join(dir, `login-${index}.mjs`);
+      writeFileSync(file, code);
+      const checked = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8', timeout: 60_000 });
+      assert.equal(checked.status, 0, `login module ${index} parses (${(checked.stderr ?? '').slice(-300)})`);
+    }
+  }
   assert.throws(() => harnessHtml('nope', publicDir), /no harness for screen/);
 });
 
@@ -85,6 +98,9 @@ test('every harness page serves its real module or the real login markup', () =>
     if (name === 'login') {
       assert.ok(page.includes('login-magic'), 'login serves the real login form');
       assert.ok(page.includes('Ogni conversazione'), 'login keeps its story panel');
+      assert.ok(page.includes('./login.js'), 'login keeps the #408 enhancement wiring');
+      assert.ok(/id="probe" hidden/.test(page), 'login carries a hidden probe');
+      assert.ok(!page.includes('document.body'), 'the login probe reads its mounts, not the whole page');
       continue;
     }
     const screen = byName.get(name);
@@ -213,6 +229,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
   // parse #probe and assert the same invariants the *-shots tests assert,
   // so each fixture has to record them. Static string checks only.
   const probes = new Map([
+    ['login', ['magic:', 'email:', 'google:', 'story:', 'noValidate:']],
     ['calendario', ['days:', 'events:', 'lede:', 'filled:']],
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
@@ -253,7 +270,13 @@ test('readProbe parses the hidden probe div from a dump-dom stdout', () => {
 });
 
 test('assertProbe accepts the filled demo probes and rejects unknown screens', () => {
-  assert.doesNotThrow(() => assertProbe('login', {}));
+  assert.doesNotThrow(() => assertProbe('login', {
+    magic: true, email: 1, google: 1, story: 1, noValidate: true,
+  }));
+  assert.throws(() => assertProbe('login', {}), /magic-link form/);
+  assert.throws(() => assertProbe('login', {
+    magic: true, email: 1, google: 1, story: 1, noValidate: false,
+  }), /did not install/);
   assert.doesNotThrow(() => assertProbe('oggi', { recap: true, tasks: 2 }));
   assert.doesNotThrow(() => assertProbe('clienti', { rows: 3 }));
   assert.doesNotThrow(() => assertProbe('cliente', { name: true }));
@@ -264,13 +287,14 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   }));
   assert.doesNotThrow(() => assertProbe('sequenze', {
     rows: 2, names: ['Bentornato in palestra', 'Promemoria appuntamento'],
-    detail: 'Bentornato in palestra', steps: 2, firstDay: 'Giorno 0 · parte subito',
-    firstChannel: 'WhatsApp', confirm: 'Attivare questa sequenza?',
+    detail: 'Bentornato in palestra', steps: 2, firstDay: 'Subito',
+    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Attivare questa sequenza?',
   }));
   assert.doesNotThrow(() => assertProbe('reporting', { kpis: 3 }));
-  assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2 }));
+  assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 2, toConnect: 7 }));
+  assert.throws(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 0, toConnect: 9 }), /connected/);
   assert.doesNotThrow(() => assertProbe('catalogo', {
-    table: '…Pacchetto 10 lezioni…', stripe: 'Stripe collegato', rules: 'auto 10%',
+    table: '…Pacchetto 10 lezioni…', stripe: 'Collegato a Stripe', rules: 'auto 10%',
   }));
   assert.doesNotThrow(() => assertProbe('connettori', { rows: 8, previews: 8, flows: 8 }));
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));

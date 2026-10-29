@@ -15,6 +15,7 @@ import {
   romeMinutes,
   romeWeekKeys,
   teamRows,
+  teamRowsWithRoles,
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
@@ -74,7 +75,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -98,6 +99,10 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, f
           return { decision: 'confirm-required', draft: body, spaceId: 'locale', permission: 'book-appointments' };
         }
         return { decision: 'booked', appointment: { ...body, id: 'b1', status: 'confirmed' }, replayed: false, spaceId: 'locale' };
+      }
+      if (path === '/api/spine/memberships') {
+        if (membershipsError) throw membershipsError;
+        if (memberships !== undefined) return { items: memberships };
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
       if (path.startsWith('/api/appointments/suggest-slots')) {
@@ -175,7 +180,9 @@ test('week renders five day columns with real Rome-time events', async () => {
   await view.render();
   // No members named yet: the honest prompt, not a blank screen.
   assert.ok(texts(mount, 'p').some((text) => text.includes('Scegli le persone')));
-  assert.equal(client.calls.length, 0);
+  // No appointment read without named members (fetta 7 refines this pin:
+  // the Team roster read is not a week read and may go out on its own).
+  assert.ok(client.calls.every((call) => !String(call.path).startsWith('/api/appointments/')));
 
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -1116,6 +1123,14 @@ test('overlapping profile reads cache under their own keys', async () => {
         return { identity: { contact: { id, firstName: `Nome-${id}`, lastName: '' }, company: null } };
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1208,6 +1223,14 @@ test('a late profile answer never repaints over the customer card', async () => 
         return { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } };
       }
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1256,6 +1279,14 @@ test('an unexpected profile failure is logged with the space, never the message'
     async request(path) {
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1302,6 +1333,14 @@ test('a missing profile stays silent while the card falls back', async () => {
     async request(path) {
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
+      if (path === '/api/spine/memberships') {
+        // No roster on this double: the spine is uncomposed here, an
+        // expected absence the view keeps silent (fetta 7).
+        const missing = new Error('no spine here');
+        missing.code = 'NOT_FOUND';
+        missing.status = 404;
+        throw missing;
+      }
       throw new Error(`unexpected path ${path}`);
     },
   };
@@ -1451,4 +1490,197 @@ test('hiding the selected block member closes the detail card', async () => {
   teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
   assert.ok(!mount.findAll('button').some((node) => node.textContent === '×'), 'hiding the member closes the card');
   assert.ok(!texts(mount, 'strong').includes('piega'));
+});
+
+// BO-F6-11 fetta 7 (specs/calendario.md C10): the roster rows carry the
+// names and Italian roles the member list names — only when one exists.
+test('teamRowsWithRoles unions the named filter and the roster with Italian roles', () => {
+  const members = [
+    { subject: 'marco', role: 'operator' },
+    { subject: 'sara', role: 'owner' },
+    { subject: 'elena', role: 'observer' },
+  ];
+  const rows = teamRowsWithRoles(['marco'], ['sara'], members);
+  assert.equal(rows.length, 3, 'named plus roster-only, deduped');
+  assert.deepEqual(rows[0], {
+    id: 'marco', active: true, listed: true,
+    color: memberColorIndex('marco'), initials: 'MA', role: 'Operatore',
+  });
+  assert.deepEqual(rows[1], {
+    id: 'sara', active: false, listed: false,
+    color: memberColorIndex('sara'), initials: 'SA', role: 'Proprietario',
+  });
+  assert.deepEqual(rows[2], {
+    id: 'elena', active: false, listed: false,
+    color: memberColorIndex('elena'), initials: 'EL', role: 'Osservatore',
+  });
+  assert.deepEqual(teamRowsWithRoles(['marco'], [], null), [
+    {
+      id: 'marco', active: true, listed: true,
+      color: memberColorIndex('marco'), initials: 'MA', role: null,
+    },
+  ], 'no member list: named rows with no role line, never invented');
+  assert.deepEqual(teamRowsWithRoles([], [], []), [], 'no names and no roster: no rows');
+  assert.deepEqual(teamRowsWithRoles(null, undefined, 'nope'), [], 'non-lists stay empty');
+});
+
+// The Team card lists the roster with Italian roles and loads a roster
+// member's week on click, without typing their name first.
+test('the Team card shows the roster roles and loads a picked member', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    week: WEEK_TWO,
+    memberships: [
+      { subject: 'marco', role: 'operator' },
+      { subject: 'sara', role: 'owner' },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(texts(mount, 'h2').includes('Team'), 'the Team card paints');
+  assert.equal(teamToggles(mount).length, 2, 'one toggle per roster member, no typing needed');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'the operator role paints in Italian');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Proprietario')), 'the owner role paints in Italian');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'no week yet: nothing listed without asking');
+
+  teamToggles(mount).find((node) => node.textContent.includes('marco')).dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const teamWeek = client.calls.find((call) => String(call.path).startsWith('/api/appointments/team-week'));
+  assert.ok(teamWeek && String(teamWeek.path).includes('marco'), 'picking a roster member loads their week');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the picked member blocks paint');
+});
+
+// A refused member list keeps the opaque named toggles: no error where the
+// week should be, no invented roster, no technical codes.
+test('a refused member list keeps the opaque toggles with no error', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const refused = new Error('forbidden');
+  refused.code = 'SPINE_MEMBERSHIP_FORBIDDEN';
+  refused.status = 403;
+  const client = stubClient({ week: WEEK_TWO, membershipsError: refused });
+  const warned = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
+  try {
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+    await view.render();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warned.length, 0, 'an expected refusal stays silent');
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco, sara';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(teamToggles(mount).length, 2, 'opaque toggles stay');
+  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'no role without a list');
+  const body = texts(mount, 'p').join('\n') + texts(mount, 'strong').join('\n');
+  for (const banned of ['NOT_FOUND', 'non composto', 'SPINE_', '403', 'undefined']) {
+    assert.ok(!body.includes(banned), `no technical residue in the Team card: ${banned}`);
+  }
+});
+
+// A member list that resolves and then fails must not leave a stale
+// roster on screen. With nobody named no week reload repaints, so a
+// refused second read would keep showing the previous rows and their
+// Italian roles unless the failure path repaints the fallback itself.
+test('a failed member-list reload repaints the fallback, never a stale roster', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let refused = false;
+  const client = {
+    async request(path) {
+      if (path === '/api/spine/memberships') {
+        if (refused) {
+          const forbidden = new Error('forbidden');
+          forbidden.code = 'SPINE_MEMBERSHIP_FORBIDDEN';
+          forbidden.status = 403;
+          throw forbidden;
+        }
+        return { items: [{ subject: 'marco', role: 'operator' }, { subject: 'sara', role: 'owner' }] };
+      }
+      if (path.startsWith('/api/appointments/team-week')) return WEEK_TWO;
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(teamToggles(mount).length, 2, 'two roster toggles while the list resolves');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'the roster role paints while the list resolves');
+  refused = true;
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(teamToggles(mount).length, 0, 'no toggles without names or a list');
+  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'no stale role without a list');
+  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Proprietario')), 'no stale role without a list');
+  assert.ok(
+    texts(mount, 'p').some((text) => text.includes('Nomina le persone')),
+    'the honest prompt is back instead of the stale roster',
+  );
+  const body = texts(mount, 'p').join('\n') + texts(mount, 'strong').join('\n');
+  for (const banned of ['NOT_FOUND', 'non composto', 'SPINE_', '403', 'undefined']) {
+    assert.ok(!body.includes(banned), `no technical residue in the Team card: ${banned}`);
+  }
+});
+
+// An unexpected member-list failure is logged with the space, never the
+// message or personal data — the same rule as the profile read.
+test('an unexpected member-list failure is logged with the space, never the message', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const fault = new Error('boom token=secret-payload');
+  fault.status = 500;
+  const client = stubClient({ week: WEEK_TWO, membershipsError: fault });
+  const warned = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
+  try {
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+    await view.render();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warned.length, 1, 'one diagnostic line for the unexpected fault');
+  assert.ok(warned[0].startsWith('bo-calendario members unreadable:'), 'sanitized cause, not the message');
+  assert.ok(!warned[0].includes('secret-payload'), 'no personal data in the log');
+  assert.ok(warned[0].includes('spaceId='), 'the space rides along for diagnosis');
+  assert.equal(teamToggles(mount).length, 0, 'the card still falls back to the honest prompt');
+});
+
+// BO-F6-11 fetta 7 (specs/calendario.md C12): the «Prenotazione online»
+// card carries the prototype title and fixed line. No link source exists in
+// the package or the server (bookFromLink books from a token but nothing
+// issues or publishes accordo.dev/p/<slug> to /bo, and the space id is
+// opaque), so no URL is guessed and no Copia paints with nothing to copy.
+test('the booking card paints the prototype texts with no invented link', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(texts(mount, 'h2').includes('Prenotazione online'), 'C12: the booking card paints');
+  const paragraphs = texts(mount, 'p').join('\n');
+  assert.ok(
+    paragraphs.includes('I clienti vedono solo gli slot liberi del team. Ogni prenotazione finisce nella loro scheda.'),
+    'C12: the fixed line is the prototype sentence',
+  );
+  assert.ok(paragraphs.includes('Il link pubblico non è configurato per questo spazio.'), 'honest empty state, no codes');
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Copia'), 'no Copia with nothing to copy');
+  assert.ok(!paragraphs.includes('accordo.dev'), 'no invented booking URL');
+  for (const banned of ['NOT_FOUND', 'non composto', '404', 'undefined']) {
+    assert.ok(!paragraphs.includes(banned), `no technical residue in the booking card: ${banned}`);
+  }
 });

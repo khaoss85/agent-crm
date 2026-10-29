@@ -22,7 +22,9 @@
 //   /api/spine/memberships (the organization team), GET
 //   /api/space-permissions/effective (the flipped switches, scoped
 //   server-side: the generic records surface cannot filter the override
-//   module by space, so the screen never pages it);
+//   module by space, so the screen never pages it), GET /api/connectors
+//   (active connections per space, for the card statistic) and GET
+//   /api/customer-data/customers (exact total only, for the same row);
 // - writes: POST /api/spine/memberships (grant) and
 //   POST /api/spine/memberships/:subject/suspend (removal), the same store
 //   the Identity screen uses — grant names a reason, removal is two-step;
@@ -40,6 +42,7 @@
 
 import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { settingsTabs } from './admin-shell.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -106,6 +109,58 @@ export function spaceRoleLabel(role) {
 }
 
 /**
+ * The statistic of one space card, in the prototype's own pattern
+ * `<n> canali · <m> persone · <k> clienti` with Italian singulars. Every
+ * count is real: active connections of the space (`GET /api/connectors`),
+ * memberships of the organization (`GET /api/spine/memberships`) and the
+ * exact customer total (`GET /api/customer-data/customers`, only when
+ * `totalIsExact`). Any unknown count yields null and the card simply shows
+ * no statistic — a package that is not composed, or an inexact total, must
+ * never invent a row. People and customers are organization-wide (the team
+ * is one per postazione, like the roster this screen already shows), so the
+ * same two numbers honestly repeat on every card until customer records are
+ * scoped per space server-side.
+ * @param {{channels?: unknown, members?: unknown, customers?: unknown}} input
+ */
+export function formatSpaceStat({ channels = null, members = null, customers = null } = {}) {
+  for (const count of [channels, members, customers]) {
+    if (typeof count !== 'number' || !Number.isFinite(count) || count < 0 || !Number.isInteger(count)) return null;
+  }
+  const word = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+  return `${word(channels, 'canale', 'canali')} · ${word(members, 'persona', 'persone')} · ${word(customers, 'cliente', 'clienti')}`;
+}
+
+/**
+ * Active connections of one space from `GET /api/connectors`: a revoked or
+ * suspended connection is not "collegato". No `connectors` array means the
+ * package is not composed here, never zero.
+ * @param {unknown} answer
+ */
+export function countSpaceChannels(answer) {
+  const entries = answer !== null && typeof answer === 'object'
+    ? /** @type {{connectors?: unknown}} */ (answer).connectors
+    : null;
+  if (!Array.isArray(entries)) return null;
+  return entries.filter((entry) => entry !== null && typeof entry === 'object'
+    && /** @type {{status?: unknown}} */ (entry).status === 'active').length;
+}
+
+/**
+ * Exact customer total from `GET /api/customer-data/customers`. An inexact
+ * total (`totalIsExact: false`) reads as unknown: showing it would pass a
+ * floor off as the count.
+ * @param {unknown} answer
+ */
+export function countSpaceCustomers(answer) {
+  if (answer === null || typeof answer !== 'object') return null;
+  const shaped = /** @type {{total?: unknown, totalIsExact?: unknown}} */ (answer);
+  if (shaped.totalIsExact !== true) return null;
+  return typeof shaped.total === 'number' && Number.isInteger(shaped.total) && shaped.total >= 0
+    ? shaped.total
+    : null;
+}
+
+/**
  * One space card: identity from the shell space, the operator's role beside
  * it, and whether this is the space being worked in.
  * @param {{spaces?: Array<{id?: unknown, name?: unknown, initials?: unknown}>, activeSpaceId?: unknown, role?: unknown}} input
@@ -145,6 +200,8 @@ export function memberInitials(subject) {
  * status. Sorted by subject so the list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown}>} members
  */
+const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa' });
+
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
   return list
@@ -153,7 +210,7 @@ export function buildTeamRows(members = []) {
       subject: member.subject,
       initials: memberInitials(member.subject),
       role: spaceRoleLabel(member.role),
-      status: typeof member.status === 'string' && member.status !== '' ? member.status : 'sconosciuto',
+      status: MEMBER_STATUS[member.status] ?? (typeof member.status === 'string' && member.status !== '' ? member.status : 'sconosciuto'),
     }))
     .sort((left, right) => (left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0));
 }
@@ -217,6 +274,8 @@ export function createSpaziAccessiView(deps) {
   };
 
   const state = {
+    /** The invite form opens in place from the team card head. */
+    inviteOpen: false,
     /** @type {string|null} my membership role, or null when unknown */
     myRole: null,
     /** @type {Array<string>|null} roles the server advertises, or null */
@@ -229,6 +288,9 @@ export function createSpaziAccessiView(deps) {
     overrides: null,
     /** @type {string|null} why the switches are not shown */
     switchesUnavailable: null,
+    /** @type {Map<string, string>} card statistic by space id; a space with
+     * an unknown count simply has no entry, never an invented row */
+    stats: new Map(),
     /** @type {string|null} subject armed for the two-step removal */
     confirmRemove: null,
     /** @type {{key: string, to: boolean}|null} switch flip armed for confirm */
@@ -267,6 +329,45 @@ export function createSpaziAccessiView(deps) {
     return { code: 'UNKNOWN', message: String(error) };
   }
 
+  /**
+   * The statistic of one space card from the composed reads. Any unreadable
+   * count yields null and the card shows no statistic: a failure here is a
+   * missing enhancement, never a page error, so it stays silent.
+   * @param {string} spaceId
+   * @param {number|null} memberCount
+   */
+  async function loadSpaceStat(spaceId, memberCount) {
+    if (memberCount === null) return null;
+    try {
+      const [channelsAnswer, customersAnswer] = await Promise.all([
+        client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
+        client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
+      ]);
+      return formatSpaceStat({
+        channels: countSpaceChannels(channelsAnswer),
+        members: memberCount,
+        customers: countSpaceCustomers(customersAnswer),
+      });
+    } catch (error) {
+      // A missing row is not a page error, but a swallowed read nobody can
+      // diagnose is: log the safe fields (code/status plus the space id,
+      // never a message that could carry personal data), like AGENTS.md asks.
+      const record = error !== null && typeof error === 'object' ? error : {};
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] lettura fallita', {
+          code: typeof /** @type {{code?: unknown}} */ (record).code === 'string'
+            ? /** @type {{code?: unknown}} */ (record).code
+            : 'UNKNOWN',
+          status: typeof /** @type {{status?: unknown}} */ (record).status === 'number'
+            ? /** @type {{status?: unknown}} */ (record).status
+            : null,
+          spaceId,
+        });
+      }
+      return null;
+    }
+  }
+
   async function load() {
     const space = readActiveSpace().trim();
     state.myRole = null;
@@ -275,6 +376,7 @@ export function createSpaziAccessiView(deps) {
     state.membersUnavailable = null;
     state.overrides = null;
     state.switchesUnavailable = null;
+    state.stats = new Map();
     state.confirmRemove = null;
     state.confirmFlip = null;
     state.refusal = null;
@@ -315,6 +417,16 @@ export function createSpaziAccessiView(deps) {
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
+    const memberCount = Array.isArray(state.members) ? state.members.length : null;
+    const ids = readSpaces()
+      .filter((entry) => entry !== null && typeof entry === 'object'
+        && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
+        && /** @type {{id?: unknown}} */ (entry).id !== '')
+      .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    await Promise.all(ids.map(async (id) => {
+      const stat = await loadSpaceStat(id, memberCount);
+      if (stat !== null) state.stats.set(id, stat);
+    }));
   }
 
   async function mutate(path, body) {
@@ -335,10 +447,10 @@ export function createSpaziAccessiView(deps) {
 
   function renderHeader(box) {
     box.appendChild(el(doc, 'p', { text: 'Spazi e accessi', cls: 'bo-kicker' }));
-    box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro' }));
+    box.appendChild(el(doc, 'h2', { text: 'Spazi di lavoro', cls: 'bo-spazi-title' }));
     box.appendChild(el(doc, 'p', {
       text: 'Passa da un\u2019attivit\u00E0 all\u2019altra senza uscire. Ogni spazio ha i suoi canali, clienti e team, e nessuno vede i dati degli altri.',
-      cls: 'bo-muted',
+      cls: 'bo-muted bo-spazi-lede',
     }));
   }
 
@@ -363,6 +475,10 @@ export function createSpaziAccessiView(deps) {
       }));
       head.appendChild(names);
       cell.appendChild(head);
+      const stat = state.stats.get(card.id) ?? null;
+      if (stat !== null) {
+        cell.appendChild(el(doc, 'div', { text: stat, cls: 'bo-spazi-stat bo-muted' }));
+      }
       if (card.active) {
         cell.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
       } else if (typeof deps.onPickSpace === 'function') {
@@ -382,7 +498,14 @@ export function createSpaziAccessiView(deps) {
 
   function renderTeam(box) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-team-panel' });
-    section.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
+    // Prototype 08: the team card head carries the green «Invita persona»,
+    // which opens the invite form in place.
+    const teamHead = el(doc, 'div', { cls: 'bo-spazi-teamhead' });
+    teamHead.appendChild(el(doc, 'h3', { text: 'Team dell\u2019organizzazione' }));
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-expanded': state.inviteOpen ? 'true' : 'false' } });
+    inviteToggle.addEventListener('click', () => { state.inviteOpen = !state.inviteOpen; render(); });
+    teamHead.appendChild(inviteToggle);
+    section.appendChild(teamHead);
     section.appendChild(el(doc, 'p', {
       text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
       cls: 'bo-muted',
@@ -451,11 +574,11 @@ export function createSpaziAccessiView(deps) {
     }
     section.appendChild(list);
 
-    const invite = el(doc, 'div', { cls: 'bo-spazi-invite' });
+    const invite = el(doc, 'div', { cls: `bo-spazi-invite${state.inviteOpen || state.refusal !== null ? ' open' : ''}` });
     invite.appendChild(el(doc, 'h4', { text: 'Invita persona' }));
     const subject = el(doc, 'input', {
       cls: 'bo-spazi-input',
-      attrs: { type: 'text', placeholder: 'Identificativo del provider di identit\u00E0', 'aria-label': 'Identificativo della persona da invitare' },
+      attrs: { type: 'text', placeholder: 'Email o account Google della persona', 'aria-label': 'Identificativo della persona da invitare' },
     });
     invite.appendChild(subject);
     const role = el(doc, 'select', { cls: 'bo-spazi-input', attrs: { 'aria-label': 'Ruolo del nuovo membro' } });
@@ -498,7 +621,7 @@ export function createSpaziAccessiView(deps) {
       invite.appendChild(el(doc, 'p', { text: state.refusal, cls: 'bo-spazi-refusal' }));
     }
     invite.appendChild(el(doc, 'p', {
-      text: 'Nessuna email parte da qui: l\u2019invito registra una decisione su un identificativo che il provider di identit\u00E0 conosce gi\u00E0.',
+      text: 'Nessuna email parte da qui: la persona entra con il suo account Google al primo accesso.',
       cls: 'bo-muted',
     }));
     section.appendChild(invite);
@@ -593,6 +716,7 @@ export function createSpaziAccessiView(deps) {
   function render() {
     clear();
     const space = activeSpace();
+    mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', navigate: typeof navigate === 'function' ? navigate : () => {} }));
     renderHeader(mount);
     renderSpaces(mount);
     if (space === null) {

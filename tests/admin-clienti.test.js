@@ -13,15 +13,17 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  * pages with ellipses, the AI column stays off by default and renders its
  * stored value with a clickable source (or an honest reason, never broken),
  * the AI entry point degrades to a hint without an LLM backend, and hostile
- * server text stays text.
+ * server text stays text. The Aggiungi cliente menu offers the AI paste and
+ * the manual contact factory, one menu opens at a time, pills carry server
+ * counts when named, and no control renders without a ui-* system class.
  */
 
 const MENUS = {
   views: [
     { id: 'tutti', label: 'Tutti' },
+    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'nuovi-lead', label: 'Nuovi lead' },
     { id: 'clienti-attivi', label: 'Clienti attivi' },
-    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
   ],
   sorts: [
@@ -31,6 +33,7 @@ const MENUS = {
     { id: 'status', label: 'Stato' },
   ],
   columns: [
+    { id: 'cliente', label: 'Cliente', always: true, ai: false },
     { id: 'canali', label: 'Canali', always: false, ai: false, def: true },
     { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
     { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
@@ -116,7 +119,7 @@ test('the five quick views render as tabs, with Tutti active first', async () =>
   const { mount } = await render(stubClient());
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti', 'Nuovi lead', 'Clienti attivi', 'Da ricontattare oggi', 'Rinnovi entro 30 giorni']);
+    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
   const active = tabs.find((node) => node.getAttribute('data-view') === 'tutti');
   assert.equal(active.getAttribute('aria-selected'), 'true');
   assert.ok(mount.textContent.includes('Marco Rossi'));
@@ -293,6 +296,278 @@ test('BO-F6-08 fetta 1: a filled page shows its interval in the pager', async ()
   const ranges = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-clienti-range'));
   assert.equal(ranges.length, 1, 'one interval in the pager');
   assert.equal(ranges[0].textContent, '1–2 di 2');
+});
+
+test('Aggiungi cliente opens a menu with the two prototype entries', async () => {
+  let manualCalls = 0;
+  let notified = null;
+  const { mount } = await render(stubClient(), { onManualAdd: () => { manualCalls += 1; } });
+  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
+  assert.ok(add, 'the add button renders beside the title');
+  assert.equal(add.getAttribute('aria-haspopup'), 'true');
+  const menus = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  assert.ok(menus.length >= 4, 'add, filters, sort and columns menus render');
+  assert.ok(menus[0].classList.contains('hidden'), 'the add menu starts closed');
+  add.dispatch('click');
+  assert.ok(!menus[0].classList.contains('hidden'), 'click opens the add menu');
+  assert.ok(menus[0].textContent.includes("Crea con l'AI"));
+  assert.ok(menus[0].textContent.includes('Incolla un messaggio o un biglietto da visita'));
+  assert.ok(menus[0].textContent.includes('Compila manualmente'));
+  assert.ok(menus[0].textContent.includes('Nome, recapiti e canale di provenienza'));
+  byAttr(mount, 'button', 'data-action', 'add-manual').dispatch('click');
+  assert.equal(manualCalls, 1, 'manual entry routes to the governed import form, never a parallel creation');
+  assert.ok(menus[0].classList.contains('hidden'), 'choosing an entry closes the menu');
+  const plain = await render(stubClient(), { notify: (message) => { notified = message; } });
+  plain.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  byAttr(plain.mount, 'button', 'data-action', 'add-manual').dispatch('click');
+  assert.ok(notified, 'without the section hook the entry explains itself instead of a dead link');
+});
+
+test("Crea con l'AI asks through the assistant, or hints without it", async () => {
+  let asked = null;
+  let notified = null;
+  const wired = await render(stubClient(), { onAskAi: (question) => { asked = question; } });
+  wired.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  byAttr(wired.mount, 'button', 'data-action', 'add-ai').dispatch('click');
+  assert.ok(asked, 'with the assistant panel the AI entry asks through it');
+  const plain = await render(stubClient(), { notify: (message) => { notified = message; } });
+  plain.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  byAttr(plain.mount, 'button', 'data-action', 'add-ai').dispatch('click');
+  assert.ok(notified, 'without onAskAi the entry explains itself instead of breaking');
+});
+
+test('only one menu opens at a time, and Escape closes it', async () => {
+  const { mount } = await render(stubClient());
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label);
+  opener('Filtri').dispatch('click');
+  assert.ok(!menus()[1].classList.contains('hidden'), 'the filters menu opens');
+  opener('Ordina').dispatch('click');
+  assert.ok(!menus()[2].classList.contains('hidden'), 'the sort menu opens');
+  assert.ok(menus()[1].classList.contains('hidden'), 'opening a second menu closes the first');
+  menus()[2].dispatch('keydown', { key: 'Escape' });
+  assert.ok(menus()[2].classList.contains('hidden'), 'Escape closes the open menu');
+});
+
+test('the opening click does not close the menu via the document handler', async () => {
+  // P1 regression: in a real browser the opening click bubbles to the
+  // document handler, which used to hide the just-opened menu at once.
+  const doc = createFakeDocument();
+  const docClicks = [];
+  const docWithOutside = {
+    ...doc,
+    addEventListener: (type, handler) => {
+      if (type === 'click') docClicks.push(handler);
+    },
+  };
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
+  const view = createCustomerListView({ doc: docWithOutside, mount, client: stubClient(), storage: store, notify: () => {} });
+  await view.render();
+  assert.ok(docClicks.length >= 1, 'the view installs a per-instance document handler');
+  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  add.dispatch('click', { target: add, stopPropagation: () => {} });
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the menu stays open after its own opening click');
+  // The bubbled opening click reaches the document handler with the button
+  // as target (inside .bo-clienti-menuwrap): it must be ignored.
+  for (const handler of docClicks) handler({ target: add });
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the bubbled opening click does not close the menu');
+  assert.equal(add.getAttribute('aria-expanded'), 'true');
+  // An outside click closes and syncs aria-expanded.
+  for (const handler of docClicks) handler({ target: mount });
+  assert.ok(menus()[0].classList.contains('hidden'), 'an outside click closes the menu');
+  assert.equal(add.getAttribute('aria-expanded'), 'false');
+});
+
+test('opening a second menu syncs the first button back to closed', async () => {
+  // P2: aria-expanded desynchronised when another menu opened.
+  const { mount } = await render(stubClient());
+  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label);
+  const filtersButton = opener('Filtri');
+  const sortButton = opener('Ordina');
+  filtersButton.dispatch('click');
+  assert.equal(filtersButton.getAttribute('aria-expanded'), 'true');
+  sortButton.dispatch('click');
+  assert.equal(sortButton.getAttribute('aria-expanded'), 'true', 'the newly opened button reports expanded');
+  assert.equal(filtersButton.getAttribute('aria-expanded'), 'false', 'the closed menu button reports collapsed');
+});
+
+test('Aggiungi cliente carries a single ui-btn-* variant', async () => {
+  // P2: the add button rendered both ui-btn-primary and ui-btn-secondary.
+  const { mount } = await render(stubClient());
+  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente');
+  const variants = String(add.getAttribute('class') ?? '').split(/\s+/).filter((cls) => cls.startsWith('ui-btn-'));
+  assert.deepEqual(variants, ['ui-btn-primary'], 'a single primary variant, never primary plus secondary');
+});
+
+test('title row and open menu lines reuse styled classes only', async () => {
+  // P2 rev-agent-crm-409-729d783ba359: the title-plus-button row and the
+  // Aggiungi/Filtri/Colonne inner lines shipped classes no stylesheet
+  // defines, so the row could not be a row. This screen owns no CSS: every
+  // bo-* class its nodes carry must already be defined in styles.css.
+  // bo-tile-*/bo-pill-* tint variants are exempt: they always pair with the
+  // styled bo-clienti-tile/bo-clienti-pill bases and degrade to the neutral
+  // base for channel systems or stati the stylesheet does not tint.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const defined = new Set([...css.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((match) => match[1]));
+  const boClasses = (root) => {
+    const out = [];
+    const walk = (node) => {
+      for (const cls of String(node.getAttribute?.('class') ?? '').split(/\s+/).filter(Boolean)) {
+        if (cls.startsWith('bo-') && !/^bo-(tile|pill)-/.test(cls)) out.push(cls);
+      }
+      for (const child of node.childNodes ?? []) walk(child);
+    };
+    walk(root);
+    return out;
+  };
+  const styled = (node, what) => {
+    const classes = boClasses(node);
+    assert.ok(classes.length > 0, `${what} carries bo-* classes`);
+    for (const cls of classes) assert.ok(defined.has(cls), `${what} class .${cls} is defined in styles.css`);
+  };
+  const { mount } = await render(stubClient());
+  const title = mount.findAll('h1')[0];
+  assert.ok(title, 'the screen renders its h1 title');
+  styled(title.parentNode, 'title row');
+  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label)
+    ?? mount.findAll('button').find((node) => String(node.textContent).startsWith(label));
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  opener('Aggiungi cliente').dispatch('click');
+  assert.ok(!menus()[0].classList.contains('hidden'), 'the add menu opens');
+  styled(menus()[0], 'Aggiungi menu');
+  opener('Filtri').dispatch('click');
+  assert.ok(!menus()[1].classList.contains('hidden'), 'the filters menu opens');
+  styled(menus()[1], 'Filtri menu');
+  opener('Colonne').dispatch('click');
+  assert.ok(!menus()[3].classList.contains('hidden'), 'the columns menu opens');
+  styled(menus()[3], 'Colonne menu');
+});
+
+test('the columns menu names its title and the always-visible Cliente row', async () => {
+  const { mount } = await render(stubClient());
+  mount.findAll('button').find((node) => node.textContent === 'Colonne 4/8').dispatch('click');
+  assert.ok(mount.textContent.includes('Colonne visibili'), 'the menu names its title');
+  assert.ok(mount.textContent.includes('Cliente · sempre visibile'), 'the fixed Cliente row names itself');
+  assert.ok(mount.textContent.includes('Ripristina'), 'the reset stays');
+});
+
+test('the filters menu carries the prototype example', async () => {
+  const { mount } = await render(stubClient());
+  mount.findAll('button').find((node) => node.textContent === 'Filtri').dispatch('click');
+  assert.ok(mount.textContent.includes('Es. «clienti di Milano con offerta sopra 10.000 €»'));
+});
+
+test('view pills show server counts when the server names them', async () => {
+  const counted = {
+    calls: [],
+    async request() {
+      return {
+        customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+        views: MENUS.views.map((view, index) => ({ ...view, count: (index + 1) * 3 })),
+      };
+    },
+  };
+  const { mount } = await render(counted);
+  const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
+  assert.deepEqual(tabs.map((node) => node.textContent),
+    ['Tutti 3', 'Da ricontattare oggi 6', 'Nuovi lead 9', 'Clienti attivi 12', 'Rinnovi entro 30 giorni 15']);
+});
+
+test('the fallback views keep the prototype order before the server answers', async () => {
+  const bare = { calls: [], async request() { return {}; } };
+  const { mount } = await render(bare);
+  const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
+  assert.deepEqual(tabs.map((node) => node.textContent),
+    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
+});
+
+test('changing the view or the page size returns to page 1', async () => {
+  // C12, C20: view and size switches re-read from the first page.
+  const page = (items, pageNum, pagesCount) => ({
+    customerListContract: 1, items, total: pagesCount * 10,
+    page: pageNum, pageSize: 10, pages: pagesCount, totalIsExact: true,
+  });
+  const client = stubClient({ pages: [page([ROW_MARCO], 1, 3), page([ROW_ANNA], 2, 3), page([], 3, 3)] });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-page', '2').dispatch('click');
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('page=2'));
+  byAttr(mount, 'button', 'data-view', 'nuovi-lead').dispatch('click');
+  await flush();
+  const switched = client.calls[client.calls.length - 1];
+  assert.ok(switched.includes('vista=nuovi-lead'), `the server sees the view: ${switched}`);
+  assert.ok(switched.includes('page=1'), `changing the view returns to page 1: ${switched}`);
+  byAttr(mount, 'button', 'data-page', '2').dispatch('click');
+  await flush();
+  byAttr(mount, 'button', 'data-size', '25').dispatch('click');
+  await flush();
+  const resized = client.calls[client.calls.length - 1];
+  assert.ok(resized.includes('pageSize=25'), `the server sees the size: ${resized}`);
+  assert.ok(resized.includes('page=1'), `changing the size returns to page 1: ${resized}`);
+});
+
+test('the sort menu lists the four prototype orders', async () => {
+  // C13: Ordina per, then Ultimo contatto, Nome A–Z, Valore offerta, Stato.
+  const { mount } = await render(stubClient());
+  mount.findAll('button').find((node) => node.textContent === 'Ordina').dispatch('click');
+  for (const label of ['Ordina per', 'Ultimo contatto', 'Nome A–Z', 'Valore offerta', 'Stato']) {
+    assert.ok(mount.textContent.includes(label), `the sort menu offers ${label}`);
+  }
+});
+
+test('a row carries avatar, tiles, state pill, last contact, next step and its card link', async () => {
+  // C16: name plus company (city/referente are not in the list contract, so
+  // the row invents none); C17: the row reaches the scheda through its link.
+  const { mount } = await render(stubClient());
+  const cards = mount.findAll('article').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-row'));
+  assert.equal(cards.length, 2, 'one card per customer');
+  const first = cards[0];
+  assert.ok(first.textContent.includes('Marco Rossi'));
+  assert.ok(first.textContent.includes('MR'), 'the avatar carries the initials');
+  assert.ok(first.textContent.includes('Palestra Esempio'), 'the company renders beside the name');
+  const link = first.findAll('a').find((node) => node.getAttribute('data-action') === 'open-customer-card');
+  assert.ok(link, 'the row links to the scheda cliente');
+  assert.equal(link.getAttribute('href'), '#/customer-card/contact/c1');
+  assert.ok(first.textContent.includes('WA'), 'the channel tile marks WhatsApp');
+  assert.ok(first.textContent.includes('Cliente'), 'the state pill names the state');
+  assert.ok(first.textContent.includes('WhatsApp · '), 'last contact names its channel');
+  assert.ok(first.textContent.includes('✦ Prova gratuita'), 'the next step renders with its spark');
+  assert.ok(first.textContent.includes('›'), 'the row carries its chevron');
+});
+
+test('a server failure reads as an Italian retry, never technical', async () => {
+  // C23: Italian, non-technical, with a retry; never codes or English.
+  const failing = { calls: [], async request() { throw Object.assign(new Error('boom'), { status: 500 }); } };
+  const { mount } = await render(failing);
+  const text = mount.textContent;
+  assert.ok(text.includes('Riprova'), 'the failure offers a retry');
+  assert.ok(!/NOT_FOUND|Error|undefined|NaN/.test(text), 'no technical residue leaks into the screen');
+});
+
+test('the clienti screen renders no raw control', async () => {
+  // Acceptance: a control without a ui-* system class fails this screen.
+  const rawControls = (root) => {
+    const out = [];
+    const walk = (node) => {
+      const tag = String(node.tagName ?? '').toLowerCase();
+      if (['button', 'select', 'input', 'textarea'].includes(tag)) {
+        const classes = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+        if (!classes.some((cls) => cls === 'ui' || cls.startsWith('ui-'))) out.push(`${tag}[${classes.join('.')}]`);
+      }
+      for (const child of node.childNodes ?? []) walk(child);
+    };
+    walk(root);
+    return out;
+  };
+  const { mount } = await render(stubClient());
+  assert.deepEqual(rawControls(mount), [], 'every control of the list carries a ui-* class');
+  byAttr(mount, 'button', 'data-column', 'budget').dispatch('click');
+  assert.deepEqual(rawControls(mount), [], 'enabling the AI column adds no raw control');
+  mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  assert.deepEqual(rawControls(mount), [], 'the open add menu adds no raw control');
 });
 
 test('the shell storage initializes before the views that read it', () => {

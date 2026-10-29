@@ -72,7 +72,7 @@ function nonEmptyText(value) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian label for a sequence state; unknown states say so, never blank.
@@ -115,13 +115,86 @@ export function sequenceChannelLabel(channel) {
 }
 
 /**
- * "Giorno N" for a step offset; day zero fires at once, said out loud.
+ * The prototype's person pill: `In corso` / `Da approvare` / `Completata` /
+ * `Programmata`. A terminal enrollment (`completed`, `stopped-replied`) reads
+ * `Completata` even when a leftover send still waits for approval — the reply
+ * already exited the person, so the stale send must not resurrect them; a
+ * send waiting for a human on a live enrollment reads `Da approvare`; a held
+ * (paused) enrollment reads `Programmata`, never `In corso`; an unknown state
+ * says so instead of borrowing a live pill.
+ * @param {any} enrollment
+ * @param {{ waitingApproval?: boolean, nowMs?: number }} [options]
+ */
+export function personStatusLabel(enrollment, { waitingApproval = false, nowMs = Date.now() } = {}) {
+  const status = enrollment?.status;
+  if (status === 'completed' || status === 'stopped-replied') return 'Completata';
+  if (waitingApproval === true) return 'Da approvare';
+  if (status === 'paused') return 'Programmata';
+  if (status === 'active') {
+    const raw = typeof enrollment?.nextDueAt === 'string' && enrollment.nextDueAt !== '' ? enrollment.nextDueAt : null;
+    const ms = raw === null ? NaN : Date.parse(raw);
+    if (Number.isFinite(ms) && ms > nowMs) return 'Programmata';
+    return 'In corso';
+  }
+  return 'Stato sconosciuto';
+}
+
+/**
+ * The prototype's progress tag: `Passo <n> di <m>`, `In attesa`, `Uscita`.
+ * Terminal enrollments read `Uscita` even when they still carry a step
+ * cursor; without a cursor the person reads `In attesa`; without the step
+ * count (a failed steps read) the tag names the step without `di <m>`.
+ * @param {any} enrollment
+ * @param {unknown} totalSteps
+ */
+export function personStepLabel(enrollment, totalSteps) {
+  const status = enrollment?.status;
+  if (status === 'completed' || status === 'stopped-replied') return 'Uscita';
+  if (!Number.isInteger(enrollment?.currentStep)) return 'In attesa';
+  const step = enrollment.currentStep + 1;
+  if (Number.isInteger(totalSteps) && totalSteps > 0) return `Passo ${step} di ${totalSteps}`;
+  return `Passo ${step}`;
+}
+
+/**
+ * The prototype's day tag for a step offset: `Subito`, `+1 giorno`,
+ * `+N giorni`. A missing or out-of-range offset says so, never blank.
+ * Negative offsets and `Scadenza` have no field behind them (dayOffset is
+ * 0–365), so they stay unpainted: noted in the PR, not invented here.
  * @param {unknown} dayOffset
  */
 export function sequenceDayLabel(dayOffset) {
   if (!Number.isInteger(dayOffset) || dayOffset < 0) return 'Giorno da decidere';
-  if (dayOffset === 0) return 'Giorno 0 · parte subito';
-  return `Giorno ${dayOffset}`;
+  if (dayOffset === 0) return 'Subito';
+  if (dayOffset === 1) return '+1 giorno';
+  return `+${dayOffset} giorni`;
+}
+
+/**
+ * The elenco `Quando …` row from the sequence trigger label (BO-F6-12
+ * fetta 1: `triggerLabel` rides the record, null when the operator never
+ * named it). No label is an honest `Quando parte`, never an invented
+ * trigger: the label varies per sequence, so it is data, never a constant.
+ * @param {any} sequence
+ */
+export function sequenceQuandoLine(sequence) {
+  const label = nonEmptyText(sequence?.triggerLabel);
+  return label === null ? 'Quando parte' : `Quando ${label}`;
+}
+
+/**
+ * Pills of the dettaglio head card. The stop falls back to the package
+ * invariant (the sweep stops every enrollment at the first recorded reply),
+ * the trigger falls back to an honest `da decidere`.
+ * @param {any} sequence
+ */
+export function sequenceTriggerPills(sequence) {
+  const trigger = nonEmptyText(sequence?.triggerLabel);
+  const stop = nonEmptyText(sequence?.stopLabel);
+  return Object.freeze({
+    trigger: trigger === null ? 'Parte quando: da decidere' : `Parte quando: ${trigger}`,
+    stop: stop === null ? 'Si ferma quando: alla prima risposta' : `Si ferma quando: ${stop}`,
+  });
 }
 
 /**
@@ -159,14 +232,29 @@ export function buildSequenzeElenco({ sequences = [], enrollments = [], sends = 
     const myPeople = people.filter(mine);
     const myFires = fires.filter(mine);
     const active = myPeople.filter((row) => row?.status === 'active').length;
+    const stopped = myPeople.filter((row) => row?.status === 'stopped-replied').length;
     const waiting = myFires.filter((row) => row?.status === 'waiting-approval').length;
     const sent = myFires.filter((row) => row?.status === 'sent').length;
+    // The prototype's stats row: `in pausa` for a held sequence, otherwise
+    // `<n> persone · <n>% risposte` with the reply share counted from the
+    // rows just read — never stored, never invented. Zero people stay an
+    // honest sentence, not a 0% share over a zero denominator.
+    const stats = sequence?.status === 'paused'
+      ? 'in pausa'
+      : myPeople.length === 0
+        ? 'Nessuna persona dentro per ora.'
+        : `${myPeople.length} ${myPeople.length === 1 ? 'persona' : 'persone'} · ${Math.round((100 * stopped) / myPeople.length)}% risposte`;
     return Object.freeze({
       id: sequence?.id ?? null,
       sourceKey: key,
       name: nonEmptyText(sequence?.name) ?? 'Senza nome',
       status: sequence?.status ?? 'unknown',
       statusLabel: sequenceStatusLabel(sequence?.status),
+      triggerLabel: nonEmptyText(sequence?.triggerLabel),
+      stopLabel: nonEmptyText(sequence?.stopLabel),
+      quando: sequenceQuandoLine(sequence),
+      stats,
+      replyPct: myPeople.length === 0 ? null : Math.round((100 * stopped) / myPeople.length),
       peopleActive: active,
       peopleTotal: myPeople.length,
       waitingApproval: waiting,
@@ -183,7 +271,7 @@ export function buildSequenzeElenco({ sequences = [], enrollments = [], sends = 
  * of painting a genuine zero.
  * @param {{ sequence?: any, steps?: Array<any>, stepsFailed?: boolean, enrollments?: Array<any>, sends?: Array<any> }} input
  */
-export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFailed = false, enrollments = [], sends = [] } = {}) {
+export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFailed = false, enrollments = [], sends = [], nowMs = Date.now() } = {}) {
   const key = nonEmptyText(sequence?.sourceKey) ?? nonEmptyText(sequence?.id) ?? '';
   const ordered = [...(Array.isArray(steps) ? steps : [])].sort((a, b) => {
     const left = Number.isInteger(a?.stepOrder) ? a.stepOrder : Number.MAX_SAFE_INTEGER;
@@ -212,11 +300,25 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFaile
     const status = typeof row?.status === 'string' ? row.status : 'unknown';
     firesByStatus.set(status, (firesByStatus.get(status) ?? 0) + 1);
   }
+  const pills = sequenceTriggerPills(sequence);
+  const totalSteps = ordered.length;
+  // The prototype's 3 KPI cards: `In corso` (active enrollments) and
+  // `Risposte` (stopped at the first reply) counted from the rows just
+  // read; `Call fissate` belongs to the appointments package, which this
+  // view cannot read, so it stays an honest dash — never invented.
+  const kpi = Object.freeze({
+    inCorso: byStatus.get('active') ?? 0,
+    risposte: byStatus.get('stopped-replied') ?? 0,
+    callFissate: null,
+  });
   return Object.freeze({
     sourceKey: key,
     name: nonEmptyText(sequence?.name) ?? 'Senza nome',
     status: sequence?.status ?? 'unknown',
     statusLabel: sequenceStatusLabel(sequence?.status),
+    triggerLabel: nonEmptyText(sequence?.triggerLabel),
+    stopLabel: nonEmptyText(sequence?.stopLabel),
+    pills,
     stepsFailed: stepsFailed === true,
     steps: Object.freeze(ordered.map((step) => {
       let vars = [];
@@ -226,12 +328,16 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFaile
       } catch {
         vars = [];
       }
+      const channelLabel = sequenceChannelLabel(step?.channel);
+      const templateName = nonEmptyText(step?.templateName) ?? 'Modello da decidere';
       return Object.freeze({
         order: Number.isInteger(step?.stepOrder) ? step.stepOrder : null,
         dayLabel: sequenceDayLabel(step?.dayOffset),
         channel: nonEmptyText(step?.channel) ?? '',
-        channelLabel: sequenceChannelLabel(step?.channel),
-        templateName: nonEmptyText(step?.templateName) ?? 'Modello da decidere',
+        channelLabel,
+        // The prototype's step title: `<Canale> · <titolo passo>`.
+        title: `${channelLabel} · ${templateName}`,
+        templateName,
         templateLanguage: nonEmptyText(step?.templateLanguage) ?? '',
         vars: Object.freeze(vars),
       });
@@ -239,18 +345,21 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFaile
     people: Object.freeze(people.map((row) => {
       const label = nonEmptyText(row?.subjectLabel) ?? nonEmptyText(row?.subjectId) ?? 'Persona senza nome';
       const next = romeDayTime(row?.nextDueAt);
+      const waiting = typeof row?.sourceKey === 'string' && row.sourceKey !== ''
+        && fireRows.some((fire) => fire?.enrollmentSourceKey === row.sourceKey && fire?.status === 'waiting-approval');
       return Object.freeze({
         initials: label.trim().slice(0, 2).toUpperCase(),
         name: label,
-        stepLabel: Number.isInteger(row?.currentStep) ? `Passo ${row.currentStep + 1}` : 'Passo da decidere',
+        stepLabel: personStepLabel(row, stepsFailed === true ? null : totalSteps),
         nextLabel: next ?? 'Prossimo invio da decidere',
         status: row?.status ?? 'unknown',
-        statusLabel: enrollmentStatusLabel(row?.status),
+        statusLabel: personStatusLabel(row, { waitingApproval: waiting, nowMs }),
       });
     })),
     metrics: Object.freeze({
       peopleByStatus: Object.freeze(Object.fromEntries(byStatus)),
       firesByStatus: Object.freeze(Object.fromEntries(firesByStatus)),
+      kpi,
     }),
   });
 }
@@ -346,8 +455,8 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
  * @param {unknown} status
  */
 export function sequenzaOfferedAction(status) {
-  if (status === 'draft') return Object.freeze({ action: 'activate', button: 'Attiva la sequenza', confirm: 'Attivare questa sequenza? I passi dovuti possono partire.' });
-  if (status === 'paused') return Object.freeze({ action: 'activate', button: 'Riattiva la sequenza', confirm: 'Riattivare questa sequenza? I passi dovuti possono partire.' });
+  if (status === 'draft') return Object.freeze({ action: 'activate', button: 'Attiva', confirm: 'Attivare questa sequenza? I passi dovuti possono partire.' });
+  if (status === 'paused') return Object.freeze({ action: 'activate', button: 'Riattiva', confirm: 'Riattivare questa sequenza? I passi dovuti possono partire.' });
   if (status === 'active') return Object.freeze({ action: 'pause', button: 'Metti in pausa', confirm: 'Mettere in pausa? Non parte più niente finché non la riattivi.' });
   return null;
 }
@@ -363,12 +472,21 @@ export function sequenzaOfferedAction(status) {
  * @param {string} selectedKey
  * @param {(sourceKey: string) => void} onSelect
  */
+const SEQ_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', email: '@', instagram: 'IG', facebook: 'FB', tiktok: 'TT', sms: 'SMS', phone: 'TEL', voice: 'TEL' });
+const channelMark = (channel) => SEQ_CHANNEL_MARKS[String(channel ?? '').toLowerCase()] ?? '·';
+const VAR_WORDS = Object.freeze({ name: 'il nome', first_name: 'il nome', firstName: 'il nome', company: "l'azienda", city: 'la città', date: 'la data', time: "l'ora", amount: "l'importo" });
+/** «il nome e l'azienda» from template variable names; never the raw names. */
+function personalisedWith(vars) {
+  const words = [...new Set(vars.map((name) => VAR_WORDS[name] ?? 'i dati del cliente'))];
+  return words.length <= 1 ? (words[0] ?? 'i dati del cliente') : `${words.slice(0, -1).join(', ')} e ${words.at(-1)}`;
+}
+
 export function renderSequenzeElenco(doc, sequences, enrollments, sends, selectedKey, onSelect) {
   const box = el(doc, 'section', 'bo-seq-section');
   box.appendChild(el(doc, 'h3', undefined, 'Le tue sequenze'));
   const rows = buildSequenzeElenco({ sequences, enrollments, sends });
   if (rows.length === 0) {
-    box.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna sequenza ancora. Quando ne crei una, la vedi qui con il suo stato.'));
+    box.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna sequenza: creane una con il pulsante in alto.'));
     return box;
   }
   const list = el(doc, 'div', 'bo-seq-list');
@@ -379,10 +497,8 @@ export function renderSequenzeElenco(doc, sequences, enrollments, sends, selecte
     head.appendChild(el(doc, 'p', 'bo-seq-name', row.name));
     head.appendChild(el(doc, 'p', 'bo-seq-status', row.statusLabel));
     item.appendChild(head);
-    const stats = row.peopleTotal === 0
-      ? 'Nessuna persona dentro per ora.'
-      : `${row.peopleTotal} ${row.peopleTotal === 1 ? 'persona' : 'persone'}${row.peopleActive > 0 ? ` · ${row.peopleActive} attive` : ''}${row.sent > 0 ? ` · ${row.sent} inviati` : ''}${row.waitingApproval > 0 ? ` · ${row.waitingApproval} aspettano il tuo ok` : ''}`;
-    item.appendChild(el(doc, 'p', 'bo-seq-stats', stats));
+    item.appendChild(el(doc, 'p', 'bo-seq-quando', row.quando));
+    item.appendChild(el(doc, 'p', 'bo-seq-stats', row.stats));
     if (row.sourceKey !== '') {
       const button = el(doc, 'button', 'bo-seq-open', 'Vedi i passi');
       button.setAttribute('data-open', row.sourceKey);
@@ -409,13 +525,23 @@ export function renderSequenzeElenco(doc, sequences, enrollments, sends, selecte
  * @param {boolean} busy
  */
 export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancelConfirm, onConfirm, busy) {
-  const box = el(doc, 'section', 'bo-seq-section');
-  box.appendChild(el(doc, 'h3', undefined, detail.name));
-  box.appendChild(el(doc, 'p', 'bo-seq-status', `Stato: ${detail.statusLabel}`));
+  const box = el(doc, 'section', 'bo-seq-section bo-seq-detail');
+  const headCard = el(doc, 'div', 'bo-seq-card bo-seq-headcard');
+  const headText = el(doc, 'div', 'bo-seq-headtext');
+  headText.appendChild(el(doc, 'h3', undefined, detail.name));
+  headText.appendChild(el(doc, 'p', 'bo-seq-status', detail.statusLabel));
+  const pills = el(doc, 'div', 'bo-seq-pills');
+  pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-trigger', detail.pills.trigger));
+  pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-stop', detail.pills.stop));
+  headText.appendChild(pills);
+  headCard.appendChild(headText);
+  const headActions = el(doc, 'div', 'bo-seq-headactions');
+  headCard.appendChild(headActions);
+  box.appendChild(headCard);
   const offered = sequenzaOfferedAction(detail.status);
   if (offered !== null) {
     if (confirming === offered.action) {
-      box.appendChild(el(doc, 'p', 'bo-seq-confirm', offered.confirm));
+      headActions.appendChild(el(doc, 'p', 'bo-seq-confirm', offered.confirm));
       const row = el(doc, 'div', 'bo-seq-btns');
       const yes = el(doc, 'button', 'primary', 'Conferma');
       yes.setAttribute('data-confirm', offered.action);
@@ -425,16 +551,31 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
       if (busy) yes.setAttribute('disabled', 'true');
       row.appendChild(yes);
       row.appendChild(no);
-      box.appendChild(row);
+      headActions.appendChild(row);
     } else {
       const button = el(doc, 'button', 'primary', offered.button);
       button.setAttribute('data-action', offered.action);
       button.addEventListener('click', () => onAsk(offered.action));
       if (busy) button.setAttribute('disabled', 'true');
-      box.appendChild(button);
+      headActions.appendChild(button);
     }
   }
-  const steps = el(doc, 'div', 'bo-seq-steps');
+  // The prototype's 3 KPI cards under the detail: each a label + a value.
+  // `Call fissate` has no appointments read behind it, so it stays a dash.
+  const kpi = el(doc, 'div', 'bo-seq-kpi');
+  const kpiCards = [
+    ['In corso', detail.metrics.kpi.inCorso],
+    ['Risposte', detail.metrics.kpi.risposte],
+    ['Call fissate', detail.metrics.kpi.callFissate],
+  ];
+  for (const [label, value] of kpiCards) {
+    const card = el(doc, 'div', 'bo-seq-kpi-card');
+    card.appendChild(el(doc, 'p', 'bo-seq-kpi-label', label));
+    card.appendChild(el(doc, 'p', 'bo-seq-kpi-value', value === null || value === undefined ? '—' : String(value)));
+    kpi.appendChild(card);
+  }
+  box.appendChild(kpi);
+  const steps = el(doc, 'div', 'bo-seq-card bo-seq-steps');
   steps.appendChild(el(doc, 'h4', undefined, 'Passi'));
   if (detail.stepsFailed === true) {
     steps.appendChild(el(doc, 'p', 'bo-seq-error',
@@ -443,26 +584,32 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
     steps.appendChild(el(doc, 'p', 'bo-muted', 'Questa sequenza non ha passi registrati.'));
   } else {
     for (const step of detail.steps) {
+      // The prototype's timeline: day | channel badge on a rail | title and
+      // message. The template language code is plumbing, never shown. The
+      // message body lives with the channel templates (no read surface), so
+      // the bubble quotes the operator's own message title — never invented.
       const item = el(doc, 'div', 'bo-seq-step');
       item.appendChild(el(doc, 'p', 'bo-seq-day', step.dayLabel));
-      item.appendChild(el(doc, 'p', 'bo-seq-channel', step.channelLabel));
-      item.appendChild(el(doc, 'p', 'bo-seq-template', step.templateName));
-      if (step.templateLanguage !== '') {
-        item.appendChild(el(doc, 'p', 'bo-seq-mono', step.templateLanguage));
-      }
+      const rail = el(doc, 'div', 'bo-seq-rail');
+      rail.appendChild(el(doc, 'span', `bo-seq-badge bo-tile-${String(step.channel ?? '').toLowerCase()}`, channelMark(step.channel)));
+      item.appendChild(rail);
+      const body = el(doc, 'div', 'bo-seq-stepbody');
+      body.appendChild(el(doc, 'p', 'bo-seq-channel', step.title));
+      body.appendChild(el(doc, 'p', 'bo-seq-template', `«${step.templateName}»`));
       if (step.vars.length > 0) {
-        item.appendChild(el(doc, 'p', 'bo-seq-vars', `✦ Personalizzato per: ${step.vars.join(', ')}`));
+        body.appendChild(el(doc, 'p', 'bo-seq-vars', `✦ Personalizzato con ${personalisedWith(step.vars)}`));
       }
+      item.appendChild(body);
       steps.appendChild(item);
     }
   }
+  steps.appendChild(el(doc, 'p', 'bo-seq-note',
+    'Con «Inviare risposte senza approvazione» spento, ogni messaggio della sequenza aspetta il tuo ok prima di partire.'));
   box.appendChild(steps);
-  box.appendChild(el(doc, 'p', 'bo-muted',
-    'Senza il permesso di invio, ogni passo aspetta il tuo ok prima di partire. Alla prima risposta registrata la persona esce da sola.'));
-  const people = el(doc, 'div', 'bo-seq-people');
+  const people = el(doc, 'div', 'bo-seq-card bo-seq-people');
   people.appendChild(el(doc, 'h4', undefined, 'Persone nella sequenza'));
   if (detail.people.length === 0) {
-    people.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna persona dentro per ora.'));
+    people.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna persona in questa sequenza.'));
   } else {
     for (const person of detail.people) {
       const item = el(doc, 'div', 'bo-seq-person');
@@ -503,44 +650,166 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     error: '',
     loaded: false,
     space: null,
+    menuOpen: false,
+    menuHint: '',
   };
+
+  // One open menu at a time, Escape or an outside click closes it — the same
+  // contract as the clienti add menu, scoped to this view's menu wrap.
+  const isInsideMenuWrap = (node) => {
+    let current = node ?? null;
+    while (current) {
+      const classes = typeof current.getAttribute === 'function'
+        ? String(current.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+        : [];
+      if (classes.includes('bo-seq-menuwrap')) return true;
+      current = current.parentNode ?? null;
+    }
+    return false;
+  };
+  if (documentNode && typeof documentNode.addEventListener === 'function') {
+    documentNode.addEventListener('click', (event) => {
+      if (state.menuOpen && !isInsideMenuWrap(event?.target ?? null)) {
+        state.menuOpen = false;
+        paint();
+      }
+    });
+    // Opening the menu repaints the whole view, so the opener that had
+    // keyboard focus is gone and focus falls back to the document body: the
+    // Escape listeners on the button and the menu can no longer be reached.
+    // This document-level listener closes the menu even then.
+    documentNode.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' && state.menuOpen) {
+        state.menuOpen = false;
+        paint();
+      }
+    });
+  }
+
+  /**
+   * The prototype's `Nuova sequenza` menu: two entries, closed by default,
+   * Escape or an outside click closes it. Creation itself belongs to the
+   * pilot (manual → the package operations, AI → the assistant seam), so a
+   * pick only names the next step in plain Italian — never a fake record.
+   */
+  function renderNewMenu() {
+    const wrap = el(documentNode, 'div', 'bo-seq-menuwrap');
+    // Green CTA like the prototype and like Calendario's «Nuovo appuntamento»:
+    // only uiButton({ variant: 'cta' }) paints green.
+    const button = uiButton(documentNode, {
+      variant: 'cta',
+      label: 'Nuova sequenza ⌄',
+      attrs: {
+        'data-menu': 'nuova-sequenza',
+        'aria-haspopup': 'true',
+        'aria-expanded': state.menuOpen ? 'true' : 'false',
+      },
+    });
+    button.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
+      state.menuOpen = !state.menuOpen;
+      state.menuHint = '';
+      paint();
+    });
+    button.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' && state.menuOpen) {
+        state.menuOpen = false;
+        paint();
+      }
+    });
+    wrap.appendChild(button);
+    const menu = el(documentNode, 'div', state.menuOpen ? 'bo-seq-menu' : 'bo-seq-menu hidden');
+    menu.setAttribute('role', 'menu');
+    const addItem = (action, label, hint, pick) => {
+      const item = el(documentNode, 'button', 'bo-seq-item', label);
+      item.setAttribute('data-action', action);
+      item.setAttribute('role', 'menuitem');
+      item.appendChild(el(documentNode, 'span', 'bo-muted', hint));
+      item.addEventListener('click', () => {
+        state.menuOpen = false;
+        state.menuHint = pick;
+        paint();
+      });
+      menu.appendChild(item);
+    };
+    menu.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape') {
+        state.menuOpen = false;
+        state.menuHint = '';
+        paint();
+      }
+    });
+    menu.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
+    });
+    addItem(
+      'new-ai',
+      "Crea con l'AI",
+      'Es. «lead dal sito: WhatsApp subito, email dopo 2 giorni»',
+      'Descrivi la sequenza nella barra AI (✦ in alto): parte da sola quando succede qualcosa.',
+    );
+    addItem(
+      'new-manual',
+      'Compila manualmente',
+      'Quando parte, passi e canali',
+      'La nuova sequenza si crea dallo spazio con un nome, un trigger e i passi: la vedi qui appena è pronta.',
+    );
+    wrap.appendChild(menu);
+    if (state.menuHint !== '') {
+      wrap.appendChild(el(documentNode, 'p', 'bo-seq-hint', state.menuHint));
+    }
+    return wrap;
+  }
 
   function paint() {
     if (!documentNode) return;
     while (mount.firstChild) mount.removeChild(mount.firstChild);
-    mount.appendChild(el(documentNode, 'p', 'bo-kicker', 'Modulo nativo'));
-    mount.appendChild(el(documentNode, 'h2', undefined, 'Sequenze'));
-    mount.appendChild(el(documentNode, 'p', 'lede',
-      'Promemoria che partono da soli, sul canale giusto. Si fermano appena il cliente risponde.'));
+    // Supervisor design pass: the prototype's 1240 px page, header, then the
+    // list on the left and the selected sequence on the right.
+    const page = el(documentNode, 'div', 'bo-seq');
+    mount.appendChild(page);
+    const top = el(documentNode, 'div', 'bo-seq-top');
+    top.appendChild(el(documentNode, 'p', 'bo-kicker', 'MODULO NATIVO'));
+    top.appendChild(el(documentNode, 'h2', 'bo-seq-title', 'Sequenze'));
+    top.appendChild(el(documentNode, 'p', 'lede',
+      'Follow-up che partono da soli quando succede qualcosa, sul canale giusto. Si fermano appena il cliente risponde.'));
+    top.appendChild(renderNewMenu());
+    page.appendChild(top);
     if (!state.loaded) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Leggo le sequenze…'));
+      page.appendChild(el(documentNode, 'p', 'bo-muted', 'Leggo le sequenze…'));
       return;
     }
     if (!state.available) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted',
-        'Le sequenze non sono composte in questo spazio (storia BO-F3-03): niente da mostrare, e niente di finto al loro posto.'));
+      page.appendChild(el(documentNode, 'p', 'bo-muted',
+        'Le sequenze non sono composte in questo spazio: niente da mostrare, e niente di finto al loro posto.'));
       return;
     }
-    mount.appendChild(renderSequenzeElenco(
+    const cols = el(documentNode, 'div', 'bo-seq-cols');
+    const left = el(documentNode, 'div', 'bo-seq-left');
+    const right = el(documentNode, 'div', 'bo-seq-right');
+    cols.appendChild(left);
+    cols.appendChild(right);
+    page.appendChild(cols);
+    left.appendChild(renderSequenzeElenco(
       documentNode, state.sequences, state.enrollments, state.sends,
       state.selectedKey, (key) => void selectSequence(key),
     ));
     if (state.capped) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${SEQUENZE_READ_LIMIT} record per elenco.`));
+      right.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${SEQUENZE_READ_LIMIT} record per elenco.`));
     }
     if (state.unavailable.length > 0) {
-      mount.appendChild(el(documentNode, 'p', 'bo-seq-error',
+      right.appendChild(el(documentNode, 'p', 'bo-seq-error',
         `Non riesco a leggere adesso: ${state.unavailable.join(', ')}. I numeri qui sotto contano solo quello che ho letto davvero.`));
     }
     if (state.error !== '') {
-      mount.appendChild(el(documentNode, 'p', 'bo-seq-error', state.error));
+      right.appendChild(el(documentNode, 'p', 'bo-seq-error', state.error));
     }
     if (state.selectedKey !== '') {
       const sequence = state.sequences.find(
         (row) => row?.sourceKey === state.selectedKey || (row?.id !== undefined && row?.id !== null && String(row.id) === state.selectedKey),
       ) ?? null;
       if (sequence === null) {
-        mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Questa sequenza non c’è più: scegline un’altra dall’elenco.'));
+        right.appendChild(el(documentNode, 'p', 'bo-muted', 'Questa sequenza non c’è più: scegline un’altra dall’elenco.'));
       } else {
         const outcome = state.stepsByKey.get(state.selectedKey) ?? { rows: [], failed: false };
         const detail = buildSequenzaDettaglio({
@@ -550,7 +819,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
           enrollments: state.enrollments.filter((row) => row?.sequenceSourceKey === sequence?.sourceKey),
           sends: state.sends.filter((row) => row?.sequenceSourceKey === sequence?.sourceKey),
         });
-        mount.appendChild(renderSequenzaDettaglio(
+        right.appendChild(renderSequenzaDettaglio(
           documentNode, detail, state.confirming,
           (action) => { state.confirming = action; state.error = ''; paint(); },
           () => { state.confirming = null; paint(); },
@@ -559,7 +828,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         ));
       }
     } else if (state.sequences.length > 0) {
-      mount.appendChild(el(documentNode, 'p', 'bo-muted', 'Scegli una sequenza per vedere i passi, giorno per giorno.'));
+      right.appendChild(el(documentNode, 'p', 'bo-muted', 'Scegli una sequenza per vedere i passi, giorno per giorno.'));
     }
   }
 

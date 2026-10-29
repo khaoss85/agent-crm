@@ -513,6 +513,7 @@ const customerCardView = createCustomerCardView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
+  toast,
   navigate: (hash) => { window.location.hash = hash; },
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).
@@ -599,6 +600,10 @@ const syncView = createSyncView({
   // under a session mount the stored pick is empty and the screen must
   // still show the current space's state, never ask to choose one.
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  // The session role for the read-only screen state (BO-F6-16, fetta 6):
+  // observers watch without touching. Local development has no session
+  // (shellUser is the dev identity without a role), so it keeps writing.
+  role: () => shellUser?.role ?? null,
   toast,
 });
 

@@ -61,6 +61,17 @@ class FakeNode {
     return child;
   }
 
+  // Real-DOM Node.contains: self, descendants, and (unlike the real one)
+  // nothing else — null and detached subtrees never match.
+  contains(node) {
+    let current = node ?? null;
+    while (current) {
+      if (current === this) return true;
+      current = current.parentNode ?? null;
+    }
+    return false;
+  }
+
   get firstChild() {
     return this.childNodes[0] ?? null;
   }

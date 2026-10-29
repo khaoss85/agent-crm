@@ -46,11 +46,17 @@ export const PHONE_BEARING_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 
  * work and contracts packages: without them the view answers "not available"
  * with its reason, never a list that silently omits customers.
  */
+/**
+ * View order follows the approved prototype ("04 Clienti", checklist C10):
+ * Tutti, Da ricontattare oggi, Nuovi lead, Clienti attivi, Rinnovi entro
+ * 30 giorni. The list view renders the server order as sent, so the
+ * canonical order lives here, not in the view.
+ */
 export const CUSTOMER_VIEWS = Object.freeze([
   { id: 'tutti', label: 'Tutti', filters: Object.freeze({}) },
+  { id: 'ricontattare-oggi', label: 'Da ricontattare oggi', filters: Object.freeze({ ricontattareOggi: true }) },
   { id: 'nuovi-lead', label: 'Nuovi lead', filters: Object.freeze({ stato: 'contatto' }) },
   { id: 'clienti-attivi', label: 'Clienti attivi', filters: Object.freeze({ stato: 'cliente' }) },
-  { id: 'ricontattare-oggi', label: 'Da ricontattare oggi', filters: Object.freeze({ ricontattareOggi: true }) },
   { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni', filters: Object.freeze({ rinnoviGiorni: 30 }) },
 ]);
 

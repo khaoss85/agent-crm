@@ -661,11 +661,11 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   for (const italian of [
     'Tutti i referenti',
     'Tutti gli stati',
-    'Cerca nome, azienda, contatto',
+    'Cerca offerta o cliente',
     'Previsione · stima',
     'Nessun valore aperto da stimare',
     'non un impegno',
-    'Nessun record.',
+    "Trascina qui un'offerta",
     '1 record non in questa pipeline (non mostrato).',
     'Fuori definizione (1)',
     'fase registrata: svincolata',
@@ -692,12 +692,160 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
 
   // Lista: headers and the empty-filter message.
   mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
-  assert.ok(painted().includes('Chiusura prevista'), 'lista header is Italian');
+  assert.ok(painted().includes('Chiusura'), 'lista header is Italian');
   assert.ok(painted().includes('Valore'), 'lista header is Italian');
   assertNoEnglish('lista');
   const search = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
   search.value = 'zzz';
   search.dispatch('input');
-  assert.ok(painted().includes('Nessun record corrisponde ai filtri attivi.'), 'empty lista is Italian');
+  assert.ok(painted().includes('Nessuna offerta con questi filtri.'), 'empty lista is Italian');
   assertNoEnglish('lista filtered');
+});
+
+test('pipeline lista follows the prototype: headers order, pill, probability, dates (C19, C20, C21)', async () => {
+  // BO-F6-10 fetta Lista (backlog:31bed527): intestazioni nell'ordine esatto,
+  // pill di stato con pallino, percentuale di probabilità, giorni di chiusura
+  // e creazione, referente; messaggio di lista vuota in italiano esatto.
+  const records = [
+    record('a', 'discovery', {
+      name: 'Cucina per Giulia',
+      companyName: 'Rossi',
+      owner: 'maria',
+      valueCents: 27500_00,
+      currency: 'EUR',
+      expectedCloseDate: '2026-11-20T00:00:00.000Z',
+      createdAt: '2026-10-02T09:30:00.000Z',
+    }),
+    record('b', 'demo', {
+      owner: 'giulia',
+      expectedCloseDate: '2026-12-01T00:00:00.000Z',
+      createdAt: '2026-10-03T10:00:00.000Z',
+    }),
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
+
+  // C19: headers in the prototype order.
+  const list = mount.findAll('div').find((node) => node.getAttribute('data-listview') === 'records');
+  const headers = list.findAll('th').map((node) => node.textContent);
+  assert.deepEqual(
+    headers,
+    ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente'],
+    'C19: lista headers follow the prototype order',
+  );
+
+  // C20: one row carries the state pill with its dot, value, probability,
+  // close day, creation day and referente.
+  const row = list.findAll('tr').find((node) => node.getAttribute('data-record') === 'a');
+  const cells = row.findAll('td');
+  assert.equal(cells.length, 7, 'one cell per header');
+  assert.ok(cells[0].textContent.includes('Cucina per Giulia'), 'offerta shows the record title');
+  assert.ok(cells[1].textContent.includes('Discovery'), 'stato shows the stage label');
+  assert.ok(
+    cells[1].findAll('span').some((node) => (node.getAttribute('class') ?? '').includes('stage-dot')),
+    'stato pill carries its dot hook',
+  );
+  assert.ok(cells[2].textContent.includes('27.500') || cells[2].textContent.includes('27,500'), `valore shows the amount (${cells[2].textContent})`);
+  assert.equal(cells[3].textContent, '10%', 'probabilità shows the discovery stage probability');
+  assert.equal(cells[4].textContent, '2026-11-20', 'chiusura shows the expected close day');
+  assert.equal(cells[5].textContent, '2026-10-02', 'creata shows the creation day');
+  assert.ok(cells[6].textContent.includes('maria'), 'referente shows the owner');
+
+  // C21: an empty filter shows the exact prototype message.
+  const search = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
+  search.value = 'zzz-niente';
+  search.dispatch('input');
+  const emptied = mount.findAll('div').find((node) => node.getAttribute('data-listview') === 'records');
+  assert.ok(
+    emptied.textContent.includes('Nessuna offerta con questi filtri.'),
+    'C21: empty lista message is the prototype text',
+  );
+});
+
+test('empty kanban columns invite a drop and columns mark the hovered target (C12, C16, C18)', async () => {
+  // BO-F6-10 (backlog:31bed527): ogni colonna ha il pallino (gancio markup,
+  // colore in CSS), le colonne vuote invitano al trascinamento e la colonna
+  // di destinazione si marca durante il passaggio.
+  const records = [record('a', 'discovery', { owner: 'maria' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+
+  const columns = mount.findAll('div').filter((node) => node.getAttribute('data-stage') !== null);
+  assert.ok(columns.length > 0, 'stage columns render');
+  for (const column of columns) {
+    assert.ok(
+      column.findAll('span').some((node) => (node.getAttribute('class') ?? '').includes('stage-dot')),
+      'C12: every column header carries the state dot hook',
+    );
+  }
+  const demoColumn = columns.find((node) => node.getAttribute('data-stage') === 'demo');
+  assert.ok(demoColumn.textContent.includes("Trascina qui un'offerta"), "C16: empty columns invite a drop");
+
+  // C18: dragover marks the target, dragleave/drop unmark it.
+  demoColumn.dispatch('dragover', { preventDefault() {} });
+  assert.ok(
+    String(demoColumn.getAttribute('class')).split(/\s+/).includes('drop-target'),
+    'C18: the hovered column is marked for the dashed outline',
+  );
+  demoColumn.dispatch('dragleave');
+  assert.ok(
+    !String(demoColumn.getAttribute('class')).split(/\s+/).includes('drop-target'),
+    'leaving the column unmarks it',
+  );
+
+  // Review finding on khaoss85/agent-crm#411 (P2): dragleave fires while the
+  // pointer moves onto a child card — the pointer still hovers the column,
+  // so the mark must stay instead of flickering.
+  const marked = (node) => String(node.getAttribute('class')).split(/\s+/).includes('drop-target');
+  const liveColumn = columns.find((node) => node.getAttribute('data-stage') === 'discovery');
+  const liveCard = liveColumn.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  liveColumn.dispatch('dragover', { preventDefault() {} });
+  liveColumn.dispatch('dragleave', { relatedTarget: liveCard });
+  assert.ok(marked(liveColumn), 'moving onto a child card keeps the column marked');
+  liveColumn.dispatch('dragleave', { relatedTarget: null });
+  assert.ok(!marked(liveColumn), 'leaving the column for good unmarks it');
+
+  // C18: the dragged card is attenuated while it flies.
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  card.dispatch('dragstart', { dataTransfer: { setData() {} } });
+  assert.ok(
+    String(card.getAttribute('class')).split(/\s+/).includes('dragging'),
+    'C18: the dragged card is marked while it flies',
+  );
+
+  // Review finding on khaoss85/agent-crm#411 (P2): cancelling the drag must
+  // not leave a column marked — dragend sweeps every hovered column.
+  demoColumn.dispatch('dragover', { preventDefault() {} });
+  liveColumn.dispatch('dragover', { preventDefault() {} });
+  card.dispatch('dragend');
+  assert.ok(
+    !String(card.getAttribute('class')).split(/\s+/).includes('dragging'),
+    'dropping the card unmarks it',
+  );
+  assert.ok(!marked(demoColumn) && !marked(liveColumn), 'dragend unmarks every column');
+});
+
+test('Azzera filtri appears only while a filter or search is active (C11)', async () => {
+  // BO-F6-10 C11 (backlog:31bed527): la voce di reset non offre un no-op.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  await board.renderBoard('b2b-sales');
+
+  const resetButton = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'clear-filters');
+  assert.equal(resetButton(), undefined, 'no reset offered on the unfiltered board');
+
+  filterInput(mount, 'owner').value = 'bob';
+  filterInput(mount, 'owner').dispatch('change');
+  assert.ok(resetButton(), 'a filter makes the reset appear');
+  assert.match(summaryText(mount), /2 offerte/);
+
+  resetButton().dispatch('click');
+  assert.match(summaryText(mount), /5 offerte/, 'reset restores the full board');
+  assert.equal(resetButton(), undefined, 'reset disappears once filters are clear');
 });

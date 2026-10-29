@@ -240,12 +240,12 @@ export function recordDetailHref(module, id) {
 
 /**
  * Label shown for the cited record: the stored snapshot label when present,
- * otherwise "resource · id" — never invented, never empty.
+ * otherwise a generic Italian name — never a technical `resource · id`
+ * (the screen must never print labels like "lead · lead-1").
  * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
  */
 function subjectDisplayLabel(row) {
-  return nonEmptyText(row?.subjectLabel)
-    ?? `${String(row?.subjectResource ?? '—')} · ${String(row?.subjectId ?? '—')}`;
+  return nonEmptyText(row?.subjectLabel) ?? 'il cliente';
 }
 
 /**
@@ -254,6 +254,23 @@ function subjectDisplayLabel(row) {
  * record that opened it.
  * @param {Record<string, any>} task an open work-task row
  */
+/**
+ * The prototype's row badge: a short human mark (initials of the person the
+ * action is about), never a record id or a kind code.
+ * @param {unknown} label
+ */
+const OGGI_CHANNEL_TILES = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', phone: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', stripe: 'S', calendar: 'CAL' });
+/** The prototype's channel tile mark, or null when the channel is unknown. */
+function channelTile(channel) {
+  return OGGI_CHANNEL_TILES[String(channel ?? '').toLowerCase()] ?? null;
+}
+
+function badgeInitials(label) {
+  const words = String(label ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
+  const marks = words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase());
+  return marks.join('') || '·';
+}
+
 function followupAction(task) {
   const id = nonEmptyText(task?.id);
   if (!id) return null;
@@ -264,7 +281,9 @@ function followupAction(task) {
   return Object.freeze({
     id: `bo04:followup:${id}`,
     kind: 'followup',
-    mono: `follow-up · ${id.length > 12 ? `${id.slice(0, 12)}…` : id}`,
+    mono: channelTile(task?.channel) ?? badgeInitials(label),
+    channel: nonEmptyText(task?.channel) ?? null,
+    note: nonEmptyText(task?.note) ?? null,
     title,
     why,
     cta: 'Completa',
@@ -298,7 +317,8 @@ function appointmentPrepAction(appointment) {
   return Object.freeze({
     id: `bo04:appointment:${id}`,
     kind: 'appointment-prep',
-    mono: `ore ${time}`,
+    mono: 'CAL',
+    channel: 'calendar',
     title: `Prepara la call con ${label}`,
     why: `Appuntamento oggi alle ${time} con ${label}.`,
     cta: 'Apri scheda',
@@ -497,10 +517,13 @@ function countNoun(count, singular, plural) {
 }
 
 /**
- * One-sentence recap of the day from real counts: today's appointments, open
- * follow-ups, and the first appointment when there is one. AI stays out of
- * it: without a configured key the llm package is dry-run only, and a recap
- * must never read as generated insight — it is arithmetic over records.
+ * One-sentence recap of the day, verbatim from the prototype: open chores
+ * and today's appointments with a minute estimate, or the no-pending line.
+ * The closing promise names prepared messages only when a task actually
+ * carries a draft note — a manual call with no draft must never read as
+ * prepared work. AI stays out of it: without a configured key the llm
+ * package is dry-run only, and a recap must never read as generated
+ * insight — it is arithmetic over records.
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date }} input
  */
 export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date() } = {}) {
@@ -512,23 +535,12 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
     : [];
-  const parts = [];
-  if (today.length === 0 && tasks.length === 0) {
-    return 'Oggi non hai appuntamenti né follow-up aperti.';
+  if (tasks.length === 0) {
+    return `Niente in sospeso. Ti restano ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
-  parts.push(today.length === 0
-    ? 'Oggi non hai appuntamenti'
-    : `Oggi hai ${countNoun(today.length, 'appuntamento', 'appuntamenti')}`);
-  parts.push(tasks.length === 0
-    ? 'e nessun follow-up aperto'
-    : `e ${countNoun(tasks.length, 'follow-up aperto', 'follow-up aperti')}`);
-  let sentence = `${parts.join(' ')}.`;
-  if (today.length > 0) {
-    const first = today[0];
-    const time = romeTime(first?.startsAt);
-    if (time) sentence += ` Il primo è alle ${time} con ${subjectDisplayLabel(first)}.`;
-  }
-  return sentence;
+  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${countNoun(today.length, 'appuntamento', 'appuntamenti')}. Ti servono circa ${tasks.length * 3} minuti`;
+  const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
+  return drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
 }
 
 /**
@@ -547,10 +559,16 @@ export function buildTodayAgenda(appointments = [], now = new Date()) {
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
+    // The prototype's second line under each appointment ("chi"): who the
+    // appointment is with — the team member holding the slot, else a short
+    // honest cue from the notes. Never invented when neither exists.
+    const team = nonEmptyText(row?.teamMemberId);
+    const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     return Object.freeze({
       id,
       time: romeTime(row.startsAt),
       title: subjectDisplayLabel(row),
+      who: cue,
       status: row.status,
       href: cardHrefForSubject(row) ?? (id !== '' ? recordDetailHref('appointment', id) : null),
     });
@@ -669,6 +687,43 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
     sources: Object.freeze(sources.slice(0, 6)),
     cardHref: card,
   });
+}
+
+/**
+ * Channels the backoffice counts for the invite, per the prototype: 9.
+ * The exact per-channel table lives in Stato sync; Oggi only needs the
+ * headline count, so the total is a fixed constant, never metadata.
+ */
+export const OGGI_TOTAL_CHANNELS = 9;
+
+/**
+ * The nine counted channel ids, in Stato sync order. Mirrors SYNC_CHANNELS
+ * in admin-sync.js (the table owner): the lead catalog and the nine differ
+ * (SMS is a lead channel but not one of the nine; Calendar and Stripe are
+ * nine but not lead), so the count must read the nine, never the catalog.
+ * Kept as ids here so Oggi never imports another screen's view module; the
+ * test pins the two lists together.
+ */
+export const OGGI_NINE_CHANNELS = Object.freeze([
+  'whatsapp', 'instagram', 'facebook', 'tiktok', 'email',
+  'voice', 'site-form', 'calendar', 'stripe',
+]);
+
+/**
+ * Distinct connected channels among the nine: active rows only, one vote
+ * per channel, capped at the nine. A channel outside the nine never moves
+ * this count.
+ * @param {Array<Record<string, any>>} [connections]
+ */
+export function countConnectedNine(connections = []) {
+  const active = new Set();
+  for (const row of Array.isArray(connections) ? connections : []) {
+    if (row == null || row.status !== 'active') continue;
+    if (typeof row.channel !== 'string' || row.channel === '') continue;
+    if (!OGGI_NINE_CHANNELS.includes(row.channel)) continue;
+    active.add(row.channel);
+  }
+  return Math.min(active.size, OGGI_TOTAL_CHANNELS);
 }
 
 /**
@@ -832,18 +887,39 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  * @param {object} doc
  * @param {{ id?: unknown, kind?: unknown, mono?: unknown, title?: unknown, why?: unknown, cta?: unknown, href?: unknown, run?: unknown }} action
  * @param {'open' | 'done' | 'postponed'} state
- * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void }} [events]
+ * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void }} [events]
  * @param {boolean} [disabled]
  */
 function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
   const row = el(doc, 'div', 'bo-oggi-row');
   row.setAttribute('data-action', String(action?.id ?? ''));
-  row.appendChild(el(doc, 'p', 'bo-oggi-mono', String(action?.mono ?? '')));
-  row.appendChild(el(doc, 'p', 'bo-oggi-title', String(action?.title ?? '')));
-  row.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
+  if (state !== 'open') row.setAttribute('data-state', state);
+  row.appendChild(el(doc, 'span', `bo-oggi-mono${action?.channel ? ` bo-tile-${String(action.channel).toLowerCase()}` : ''}`, String(action?.mono ?? '')));
+  const body = el(doc, 'div', 'bo-oggi-body');
+  // The prototype's title opens the record the suggestion is about, through
+  // the shell router like every other in-app anchor.
+  const href = typeof action?.href === 'string' && action.href !== '' ? action.href : null;
+  const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(action?.title ?? ''));
+  if (href) {
+    title.setAttribute('href', href);
+    if (typeof events?.navigate === 'function') {
+      title.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        events.navigate(href);
+      });
+    }
+  }
+  body.appendChild(title);
+  body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
+  // The prototype's violet third line: the AI's prepared next step, only
+  // when the action carries one — never an invented suggestion. The note
+  // renders verbatim: prototype notes already carry their own ✦ when they
+  // are AI suggestions, and prefixing one here would double it.
+  if (typeof action?.note === 'string' && action.note !== '') body.appendChild(el(doc, 'p', 'bo-oggi-note', action.note));
+  row.appendChild(body);
   if (state === 'open') {
     const controls = el(doc, 'div', 'bo-oggi-btns');
-    const postpone = el(doc, 'button', 'small secondary', 'Domani');
+    const postpone = el(doc, 'button', 'small ghost', 'Domani');
     postpone.setAttribute('data-triage', 'postpone');
     postpone.disabled = disabled;
     postpone.addEventListener('click', () => events.onPostpone?.(action.id));
@@ -895,12 +971,13 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     actions?: Array<any>,
  *     triage?: Record<string, string>,
  *     capped?: boolean,
- *     agenda?: Array<{ id: unknown, time: unknown, title: unknown, href: unknown }>,
+ *     agenda?: Array<{ id: unknown, time: unknown, title: unknown, who?: unknown, href: unknown }>,
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
+ *     connections?: Array<{ channel?: unknown, status?: unknown }>,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
- *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void },
+ *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void },
  *     disabled?: boolean,
  *   },
  * }} options
@@ -916,20 +993,25 @@ export function renderOggi({
   home = null,
 } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
+  // The prototype's Oggi is one centred 900 px column (data-screen-label "00 Oggi").
+  const page = el(doc, 'div', 'bo-oggi');
+  mount.appendChild(page);
   const person = nonEmptyText(userName) ?? (typeof spaceName === 'string' && spaceName !== '' ? spaceName : 'il tuo spazio');
   const hour = now instanceof Date ? now.getHours() : NaN;
 
-  mount.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
-  mount.appendChild(el(doc, 'h2', undefined, `${greetingForHour(hour)}, ${person}`));
+  page.appendChild(el(doc, 'p', 'bo-kicker', oggiDateLine(now)));
+  // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
+  // scale is untouched — only the semantics change (C6).
+  page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
 
   if (home == null) {
-    mount.appendChild(el(
+    page.appendChild(el(
       doc,
       'p',
       'bo-muted',
       'Le schermate pronte del tuo spazio, in un posto solo.',
     ));
-    appendLinkList(doc, mount, links, navigate);
+    appendLinkList(doc, page, links, navigate);
     return;
   }
 
@@ -939,7 +1021,7 @@ export function renderOggi({
   const actions = Array.isArray(home.actions) ? home.actions : [];
 
   if (typeof home.recap === 'string' && home.recap !== '') {
-    mount.appendChild(el(doc, 'p', 'bo-oggi-recap', home.recap));
+    page.appendChild(el(doc, 'p', 'bo-oggi-recap', home.recap));
   }
 
   // ---- Advisor ----
@@ -947,8 +1029,6 @@ export function renderOggi({
   const head = el(doc, 'div', 'bo-oggi-head');
   head.appendChild(el(doc, 'h3', undefined, '✦ Il tuo advisor'));
   const progress = advisorProgress(actions, triage);
-  head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total}`));
-  advisor.appendChild(head);
   if (progress.total > 0) {
     const bar = el(doc, 'div', 'bo-oggi-bar');
     bar.setAttribute('role', 'progressbar');
@@ -959,14 +1039,16 @@ export function renderOggi({
     const ratio = progress.handled / progress.total;
     fill.setAttribute('style', `width: ${Math.round(ratio * 100)}%`);
     bar.appendChild(fill);
-    advisor.appendChild(bar);
+    head.appendChild(bar);
   }
+  head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total} fatte`));
+  advisor.appendChild(head);
   if (actions.length === 0) {
-    advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi: niente azioni aperte.'));
+    advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
   } else {
     const list = el(doc, 'div', 'bo-oggi-actions');
     for (const action of actions) {
-      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), events, disabled));
+      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), { ...events, navigate }, disabled));
     }
     advisor.appendChild(list);
     if (home.capped === true) {
@@ -976,10 +1058,12 @@ export function renderOggi({
   if (home.availability?.work === false) {
     advisor.appendChild(el(doc, 'p', 'bo-muted', 'I follow-up non sono composti in questo spazio: niente azioni da proporre.'));
   }
-  mount.appendChild(advisor);
+  page.appendChild(advisor);
 
-  // ---- Agenda ----
-  const agenda = el(doc, 'section', 'bo-oggi-section');
+  // ---- Agenda and pre-call brief: two cards side by side ----
+  const pair = el(doc, 'div', 'bo-oggi-pair');
+  page.appendChild(pair);
+  const agenda = el(doc, 'section', 'bo-oggi-card');
   agenda.appendChild(el(doc, 'h3', undefined, 'Agenda di oggi'));
   const rows = Array.isArray(home.agenda) ? home.agenda : [];
   if (home.availability?.appointments === false) {
@@ -991,6 +1075,7 @@ export function renderOggi({
     for (const entry of rows) {
       const item = el(doc, 'div', 'bo-oggi-agenda-row');
       item.appendChild(el(doc, 'span', 'bo-oggi-time', String(entry?.time ?? '')));
+      const cell = el(doc, 'div');
       if (typeof entry?.href === 'string' && entry.href !== '') {
         const anchor = el(doc, 'a', 'bo-setting-link', String(entry?.title ?? ''));
         anchor.setAttribute('href', entry.href);
@@ -998,19 +1083,35 @@ export function renderOggi({
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
           navigate(entry.href);
         });
-        item.appendChild(anchor);
+        cell.appendChild(anchor);
       } else {
-        item.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
+        cell.appendChild(el(doc, 'span', undefined, String(entry?.title ?? '')));
       }
+      // The prototype's "chi" line under every appointment: who holds the
+      // slot or what the appointment is about. A shared muted token (no new
+      // stylesheet); the supervisor dresses the exact spacing.
+      if (typeof entry?.who === 'string' && entry.who !== '') {
+        cell.appendChild(el(doc, 'div', 'bo-muted', entry.who));
+      }
+      item.appendChild(cell);
       list.appendChild(item);
     }
     agenda.appendChild(list);
   }
-  mount.appendChild(agenda);
+  if (home.availability?.appointments !== false) {
+    const toCalendar = el(doc, 'a', 'bo-oggi-more', 'Apri il calendario →');
+    toCalendar.setAttribute('href', '#/calendario');
+    toCalendar.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate('#/calendario');
+    });
+    agenda.appendChild(toCalendar);
+  }
+  pair.appendChild(agenda);
 
   // ---- Pre-call brief ----
   if (home.brief != null) {
-    const brief = el(doc, 'section', 'bo-oggi-section');
+    const brief = el(doc, 'section', 'bo-oggi-card bo-oggi-ai');
     brief.appendChild(el(doc, 'h3', undefined, '✦ Prima della prossima call'));
     brief.appendChild(el(
       doc, 'p', 'bo-oggi-brief-who',
@@ -1024,7 +1125,8 @@ export function renderOggi({
     if (Array.isArray(home.brief.sources) && home.brief.sources.length > 0) {
       const sources = el(doc, 'p', 'bo-oggi-sources');
       sources.appendChild(el(doc, 'span', undefined, 'Fonti: '));
-      home.brief.sources.forEach((source, index) => {
+      const cardSource = home.brief.sources.find((source) => source?.label === 'Apri la scheda') ?? null;
+      home.brief.sources.filter((source) => source !== cardSource).forEach((source, index) => {
         if (index > 0) sources.appendChild(el(doc, 'span', undefined, ' · '));
         const anchor = el(doc, 'a', 'bo-setting-link', String(source?.label ?? ''));
         anchor.setAttribute('href', String(source?.href ?? ''));
@@ -1035,8 +1137,22 @@ export function renderOggi({
         sources.appendChild(anchor);
       });
       brief.appendChild(sources);
+      if (cardSource) {
+        // The prototype's violet CTA under the sources: a real button that
+        // navigates to the customer scheda, like the prototype. The explicit
+        // `ui-btn` base (no `ui-btn-*` variant) keeps the `ui-*` contract
+        // the raw-control test enforces without letting the later
+        // `.ui-btn-secondary` rule override the violet `.bo-oggi-cta`
+        // background in styles.css (which this screen must not touch).
+        const open = el(doc, 'button', 'bo-oggi-cta ui-btn', 'Apri la scheda');
+        open.setAttribute('type', 'button');
+        open.addEventListener('click', () => {
+          navigate(String(cardSource.href ?? ''));
+        });
+        brief.appendChild(open);
+      }
     }
-    mount.appendChild(brief);
+    pair.appendChild(brief);
   }
 
   // ---- Missing channels ----
@@ -1044,25 +1160,33 @@ export function renderOggi({
   if (home.availability?.channels === false) {
     const note = el(doc, 'section', 'bo-oggi-section');
     note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono composti in questo spazio.'));
-    mount.appendChild(note);
+    page.appendChild(note);
   } else if (missing.length > 0) {
     const invite = el(doc, 'section', 'bo-oggi-section');
     const names = missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
-    const anchor = el(doc, 'a', 'bo-oggi-invite', `Collega ${names.join(', ')} per non perdere nessun lead →`);
+    // The prototype's headline count: connected of the 9 backoffice
+    // channels, read from the actual connections. Hand-built homes without
+    // connections (tests) fall back to nine minus the missing lead list;
+    // the live view always carries connections, so production never guesses.
+    const connected = Array.isArray(home.connections)
+      ? countConnectedNine(home.connections)
+      : OGGI_TOTAL_CHANNELS - missing.length;
+    const anchor = el(doc, 'a', 'bo-oggi-invite', '');
+    anchor.appendChild(el(doc, 'strong', undefined, `${connected} di ${OGGI_TOTAL_CHANNELS} collegati`));
+    anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} per non perdere nessun lead →`));
     anchor.setAttribute('href', '#/connettori');
     anchor.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       navigate('#/connettori');
     });
     invite.appendChild(anchor);
-    mount.appendChild(invite);
+    page.appendChild(invite);
   }
 
   if (typeof home.error === 'string' && home.error !== '') {
-    mount.appendChild(el(doc, 'p', 'field-error', home.error));
+    page.appendChild(el(doc, 'p', 'field-error', home.error));
   }
 
-  appendLinkList(doc, mount, links, navigate);
 }
 
 /**
@@ -1146,6 +1270,7 @@ export function createOggiView(deps) {
         agenda,
         brief,
         missing,
+        connections: last.connections,
         availability: {
           work: last.workAvailable,
           appointments: last.appointmentsAvailable,

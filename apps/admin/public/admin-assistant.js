@@ -735,7 +735,7 @@ function answerNuovoAi() {
   answer.lines.push('1. Descrivi il modulo nella schermata Nuovo modulo (nome, campi, tipi).');
   answer.lines.push('2. L’agente di coding redige il manifest dalla descrizione (docs/MODULE_MANIFEST.md).');
   answer.lines.push('3. L’agente esegue bundle create --apply: file veri in bundles/<nome>/<versione>/, mai nel kernel.');
-  answer.lines.push('4. bundle verify avvia l’app vera con il bundle composto e serve un record: se non si avvia e non serve, il bundle non esiste.');
+  answer.lines.push('4. Il modulo viene provato davvero: si apre e mostra un record, altrimenti non esiste.');
   answer.lines.push('5. bundle install lo registra; l’host lo compone con createAccordoApp({ bundles }).');
   answer.actions.push({ id: 'bo05:apri-nuovo-modulo', label: 'Apri: Nuovo modulo', kind: 'navigate', href: '#/nuovo-modulo', customerFacing: false });
   answer.actions.push({ id: 'bo05:apri-reporting', label: 'Apri: Reporting', kind: 'navigate', href: '#/reporting', customerFacing: false });

@@ -542,7 +542,7 @@ export const SCREENS = Object.freeze([
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
-  { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Stripe collegato'] },
+  { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
   { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Cosa succede quando colleghi:', 'Collega in 3 passi'] },
@@ -721,7 +721,7 @@ await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: n
 const oggiViewText = document.getElementById('view-module').textContent;
 const oggiTitles = [...document.querySelectorAll('#view-module .bo-oggi-title')].map((node) => node.textContent);
 document.getElementById('probe').textContent = JSON.stringify({
-  recap: oggiViewText.includes('Oggi hai 2 appuntamenti'),
+  recap: oggiViewText.includes('Oggi hai 2 cose da fare e 2 appuntamenti'),
   tasks: oggiTitles.filter((title) => title === 'Richiama per il preventivo' || title === 'Prepara la call con i prezzi del pacchetto').length,
 });
 document.title = 'oggi-ready';`;
@@ -731,9 +731,9 @@ const ROWS = ${JSON.stringify(DEMO_CLIENTS)};
 const MENUS = {
   views: [
     { id: 'tutti', label: 'Tutti' },
+    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'nuovi-lead', label: 'Nuovi lead' },
     { id: 'clienti-attivi', label: 'Clienti attivi' },
-    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
     { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
   ],
   sorts: [
@@ -917,7 +917,11 @@ const client = {
     if (path.startsWith('/api/space-packages/preview')) {
       return { headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [{ module: 'channel-connection', count: 1 }], uncomposed: [], writes: 0 };
     }
-    if (path.startsWith('/api/connectors?')) return { connectors: [] };
+    // A mixed state, like the prototype: two channels connected (✓), the rest to connect (+).
+    if (path.startsWith('/api/connectors?')) return { connectors: [
+      { channel: 'whatsapp', connectionKey: 'wa-demo', status: 'active' },
+      { channel: 'email', connectionKey: 'mail-demo', status: 'active' },
+    ] };
     throw new Error('unexpected request ' + path);
   },
 };
@@ -929,6 +933,8 @@ await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   hero: document.getElementById('view-module').textContent.includes('Kit social'),
   sections: (document.getElementById('view-module').textContent.match(/Canali di conversazione|Agenda, lead e pagamenti/g) ?? []).length,
+  connected: document.querySelectorAll('[title="Collegato"]').length,
+  toConnect: document.querySelectorAll('button[aria-label^="Collega "]').length,
 });
 document.title = 'personalizzazione-ready';`;
     case 'catalogo': return `
@@ -948,8 +954,8 @@ const client = {
 const view = createCatalogView({ doc: document, mount: document.getElementById('view-module'), client });
 await view.renderTable({});
 document.getElementById('probe').textContent = JSON.stringify({
-  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
-  stripe: (document.querySelector('.catalog-stripe-ok') ?? { textContent: null }).textContent,
+  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 200) : null,
+  stripe: (document.querySelector('.catalog-stripe') ?? { textContent: null }).textContent,
   rules: (document.querySelector('.catalog-rule-bands') ?? { textContent: null }).textContent,
 });
 document.title = 'catalogo-ready';`;
@@ -1072,9 +1078,32 @@ const MIME = Object.freeze({
  * @param {string} name
  * @param {string} publicDir
  */
+/**
+ * The login probe writer. The static login page carries no `#probe` div, so
+ * the harness appends one plus a module script that records the painted
+ * login facts the review gate asserts (see `assertProbe` 'login'): the
+ * magic-link form, its email field, the Google button, the story panel and
+ * the installed #408 progressive enhancement (`form.noValidate`). The div
+ * stays hidden, so the photograph keeps the real page pixels.
+ */
+const LOGIN_PROBE_HTML = `<div id="probe" hidden></div><script type="module">
+const loginForm = document.querySelector('form.login-magic');
+document.getElementById('probe').textContent = JSON.stringify({
+  magic: loginForm !== null,
+  email: document.querySelectorAll('#login-email').length,
+  google: document.querySelectorAll('.login-google').length,
+  story: document.querySelectorAll('.login-story h1').length,
+  noValidate: loginForm !== null && loginForm.noValidate === true,
+});
+</script>`;
+
 export function harnessHtml(name, publicDir) {
   if (name === 'login') {
-    return readFileSync(join(publicDir, 'login.html'), 'utf8');
+    const markup = readFileSync(join(publicDir, 'login.html'), 'utf8');
+    if (!markup.includes('</body>')) {
+      throw new Error('bo:shots has no body close for the login harness');
+    }
+    return markup.replace('</body>', `${LOGIN_PROBE_HTML}</body>`);
   }
   const screen = SCREENS.find((entry) => entry.name === name);
   if (!screen || !screen.module) throw new Error(`bo:shots has no harness for screen "${name}"`);
@@ -1257,7 +1286,8 @@ export function readProbe(stdout, name) {
  * steps, the catalog holds the product table with its Stripe state and
  * price-rule bands, spazi-accessi holds both spaces with both members,
  * connettori holds all eight channel rows with their connect previews and
- * guided-flow buttons. The
+ * guided-flow buttons, the login page its magic-link form with the installed
+ * enhancement. The
  * per-screen counts for oggi/clienti/pipeline/reporting prove the demo
  * fixtures painted instead of an empty shell. Throws on the first mismatch.
  * @param {string} name
@@ -1268,8 +1298,16 @@ export function assertProbe(name, probe) {
     throw new Error(`${name}: the harness probe is not a JSON object`);
   }
   switch (name) {
-    case 'login':
+    case 'login': {
+      if (probe.magic !== true) throw new Error('login: the probe shows no magic-link form');
+      if (probe.email !== 1) throw new Error(`login: the probe lists ${String(probe.email)} email fields, expected 1`);
+      if (probe.google !== 1) throw new Error(`login: the probe lists ${String(probe.google)} Google buttons, expected 1`);
+      if (probe.story !== 1) throw new Error('login: the probe shows no story panel');
+      if (probe.noValidate !== true) {
+        throw new Error('login: the progressive enhancement did not install (stale pre-#408 markup?)');
+      }
       return;
+    }
     case 'oggi': {
       if (probe.recap !== true) throw new Error('oggi: the probe shows no appointments recap');
       if (probe.tasks !== 2) throw new Error(`oggi: the probe lists ${String(probe.tasks)} tasks, expected 2`);
@@ -1328,13 +1366,16 @@ export function assertProbe(name, probe) {
       if (typeof probe.sections !== 'number' || probe.sections < 1) {
         throw new Error('personalizzazione: the probe shows no channel sections');
       }
+      if (typeof probe.connected !== 'number' || probe.connected < 1 || typeof probe.toConnect !== 'number' || probe.toConnect < 1) {
+        throw new Error('personalizzazione: the probe must show both connected (✓) and to-connect (+) cards');
+      }
       return;
     }
     case 'catalogo': {
       if (typeof probe.table !== 'string' || !probe.table.includes('Pacchetto 10 lezioni')) {
         throw new Error('catalogo: the probe holds no product table');
       }
-      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Stripe collegato')) {
+      if (typeof probe.stripe !== 'string' || !probe.stripe.includes('Collegato a Stripe')) {
         throw new Error('catalogo: the probe holds no Stripe state');
       }
       if (typeof probe.rules !== 'string' || !probe.rules.includes('10%')) {
@@ -1442,13 +1483,11 @@ async function renderScreen({ binary, port, screen, outDir }) {
     if (diag) {
       console.log(`  · ${screen.name} ${kind} paint: ${diag[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')}`);
     }
-    if (screen.name !== 'login') {
-      try {
-        assertProbe(screen.name, readProbe(dom.stdout, screen.name));
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`${screen.name} ${kind}: ${reason}`);
-      }
+    try {
+      assertProbe(screen.name, readProbe(dom.stdout, screen.name));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`${screen.name} ${kind}: ${reason}`);
     }
     for (const expected of screen.expect) {
       if (!dom.stdout.includes(expected)) {
