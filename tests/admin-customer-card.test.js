@@ -298,6 +298,26 @@ test('BO-F6-09 fetta C3: an unknown origin channel reads Da raccogliere, never t
   assert.equal(sub.textContent, 'Da raccogliere · Da raccogliere · la segue Da raccogliere');
 });
 
+test('BO-F6-09 fetta C3: a prototype-named origin reads Da raccogliere, never Object source', async () => {
+  for (const system of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
+    const mount = await renderCard(stubClient({
+      card: {
+        ...CARD,
+        headline: {
+          city: { available: false, value: null, reason: 'no city on record' },
+          origin: { available: true, system, firstObservedAt: '2026-10-19T10:00:00.000Z', reason: null },
+          assignee: { available: false, value: null, reason: 'no referente on record' },
+        },
+      },
+    }));
+    const sub = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-sub');
+    assert.ok(sub, `the meta line exists for system ${system}`);
+    assert.equal(sub.textContent, 'Da raccogliere · Da raccogliere · la segue Da raccogliere',
+      `a prototype-named origin (${system}) falls back, never Object.prototype`);
+    assert.ok(!sub.textContent.includes('function'), 'no function source on screen');
+  }
+});
+
 test('BO-F6-09: every control on the scheda carries the visual system', async () => {
   const mount = await renderCard(stubClient());
   const raw = [];

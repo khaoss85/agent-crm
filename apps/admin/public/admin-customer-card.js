@@ -164,8 +164,15 @@ const syncArrow = (direction) => {
   return '';
 };
 
+/**
+ * Own-property label lookup: a hostile or unknown key (`constructor`,
+ * `toString`, `__proto__`, …) never reads through to `Object.prototype` —
+ * it falls to the caller's fallback, never a function source on screen.
+ */
+const ownLabel = (map, key) => Object.hasOwn(map, key) ? map[key] : undefined;
+
 const STATUS_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
-const statusLabel = (value) => STATUS_LABELS[String(value ?? '').toLowerCase()]
+const statusLabel = (value) => ownLabel(STATUS_LABELS, String(value ?? '').toLowerCase())
   ?? String(value ?? 'Contatto').replace(/^./, (first) => first.toUpperCase());
 
 /**
@@ -191,18 +198,18 @@ const OFFER_STATUS_LABELS = Object.freeze({
   pending_approval: 'in attesa di approvazione', approval_pending: 'in attesa di approvazione',
   discovery: 'scoperta', qualification: 'qualificazione', proposal: 'proposta', negotiation: 'trattativa',
 });
-const offerStatusLabel = (status) => OFFER_STATUS_LABELS[String(status ?? '').toLowerCase()] ?? null;
+const offerStatusLabel = (status) => ownLabel(OFFER_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
-const packageStatusLabel = (status) => PACKAGE_STATUS_LABELS[String(status ?? '').toLowerCase()] ?? null;
+const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
 const RESOURCE_LABELS = Object.freeze({ contact: 'Contatto', company: 'Azienda' });
-const resourceLabel = (resource) => RESOURCE_LABELS[String(resource ?? '').toLowerCase()] ?? 'Scheda';
+const resourceLabel = (resource) => ownLabel(RESOURCE_LABELS, String(resource ?? '').toLowerCase()) ?? 'Scheda';
 
 const ROLE_LABELS = Object.freeze({ canonical: 'scheda principale', alias: 'scheda collegata' });
-const roleLabel = (role) => ROLE_LABELS[String(role ?? '').toLowerCase()] ?? null;
-const channelLabel = (channel) => CHANNEL_LABELS[String(channel ?? '').toLowerCase()] ?? String(channel ?? 'canale');
-const syncLabel = (sync) => SYNC_LABELS[String(sync ?? '').toLowerCase()] ?? String(sync ?? 'stato ignoto');
+const roleLabel = (role) => ownLabel(ROLE_LABELS, String(role ?? '').toLowerCase()) ?? null;
+const channelLabel = (channel) => ownLabel(CHANNEL_LABELS, String(channel ?? '').toLowerCase()) ?? String(channel ?? 'canale');
+const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase()) ?? String(sync ?? 'stato ignoto');
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
@@ -317,7 +324,7 @@ export function createCustomerCardView(deps) {
       ? headline.city.value : 'Da raccogliere';
     const originSystem = headline?.origin?.available === true
       ? String(headline.origin.system ?? '').toLowerCase() : '';
-    const origin = CHANNEL_LABELS[originSystem] ?? 'Da raccogliere';
+    const origin = ownLabel(CHANNEL_LABELS, originSystem) ?? 'Da raccogliere';
     const follow = headline?.assignee?.available === true
       && typeof headline.assignee.value === 'string' && headline.assignee.value !== ''
       ? headline.assignee.value : 'Da raccogliere';
@@ -481,8 +488,8 @@ export function createCustomerCardView(deps) {
       return;
     }
     for (const item of items) {
-      const label = ENRICHED_FIELD_LABELS[String(item?.field ?? '')] ?? String(item?.field ?? 'dato');
-      const source = ENRICHMENT_SOURCE_LABELS[String(item?.source ?? '')] ?? String(item?.source ?? 'fonte non registrata');
+      const label = ownLabel(ENRICHED_FIELD_LABELS, String(item?.field ?? '')) ?? String(item?.field ?? 'dato');
+      const source = ownLabel(ENRICHMENT_SOURCE_LABELS, String(item?.source ?? '')) ?? String(item?.source ?? 'fonte non registrata');
       const when = dateParts(item?.observedAt);
       box.appendChild(el('p', 'bo-scheda-enriched',
         `${label}: ${String(item?.value ?? '—')} (fonte: ${source}${when ? ` · ${when}` : ''})`));
@@ -721,7 +728,7 @@ export function createCustomerCardView(deps) {
     if (signals.length > 0) {
       const list = el('ul', 'bo-scheda-signals');
       for (const signal of signals) {
-        const label = SIGNAL_LABELS[String(signal?.type ?? '')] ?? String(signal?.type ?? 'segnale');
+        const label = ownLabel(SIGNAL_LABELS, String(signal?.type ?? '')) ?? String(signal?.type ?? 'segnale');
         // A purged transcript keeps its signal rows without the quoted words:
         // the label stays as proof of what was found, never an empty quote.
         const line = typeof signal?.excerpt === 'string' && signal.excerpt !== ''
