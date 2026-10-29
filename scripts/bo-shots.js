@@ -1284,7 +1284,8 @@ export function readProbe(stdout, name) {
  * calendario week holds five work-day columns with the demo events, the AI
  * proposal rows with their ghosts and a prefilled manual form, sequenze lists both sequences with detail and
  * steps, the catalog holds the product table with its Stripe state and
- * price-rule bands, spazi-accessi holds both spaces with both members,
+ * price-rule bands, spazi-accessi holds both spaces plus the dashed new-space
+ * box with both members,
  * connettori holds all eight channel rows with their connect previews and
  * guided-flow buttons, the login page its magic-link form with the installed
  * enhancement. The
@@ -1388,7 +1389,10 @@ export function assertProbe(name, probe) {
       return;
     }
     case 'spazi-accessi': {
-      if (probe.spaces !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.spaces)} spaces, expected 2`);
+      // Two space cards plus the dashed "+ Nuovo spazio di lavoro" box (C11),
+      // which shares the card class: keep in sync with
+      // tests/admin-spazi-accessi-shots.test.js.
+      if (probe.spaces !== 3) throw new Error(`spazi-accessi: the probe holds ${String(probe.spaces)} spaces, expected 3`);
       if (probe.members !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.members)} members, expected 2`);
       if (probe.switches !== 5) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 5`);
       return;
