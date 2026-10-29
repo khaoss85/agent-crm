@@ -114,7 +114,35 @@ every operation refuses with `MAGIC_LINK_NOT_CONFIGURED` until the edges exist.
 npm run crm -- package inspect packages/magic-link
 npm run crm -- package validate packages/magic-link
 npm run crm -- package test packages/magic-link --json
-node --no-warnings --test tests/magic-link.test.js tests/magic-link-rules.test.js tests/magic-link-outbox.test.js tests/admin-login.test.js
+node --no-warnings --test tests/magic-link.test.js tests/magic-link-rules.test.js tests/magic-link-outbox.test.js tests/admin-login.test.js tests/login-page.test.js
+```
+
+## Who serves the login page
+
+The framework owns the login markup, so every deployment paints the same
+prototype screen (backlog:f9680c478410). The single source is
+`src/login-page.js`:
+
+- `loginPageHtml({ googleHref })` — the production page for hosts that
+  cannot serve the backoffice assets (today the shared pilot's
+  `/w/<spazio>/`). One self-contained document: inline style only, no
+  `<form>`, no stylesheet link, no script. `googleHref` names the
+  deployment's OAuth entry — a same-origin `/path` or an `https://`
+  URL, anything else refuses fail-closed — and is the only input.
+- `backofficeLoginHtml()` — the full backoffice document: the same
+  story, greeting and Google entry, plus the deployment-owned
+  magic-link form, its enhancement module and the design-system
+  stylesheet. `apps/admin/public/login.html` is generated from it with
+  `node scripts/generate-login-html.js` (`--check` verifies freshness)
+  and never edited by hand; `tests/login-page.test.js` fails on any
+  byte of drift, so the file and the function cannot duplicate the
+  markup.
+
+```js
+import { loginPageHtml } from 'accordo/packages/magic-link/src/index.js';
+
+const html = loginPageHtml({ googleHref: '/auth/google' });
+// serve it as text/html; charset=utf-8 with `cache-control: no-store`
 ```
 
 `package test` proves this package satisfies the **framework contract**. It

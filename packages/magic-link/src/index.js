@@ -441,3 +441,11 @@ export function createMagicLinkPackage(options = {}) {
 }
 
 export { createMemoryMagicLinkStore };
+export {
+  BACKOFFICE_GOOGLE_HREF,
+  backofficeLoginHtml,
+  loginGreetingHtml,
+  loginGoogleLinkHtml,
+  loginPageHtml,
+  loginStoryHtml,
+} from './login-page.js';
