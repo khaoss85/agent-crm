@@ -499,7 +499,13 @@ export function createCalendarioView(deps) {
           `spaceId=${readSpace()}`,
         );
       }
+      // A failed reload repaints too: without it the card would keep
+      // showing the previous roster and its Italian roles instead of
+      // falling back to the opaque named toggles (same mount guard as
+      // the success path, so a late answer never paints over another
+      // screen sharing the mount).
       state.members = null;
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
       return;
     }
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
