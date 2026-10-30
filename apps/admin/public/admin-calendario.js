@@ -24,7 +24,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { spaceRoleLabel } from './admin-spazi-accessi.js';
-import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -1637,6 +1637,55 @@ export function createCalendarioView(deps) {
     if (field) state.manualFirst = field;
   }
 
+  /**
+   * BO-F6-11 fetta 9 (backlog:5fbebe8559e9, owner 29/10: never an id the
+   * operator types blind): the manual form's person is a choice among the
+   * known team — the same names the Team card toggles (named filter ids plus
+   * roster subjects), through the design-system select, so the claim still
+   * carries the opaque identity the server books. With nobody known, or when
+   * a phrase draft names someone outside the known team, the plain «Persona
+   * del team» text field stays so nothing the operator or the AI named is
+   * lost. An empty choice books nothing: the server requires the person and
+   * the form answers in plain words.
+   * @param {any} form
+   * @returns {any} the live teamMemberId node (the select, or the fallback input)
+   */
+  function renderPersonChoice(form) {
+    const named = parseMemberFilter(state.memberFilter);
+    const rows = teamRowsWithRoles(named, state.hiddenMembers, state.members);
+    const draftPerson = typeof state.draftFill?.teamMemberId === 'string' ? state.draftFill.teamMemberId : '';
+    const keptPerson = typeof state.manual?.teamMemberId === 'string' ? state.manual.teamMemberId : '';
+    const current = keptPerson !== '' ? keptPerson : draftPerson;
+    const known = rows.length > 0 && (current === '' || rows.some((row) => row.id === current));
+    if (!known) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
+      if (current !== '') input.value = current;
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), teamMemberId: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      return input;
+    }
+    const options = [{ value: '', label: 'Scegli una persona…' },
+      ...rows.map((row) => ({
+        value: row.id,
+        label: typeof row.role === 'string' && row.role !== '' ? `${row.id} · ${row.role}` : row.id,
+      }))];
+    const wrap = uiSelect(doc, { name: 'teamMemberId', value: current, options });
+    const select = wrap.querySelector('select');
+    if (select) {
+      if (current !== '') select.value = current;
+      const track = () => {
+        state.manual = { ...(state.manual ?? {}), teamMemberId: String(select.value ?? '') };
+      };
+      select.addEventListener('input', track);
+      select.addEventListener('change', track);
+      form.appendChild(wrap);
+      return select;
+    }
+    return wrap;
+  }
+
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM, so a draft can still prefill it.
@@ -1652,16 +1701,22 @@ export function createCalendarioView(deps) {
     // or a resource (owner 29/10): the search block below owns the pick, so
     // no raw customer field paints here.
     renderCustomerPick(form);
+    const inputs = {};
+    // The person is chosen from the known team, never typed as an opaque id
+    // while the team is known (fetta 9): the select owns the claim value.
+    inputs.teamMemberId = renderPersonChoice(form);
+    // The service rides the listino product key the server books: no
+    // listino-backed picker exists in the framework yet (nominated missing
+    // capability, never simulated), so the key stays typed — but the label
+    // names no technical concept (fetta 9, C22).
     const fields = [
-      ['teamMemberId', 'text', 'Persona del team'],
-      ['serviceKey', 'text', 'Servizio (chiave listino)'],
+      ['serviceKey', 'text', 'Servizio'],
       ['price', 'text', 'Prezzo EUR (es. 45.00)'],
       ['date', 'date', 'Giorno'],
       ['start', 'time', 'Inizio'],
       ['end', 'time', 'Fine'],
       ['notes', 'text', 'Note'],
     ];
-    const inputs = {};
     for (const [name, type, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, placeholder } });
       // Keep what the operator typed: a re-render (propose, slots, week)
