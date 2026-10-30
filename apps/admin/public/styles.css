@@ -1257,7 +1257,11 @@ select.bo-spazi-input { flex: none; }
 .catalog-meta { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .catalog-source { padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--muted); }
 .catalog-source-provider { background: var(--agent-card); color: var(--agent-ink); }
-.catalog-inactive { font-size: 11px; color: var(--dim); }
+.catalog-active-state { font-size: 12px; font-weight: 700; color: var(--muted); }
+.catalog-create-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.catalog-create-form { display: grid; gap: 6px; }
+.catalog-create-label { font-size: 12px; color: var(--muted); }
+.catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
 .catalog-readonly { margin: 4px 0 0; font-size: 11.5px; color: var(--data-ink); }
 .catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
 .catalog-offer { padding: 0; margin: 0; }
@@ -1293,6 +1297,7 @@ select.bo-spazi-input { flex: none; }
   .catalog-filters { flex-direction: column; align-items: stretch; }
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-row { overflow-wrap: anywhere; }
 }
 
