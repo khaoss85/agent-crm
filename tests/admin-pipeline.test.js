@@ -390,10 +390,31 @@ test('forecast shows the month title, won plus 60% of open, and the risk name (C
   assert.ok(box.textContent.includes('1.900 €'), `EUR forecast total (${box.textContent})`);
   assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
   assert.ok(
+    !box.textContent.includes('Il rischio più alto'),
+    `no global risk ranking across currencies (Codex P2 on #467) (${box.textContent})`,
+  );
+  assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
+});
+
+test('forecast names the highest-value open offer when one currency is in play', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { owner: 'alice' }),
+      record('b', 'demo', { valueCents: 50_000, owner: 'bob' }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(
     box.textContent.includes('Il rischio più alto è alice.'),
     `the risk names the owner of the highest-value open offer (${box.textContent})`,
   );
-  assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
 });
 
 test('forecast with closed offers but no open ones shows totals and no risk line', async () => {

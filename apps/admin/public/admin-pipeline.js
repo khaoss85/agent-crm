@@ -490,6 +490,7 @@ export function createPipelineBoard(deps) {
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open').map((stage) => stage.key));
     const closed = new Map();
     const waiting = new Map();
+    const openCurrencies = new Set();
     let riskiest = null;
     for (const record of visible) {
       if (!Number.isSafeInteger(record.valueCents)) continue;
@@ -497,6 +498,7 @@ export function createPipelineBoard(deps) {
         closed.set(record.currency, (closed.get(record.currency) ?? 0) + record.valueCents);
       } else if (openKeys.has(record.pipelineStage)) {
         waiting.set(record.currency, (waiting.get(record.currency) ?? 0) + record.valueCents);
+        openCurrencies.add(record.currency);
         if (!riskiest || record.valueCents > riskiest.valueCents) riskiest = record;
       }
     }
@@ -518,9 +520,12 @@ export function createPipelineBoard(deps) {
       class: 'hint',
       text: 'Vinte e pagate, più il 60% di quelle in attesa — stima, non un impegno.',
     }));
-    const riskName = typeof riskiest?.owner === 'string' && riskiest.owner
+    // No global ranking across currencies: raw cents are not comparable
+    // without exchange rates, so the risk line shows only when every valued
+    // open offer shares one currency (Codex P2 on #467).
+    const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
       ? riskiest.owner
-      : typeof riskiest?.companyName === 'string' && riskiest.companyName
+      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
         ? riskiest.companyName
         : null;
     if (riskName) {
