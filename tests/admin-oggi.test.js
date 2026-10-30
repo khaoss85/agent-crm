@@ -79,7 +79,7 @@ test('Oggi links are the delivered screens only, never Oggi itself', () => {
   assert.ok(routes.includes('#/customer-data'), 'Clienti links the delivered screen');
   assert.ok(routes.includes('#/pipelines/vendite'), 'Pipeline links the composed board');
   assert.ok(routes.includes('#/modules/magazzino'), 'custom modules link their screen');
-  assert.ok(routes.includes('#/impostazioni'), 'Impostazioni links the settings entry');
+  assert.ok(routes.includes('#/personalizzazione'), 'Impostazioni links the Personalizzazione tab');
   assert.ok(!routes.includes('#/'), 'Oggi never links itself');
   assert.ok(links.every((link) => typeof link.label === 'string' && link.label !== ''));
   // Without composed packages Oggi links the always-available entries:
@@ -88,7 +88,7 @@ test('Oggi links are the delivered screens only, never Oggi itself', () => {
   const bare = buildOggiLinks(buildShellNav());
   assert.deepEqual(
     bare.map((link) => link.route),
-    ['#/calendario', '#/reporting', '#/nuovo-modulo', '#/impostazioni'],
+    ['#/calendario', '#/reporting', '#/nuovo-modulo', '#/personalizzazione'],
   );
   assert.deepEqual(buildOggiLinks(null), []);
   assert.deepEqual(buildOggiLinks('nope'), []);
@@ -204,7 +204,7 @@ test('sidebar under a space mount shows the Italian voices and links the deliver
     assert.ok(!text.includes(banned), `sidebar shows no demo text: ${banned}`);
   }
   const byHref = (href) => sidebar.findAll('a').find((node) => node.getAttribute('href') === href);
-  for (const href of ['#/', '#/customer-data', '#/pipelines/vendite', '#/impostazioni']) {
+  for (const href of ['#/', '#/customer-data', '#/pipelines/vendite', '#/personalizzazione']) {
     assert.ok(byHref(href), `sidebar links ${href}`);
   }
   byHref('#/customer-data').dispatch('click', { preventDefault: () => {} });

@@ -204,6 +204,26 @@ test('provider rows render read-only with tier labels and no invite once Stripe 
   assert.equal(mount.findAll('select').length, 1, 'the active filter is a bounded select');
 });
 
+test('provider rows promise no Stripe edit while Stripe is disconnected', async () => {
+  // A provider-priced row with a summary that says disconnected: the row
+  // keeps its amounts as plain text but carries no "change it on Stripe"
+  // note, since there is no connected Stripe source to change it on.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const table = {
+    products: STRIPE_TABLE.products,
+    summary: { manual: 0, byProvider: {}, stripeConnected: false },
+  };
+  const client = stubClient({ tables: { '': table } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const text = mount.textContent;
+  assert.ok(text.includes('Stripe non collegato'), 'the disconnected state renders');
+  assert.ok(!text.includes('Sola lettura'), 'no row promises a Stripe edit while disconnected');
+  assert.ok(!text.includes('sola lettura'), 'no row promises a Stripe edit while disconnected');
+});
+
 test('filters travel as query params and hostile values stay text', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

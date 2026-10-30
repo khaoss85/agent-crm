@@ -135,6 +135,20 @@ export function createCatalogView(deps) {
    * the honest manual-management invite.
    * @param {any} summary
    */
+  /**
+   * Stripe connection state from the catalog summary. The server publishes
+   * `stripeConnected` (packages/commercial/src/manual-catalog.js); a summary
+   * without the flag falls back to the same by-provider derivation, so the
+   * rows and the Stripe block never disagree about it.
+   * @param {any} summary
+   */
+  function stripeIsConnected(summary) {
+    if (summary && typeof summary.stripeConnected === 'boolean') return summary.stripeConnected;
+    const providers = summary && typeof summary === 'object' && summary.byProvider
+      && typeof summary.byProvider === 'object' ? summary.byProvider : {};
+    return Object.keys(providers).some((name) => name.toLowerCase().includes('stripe'));
+  }
+
   function renderStripeBlock(summary) {
     const box = el('div', 'catalog-stripe');
     box.appendChild(el('span', 'catalog-stripe-badge', 'S'));
@@ -142,7 +156,9 @@ export function createCatalogView(deps) {
     box.appendChild(text);
     const byProvider = summary && typeof summary === 'object' && summary.byProvider
       && typeof summary.byProvider === 'object' ? summary.byProvider : {};
-    const connected = Object.keys(byProvider).filter((name) => name.toLowerCase().includes('stripe'));
+    const connected = stripeIsConnected(summary)
+      ? Object.keys(byProvider).filter((name) => name.toLowerCase().includes('stripe'))
+      : [];
     if (connected.length === 0) {
       box.setAttribute('data-state', 'manual');
       text.appendChild(el('strong', 'catalog-stripe-title', 'Stripe non collegato'));
@@ -502,6 +518,7 @@ export function createCatalogView(deps) {
       return;
     }
     const summary = table.summary ?? {};
+    const stripeConnected = stripeIsConnected(summary);
     page.appendChild(renderStripeBlock(summary));
     const loaded = table.products;
 
@@ -593,7 +610,11 @@ export function createCatalogView(deps) {
       const switchCell = el('div', 'catalog-cell-switch');
       row.appendChild(switchCell);
       const manual = product.source === 'manual' && product.priceReadOnly !== true;
-      if (product.priceReadOnly === true) {
+      // Provider prices stay read-only text (the write path refuses them
+      // with PROVIDER_PRICE_READONLY), but the "change it on Stripe" note
+      // only makes sense while a Stripe source is actually connected: with
+      // Stripe disconnected no row may promise a Stripe edit.
+      if (product.priceReadOnly === true && stripeConnected) {
         priceCell.appendChild(el('p', 'catalog-readonly', 'Sola lettura: si cambia su Stripe.'));
       }
       const offers = Array.isArray(product.offers) ? product.offers : [];

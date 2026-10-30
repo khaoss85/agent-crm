@@ -161,7 +161,10 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
   await board.renderBoard('b2b-sales');
   assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
-  assert.ok(mount.textContent.includes('1 record non in questa pipeline (non mostrato)'), 'exclusion disclosed');
+  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline (non mostrata)."), 'exclusion disclosed in correct Italian');
+  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/another-pipeline');
+  assert.ok(link, 'the other pipeline links to its own board');
+  assert.equal(link.textContent, 'Vedi another-pipeline');
 });
 
 test('the off-pipeline disclosure uses the Italian plural for several records', async () => {
@@ -174,7 +177,24 @@ test('the off-pipeline disclosure uses the Italian plural for several records', 
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('2 record non in questa pipeline (non mostrati).'), 'plural exclusion disclosed');
+  assert.ok(mount.textContent.includes('2 offerte di altre pipeline (non mostrate).'), 'plural exclusion disclosed in correct Italian');
+  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/other');
+  assert.ok(link, 'the other pipeline links to its own board');
+  assert.equal(link.textContent, 'Vedi other');
+});
+
+test('the summary counts the shown cards, never the off-pipeline offers', async () => {
+  const records = [
+    record('a', 'discovery'),
+    record('b', 'demo'),
+    { ...record('x', 'discovery'), pipelineKey: 'other' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  assert.match(summaryText(mount), /2 offerte/, 'the count names the shown cards only');
+  assert.ok(!summaryText(mount).includes('3'), 'off-pipeline offers never enter the count');
 });
 
 test('hostile stage labels and record values render as inert text', async () => {
@@ -666,7 +686,8 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Nessun valore aperto da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
-    '1 record non in questa pipeline (non mostrato).',
+    "1 offerta di un'altra pipeline (non mostrata).",
+    'Vedi altra',
     'Fuori definizione (1)',
     'fase registrata: svincolata',
     'Sposta in',

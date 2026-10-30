@@ -252,10 +252,7 @@ export function createPipelineBoard(deps) {
       }));
     }
     if (offPipeline > 0) {
-      titleBox.appendChild(el(doc, 'p', {
-        class: 'hint',
-        text: `${offPipeline} record non in questa pipeline (non mostrat${offPipeline === 1 ? 'o' : 'i'}).`,
-      }));
+      titleBox.appendChild(renderOffPipelineNote(records, pipeline.name, offPipeline));
     }
     heading.appendChild(titleBox);
     // Supervisor design pass (prototype 06): the forecast is the violet card
@@ -409,6 +406,32 @@ export function createPipelineBoard(deps) {
   }
 
   /** Count + per-currency totals over the filtered set (currencies never summed). */
+  /**
+   * Off-pipeline disclosure: records of other pipelines are excluded by
+   * documented behavior, never silently hidden. The count names offers —
+   * the page is the offers board, and the summary beside it counts the
+   * shown cards — and every other pipeline with a routable name gets a
+   * link to its own board, so the operator can go see them. A key outside
+   * the route grammar cannot be linked: it stays in the count, never in
+   * an href. Every value renders as text, never HTML.
+   * @param {Array<Record<string, any>>} records
+   */
+  function renderOffPipelineNote(records, pipelineName, offPipeline) {
+    const one = offPipeline === 1;
+    const note = el(doc, 'p', { class: 'hint' });
+    note.textContent = `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline (non mostrat${one ? 'a' : 'e'}).`;
+    const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
+      .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
+      .sort();
+    others.forEach((key, index) => {
+      note.appendChild(el(doc, 'span', { text: index === 0 ? ' ' : ' · ' }));
+      const link = el(doc, 'a', { attrs: { href: `#/pipelines/${encodeURIComponent(key)}` } });
+      link.textContent = `Vedi ${key}`;
+      note.appendChild(link);
+    });
+    return note;
+  }
+
   function renderSummary(visible) {
     const summary = el(doc, 'p', { class: 'pipeline-summary', attrs: { 'data-summary': String(visible.length) } });
     const totals = new Map();
