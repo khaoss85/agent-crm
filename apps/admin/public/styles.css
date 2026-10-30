@@ -372,6 +372,9 @@ button[aria-busy="true"] { opacity: .6; }
 }
 a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-nav-item.active { background: var(--ink); color: var(--paper); }
+/* The hover wash must never win over the active pair: paper on soft is
+ * unreadable, and the grey pills would be all that is left of the row. */
+a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-nav-item.disabled { color: var(--muted); background: transparent; cursor: default; }
 .bo-nav-label { flex: 1; }
 .bo-nav-icon { width: 18px; height: 18px; flex: none; }
