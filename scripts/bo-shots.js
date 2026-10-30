@@ -741,11 +741,14 @@ document.title = 'oggi-ready';`;
 import { createCustomerListView } from './admin-clienti.js';
 const ROWS = ${JSON.stringify(DEMO_CLIENTS)};
 const MENUS = {
+  // Demo-shaped counts (Tutti 3 covers the 3 demo rows); rinnovi names no
+  // count on purpose, so the render also proves the label-only fallback for
+  // an unreadable dependency (backlog:22d4dd0f, C10).
   views: [
-    { id: 'tutti', label: 'Tutti' },
-    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi' },
-    { id: 'nuovi-lead', label: 'Nuovi lead' },
-    { id: 'clienti-attivi', label: 'Clienti attivi' },
+    { id: 'tutti', label: 'Tutti', count: 3 },
+    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi', count: 1 },
+    { id: 'nuovi-lead', label: 'Nuovi lead', count: 1 },
+    { id: 'clienti-attivi', label: 'Clienti attivi', count: 1 },
     { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
   ],
   sorts: [
@@ -777,6 +780,7 @@ const view = createCustomerListView({ doc: document, mount: document.getElementB
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
   rows: document.querySelectorAll('#view-module .bo-clienti-row').length,
+  pills: Array.from(document.querySelectorAll('#view-module button[role="tab"]'), (tab) => tab.textContent),
 });
 document.title = 'clienti-ready';`;
     case 'cliente': return `
@@ -1359,6 +1363,11 @@ export function assertProbe(name, probe) {
     }
     case 'clienti': {
       if (probe.rows !== 3) throw new Error(`clienti: the probe lists ${String(probe.rows)} rows, expected 3`);
+      const pills = Array.isArray(probe.pills) ? probe.pills : [];
+      const expectedPills = ['Tutti 3', 'Da ricontattare oggi 1', 'Nuovi lead 1', 'Clienti attivi 1', 'Rinnovi entro 30 giorni'];
+      if (pills.length !== expectedPills.length || pills.some((pill, index) => pill !== expectedPills[index])) {
+        throw new Error(`clienti: the pills read ${JSON.stringify(pills)}, expected ${JSON.stringify(expectedPills)}`);
+      }
       return;
     }
     case 'cliente': {

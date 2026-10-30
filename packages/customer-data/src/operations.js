@@ -6,7 +6,7 @@ import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
   CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
-  CUSTOMER_VIEWS, applyCustomerListQuery, parseCustomerListQuery, shapeCustomerRow,
+  CUSTOMER_VIEWS, applyCustomerListQuery, filterCustomerRows, parseCustomerListQuery, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -617,6 +617,20 @@ export async function listCustomerRecords({ modules, core, names }, request) {
   });
 
   const page = applyCustomerListQuery(rows, query, today);
+  // Per-view pill counts (prototype checklist C10: `<etichetta> <n>`): the
+  // same predicate the page applies, counted without pagination over the
+  // current explicit filters. A view without a count renders its label
+  // only — honest absence, never an exact-looking floor: no count when the
+  // subject scan truncated (complete:false), nor for a derived view whose
+  // dependency is unreadable or partial here.
+  const views = CUSTOMER_VIEWS.map((view) => {
+    const entry = { id: view.id, label: view.label };
+    if (complete !== true) return entry;
+    if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
+    if (view.id === 'rinnovi-30-giorni'
+      && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
+    return { ...entry, count: filterCustomerRows(rows, query, view, today).length };
+  });
   return Object.freeze({
     customerListContract: CUSTOMER_LIST_CONTRACT,
     items: page.items,
@@ -626,7 +640,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     pages: page.pages,
     complete,
     totalIsExact: complete,
-    views: CUSTOMER_VIEWS.map((view) => ({ id: view.id, label: view.label })),
+    views,
     sorts: CUSTOMER_SORTS.map((sort) => ({ ...sort })),
     columns: CUSTOMER_COLUMNS.map((column) => ({ ...column })),
     pageSizes: [...CUSTOMER_PAGE_SIZES],
