@@ -195,29 +195,49 @@ export function assertNoSecrets(value, connection = PG_TEST_URL) {
   }
 }
 
+const PG_CONNECT_RETRY_MS = 6_000;
+const PG_CONNECT_RETRY_GAP_MS = 200;
+
+function isTransientPostgresqlOpenError(error) {
+  return error instanceof AppError
+    && (error.code === 'STORAGE_UNAVAILABLE' || error.code === 'STORAGE_TIMEOUT');
+}
+
 export async function openPostgresqlFixture(t, options = {}) {
-  try {
-    const db = await createPostgresqlDatabase({
-      connection: options.connection ?? PG_TEST_URL,
-      ddl: options.ddl ?? PG_TEST_DDL,
-      max: options.max,
-      acquisitionDeadlineMs: options.acquisitionDeadlineMs,
-      queryDeadlineMs: options.queryDeadlineMs,
-      lockTimeoutMs: options.lockTimeoutMs,
-      statementTimeoutMs: options.statementTimeoutMs,
-    });
-    t.after(() => db.close());
-    return db;
-  } catch (error) {
-    if (PG_REQUIRED) {
-      throw new AppError(
-        'ACCORDO_PG_TEST_REQUIRED: PostgreSQL 16 is required for this suite. '
-          + 'Start with: docker run --rm -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres '
-          + '-e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16',
-        { code: 'ACCORDO_PG_TEST_REQUIRED', status: 503 },
-      );
+  // The scheduled verify opens dozens of fixtures while every other Postgres
+  // suite on the same runner does the same: the first connect can hit a busy
+  // server (too many clients, a refused/terminated handshake) even though the
+  // database itself is healthy. Retry transient opens for a few seconds before
+  // refusing the suite, so one bad moment no longer fails the whole run
+  // (backlog:732c0a9a5dd3). Programmer errors (bad schema, missing driver)
+  // still fail on the first attempt.
+  const deadline = Date.now() + PG_CONNECT_RETRY_MS;
+  for (;;) {
+    try {
+      const db = await createPostgresqlDatabase({
+        connection: options.connection ?? PG_TEST_URL,
+        ddl: options.ddl ?? PG_TEST_DDL,
+        max: options.max,
+        acquisitionDeadlineMs: options.acquisitionDeadlineMs,
+        queryDeadlineMs: options.queryDeadlineMs,
+        lockTimeoutMs: options.lockTimeoutMs,
+        statementTimeoutMs: options.statementTimeoutMs,
+      });
+      t.after(() => db.close());
+      return db;
+    } catch (error) {
+      if (!isTransientPostgresqlOpenError(error) || Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, PG_CONNECT_RETRY_GAP_MS));
     }
-    t.skip('PostgreSQL 16 is not reachable locally; CI always runs this suite against postgres:16');
-    return null;
   }
+  if (PG_REQUIRED) {
+    throw new AppError(
+      'ACCORDO_PG_TEST_REQUIRED: PostgreSQL 16 is required for this suite. '
+        + 'Start with: docker run --rm -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres '
+        + '-e POSTGRES_DB=accordo_test -p 5432:5432 postgres:16',
+      { code: 'ACCORDO_PG_TEST_REQUIRED', status: 503 },
+    );
+  }
+  t.skip('PostgreSQL 16 is not reachable locally; CI always runs this suite against postgres:16');
+  return null;
 }
