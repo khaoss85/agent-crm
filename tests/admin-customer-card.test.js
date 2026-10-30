@@ -1236,7 +1236,7 @@ test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline'
 test('714433c2: Cambia stato lists the other stages in Italian and moves the opportunity', async () => {
   const seen = [];
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
-  const client = recordingClient(base, () => ({ outcome: 'stage_changed' }));
+  const client = recordingClient(base, () => ({ output: { outcome: 'stage_changed' } }));
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({
@@ -1273,7 +1273,7 @@ test('714433c2: Cambia stato lists the other stages in Italian and moves the opp
 test('714433c2: an approval-gated move toasts the approval, and a quote line carries no menu', async () => {
   const seen = [];
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
-  const client = recordingClient(base, () => ({ outcome: 'approval_required' }));
+  const client = recordingClient(base, () => ({ output: { outcome: 'approval_required' } }));
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({

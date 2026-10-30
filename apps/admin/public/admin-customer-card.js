@@ -2,6 +2,7 @@
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError } from './admin-core.js';
+import { writePendingCustomerPick } from './admin-prefill.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -232,6 +233,10 @@ const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', face
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
+  // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
+  // The shell passes its storage; without one the buttons still navigate
+  // and the creation screens open unpicked.
+  const storage = deps.storage ?? null;
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
@@ -347,7 +352,21 @@ export function createCustomerCardView(deps) {
     panel.appendChild(head);
   }
 
-  function quickActions(box, card) {
+  /**
+   * Voce 714433c2: the customer the creation flows start with. Only a
+   * named contact/company record qualifies — anything else navigates
+   * unpicked instead of inventing a customer.
+   */
+  function customerPickFor(navCtx, card) {
+    const resource = navCtx?.resource;
+    const id = navCtx?.id;
+    const name = typeof card?.name === 'string' ? card.name.trim() : '';
+    if ((resource !== 'contact' && resource !== 'company')) return null;
+    if (typeof id !== 'string' || id === '' || name === '') return null;
+    return { resource, id, name };
+  }
+
+  function quickActions(box, card, navCtx) {
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
     if (card?.phone?.available === true && card.phone.value) {
@@ -368,6 +387,29 @@ export function createCustomerCardView(deps) {
     } else {
       row.appendChild(el('span', 'bo-scheda-disabled', 'email non disponibile'));
     }
+    // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
+    // creation flows with this customer already chosen. The pick travels
+    // as a one-time handoff the target screen takes on render (the router
+    // carries path-only hashes, so no query tail); without a named record
+    // or without a storage the buttons still navigate, and the creation
+    // screen opens unpicked instead of inventing a customer.
+    const pick = customerPickFor(navCtx, card);
+    const offer = el('button', undefined, 'Nuova offerta');
+    offer.setAttribute('type', 'button');
+    offer.setAttribute('data-action', 'new-offer');
+    offer.addEventListener('click', () => {
+      if (pick !== null) writePendingCustomerPick(storage, 'offer', pick);
+      navigate('#/modules/opportunity/new');
+    });
+    row.appendChild(offer);
+    const appointment = el('button', undefined, 'Nuovo appuntamento');
+    appointment.setAttribute('type', 'button');
+    appointment.setAttribute('data-action', 'new-appointment');
+    appointment.addEventListener('click', () => {
+      if (pick !== null) writePendingCustomerPick(storage, 'appointment', pick);
+      navigate('#/calendario');
+    });
+    row.appendChild(appointment);
     box.appendChild(row);
   }
 
@@ -928,7 +970,10 @@ export function createCustomerCardView(deps) {
                 { method: 'POST', body: JSON.stringify({ targetStage: stage }) },
               );
               close();
-              toast(result?.outcome === 'approval_required'
+              // The stage route returns the workflow envelope
+              // { runId, status, output }: the approval gate reads in
+              // output.outcome, never in a top-level outcome.
+              toast(result?.output?.outcome === 'approval_required'
                 ? 'Stato aggiornato: serve un\u2019approvazione'
                 : 'Stato aggiornato');
               await renderCard(offerCtx.resource, offerCtx.id);
@@ -1118,7 +1163,7 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card);
+    section(left, '', quickActions, card, { resource, id });
     section(left, '', linkedIdentities, profile);
     section(left, '', details, card, profile, { resource, id });
     section(left, '', enriched, enrichment, reloadEnrichment);

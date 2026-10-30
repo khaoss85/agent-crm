@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
+import { AppError, definePackage, nowIso, selectPackageGraph } from '../../core/index.js';
 import {
   ACTIVITY_KINDS,
   ACTIVITY_MODULE,
@@ -25,7 +25,6 @@ import {
   sortTimeline,
   validateSubject,
 } from './follow-up.js';
-import { nowIso } from '../../core/src/time.js';
 
 /**
  * **Work v1 — tasks and activity evidence.**

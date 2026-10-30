@@ -85,68 +85,62 @@ export class ContactService {
     if (!patch || typeof patch !== 'object') {
       throw new ValidationError('a contact update needs at least one field', { field: 'patch' });
     }
+    // The write names only the columns the patch supplies (plus updatedAt):
+    // two concurrent partial updates touch disjoint columns instead of
+    // replaying each other's stale snapshot (lost update). The merged copy
+    // below feeds the audit payload only, never the write.
+    const values = [];
     const next = { ...current };
-    let touched = false;
     if (patch.firstName !== undefined) {
       next.firstName = requiredString(patch.firstName, 'firstName');
-      touched = true;
+      values.push({ column: 'first_name', value: next.firstName });
     }
     if (patch.lastName !== undefined) {
       next.lastName = requiredString(patch.lastName, 'lastName');
-      touched = true;
+      values.push({ column: 'last_name', value: next.lastName });
     }
     if (patch.email !== undefined) {
       next.email = requiredEmail(patch.email);
-      touched = true;
+      values.push({ column: 'email', value: next.email });
     }
     if (patch.role !== undefined) {
       next.role = optionalString(patch.role, 'role');
-      touched = true;
+      values.push({ column: 'role', value: next.role });
     }
-    if (!touched) {
+    if (values.length === 0) {
       throw new ValidationError('a contact update needs at least one of firstName, lastName, email, role', { field: 'patch' });
     }
     next.updatedAt = nowIso();
+    values.push({ column: 'updated_at', value: next.updatedAt });
+    const write = {
+      kind: 'update', table: 'contacts',
+      values,
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const entry = {
+      actor: context.actor,
+      action: 'contact.updated',
+      entityType: 'contact',
+      entityId: id,
+      data: next,
+    };
     try {
+      // The update and its audit row commit together. On sync storage the
+      // callback stays fully synchronous inside the savepoint (a sync
+      // savepoint releases as soon as an async callback returns, so no
+      // await may sit between the two writes); on async storage the same
+      // unit runs as one transaction. A refused audit rolls the update
+      // back instead of leaving an unaudited write behind.
       if (isSyncStorage(this.database)) {
-        this.database.storage.sync.execute({
-          kind: 'update', table: 'contacts',
-          values: [
-            { column: 'first_name', value: next.firstName },
-            { column: 'last_name', value: next.lastName },
-            { column: 'email', value: next.email },
-            { column: 'role', value: next.role },
-            { column: 'updated_at', value: next.updatedAt },
-          ],
-          where: [{ column: 'id', op: 'eq', value: id }],
-        });
-        this.audit.record({
-          actor: context.actor,
-          action: 'contact.updated',
-          entityType: 'contact',
-          entityId: id,
-          data: next,
+        const sync = this.database.storage.sync;
+        sync.savepoint('contact_update', () => {
+          sync.execute(write);
+          this.audit.record(entry, sync);
         });
       } else {
         await storageMutate(this.database, 'contact_update', async (tx) => {
-          await tx.execute({
-            kind: 'update', table: 'contacts',
-            values: [
-              { column: 'first_name', value: next.firstName },
-              { column: 'last_name', value: next.lastName },
-              { column: 'email', value: next.email },
-              { column: 'role', value: next.role },
-              { column: 'updated_at', value: next.updatedAt },
-            ],
-            where: [{ column: 'id', op: 'eq', value: id }],
-          });
-          await this.audit.record({
-            actor: context.actor,
-            action: 'contact.updated',
-            entityType: 'contact',
-            entityId: id,
-            data: next,
-          }, tx);
+          await tx.execute(write);
+          await this.audit.record(entry, tx);
         });
       }
     } catch (error) {
@@ -158,8 +152,9 @@ export class ContactService {
       }
       throw error;
     }
-    await this.events.emit('contact.updated', next);
-    return next;
+    const reread = await this.get(id);
+    await this.events.emit('contact.updated', reread);
+    return reread;
   }
 
   /** @param {string} id */

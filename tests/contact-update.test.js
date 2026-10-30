@@ -76,6 +76,30 @@ test('an empty patch and an unknown id refuse', async (t) => {
   );
 });
 
+test('concurrent partial updates do not undo each other', async (t) => {
+  const { app, contact } = await scene(t);
+  await Promise.all([
+    app.services.contacts.update(contact.id, { firstName: 'Guido Maria' }, { actor: ACTOR }),
+    app.services.contacts.update(contact.id, { lastName: 'Presti Rossi' }, { actor: ACTOR }),
+  ]);
+  const reread = await app.services.contacts.get(contact.id);
+  assert.equal(reread.firstName, 'Guido Maria', 'the first partial update survives');
+  assert.equal(reread.lastName, 'Presti Rossi', 'the second partial update survives');
+});
+
+test('a refused audit rolls the update back with it', async (t) => {
+  const { app, contact } = await scene(t);
+  app.audit.record = () => { throw new Error('audit down'); };
+  t.after(() => { delete app.audit.record; });
+  await assert.rejects(
+    () => app.services.contacts.update(contact.id, { firstName: 'Perso' }, { actor: ACTOR }),
+    /audit down/,
+    'the refused audit rejects the update',
+  );
+  const reread = await app.services.contacts.get(contact.id);
+  assert.equal(reread.firstName, 'Guido', 'no unaudited write is left behind');
+});
+
 test('invalid values refuse like create', async (t) => {
   const { app, contact } = await scene(t);
   await assert.rejects(
