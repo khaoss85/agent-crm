@@ -28,6 +28,7 @@ const page = readFileSync(join(root, 'apps/admin/public/login.html'), 'utf8');
 const loginSource = readFileSync(join(root, 'apps/admin/public/login.js'), 'utf8');
 
 test('the login page tells the four-channel story like the prototype', () => {
+  assert.ok(page.includes('>Accordo</span>'), 'the brand names Accordo next to the mark (C2)');
   for (const text of [
     'Ogni conversazione, un solo cliente.',
     'Instagram, email, telefono e WhatsApp',
@@ -128,6 +129,11 @@ test('the page ships no app surface and no prefilled address', () => {
   assert.match(page, /<label\b[^>]*for="login-email"[^>]*>/, 'the exact label names its field');
   assert.match(page, /<form\b[^>]*method="post"[^>]*action="\/api\/auth\/magic-link\/request"/,
     'no-JS visitors still POST to the deployment route');
+  const submit = page.match(/<button\b[^>]*>/i)?.[0] ?? '';
+  assert.match(submit, /type="submit"/,
+    'the primary button submits the form: keyboard visitors send with Invio (C17)');
+  assert.ok(page.includes('>Ricevi il link di accesso</button>'),
+    'the submit button keeps its exact label (C14)');
 });
 
 test('the login copy never leaks machinery: no codes, no English internals', () => {
