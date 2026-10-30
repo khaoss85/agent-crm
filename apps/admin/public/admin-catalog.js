@@ -10,14 +10,19 @@ import { settingsTabs } from './admin-shell.js';
  * the backoffice product table over `GET /api/catalog/products` — one row
  * per product with its source, active flag and current prices — plus the
  * Stripe connection state for this space, the enforced price rules read
- * from the schema, and confirm-gated edits of manual prices and flags over
- * the existing `POST /api/catalog/...` routes (no new backend surface).
+ * from the schema, a confirm-gated "Aggiungi prodotto" creation over the
+ * existing `POST /api/catalog/products` route, and confirm-gated edits of
+ * manual prices and flags over the existing `POST /api/catalog/...` routes
+ * (no new backend surface).
  * Rules unchanged from the rest of the Admin: every value renders as text
  * (never HTML), the server is authoritative for every amount,
  * provider-sourced prices render read-only text (no inputs at all — the
  * write path refuses them with PROVIDER_PRICE_READONLY), a render token
  * discards stale responses, and every mutation goes through the shared
  * submission controller (idempotency key per user submission).
+ * The ATTIVO column states every row's flag as text, so imported rows show
+ * their state even where they offer no toggle yet; Stripe rows stay
+ * read-only and the page says so.
  *
  * DECISION (to be confirmed): the discount bands themselves (auto-approve,
  * owner max) stay composition config evaluated by the package — changing
@@ -459,6 +464,115 @@ export function createCatalogView(deps) {
   }
 
   /**
+   * Confirm-gated product creation over the existing
+   * `POST /api/catalog/products` route: Aggiungi prodotto -> fill the five
+   * backoffice fields (name, code, category, price, unit) plus the currency
+   * the write path requires -> Rivedi -> Conferma. The price becomes the
+   * single one-time flat component of a new manual product; the server
+   * re-validates everything fail-closed. The form stays manual-only in
+   * shape: provider rows are never created here, so Stripe keeps nothing
+   * to read here either.
+   */
+  function renderCreateForm() {
+    const wrap = el('div', 'catalog-create-wrap');
+    const openButton = el('button', 'catalog-create', 'Aggiungi prodotto');
+    const formBox = el('div', 'catalog-create-form');
+    const formError = el('p', 'field-error', '');
+    openButton.addEventListener('click', () => {
+      while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+      /** @type {Record<string, any>} */
+      const fields = {};
+      const addField = (name, label, options = {}) => {
+        formBox.appendChild(el('label', 'catalog-create-label', label));
+        const input = el('input');
+        input.setAttribute('name', name);
+        input.setAttribute('aria-label', label);
+        if (options.placeholder) input.setAttribute('placeholder', options.placeholder);
+        if (options.inputmode) input.setAttribute('inputmode', options.inputmode);
+        input.value = options.value ?? '';
+        formBox.appendChild(input);
+        fields[name] = input;
+      };
+      addField('name', 'Nome', { placeholder: 'Pacchetto 10 lezioni' });
+      addField('sku', 'Codice', { placeholder: 'PACCHETTO-10' });
+      addField('category', 'Categoria', { placeholder: 'pacchetti' });
+      addField('price', 'Prezzo', { placeholder: '99,00', inputmode: 'decimal' });
+      addField('unit', 'Unità', { placeholder: 'ingressi' });
+      addField('currency', 'Valuta', { value: 'EUR' });
+      const reviewButton = el('button', undefined, 'Rivedi');
+      reviewButton.addEventListener('click', () => {
+        formError.textContent = '';
+        const name = fields.name.value.trim();
+        const sku = fields.sku.value.trim();
+        const category = fields.category.value.trim();
+        const cents = parseEuroToCents(fields.price.value);
+        const unit = fields.unit.value.trim();
+        const currency = fields.currency.value.trim();
+        if (name === '' || sku === '') {
+          formError.textContent = 'Nome e codice sono obbligatori.';
+          return;
+        }
+        if (cents === null) {
+          formError.textContent = 'Il prezzo deve essere un numero non negativo con al massimo due decimali.';
+          return;
+        }
+        if (!/^[A-Z]{3}$/.test(currency)) {
+          formError.textContent = 'La valuta sono tre lettere maiuscole, per esempio EUR.';
+          return;
+        }
+        while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+        const review = el('div', 'catalog-review');
+        review.appendChild(el('p', undefined, `Creare ${name} (${sku}) a ${money(cents, currency)}?`));
+        if (category !== '') review.appendChild(el('p', 'catalog-change', `Categoria: ${category}`));
+        review.appendChild(el('p', 'catalog-change', `Unità: ${unit === '' ? '—' : unit}`));
+        const yes = el('button', undefined, 'Conferma');
+        const no = el('button', undefined, 'Annulla');
+        no.addEventListener('click', async () => { await renderTable(); });
+        yes.addEventListener('click', async () => {
+          yes.disabled = true;
+          try {
+            await submissions.submit({
+              path: '/api/catalog/products',
+              method: 'POST',
+              body: {
+                sku,
+                name,
+                category: category === '' ? null : category,
+                currency,
+                unit: unit === '' ? null : unit,
+                components: [{
+                  key: 'prezzo',
+                  label: 'Prezzo',
+                  chargeType: 'one_time',
+                  pricingModel: 'flat_fee',
+                  unitAmountCents: null,
+                  flatAmountCents: cents,
+                  externalPriceId: null,
+                  tiers: [],
+                }],
+              },
+            });
+            await renderTable();
+          } catch (error) {
+            formError.textContent = error?.message ?? 'Creazione fallita';
+            review.appendChild(formError);
+          } finally {
+            yes.disabled = false;
+          }
+        });
+        review.appendChild(yes);
+        review.appendChild(no);
+        formBox.appendChild(review);
+      });
+      formBox.appendChild(reviewButton);
+      formBox.appendChild(formError);
+    });
+    wrap.appendChild(openButton);
+    wrap.appendChild(formBox);
+    return wrap;
+  }
+
+  /**
    * The prototype's search filters the visible rows by product name and
    * code (spec catalogo.md C9/C21): the read vocabulary has no search
    * param, so the match runs client-side over the loaded page, like the
@@ -520,6 +634,7 @@ export function createCatalogView(deps) {
     const summary = table.summary ?? {};
     const stripeConnected = stripeIsConnected(summary);
     page.appendChild(renderStripeBlock(summary));
+    page.appendChild(renderCreateForm());
     const loaded = table.products;
 
     const filters = el('div', 'catalog-filters');
@@ -605,9 +720,9 @@ export function createCatalogView(deps) {
       row.appendChild(priceCell);
       const meta = el('p', 'catalog-meta');
       meta.appendChild(el('span', `catalog-source catalog-source-${product.source === 'manual' ? 'manual' : 'provider'}`, sourceLabel(product.source)));
-      if (product.active !== true) meta.appendChild(el('span', 'catalog-inactive', 'non attivo'));
       row.appendChild(meta);
       const switchCell = el('div', 'catalog-cell-switch');
+      switchCell.appendChild(el('span', 'catalog-active-state', product.active === true ? 'Attivo' : 'Non attivo'));
       row.appendChild(switchCell);
       const manual = product.source === 'manual' && product.priceReadOnly !== true;
       // Provider prices stay read-only text (the write path refuses them

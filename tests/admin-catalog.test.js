@@ -593,3 +593,117 @@ test('Stripe pricing models and intervals read in Italian, unknown models stay o
   assert.ok(text.includes('Strano: 5 €'), 'an unknown model and interval are left out, the amount stays');
   assert.ok(!/mystery|fortnight|graduated/.test(text), 'no machine word reaches the screen');
 });
+
+function fillCreateField(mount, label, value) {
+  const input = mount.findAll('input').find((node) => node.getAttribute('aria-label') === label);
+  assert.ok(input, `the ${label} field renders`);
+  input.value = value;
+}
+
+test('Aggiungi prodotto creates a manual product after review and confirmation', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Categoria', 'pacchetti');
+  fillCreateField(mount, 'Prezzo', '120,50');
+  fillCreateField(mount, 'Unità', 'ingressi');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('Creare Pacchetto 5 lezioni (PACCHETTO-5)'), 'the review names the product');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'review sends nothing');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const created = client.calls.find((call) => call.path === '/api/catalog/products' && call.method === 'POST');
+  assert.ok(created, 'confirmation sends the creation');
+  assert.equal(created.body.sku, 'PACCHETTO-5');
+  assert.equal(created.body.name, 'Pacchetto 5 lezioni');
+  assert.equal(created.body.category, 'pacchetti');
+  assert.equal(created.body.currency, 'EUR');
+  assert.equal(created.body.unit, 'ingressi');
+  assert.equal(created.body.components.length, 1, 'one price from the form');
+  assert.equal(created.body.components[0].flatAmountCents, 12050, 'the comma decimal becomes cents');
+  assert.equal(created.body.components[0].pricingModel, 'flat_fee');
+  assert.equal(created.body.components[0].chargeType, 'one_time');
+});
+
+test('the create form refuses garbage without sending', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Prezzo', '99.00');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('obbligatori'), 'an empty name and code refuse with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
+
+  fillCreateField(mount, 'Nome', 'Prova');
+  fillCreateField(mount, 'Codice', 'PROVA-1');
+  fillCreateField(mount, 'Prezzo', '12.345');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('non negativo'), 'three decimals refuse with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the hostile amount is never sent');
+
+  fillCreateField(mount, 'Prezzo', '10.00');
+  fillCreateField(mount, 'Valuta', 'eur');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('maiuscole'), 'a lowercase currency refuses with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
+});
+
+test('every row states its active flag, toggles stay manual-only', async () => {
+  const inactiveManual = structuredClone(MANUAL_TABLE.products[0]);
+  inactiveManual.productId = 'p3';
+  inactiveManual.name = 'Pacchetto archiviato';
+  inactiveManual.active = false;
+  const imported = {
+    productId: 'p4',
+    sku: 'PRESTI-1',
+    name: 'Ingresso singolo',
+    description: 'Listino importato.',
+    category: 'ingressi',
+    source: 'presti-listino',
+    priceReadOnly: true,
+    active: false,
+    version: 1,
+    offers: [],
+  };
+  const table = {
+    products: [MANUAL_TABLE.products[0], inactiveManual, imported],
+    summary: { manual: 2, byProvider: { 'presti-listino': 1 }, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  const states = mount.findAll('span')
+    .filter((node) => node.getAttribute('class') === 'catalog-active-state')
+    .map((node) => node.textContent);
+  assert.deepEqual(states, ['Attivo', 'Non attivo', 'Non attivo'], 'every row states its flag, imported rows too');
+  const labels = mount.findAll('button').map((node) => node.textContent);
+  assert.ok(labels.includes('Disattiva'), 'the active manual row offers its toggle');
+  assert.ok(labels.includes('Attiva'), 'the inactive manual row offers its toggle');
+  const importedToggles = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-row'))
+    .map((row) => row.textContent.includes('Ingresso singolo') ? row.textContent : null)
+    .filter(Boolean);
+  assert.ok(importedToggles.length === 1 && !/Attiva|Disattiva/.test(importedToggles[0]), 'the imported row states its flag but offers no toggle yet');
+});
+
+test('Aggiungi prodotto stays available once Stripe is connected', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': STRIPE_TABLE } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Aggiungi prodotto'), 'manual products coexist with Stripe');
+  assert.ok(mount.textContent.includes('sola lettura'), 'Stripe rows stay read-only and the page says so');
+});
