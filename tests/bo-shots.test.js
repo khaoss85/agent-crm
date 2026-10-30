@@ -131,6 +131,23 @@ test('harness pages photograph the full /bo shell with a hidden probe', () => {
   }
 });
 
+test('the clienti harness names counted pills and one label-only fallback', () => {
+  // backlog:22d4dd0f, C10: the next render paints counted pills for the
+  // views the demo server knows, and the bare label for rinnovi, whose
+  // dependency reads as unavailable — both states the P2 asks to see.
+  const page = harnessHtml('clienti', publicDir);
+  for (const view of [
+    "{ id: 'tutti', label: 'Tutti', count: 3 }",
+    "{ id: 'ricontattare-oggi', label: 'Da ricontattare oggi', count: 1 }",
+    "{ id: 'nuovi-lead', label: 'Nuovi lead', count: 1 }",
+    "{ id: 'clienti-attivi', label: 'Clienti attivi', count: 1 }",
+    "{ id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' }",
+  ]) {
+    assert.ok(page.includes(view), `the demo names ${view}`);
+  }
+  assert.ok(page.includes('button[role="tab"]'), 'the probe reads the pill tabs');
+});
+
 test('every screen photographs with its shell identity from the /bo router', () => {
   // Mirrors apps/admin/public/app.js `shellScreenFor`: the same sidebar
   // voice is highlighted and the same path is crumbed as in the app.
@@ -282,7 +299,12 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     magic: true, email: 1, google: 1, story: 1, noValidate: false,
   }), /did not install/);
   assert.doesNotThrow(() => assertProbe('oggi', { recap: true, tasks: 2 }));
-  assert.doesNotThrow(() => assertProbe('clienti', { rows: 3 }));
+  assert.doesNotThrow(() => assertProbe('clienti', {
+    rows: 3,
+    pills: ['Tutti 3', 'Da ricontattare oggi 1', 'Nuovi lead 1', 'Clienti attivi 1', 'Rinnovi entro 30 giorni'],
+  }));
+  assert.throws(() => assertProbe('clienti', { rows: 3, pills: ['Tutti'] }), /pills/);
+  assert.throws(() => assertProbe('clienti', { rows: 3 }), /pills/);
   assert.doesNotThrow(() => assertProbe('cliente', { name: true }));
   assert.doesNotThrow(() => assertProbe('pipeline', { deals: 5 }));
   assert.doesNotThrow(() => assertProbe('calendario', {
