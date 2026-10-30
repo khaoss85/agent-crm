@@ -398,9 +398,12 @@ test('M3B close returns while a max:1 transaction still holds its client', { tim
     await hold;
   });
   await started;
-  await db.close();
-  try { release(); } catch { /* already released */ }
-  await first.catch(() => {});
+  try {
+    await db.close();
+  } finally {
+    try { release(); } catch { /* already released */ }
+    await first.catch(() => {});
+  }
 });
 
 test('M3B database open bounds setup statements instead of hanging', { timeout: 15_000 }, async (t) => {

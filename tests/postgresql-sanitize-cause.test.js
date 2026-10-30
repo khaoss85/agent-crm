@@ -118,6 +118,27 @@ test('a statement timeout keeps the redacted deadline error as cause', async () 
   );
 });
 
+test('a codeless connection termination maps to unavailable, not raw', async () => {
+  // pg@8.23.0 emits a plain `Error('Connection terminated unexpectedly')`
+  // with no code when a handshake is dropped (backlog:732c0a9a5dd3). The
+  // open fixture retries only bounded STORAGE_UNAVAILABLE/STORAGE_TIMEOUT,
+  // so this must map instead of passing through raw.
+  const driver = new Error('Connection terminated unexpectedly');
+  const storage = createPostgresqlStorage(failingPool({ connectError: driver }));
+
+  await assert.rejects(
+    () => storage.many({ kind: 'select', table: 'companies', columns: '*' }),
+    (error) => {
+      assert.equal(error.code, 'STORAGE_UNAVAILABLE');
+      assert.equal(error.message, 'PostgreSQL storage is unavailable');
+      assert.notEqual(error.cause, driver);
+      assert.deepEqual(error.cause, { code: 'UNKNOWN', name: 'Error' });
+      assertNoSecrets(error, SENTINEL);
+      return true;
+    },
+  );
+});
+
 test('a non-driver error still passes through untouched', async () => {
   const plain = new Error('no code, no mapping');
   const storage = createPostgresqlStorage(failingPool({ connectError: plain }));
