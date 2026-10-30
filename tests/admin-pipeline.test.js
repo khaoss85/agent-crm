@@ -369,7 +369,7 @@ test('summary totals the filtered set per currency without mixing', async () => 
   assert.ok(text.includes('25 USD'), `alice USD total stays separate (${text})`);
 });
 
-test('forecast is labeled as a stima and weights open stages by probability', async () => {
+test('forecast shows the month title, won plus 60% of open, and the risk name (C4/C5)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
@@ -377,12 +377,54 @@ test('forecast is labeled as a stima and weights open stages by probability', as
 
   const box = forecastBox(mount);
   assert.ok(box, 'a forecast section exists');
-  assert.match(box.textContent, /stima/i, 'the forecast is labeled as an estimate');
+  const months = [
+    'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+    'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
+  ];
+  assert.ok(
+    box.textContent.includes(`✦ Previsione di ${months[new Date().getMonth()]}`),
+    `the title names the current month (${box.textContent})`,
+  );
+  // EUR: won 100_000 at face value + 60% of open (100_000 + 50_000) = 190_000;
+  // USD: 60% of the 2_500 open demo = 1_500; lost stages never forecast.
+  assert.ok(box.textContent.includes('1.900 €'), `EUR forecast total (${box.textContent})`);
+  assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
+  assert.ok(
+    box.textContent.includes('Il rischio più alto è alice.'),
+    `the risk names the owner of the highest-value open offer (${box.textContent})`,
+  );
   assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
-  // discovery 100_000 @10% = 10_000 plus 50_000 @10% = 5_000 → EUR 150.00;
-  // demo USD 2_500 @30% = 750 → USD 7.50; won/lost stages never forecast.
-  assert.ok(box.textContent.includes('150 €'), `EUR weighted total (${box.textContent})`);
-  assert.ok(box.textContent.includes('7,50 USD'), `USD weighted total (${box.textContent})`);
+});
+
+test('forecast with closed offers but no open ones shows totals and no risk line', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('d', 'won'), record('e', 'lost', { closeReason: 'No budget' })]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(box.textContent.includes('1.000 €'), `won value at face value (${box.textContent})`);
+  assert.ok(!box.textContent.includes('Il rischio più alto'), 'no risk line without open offers');
+});
+
+test('forecast with no valued offers stays honest and technical-text free', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery', { valueCents: undefined })]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(box.textContent.includes('Nessuna offerta da stimare'), `empty state (${box.textContent})`);
 });
 
 test('dropping a card posts the same move-stage action as the Move button', async () => {
@@ -682,8 +724,8 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Tutti i referenti',
     'Tutti gli stati',
     'Cerca offerta o cliente',
-    'Previsione · stima',
-    'Nessun valore aperto da stimare',
+    '✦ Previsione di ',
+    'Nessuna offerta da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
     "1 offerta di un'altra pipeline (non mostrata).",
