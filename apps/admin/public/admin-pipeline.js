@@ -767,7 +767,7 @@ export function createPipelineBoard(deps) {
       console.error('[bo] spostamento non riuscito', { code: code || 'UNKNOWN', status: record.status ?? null, message });
     }
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
-    if (field === 'reason' || /reason is required/i.test(message)) return 'Per segnare un\u2019offerta come persa serve il motivo.';
+    if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
   }
 
