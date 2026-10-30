@@ -249,16 +249,34 @@ test('unsupported contract and unknown pipeline fail gracefully', async () => {
 });
 
 function filterInput(mount, name) {
-  return mount.findAll('input').find((node) => node.getAttribute('data-filter') === name)
-    ?? mount.findAll('select').find((node) => node.getAttribute('data-filter') === name);
+  return mount.findAll('input').find((node) => node.getAttribute('data-filter') === name);
+}
+
+function daysAgo(days) {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days)).toISOString();
+}
+
+/** The pill button of a filter menu (`Referente`, `Creata`, `Stati`). */
+function filterPill(mount, key) {
+  const menu = mount.findAll('div').find((node) => node.getAttribute('data-filtermenu') === key);
+  return menu.findAll('button').find((node) => node.getAttribute('aria-haspopup') === 'menu');
+}
+
+/** Click a voice of a filter menu; the board re-renders synchronously. */
+function pickVoice(mount, key, value) {
+  const menu = mount.findAll('div').find((node) => node.getAttribute('data-filtermenu') === key);
+  menu.findAll('button')
+    .find((node) => node.getAttribute('data-menu-voice') === key && node.getAttribute('data-value') === value)
+    .dispatch('click');
 }
 
 function boardRecords() {
   return [
-    record('a', 'discovery', { owner: 'alice', expectedCloseDate: '2026-11-01T00:00:00.000Z', contactName: 'Anna' }),
-    record('b', 'discovery', { valueCents: 50_000, owner: 'bob', expectedCloseDate: '2026-12-15T00:00:00.000Z' }),
-    record('c', 'demo', { currency: 'USD', valueCents: 2_500, owner: 'alice', expectedCloseDate: '2026-10-20T00:00:00.000Z' }),
-    record('d', 'won', { owner: 'alice', expectedCloseDate: '2026-09-01T00:00:00.000Z' }),
+    record('a', 'discovery', { owner: 'alice', expectedCloseDate: '2026-11-01T00:00:00.000Z', contactName: 'Anna', createdAt: daysAgo(2) }),
+    record('b', 'discovery', { valueCents: 50_000, owner: 'bob', expectedCloseDate: '2026-12-15T00:00:00.000Z', createdAt: daysAgo(10) }),
+    record('c', 'demo', { currency: 'USD', valueCents: 2_500, owner: 'alice', expectedCloseDate: '2026-10-20T00:00:00.000Z', createdAt: daysAgo(40) }),
+    record('d', 'won', { owner: 'alice', expectedCloseDate: '2026-09-01T00:00:00.000Z', createdAt: daysAgo(5) }),
     record('e', 'lost', { owner: 'bob', closeReason: 'No budget' }),
   ];
 }
@@ -294,12 +312,16 @@ test('Lista view renders the same filtered records as a read-only table', async 
     'Kanban columns come back');
 });
 
-test('search, Referente, Stato and close-date filters narrow both views', async () => {
+test('search and the Referente, Creata, Stati pills narrow both views (C8)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
   await board.renderBoard('b2b-sales');
   assert.match(summaryText(mount), /5 offerte/);
+  // C8: the pills carry the prototype labels with the default values.
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente Tutti'));
+  assert.ok(filterPill(mount, 'created').textContent.includes('Creata Sempre'));
+  assert.ok(filterPill(mount, 'stage').textContent.includes('Stati Tutti'));
 
   const search = filterInput(mount, 'q');
   search.value = 'acme';
@@ -312,30 +334,26 @@ test('search, Referente, Stato and close-date filters narrow both views', async 
   search.value = '';
   search.dispatch('input');
 
-  const owner = filterInput(mount, 'owner');
-  owner.value = 'bob';
-  owner.dispatch('change');
-  assert.match(summaryText(mount), /2 offerte/, 'Referente filter keeps only bob’s cards');
+  pickVoice(mount, 'owner', 'bob');
+  assert.match(summaryText(mount), /2 offerte/, 'Referente pill keeps only bob’s cards');
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente bob'), 'the pill names the active referente');
 
-  const stage = filterInput(mount, 'stage');
-  stage.value = 'discovery';
-  stage.dispatch('change');
-  assert.match(summaryText(mount), /1 offerta/, 'Stato filter intersects with Referente');
+  pickVoice(mount, 'stage', 'discovery');
+  assert.match(summaryText(mount), /1 offerta/, 'Stati pill intersects with Referente');
 
-  const from = filterInput(mount, 'closeFrom');
-  from.value = '2026-12-01';
-  from.dispatch('change');
-  assert.match(summaryText(mount), /1 offerta/, 'close-from keeps the December card');
-  const to = filterInput(mount, 'closeTo');
-  to.value = '2026-12-31';
-  to.dispatch('change');
-  assert.match(summaryText(mount), /1 offerta/, 'close-to still matches December');
-  to.value = '2026-12-01';
-  to.dispatch('change');
-  assert.match(summaryText(mount), /0 offerte/, 'a range excluding every date empties the board');
+  // The Creata pill replaces the raw close-date bounds: creation recency.
+  pickVoice(mount, 'owner', '');
+  pickVoice(mount, 'stage', '');
+  pickVoice(mount, 'created', '7d');
+  assert.match(summaryText(mount), /2 offerte/, 'Ultimi 7 giorni keeps the two recent cards');
+  pickVoice(mount, 'created', '30d');
+  assert.match(summaryText(mount), /3 offerte/, 'Ultimi 30 giorni adds the ten-day-old card');
+  assert.ok(filterPill(mount, 'created').textContent.includes('Ultimi 30 giorni'));
+  pickVoice(mount, 'created', '');
+  assert.match(summaryText(mount), /5 offerte/, 'Sempre restores the full board');
 });
 
-test('Azzera filtri resets search and every filter', async () => {
+test('Azzera filtri resets search and every pill', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
@@ -343,15 +361,15 @@ test('Azzera filtri resets search and every filter', async () => {
 
   filterInput(mount, 'q').value = 'anna';
   filterInput(mount, 'q').dispatch('input');
-  filterInput(mount, 'owner').value = 'alice';
-  filterInput(mount, 'owner').dispatch('change');
+  pickVoice(mount, 'owner', 'alice');
   assert.match(summaryText(mount), /1 offerta/);
 
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'clear-filters').dispatch('click');
   assert.match(summaryText(mount), /5 offerte/, 'every offer is back');
   assert.equal(filterInput(mount, 'q').value, '');
-  assert.equal(filterInput(mount, 'owner').value, '');
-  assert.equal(filterInput(mount, 'stage').value, '');
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente Tutti'));
+  assert.ok(filterPill(mount, 'created').textContent.includes('Creata Sempre'));
+  assert.ok(filterPill(mount, 'stage').textContent.includes('Stati Tutti'));
 });
 
 test('summary totals the filtered set per currency without mixing', async () => {
@@ -360,9 +378,7 @@ test('summary totals the filtered set per currency without mixing', async () => 
   const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
   await board.renderBoard('b2b-sales');
 
-  const owner = filterInput(mount, 'owner');
-  owner.value = 'alice';
-  owner.dispatch('change');
+  pickVoice(mount, 'owner', 'alice');
   const text = summaryText(mount);
   assert.match(text, /3 offerte/);
   assert.ok(text.includes('2.000 €'), `alice EUR total (${text})`);
@@ -494,9 +510,12 @@ test('hostile owner names render as inert option text', async () => {
   const records = [record('a', 'discovery', { owner: hostile })];
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
-  const option = filterInput(mount, 'owner').findAll('option').find((node) => node.textContent === hostile);
-  assert.ok(option, 'the hostile owner is offered as plain text');
-  assert.equal(option.childNodes.length, 0, 'no elements parsed out of the hostile owner');
+  const menu = mount.findAll('div').find((node) => node.getAttribute('data-filtermenu') === 'owner');
+  const voice = menu.findAll('button').find((node) => node.getAttribute('data-value') === hostile);
+  assert.ok(voice, 'the hostile owner is offered as plain text');
+  const title = voice.findAll('span').find((node) => (node.getAttribute('class') ?? '').includes('ui-add-title'));
+  assert.equal(title.textContent, hostile, 'the hostile owner is the voice title');
+  assert.equal(title.childNodes.length, 0, 'no elements parsed out of the hostile owner');
 });
 
 test('search typing restores focus through the real-DOM query API only', async () => {
@@ -560,10 +579,8 @@ test('switching pipelines resets the previous board’s filters', async () => {
   const board = createPipelineBoard({ doc, mount, client });
   await board.renderBoard('b2b-sales');
 
-  filterInput(mount, 'owner').value = 'alice';
-  filterInput(mount, 'owner').dispatch('change');
-  filterInput(mount, 'stage').value = 'discovery';
-  filterInput(mount, 'stage').dispatch('change');
+  pickVoice(mount, 'owner', 'alice');
+  pickVoice(mount, 'stage', 'discovery');
   assert.match(summaryText(mount), /1 offerta/, 'board A is filtered to one card');
 
   await board.renderBoard('b2b-enterprise');
@@ -573,8 +590,9 @@ test('switching pipelines resets the previous board’s filters', async () => {
     'board B columns are rendered',
   );
   assert.equal(filterInput(mount, 'q').value, '', 'search does not leak across pipelines');
-  assert.equal(filterInput(mount, 'owner').value, '', 'Referente does not leak across pipelines');
-  assert.equal(filterInput(mount, 'stage').value, '', 'Stato does not leak across pipelines');
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente Tutti'), 'Referente does not leak across pipelines');
+  assert.ok(filterPill(mount, 'stage').textContent.includes('Stati Tutti'), 'Stato does not leak across pipelines');
+  assert.ok(filterPill(mount, 'created').textContent.includes('Creata Sempre'), 'Creata does not leak across pipelines');
   const enterpriseCard = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'z');
   assert.ok(enterpriseCard, 'the enterprise card is visible, not silently filtered out');
 });
@@ -609,11 +627,9 @@ test('header follows the BO-F6-10 spec: kicker, title, description, offers summa
 
   // C9: `<n> offerte · <totale>`, aggiornato da filtri e ricerca.
   assert.match(summaryText(mount), /^5 offerte · /, 'summary pattern with count first');
-  filterInput(mount, 'owner').value = 'alice';
-  filterInput(mount, 'owner').dispatch('change');
+  pickVoice(mount, 'owner', 'alice');
   assert.match(summaryText(mount), /^3 offerte · /, 'the summary follows the filter');
-  filterInput(mount, 'owner').value = '';
-  filterInput(mount, 'owner').dispatch('change');
+  pickVoice(mount, 'owner', '');
   assert.match(summaryText(mount), /^5 offerte · /, 'clearing the filter restores the full count');
 });
 
@@ -742,8 +758,11 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   assert.deepEqual(badges, ['Aperta', 'Aperta', 'Vinta ✓', 'Persa ✕'], 'column badges are Italian');
   assertNoEnglish('kanban');
   for (const italian of [
-    'Tutti i referenti',
-    'Tutti gli stati',
+    'Referente Tutti',
+    'Creata Sempre',
+    'Stati Tutti',
+    'Ultimi 7 giorni',
+    'Ultimi 30 giorni',
     'Cerca offerta o cliente',
     '✦ Previsione di ',
     'Nessuna offerta da stimare',
@@ -924,8 +943,7 @@ test('Azzera filtri appears only while a filter or search is active (C11)', asyn
   const resetButton = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'clear-filters');
   assert.equal(resetButton(), undefined, 'no reset offered on the unfiltered board');
 
-  filterInput(mount, 'owner').value = 'bob';
-  filterInput(mount, 'owner').dispatch('change');
+  pickVoice(mount, 'owner', 'bob');
   assert.ok(resetButton(), 'a filter makes the reset appear');
   assert.match(summaryText(mount), /2 offerte/);
 
