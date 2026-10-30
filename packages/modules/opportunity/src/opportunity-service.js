@@ -237,28 +237,101 @@ export class OpportunityService {
    * Internal state mutation. Call from a named workflow, not directly from API/MCP.
    * @param {string} id
    * @param {string} targetStage
-   * @param {{actor?: unknown, workflowRunId?: string, bypassTransitionCheck?: boolean}} [context]
+   * @param {{actor?: unknown, workflowRunId?: string, bypassTransitionCheck?: boolean, expectedFromStage?: string}} [context]
+   *   expectedFromStage pins the intent to a previously read stage; when the
+   *   stored stage moved meanwhile the caller loses with 409 instead of
+   *   re-basing onto the new stage. Omit it only when the read above is the
+   *   intent (the committing write still claims exactly one winner).
    */
   async setStage(id, targetStage, context = {}) {
     const opportunity = await Promise.resolve(this.get(id));
     const stage = enumValue(targetStage, [...OPPORTUNITY_STAGES], 'targetStage');
+    // A caller acting on a stage it read earlier pins it via
+    // expectedFromStage: the intent is only valid from that stage. A fresh
+    // read that already moved means a concurrent writer won, so the loser
+    // reports 409 instead of re-basing its intent onto the new stage.
+    const from = context.expectedFromStage ?? opportunity.stage;
+    if (from !== opportunity.stage) {
+      // Any pin mismatch loses, even when the current stage happens to equal
+      // the target: returning success there would report a commit this request
+      // never made (its policy ran against the stage it read, not the current
+      // one). Same-intent retries are replayed by idempotency key one layer up,
+      // never by stage equality here.
+      throw new ConflictError(
+        `Opportunity stage changed under this caller: ${from} → ${opportunity.stage} (wanted ${stage})`,
+        { from, to: stage, current: opportunity.stage },
+      );
+    }
     if (opportunity.stage === stage) return opportunity;
-    const allowed = ALLOWED_TRANSITIONS[opportunity.stage] ?? [];
+    const allowed = ALLOWED_TRANSITIONS[from] ?? [];
     if (!context.bypassTransitionCheck && !allowed.includes(stage)) {
-      throw new ValidationError(`Invalid stage transition: ${opportunity.stage} → ${stage}`, {
-        from: opportunity.stage,
+      throw new ValidationError(`Invalid stage transition: ${from} → ${stage}`, {
+        from,
         to: stage,
         allowed,
       });
     }
-    const updatedAt = nowIso();
+    // The committing write is a conditional claim (the product-import
+    // `affectedRows` verdict idiom): the check above and this write are not
+    // atomic, so two writers that both passed the check still serialize here.
+    // The claim is fenced on (stage, updated_at), not the stage alone: the
+    // stage value is re-enterable (proposal ↔ negotiation …), so a stale
+    // intent must not commit after the opportunity cycled away and back
+    // (ABA). updated_at is bumped on every stage write and forced strictly
+    // monotonic here, so it acts as the row's generation token. Zero rows
+    // means a concurrent writer moved the opportunity first, so the loser
+    // re-reads for the error detail and reports 409 — never success, even
+    // when the current stage happens to equal the target.
+    const readUpdatedAt = typeof opportunity.updatedAt === 'string' ? opportunity.updatedAt : null;
+    let updatedAt = nowIso();
+    if (readUpdatedAt !== null && updatedAt <= readUpdatedAt) {
+      updatedAt = new Date(Date.parse(readUpdatedAt) + 1).toISOString();
+    }
+    const where = [
+      { column: 'id', op: 'eq', value: id },
+      { column: 'stage', op: 'eq', value: from },
+    ];
+    if (readUpdatedAt !== null) where.push({ column: 'updated_at', op: 'eq', value: readUpdatedAt });
     const write = {
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: stage }, { column: 'updated_at', value: updatedAt },
-      ], where: [{ column: 'id', op: 'eq', value: id }],
+      ], where,
     };
-    if (isSyncStorage(this.database)) this.database.storage.sync.execute(write);
-    else await storageMutate(this.database, 'opportunity_stage', async (tx) => { await tx.execute(write); });
+    let claimed;
+    try {
+      if (isSyncStorage(this.database)) claimed = this.database.storage.sync.execute(write);
+      else claimed = await storageMutate(this.database, 'opportunity_stage', async (tx) => tx.execute(write));
+    } catch (error) {
+      // A pinned intent that loses the commit contest is decided, not
+      // retryable: the write-outcome envelope would otherwise retry this same
+      // run with a fresh read, re-basing an intent formed on a stage that is
+      // gone and committing a transition this request never evaluated (two
+      // terminal changes committing twice). A serialization or deadlock loss
+      // on this fenced claim always means a concurrent writer moved the row
+      // first, so the loser reports 409; a genuinely new intent needs a
+      // genuinely new request. The re-read is best-effort: the contest may
+      // have left this transaction aborted.
+      const transient = /** @type {any} */ (error)?.code === 'CONFLICT'
+        && /** @type {any} */ (error)?.details?.transient === true;
+      if (!transient) throw error;
+      let current = null;
+      try {
+        current = await Promise.resolve(this.get(id));
+      } catch {
+        current = null;
+      }
+      throw new ConflictError(
+        `Opportunity stage changed under this caller: ${from} → ${current?.stage ?? '?'} (wanted ${stage})`,
+        { from, to: stage, current: current?.stage ?? null },
+      );
+    }
+    if (Number(claimed?.affectedRows ?? 0) !== 1) {
+      const current = await Promise.resolve(this.get(id));
+      throw new ConflictError(
+        `Opportunity stage changed under this caller: ${opportunity.stage} → ${current.stage} (wanted ${stage})`,
+        { from: opportunity.stage, to: stage, current: current.stage },
+      );
+    }
     const updated = await Promise.resolve(this.get(id));
     await Promise.resolve(this.audit.record({
       actor: context.actor,

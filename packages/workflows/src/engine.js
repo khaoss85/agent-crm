@@ -2,7 +2,7 @@
 
 import { NotFoundError, normalizeError } from '../../core/src/errors.js';
 import { createExecutionRunStore } from '../../core/src/execution-run-store.js';
-import { runIdempotentWrite, usesWriteOutcomes } from '../../core/src/write-outcome-runtime.js';
+import { boundedFailureCode, runIdempotentWrite, usesWriteOutcomes } from '../../core/src/write-outcome-runtime.js';
 
 /**
  * @typedef {{
@@ -22,7 +22,8 @@ import { runIdempotentWrite, usesWriteOutcomes } from '../../core/src/write-outc
  *   runId: string,
  *   services: Record<string, any>,
  *   database: any,
- *   config: Record<string, any>
+ *   config: Record<string, any>,
+ *   sticky?: Record<string, any>
  * }} WorkflowStepContext
  */
 
@@ -63,10 +64,37 @@ export class WorkflowEngine {
     }));
   }
 
+  /**
+   * Trace bookkeeping must never replace the verdict it records. After a step
+   * fails, the enclosing SERIALIZABLE transaction is often already aborted,
+   * so the failure write itself can fail (25P02 masking the primary error as
+   * STORAGE_UNAVAILABLE): note it with its bounded code and let the original
+   * error out, per the review guideline on swallowed exceptions.
+   * @param {string} what
+   * @param {() => unknown} write
+   */
+  async #noteTraceFailure(what, write) {
+    try {
+      await write();
+    } catch (traceError) {
+      console.error(`[accordo] workflow trace ${what} write failed: ${boundedFailureCode(traceError)}`);
+    }
+  }
+
   /** @param {string} name @param {any} input @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string}} [context] */
   async run(name, input, context = {}) {
     const workflow = this.workflows.get(name);
     if (!workflow) throw new NotFoundError('Workflow', name);
+    // Sticky intent across envelope retries, owned by this run() call. The
+    // write-outcome envelope re-executes the whole workflow when a
+    // SERIALIZABLE attempt aborts, so a step that re-reads shared state
+    // would re-base its intent onto a concurrent winner's write (two
+    // terminal stage changes committing twice). Steps keep their first
+    // attempt's read here; later attempts reuse it, so a retry can only
+    // replay the original intent or lose with 409, never form a new one.
+    // In-memory only: it survives an aborted attempt because the abort
+    // rolls back storage, not this object. One request, one intent.
+    const sticky = {};
     if (usesWriteOutcomes(this.database) && this.events) {
       const outcome = await runIdempotentWrite(this.database, this.events, {
         tenantId: context.tenantId ?? this.database.tenantId,
@@ -79,19 +107,19 @@ export class WorkflowEngine {
             : '',
         contractVersion: 'workflow.v1',
         input,
-      }, async ({ runId }) => this.#execute(workflow, input, { ...context, runId }));
+      }, async ({ runId }) => this.#execute(workflow, input, { ...context, runId, sticky }));
       const result = outcome.result && typeof outcome.result === 'object'
         ? { ...outcome.result, idempotencyKey: outcome.idempotencyKey, replayed: outcome.replayed }
         : outcome.result;
       return result;
     }
-    return this.#execute(workflow, input, context);
+    return this.#execute(workflow, input, { ...context, sticky });
   }
 
   /**
    * @param {WorkflowDefinition} workflow
    * @param {any} input
-   * @param {{actor?: unknown, runId?: string}} context
+   * @param {{actor?: unknown, runId?: string, sticky?: Record<string, any>}} context
    */
   async #execute(workflow, input, context) {
     // Envelope writes already inserted the pending run under this id.
@@ -116,6 +144,7 @@ export class WorkflowEngine {
             services: this.services,
             database: this.database,
             config: this.config,
+            sticky: context.sticky,
           });
           if (output && typeof output === 'object' && !Array.isArray(output)) {
             state = { ...state, ...output };
@@ -126,7 +155,7 @@ export class WorkflowEngine {
           await this.#runs.completeSpan({ spanId, output });
         } catch (error) {
           const normalized = normalizeError(error);
-          await this.#runs.failSpan({ spanId, error: normalized.message });
+          await this.#noteTraceFailure('span', () => this.#runs.failSpan({ spanId, error: normalized.message }));
           throw normalized;
         }
       }
@@ -147,6 +176,7 @@ export class WorkflowEngine {
             services: this.services,
             database: this.database,
             config: this.config,
+            sticky: context.sticky,
             stepOutput: item.output,
           });
         } catch (compensationError) {
@@ -154,7 +184,7 @@ export class WorkflowEngine {
           console.error(`[accordo] compensation failed in ${item.definition.name}: ${compensation.message}`);
         }
       }
-      await this.#runs.failRun({ runId, error: normalized.message, output: state });
+      await this.#noteTraceFailure('run', () => this.#runs.failRun({ runId, error: normalized.message, output: state }));
       normalized.details = {
         ...(normalized.details && typeof normalized.details === 'object' ? normalized.details : {}),
         workflowRunId: runId,
