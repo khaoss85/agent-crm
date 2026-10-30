@@ -192,9 +192,10 @@ export function createInstagramChannelAdapter(options = {}) {
    * (backlog:32820692): one per attachment, so a two-photo message stores
    * two rows and the card shows both — never a first-only truncation. A
    * message with zero or one attachment keeps its bare message id (stable
-   * with every key stored before attachments existed); several attachments
-   * derive stable sibling ids (`<mid>:a<index>`), so a retry replays the
-   * same rows instead of conflicting. The caption rides on every sibling.
+   * with every key stored before attachments existed); of several
+   * attachments the first keeps the bare id and later siblings derive
+   * stable (`<mid>:a<index>`) ids, so a retry replays the same rows
+   * instead of conflicting. The caption rides on every sibling.
    */
   function normalizeGraphEvents(messaging) {
     const item = messaging && typeof messaging === 'object' ? messaging : null;
@@ -238,8 +239,13 @@ export function createInstagramChannelAdapter(options = {}) {
     if (content.attachments.length <= 1) {
       return [{ providerEventId: mid, ...base, attachment: content.attachments[0] ?? null }];
     }
+    // The first sibling keeps the bare message id (backlog:32820692): it is
+    // the identity every row stored before attachments existed carries, so a
+    // redelivery of a previously ingested message replays or conflicts on
+    // the same row instead of silently doubling the timeline. Later siblings
+    // derive stable `<mid>:a<index>` ids, so a retry replays the same rows.
     return content.attachments.map((attachment, index) => ({
-      providerEventId: `${mid}:a${index}`,
+      providerEventId: index === 0 ? mid : `${mid}:a${index}`,
       ...base,
       attachment,
     }));

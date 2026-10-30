@@ -265,8 +265,11 @@ function normalizeGmailMessage(decoded, config) {
   if (attachments.length <= 1) {
     return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
   }
+  // The first sibling keeps the bare message id (backlog:32820692): the
+  // same stable identity the Meta adapters use, so a redelivery of a
+  // previously ingested message replays or conflicts instead of doubling.
   return attachments.map((attachment, index) => ({
-    providerEventId: `${item.id}:a${index}`,
+    providerEventId: index === 0 ? item.id : `${item.id}:a${index}`,
     ...base,
     attachment,
   }));

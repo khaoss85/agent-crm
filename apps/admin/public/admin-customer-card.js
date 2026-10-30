@@ -562,6 +562,36 @@ export function createCustomerCardView(deps) {
       }
     };
     const list = el('div', 'bo-scheda-timeline');
+    // Voce 32820692: the timeline entry carries the attachment reference
+    // the host logged, and the card shows it — a thumbnail for photos, a
+    // player for audio and video, an icon with the name for documents. A
+    // captionless message still shows its attachment instead of an empty
+    // bubble. Handles are server-validated (https without credentials, or
+    // a provider media id fetched server-side); the card embeds same-shape
+    // values only, never markup, and names stay text.
+    const attachmentNode = (attachment) => {
+      if (!attachment || typeof attachment !== 'object') return null;
+      const kinds = ['photo', 'video', 'audio', 'document'];
+      if (!kinds.includes(attachment.kind)) return null;
+      const clean = (value) => (typeof value === 'string' && value !== ''
+        && !/[\s\u0000-\u001f\u007f-\u009f]/.test(value) ? value : null);
+      const handle = clean(attachment.preview) ?? clean(attachment.ref);
+      if (!handle) return null;
+      if (attachment.kind === 'photo') {
+        const img = el('img', 'bo-scheda-allegato');
+        img.setAttribute('src', handle);
+        img.setAttribute('alt', typeof attachment.name === 'string' && attachment.name !== '' ? attachment.name : 'foto allegata');
+        return img;
+      }
+      if (attachment.kind === 'video' || attachment.kind === 'audio') {
+        const player = el(attachment.kind, 'bo-scheda-allegato');
+        player.setAttribute('src', handle);
+        player.setAttribute('controls', '');
+        return player;
+      }
+      const name = typeof attachment.name === 'string' && attachment.name !== '' ? attachment.name : 'Documento';
+      return el('p', 'bo-scheda-allegato', `Documento: ${name}`);
+    };
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
       const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
@@ -610,6 +640,8 @@ export function createCustomerCardView(deps) {
         } else if (typeof item?.body === 'string' && item.body !== '') {
           row.appendChild(el('p', undefined, item.body));
         }
+        const attachment = attachmentNode(item?.attachment);
+        if (attachment) row.appendChild(attachment);
         // Voce 59def6cb805d (C17): the sync row of the prototype,
         // `←/→ <canale> · <stato>`.
         row.appendChild(el('p', 'bo-scheda-sync',

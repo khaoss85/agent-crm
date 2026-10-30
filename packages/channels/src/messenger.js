@@ -238,8 +238,11 @@ export function createMessengerChannelAdapter(options = {}) {
     if (content.attachments.length <= 1) {
       return [{ providerEventId: mid, ...base, attachment: content.attachments[0] ?? null }];
     }
+    // The first sibling keeps the bare message id (backlog:32820692): the
+    // same stable identity Instagram uses, because both ride the shared
+    // Graph shape — a redelivery replays or conflicts instead of doubling.
     return content.attachments.map((attachment, index) => ({
-      providerEventId: `${mid}:a${index}`,
+      providerEventId: index === 0 ? mid : `${mid}:a${index}`,
       ...base,
       attachment,
     }));

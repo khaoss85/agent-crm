@@ -193,6 +193,75 @@ test('an Instagram photo lands the same way, with its caption kept', async (t) =
   assert.equal(card?.preview ?? card?.ref, 'https://cdn.example/ig/locandina.jpg');
 });
 
+test('a two-photo message keeps the bare id on the first sibling and replays', async (t) => {
+  const harness = instagramSetup();
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE, {
+    channel: 'instagram', account: '17841400008460056',
+    adapter: INSTAGRAM_ADAPTER_NAME, adapterVersion: INSTAGRAM_ADAPTER_VERSION,
+    secretRef: 'vault://presti/instagram-a',
+  });
+  await harness.activate(SPACE, reg.connection.sourceKey);
+  const twoPhotos = (mid) => instagramEventBody({
+    mid, sender: 'ig-user-7', recipient: '17841400008460056', text: 'Due foto',
+    timestampMs: NOW,
+    attachments: [
+      { type: 'image', payload: { url: 'https://cdn.example/ig/una.jpg' } },
+      { type: 'image', payload: { url: 'https://cdn.example/ig/due.jpg' } },
+    ],
+  });
+  const first = await harness.ingest(SPACE, {
+    connectionKey: reg.connection.sourceKey,
+    rawBody: twoPhotos('ig-mid-due'), headers: instagramWebhookHeaders(twoPhotos('ig-mid-due'), 'instagram-kit-secret-1'),
+  });
+  assert.equal(first.batched, true);
+  assert.deepEqual(first.events.map((event) => event.content?.attachment?.ref),
+    ['https://cdn.example/ig/una.jpg', 'https://cdn.example/ig/due.jpg']);
+  const rows = harness.inbox(SPACE);
+  assert.deepEqual(rows.map((row) => row.providerEventId).sort(), ['ig-mid-due', 'ig-mid-due:a1'].sort());
+  const retry = await harness.ingest(SPACE, {
+    connectionKey: reg.connection.sourceKey,
+    rawBody: twoPhotos('ig-mid-due'), headers: instagramWebhookHeaders(twoPhotos('ig-mid-due'), 'instagram-kit-secret-1'),
+  });
+  assert.ok(retry.batched === true ? retry.events.every((event) => event.duplicate === true)
+    : retry.duplicate === true, 'a retry replays the same rows instead of conflicting');
+  assert.equal(harness.inbox(SPACE).length, 2, 'no row is doubled by the retry');
+});
+
+test('a redelivery of a pre-attachment row conflicts instead of doubling the card', async (t) => {
+  const harness = instagramSetup();
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE, {
+    channel: 'instagram', account: '17841400008460056',
+    adapter: INSTAGRAM_ADAPTER_NAME, adapterVersion: INSTAGRAM_ADAPTER_VERSION,
+    secretRef: 'vault://presti/instagram-a',
+  });
+  await harness.activate(SPACE, reg.connection.sourceKey);
+  const sign = (rawBody) => instagramWebhookHeaders(rawBody, 'instagram-kit-secret-1');
+  const textOnly = instagramEventBody({
+    mid: 'ig-mid-vecchio', sender: 'ig-user-7', recipient: '17841400008460056',
+    text: 'Due foto', timestampMs: NOW,
+  });
+  const stored = await harness.ingest(SPACE, { connectionKey: reg.connection.sourceKey, rawBody: textOnly, headers: sign(textOnly) });
+  assert.equal(stored.effect, 'applied');
+  // The same message redelivered after the upgrade carries attachments: the
+  // first sibling lands on the stored bare id, whose envelope drifted, so
+  // the webhook contract answers 409 — visible, never a silent duplicate.
+  const withPhotos = instagramEventBody({
+    mid: 'ig-mid-vecchio', sender: 'ig-user-7', recipient: '17841400008460056',
+    text: 'Due foto', timestampMs: NOW,
+    attachments: [
+      { type: 'image', payload: { url: 'https://cdn.example/ig/una.jpg' } },
+      { type: 'image', payload: { url: 'https://cdn.example/ig/due.jpg' } },
+    ],
+  });
+  await assert.rejects(
+    harness.ingest(SPACE, { connectionKey: reg.connection.sourceKey, rawBody: withPhotos, headers: sign(withPhotos) }),
+    (error) => error?.code === 'CHANNEL_EVENT_ID_CONFLICT',
+  );
+  assert.equal(harness.inbox(SPACE).length, 1, 'the redelivery stores no second row');
+});
+
 test('audio and documents arrive with a player or an icon and the name', async (t) => {
   const harness = whatsappSetup();
   t.after(() => harness.close());

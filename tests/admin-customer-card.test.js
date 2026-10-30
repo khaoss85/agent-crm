@@ -1085,3 +1085,38 @@ test('a customer with no linked offer reads none registered, never another custo
   assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
 });
+
+test('backlog:32820692: attachments render on the card: thumbnail, player, icon with name', async () => {
+  const photo = {
+    entry: 'message', id: 'm-photo', conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+    sync: 'received', body: null, teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null,
+    occurredAt: '2026-10-20T09:00:00.000Z',
+    attachment: { kind: 'photo', name: null, size: 1234, ref: 'media-photo-1', preview: null },
+  };
+  const voice = {
+    entry: 'message', id: 'm-voice', conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+    sync: 'received', body: null, teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null,
+    occurredAt: '2026-10-20T09:01:00.000Z',
+    attachment: { kind: 'audio', name: null, size: null, ref: 'media-voice-1', preview: null },
+  };
+  const hostile = {
+    entry: 'message', id: 'm-doc', conversationId: 't1', channel: 'instagram', direction: 'inbound',
+    sync: 'received', body: null, teamAuthorId: null, remoteHandle: 'guido.presti', errorCode: null,
+    occurredAt: '2026-10-20T09:02:00.000Z',
+    attachment: { kind: 'document', name: '<script>alert(1)</script>.pdf', size: 42, ref: 'media-doc-1', preview: null },
+  };
+  const timeline = {
+    ...TIMELINE,
+    entries: { available: true, count: 3, truncated: false, items: [photo, voice, hostile] },
+  };
+  const mount = await renderCard(stubClient({ timeline }));
+  const imgs = mount.findAll('img');
+  assert.equal(imgs.length, 1, 'the photo shows one thumbnail');
+  assert.equal(imgs[0].getAttribute('src'), 'media-photo-1');
+  const players = mount.findAll('audio');
+  assert.equal(players.length, 1, 'the voice note shows one player');
+  assert.equal(players[0].getAttribute('src'), 'media-voice-1');
+  assert.equal(players[0].getAttribute('controls'), '');
+  assert.ok(mount.textContent.includes('<script>alert(1)</script>.pdf'), 'the document name reads as text');
+  assert.deepEqual(mount.findAll('script'), [], 'a hostile filename never becomes markup');
+});
