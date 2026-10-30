@@ -2,9 +2,13 @@
 
 // Focused tests for backlog:0b6d33de — the opportunity stage-race cure.
 // `setStage` pins each request to the stage its caller saw
-// (`expectedFromStage`) and commits through a conditional write gated on
-// that stage, so a concurrent winner makes the loser report 409 instead of
-// committing twice. The parallel-race layer itself stays covered by
+// (`expectedFromStage`) and commits through a conditional write fenced on
+// the stage-generation token (`stage`, `stage_entered_at`), so a concurrent
+// stage winner makes the loser report 409 instead of committing twice,
+// while a pipeline-managed patch that never moves the lifecycle position
+// preserves the fence and commits. Rows that never entered a pipeline carry
+// no token yet and fence on (`stage`, `updated_at`) exactly once. The
+// parallel-race layer itself stays covered by
 // `two terminal stage changes on one opportunity commit at most once` in
 // tests/spine-v2-m4c-http-sdk-admin-cli.test.js (PostgreSQL); these tests
 // pin the deterministic contract on the portable store.
@@ -114,7 +118,9 @@ test('a stale intent does not commit after the stage cycled away and back (ABA)'
   // race interleaving at the service seam: the first read inside setStage
   // returns the pre-race snapshot (what A saw before B and C committed),
   // while the row itself cycles proposal → negotiation → proposal through
-  // two real committed writes (what B and C did). The stage value is back,
+  // two real committed writes (what B and C did). Each leg stamps
+  // stage_entered_at, exactly as a production stage write through setStage
+  // does (raw UPDATE stage exists only in tests); the stage value is back,
   // but the generation token moved on, so A's stale claim must match zero
   // rows and report 409 with the stage unchanged.
   const snapshot = svc.get(opportunity.id);
@@ -123,14 +129,18 @@ test('a stale intent does not commit after the stage cycled away and back (ABA)'
   const execute = svc.database.storage.sync.execute.bind(svc.database.storage.sync);
   const cycle = () => {
     const first = bump(snapshot.updatedAt);
+    const tokenBase = typeof snapshot.stageEnteredAt === 'string' ? snapshot.stageEnteredAt : snapshot.updatedAt;
+    const firstToken = bump(tokenBase);
     execute({
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: 'negotiation' }, { column: 'updated_at', value: first },
+        { column: 'stage_entered_at', value: firstToken },
       ], where: [{ column: 'id', op: 'eq', value: opportunity.id }],
     });
     execute({
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: 'proposal' }, { column: 'updated_at', value: bump(first) },
+        { column: 'stage_entered_at', value: bump(firstToken) },
       ], where: [{ column: 'id', op: 'eq', value: opportunity.id }],
     });
   };
@@ -211,4 +221,110 @@ test('an envelope retry replays the first attempt intent instead of re-reading t
     'the replayed stale intent reports conflict instead of committing twice',
   );
   assert.equal(app.services.opportunities.get(opportunity.id).stage, 'proposal');
+});
+
+test('a managed patch between the read and the claim does not fail a valid stage transition', async (t) => {
+  const { app, actor, opportunity } = await fixture();
+  t.after(() => app.close());
+  const svc = app.services.opportunities;
+
+  // The opportunity rides a pipeline: placement sets the stage-generation
+  // token (`stage_entered_at`), and from then on the pipeline runtime bumps
+  // the row `updated_at` on every managed patch.
+  await svc.applyManaged(opportunity.id, {
+    pipelineKey: 'b2b-sales',
+    pipelineStage: 'discovery',
+    stageEnteredAt: '2026-08-01T00:00:00.000Z',
+  }, { actor });
+  const placed = svc.get(opportunity.id);
+  assert.equal(placed.stageEnteredAt, '2026-08-01T00:00:00.000Z');
+
+  // The review interleaving: a managed patch that never moves the lifecycle
+  // position (no `stage_entered_at` in the patch) lands between setStage's
+  // internal read and its conditional claim. The fence is stage-owned, so
+  // the claim still matches exactly one row and commits.
+  const bump = (iso) => new Date(Date.parse(iso) + 1).toISOString();
+  const execute = svc.database.storage.sync.execute.bind(svc.database.storage.sync);
+  const originalGet = svc.get.bind(svc);
+  let reads = 0;
+  svc.get = (id) => {
+    reads += 1;
+    const snapshot = originalGet(id);
+    if (reads === 1 && id === opportunity.id) {
+      execute({
+        kind: 'update', table: 'opportunities', values: [
+          { column: 'pipeline_stage', value: 'demo' },
+          { column: 'updated_at', value: bump(snapshot.updatedAt) },
+        ], where: [{ column: 'id', op: 'eq', value: opportunity.id }],
+      });
+    }
+    return snapshot;
+  };
+  try {
+    const moved = await svc.setStage(opportunity.id, 'proposal', { actor });
+    assert.equal(moved.stage, 'proposal');
+  } finally {
+    delete svc.get;
+  }
+  const settled = originalGet(opportunity.id);
+  assert.equal(settled.stage, 'proposal');
+  assert.equal(settled.pipelineStage, 'demo');
+  assert.notEqual(
+    settled.stageEnteredAt,
+    placed.stageEnteredAt,
+    'the stage write advances the generation token past what it read',
+  );
+});
+
+test('a lost claim reports whether the stage moved or only the row was touched', async (t) => {
+  const { app, actor, opportunity } = await fixture();
+  t.after(() => app.close());
+  const svc = app.services.opportunities;
+
+  await svc.setStage(opportunity.id, 'proposal', { actor, expectedFromStage: 'qualification' });
+  await assert.rejects(
+    svc.setStage(opportunity.id, 'lost', { actor, expectedFromStage: 'qualification' }),
+    (error) => error?.code === 'CONFLICT'
+      && error?.status === 409
+      && error?.details?.reason === 'stage_moved',
+    'a loser that finds the stage moved reports stage_moved',
+  );
+
+  // Same stage, but the lifecycle position moved under the claim (a managed
+  // patch carrying stage_entered_at, e.g. a pipeline move racing the stage
+  // write): fail closed, but say the stage itself did not move, with a retry
+  // hint — the same intent re-pinned still validates.
+  const bump = (iso) => new Date(Date.parse(iso) + 1).toISOString();
+  const execute = svc.database.storage.sync.execute.bind(svc.database.storage.sync);
+  const originalGet = svc.get.bind(svc);
+  let reads = 0;
+  svc.get = (id) => {
+    reads += 1;
+    const snapshot = originalGet(id);
+    if (reads === 1 && id === opportunity.id) {
+      const tokenBase = typeof snapshot.stageEnteredAt === 'string'
+        ? snapshot.stageEnteredAt
+        : snapshot.updatedAt;
+      execute({
+        kind: 'update', table: 'opportunities', values: [
+          { column: 'pipeline_stage', value: 'demo' },
+          { column: 'updated_at', value: bump(snapshot.updatedAt) },
+          { column: 'stage_entered_at', value: bump(tokenBase) },
+        ], where: [{ column: 'id', op: 'eq', value: opportunity.id }],
+      });
+    }
+    return snapshot;
+  };
+  try {
+    await assert.rejects(
+      svc.setStage(opportunity.id, 'lost', { actor, expectedFromStage: 'proposal' }),
+      (error) => error?.code === 'CONFLICT'
+        && error?.status === 409
+        && error?.details?.reason === 'row_touched',
+      'a loser that finds the stage unmoved reports row_touched',
+    );
+  } finally {
+    delete svc.get;
+  }
+  assert.equal(originalGet(opportunity.id).stage, 'proposal');
 });
