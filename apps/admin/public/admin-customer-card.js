@@ -383,7 +383,8 @@ export function createCustomerCardView(deps) {
     const channelRows = rawIdentities.filter((row) => {
       const system = String(row?.system ?? '').toLowerCase();
       if (ownLabel(CHANNEL_LABELS, system) === undefined) return false;
-      return !isUuid(row?.externalId);
+      if (typeof row?.externalId !== 'string' || row.externalId.trim() === '') return false;
+      return !isUuid(row.externalId);
     });
     const systems = new Set(channelRows.map((row) => String(row.system).toLowerCase()));
     box.appendChild(el('p', 'bo-muted',
