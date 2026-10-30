@@ -51,6 +51,60 @@ function localModules(dir) {
 }
 
 /**
+ * Strip `//` and `/* … *\/` comments so prose that mentions module syntax
+ * (changelog-style headers like "import { x } from './y.js';") never parses
+ * as code. String literals (`'…'`, `"…"`, `` `…` `` with `\` escapes) are
+ * opaque to the scanner, so URLs and text survive untouched; the shell
+ * sources it was written against hold no comment-like sequence inside a
+ * regex literal, and anything unrecognized fails closed in `parseImports`.
+ * The stripped text feeds detection AND the emitted bundle, never the
+ * checked-in sources.
+ *
+ * @param {string} source
+ */
+function stripComments(source) {
+  let out = '';
+  let i = 0;
+  const end = source.length;
+  while (i < end) {
+    const char = source[i];
+    if (char === "'" || char === '"' || char === '`') {
+      const quote = char;
+      out += char;
+      i += 1;
+      while (i < end) {
+        const inner = source[i];
+        out += inner;
+        if (inner === '\\') {
+          out += source[i + 1] ?? '';
+          i += 2;
+          continue;
+        }
+        i += 1;
+        if (inner === quote) break;
+      }
+      continue;
+    }
+    if (char === '/' && source[i + 1] === '/') {
+      while (i < end && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (char === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < end && !(source[i] === '*' && source[i + 1] === '/')) {
+        if (source[i] === '\n') out += '\n';
+        i += 1;
+      }
+      i += 2;
+      continue;
+    }
+    out += char;
+    i += 1;
+  }
+  return out;
+}
+
+/**
  * @param {string} source
  */
 function parseImports(source) {
@@ -159,7 +213,7 @@ export function buildAdminBundle() {
   if (!files.has(ENTRY)) throw new Error('admin-bundle: app.js entry is missing');
   /** @type {Map<string, string>} */
   const sources = new Map();
-  for (const name of files) sources.set(name, readFileSync(join(PUBLIC_DIR, name), 'utf8'));
+  for (const name of files) sources.set(name, stripComments(readFileSync(join(PUBLIC_DIR, name), 'utf8')));
   const order = topoOrder(ENTRY, sources);
   const sections = order.map((file) => {
     const { body, prelude, epilogue } = transformModule(file, /** @type {string} */ (sources.get(file)));

@@ -1508,6 +1508,28 @@ export async function readStaticFile(publicDir, pathname) {
   }
 }
 
+/**
+ * Cache policy for Admin shell static files (backlog:3f74a2f296ec).
+ *
+ * The first paint of `/bo` used to wait for 30+ unversioned modules, so
+ * everything rode `no-cache`. The shell now ships one content-hashed bundle
+ * (`bo-<sha>.js`, `bo-styles-<sha>.css`, via `scripts/admin-bundle.js`): a
+ * new build is a new name, so hashed files are immutable for a year. HTML
+ * entry points are never cached — they carry the current hashed names (and,
+ * under a mount, a per-operator session profile). Anything else (fonts and
+ * friends, referenced by stable names) keeps the old `no-cache`.
+ *
+ * @param {string} pathname the mount-relative request path, `/` included
+ */
+export function staticCacheControl(pathname) {
+  const name = String(pathname ?? '').split('/').pop() ?? '';
+  if (name === '' || name === 'index.html' || name === 'login.html') return 'no-store';
+  if (/^bo-[0-9a-f]+\.js$/.test(name) || /^bo-styles-[0-9a-f]+\.css$/.test(name)) {
+    return 'public, max-age=31536000, immutable';
+  }
+  return 'no-cache';
+}
+
 /** @param {string} publicDir @param {string} pathname @param {import('node:http').ServerResponse} response */
 async function serveStatic(publicDir, pathname, response) {
   const found = await readStaticFile(publicDir, pathname);
@@ -1515,7 +1537,7 @@ async function serveStatic(publicDir, pathname, response) {
   response.writeHead(200, {
     'content-type': found.contentType,
     'content-length': found.data.byteLength,
-    'cache-control': 'no-cache',
+    'cache-control': staticCacheControl(pathname),
   });
   response.end(found.data);
   return true;

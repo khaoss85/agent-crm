@@ -1,1 +1,1 @@
-export { createHttpServer, buildRouter, isResponseEnvelope, readStaticFile, requestIdentity } from './http-server.js';
+export { createHttpServer, buildRouter, isResponseEnvelope, readStaticFile, requestIdentity, staticCacheControl } from './http-server.js';
