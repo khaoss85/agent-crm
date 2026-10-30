@@ -969,3 +969,106 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
   assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
 });
+
+function newOfferMenu(mount) {
+  return mount.findAll('div').find((node) => node.getAttribute('data-newoffer') === 'menu');
+}
+
+function newOfferButton(menu) {
+  return menu.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+}
+
+function newOfferVoices(menu) {
+  return menu.findAll('button').filter((node) => node.getAttribute('data-voice') !== null);
+}
+
+test('Nuova offerta button sits under the description with the two prototype voices (C3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  assert.ok(menu, 'a Nuova offerta menu exists');
+  const button = newOfferButton(menu);
+  assert.ok(button.textContent.includes('Nuova offerta'), 'the green button is labelled');
+  assert.ok((button.getAttribute('class') ?? '').includes('ui-btn-cta'), 'the button uses the green cta variant');
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false', 'the menu starts closed');
+  const panel = menu.findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('ui-add-menu'));
+  assert.ok(panel, 'the voices live in the shared add menu');
+  assert.ok((panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu starts hidden');
+
+  button.dispatch('click');
+  assert.equal(button.getAttribute('aria-expanded'), 'true', 'the button opens the menu');
+  assert.ok(!(panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu is visible');
+
+  const voices = newOfferVoices(menu);
+  assert.equal(voices.length, 2, 'exactly the two prototype voices');
+  const ai = voices.find((voice) => voice.getAttribute('data-voice') === 'ai');
+  const manual = voices.find((voice) => voice.getAttribute('data-voice') === 'manual');
+  assert.ok(ai.textContent.includes("Crea con l'AI"), 'AI voice title');
+  assert.ok(ai.textContent.includes('Es. «cucina per Giulia, 27.500 €»'), 'AI voice example');
+  assert.ok(manual.textContent.includes('Compila manualmente'), 'manual voice title');
+  assert.ok(manual.textContent.includes('Titolo, cliente, valore e scadenza'), 'manual voice line');
+
+  // Escape closes the menu; a second Escape while closed stays closed.
+  panel.dispatch('keydown', { key: 'Escape' });
+  assert.ok((panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'Escape closes the menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+});
+
+test("Crea con l'AI opens the assistant on the pipeline screen (C3)", async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const asked = [];
+  const board = createPipelineBoard({
+    doc, mount, client: stubClient([record('a', 'discovery')]),
+    onAskAi: (screenId, description) => { asked.push({ screenId, description }); },
+  });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'ai').dispatch('click');
+  assert.equal(asked.length, 1, 'the assistant opens once');
+  assert.equal(asked[0].screenId, 'pipeline', 'on the pipeline screen');
+  assert.ok(typeof asked[0].description === 'string' && asked[0].description.length > 0, 'with a description');
+  const panel = menu.findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('ui-add-menu'));
+  assert.ok((panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'picking a voice closes the menu');
+});
+
+test('Compila manualmente navigates to the governed create form (C3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const board = createPipelineBoard({
+    doc, mount, client: stubClient([record('a', 'discovery')]),
+    navigate: (hash) => { navigated.push(hash); },
+  });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
+  assert.deepEqual(navigated, ['#/modules/opportunity/new'], 'the module create form, not a local write');
+});
+
+test('Nuova offerta voices stay honest without shell seams (C3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const board = createPipelineBoard({
+    doc, mount, client: stubClient([record('a', 'discovery')]),
+    toast: (message) => { toasts.push(String(message)); },
+  });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'ai').dispatch('click');
+  assert.ok(toasts.some((message) => message.includes('⌘K')), 'AI voice names the AI bar instead of faking it');
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
+  assert.ok(toasts.some((message) => message.includes('manuale')), 'manual voice says it cannot create instead of writing');
+});
