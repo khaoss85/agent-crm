@@ -3,6 +3,7 @@
 import { definePackage, selectPackageGraph } from '../../core/index.js';
 import {
   ASSIGNMENT_MODULE,
+  ATTACHMENT_KINDS,
   CALL_DIRECTIONS,
   CALL_MODULE,
   CALL_OUTCOMES,
