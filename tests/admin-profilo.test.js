@@ -105,3 +105,20 @@ test('initials come from the name, else from the email', () => {
   assert.equal(profiloInitials('', 'marco.rossi@example.com'), 'MR');
   assert.equal(profiloInitials(null, null), '··');
 });
+
+test('a provider subject is never shown as the name or the email', async () => {
+  const mount = await render({ member: { name: 'google|104938793743317800292', email: 'google|104938793743317800292', role: null },
+    connections: { available: true, reason: null, items: [] } }, { name: 'google|104938793743317800292', email: null, role: 'owner' });
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Il tuo profilo');
+  assert.equal(byClass(mount, 'span', 'bo-profilo-email').length, 0);
+  assert.ok(!mount.textContent.includes('google|'));
+  assert.equal(byClass(mount, 'span', 'bo-profilo-pill-role')[0].textContent, 'Titolare', 'the session role survives a null server role');
+});
+
+test('without a readable email the connected Google account names the person', async () => {
+  const mount = await render({ member: { name: 'google|1049', email: 'google|1049', role: null },
+    connections: { available: true, reason: null, items: [{ connector: 'calendar', status: 'connected', account: 'dan@presti.it' }] } },
+  { name: 'google|1049', email: null, role: null });
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'dan@presti.it');
+  assert.equal(byClass(mount, 'span', 'bo-profilo-avatar')[0].textContent, 'DA');
+});

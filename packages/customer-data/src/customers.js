@@ -24,6 +24,27 @@ export const CUSTOMER_LIST_CONTRACT = 1;
 /** Display bound of one scan: contacts and companies are display reads. */
 export const CUSTOMER_SCAN_LIMIT = 500;
 
+/**
+ * Bound of the last-contact preview in a list row (prototype "04 Clienti":
+ * the Ultimo contatto cell shows the channel mark plus a short message
+ * excerpt, never the full body). Single-line: newlines collapse to spaces.
+ */
+export const LAST_CONTACT_PREVIEW_CHARS = 140;
+
+/**
+ * Short single-line excerpt of the latest message for the list row. Calls
+ * carry no text, so a latest call (or no activity) previews as null — the
+ * view renders the channel and the date alone, never an invented excerpt.
+ * @param {unknown} value the latest message body, if any
+ */
+export function previewLastContactText(value) {
+  if (typeof value !== 'string') return null;
+  const single = value.replace(/\s+/g, ' ').trim();
+  if (single === '') return null;
+  if (single.length <= LAST_CONTACT_PREVIEW_CHARS) return single;
+  return `${single.slice(0, LAST_CONTACT_PREVIEW_CHARS).trimEnd()}…`;
+}
+
 /** Server page sizes from the approved prototype ("04 Clienti"). */
 export const CUSTOMER_PAGE_SIZES = Object.freeze([10, 25, 50]);
 
@@ -270,6 +291,8 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
  * @param {{identitiesBySubject?: Map<string, Array<any>>, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ *   activity entries name `{ occurredAt, channel, text }`: `text` is the
+ *   latest message body (a call carries none, so it stays null there).
  */
 export function shapeCustomerRow(subject, reads = {}) {
   const contact = subject?.contact ?? null;
@@ -304,6 +327,7 @@ export function shapeCustomerRow(subject, reads = {}) {
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
+    lastContactText: previewLastContactText(activity?.text ?? null),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,

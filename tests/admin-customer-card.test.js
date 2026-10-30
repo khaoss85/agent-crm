@@ -107,7 +107,18 @@ const PROFILE = {
     note: 'every record below still exists and was never rewritten',
   },
   identity: { company: { id: 'co1', name: 'Palestra Esempio' }, contact: { id: 'c1', email: 'guido@palestra-esempio.it' } },
-  externalIdentities: [],
+  externalIdentities: [
+    {
+      system: 'whatsapp', externalId: '+39 333 1234567',
+      subject: { resource: 'contact', id: 'c1' },
+      firstObservedAt: '2026-10-19T08:00:00.000Z', lastObservedAt: '2026-10-20T09:00:00.000Z',
+    },
+    {
+      system: 'instagram', externalId: 'guido.presti',
+      subject: { resource: 'contact', id: 'c2' },
+      firstObservedAt: '2026-10-19T10:00:00.000Z', lastObservedAt: '2026-10-20T11:00:00.000Z',
+    },
+  ],
   opportunities: { available: true, count: 1, countIsComplete: true, items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi' }], truncated: false },
   quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi' }], truncated: false },
   orders: { available: false, reason: 'not composed', items: null, count: null },
@@ -985,6 +996,61 @@ test('an unreadable quotes section reads unavailable in Italian, never a confirm
   assert.ok(text.includes('offerte non disponibili'), 'the unavailable commercial section reads a fixed Italian line');
   assert.ok(!text.includes('Nessuna offerta firmata'),
     'an empty opportunities read never proves there are no quotes');
+});
+
+// Voce 59def6cb805d (C10): Identità collegate conta i canali osservati e
+// mostra una riga per canale con sigla e recapito, mai chiavi grezze o UUID.
+test('59def6cb805d: the identities section counts channels with one row each (C10)', async () => {
+  const mount = await renderCard(stubClient());
+  const text = mount.textContent;
+  assert.ok(text.includes('2 canali'), 'the header counts the observed channels');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed channel');
+  assert.ok(text.includes('+39 333 1234567'), 'the WhatsApp handle reads as value');
+  assert.ok(text.includes('guido.presti'), 'the Instagram handle reads as value');
+});
+
+// Voce 59def6cb805d (C10): i sistemi senza etichetta italiana e gli UUID non
+// vanno mai su schermo.
+test('59def6cb805d: unlabelled systems and UUID handles never reach the screen (C10)', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      externalIdentities: [
+        { system: 'google-contacts', externalId: 'people/c123', subject: { resource: 'contact', id: 'c1' } },
+        {
+          system: 'whatsapp', externalId: 'd394d386-4a1b-4c2d-8e3f-267581100b32',
+          subject: { resource: 'contact', id: 'c1' },
+        },
+      ],
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('google-contacts'), 'no raw system key on screen');
+  assert.ok(!text.includes('people/c123'), 'no enrichment-only handle on screen');
+  assert.ok(!text.includes('d394d386-4a1b-4c2d-8e3f-267581100b32'), 'no UUID on screen');
+  assert.ok(text.includes('nessun canale osservato'), 'the empty channel list stays honest');
+});
+
+// Voce 59def6cb805d (C11): la nota viola ✦ riporta la motivazione registrata;
+// senza unione o senza motivazione non si inventa nulla.
+test('59def6cb805d: the union note carries the recorded motivation (C11)', async () => {
+  const mount = await renderCard(stubClient());
+  const notes = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-union-note');
+  assert.equal(notes.length, 1, 'one note for the distinct recorded reason');
+  assert.equal(notes[0].textContent, '✦ stesso numero su WhatsApp e Instagram');
+});
+
+// Voce 59def6cb805d (C11): scheda non unita o senza motivazione, nessuna nota.
+test('59def6cb805d: no union note is invented without a linked union (C11)', async () => {
+  const mount = await renderCard(stubClient({ profile: PROFILE_BARE }));
+  assert.deepEqual(
+    mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-union-note'),
+    [],
+    'an unlinked record shows no union note',
+  );
+  assert.ok(mount.textContent.includes('nessun canale osservato'), 'and no channel is claimed');
 });
 
 test('a customer with no linked offer reads none registered, never another customer offer', async () => {

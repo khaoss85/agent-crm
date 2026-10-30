@@ -383,6 +383,71 @@ test("a contact from the site form shows 'Form sito' in Ultimo contatto", async 
   assert.equal(tile?.getAttribute('title'), 'Form sito', 'the channel tile names Form sito too');
 });
 
+test('Ultimo contatto paints the mark, the excerpt and «canale · quando»', async () => {
+  // backlog:22d4dd0f, C16: the prototype cell is the channel mark, the
+  // message excerpt, then the mono «<canale> · <quando>» line.
+  const excerptRow = {
+    ...ROW_MARCO,
+    lastContactAt: '2026-10-20T09:00:00.000Z', lastContactChannel: 'whatsapp',
+    lastContactText: 'Ci vediamo domani per la prova gratuita?',
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [excerptRow], total: 1, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const card = mount.findAll('article')[0];
+  const when = card.querySelector('.bo-clienti-when');
+  assert.ok(when, 'the mono quando line renders');
+  assert.equal(when.textContent, 'WhatsApp · 20 ott', 'the mono line names the channel and the short day');
+  assert.ok(card.textContent.includes('Ci vediamo domani per la prova gratuita?'), 'the excerpt renders beside the mark');
+  const mark = card.querySelector('.bo-clienti-tile');
+  assert.ok(mark, 'the channel mark renders before the excerpt');
+  assert.equal(mark.getAttribute('aria-label'), 'WhatsApp', 'the mark names the channel to assistive tech');
+});
+
+test('Ultimo contatto of today reads «oggi HH:MM», a call names no excerpt', async () => {
+  // backlog:22d4dd0f, C16: «WhatsApp · oggi 10:20» for a contact of today;
+  // a latest call carries no text, so only channel and date render.
+  const now = new Date().toISOString();
+  const callRow = {
+    ...ROW_MARCO,
+    lastContactAt: now, lastContactChannel: 'phone', lastContactText: null,
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [callRow], total: 1, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const card = mount.findAll('article')[0];
+  const when = card.querySelector('.bo-clienti-when');
+  assert.ok(when, 'the mono quando line renders for a call too');
+  assert.match(when.textContent, /^Telefono · oggi \d{2}:\d{2}$/, 'today renders as «oggi HH:MM», never a bare date');
+  assert.ok(!card.querySelector('.bo-clienti-tile') || !card.textContent.includes('…'),
+    'no excerpt is invented for a call');
+});
+
+test('a hostile excerpt stays text, and no contact still reads «mai»', async () => {
+  // backlog:22d4dd0f, C16+C23: hostile server text never becomes markup.
+  const hostileRow = {
+    ...ROW_MARCO,
+    lastContactAt: '2026-10-20T09:00:00.000Z', lastContactChannel: 'whatsapp',
+    lastContactText: '<img src=x onerror=alert(1)>',
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [hostileRow, ROW_ANNA], total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const cards = mount.findAll('article');
+  assert.equal(cards[0].findAll('img').length, 0, 'the excerpt never becomes an element');
+  assert.ok(cards[0].textContent.includes('<img src=x onerror=alert(1)>'), 'the hostile text still reads as text');
+  assert.ok(cards[1].textContent.includes('mai'), 'no contact still reads «mai»');
+});
+
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {
   let asked = null;
   let notified = null;
