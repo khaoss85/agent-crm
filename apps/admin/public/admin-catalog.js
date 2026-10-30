@@ -135,6 +135,20 @@ export function createCatalogView(deps) {
    * the honest manual-management invite.
    * @param {any} summary
    */
+  /**
+   * Stripe connection state from the catalog summary. The server publishes
+   * `stripeConnected` (packages/commercial/src/manual-catalog.js); a summary
+   * without the flag falls back to the same by-provider derivation, so the
+   * rows and the Stripe block never disagree about it.
+   * @param {any} summary
+   */
+  function stripeIsConnected(summary) {
+    if (summary && typeof summary.stripeConnected === 'boolean') return summary.stripeConnected;
+    const providers = summary && typeof summary === 'object' && summary.byProvider
+      && typeof summary.byProvider === 'object' ? summary.byProvider : {};
+    return Object.keys(providers).some((name) => name.toLowerCase().includes('stripe'));
+  }
+
   function renderStripeBlock(summary) {
     const box = el('div', 'catalog-stripe');
     box.appendChild(el('span', 'catalog-stripe-badge', 'S'));
@@ -142,7 +156,9 @@ export function createCatalogView(deps) {
     box.appendChild(text);
     const byProvider = summary && typeof summary === 'object' && summary.byProvider
       && typeof summary.byProvider === 'object' ? summary.byProvider : {};
-    const connected = Object.keys(byProvider).filter((name) => name.toLowerCase().includes('stripe'));
+    const connected = stripeIsConnected(summary)
+      ? Object.keys(byProvider).filter((name) => name.toLowerCase().includes('stripe'))
+      : [];
     if (connected.length === 0) {
       box.setAttribute('data-state', 'manual');
       text.appendChild(el('strong', 'catalog-stripe-title', 'Stripe non collegato'));
