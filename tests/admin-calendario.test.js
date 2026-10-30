@@ -650,6 +650,152 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
 });
 
+// BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or says
+// so): a slot starting outside 09:00–18:00 never lands on another hour's row.
+test('slotInGrid keeps the painted 09:00–18:00 hours, nothing else', () => {
+  assert.equal(slotInGrid('2026-10-22T07:00:00.000Z', '2026-10-22T07:30:00.000Z'), true, '09:00 Rome starts inside');
+  assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), true, '18:00 Rome starts inside');
+  assert.equal(slotInGrid('2026-10-22T17:00:00.000Z', '2026-10-22T17:30:00.000Z'), false, '19:00 Rome stays outside');
+  assert.equal(slotInGrid('2026-10-22T06:59:00.000Z', '2026-10-22T07:30:00.000Z'), false, '08:59 Rome stays outside');
+  assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:00:00.000Z'), false, 'an empty slot never paints');
+  assert.equal(slotInGrid(null, '2026-10-22T16:30:00.000Z'), false, 'an unreadable start never paints');
+  assert.equal(slotInGrid('not-a-time', '2026-10-22T16:30:00.000Z'), false, 'a corrupt start fails closed');
+});
+
+test('a 19:00 proposal is named below the grid with its real time, never on the 17:00 row', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T17:00:00.000Z',
+    endsAt: '2026-10-22T17:30:00.000Z',
+    notes: 'taglio serale per Ada',
+  };
+  const slots = [{ startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' }];
+  const client = stubClient({ phrase: draft, slots });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  const flush = async (n = 7) => {
+    for (let round = 0; round < n; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await flush();
+  const field = mount.querySelector('textarea[name="phrase"]');
+  field.value = 'trova un posto serale con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flush();
+  const ghosts = mount.findAll('button').filter((node) => (node.textContent ?? '').startsWith('✦ Proposta'));
+  assert.equal(ghosts.length, 0, 'no ghost lands on a grid row for the out-of-hours slot');
+  assert.ok(
+    texts(mount, 'p').some((text) => text.includes('✦ Proposta') && text.includes('19:00') && text.includes("fuori dall'orario mostrato")),
+    'the honest line names the real 19:00 time and says the grid does not show it',
+  );
+});
+
+// BO-F6-11 fetta 8 (owner 29/10: the manual customer rides a name search,
+// never a typed id): the search paints name buttons only, a pick names the
+// customer, and «Cambia cliente» searches again.
+test('the manual customer search lists names, never ids or resources', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: customersOf([
+      { resource: 'contact', id: 'c1', name: 'Ada' },
+      { resource: 'company', id: 'c2', name: 'Ada Ditta' },
+    ]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  assert.ok(search, 'the manual form searches by name');
+  assert.equal(search.getAttribute('placeholder'), 'Cerca il cliente per nome…');
+  search.value = 'Ad';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const names = mount.querySelector('[data-role="customer-results"]').findAll('button').map((node) => node.textContent);
+  assert.deepEqual(names, ['Ada', 'Ada Ditta']);
+  assert.ok(!mount.querySelector('[data-role="customer-results"]').textContent.includes('c1'), 'no id reaches the screen');
+  const fieldNames = mount.findAll('input').map((node) => node.getAttribute('name'));
+  assert.ok(!fieldNames.includes('customerResource') && !fieldNames.includes('customerId'), 'no technical customer field');
+});
+
+test('a short customer query searches nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'A';
+  search.dispatch('input');
+  for (let round = 0; round < 5; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(client.calls.filter((call) => call.path.startsWith('/api/customer-data/customers')).length, 0);
+});
+
+test('a customer search without a match says so in plain words', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Zzz';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Nessun cliente corrisponde')), 'the empty match is honest');
+});
+
+test('a failed customer search says so in plain words, never a code', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: () => {
+      throw new Error('customer-data is not composed');
+    },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Ada';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(texts(mount, 'p').some((text) => text.includes('non si è potuto leggere')), 'the failure is honest');
+});
+
+test('picking a customer names them and «Cambia cliente» searches again', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: customersOf([
+      { resource: 'contact', id: 'c1', name: 'Ada' },
+      { resource: 'contact', id: 'c2', name: 'Bo' },
+    ]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await pickCustomerByName(mount, 'Ada');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Ada'), 'the pick names the customer');
+  assert.equal(mount.querySelector('input[name="customerSearch"]'), null, 'no search field over a pick');
+  clickButton(mount, 'Cambia cliente');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(mount.querySelector('input[name="customerSearch"]'), 'the search returns after «Cambia cliente»');
+  await pickCustomerByName(mount, 'Bo');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the second pick wins');
+});
+
 // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome.
 test('the header carries the prototype eyebrow and title', async () => {
   const doc = createFakeDocument();
@@ -741,7 +887,7 @@ test('the voices focus the phrase field and the manual form', async () => {
   assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
   toggle.dispatch('click');
   const manual = menu.findAll('button').find((node) => node.textContent.includes('Compila manualmente'));
-  const first = mount.querySelector('input[name="customerResource"]');
+  const first = mount.querySelector('input[name="customerSearch"]');
   first.focus = () => { focused = 'manual'; };
   manual.dispatch('click');
   assert.equal(focused, 'manual', 'the manual voice focuses the booking form');
