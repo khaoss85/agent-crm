@@ -2,7 +2,14 @@
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 
-import { humanReadError } from './admin-core.js';
+import {
+  customerDataDeferredLine,
+  customerImportOutcomeLabel,
+  customerImportReasonLabel,
+  customerIssueKindLabel,
+  customerResourceLabel,
+  humanReadError,
+} from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
@@ -61,9 +68,10 @@ function block(el, panel, meta) {
     limits.appendChild(el('p', 'muted customer-data-limit', sentence));
   }
   const deferred = meta?.deferred;
-  if (deferred?.items?.length) {
-    limits.appendChild(el('p', 'muted customer-data-deferred',
-      `Rimandato a ${deferred.track}: ${deferred.items.join(', ')}.`));
+  if (deferred && (deferred.track || (deferred.items ?? []).length > 0)) {
+    // backlog:273de560: the deferred track reads in Italian — the import
+    // screen is an operator tool, not a developer surface.
+    limits.appendChild(el('p', 'muted customer-data-deferred', customerDataDeferredLine(deferred)));
   }
   panel.appendChild(limits);
 }
@@ -234,7 +242,10 @@ export function createCustomerDataView(deps) {
         const row = el('p', 'customer-data-receipt');
         row.setAttribute('data-outcome', String(receipt.outcome));
         row.appendChild(el('span', 'customer-data-receipt-index', `riga ${receipt.index}`));
-        row.appendChild(el('span', 'customer-data-receipt-outcome', ` ${receipt.outcome} · ${receipt.reasonCode}`));
+        // backlog:273de560: outcome and reason read as Italian labels; the
+        // free-text server reason stays as-is (per-row diagnostics, not chrome).
+        row.appendChild(el('span', 'customer-data-receipt-outcome',
+          ` ${customerImportOutcomeLabel(receipt.outcome)} · ${customerImportReasonLabel(receipt.reasonCode)}`));
         row.appendChild(el('span', 'customer-data-receipt-reason', ` — ${receipt.reason}`));
         previewBox.appendChild(row);
       }
@@ -268,7 +279,7 @@ export function createCustomerDataView(deps) {
       const row = el('div', 'customer-data-candidate');
       row.setAttribute('data-candidate', String(candidate.id));
       row.appendChild(el('p', 'customer-data-candidate-pair',
-        `${candidate.leftResource} ${candidate.leftLabel ?? candidate.leftId} ↔ ${candidate.rightResource} ${candidate.rightLabel ?? candidate.rightId}`));
+        `${customerResourceLabel(candidate.leftResource)} ${candidate.leftLabel ?? candidate.leftId} ↔ ${customerResourceLabel(candidate.rightResource)} ${candidate.rightLabel ?? candidate.rightId}`));
       row.appendChild(el('p', 'muted customer-data-candidate-evidence', `${candidate.rule}: ${candidate.evidence}`));
 
       const reason = el('input');
@@ -318,7 +329,7 @@ export function createCustomerDataView(deps) {
       const row = el('div', 'customer-data-issue');
       row.setAttribute('data-issue', String(issue.id));
       row.setAttribute('data-kind', String(issue.kind));
-      row.appendChild(el('p', 'customer-data-issue-kind', issue.kind));
+      row.appendChild(el('p', 'customer-data-issue-kind', customerIssueKindLabel(issue.kind)));
       row.appendChild(el('p', 'muted customer-data-issue-evidence', issue.evidence));
       const reason = el('input');
       reason.setAttribute('name', `issue-reason-${issue.id}`);
@@ -471,7 +482,7 @@ export function createCustomerDataView(deps) {
     const issueBox = el('div', 'customer-profile-issues');
     issueBox.appendChild(el('h4', undefined, `Segnalazioni aperte (${(profile.dataQualityIssues ?? []).length})`));
     for (const issue of profile.dataQualityIssues ?? []) {
-      issueBox.appendChild(el('p', 'customer-profile-issue', `${issue.kind}: ${issue.evidence}`));
+      issueBox.appendChild(el('p', 'customer-profile-issue', `${customerIssueKindLabel(issue.kind)}: ${issue.evidence}`));
     }
     panel.appendChild(issueBox);
 

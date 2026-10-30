@@ -1,6 +1,7 @@
 // @ts-check
 
 import { elFor, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
 // BO-F1-05 — Elenco Clienti: viste rapide, ricerca, filtri raggruppati con
 // "Crea un filtro con l'AI", × sui filtri, ordinamento, colonne configurabili
@@ -24,8 +25,9 @@ import { humanReadError } from './admin-core.js';
 
 /**
  * Where the governed JSON import lives since the Clienti screen stopped
- * embedding it (backlog:80b25fb0): the list never writes, so manual entry
- * navigates there instead of focusing a form below the table.
+ * embedding it (backlog:80b25fb0): the list never writes. Manual entry
+ * opens the customer form (backlog:273de560, `#/clienti/nuovo`); the
+ * import stays a separate tool, reached from the menu's own voice.
  */
 export const CLIENTI_IMPORT_ROUTE = '#/import-clienti';
 
@@ -306,8 +308,9 @@ export function createCustomerListView(deps) {
     const headRow = el('div', 'bo-clienti-bar');
     headRow.appendChild(title);
     // "Aggiungi cliente": AI paste writes nothing until applied (preview is
-    // the plan-then-confirm surface below), manual entry is the host contact
-    // module factory — the list owns no record creation of its own.
+    // the plan-then-confirm surface below), manual entry opens the customer
+    // form (#/clienti/nuovo) — the list owns no record creation of its own.
+    // The governed JSON import stays a separate tool on #/import-clienti.
     headRow.appendChild(menuBox('Aggiungi cliente', (menu, closeMenu) => {
       menu.classList.add('ui-add-menu');
       const addItem = (action, label, hint, onPick) => {
@@ -326,12 +329,15 @@ export function createCustomerListView(deps) {
           notify('Apri la barra AI (⌘K) e incolla un messaggio o un biglietto da visita.');
         }
       });
-      addItem('add-manual', 'Compila manualmente', 'Nome, recapiti e canale di provenienza', () => {
+      addItem('add-manual', 'Compila manualmente', 'Nome, recapiti e azienda', () => {
         if (typeof deps.onManualAdd === 'function') {
           deps.onManualAdd();
         } else {
-          navigate(CLIENTI_IMPORT_ROUTE);
+          navigate(CLIENTI_NUOVO_ROUTE);
         }
+      });
+      addItem('add-import', 'Importa da JSON', 'Strumento: anteprima e applicazione da righe', () => {
+        navigate(CLIENTI_IMPORT_ROUTE);
       });
     }, 'Aggiungi cliente', 'bo-clienti-menubutton ui-btn-primary'));
     panel.appendChild(headRow);

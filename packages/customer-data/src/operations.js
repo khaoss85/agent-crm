@@ -60,8 +60,16 @@ export function createCustomerDataOperations({ database, modules, events, config
    */
   const readerFor = () => createPolicyReader({ modules, names, core });
 
-  /** Shared summary shape for both preview and apply. */
-  const summarize = (resolution, mode, runId = null) => ({
+  /**
+   * Shared summary shape for both preview and apply.
+   *
+   * A preview resolves read-only, so a row that would create a record
+   * carries `subject: null` with `willCreate: true` — nothing exists yet.
+   * An apply creates those records inside its transaction, so it fills the
+   * same receipts with the created subjects (backlog:273de560): a caller
+   * that navigates to the new scheda needs the id, not a second lookup.
+   */
+  const summarize = (resolution, mode, runId = null, subjectsBy = null) => ({
     mode,
     runId,
     system: resolution.system,
@@ -76,7 +84,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       reasonCode: receipt.reasonCode,
       reason: receipt.reason,
       matchRule: receipt.rule,
-      subject: receipt.subject ?? null,
+      subject: subjectsBy?.get(receipt.index) ?? receipt.subject ?? null,
       candidates: receipt.candidates ?? [],
       willCreate: Boolean(receipt.created),
     })),
@@ -121,9 +129,12 @@ export function createCustomerDataOperations({ database, modules, events, config
       const existing = (await runs.listWhere({ idempotencyKey: resolution.idempotencyKey }))[0];
       if (existing) {
         // Same payload → same run. A *different* payload cannot reach here:
-        // the key is derived from the payload itself.
+        // the key is derived from the payload itself. The stored rows carry
+        // the subjects the first apply created, so a replay answers the same
+        // shape as the original — never accepted with a missing subject.
+        const stored = await trusted(modules, names.row).listWhere({ runId: existing.id });
         return Object.freeze({
-          ...summarize(resolution, 'apply', existing.id),
+          ...summarize(resolution, 'apply', existing.id, subjectsByIndex(stored)),
           replayed: true,
           writes: 'nothing new — this exact import was already applied, and its run is returned unchanged',
         });
@@ -155,6 +166,7 @@ export function createCustomerDataOperations({ database, modules, events, config
 
         let candidateCount = 0;
         let issueCount = 0;
+        const createdSubjects = new Map();
 
         for (const receipt of resolution.receipts) {
           let subject = receipt.subject ?? null;
@@ -162,6 +174,7 @@ export function createCustomerDataOperations({ database, modules, events, config
           // Create the record the row names, when nothing matched it.
           if (receipt.outcome === 'accepted' && receipt.created) {
             subject = await createSubjectFor(receipt.row, actor);
+            createdSubjects.set(receipt.index, subject);
           }
 
           await trusted(modules, names.row).createManaged({
@@ -192,7 +205,7 @@ export function createCustomerDataOperations({ database, modules, events, config
         issueCount = await recordIssues({ resolution, runId: run.id, actor });
 
         await runs.applyManaged(run.id, { candidateCount, issueCount }, { actor });
-        return { run, candidateCount, issueCount };
+        return { run, candidateCount, issueCount, createdSubjects };
       });
 
       events.emit?.('customer-data.import.applied', {
@@ -200,7 +213,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       });
 
       return Object.freeze({
-        ...summarize(resolution, 'apply', applied.run.id),
+        ...summarize(resolution, 'apply', applied.run.id, applied.createdSubjects),
         replayed: false,
         candidateCount: applied.candidateCount,
         issueCount: applied.issueCount,
@@ -381,6 +394,27 @@ export function createCustomerDataOperations({ database, modules, events, config
     }
     return written;
   }
+}
+
+/**
+ * Rebuild the subject envelope for each stored row of an already-applied
+ * run, so a replayed apply answers the same receipts as the original —
+ * including the subjects the first apply created (backlog:273de560).
+ * @param {Array<any>} storedRows
+ */
+function subjectsByIndex(storedRows) {
+  const byIndex = new Map();
+  for (const row of storedRows ?? []) {
+    if (!row || row.subjectResource === 'none' || row.subjectResource == null || row.subjectId == null) continue;
+    byIndex.set(row.rowIndex, Object.freeze({
+      resource: row.subjectResource,
+      id: row.subjectId,
+      owner: row.subjectOwner ?? 'host',
+      ownerPackage: row.subjectOwnerPackage ?? null,
+      label: row.subjectLabel ?? null,
+    }));
+  }
+  return byIndex;
 }
 
 /**

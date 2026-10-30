@@ -136,6 +136,19 @@ test('parseModuleRoute routes the customer import tool to its own screen', () =>
   }
 });
 
+test('parseModuleRoute routes the manual customer form to its own screen', () => {
+  // backlog:273de560: "Compila manualmente" opens #/clienti/nuovo, never the import tool.
+  assert.deepEqual(parseModuleRoute('#/clienti/nuovo'), { view: 'customer-new' });
+  assert.deepEqual(parseModuleRoute('#/clienti/nuovo/'), { view: 'customer-new' });
+  for (const hash of [
+    '#/clienti/nuovo/extra',
+    '#/clienti/nuovo//',
+    '#/clienti',
+  ]) {
+    assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
+  }
+});
+
 test('parseModuleRoute routes the customer scheda to its three-column view', () => {
   assert.deepEqual(parseModuleRoute('#/customer-card/contact/c1'), { view: 'customer-card', resource: 'contact', subjectId: 'c1' });
   for (const hash of [

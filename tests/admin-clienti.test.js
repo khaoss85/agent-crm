@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
+import { CLIENTI_NUOVO_ROUTE } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -312,15 +313,21 @@ test('Aggiungi cliente opens a menu with the two prototype entries', async () =>
   assert.ok(menus[0].textContent.includes("Crea con l'AI"));
   assert.ok(menus[0].textContent.includes('Incolla un messaggio o un biglietto da visita'));
   assert.ok(menus[0].textContent.includes('Compila manualmente'));
-  assert.ok(menus[0].textContent.includes('Nome, recapiti e canale di provenienza'));
+  assert.ok(menus[0].textContent.includes('Nome, recapiti e azienda'));
+  assert.ok(menus[0].textContent.includes('Importa da JSON'), 'the governed import stays reachable as its own tool');
   byAttr(mount, 'button', 'data-action', 'add-manual').dispatch('click');
-  assert.equal(manualCalls, 1, 'manual entry routes to the governed import form, never a parallel creation');
+  assert.equal(manualCalls, 1, 'manual entry routes to the customer form, never a parallel creation');
   assert.ok(menus[0].classList.contains('hidden'), 'choosing an entry closes the menu');
   let navigated = null;
   const plain = await render(stubClient(), { navigate: (hash) => { navigated = hash; } });
   plain.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
   byAttr(plain.mount, 'button', 'data-action', 'add-manual').dispatch('click');
-  assert.equal(navigated, CLIENTI_IMPORT_ROUTE, 'without the section hook the entry navigates to the import screen');
+  assert.equal(navigated, CLIENTI_NUOVO_ROUTE, 'without the section hook the entry navigates to the customer form');
+  let imported = null;
+  const plainImport = await render(stubClient(), { navigate: (hash) => { imported = hash; } });
+  plainImport.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
+  byAttr(plainImport.mount, 'button', 'data-action', 'add-import').dispatch('click');
+  assert.equal(imported, CLIENTI_IMPORT_ROUTE, 'the import entry navigates to the separate import tool');
 });
 
 test('the Clienti screen carries no import tool', async () => {

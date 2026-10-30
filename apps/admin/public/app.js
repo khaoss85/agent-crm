@@ -419,6 +419,7 @@ import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { CLIENTI_IMPORT_ROUTE, createCustomerListView } from './admin-clienti.js';
+import { CLIENTI_NUOVO_ROUTE, createCustomerFormView } from './admin-cliente-nuovo.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
@@ -542,8 +543,8 @@ const customerCardView = createCustomerCardView({
 });
 
 // Clienti list (BO-F1-05, backlog:80b25fb0): the table alone, no import tool.
-// Manual entry navigates to the governed import screen below — the list
-// itself never writes.
+// Manual entry opens the customer form (backlog:273de560) — the list
+// itself never writes. The import stays a separate tool on #/import-clienti.
 const clientiListView = createCustomerListView({
   doc: document,
   mount: moduleView,
@@ -558,8 +559,20 @@ const clientiListView = createCustomerListView({
     if (assistantPanel) void assistantPanel.open('clienti');
     else toast('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
   },
-  onManualAdd: () => { window.location.hash = CLIENTI_IMPORT_ROUTE; },
+  onManualAdd: () => { window.location.hash = CLIENTI_NUOVO_ROUTE; },
   storage: shellStorage,
+});
+
+// New customer form (backlog:273de560): nome, email, telefono, azienda,
+// stato and nota with Salva/Annulla. Salva creates through the same
+// governed import-apply operation as the tool, then lands on the scheda.
+const customerFormView = createCustomerFormView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+  notify: (message) => toast(message),
 });
 
 // Customer Data import and governance tool (ADR-037, backlog:80b25fb0):
@@ -824,6 +837,7 @@ function shellScreenFor(target) {
     case 'customer-profile':
     case 'customer-card': return { id: 'clienti', label: 'Clienti' };
     case 'customer-import': return { id: 'clienti', label: 'Importazione clienti' };
+    case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
@@ -1032,6 +1046,10 @@ async function route() {
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
   if (target.view !== 'customer-data') clientiListView.invalidate();
+  // backlog:273de560: the form paints straight into the shared mount, so a
+  // save still in flight must die when the operator leaves the form —
+  // otherwise its late response clears the screen just opened.
+  if (target.view !== 'customer-new') customerFormView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
     // Space home (BO-F3-04): the Oggi screen, never the demo. The
@@ -1069,7 +1087,7 @@ async function route() {
       (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
-      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card' || target.view === 'customer-import') && link.getAttribute('href') === '#/customer-data')
+      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card' || target.view === 'customer-import' || target.view === 'customer-new') && link.getAttribute('href') === '#/customer-data')
       || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);
@@ -1097,6 +1115,7 @@ async function route() {
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await clientiListView.render();
     else if (target.view === 'customer-import') await customerDataView.render();
+    else if (target.view === 'customer-new') await customerFormView.render();
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
     else if (target.view === 'sync') await syncView.render();
