@@ -9,11 +9,22 @@ export const requestOpportunityStageChangeWorkflow = Object.freeze({
   steps: [
     {
       name: 'load-opportunity',
-      async execute({ input, services }) {
+      async execute({ input, services, sticky }) {
         const opportunityId = requiredString(input.opportunityId, 'opportunityId');
         const targetStage = enumValue(input.targetStage, [...OPPORTUNITY_STAGES], 'targetStage');
         const opportunity = await Promise.resolve(services.opportunities.get(opportunityId));
-        return { opportunity, opportunityId, targetStage, originalStage: opportunity.stage };
+        // The intent is pinned to the stage the FIRST attempt saw. The
+        // engine reuses one `sticky` object per run() call, so an envelope
+        // retry (runIdempotentWrite re-executes the whole workflow after a
+        // SERIALIZABLE abort) replays this same intent instead of re-reading
+        // the concurrent winner's stage and committing a second transition.
+        // A retry whose pin no longer holds loses with 409 in setStage.
+        let originalStage = opportunity.stage;
+        if (sticky !== null && typeof sticky === 'object') {
+          if (sticky.originalStage === undefined) sticky.originalStage = opportunity.stage;
+          originalStage = sticky.originalStage;
+        }
+        return { opportunity, opportunityId, targetStage, originalStage };
       },
     },
     {

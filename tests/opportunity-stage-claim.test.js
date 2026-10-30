@@ -173,3 +173,42 @@ test('the stage-change workflow pins its load-time stage on the commit', async (
   assert.equal(run.output.outcome, 'stage_changed');
   assert.equal(app.services.opportunities.get(opportunity.id).stage, 'proposal');
 });
+
+test('an envelope retry replays the first attempt intent instead of re-reading the winner stage', async (t) => {
+  const { app, actor, opportunity } = await fixture();
+  t.after(() => app.close());
+
+  const load = requestOpportunityStageChangeWorkflow.steps[0];
+  const services = { opportunities: app.services.opportunities };
+  const input = { opportunityId: opportunity.id, targetStage: 'lost' };
+  // One `sticky` object per engine run() call: the engine hands the same
+  // object to every envelope attempt, so the second load below is the retry
+  // of the first after its SERIALIZABLE transaction aborted.
+  const sticky = {};
+  const first = await load.execute({ input, services, sticky });
+  assert.equal(first.originalStage, 'qualification');
+
+  // The concurrent winner commits between the loser attempt 1 and its retry.
+  await app.services.opportunities.setStage(opportunity.id, 'proposal', { actor });
+
+  const retry = await load.execute({ input, services, sticky });
+  assert.equal(
+    retry.originalStage,
+    'qualification',
+    'the retry replays the first attempt intent, never the winner stage',
+  );
+  assert.equal(retry.opportunity.stage, 'proposal');
+
+  // And the commit built on that replayed intent loses with 409: no re-base
+  // onto the winner stage (proposal → lost), hence no second commit.
+  await assert.rejects(
+    app.services.opportunities.setStage(
+      opportunity.id,
+      'lost',
+      { actor, expectedFromStage: retry.originalStage },
+    ),
+    (error) => error?.code === 'CONFLICT' && error?.status === 409,
+    'the replayed stale intent reports conflict instead of committing twice',
+  );
+  assert.equal(app.services.opportunities.get(opportunity.id).stage, 'proposal');
+});

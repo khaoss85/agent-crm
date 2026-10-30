@@ -22,7 +22,8 @@ import { boundedFailureCode, runIdempotentWrite, usesWriteOutcomes } from '../..
  *   runId: string,
  *   services: Record<string, any>,
  *   database: any,
- *   config: Record<string, any>
+ *   config: Record<string, any>,
+ *   sticky?: Record<string, any>
  * }} WorkflowStepContext
  */
 
@@ -84,6 +85,16 @@ export class WorkflowEngine {
   async run(name, input, context = {}) {
     const workflow = this.workflows.get(name);
     if (!workflow) throw new NotFoundError('Workflow', name);
+    // Sticky intent across envelope retries, owned by this run() call. The
+    // write-outcome envelope re-executes the whole workflow when a
+    // SERIALIZABLE attempt aborts, so a step that re-reads shared state
+    // would re-base its intent onto a concurrent winner's write (two
+    // terminal stage changes committing twice). Steps keep their first
+    // attempt's read here; later attempts reuse it, so a retry can only
+    // replay the original intent or lose with 409, never form a new one.
+    // In-memory only: it survives an aborted attempt because the abort
+    // rolls back storage, not this object. One request, one intent.
+    const sticky = {};
     if (usesWriteOutcomes(this.database) && this.events) {
       const outcome = await runIdempotentWrite(this.database, this.events, {
         tenantId: context.tenantId ?? this.database.tenantId,
@@ -96,19 +107,19 @@ export class WorkflowEngine {
             : '',
         contractVersion: 'workflow.v1',
         input,
-      }, async ({ runId }) => this.#execute(workflow, input, { ...context, runId }));
+      }, async ({ runId }) => this.#execute(workflow, input, { ...context, runId, sticky }));
       const result = outcome.result && typeof outcome.result === 'object'
         ? { ...outcome.result, idempotencyKey: outcome.idempotencyKey, replayed: outcome.replayed }
         : outcome.result;
       return result;
     }
-    return this.#execute(workflow, input, context);
+    return this.#execute(workflow, input, { ...context, sticky });
   }
 
   /**
    * @param {WorkflowDefinition} workflow
    * @param {any} input
-   * @param {{actor?: unknown, runId?: string}} context
+   * @param {{actor?: unknown, runId?: string, sticky?: Record<string, any>}} context
    */
   async #execute(workflow, input, context) {
     // Envelope writes already inserted the pending run under this id.
@@ -133,6 +144,7 @@ export class WorkflowEngine {
             services: this.services,
             database: this.database,
             config: this.config,
+            sticky: context.sticky,
           });
           if (output && typeof output === 'object' && !Array.isArray(output)) {
             state = { ...state, ...output };
@@ -164,6 +176,7 @@ export class WorkflowEngine {
             services: this.services,
             database: this.database,
             config: this.config,
+            sticky: context.sticky,
             stepOutput: item.output,
           });
         } catch (compensationError) {
