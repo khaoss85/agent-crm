@@ -14,12 +14,14 @@ import {
   parseMemberFilter,
   romeMinutes,
   romeWeekKeys,
+  slotInGrid,
   teamRows,
   teamRowsWithRoles,
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -75,7 +77,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -90,6 +92,10 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, f
       if (failWith) throw failWith;
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profiles && Object.hasOwn(profiles, path)) return profiles[path];
+        throw notFound();
+      }
+      if (path.startsWith('/api/customer-data/customers')) {
+        if (customers) return customers(path);
         throw notFound();
       }
       if (path === '/api/appointments/confirm' && failConfirmWith) throw failConfirmWith;
@@ -135,6 +141,32 @@ function clickButton(mount, label) {
   assert.ok(button, `button "${label}" exists`);
   button.dispatch('click');
   return button;
+}
+
+// The roster behind the manual customer search: name buttons only, the same
+// read-only list the Clienti view pages.
+function customersOf(items) {
+  return (path) => {
+    const query = new URL(path, 'http://stub.test').searchParams.get('q') ?? '';
+    const needle = query.toLowerCase();
+    return { items: items.filter((item) => String(item?.name ?? '').toLowerCase().includes(needle)) };
+  };
+}
+
+// BO-F6-11 fetta 8 (owner 29/10): the manual customer rides a name search,
+// never a typed id. Types the query, waits out the search, clicks the name.
+async function pickCustomerByName(mount, name, rounds = 7) {
+  const search = mount.querySelector('input[name="customerSearch"]');
+  assert.ok(search, 'the manual form searches the customer by name');
+  search.value = name;
+  search.dispatch('input');
+  for (let round = 0; round < rounds; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const choice = mount.findAll('button').find((node) => node.textContent === name);
+  assert.ok(choice, `the search lists ${name} by name`);
+  choice.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 test('week keys are Monday..Sunday in Rome and the window covers the week', () => {
@@ -356,7 +388,11 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     endsAt: '2026-10-22T16:30:00.000Z',
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
-  const client = stubClient({ phrase: draft, slots });
+  const client = stubClient({
+    phrase: draft,
+    slots,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -368,9 +404,9 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     }
   };
   await flush();
-  // The operator names the customer once; the slot brings person and time.
+  // The operator picks the customer by name; the slot brings person and time.
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.serviceKey.value = 'taglio';
   form.price.value = '45.00';
   const confirm = mount.querySelector('.cal-slots').findAll('button')
@@ -385,6 +421,7 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   assert.equal(body.startsAt, '2026-10-22T16:00:00.000Z');
   assert.equal(body.endsAt, '2026-10-22T16:30:00.000Z');
   assert.equal(body.priceCents, 4500);
+  assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T16:00:00.000Z:c1');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
@@ -498,12 +535,12 @@ test('a phrase without a person says who is missing', async () => {
 test('propose plans, confirm books: nothing is written before Conferma', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.price.value = '45.00';
@@ -519,6 +556,7 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   assert.equal(payload(proposes[0]).priceCents, 4500);
   assert.equal(payload(proposes[0]).startsAt, '2026-10-22T16:00:00.000Z');
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 0);
+  assert.deepEqual(payload(proposes[0]).subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.ok(texts(mount, 'p').some((text) => text.includes('Conferma')));
   clickButton(mount, 'Conferma');
   await new Promise((resolve) => setImmediate(resolve));
@@ -533,12 +571,12 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
 test('late-evening wall times book the same Rome day, never tomorrow', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.date.value = '2026-10-22';
@@ -557,13 +595,18 @@ test('late-evening wall times book the same Rome day, never tomorrow', async () 
 test('unsubmitted manual edits survive a week reload', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({
+    customers: customersOf([
+      { resource: 'contact', id: 'c1', name: 'Ada' },
+      { resource: 'contact', id: 'c2', name: 'Bo' },
+    ]),
+  });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.date.value = '2026-10-22';
@@ -575,27 +618,26 @@ test('unsubmitted manual edits survive a week reload', async () => {
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
   assert.equal(payload(proposes[0]).subject.id, 'c1');
-  // The operator retypes the customer before reloading the week.
-  const edited = byName();
-  edited.customerId.value = 'c2';
-  edited.customerId.dispatch('input');
+  // The operator changes their mind about the customer before reloading.
+  clickButton(mount, 'Cambia cliente');
+  await pickCustomerByName(mount, 'Bo');
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(byName().customerId.value, 'c2');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the pick survives the reload');
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/propose').length, 1);
 });
 
 test('conferma books directly: no propose call on the confirm path', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.date.value = '2026-10-22';
@@ -613,6 +655,217 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).startsAt, '2026-10-22T16:00:00.000Z');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+});
+
+// BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or says
+// so): a slot starting outside 09:00–18:00 never lands on another hour's row.
+test('slotInGrid keeps the painted 09:00–18:00 hours, nothing else', () => {
+  assert.equal(slotInGrid('2026-10-22T07:00:00.000Z', '2026-10-22T07:30:00.000Z'), true, '09:00 Rome starts inside');
+  assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), true, '18:00 Rome starts inside');
+  assert.equal(slotInGrid('2026-10-22T17:00:00.000Z', '2026-10-22T17:30:00.000Z'), false, '19:00 Rome stays outside');
+  assert.equal(slotInGrid('2026-10-22T06:59:00.000Z', '2026-10-22T07:30:00.000Z'), false, '08:59 Rome stays outside');
+  assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:00:00.000Z'), false, 'an empty slot never paints');
+  assert.equal(slotInGrid(null, '2026-10-22T16:30:00.000Z'), false, 'an unreadable start never paints');
+  assert.equal(slotInGrid('not-a-time', '2026-10-22T16:30:00.000Z'), false, 'a corrupt start fails closed');
+});
+
+test('a 19:00 proposal is named below the grid with its real time, never on the 17:00 row', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T17:00:00.000Z',
+    endsAt: '2026-10-22T17:30:00.000Z',
+    notes: 'taglio serale per Ada',
+  };
+  const slots = [{ startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' }];
+  const client = stubClient({ phrase: draft, slots });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  const flush = async (n = 7) => {
+    for (let round = 0; round < n; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await flush();
+  const field = mount.querySelector('textarea[name="phrase"]');
+  field.value = 'trova un posto serale con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flush();
+  const ghosts = mount.findAll('button').filter((node) => (node.textContent ?? '').startsWith('✦ Proposta'));
+  assert.equal(ghosts.length, 0, 'no ghost lands on a grid row for the out-of-hours slot');
+  assert.ok(
+    texts(mount, 'p').some((text) => text.includes('✦ Proposta') && text.includes('19:00') && text.includes("fuori dall'orario mostrato")),
+    'the honest line names the real 19:00 time and says the grid does not show it',
+  );
+});
+
+// BO-F6-11 fetta 8 (owner 29/10: the manual customer rides a name search,
+// never a typed id): the search paints name buttons only, a pick names the
+// customer, and «Cambia cliente» searches again.
+test('the manual customer search lists names, never ids or resources', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: customersOf([
+      { resource: 'contact', id: 'c1', name: 'Ada' },
+      { resource: 'company', id: 'c2', name: 'Ada Ditta' },
+    ]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  assert.ok(search, 'the manual form searches by name');
+  assert.equal(search.getAttribute('placeholder'), 'Cerca il cliente per nome…');
+  search.value = 'Ad';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const names = mount.querySelector('[data-role="customer-results"]').findAll('button').map((node) => node.textContent);
+  assert.deepEqual(names, ['Ada', 'Ada Ditta']);
+  assert.ok(!mount.querySelector('[data-role="customer-results"]').textContent.includes('c1'), 'no id reaches the screen');
+  const fieldNames = mount.findAll('input').map((node) => node.getAttribute('name'));
+  assert.ok(!fieldNames.includes('customerResource') && !fieldNames.includes('customerId'), 'no technical customer field');
+});
+
+test('a short customer query searches nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'A';
+  search.dispatch('input');
+  for (let round = 0; round < 5; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(client.calls.filter((call) => call.path.startsWith('/api/customer-data/customers')).length, 0);
+});
+
+test('a customer search without a match says so in plain words', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Zzz';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Nessun cliente corrisponde')), 'the empty match is honest');
+});
+
+test('a failed customer search says so in plain words, never a code', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: () => {
+      throw new Error('customer-data is not composed');
+    },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Ada';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(texts(mount, 'p').some((text) => text.includes('non si è potuto leggere')), 'the failure is honest');
+});
+
+// BO-F6-11 fetta 8 review (P1: pageSize=5 is refused by
+// parseCustomerListQuery): the search asks for a supported server page and
+// shows five rows at most.
+test('the customer search asks for a supported page and shows five rows at most', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const rows = Array.from(
+    { length: 8 },
+    (_, index) => ({ resource: 'contact', id: `c${index}`, name: `Adalberto ${index}` }),
+  );
+  const client = stubClient({
+    customers: (path) => {
+      const params = new URL(path, 'http://stub.test').searchParams;
+      // The real server parses every list query strictly: an unsupported
+      // pageSize is a 400, never silent results.
+      parseCustomerListQuery(Object.fromEntries(params));
+      return customersOf(rows)(path);
+    },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Adalberto';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const asked = client.calls.find((call) => call.path.startsWith('/api/customer-data/customers'));
+  assert.ok(asked, 'the search reads the customer list');
+  const pageSize = new URL(asked.path, 'http://stub.test').searchParams.get('pageSize');
+  assert.ok(['10', '25', '50'].includes(pageSize ?? ''), `pageSize ${pageSize} is a page the server accepts`);
+  const names = mount.querySelector('[data-role="customer-results"]').findAll('button').map((node) => node.textContent);
+  assert.equal(names.length, 5, 'the search shows five rows at most');
+});
+
+// BO-F6-11 fetta 8 review (P2 detached box): a search resolving after a
+// re-render paints the live form, not the detached box it started from.
+test('a customer search resolving after a re-render paints the live form', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve({ items: [{ resource: 'contact', id: 'c1', name: 'Ada' }] });
+  });
+  const client = stubClient({ customers: () => gate });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Ad';
+  search.dispatch('input');
+  for (let round = 0; round < 3; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  // The week moves while the search is in flight: the captured results box
+  // is detached by the re-render.
+  await view.render();
+  release();
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const live = mount.querySelector('[data-role="customer-results"]');
+  assert.ok(live, 'the live form has a results box');
+  assert.deepEqual(live.findAll('button').map((node) => node.textContent), ['Ada']);
+});
+
+test('picking a customer names them and «Cambia cliente» searches again', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: customersOf([
+      { resource: 'contact', id: 'c1', name: 'Ada' },
+      { resource: 'contact', id: 'c2', name: 'Bo' },
+    ]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await pickCustomerByName(mount, 'Ada');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Ada'), 'the pick names the customer');
+  assert.equal(mount.querySelector('input[name="customerSearch"]'), null, 'no search field over a pick');
+  clickButton(mount, 'Cambia cliente');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(mount.querySelector('input[name="customerSearch"]'), 'the search returns after «Cambia cliente»');
+  await pickCustomerByName(mount, 'Bo');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the second pick wins');
 });
 
 // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome.
@@ -706,7 +959,7 @@ test('the voices focus the phrase field and the manual form', async () => {
   assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
   toggle.dispatch('click');
   const manual = menu.findAll('button').find((node) => node.textContent.includes('Compila manualmente'));
-  const first = mount.querySelector('input[name="customerResource"]');
+  const first = mount.querySelector('input[name="customerSearch"]');
   first.focus = () => { focused = 'manual'; };
   manual.dispatch('click');
   assert.equal(focused, 'manual', 'the manual voice focuses the booking form');

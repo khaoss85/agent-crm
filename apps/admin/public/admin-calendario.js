@@ -24,7 +24,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { spaceRoleLabel } from './admin-spazi-accessi.js';
-import { uiAddOption, uiButton, uiChannelChip } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -288,6 +288,21 @@ export function gridRowsFor(startsAt, endsAt) {
 }
 
 /**
+ * Whether a proposed slot paints inside the 09:00–18:00 grid body: only a
+ * slot starting inside the painted hours lands on its own rows. Anything
+ * earlier or later would clamp onto another hour's row under its real time
+ * (a 19:00 proposal painted on the 17:00 row), so the grid names it below
+ * instead of painting it — the grid covers the proposal hours or says so.
+ * @param {unknown} startsAt @param {unknown} endsAt
+ */
+export function slotInGrid(startsAt, endsAt) {
+  const startMin = romeMinutes(startsAt);
+  const endMin = romeMinutes(endsAt);
+  if (startMin === null || endMin === null || endMin <= startMin) return false;
+  return startMin >= GRID_START_MINUTES && startMin <= GRID_END_MINUTES;
+}
+
+/**
  * Overlap lanes per day column: events sharing Rome time split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
@@ -402,7 +417,17 @@ export function createCalendarioView(deps) {
     phraseInput: null,
     /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
     manualFirst: null,
+    /** Manual booking customer picked by name, never typed as id: {resource, id, name} or null. @type {any} */
+    customerPick: null,
+    /** Live customer search text, kept across re-renders like the other edits. */
+    customerQuery: '',
+    /** Latest customer search results (`GET /api/customer-data/customers` items). @type {Array<any>} */
+    customerItems: [],
+    /** Customer search failure in the operator's own words, or null. @type {string|null} */
+    customerError: null,
   };
+  /** Guards the customer search, like renderToken guards the week. */
+  let customerSeq = 0;
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -986,9 +1011,12 @@ export function createCalendarioView(deps) {
       // One dashed ghost per searched slot on its Rome day, clickable to
       // confirm like the card rows. The dashed `bo-add-button` is the shared
       // shell control for add-an-item blocks, not a new style. Fetta 4 seats
-      // each ghost on its time rows, spanning the day width.
+      // each ghost on its time rows, spanning the day width. Fetta 8: a slot
+      // starting outside 09:00–18:00 never lands on another hour's row — it
+      // joins the honest out-of-hours lines below the grid instead.
       for (const slot of state.proposals) {
         if (romeDayKey(slot?.startsAt) !== key) continue;
+        if (!slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
         const ghost = el(doc, 'button', {
           className: 'bo-add-button',
@@ -1013,6 +1041,18 @@ export function createCalendarioView(deps) {
       grid.appendChild(col);
     });
     panel.appendChild(grid);
+    // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or
+    // says so): proposals starting outside 09:00–18:00 are named here with
+    // their real time instead of landing on another hour's row. Confirming
+    // stays in the «Fissa con una frase» card rows, like every other slot.
+    for (const slot of state.proposals) {
+      if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
+      const when = `${romeShortDay(slot?.startsAt) ?? ''} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      panel.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
+      }));
+    }
     return panel;
   }
 
@@ -1395,6 +1435,104 @@ export function createCalendarioView(deps) {
     return typeof kept === 'string' ? kept : '';
   }
 
+  /**
+   * The manual booking customer: picked by name from the search, never typed
+   * as an id or a resource (owner 29/10). Without a pick the claim keeps the
+   * historical fallback — contact with an empty id, «senza-cliente» downstream.
+   */
+  function pickedCustomer() {
+    const pick = state.customerPick;
+    const id = typeof pick?.id === 'string' ? pick.id : '';
+    const resource = typeof pick?.resource === 'string' && pick.resource !== '' ? pick.resource : 'contact';
+    return { resource, id };
+  }
+
+  /**
+   * Customer name search for the manual form: the same read-only list the
+   * Clienti view pages (`GET /api/customer-data/customers?q=`). The list
+   * only serves pages 10, 25 and 50, so the search asks for the smallest
+   * page and shows five rows at most. Late answers paint the live results
+   * box only — never a full re-render, so the operator keeps typing without
+   * losing focus. Stale answers lose the token race and paint nothing.
+   * @param {unknown} query
+   */
+  async function searchCustomers(query) {
+    const token = ++customerSeq;
+    const q = String(query ?? '').trim();
+    if (q.length < 2) {
+      if (token !== customerSeq) return;
+      state.customerItems = [];
+      state.customerError = null;
+      paintCustomerResults(liveCustomerBox());
+      return;
+    }
+    try {
+      const params = new URLSearchParams({ q, page: '1', pageSize: '10' });
+      const spaceId = readSpace();
+      if (spaceId) params.set('spaceId', spaceId);
+      const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
+      if (token !== customerSeq) return;
+      state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
+      state.customerError = null;
+    } catch (error) {
+      if (token !== customerSeq) return;
+      state.customerItems = [];
+      state.customerError = humanReadError(error, {
+        failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
+      });
+    }
+    paintCustomerResults(liveCustomerBox());
+  }
+
+  /**
+   * The customer-results box currently on screen, if the manual form is
+   * still mounted: a re-render (week move, roster, slots) while a search is
+   * in flight detaches the captured box, so late answers paint here.
+   */
+  function liveCustomerBox() {
+    return mount.querySelector('[data-role="customer-results"]');
+  }
+
+  /**
+   * Paint the last customer search into its box: one button per customer
+   * carrying the name and nothing else — ids and resources never reach the
+   * screen. A click picks the customer and rebuilds the form around the
+   * pick, so the claim below books exactly the shown name.
+   * @param {any} box
+   */
+  function paintCustomerResults(box) {
+    if (!box || typeof box.appendChild !== 'function') return;
+    while (box.firstChild) box.removeChild(box.firstChild);
+    if (state.customerError) {
+      box.appendChild(el(doc, 'p', { className: 'empty', text: state.customerError }));
+      return;
+    }
+    if (String(state.customerQuery ?? '').trim().length < 2) return;
+    if (state.customerItems.length === 0) {
+      box.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: 'Nessun cliente corrisponde. Prova con un altro nome.',
+      }));
+      return;
+    }
+    for (const item of state.customerItems) {
+      const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
+      const pick = uiSecondaryButton(doc, name);
+      pick.addEventListener('click', () => {
+        state.customerPick = {
+          resource: typeof item?.resource === 'string' && item.resource !== '' ? item.resource : 'contact',
+          id: typeof item?.id === 'string' ? item.id : '',
+          name,
+        };
+        state.customerQuery = '';
+        state.customerItems = [];
+        state.customerError = null;
+        renderAll();
+      });
+      box.appendChild(pick);
+    }
+  }
+
   /** Price text to integer minor units, or null when empty — the manual form's own rule. @param {unknown} raw */
   function priceToCents(raw) {
     const price = String(raw ?? '').replace(',', '.');
@@ -1417,10 +1555,10 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
-    const customerId = manualValue('customerId');
+    const customer = pickedCustomer();
     const claim = {
       spaceId: readSpace(),
-      subject: { resource: manualValue('customerResource') || 'contact', id: customerId, owner: 'host' },
+      subject: { resource: customer.resource, id: customer.id, owner: 'host' },
       teamMemberId: member,
       serviceKey: manualValue('serviceKey'),
       priceCents: priceToCents(manualValue('price')),
@@ -1428,7 +1566,7 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
-      sourceKey: `calendario:${member}:${startsAt}:${customerId === '' ? 'senza-cliente' : customerId}`,
+      sourceKey: `calendario:${member}:${startsAt}:${customer.id === '' ? 'senza-cliente' : customer.id}`,
       source: { package: 'host', action: 'calendar-book' },
     };
     try {
@@ -1455,6 +1593,50 @@ export function createCalendarioView(deps) {
     if (members.length > 0 && state.confirmed) void loadWeek(members);
   }
 
+  /**
+   * The manual form's customer block: a name search, never an id or a
+   * resource field (owner 29/10 gap). Without a pick the operator types at
+   * least two letters into the shared search field and picks one of the
+   * five name buttons; with a pick the block names the chosen customer and
+   * offers «Cambia cliente» to search again. Ids and resources never reach
+   * the screen — they ride the claim from `pickedCustomer()` only.
+   * @param {any} form
+   */
+  function renderCustomerPick(form) {
+    const pick = state.customerPick;
+    if (pick && typeof pick?.name === 'string') {
+      form.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: `Cliente: ${pick.name}` }));
+      const change = uiSecondaryButton(doc, 'Cambia cliente');
+      change.addEventListener('click', () => {
+        state.customerPick = null;
+        state.customerQuery = '';
+        state.customerItems = [];
+        state.customerError = null;
+        renderAll();
+      });
+      form.appendChild(change);
+      state.manualFirst = change;
+      return;
+    }
+    const search = uiSearchField(doc, {
+      name: 'customerSearch',
+      placeholder: 'Cerca il cliente per nome…',
+      value: state.customerQuery,
+    });
+    const box = el(doc, 'div', { attrs: { 'data-role': 'customer-results' } });
+    const field = search.querySelector('input');
+    if (field) {
+      field.addEventListener('input', () => {
+        state.customerQuery = String(field.value ?? '');
+        void searchCustomers(state.customerQuery);
+      });
+    }
+    form.appendChild(search);
+    form.appendChild(box);
+    paintCustomerResults(box);
+    if (field) state.manualFirst = field;
+  }
+
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM, so a draft can still prefill it.
@@ -1466,9 +1648,11 @@ export function createCalendarioView(deps) {
       text: 'Compila e premi «Proponi»: niente è scritto finché non premi «Conferma».',
     }));
     const form = el(doc, 'div', { className: 'cal-form' });
+    // The customer is picked by name from the search, never typed as an id
+    // or a resource (owner 29/10): the search block below owns the pick, so
+    // no raw customer field paints here.
+    renderCustomerPick(form);
     const fields = [
-      ['customerResource', 'text', 'Cliente (risorsa: contact)'],
-      ['customerId', 'text', 'Cliente (id)'],
       ['teamMemberId', 'text', 'Persona del team'],
       ['serviceKey', 'text', 'Servizio (chiave listino)'],
       ['price', 'text', 'Prezzo EUR (es. 45.00)'],
@@ -1494,7 +1678,9 @@ export function createCalendarioView(deps) {
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
-    state.manualFirst = inputs.customerResource ?? null;
+    // state.manualFirst is the customer search field (or the «Cambia
+    // cliente» button over an existing pick), set by renderCustomerPick
+    // above so «Compila manualmente» focuses the customer first.
     if (state.draftFill) {
       state.manualOpen = true;
       const draft = state.draftFill;
@@ -1551,10 +1737,13 @@ export function createCalendarioView(deps) {
     const endsAt = day !== '' && end !== '' ? romeInstant(day, end) : null;
     const priceCents = priceToCents(read('price'));
     const member = read('teamMemberId');
+    // The customer rides the name-search pick, never a typed id or
+    // resource: without a pick the historical contact/empty fallback stays.
+    const customer = pickedCustomer();
     return {
       claim: {
         spaceId: readSpace(),
-        subject: { resource: read('customerResource') || 'contact', id: read('customerId'), owner: 'host' },
+        subject: { resource: customer.resource, id: customer.id, owner: 'host' },
         teamMemberId: member,
         serviceKey: read('serviceKey'),
         priceCents,
@@ -1563,7 +1752,7 @@ export function createCalendarioView(deps) {
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
         sourceKey: member !== '' && startsAt
-          ? `calendario:${member}:${startsAt}:${read('customerId') || 'senza-cliente'}`
+          ? `calendario:${member}:${startsAt}:${customer.id || 'senza-cliente'}`
           : undefined,
         source: { package: 'host', action: 'calendar-book' },
       },
