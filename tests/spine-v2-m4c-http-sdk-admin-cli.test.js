@@ -12,6 +12,7 @@ import { createHttpServer } from '../apps/server/src/index.js';
 import { AccordoClient } from '../packages/sdk/src/client.js';
 import { issueIdempotencyKey, deriveChildKey, requireIdempotencyKey } from '../packages/core/src/idempotency.js';
 import { injectPostgresqlCommitFault } from '../packages/core/src/postgresql-storage.js';
+import { injectOpportunityStageClaimProbe } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { postgresqlTestStorage } from '../packages/app/src/portable-app.js';
 import {
   APP_COMMANDS,
@@ -421,14 +422,49 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
     assert.equal(opportunity.status, 201, JSON.stringify(opportunity.body));
     const leftKey = key();
     const rightKey = issueIdempotencyKey(() => '2026-08-30T00:00:01.000Z');
-    const [left, right] = await Promise.all([
-      http(listening.url, `/api/opportunities/${opportunity.body.id}/stage`, {
-        method: 'POST', body: { targetStage: 'proposal' }, key: leftKey,
-      }),
-      http(listening.url, `/api/opportunities/${opportunity.body.id}/stage`, {
-        method: 'POST', body: { targetStage: 'lost' }, key: rightKey,
-      }),
-    ]);
+    // Force the overlap these assertions need: hold every stage claim until
+    // both requests have loaded and pinned. The pin predates setStage, so
+    // both pins are the initial stage and neither commit precedes a pin.
+    // Without this gate the schedule where A commits before B loads is a
+    // legal sequential transition (both 200), which the assertions below
+    // rightfully reject for overlapping pins.
+    let arrived = 0;
+    /** @type {Array<() => void>} */
+    const waiters = [];
+    injectOpportunityStageClaimProbe(() => {
+      arrived += 1;
+      if (arrived >= 2) {
+        for (const release of waiters.splice(0)) release();
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          const index = waiters.indexOf(release);
+          if (index !== -1) waiters.splice(index, 1);
+          resolve();
+        }, 10_000);
+        if (typeof timer.unref === 'function') timer.unref();
+        const release = () => { clearTimeout(timer); resolve(); };
+        waiters.push(release);
+      });
+    });
+    /** @type {any} */
+    let left;
+    /** @type {any} */
+    let right;
+    try {
+      [left, right] = await Promise.all([
+        http(listening.url, `/api/opportunities/${opportunity.body.id}/stage`, {
+          method: 'POST', body: { targetStage: 'proposal' }, key: leftKey,
+        }),
+        http(listening.url, `/api/opportunities/${opportunity.body.id}/stage`, {
+          method: 'POST', body: { targetStage: 'lost' }, key: rightKey,
+        }),
+      ]);
+    } finally {
+      injectOpportunityStageClaimProbe(null);
+    }
+    assert.ok(arrived >= 2, 'both stage claims reached the barrier: the pins genuinely overlapped');
     const successes = [left, right].filter((item) => item.status === 200);
     assert.equal(successes.length, 1, `expected exactly one commit, got ${successes.length} (left=${left.status}, right=${right.status})`);
     const loser = left.status === 200 ? right : left;

@@ -24,6 +24,37 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   lost: ['discovery'],
 });
 
+// Test probe (mirrors injectPostgresqlCommitFault in core
+// postgresql-storage): armed only by tests that must force two stage claims
+// to overlap. The workflow pins its intent at load-opportunity, before
+// setStage runs, so holding every claim here until all parties arrive
+// guarantees every pin predates every commit. Production never arms it, so
+// setStage never waits outside those tests.
+/** @type {(() => Promise<unknown>) | null} */
+let stageClaimProbe = null;
+/** @param {(() => Promise<unknown>) | null} probe */
+export function injectOpportunityStageClaimProbe(probe) {
+  stageClaimProbe = typeof probe === 'function' ? probe : null;
+}
+
+/**
+ * A lost conditional claim reports which of the two defeats happened, so the
+ * caller can tell a genuine stage race (fresh pin required) from a row touch
+ * that left the stage alone (re-read and retry the same intent).
+ */
+function stageClaimConflict(from, target, current) {
+  if (current !== from) {
+    return new ConflictError(
+      `Opportunity stage changed under this caller: ${from} → ${current ?? '?'} (wanted ${target})`,
+      { from, to: target, current, reason: 'stage_moved' },
+    );
+  }
+  return new ConflictError(
+    `Opportunity changed under this caller without a stage move: ${from} (wanted ${target}); re-read the opportunity and retry with a fresh pin`,
+    { from, to: target, current, reason: 'row_touched' },
+  );
+}
+
 // Pipeline state (migration v3, ADR-014) is server-managed: never accepted
 // from public create input, written only through applyManaged below.
 const PIPELINE_MANAGED_FIELDS = Object.freeze([
@@ -259,7 +290,7 @@ export class OpportunityService {
       // never by stage equality here.
       throw new ConflictError(
         `Opportunity stage changed under this caller: ${from} → ${opportunity.stage} (wanted ${stage})`,
-        { from, to: stage, current: opportunity.stage },
+        { from, to: stage, current: opportunity.stage, reason: 'stage_moved' },
       );
     }
     if (opportunity.stage === stage) return opportunity;
@@ -274,29 +305,42 @@ export class OpportunityService {
     // The committing write is a conditional claim (the product-import
     // `affectedRows` verdict idiom): the check above and this write are not
     // atomic, so two writers that both passed the check still serialize here.
-    // The claim is fenced on (stage, updated_at), not the stage alone: the
-    // stage value is re-enterable (proposal ↔ negotiation …), so a stale
-    // intent must not commit after the opportunity cycled away and back
-    // (ABA). updated_at is bumped on every stage write and forced strictly
-    // monotonic here, so it acts as the row's generation token. Zero rows
-    // means a concurrent writer moved the opportunity first, so the loser
-    // re-reads for the error detail and reports 409 — never success, even
-    // when the current stage happens to equal the target.
+    // The claim is fenced on the stage-generation token (stage,
+    // stage_entered_at), not the stage alone: the stage value is re-enterable
+    // (proposal ↔ negotiation …), so a stale intent must not commit after the
+    // opportunity cycled away and back (ABA). The token is stamped by every
+    // stage write and forced strictly monotonic here; the pipeline runtime's
+    // applyManaged never stamps it unless the lifecycle position itself moves,
+    // so an unrelated managed patch between the read and the claim preserves
+    // the fence and a valid transition still commits. Rows that never entered
+    // a pipeline carry no token yet: they fence on (stage, updated_at)
+    // exactly once and graduate to the token on this commit. Zero rows means
+    // a concurrent writer moved the opportunity first, so the loser re-reads
+    // for the error detail and reports 409 — never success, even when the
+    // current stage happens to equal the target.
+    const readToken = typeof opportunity.stageEnteredAt === 'string' ? opportunity.stageEnteredAt : null;
     const readUpdatedAt = typeof opportunity.updatedAt === 'string' ? opportunity.updatedAt : null;
     let updatedAt = nowIso();
     if (readUpdatedAt !== null && updatedAt <= readUpdatedAt) {
       updatedAt = new Date(Date.parse(readUpdatedAt) + 1).toISOString();
     }
+    let stageToken = updatedAt;
+    if (readToken !== null && stageToken <= readToken) {
+      stageToken = new Date(Date.parse(readToken) + 1).toISOString();
+    }
     const where = [
       { column: 'id', op: 'eq', value: id },
       { column: 'stage', op: 'eq', value: from },
     ];
-    if (readUpdatedAt !== null) where.push({ column: 'updated_at', op: 'eq', value: readUpdatedAt });
+    if (readToken !== null) where.push({ column: 'stage_entered_at', op: 'eq', value: readToken });
+    else if (readUpdatedAt !== null) where.push({ column: 'updated_at', op: 'eq', value: readUpdatedAt });
     const write = {
       kind: 'update', table: 'opportunities', values: [
         { column: 'stage', value: stage }, { column: 'updated_at', value: updatedAt },
+        { column: 'stage_entered_at', value: stageToken },
       ], where,
     };
+    if (stageClaimProbe) await stageClaimProbe();
     let claimed;
     try {
       if (isSyncStorage(this.database)) claimed = this.database.storage.sync.execute(write);
@@ -320,17 +364,11 @@ export class OpportunityService {
       } catch {
         current = null;
       }
-      throw new ConflictError(
-        `Opportunity stage changed under this caller: ${from} → ${current?.stage ?? '?'} (wanted ${stage})`,
-        { from, to: stage, current: current?.stage ?? null },
-      );
+      throw stageClaimConflict(from, stage, current?.stage ?? null);
     }
     if (Number(claimed?.affectedRows ?? 0) !== 1) {
       const current = await Promise.resolve(this.get(id));
-      throw new ConflictError(
-        `Opportunity stage changed under this caller: ${opportunity.stage} → ${current.stage} (wanted ${stage})`,
-        { from: opportunity.stage, to: stage, current: current.stage },
-      );
+      throw stageClaimConflict(from, stage, current.stage);
     }
     const updated = await Promise.resolve(this.get(id));
     await Promise.resolve(this.audit.record({
