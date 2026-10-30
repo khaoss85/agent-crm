@@ -20,7 +20,7 @@
  * of its rules.
  */
 
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -84,35 +84,51 @@ async function bootApp(root) {
   return createAccordoApp({ dbPath: ':memory:' });
 }
 
-function stripeProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-catalog-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+/**
+ * One applied template per file: the tree copy plus the fourteen
+ * `module create --apply` spawns cost seconds per test on a loaded CI
+ * runner and pushed the PR gate past its 270 s budget, so they run once.
+ * Every test still gets its own private copy (own files, own sqlite file,
+ * own :memory: app): isolation is unchanged, only the repeated CLI work
+ * is shared. The template is removed after the last test in this file.
+ */
+let appliedTemplate = null;
+function appliedTemplateRoot() {
+  if (!appliedTemplate) {
+    appliedTemplate = mkdtempSync(join(tmpdir(), 'accordo-commercial-template-'));
+    for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+      cpSync(join(repoRoot, entry), join(appliedTemplate, entry), { recursive: true });
+    }
+    applyManifests(appliedTemplate);
   }
-  applyManifests(root);
+  return appliedTemplate;
+}
+after(() => {
+  if (appliedTemplate) rmSync(appliedTemplate, { recursive: true, force: true });
+  appliedTemplate = null;
+});
+
+function freshRoot(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  cpSync(appliedTemplateRoot(), root, { recursive: true });
+  return root;
+}
+
+function stripeProject(t) {
+  const root = freshRoot(t, 'accordo-stripe-catalog-');
   compose(root, stripeComposition());
   return root;
 }
 
 function manualProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-manual-catalog-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-manual-catalog-');
   compose(root, 'const catalogProviders = [];');
   return root;
 }
 
 function listinoProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-listino-catalog-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-listino-catalog-');
   compose(root, [
     "import { createStripeCatalogProvider, createFixtureStripeCatalogClient } from '../../commercial/src/index.js';",
     'const catalogProviders = [createStripeCatalogProvider({ name: \'presti-listino\', version: 1, stripe: createFixtureStripeCatalogClient() })];',
@@ -231,12 +247,7 @@ test('metered follows real Stripe: usage_type metered is unsupported, licensed q
 });
 
 function flipProject(t, initialPrices) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-flip-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-stripe-flip-');
   writeFileSync(join(root, 'flip-fixture.mjs'), [
     `let prices = ${JSON.stringify(initialPrices)};`,
     'export const stripe = {',
@@ -282,12 +293,7 @@ test('a Stripe price flipped inactive deactivates the offer the earlier sync cre
 });
 
 function archiveProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-archive-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-stripe-archive-');
   writeFileSync(join(root, 'archive-fixture.mjs'), [
     'let products = [{ id: \'prod_arch\', name: \'Archiviabile\', active: true }];',
     'export const stripe = {',
