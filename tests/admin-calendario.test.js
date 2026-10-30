@@ -75,7 +75,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -103,6 +103,12 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, f
       if (path === '/api/spine/memberships') {
         if (membershipsError) throw membershipsError;
         if (memberships !== undefined) return { items: memberships };
+      }
+      if (path === '/api/profile') {
+        // Unknown by default: the same silence a refused profile keeps, so
+        // every older test reads the pre-connection behavior unchanged.
+        if (profile !== undefined) return profile;
+        return { member: null, connections: { available: false, reason: 'PROFILE_NOT_COMPOSED', items: [] } };
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
       if (path.startsWith('/api/appointments/suggest-slots')) {
@@ -933,7 +939,22 @@ test('the WA badge is fail-closed on the row channel marker', async () => {
   const view = createCalendarioView({
     doc,
     mount,
-    client: { calls, async request(path) { calls.push(path); return week; } },
+    client: {
+      calls,
+      async request(path) {
+        calls.push(path);
+        if (path === '/api/spine/memberships' || path === '/api/profile') {
+          // No roster on this double: the spine is uncomposed here, an
+          // expected absence the view keeps silent; the profile is unread,
+          // so no connect notice paints either.
+          const missing = new Error('no spine here');
+          missing.code = 'NOT_FOUND';
+          missing.status = 404;
+          throw missing;
+        }
+        return week;
+      },
+    },
     now: () => new Date('2026-10-25T10:00:00Z'),
   });
   await view.render();
@@ -1524,9 +1545,10 @@ test('teamRowsWithRoles unions the named filter and the roster with Italian role
   assert.deepEqual(teamRowsWithRoles(null, undefined, 'nope'), [], 'non-lists stay empty');
 });
 
-// The Team card lists the roster with Italian roles and loads a roster
-// member's week on click, without typing their name first.
-test('the Team card shows the roster roles and loads a picked member', async () => {
+// The Team card lists the roster with Italian roles and loads the whole
+// roster week on mount, without typing any name first
+// (backlog:0533362e8efe). The toggles stay for filtering.
+test('the Team card shows the roster roles and loads its week with no typing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -1540,18 +1562,133 @@ test('the Team card shows the roster roles and loads a picked member', async () 
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
   assert.ok(texts(mount, 'h2').includes('Team'), 'the Team card paints');
   assert.equal(teamToggles(mount).length, 2, 'one toggle per roster member, no typing needed');
   assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'the operator role paints in Italian');
   assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Proprietario')), 'the owner role paints in Italian');
-  assert.ok(!texts(mount, 'strong').includes('taglio'), 'no week yet: nothing listed without asking');
-
-  teamToggles(mount).find((node) => node.textContent.includes('marco')).dispatch('click');
-  await new Promise((resolve) => setImmediate(resolve));
-  await new Promise((resolve) => setImmediate(resolve));
   const teamWeek = client.calls.find((call) => String(call.path).startsWith('/api/appointments/team-week'));
-  assert.ok(teamWeek && String(teamWeek.path).includes('marco'), 'picking a roster member loads their week');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the picked member blocks paint');
+  assert.ok(teamWeek, 'the roster week loads on mount');
+  assert.ok(String(teamWeek.path).includes('marco') && String(teamWeek.path).includes('sara'), 'the whole roster is listed, never typed');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the roster blocks paint');
+  assert.equal(
+    mount.findAll('input').filter((node) => node.getAttribute('name') === 'members').length,
+    0,
+    'no text field while the roster is known: the team comes from the space',
+  );
+});
+
+// A roster nobody has to type still filters: hiding a roster member hides
+// their blocks with no reload, like the named path does.
+test('the roster week filters on toggle with no reload', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    week: WEEK_TWO,
+    memberships: [
+      { subject: 'marco', role: 'operator' },
+      { subject: 'sara', role: 'owner' },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(texts(mount, 'strong').includes('piega'), 'both roster weeks paint');
+  const callsBefore = client.calls.length;
+  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  assert.equal(client.calls.length, callsBefore, 'filtering needs no reload');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the active member stays');
+  assert.ok(!texts(mount, 'strong').includes('piega'), 'the deselected roster member disappears');
+});
+
+// Without a connected calendar the week panel says how to connect it, with
+// a way into Profilo — never a silent empty week (backlog:0533362e8efe).
+test('a disconnected calendar shows the Profilo way in the week panel', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const client = stubClient({
+    week: WEEK_TWO,
+    memberships: [{ subject: 'marco', role: 'operator' }],
+    profile: {
+      member: { name: 'Guido', email: 'guido', role: null },
+      connections: {
+        available: true,
+        reason: null,
+        items: [
+          { connector: 'calendar', status: 'disconnected', account: null },
+          { connector: 'gmail', status: 'disconnected', account: null },
+        ],
+      },
+    },
+  });
+  const view = createCalendarioView({
+    doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z'),
+    navigate: (hash) => { seen.push(hash); },
+  });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const body = texts(mount, 'p').join('\n');
+  assert.ok(body.includes('non è collegato'), 'the panel names the missing connection');
+  assert.ok(body.includes('Profilo'), 'the panel points at Profilo');
+  const go = mount.findAll('button').find((node) => node.textContent.includes('Vai al Profilo'));
+  assert.ok(go, 'a way into Profilo paints');
+  go.dispatch('click');
+  assert.deepEqual(seen, ['#/profilo'], 'the way lands on Profilo');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the local week still paints under the notice');
+});
+
+// A connected calendar shows no connect notice: the week is the whole story.
+test('a connected calendar shows no connect notice', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    week: WEEK_TWO,
+    memberships: [{ subject: 'marco', role: 'operator' }],
+    profile: {
+      member: { name: 'Guido', email: 'guido', role: null },
+      connections: {
+        available: true,
+        reason: null,
+        items: [{ connector: 'calendar', status: 'connected', account: 'guido@palestra.example' }],
+      },
+    },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const body = texts(mount, 'p').join('\n');
+  assert.ok(!body.includes('non è collegato'), 'no connect notice when connected');
+  assert.ok(!mount.findAll('button').some((node) => node.textContent.includes('Vai al Profilo')), 'no Profilo detour when connected');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the week paints');
+});
+
+// An unreadable profile stays silent: unknown is not "not connected", so no
+// notice cries wolf about a link the operator may already have.
+test('an unreadable profile keeps the old week with no notice', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ week: WEEK_TWO });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const body = texts(mount, 'p').join('\n');
+  assert.ok(!body.includes('non è collegato'), 'no notice on an unknown connection');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the typed week still paints');
 });
 
 // A refused member list keeps the opaque named toggles: no error where the
