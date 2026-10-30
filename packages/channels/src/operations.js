@@ -855,12 +855,21 @@ export function createChannelOperations(deps) {
     // one on this handle already (MEM_ACC_REUSE: the same proof the sibling
     // packages use): generated services nest on SAVEPOINT, a second outer
     // transaction would not.
+    // The host-loggable content rides on the result, never in the row
+    // (backlog:32820692): the inbox keeps the envelope only, and the host
+    // logs the message — with its attachment reference — through
+    // `interaction-log@1` when it chooses to. A duplicate replays the
+    // winner's row and carries the same content it arrived with.
     if (items.length === 1) {
-      return storeInboxItem(service, { ...storeParams, item: items[0] });
+      const stored = await storeInboxItem(service, { ...storeParams, item: items[0] });
+      return { ...stored, content: eventContent(rawEvents[0]) };
     }
     const storeBatch = async () => {
       const results = [];
-      for (const item of items) results.push(await storeInboxItem(service, { ...storeParams, item }));
+      for (let index = 0; index < items.length; index += 1) {
+        const stored = await storeInboxItem(service, { ...storeParams, item: items[index] });
+        results.push({ ...stored, content: eventContent(rawEvents[index]) });
+      }
       return results;
     };
     let batchTransaction = null;

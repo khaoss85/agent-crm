@@ -115,6 +115,25 @@ export function assertChannelAttachment(value, providerLabel) {
     }
     size = entry.size;
   }
+  let preview = null;
+  if (entry.preview !== undefined && entry.preview !== null && entry.preview !== '') {
+    if (typeof entry.preview !== 'string' || entry.preview.length > MAX_ATTACHMENT_REF
+      || /[\s\u0000-\u001f\u007f-\u009f]/.test(entry.preview)) {
+      malformedAttachment(providerLabel, 'attachment preview must be a bounded fetch handle without whitespace when present');
+    }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(entry.preview)) {
+      let parsedPreview = null;
+      try {
+        parsedPreview = new URL(entry.preview);
+      } catch {
+        parsedPreview = null;
+      }
+      if (!parsedPreview || parsedPreview.protocol !== 'https:' || parsedPreview.username !== '' || parsedPreview.password !== '') {
+        malformedAttachment(providerLabel, 'attachment preview must be a clean https URL when URL-shaped');
+      }
+    }
+    preview = entry.preview;
+  }
   if (typeof entry.ref !== 'string' || entry.ref === '' || entry.ref.length > MAX_ATTACHMENT_REF
     || /[\s\u0000-\u001f\u007f-\u009f]/.test(entry.ref)) {
     malformedAttachment(providerLabel, 'attachment ref must be a bounded fetch handle without whitespace');
@@ -133,7 +152,7 @@ export function assertChannelAttachment(value, providerLabel) {
       malformedAttachment(providerLabel, 'attachment ref must be a clean https URL when URL-shaped');
     }
   }
-  return Object.freeze({ kind: entry.kind, name, size, ref: entry.ref });
+  return Object.freeze({ kind: entry.kind, name, size, ref: entry.ref, preview });
 }
 
 /**
@@ -153,6 +172,26 @@ export function assertChannelAttachment(value, providerLabel) {
  * @param {string} providerLabel the adapter name for the refusal text
  * @returns {{ text: string, attachment: null | ReturnType<typeof assertChannelAttachment> }}
  */
+/**
+ * The Cloud API text the card reads (backlog:32820692): WhatsApp markup is
+ * display-only — `*bold*`, `_italic_`, `~strike~`, triple-backtick code —
+ * so paired markers come off and the words stay, on one line at a time
+ * (markers never span a line break). An unmatched marker stays as written
+ * rather than eating its line, and plain-text artefacts like `2*3=6` keep
+ * their asterisk. Graph and Gmail text travel untouched: no markup dialect
+ * there to misread.
+ *
+ * @param {string} text the provider caption or body
+ */
+export function readableCloudText(text) {
+  if (typeof text !== 'string' || text === '') return text;
+  return text.split('\n').map((line) => {
+    let out = line.replace(/```([^`]+?)```/g, '$1');
+    out = out.replace(/(\*|_|~)([^*_~\n]+?)\1/g, '$2');
+    return out;
+  }).join('\n');
+}
+
 export function normalizeCloudMessageContent(item, providerLabel) {
   const checkText = (text) => {
     if (typeof text !== 'string' || text.length > 4096) {
@@ -163,18 +202,18 @@ export function normalizeCloudMessageContent(item, providerLabel) {
   const mediaKind = { image: 'photo', video: 'video', audio: 'audio', document: 'document', sticker: 'photo' }[item?.type];
   if (item?.type === 'text') {
     const body = item?.text && typeof item.text === 'object' ? item.text.body : undefined;
-    return { text: checkText(typeof body === 'string' ? body : ''), attachment: null };
+    return { text: checkText(readableCloudText(typeof body === 'string' ? body : '')), attachment: null };
   }
   if (mediaKind === undefined) return { text: '', attachment: null };
   const media = item?.[item.type];
   const caption = media && typeof media === 'object' && typeof media.caption === 'string' ? media.caption : '';
   if (!media || typeof media !== 'object' || typeof media.id !== 'string' || media.id === '') {
-    return { text: checkText(caption), attachment: null };
+    return { text: checkText(readableCloudText(caption)), attachment: null };
   }
   const name = item.type === 'document' && typeof media.filename === 'string' ? media.filename : null;
   return {
-    text: caption,
-    attachment: assertChannelAttachment({ kind: mediaKind, name, size: null, ref: media.id }, providerLabel),
+    text: readableCloudText(caption),
+    attachment: assertChannelAttachment({ kind: mediaKind, name, size: null, ref: media.id, preview: null }, providerLabel),
   };
 }
 

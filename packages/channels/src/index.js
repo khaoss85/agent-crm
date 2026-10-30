@@ -620,10 +620,15 @@ export {
   createWhatsAppChannelAdapter,
 } from './whatsapp.js';
 export {
+  CHANNEL_ATTACHMENT_KINDS,
   META_CUSTOMER_SERVICE_WINDOW_MS,
+  assertChannelAttachment,
   checkMetaServiceWindow,
   isMetaSelfEcho,
   iterateMetaBatchItems,
+  normalizeCloudMessageContent,
+  normalizeGraphMessageContent,
+  readableCloudText,
   parseMetaWebhookBody,
   verifyMetaHubSignature,
 } from './meta-webhook.js';
