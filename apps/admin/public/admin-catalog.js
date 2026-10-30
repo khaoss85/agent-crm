@@ -568,9 +568,32 @@ export function createCatalogView(deps) {
             });
             await renderTable();
           } catch (error) {
+            // An uncertain outcome (the creation POST may have committed
+            // before its response was lost) never offers a blind retry: the
+            // create route has no replay protection, so a second Conferma
+            // would create a duplicate product. Reconcile first — when the
+            // row with this code is already there, treat it as created;
+            // otherwise say so and keep Conferma disabled until the operator
+            // reloads and checks.
+            if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+              let reconciled = false;
+              try {
+                const reloaded = await client.request(`/api/catalog/products?limit=${LIST_LIMIT}`);
+                const rows = Array.isArray(reloaded?.products) ? reloaded.products : [];
+                reconciled = rows.some((row) => row && typeof row === 'object' && row.sku === sku);
+              } catch {
+                reconciled = false;
+              }
+              if (reconciled) {
+                await renderTable();
+                return;
+              }
+              formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
+              review.appendChild(formError);
+              return;
+            }
             formError.textContent = error?.message ?? 'Creazione fallita';
             review.appendChild(formError);
-          } finally {
             yes.disabled = false;
           }
         });

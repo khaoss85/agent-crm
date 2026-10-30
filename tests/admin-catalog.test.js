@@ -738,3 +738,65 @@ test('Aggiungi prodotto stays available once Stripe is connected', async () => {
   assert.ok(mount.findAll('button').some((node) => node.textContent === 'Aggiungi prodotto'), 'manual products coexist with Stripe');
   assert.ok(mount.textContent.includes('sola lettura'), 'Stripe rows stay read-only and the page says so');
 });
+
+test('an uncertain creation reconciles the created row instead of retrying blindly', async () => {
+  // The create route has no replay protection, so a second Conferma after a
+  // lost response would create a duplicate product. On COMMIT_OUTCOME_UNKNOWN
+  // the view re-reads the catalog: the row with this code is already there,
+  // so it renders as created with a single attempt.
+  const created = { ...MANUAL_TABLE.products[0], productId: 'p9', sku: 'PACCHETTO-5', name: 'Pacchetto 5 lezioni' };
+  const reconciled = { products: [...MANUAL_TABLE.products, created], summary: MANUAL_TABLE.summary };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': MANUAL_TABLE, 'limit=200': reconciled } });
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(!mount.textContent.includes('Esito incerto'), 'no uncertain warning when the row reconciles');
+  assert.ok(mount.textContent.includes('Pacchetto 5 lezioni'), 'the created row renders as created');
+});
+
+test('an uncertain creation without the row stays locked instead of duplicating', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': MANUAL_TABLE } });
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(mount.textContent.includes('Esito incerto'), 'the operator is told to reload and check first');
+  const yes = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(yes, 'the confirm button is still there');
+  assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
+});
