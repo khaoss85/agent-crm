@@ -1,7 +1,7 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { ConflictError, NotFoundError } from '../../../core/src/errors.js';
+import { ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import { requiredString, requiredEmail, optionalString } from '../../../core/src/validation.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
@@ -68,6 +68,98 @@ export class ContactService {
     }
     await this.events.emit('contact.created', contact);
     return contact;
+  }
+
+  /**
+   * Voce 714433c2: the scheda cliente edits Dettagli in place. A partial
+   * patch — only the keys present are touched, and at least one editable key
+   * must be present. Email stays unique like in create: a taken address
+   * refuses with ConflictError, never a silent duplicate.
+   *
+   * @param {string} id
+   * @param {{firstName?: unknown, lastName?: unknown, email?: unknown, role?: unknown}} patch
+   * @param {{actor?: unknown}} [context]
+   */
+  async update(id, patch, context = {}) {
+    const current = await this.get(id);
+    if (!patch || typeof patch !== 'object') {
+      throw new ValidationError('a contact update needs at least one field', { field: 'patch' });
+    }
+    const next = { ...current };
+    let touched = false;
+    if (patch.firstName !== undefined) {
+      next.firstName = requiredString(patch.firstName, 'firstName');
+      touched = true;
+    }
+    if (patch.lastName !== undefined) {
+      next.lastName = requiredString(patch.lastName, 'lastName');
+      touched = true;
+    }
+    if (patch.email !== undefined) {
+      next.email = requiredEmail(patch.email);
+      touched = true;
+    }
+    if (patch.role !== undefined) {
+      next.role = optionalString(patch.role, 'role');
+      touched = true;
+    }
+    if (!touched) {
+      throw new ValidationError('a contact update needs at least one of firstName, lastName, email, role', { field: 'patch' });
+    }
+    next.updatedAt = nowIso();
+    try {
+      if (isSyncStorage(this.database)) {
+        this.database.storage.sync.execute({
+          kind: 'update', table: 'contacts',
+          values: [
+            { column: 'first_name', value: next.firstName },
+            { column: 'last_name', value: next.lastName },
+            { column: 'email', value: next.email },
+            { column: 'role', value: next.role },
+            { column: 'updated_at', value: next.updatedAt },
+          ],
+          where: [{ column: 'id', op: 'eq', value: id }],
+        });
+        this.audit.record({
+          actor: context.actor,
+          action: 'contact.updated',
+          entityType: 'contact',
+          entityId: id,
+          data: next,
+        });
+      } else {
+        await storageMutate(this.database, 'contact_update', async (tx) => {
+          await tx.execute({
+            kind: 'update', table: 'contacts',
+            values: [
+              { column: 'first_name', value: next.firstName },
+              { column: 'last_name', value: next.lastName },
+              { column: 'email', value: next.email },
+              { column: 'role', value: next.role },
+              { column: 'updated_at', value: next.updatedAt },
+            ],
+            where: [{ column: 'id', op: 'eq', value: id }],
+          });
+          await this.audit.record({
+            actor: context.actor,
+            action: 'contact.updated',
+            entityType: 'contact',
+            entityId: id,
+            data: next,
+          }, tx);
+        });
+      }
+    } catch (error) {
+      if (error instanceof ConflictError) {
+        throw new ConflictError(`A contact already uses ${next.email}`, { email: next.email });
+      }
+      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+        throw new ConflictError(`A contact already uses ${next.email}`, { email: next.email });
+      }
+      throw error;
+    }
+    await this.events.emit('contact.updated', next);
+    return next;
   }
 
   /** @param {string} id */

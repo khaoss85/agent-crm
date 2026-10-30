@@ -439,7 +439,14 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function details(box, card, profile) {
+  /**
+   * Voce 714433c2: in-place edit of Dettagli for contact subjects. The form
+   * edits what the section shows (Nome, Cognome, Email); company records
+   * have no update path yet, so a company scheda keeps no Modifica button
+   * (remaining). Salva PATCHes the contact and re-reads the card; Annulla
+   * drops the edits by re-reading too, so nothing stale stays on screen.
+   */
+  function details(box, card, profile, editCtx) {
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const fact = (label, value) => {
       const row = el('p', 'bo-scheda-fact');
@@ -474,6 +481,85 @@ export function createCustomerCardView(deps) {
       // instead of printing the English reason or a false "none".
       box.appendChild(el('p', 'bo-muted', 'Nessun pacchetto attivo'));
     }
+    // Voce 714433c2: Modifica opens the in-place form below. Company
+    // records have no update path yet, so a company scheda shows no button.
+    const contact = profile?.identity?.contact ?? null;
+    if (editCtx && card?.subject?.resource === 'contact'
+      && contact && typeof contact.id === 'string' && contact.id !== '') {
+      const edit = el('button', undefined, 'Modifica');
+      edit.setAttribute('type', 'button');
+      edit.setAttribute('data-action', 'edit-details');
+      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx));
+      box.appendChild(edit);
+    }
+  }
+
+  /**
+   * Voce 714433c2: the Dettagli edit form. Salva PATCHes the contact and
+   * re-reads the whole card (the same reload the section helpers use), so a
+   * saved value is the server's value, never an optimistic copy. Annulla
+   * drops the edits by re-reading too, so nothing stale stays on screen. A
+   * refused save keeps the form with the server's Italian error, never a
+   * blank card.
+   */
+  function renderDetailsForm(box, card, contact, editCtx) {
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.appendChild(el('h4', undefined, 'Dettagli'));
+    const field = (label, name, value) => {
+      const labelNode = el('label', 'bo-scheda-field-label', label);
+      const input = el('input');
+      input.setAttribute('name', name);
+      input.value = value;
+      input.setAttribute('aria-label', label);
+      box.appendChild(labelNode);
+      box.appendChild(input);
+      return input;
+    };
+    const firstInput = field('Nome', 'firstName',
+      typeof contact.firstName === 'string' ? contact.firstName : '');
+    const lastInput = field('Cognome', 'lastName',
+      typeof contact.lastName === 'string' ? contact.lastName : '');
+    const emailInput = field('Email', 'email',
+      typeof contact.email === 'string' ? contact.email : '');
+    const error = el('small', 'field-error', '');
+    const row = el('div', 'bo-scheda-form-actions');
+    const save = el('button', undefined, 'Salva');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'save-details');
+    const cancel = el('button', undefined, 'Annulla');
+    cancel.setAttribute('type', 'button');
+    cancel.setAttribute('data-action', 'cancel-details');
+    row.appendChild(save);
+    row.appendChild(cancel);
+    box.appendChild(row);
+    box.appendChild(error);
+    let busy = false;
+    save.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      error.textContent = '';
+      try {
+        await client.request(`/api/contacts/${encodeURIComponent(contact.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            firstName: firstInput.value,
+            lastName: lastInput.value,
+            email: emailInput.value,
+          }),
+        });
+        toast('Dati salvati');
+        await renderCard(editCtx.resource, editCtx.id);
+      } catch (err) {
+        error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
+        toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
+      } finally {
+        busy = false;
+      }
+    });
+    cancel.addEventListener('click', async () => {
+      await renderCard(editCtx.resource, editCtx.id);
+    });
+    void card;
   }
 
   const ENRICHED_FIELD_LABELS = Object.freeze({
@@ -540,7 +626,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function timelineBox(box, timeline) {
+  function timelineBox(box, timeline, noteCtx) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -594,6 +680,8 @@ export function createCustomerCardView(deps) {
     };
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
+      // Voce 714433c2: operator notes are channel-less, so they read under
+      // `Tutti` only — a channel filter shows that channel's passages alone.
       const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
       if (visible.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
@@ -619,6 +707,22 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        if (item?.entry === 'note') {
+          // Voce 714433c2: the operator note. No channel badge and no sync
+          // line — it is a statement about the customer, not a passage.
+          // The writer reads when the row names a human handle, like the
+          // outbound passages above; markup in the body stays text.
+          const when = timeParts(item?.occurredAt);
+          const author = isHumanHandle(item?.teamAuthorId)
+            ? `da ${String(item.teamAuthorId).trim()}` : 'dal team';
+          row.appendChild(el('p', 'bo-scheda-entry-head',
+            when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
+          if (typeof item?.body === 'string' && item.body !== '') {
+            row.appendChild(el('p', undefined, item.body));
+          }
+          list.appendChild(row);
+          continue;
+        }
         const channelKey = String(item?.channel ?? '').trim().toLowerCase();
         const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
         row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
@@ -653,6 +757,47 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
+    // Voce 714433c2: "Aggiungi nota" — the operator statement that reads
+    // back in the cronologia above. Plain text only, like the work views; it
+    // emails nobody and notifies nobody. A refused save keeps the text with
+    // the server's Italian error, and a saved note re-reads the card so the
+    // row is the server's row, never an optimistic copy.
+    if (noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string') {
+      const noteForm = el('div', 'bo-scheda-note-form');
+      const noteInput = el('input');
+      noteInput.setAttribute('name', 'noteBody');
+      noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
+      noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
+      const noteButton = el('button', undefined, 'Aggiungi nota');
+      noteButton.setAttribute('type', 'button');
+      noteButton.setAttribute('data-action', 'add-note');
+      const noteError = el('small', 'field-error', '');
+      let noteBusy = false;
+      noteButton.addEventListener('click', async () => {
+        if (noteBusy) return;
+        noteBusy = true;
+        noteError.textContent = '';
+        try {
+          await client.request('/api/customer-hub/notes', {
+            method: 'POST',
+            body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
+          });
+          toast('Nota aggiunta');
+          await renderCard(noteCtx.resource, noteCtx.id);
+        } catch (error) {
+          noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
+          toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
+        } finally {
+          noteBusy = false;
+        }
+      });
+      noteForm.appendChild(noteInput);
+      noteForm.appendChild(noteButton);
+      noteForm.appendChild(noteError);
+      noteForm.appendChild(el('p', 'bo-muted',
+        'La nota resta qui, nella cronologia del cliente. Non viene inviata a nessuno.'));
+      box.appendChild(noteForm);
+    }
   }
 
   function nextSteps(box, profile) {
@@ -889,9 +1034,9 @@ export function createCustomerCardView(deps) {
     };
     section(left, '', quickActions, card);
     section(left, '', linkedIdentities, profile);
-    section(left, '', details, card, profile);
+    section(left, '', details, card, profile, { resource, id });
     section(left, '', enriched, enrichment, reloadEnrichment);
-    section(center, 'bo-scheda-card-timeline', timelineBox, timeline);
+    section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
     section(right, 'bo-scheda-ai', aiSummary, calls);
     section(right, '', callsBox, calls);
     section(right, '', nextSteps, profile);

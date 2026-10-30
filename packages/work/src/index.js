@@ -23,7 +23,9 @@ import {
   resolveModule,
   safeText,
   sortTimeline,
+  validateSubject,
 } from './follow-up.js';
+import { nowIso } from '../../core/src/time.js';
 
 /**
  * **Work v1 — tasks and activity evidence.**
@@ -370,6 +372,67 @@ export function createFollowUpCapability(moduleNames) {
   };
 }
 
+/**
+ * `record-subject-note` — the scheda cliente's "Aggiungi nota" (voce 714433c2).
+ *
+ * The one operation that writes a timeline entry without a task: an operator
+ * note on a customer subject. It reuses the same `work-activity` row, the
+ * same `note` kind and the same human-actor boundary as the `add-note`
+ * action — only the task context is absent (taskId null), because a customer
+ * note is a statement about the subject, not about a follow-up. Like a manual
+ * note it carries no source key: two identical notes are two statements
+ * (`MANUAL_NOTES_ARE_NOT_IDEMPOTENT`). The scheda timeline renders these
+ * rows; the channel evidence counts ignore them, like every other work note.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildRecordSubjectNoteOperation(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'record-subject-note',
+    appMethod: 'recordSubjectNote',
+    label: 'Record an operator note on a subject timeline',
+    description:
+      'Append a human note to a subject timeline without a task. Safe text only; it is not sent anywhere. '
+      + 'Two identical notes are two notes: a note carries no idempotency key.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind, e.g. "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'body', type: 'string', hint: 'The note. Plain text, at most 1000 characters.' },
+    ],
+    create(runtime) {
+      return async (request) => {
+        requireHumanActor(request?.actor, 'Recording a subject note');
+        const subject = validateSubject({
+          resource: request?.resource, id: request?.id, owner: 'host',
+        });
+        if (subject.resource !== 'contact' && subject.resource !== 'company') {
+          throw new AppError('a subject note needs a contact or company subject', {
+            code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
+          });
+        }
+        const body = safeText(request?.body, 'body', bounds.noteBody);
+        const activities = resolveModule(runtime.modules, names.activity)?.service;
+        if (!activities || typeof activities.createManaged !== 'function') {
+          throw new AppError('The work package is installed without its activity record', {
+            code: 'WORK_STORAGE_INVALID', status: 500,
+          });
+        }
+        return recordActivity({ activities, actor: request.actor }, {
+          sourceKey: null,
+          kind: 'note',
+          subject: { resource: subject.resource, id: subject.id },
+          taskId: null,
+          body,
+          occurredAt: nowIso(),
+          source: { package: WORK_PACKAGE, action: 'record-subject-note' },
+        });
+      };
+    },
+  };
+}
+
 /** @param {{modules?: Record<string, string>}} [options] */
 export function createWorkPackage(options = {}) {
   return selectPackageGraph(definePackage({
@@ -390,6 +453,7 @@ export function createWorkPackage(options = {}) {
       buildPostponeTaskAction(options.modules),
       buildAddNoteAction(options.modules),
     ],
+    operations: [buildRecordSubjectNoteOperation(options.modules)],
     // None. A versioned policy earns its fingerprint when two consumers share a
     // rule; these two share none — one wants a lead's name and a due date, the
     // other a contract intent and no date. See ADR-030.
