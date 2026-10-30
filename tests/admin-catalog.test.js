@@ -658,11 +658,13 @@ test('the create form refuses garbage without sending', async () => {
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
 });
 
-test('every row states its active flag, toggles stay manual-only', async () => {
+test('every row states its active flag, every non-Stripe row offers its actions', async () => {
   const inactiveManual = structuredClone(MANUAL_TABLE.products[0]);
   inactiveManual.productId = 'p3';
   inactiveManual.name = 'Pacchetto archiviato';
   inactiveManual.active = false;
+  const importedOffer = structuredClone(MANUAL_TABLE.products[0].offers[0]);
+  importedOffer.offerId = 'o4';
   const imported = {
     productId: 'p4',
     sku: 'PRESTI-1',
@@ -673,7 +675,7 @@ test('every row states its active flag, toggles stay manual-only', async () => {
     priceReadOnly: true,
     active: false,
     version: 1,
-    offers: [],
+    offers: [importedOffer],
   };
   const table = {
     products: [MANUAL_TABLE.products[0], inactiveManual, imported],
@@ -691,11 +693,40 @@ test('every row states its active flag, toggles stay manual-only', async () => {
   const labels = mount.findAll('button').map((node) => node.textContent);
   assert.ok(labels.includes('Disattiva'), 'the active manual row offers its toggle');
   assert.ok(labels.includes('Attiva'), 'the inactive manual row offers its toggle');
-  const importedToggles = mount.findAll('div')
+  const importedRows = mount.findAll('div')
     .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-row'))
     .map((row) => row.textContent.includes('Ingresso singolo') ? row.textContent : null)
     .filter(Boolean);
-  assert.ok(importedToggles.length === 1 && !/Attiva|Disattiva/.test(importedToggles[0]), 'the imported row states its flag but offers no toggle yet');
+  assert.equal(importedRows.length, 1, 'the imported row renders');
+  assert.ok(importedRows[0].includes('Modifica prezzi'), 'the imported non-Stripe row offers its price edit');
+  assert.ok(importedRows[0].includes('Attiva'), 'the imported non-Stripe row offers its toggle');
+  assert.ok(
+    mount.textContent.includes('Prezzi importati: alla prima modifica la riga passa alla gestione manuale.'),
+    'the imported price edit names the takeover before anything is sent',
+  );
+  for (const button of mount.findAll('button').filter((node) => node.textContent === 'Attiva')) {
+    button.dispatch('click');
+  }
+  const takeoverConfirms = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'catalog-takeover-note'
+      && node.textContent.includes('La riga importata passa alla gestione manuale'));
+  assert.equal(takeoverConfirms.length, 1, 'only the imported toggle confirm names the takeover');
+});
+
+test('Stripe rows offer no action and stay read-only', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': STRIPE_TABLE } }) });
+  await view.renderTable({});
+
+  const labels = mount.findAll('button').map((node) => node.textContent);
+  assert.ok(!labels.includes('Modifica prezzi'), 'no price edit on a Stripe row');
+  assert.ok(!labels.includes('Attiva') && !labels.includes('Disattiva'), 'no toggle on a Stripe row');
+  assert.ok(!mount.textContent.includes('gestione manuale'), 'no takeover note on a Stripe row');
+  const states = mount.findAll('span')
+    .filter((node) => node.getAttribute('class') === 'catalog-active-state')
+    .map((node) => node.textContent);
+  assert.ok(states.length > 0 && states.every((state) => state === 'Attivo' || state === 'Non attivo'), 'Stripe rows still state their flag');
 });
 
 test('Aggiungi prodotto stays available once Stripe is connected', async () => {

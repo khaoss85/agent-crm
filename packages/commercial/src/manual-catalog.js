@@ -18,14 +18,20 @@ import { requireCurrency, validatePriceComponent } from './money.js';
 
 /**
  * Manual catalog management (BO-F2-05, "gestione manuale senza Stripe"): the
- * trusted write path for products whose price source is NOT a provider.
+ * trusted write path for products whose price source is NOT Stripe.
  *
- * Invariant (the read-only rule the backoffice renders): rows with
- * `sourceKind: 'provider'` (or a non-manual `provider` on offers) are owned by
- * their price source — every manual mutation refuses them with
- * PROVIDER_PRICE_READONLY. Manual rows (`sourceKind: 'internal'`,
- * `provider: 'manual'`) are fully managed here: create, describe, reprice,
- * activate.
+ * Invariant (the read-only rule the backoffice renders): only Stripe-owned
+ * rows are owned by their price source — every manual mutation refuses them
+ * with PROVIDER_PRICE_READONLY, because Stripe stays the source of truth and
+ * a re-sync would overwrite the operator. Rows imported from any other
+ * provider (a static listino with no live sync in this codebase) are
+ * operator-managed: the operator's first mutation takes the row over into
+ * manual management (`sourceKind: 'internal'`, `provider: 'manual'` on the
+ * product row; offers convert lazily to manual revisions on the first
+ * reprice, moving to the manual book of their currency), so a later sync of
+ * that provider never silently rewrites what the operator decided. Manual
+ * rows (`sourceKind: 'internal'`, `provider: 'manual'`) are fully managed
+ * here: create, describe, reprice, activate.
  *
  * Shape discipline mirrors catalog sync on purpose: versions stay immutable
  * (a description change opens version n+1), offers stay revisioned as a
@@ -164,17 +170,44 @@ function requireComponentKey(value, field) {
 }
 
 /**
- * The price-source guard: provider rows are read-only for manual writers.
+ * Whether a provider name is a Stripe price source: the only source the
+ * manual writers never touch. The same derivation the backoffice uses to
+ * render Stripe rows read-only, so the two never disagree about it.
+ * @param {unknown} provider
+ */
+export function isStripeSource(provider) {
+  return typeof provider === 'string' && provider.toLowerCase().includes('stripe');
+}
+
+/**
+ * The price-source guard: Stripe-owned rows are read-only for manual
+ * writers. Any other provider row (a static import with no live sync) is
+ * operator-managed — the caller takes it over (see the module header).
  * @param {{sourceKind?: unknown, provider?: unknown} | null} row @param {string} what
  */
-function requireManualRow(row, what) {
+function requireManageableRow(row, what) {
   const provider = row?.provider ?? 'unknown';
-  if (row?.sourceKind === 'provider' || (row?.sourceKind === undefined && typeof provider === 'string' && provider !== MANUAL_PROVIDER)) {
+  const providerOwned = row?.sourceKind === 'provider'
+    || (row?.sourceKind === undefined && typeof provider === 'string' && provider !== MANUAL_PROVIDER);
+  if (providerOwned && isStripeSource(provider)) {
     throw new AppError(
       `${what} is owned by price source "${typeof provider === 'string' ? provider : 'unknown'}": provider prices are read-only — change them at the source and re-sync`,
       { code: PRICE_SOURCE_READONLY, status: 409 },
     );
   }
+}
+
+/**
+ * Take a non-Stripe provider product over into manual management, so the
+ * operator's edit is never silently rewritten by a later sync of that
+ * provider. Stripe rows never reach here (the guard above refuses them);
+ * manual rows are already managed and read back unchanged. The import's
+ * external id stays on the row as provenance.
+ * @param {{applyManaged: (id: string, patch: Record<string, unknown>, context: unknown) => Promise<any>}} products
+ */
+async function takeoverProviderProduct(products, product, context) {
+  if (product.sourceKind !== 'provider' || isStripeSource(product.provider)) return product;
+  return products.applyManaged(product.id, { sourceKind: 'internal', provider: MANUAL_PROVIDER }, context);
 }
 
 /**
@@ -353,7 +386,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
     const sourceKey = `manual:book:${currency}`;
     const existing = (await books.listWhere({ sourceKey }))[0];
     if (existing) {
-      requireManualRow(existing, `Price book "${existing.id}"`);
+      requireManageableRow(existing, `Price book "${existing.id}"`);
       if (existing.currency !== currency) {
         throw new AppError(`Manual price book currency is immutable (stored ${existing.currency}, requested ${currency})`, { code: 'SYNC_CONFLICT', status: 409 });
       }
@@ -488,7 +521,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
     let book;
     if (input.priceBookId !== undefined && input.priceBookId !== null) {
       book = await service(names.priceBook).get(String(input.priceBookId));
-      requireManualRow(book, `Price book "${book.id}"`);
+      requireManageableRow(book, `Price book "${book.id}"`);
       if (book.currency !== currency) {
         throw new AppError(`Price book "${book.id}" is in ${book.currency}, the product declares ${currency}`, { code: 'CURRENCY_MISMATCH', status: 409 });
       }
@@ -562,7 +595,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
         const products = service(names.product);
         const versions = service(names.productVersion);
         const product = await products.get(productId);
-        requireManualRow(product, `Product "${product.id}"`);
+        requireManageableRow(product, `Product "${product.id}"`);
         const current = product.currentVersionId ? await versions.get(product.currentVersionId) : null;
         if (!current) {
           throw new AppError(`Product "${product.id}" has no current version`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
@@ -583,6 +616,8 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
         if (isUnchangedCommercial(current, sourceFingerprint)) {
           return { product: { id: product.id, version: current.version }, unchanged: true };
         }
+        // A real change takes an imported row over; a no-op leaves it alone.
+        await takeoverProviderProduct(products, product, context);
         const nextNumber = (await versions.countWhere({ productId: product.id })) + 1;
         const version = await versions.createManaged(
           {
@@ -601,7 +636,9 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
     /**
      * Replace a manual product's prices: one new offer revision per declared
      * offer (the previous revision deactivates, history is never rewritten).
-     * Provider-owned offers refuse with PROVIDER_PRICE_READONLY.
+     * Stripe-owned offers refuse with PROVIDER_PRICE_READONLY; offers
+     * imported from any other provider convert to manual revisions on the
+     * manual book of their currency (the product row is taken over below).
      */
     async setPrices(input = {}, actor) {
       return runManual('set-manual-prices', actor, async (context) => {
@@ -613,7 +650,8 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
         const products = service(names.product);
         const offersService = service(names.offer);
         const product = await products.get(productId);
-        requireManualRow(product, `Product "${product.id}"`);
+        requireManageableRow(product, `Product "${product.id}"`);
+        await takeoverProviderProduct(products, product, context);
         if (!product.currentVersionId) {
           throw new AppError(`Product "${product.id}" has no current version`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
         }
@@ -623,7 +661,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
           if (current.productId !== product.id) {
             throw new AppError(`Offer "${current.id}" belongs to another product`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
           }
-          if (current.provider !== MANUAL_PROVIDER) {
+          if (current.provider !== MANUAL_PROVIDER && isStripeSource(current.provider)) {
             throw new AppError(
               `Offer "${current.id}" is owned by price source "${current.provider}": provider prices are read-only — change them at the source and re-sync`,
               { code: PRICE_SOURCE_READONLY, status: 409 },
@@ -640,9 +678,15 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
             );
           }
           const book = await service(names.priceBook).get(current.priceBookId);
+          // Converted offers land on the manual book of their currency:
+          // provider books are never reused for manual revisions, so sources
+          // stay clean (the same rule manual creation follows).
+          const targetBook = book.provider === MANUAL_PROVIDER
+            ? book
+            : await manualBookFor(book.currency, context);
           const declared = {
             name: offer.name,
-            currency: book.currency,
+            currency: targetBook.currency,
             quoteEligible: true,
             unsupportedReason: null,
             productVersionId: product.currentVersionId,
@@ -675,7 +719,7 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
               active: offer.active,
               components: offer.components.map((component, componentIndex) => ({ ...component, position: componentIndex + 1 })),
             },
-            { priceBookId: current.priceBookId, productId: product.id, productVersionId: product.currentVersionId, currency: book.currency },
+            { priceBookId: targetBook.id, productId: product.id, productVersionId: product.currentVersionId, currency: targetBook.currency },
             context,
           );
           results.push({ offerId: created.id, revision: created.revision, unchanged: false });
@@ -692,10 +736,13 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
         const products = service(names.product);
         const offersService = service(names.offer);
         const product = await products.get(productId);
-        requireManualRow(product, `Product "${product.id}"`);
+        requireManageableRow(product, `Product "${product.id}"`);
+        await takeoverProviderProduct(products, product, context);
         const updated = await products.applyManaged(product.id, { active }, context);
-        // A manual product only carries manual offers: sync never writes to
-        // internal products, and every manual mutation above refuses providers.
+        // The flag propagates to every current offer revision, including
+        // imported ones not yet repriced: the product row is manual from the
+        // takeover above, so a later sync of that provider leaves it alone,
+        // and the first reprice converts the offers to manual revisions.
         const current = latestRevisions(await offersService.listWhere({ productId: product.id }));
         for (const offer of current) {
           if (offer.active !== active) await offersService.applyManaged(offer.id, { active }, context);

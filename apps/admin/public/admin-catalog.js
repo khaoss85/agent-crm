@@ -12,17 +12,20 @@ import { settingsTabs } from './admin-shell.js';
  * Stripe connection state for this space, the enforced price rules read
  * from the schema, a confirm-gated "Aggiungi prodotto" creation over the
  * existing `POST /api/catalog/products` route, and confirm-gated edits of
- * manual prices and flags over the existing `POST /api/catalog/...` routes
- * (no new backend surface).
+ * prices and flags over the existing `POST /api/catalog/...` routes (no new
+ * backend surface).
  * Rules unchanged from the rest of the Admin: every value renders as text
  * (never HTML), the server is authoritative for every amount,
- * provider-sourced prices render read-only text (no inputs at all — the
- * write path refuses them with PROVIDER_PRICE_READONLY), a render token
- * discards stale responses, and every mutation goes through the shared
- * submission controller (idempotency key per user submission).
- * The ATTIVO column states every row's flag as text, so imported rows show
- * their state even where they offer no toggle yet; Stripe rows stay
- * read-only and the page says so.
+ * Stripe-sourced prices render read-only text (no inputs at all — the write
+ * path refuses them with PROVIDER_PRICE_READONLY), a render token discards
+ * stale responses, and every mutation goes through the shared submission
+ * controller (idempotency key per user submission).
+ * Every row not bound to Stripe — manual or imported — offers Modifica
+ * prezzi and Attiva/Disattiva: the first operator edit takes an imported
+ * row over into manual management (the confirm says so), so a later sync
+ * never rewrites it; Stripe rows stay read-only and the page says so.
+ * Removing a product outright (Togli) has no backend operation yet and is
+ * not offered here — deactivation archives it from quoting instead.
  *
  * DECISION (to be confirmed): the discount bands themselves (auto-approve,
  * owner max) stay composition config evaluated by the package — changing
@@ -248,12 +251,15 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Confirm-gated active toggle for one manual product over the existing
-   * `POST /api/catalog/products/:id/active` route.
+   * Confirm-gated active toggle for one operator-managed product over the
+   * existing `POST /api/catalog/products/:id/active` route. On an imported
+   * row the confirm names the takeover, so the operator knows the row
+   * leaves its import source for manual management.
    * @param {any} product
    */
   function renderActiveToggle(product) {
     const target = product.active !== true;
+    const imported = product.source !== 'manual';
     const button = el('button', `catalog-toggle catalog-switch${product.active === true ? ' on' : ''}`, target ? 'Attiva' : 'Disattiva');
     button.setAttribute('role', 'switch');
     button.setAttribute('aria-checked', product.active === true ? 'true' : 'false');
@@ -264,6 +270,9 @@ export function createCatalogView(deps) {
       confirmBox.appendChild(el('p', undefined, target
         ? `Attivare ${product.name ?? product.productId}? Le offerte correnti si riattivano.`
         : `Disattivare ${product.name ?? product.productId}? Le offerte correnti si disattivano.`));
+      if (imported) {
+        confirmBox.appendChild(el('p', 'catalog-takeover-note', 'La riga importata passa alla gestione manuale: non seguirà più la fonte di importazione.'));
+      }
       const yes = el('button', undefined, 'Conferma');
       const no = el('button', undefined, 'Annulla');
       no.addEventListener('click', () => {
@@ -314,10 +323,12 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Confirm-gated price edit for one manual product over the existing
-   * `POST /api/catalog/products/:id/prices` route: Modifica -> edit amounts
-   * -> Rivedi (old→new summary) -> Conferma. Tiers keep their schedule with
-   * edited amounts; the server re-validates everything fail-closed.
+   * Confirm-gated price edit for one operator-managed product over the
+   * existing `POST /api/catalog/products/:id/prices` route: Modifica ->
+   * edit amounts -> Rivedi (old→new summary) -> Conferma. Tiers keep their
+   * schedule with edited amounts; the server re-validates everything
+   * fail-closed. On an imported row the first confirmation takes the row
+   * over into manual management (the form says so).
    * @param {any} product
    */
   function renderPriceEditor(product) {
@@ -459,6 +470,9 @@ export function createCatalogView(deps) {
       formBox.appendChild(formError);
     });
     wrap.appendChild(openButton);
+    if (product.source !== 'manual') {
+      wrap.appendChild(el('p', 'catalog-takeover-note', 'Prezzi importati: alla prima modifica la riga passa alla gestione manuale.'));
+    }
     wrap.appendChild(formBox);
     return wrap;
   }
@@ -632,7 +646,6 @@ export function createCatalogView(deps) {
       return;
     }
     const summary = table.summary ?? {};
-    const stripeConnected = stripeIsConnected(summary);
     page.appendChild(renderStripeBlock(summary));
     page.appendChild(renderCreateForm());
     const loaded = table.products;
@@ -724,12 +737,16 @@ export function createCatalogView(deps) {
       const switchCell = el('div', 'catalog-cell-switch');
       switchCell.appendChild(el('span', 'catalog-active-state', product.active === true ? 'Attivo' : 'Non attivo'));
       row.appendChild(switchCell);
-      const manual = product.source === 'manual' && product.priceReadOnly !== true;
-      // Provider prices stay read-only text (the write path refuses them
-      // with PROVIDER_PRICE_READONLY), but the "change it on Stripe" note
-      // only makes sense while a Stripe source is actually connected: with
-      // Stripe disconnected no row may promise a Stripe edit.
-      if (product.priceReadOnly === true && stripeConnected) {
+      // Only Stripe-bound rows stay read-only: the write path refuses them
+      // with PROVIDER_PRICE_READONLY. Imported rows from any other source
+      // are operator-managed (the first edit takes them over), so the
+      // "change it on Stripe" note names Stripe rows only — and only while
+      // a Stripe source is actually connected, so no row promises a Stripe
+      // edit that has nowhere to go. Row identity uses the same derivation
+      // the server guard uses, so the two never disagree about a row.
+      const stripeRow = String(product.source ?? '').toLowerCase().includes('stripe');
+      const manageable = !stripeRow && typeof product.productId === 'string' && product.productId !== '';
+      if (stripeRow && stripeIsConnected(summary)) {
         priceCell.appendChild(el('p', 'catalog-readonly', 'Sola lettura: si cambia su Stripe.'));
       }
       const offers = Array.isArray(product.offers) ? product.offers : [];
@@ -749,7 +766,7 @@ export function createCatalogView(deps) {
         }
         priceCell.appendChild(offerBox);
       }
-      if (manual && typeof product.productId === 'string' && product.productId !== '') {
+      if (manageable) {
         priceCell.appendChild(renderPriceEditor(product));
         switchCell.appendChild(renderActiveToggle(product));
       }

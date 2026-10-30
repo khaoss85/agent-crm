@@ -7,9 +7,12 @@
  * 1. sync from the fake Stripe adapter lands in `product` with the source
  *    marked (sourceKind provider, provider name, Stripe external ids);
  * 2. with the price source active the price is not modifiable — every manual
- *    mutation of a provider-owned row refuses with PROVIDER_PRICE_READONLY;
+ *    mutation of a Stripe-owned row refuses with PROVIDER_PRICE_READONLY;
  * 3. without Stripe the manual catalog works end to end (create, describe,
- *    reprice, activate, table read with filters).
+ *    reprice, activate, table read with filters);
+ * 4. rows imported from a non-Stripe source are operator-managed: the first
+ *    mutation takes the row over into manual management (takeover), and
+ *    Stripe rows still refuse.
  *
  * The Stripe client is a fake (owner decision: no credentials yet); the
  * mapping is what the real adapter reuses. The oracle for the mapping shape
@@ -100,6 +103,20 @@ function manualProject(t) {
   }
   applyManifests(root);
   compose(root, 'const catalogProviders = [];');
+  return root;
+}
+
+function listinoProject(t) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-listino-catalog-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+  }
+  applyManifests(root);
+  compose(root, [
+    "import { createStripeCatalogProvider, createFixtureStripeCatalogClient } from '../../commercial/src/index.js';",
+    'const catalogProviders = [createStripeCatalogProvider({ name: \'presti-listino\', version: 1, stripe: createFixtureStripeCatalogClient() })];',
+  ].join('\n'));
   return root;
 }
 
@@ -704,4 +721,75 @@ test('setManualPrices refuses a stale offer revision instead of forking history'
   );
   const revisions = app.modules.get('offer').service.listWhere({ productId: created.product.id });
   assert.equal(revisions.length, 2, 'the refused write leaves history untouched');
+});
+
+test('acceptance 4: rows imported from a non-Stripe source are operator-managed via takeover', async (t) => {
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+
+  const table = await app.listCatalogProducts({});
+  assert.equal(table.summary.stripeConnected, false, 'a non-Stripe import never reads as Stripe-connected');
+  const yoga = table.products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+  assert.equal(yoga.source, 'presti-listino');
+  assert.equal(yoga.priceReadOnly, true, 'reads still mark the import source until the operator edits');
+
+  // Toggle: the flag flips and the row is taken over into manual management,
+  // keeping the import external id as provenance.
+  const toggled = await app.setManualProductActive({ productId: yoga.productId, active: false }, ACTOR);
+  assert.equal(toggled.product.active, false);
+  const stored = app.modules.get('product').service.listWhere({}).find((row) => row.id === yoga.productId);
+  assert.equal(stored.sourceKind, 'internal', 'the takeover leaves no provider-owned row behind');
+  assert.equal(stored.provider, 'manual');
+  assert.equal(stored.externalId, 'prod_yoga', 'the import external id stays as provenance');
+  const reread = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+  assert.equal(reread.source, 'manual');
+  assert.equal(reread.priceReadOnly, false);
+
+  // Describe: version 2 on the taken-over row, history kept.
+  const updated = await app.updateManualProduct({ productId: yoga.productId, name: 'Corso Yoga serale' }, ACTOR);
+  assert.equal(updated.product.version, 2);
+  assert.equal(updated.unchanged, false);
+
+  // Describe as the FIRST takeover action: a fresh imported row converts on
+  // a real change, while a no-op describe leaves the import source alone.
+  const pilates = table.products.find((row) => row.sku === 'PILATES');
+  assert.ok(pilates, 'a second imported product reads back');
+  const renamed = await app.updateManualProduct({ productId: pilates.productId, name: 'Pilates serale' }, ACTOR);
+  assert.equal(renamed.unchanged, false);
+  const pilatesStored = app.modules.get('product').service.listWhere({}).find((row) => row.id === pilates.productId);
+  assert.equal(pilatesStored.sourceKind, 'internal', 'describe takes the row over too');
+  assert.equal(pilatesStored.provider, 'manual');
+
+  // A no-op describe on a fresh imported row changes nothing, not even
+  // ownership: only a real edit takes a row over.
+  const sala = table.products.find((row) => row.sku === 'SALA');
+  assert.ok(sala, 'a third imported product reads back');
+  const noop = await app.updateManualProduct({ productId: sala.productId }, ACTOR);
+  assert.equal(noop.unchanged, true, 'an empty describe stays a clean no-op');
+  const salaStored = app.modules.get('product').service.listWhere({}).find((row) => row.id === sala.productId);
+  assert.equal(salaStored.sourceKind, 'provider', 'the no-op leaves the import source alone');
+  assert.equal(salaStored.provider, 'presti-listino');
+
+  // Reprice: the imported offer converts to a manual revision on the manual
+  // book, the previous revision deactivates.
+  const offerId = yoga.offers[0].offerId;
+  const repriced = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [offerId],
+    offers: [{ name: 'Corso Yoga', components: [MANUAL_COMPONENT] }],
+  }, ACTOR);
+  assert.equal(repriced.offers[0].unchanged, false);
+  const converted = app.modules.get('offer').service.listWhere({}).filter((row) => row.productId === yoga.productId);
+  assert.ok(converted.some((row) => row.id === repriced.offers[0].offerId && row.provider === 'manual'), 'the new revision is manual');
+  assert.ok(converted.some((row) => row.id === offerId && row.active === false), 'the imported revision deactivates');
+  const books = app.modules.get('price-book').service.listWhere({});
+  const manualBook = books.find((book) => book.sourceKey === 'manual:book:EUR');
+  assert.ok(manualBook, 'the manual book of the currency exists');
+  assert.equal(
+    converted.find((row) => row.id === repriced.offers[0].offerId).priceBookId,
+    manualBook.id,
+    'converted revisions land on the manual book, never the provider book',
+  );
 });
