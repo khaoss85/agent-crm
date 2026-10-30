@@ -16,7 +16,7 @@ import { isExposableGeneratedModule } from '../../../packages/core/src/generated
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
-import { getAdminBundle } from '../../../scripts/admin-bundle.js';
+import { getAdminBundle } from './admin-bundle.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
@@ -1538,7 +1538,7 @@ export async function readStaticFile(publicDir, pathname) {
  * The first paint of `/bo` used to wait for 30+ unversioned modules, so
  * everything rode `no-cache`. The server now generates one content-hashed
  * bundle at serve time (`bo-<sha>.js`, `bo-styles-<sha>.css`, built in
- * memory by `scripts/admin-bundle.js`, never committed): a new deploy is a
+ * memory by `apps/server/src/admin-bundle.js`, never committed): a new deploy is a
  * new name, so hashed files are immutable for a year. HTML entry points are
  * never cached — they carry the current hashed names (and, under a mount, a
  * per-operator session profile). Anything else (fonts and friends,

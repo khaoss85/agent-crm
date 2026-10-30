@@ -9,7 +9,7 @@ import {
   buildAdminBundle,
   getAdminBundle,
   resetAdminBundleCache,
-} from '../scripts/admin-bundle.js';
+} from '../apps/server/src/admin-bundle.js';
 import { readStaticFile, staticCacheControl } from '../apps/server/src/index.js';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createAdminShellMount } from '../packages/app/src/admin-mount.js';
