@@ -51,7 +51,11 @@ export const SHELL_ITEMS = Object.freeze([
   // button under the voices is the entry, and its "Compila manualmente" opens
   // this route. Kept here so the route still resolves to a known screen.
   { id: 'nuovo-modulo', label: 'Nuovo modulo', group: 'custom', route: '#/nuovo-modulo', story: 'BO-F5-01', icon: 'nuovo-modulo', nav: false },
-  { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: SETTINGS_ROUTE, story: 'BO-F0-02', icon: 'impostazioni' },
+  // The Impostazioni voice opens the Personalizzazione tab directly (its
+  // first area), never the settings index: the sidebar stays highlighted
+  // through screenLabelFor('personalizzazione'). SETTINGS_ROUTE still names
+  // the index for the space-manage entry.
+  { id: 'impostazioni', label: 'Impostazioni', group: 'settings', route: '#/personalizzazione', story: 'BO-F0-02', icon: 'impostazioni' },
 ]);
 
 /** Sidebar group headers, in render order. `null` renders no header. */

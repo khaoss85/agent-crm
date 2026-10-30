@@ -269,7 +269,7 @@ test('a composed schema envelope links every delivered screen (backlog:42fd49b8)
   const byId = Object.fromEntries(nav.map((item) => [item.id, item]));
   assert.equal(byId.clienti.route, '#/customer-data');
   assert.equal(byId.pipeline.route, '#/pipelines/vendite');
-  assert.equal(byId.impostazioni.route, '#/impostazioni');
+  assert.equal(byId.impostazioni.route, '#/personalizzazione', 'Impostazioni opens the Personalizzazione tab');
   assert.equal(byId.oggi.route, '#/');
   for (const id of ['clienti', 'pipeline', 'impostazioni', 'oggi']) {
     assert.equal(byId[id].available, true, `${id} links its delivered screen`);
@@ -282,7 +282,7 @@ test('a composed schema envelope links every delivered screen (backlog:42fd49b8)
   }
   assert.equal(byId.calendario.route, '#/calendario');
   const oggiRoutes = buildOggiLinks(nav).map((link) => link.route);
-  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/reporting', '#/nuovo-modulo', '#/calendario', '#/impostazioni']) {
+  for (const href of ['#/customer-data', '#/pipelines/vendite', '#/reporting', '#/nuovo-modulo', '#/calendario', '#/personalizzazione']) {
     assert.ok(oggiRoutes.includes(href), `Oggi lists the ready screen ${href}`);
   }
 });
