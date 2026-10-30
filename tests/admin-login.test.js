@@ -28,7 +28,8 @@ const page = readFileSync(join(root, 'apps/admin/public/login.html'), 'utf8');
 const loginSource = readFileSync(join(root, 'apps/admin/public/login.js'), 'utf8');
 
 test('the login page tells the four-channel story like the prototype', () => {
-  assert.ok(page.includes('>Accordo</span>'), 'the brand names Accordo next to the mark (C2)');
+  assert.match(page, /<div class="login-brand">[\s\S]*?<svg[\s\S]*?<span>Accordo<\/span>/,
+    'the brand names Accordo inside the logo row, next to the mark (C2)');
   for (const text of [
     'Ogni conversazione, un solo cliente.',
     'Instagram, email, telefono e WhatsApp',
@@ -126,6 +127,10 @@ test('the page ships no app surface and no prefilled address', () => {
   assert.ok(!/\bvalue=/.test(input), 'the email field ships empty: the demo address stays a placeholder');
   assert.match(input, /placeholder="[^"]*"/, 'the demo address stays a placeholder, never a value');
   assert.match(input, /maxlength="200"/, 'the client bound matches the server bound');
+  assert.ok(!/\bdisabled\b/.test(input) && !/\breadonly\b/.test(input),
+    'the email field stays editable: no disabled/readonly gate blocks keyboard entry (C17)');
+  assert.ok(!/aria-disabled/.test(input),
+    'the email field carries no aria-disabled gate (C17)');
   assert.match(page, /<label\b[^>]*for="login-email"[^>]*>/, 'the exact label names its field');
   assert.match(page, /<form\b[^>]*method="post"[^>]*action="\/api\/auth\/magic-link\/request"/,
     'no-JS visitors still POST to the deployment route');
@@ -185,6 +190,15 @@ function wireFakeLogin(request) {
 }
 
 const noopEvent = { preventDefault() {} };
+
+test('the native submit event reaches the login handler: Enter sends (C17)', async () => {
+  let calls = 0;
+  const { form, email } = wireFakeLogin(async () => { calls += 1; return true; });
+  email.value = 'elena@studioaurora.it';
+  form.dispatch('submit', noopEvent);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, 1, 'the same event Enter fires natively reaches onSubmit');
+});
 
 test('an empty or invalid address shows Italian guidance and never requests', async () => {
   for (const [typed, expected] of [
