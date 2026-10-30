@@ -1120,3 +1120,179 @@ test('backlog:32820692: attachments render on the card: thumbnail, player, icon 
   assert.ok(mount.textContent.includes('<script>alert(1)</script>.pdf'), 'the document name reads as text');
   assert.deepEqual(mount.findAll('script'), [], 'a hostile filename never becomes markup');
 });
+
+// Voce 714433c2: Dettagli has Modifica with Salva and Annulla. Salva PATCHes
+// the contact and re-reads the card; Annulla re-reads without writing.
+const OPPORTUNITY_ONLY_PROFILE = {
+  ...PROFILE,
+  opportunities: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{ id: 'o1', status: 'qualification', name: 'Pacchetto 10 ingressi' }],
+  },
+  quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+};
+
+/** A client stub that records writes (method + parsed body) and serves reads from the base stub. */
+const recordingClient = (base, onWrite = null) => {
+  const writes = [];
+  return {
+    writes,
+    async request(path, opts = {}) {
+      const method = opts?.method ?? 'GET';
+      if (method === 'GET') return base.request(path);
+      const body = opts?.body === undefined ? undefined : JSON.parse(String(opts.body));
+      writes.push({ path, method, body });
+      if (typeof onWrite === 'function') return onWrite({ path, method, body });
+      return { ok: true };
+    },
+  };
+};
+
+const flushClicks = async (times = 3) => {
+  for (let i = 0; i < times; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+test('714433c2: Modifica opens the edit form and Salva PATCHes the contact, then re-reads', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  const edit = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details');
+  assert.ok(edit, 'the Dettagli Modifica button exists');
+  edit.dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  const cancel = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details');
+  assert.ok(save, 'Salva is in the form');
+  assert.ok(cancel, 'Annulla is in the form');
+
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('firstName').value = 'Guido';
+  byName('lastName').value = 'Presti';
+  byName('email').value = 'guido@palestra-esempio.it';
+  save.dispatch('click');
+  await flushClicks();
+
+  assert.equal(client.writes.length, 1, 'one write for the save');
+  assert.equal(client.writes[0].path, '/api/contacts/c1', 'Salva PATCHes the contact');
+  assert.equal(client.writes[0].method, 'PATCH', 'the save is a PATCH');
+  assert.deepEqual(client.writes[0].body,
+    { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' },
+    'only the editable keys travel, exactly as typed');
+  assert.deepEqual(seen, [{ message: 'Dati salvati', error: false }], 'the save toasts in Italian');
+  assert.ok(mount.textContent.includes('Dettagli'), 'the re-read card shows Dettagli again');
+});
+
+test('714433c2: Annulla drops the edits with no write and re-reads the card', async () => {
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('firstName').value = 'Inventato';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details').dispatch('click');
+  await flushClicks();
+
+  assert.deepEqual(client.writes, [], 'Annulla writes nothing');
+  assert.ok(!mount.textContent.includes('Inventato'), 'the dropped edit is not on screen');
+  assert.ok(mount.textContent.includes('Dettagli'), 'the card re-read after Annulla');
+});
+
+test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  const noteInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  assert.ok(noteInput, 'the note field names its purpose for assistive tech');
+  noteInput.value = 'Richiamare giovedì';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+  await flushClicks();
+
+  assert.equal(client.writes.length, 1, 'one write for the note');
+  assert.equal(client.writes[0].path, '/api/customer-hub/notes', 'the note goes to the hub notes route');
+  assert.equal(client.writes[0].method, 'POST', 'the note is a POST');
+  assert.deepEqual(client.writes[0].body,
+    { resource: 'contact', id: 'c1', body: 'Richiamare giovedì' },
+    'the note carries its subject and plain-text body');
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }], 'the note toasts in Italian');
+});
+
+// Voce 714433c2: lo stato si cambia da un menu. The menu moves the shown
+// opportunity through the governed stage workflow; the current stage is not
+// offered again and every voice reads Italian.
+test('714433c2: Cambia stato lists the other stages in Italian and moves the opportunity', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => ({ outcome: 'stage_changed' }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  assert.ok(mount.textContent.includes('Pacchetto 10 ingressi · qualificazione'),
+    'the offer line shows the opportunity with its Italian stage');
+  const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
+  assert.ok(change, 'the Cambia stato menu button exists');
+  assert.equal(change.getAttribute('aria-haspopup'), 'menu', 'the button announces its menu');
+  change.dispatch('click');
+  const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
+  const labels = voices.map((node) => node.textContent);
+  for (const label of ['scoperta', 'proposta', 'trattativa', 'vinta', 'persa', 'in attesa di approvazione']) {
+    assert.ok(labels.includes(label), `the menu offers «${label}»`);
+  }
+  assert.ok(!labels.includes('qualificazione'), 'the current stage is not offered again');
+  assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'qualification'),
+    'the current stage key is not a voice');
+  assert.ok(!labels.some((label) => label === 'discovery' || label === 'proposal' || label === 'negotiation'),
+    'no raw stage key reaches the screen');
+
+  voices.find((node) => node.getAttribute('data-stage') === 'proposal').dispatch('click');
+  await flushClicks();
+
+  assert.equal(client.writes.length, 1, 'one write for the stage move');
+  assert.equal(client.writes[0].path, '/api/opportunities/o1/stage', 'the move goes through the governed stage route');
+  assert.equal(client.writes[0].method, 'POST', 'the move is a POST');
+  assert.deepEqual(client.writes[0].body, { targetStage: 'proposal' }, 'the move names its target stage');
+  assert.deepEqual(seen, [{ message: 'Stato aggiornato', error: false }], 'the move toasts in Italian');
+});
+
+test('714433c2: an approval-gated move toasts the approval, and a quote line carries no menu', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => ({ outcome: 'approval_required' }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'won').dispatch('click');
+  await flushClicks();
+  assert.deepEqual(seen, [{ message: 'Stato aggiornato: serve un\u2019approvazione', error: false }],
+    'an approval-gated move says so honestly');
+
+  // The default fixture reads a quote line (fromQuote): quotes have no
+  // governed stage transition, so no menu is offered there.
+  const quoteMount = await renderCard(stubClient());
+  assert.ok(quoteMount.textContent.includes('Preventivo 10 ingressi'), 'the fixture reads a quote line');
+  assert.equal(
+    quoteMount.findAll('button').filter((node) => node.getAttribute('data-action') === 'change-offer-stage').length,
+    0,
+    'a quote line carries no stage menu',
+  );
+});

@@ -200,6 +200,15 @@ const OFFER_STATUS_LABELS = Object.freeze({
 });
 const offerStatusLabel = (status) => ownLabel(OFFER_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
+// Voce 714433c2: the opportunity stages the «Cambia stato» menu offers.
+// Mirrors OPPORTUNITY_STAGES in packages/core/src/schema.js (this view ships
+// as a static file, so it names the set instead of importing it, like
+// TERMINAL_APPOINTMENT below). Every key has an Italian voice in
+// OFFER_STATUS_LABELS above, so the menu never prints a raw stage key.
+const OPPORTUNITY_STAGE_ORDER = Object.freeze([
+  'discovery', 'qualification', 'proposal', 'negotiation', 'won', 'lost', 'approval_pending',
+]);
+
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
 const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
@@ -818,7 +827,7 @@ export function createCustomerCardView(deps) {
     return true;
   }
 
-  function offer(box, profile) {
+  function offer(box, profile, offerCtx) {
     // Voce cc525cd6a3c5: the offer panel shows one commercial line for THIS
     // customer only — the profile behind it is already scoped to the customer
     // (contact-scoped records never leak onto a company-mate's card), so the
@@ -861,6 +870,83 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
     }
     box.appendChild(line);
+    // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
+    // menu. The menu moves the shown opportunity through the governed
+    // `request-opportunity-stage-change` workflow (POST
+    // /api/opportunities/:id/stage), never a direct write: a renewal moving
+    // to proposal past the approval threshold lands in «in attesa di
+    // approvazione» with a toast saying so, like the pipeline board. The
+    // menu acts on exactly the stato the line shows: when the line reads a
+    // quote (no governed stage transition exists for quotes), there is no
+    // menu — the quote's state changes from the quotes screen. A refused
+    // move keeps the menu with the server's Italian error, and a completed
+    // move re-reads the card so the line is the server's state, never an
+    // optimistic copy. The header Cliente/Contatto pill stays derived (see
+    // customer-status.js): this menu does not touch it.
+    const shownOpportunity = fromQuote ? null : first;
+    if (shownOpportunity && typeof shownOpportunity.id === 'string' && shownOpportunity.id !== ''
+      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
+      const current = String(shownOpportunity.status ?? '').toLowerCase();
+      const targets = OPPORTUNITY_STAGE_ORDER.filter((stage) => stage !== current);
+      if (targets.length > 0) {
+        const wrap = el('div', 'bo-scheda-stage-menu');
+        const button = el('button', undefined, 'Cambia stato');
+        button.setAttribute('type', 'button');
+        button.setAttribute('aria-haspopup', 'menu');
+        button.setAttribute('aria-expanded', 'false');
+        button.setAttribute('data-action', 'change-offer-stage');
+        const menu = el('div', 'bo-scheda-stage-voices hidden');
+        menu.setAttribute('role', 'menu');
+        const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+        const syncMenu = () => {
+          button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
+        };
+        const close = () => {
+          if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
+          syncMenu();
+        };
+        button.addEventListener('click', () => {
+          menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
+          syncMenu();
+        });
+        button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+        menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+        const stageError = el('small', 'field-error', '');
+        let stageBusy = false;
+        for (const stage of targets) {
+          const voice = el('button', undefined, offerStatusLabel(stage) ?? stage);
+          voice.setAttribute('type', 'button');
+          voice.setAttribute('role', 'menuitem');
+          voice.setAttribute('data-stage', stage);
+          voice.addEventListener('click', async () => {
+            if (stageBusy) return;
+            stageBusy = true;
+            stageError.textContent = '';
+            try {
+              const result = await client.request(
+                `/api/opportunities/${encodeURIComponent(shownOpportunity.id)}/stage`,
+                { method: 'POST', body: JSON.stringify({ targetStage: stage }) },
+              );
+              close();
+              toast(result?.outcome === 'approval_required'
+                ? 'Stato aggiornato: serve un\u2019approvazione'
+                : 'Stato aggiornato');
+              await renderCard(offerCtx.resource, offerCtx.id);
+            } catch (error) {
+              stageError.textContent = humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' });
+              toast(humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' }), true);
+            } finally {
+              stageBusy = false;
+            }
+          });
+          menu.appendChild(voice);
+        }
+        wrap.appendChild(button);
+        wrap.appendChild(menu);
+        wrap.appendChild(stageError);
+        box.appendChild(wrap);
+      }
+    }
     return true;
   }
 
@@ -1040,7 +1126,7 @@ export function createCustomerCardView(deps) {
     section(right, 'bo-scheda-ai', aiSummary, calls);
     section(right, '', callsBox, calls);
     section(right, '', nextSteps, profile);
-    section(right, 'bo-scheda-card-offer', offer, profile);
+    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id });
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline);
     grid.appendChild(left);
     grid.appendChild(center);
