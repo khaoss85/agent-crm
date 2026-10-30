@@ -174,6 +174,38 @@ test('external identity is recorded beside the record, with provenance and no pa
   assert.equal(after[0].lastObservedRunId, again.runId);
 });
 
+test('an apply names the record it created; a preview and a replay agree (backlog:273de560)', async (t) => {
+  const { app } = await scene(t, 'created-subject');
+
+  // The preview resolves read-only: accepted with willCreate, but no subject yet.
+  const preview = await app.previewCustomerImport({ system: 'crm-export', rows: [ROWS.newContact], actor: ACTOR });
+  assert.equal(preview.receipts[0].outcome, 'accepted');
+  assert.equal(preview.receipts[0].willCreate, true);
+  assert.equal(preview.receipts[0].subject, null);
+
+  // The apply creates and names the record in the same receipt.
+  const applied = await app.applyCustomerImport({ system: 'crm-export', rows: [ROWS.newContact], actor: ACTOR });
+  const receipt = applied.receipts[0];
+  assert.equal(receipt.outcome, 'accepted');
+  assert.equal(receipt.willCreate, true);
+  assert.equal(receipt.subject?.resource, 'contact');
+  assert.ok(typeof receipt.subject?.id === 'string' && receipt.subject.id !== '',
+    'the created subject carries its id, so a caller can open the scheda without a second lookup');
+
+  // The stored row agrees with the returned receipt.
+  const stored = app.modules.get('customer-import-row').service.listWhere({ runId: applied.runId });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].subjectResource, receipt.subject.resource);
+  assert.equal(stored[0].subjectId, receipt.subject.id);
+
+  // A replay of the same payload answers the same subject, not a bare acceptance.
+  const replay = await app.applyCustomerImport({ system: 'crm-export', rows: [ROWS.newContact], actor: ACTOR });
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.receipts[0].outcome, 'accepted');
+  assert.deepEqual(replay.receipts[0].subject?.resource, receipt.subject.resource);
+  assert.deepEqual(replay.receipts[0].subject?.id, receipt.subject.id);
+});
+
 test('matching is deterministic: the same identifier matches, and nothing else is guessed', async (t) => {
   const { app } = await scene(t, 'matching');
   await app.applyCustomerImport({ system: 'crm-export', rows: [ROWS.newContact], actor: ACTOR });

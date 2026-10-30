@@ -161,6 +161,19 @@ test('Salva links the phone with a second single-row apply', async () => {
   assert.ok(rendered.notes.some((note) => note.includes('senza duplicati')), 'a matched scheda warns instead of duplicating');
 });
 
+test('Salva navigates on the real created-row receipt: accepted, willCreate, named subject (backlog:273de560)', async () => {
+  const client = stubClient(() => ({
+    receipts: [{ outcome: 'accepted', reasonCode: 'CREATED_RECORD', willCreate: true, subject: { id: 'c9', resource: 'contact' } }],
+  }));
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9');
+});
+
 test('a refused apply keeps the operator on the form with an Italian reason', async () => {
   const client = stubClient(() => ({ receipts: [{ outcome: 'rejected', reasonCode: 'AMBIGUOUS_CANDIDATES', subject: null }] }));
   const rendered = render(client);
