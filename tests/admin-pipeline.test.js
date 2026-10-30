@@ -112,7 +112,7 @@ test('moving a card posts the same server action with the optimistic fromStage',
   assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
 });
 
-test('a failed move restores the control and shows the server message as text', async () => {
+test('a failed move restores the control and shows a friendly line, never the server message (C25)', async () => {
   const records = [record('a', 'discovery')];
   const doc = createFakeDocument();
   const mount = createMount();
@@ -126,7 +126,83 @@ test('a failed move restores the control and shows the server message as text', 
   card.__select.value = 'demo';
   await card.__move();
   const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
-  assert.match(error.textContent, /Stale move/);
+  assert.ok(error.textContent.includes('Riprova più tardi'), `friendly retry line (${error.textContent})`);
+  assert.ok(!error.textContent.includes('Stale move'), 'no raw server message in the DOM');
+  assert.ok(!error.textContent.includes('STALE_STAGE'), 'no error code in the DOM');
+  assert.equal(card.findAll('select').length, 1, 'the move control is restored');
+});
+
+test('move toasts name the stage label and failures stay friendly (C25)', async () => {
+  const stages = [
+    { key: 'richiesta', label: 'Richiesta', order: 10, type: 'open', probability: 10 },
+    { key: 'attesa', label: 'In attesa di risposta', order: 20, type: 'open', probability: 30 },
+    { key: 'persa', label: 'Persa', order: 30, type: 'lost', probability: 0 },
+  ];
+  const pipeline = { ...PIPELINE, name: 'vendita', label: 'Vendita', defaultStage: 'richiesta', stages };
+  const rendering = async (failMove) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const toasts = [];
+    const calls = [];
+    const client = {
+      calls,
+      async request(path, options = {}) {
+        calls.push({ path, method: options.method ?? 'GET', body: options.body });
+        if (path === '/api/schema') return { pipelineContract: 1, pipelines: [pipeline] };
+        if (options.method === 'POST') {
+          if (failMove) throw Object.assign(new Error(failMove.message), failMove);
+          return { ok: true };
+        }
+        return { items: [{ id: 'a', name: 'Offerta A', companyName: 'Rossi', valueCents: 100_000, currency: 'EUR', pipelineKey: 'vendita', pipelineStage: 'richiesta' }] };
+      },
+    };
+    const board = createPipelineBoard({ doc, mount, client, toast: (message) => toasts.push(String(message)) });
+    await board.renderBoard('vendita');
+    return { doc, mount, toasts, client };
+  };
+
+  // Success: the toast names the Italian label, never the stage key.
+  {
+    const { mount, toasts } = await rendering(null);
+    const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+    card.__select.value = 'attesa';
+    await card.__move();
+    assert.ok(toasts.some((message) => message.includes('Spostata in In attesa di risposta.')), `toast names the label (${toasts.join(' | ')})`);
+    assert.ok(!toasts.some((message) => message.includes('Spostata in attesa.')), 'no stage key in the toast');
+  }
+
+  // SAME_STAGE: already-there line, no code.
+  {
+    const { mount, toasts } = await rendering({ message: 'same stage', status: 409, code: 'SAME_STAGE' });
+    const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+    card.__select.value = 'attesa';
+    await card.__move();
+    const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
+    assert.ok(error.textContent.includes('già in questo stato'), `already-there line (${error.textContent})`);
+    assert.ok(!error.textContent.includes('SAME_STAGE'), 'no code in the DOM');
+    assert.ok(!toasts.some((message) => message.includes('SAME_STAGE')), 'no code in toasts');
+  }
+
+  // Missing reason for a lost move: motivo line, no field name.
+  {
+    const { mount } = await rendering({ message: 'reason is required when moving to the lost stage', status: 400, code: 'VALIDATION', details: { field: 'reason' } });
+    const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+    card.__select.value = 'persa';
+    await card.__move();
+    const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
+    assert.ok(error.textContent.includes('motivo'), `motivo line (${error.textContent})`);
+    assert.ok(!error.textContent.includes('reason is required'), 'no raw message in the DOM');
+  }
+
+  // Unknown pipeline: friendly line, the routed name stays out of the DOM.
+  {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const board = createPipelineBoard({ doc, mount, client: stubClient([]) });
+    await board.renderBoard('ghost-pipeline');
+    assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'friendly missing-pipeline line');
+    assert.ok(!mount.textContent.includes('ghost-pipeline'), 'no routed name in the DOM');
+  }
 });
 
 test('drifted records are shown in an explicit off-definition section, never hidden', async () => {
@@ -245,7 +321,8 @@ test('unsupported contract and unknown pipeline fail gracefully', async () => {
 
   const boardMissing = createPipelineBoard({ doc, mount, client: stubClient([]) });
   await boardMissing.renderBoard('ghost-pipeline');
-  assert.ok(mount.textContent.includes('Pipeline non trovata'));
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'));
+  assert.ok(!mount.textContent.includes('ghost-pipeline'), 'the routed name stays out of the DOM');
 });
 
 function filterInput(mount, name) {
@@ -480,7 +557,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
   const post = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.equal(post.path, '/api/modules/opportunity/records/a/actions/move-stage');
   assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
-  assert.ok(toasts.some((message) => message.includes('Spostata in demo')), 'success is toasted');
+  assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), 'success is toasted with the stage label');
 });
 
 test('same-stage drops post nothing; drops onto lost ask for a reason first', async () => {
@@ -784,7 +861,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   card.__select.value = 'attesa';
   await card.__move();
-  assert.ok(toasts.some((message) => message.includes('Spostata in attesa.')), 'move success is toasted in Italian');
+  assert.ok(toasts.some((message) => message.includes('Spostata in Attesa.')), 'move success is toasted in Italian with the stage label');
   assertNoEnglish('after move');
   const lostColumn = mount.findAll('div').find((n) => n.getAttribute('data-stage') === 'persa');
   await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'richiesta' }));
