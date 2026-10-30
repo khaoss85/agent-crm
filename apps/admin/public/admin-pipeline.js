@@ -127,8 +127,8 @@ export function createPipelineBoard(deps) {
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
-  /** @type {{pipeline: any, records: Array<Record<string, any>>}} */
-  let cached = { pipeline: null, records: [] };
+  /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
+  let cached = { pipeline: null, pipelines: [], records: [] };
   /** Name of the pipeline the current filter state belongs to. A filter set
    * on pipeline A must never silently empty pipeline B after a switch. */
   let filteredPipeline = null;
@@ -221,13 +221,15 @@ export function createPipelineBoard(deps) {
     showMessage('Caricamento…');
     let pipeline;
     let records;
+    let composed = [];
     try {
       const schema = await client.request('/api/schema');
       if (schema?.pipelineContract !== 1) {
         showMessage('Questo pannello va aggiornato per mostrare le pipeline.');
         return;
       }
-      pipeline = (schema.pipelines ?? []).find((candidate) => candidate.name === pipelineName);
+      composed = Array.isArray(schema.pipelines) ? schema.pipelines : [];
+      pipeline = composed.find((candidate) => candidate.name === pipelineName);
       if (!pipeline) {
         if (typeof console !== 'undefined' && typeof console.error === 'function') {
           console.error('[bo] pipeline non composta', { pipelineName });
@@ -256,12 +258,12 @@ export function createPipelineBoard(deps) {
       state.stage = '';
       state.created = '';
     }
-    cached = { pipeline, records };
+    cached = { pipeline, pipelines: composed, records };
     return renderAll(token);
   }
 
   function renderAll(token) {
-    const { pipeline, records } = cached;
+    const { pipeline, pipelines, records } = cached;
     clear();
     cardNodes.clear();
     columnNodes.length = 0;
@@ -300,8 +302,8 @@ export function createPipelineBoard(deps) {
         text: `Mostro solo i primi ${BOARD_LIMIT} record — gli altri non sono in questa vista.`,
       }));
     }
-    if (offPipeline > 0) {
-      titleBox.appendChild(renderOffPipelineNote(records, pipeline.name, offPipeline));
+    if (offPipeline > 0 || composedPipelineNames(pipelines).length > 1) {
+      titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline));
     }
     heading.appendChild(titleBox);
     // Supervisor design pass (prototype 06): the forecast is the violet card
@@ -589,33 +591,69 @@ export function createPipelineBoard(deps) {
     return toolbar;
   }
 
-  /** Count + per-currency totals over the filtered set (currencies never summed). */
   /**
-   * Off-pipeline disclosure: records of other pipelines are excluded by
-   * documented behavior, never silently hidden. The count names offers —
-   * the page is the offers board, and the summary beside it counts the
-   * shown cards — and every other pipeline with a routable name gets a
-   * link to its own board, so the operator can go see them. A key outside
-   * the route grammar cannot be linked: it stays in the count, never in
-   * an href. Every value renders as text, never HTML.
+   * Canonical composed-pipeline names, sorted: the only values the switch
+   * offers, so an out-of-band record key can never become a route.
+   * @param {Array<Record<string, any>>} pipelines
+   */
+  function composedPipelineNames(pipelines) {
+    return (Array.isArray(pipelines) ? pipelines : [])
+      .filter((candidate) => typeof candidate?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(candidate.name))
+      .map((candidate) => candidate.name)
+      .sort();
+  }
+
+  /**
+   * Pipeline switch (backlog:1cb4cc48): records of other pipelines are
+   * excluded by documented behavior, never silently hidden. The count
+   * still names how many offers live on the other boards, and when the
+   * space composes more than one pipeline a selector replaces the old
+   * "(non mostrata)" line — every composed pipeline is one choice away.
+   * With a single composed pipeline the legacy links stay, so an
+   * out-of-band record still names where the operator can go see it. A
+   * key outside the route grammar cannot be linked: it stays in the
+   * count, never in an href. Every value renders as text, never HTML.
+   * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
    */
-  function renderOffPipelineNote(records, pipelineName, offPipeline) {
-    const one = offPipeline === 1;
-    const note = el(doc, 'p', { class: 'hint' });
-    note.textContent = `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline (non mostrat${one ? 'a' : 'e'}).`;
+  function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline) {
+    const box = el(doc, 'div', { class: 'hint pipeline-switch' });
+    if (offPipeline > 0) {
+      const one = offPipeline === 1;
+      box.appendChild(el(doc, 'span', { text: `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline. ` }));
+    }
+    if (composedPipelineNames(pipelines).length > 1) {
+      const selectId = 'pipeline-switch';
+      box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
+      const select = el(doc, 'select', { attrs: { id: selectId } });
+      for (const name of composedPipelineNames(pipelines)) {
+        const defined = pipelines.find((candidate) => candidate?.name === name);
+        const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
+        select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
+      }
+      select.value = pipelineName;
+      select.addEventListener('change', () => {
+        const next = select.value;
+        if (typeof next === 'string' && next !== '' && next !== pipelineName) {
+          if (typeof deps.navigate === 'function') deps.navigate(`#/pipelines/${next}`);
+        }
+      });
+      box.appendChild(select);
+      return box;
+    }
     const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
       .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
       .sort();
     others.forEach((key, index) => {
-      note.appendChild(el(doc, 'span', { text: index === 0 ? ' ' : ' · ' }));
+      box.appendChild(el(doc, 'span', { text: index === 0 ? '' : ' · ' }));
       const link = el(doc, 'a', { attrs: { href: `#/pipelines/${encodeURIComponent(key)}` } });
       link.textContent = `Vedi ${key}`;
-      note.appendChild(link);
+      box.appendChild(link);
     });
-    return note;
+    return box;
   }
 
+  /** Count + per-currency totals over the filtered set (currencies never summed). */
   function renderSummary(visible) {
     const summary = el(doc, 'p', { class: 'pipeline-summary', attrs: { 'data-summary': String(visible.length) } });
     const totals = new Map();
