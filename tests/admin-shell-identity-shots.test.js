@@ -245,6 +245,11 @@ async function runBrowser({ width, height }) {
   try {
     const run = await runChromium([
       '--headless',
+      // Same sandbox flag as the usability probe above and the sibling
+      // browser tests (admin-sync-browser.test.js): the CI Linux runner
+      // denies Chromium's sandbox (AppArmor userns), so without this the
+      // run exits non-zero and the proof fails on the environment.
+      '--no-sandbox',
       `--screenshot=${out}`,
       `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
@@ -260,6 +265,7 @@ async function runBrowser({ width, height }) {
     // started — the stderr tail then names the cause.
     const probeRun = await runChromium([
       '--headless', '--dump-dom',
+      '--no-sandbox',
       `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
       '--disable-background-networking',
