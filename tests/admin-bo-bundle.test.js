@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileFunction } from 'node:vm';
-import { buildAdminBundle, renderHtml } from '../scripts/admin-bundle.js';
+import { adminBundleWiring, buildAdminBundle, renderHtml } from '../scripts/admin-bundle.js';
 import { staticCacheControl } from '../apps/server/src/index.js';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createAdminShellMount } from '../packages/app/src/admin-mount.js';
@@ -51,6 +51,21 @@ test('the bundle is one self-contained scope with no surviving module syntax', (
   assert.equal(sections.length, built.order.length, 'every bundled module keeps its section marker');
 });
 
+test('every bundled import resolves to a provided export (no undefined at load)', () => {
+  const wiring = adminBundleWiring();
+  assert.ok(wiring.length > 30, `the cascade is wired (${wiring.length} modules)`);
+  const providedBy = new Map(wiring.map((mod) => [mod.file, new Set(mod.provided)]));
+  for (const mod of wiring) {
+    for (const req of mod.required) {
+      assert.ok(providedBy.has(req.from), `${mod.file} imports from unknown module ./${req.from}`);
+      assert.ok(
+        providedBy.get(req.from).has(req.exported),
+        `${mod.file} imports ${req.exported} from ./${req.from}, which does not provide it (stale splash follows)`,
+      );
+    }
+  }
+});
+
 test('first access loads at most 3 JS files, all versioned', () => {
   const { indexHtml } = renderHtml(buildAdminBundle());
   const srcs = scriptSrcs(indexHtml);
@@ -79,13 +94,14 @@ test('the shell never serves a blank page: a branded splash paints before the bu
 });
 
 test('staticCacheControl: hashed bundles immutable, HTML no-store, rest unchanged', () => {
+  const built = buildAdminBundle();
   assert.equal(staticCacheControl('/'), 'no-store');
   assert.equal(staticCacheControl('/index.html'), 'no-store');
   assert.equal(staticCacheControl('/bo/'), 'no-store');
   assert.equal(staticCacheControl('/bo/index.html'), 'no-store');
   assert.equal(staticCacheControl('/bo/login.html'), 'no-store');
-  assert.equal(staticCacheControl('/bo/bo-1f2165ae444e.js'), 'public, max-age=31536000, immutable');
-  assert.equal(staticCacheControl('/bo/bo-styles-af86892bbdd2.css'), 'public, max-age=31536000, immutable');
+  assert.equal(staticCacheControl(`/bo/${built.jsName}`), 'public, max-age=31536000, immutable');
+  assert.equal(staticCacheControl(`/bo/${built.cssName}`), 'public, max-age=31536000, immutable');
   assert.equal(staticCacheControl('/bo/app.js'), 'no-cache');
   assert.equal(staticCacheControl('/bo/styles.css'), 'no-cache');
   assert.equal(staticCacheControl('/bo/login.js'), 'no-cache');

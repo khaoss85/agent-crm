@@ -39,6 +39,10 @@ const HASH_LEN = 12;
 const LOCAL_IMPORT = /import\s+([^;]*?)\s+from\s*['"](\.[^'"]*)['"]\s*;/gs;
 const EXPORT_PREFIX = /^export\s+(?=(?:async\s+)?function\b|class\b|(?:const|let|var)\b)/gm;
 const EXPORT_LIST = /^\s*export\s*\{([^}]*)\}\s*;?\s*$/gm;
+const DECLARATION_FN = /^export\s+(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)/gm;
+const DECLARATION_CLASS = /^export\s+class\s+([A-Za-z_$][A-Za-z0-9_$]*)/gm;
+const DECLARATION_VAR = /^export\s+(?:const|let|var)\s+/gm;
+const BINDING_IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const FORBIDDEN = /export\s+default\b|export\s*\*\s*from\b|import\s*\(|import\.meta\b/;
 
 /**
@@ -132,6 +136,93 @@ function parseImports(source) {
 }
 
 /**
+ * Split top-level commas: commas inside `()[]{}` or string literals never
+ * separate declarators. Anything unbalanced fails closed.
+ *
+ * @param {string} text
+ */
+function splitTopLevel(text) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let current = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (quote !== null) {
+      current += char;
+      if (char === '\\') {
+        current += text[i + 1] ?? '';
+        i += 1;
+      } else if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === '(' || char === '[' || char === '{') depth += 1;
+    else if (char === ')' || char === ']' || char === '}') depth -= 1;
+    if (depth < 0) throw new Error('admin-bundle: unbalanced brackets in an export declaration');
+    if (char === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (quote !== null) throw new Error('admin-bundle: unterminated string in an export declaration');
+  if (depth !== 0) throw new Error('admin-bundle: unbalanced brackets in an export declaration');
+  parts.push(current);
+  return parts;
+}
+
+/**
+ * Names bound by `export const|let|var …;` starting right after the keyword.
+ * The statement ends at the first `;` outside brackets and strings;
+ * destructured declarators are rejected (fail closed: name them plainly or
+ * extend the bundler deliberately).
+ *
+ * @param {string} file
+ * @param {string} body
+ * @param {number} start index just after `export const|let|var `
+ */
+function varDeclaratorNames(file, body, start) {
+  let depth = 0;
+  let quote = null;
+  let end = -1;
+  for (let i = start; i < body.length; i += 1) {
+    const char = body[i];
+    if (quote !== null) {
+      if (char === '\\') i += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    if (char === '(' || char === '[' || char === '{') depth += 1;
+    else if (char === ')' || char === ']' || char === '}') depth -= 1;
+    if (depth < 0) throw new Error(`admin-bundle: unbalanced brackets in an export of ${file}`);
+    if (char === ';' && depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end === -1) throw new Error(`admin-bundle: unterminated export declaration in ${file}`);
+  return splitTopLevel(body.slice(start, end)).map((part) => {
+    const lhs = part.split('=')[0].trim();
+    if (!BINDING_IDENT.test(lhs)) {
+      throw new Error(`admin-bundle: unsupported export declarator \`${part.trim()}\` in ${file} (only plain bindings)`);
+    }
+    return lhs;
+  });
+}
+
+/**
  * @param {string} file
  * @param {string} source
  */
@@ -151,6 +242,17 @@ function transformModule(file, source) {
     const resolved = target.slice(2);
     body = body.replace(statement, () => `/* bundled: ${names.map((n) => n.local).join(', ')} from ${resolved} */`);
     for (const name of names) required.push({ ...name, from: resolved });
+  }
+  for (const match of body.matchAll(DECLARATION_FN)) {
+    provided.push({ local: match[1], exported: match[1] });
+  }
+  for (const match of body.matchAll(DECLARATION_CLASS)) {
+    provided.push({ local: match[1], exported: match[1] });
+  }
+  for (const match of body.matchAll(DECLARATION_VAR)) {
+    for (const name of varDeclaratorNames(file, body, match.index + match[0].length)) {
+      provided.push({ local: name, exported: name });
+    }
   }
   body = body.replace(EXPORT_PREFIX, '');
   for (const match of body.matchAll(EXPORT_LIST)) {
@@ -238,6 +340,27 @@ function replaceOnce(html, pattern, replacement, label) {
   const matches = html.match(pattern);
   if (!matches) throw new Error(`admin-bundle: ${label} not found in html`);
   return html.replace(pattern, replacement);
+}
+
+/**
+ * Per-module import/export wiring, for tests: every `required` entry names
+ * the exporting module (`from`, without `./`) and the exported binding.
+ * A required binding missing from its target's `provided` list would load
+ * as `undefined` and break the shell on first paint.
+ */
+export function adminBundleWiring() {
+  const files = localModules(PUBLIC_DIR);
+  /** @type {Map<string, string>} */
+  const sources = new Map();
+  for (const name of files) sources.set(name, stripComments(readFileSync(join(PUBLIC_DIR, name), 'utf8')));
+  return topoOrder(ENTRY, sources).map((file) => {
+    const { required, provided } = transformModule(file, /** @type {string} */ (sources.get(file)));
+    return {
+      file,
+      required: required.map(({ exported, from }) => ({ exported, from })),
+      provided: provided.map(({ exported }) => exported),
+    };
+  });
 }
 
 /**
