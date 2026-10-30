@@ -40,13 +40,13 @@ function record(id, stage, extra = {}) {
   };
 }
 
-function stubClient(records, { failMove } = {}) {
+function stubClient(records, { failMove, pipelines } = {}) {
   const calls = [];
   return {
     calls,
     async request(path, options = {}) {
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
-      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE] };
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: pipelines ?? [PIPELINE] };
       if (options.method === 'POST') {
         if (failMove) throw Object.assign(new Error(failMove.message), failMove);
         return { ok: true };
@@ -237,7 +237,7 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
   await board.renderBoard('b2b-sales');
   assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
-  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline (non mostrata)."), 'exclusion disclosed in correct Italian');
+  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'exclusion disclosed in correct Italian');
   const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/another-pipeline');
   assert.ok(link, 'the other pipeline links to its own board');
   assert.equal(link.textContent, 'Vedi another-pipeline');
@@ -253,10 +253,86 @@ test('the off-pipeline disclosure uses the Italian plural for several records', 
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('2 offerte di altre pipeline (non mostrate).'), 'plural exclusion disclosed in correct Italian');
+  assert.ok(mount.textContent.includes('2 offerte di altre pipeline.'), 'plural exclusion disclosed in correct Italian');
   const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/other');
   assert.ok(link, 'the other pipeline links to its own board');
   assert.equal(link.textContent, 'Vedi other');
+});
+
+test('with several composed pipelines the board shows a selector instead of the note', async () => {
+  const SECOND = {
+    pipelineContract: 1,
+    name: 'upsell',
+    label: 'Upsell',
+    module: 'opportunity',
+    defaultStage: 'idea',
+    stages: [
+      { key: 'idea', label: 'Idea', order: 10, type: 'open', probability: 10 },
+      { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
+    ],
+  };
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'idea'), pipelineKey: 'upsell' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient(records, { pipelines: [PIPELINE, SECOND] }),
+    navigate: (hash) => navigated.push(hash),
+  });
+  await board.renderBoard('b2b-sales');
+  assert.ok(!mount.textContent.includes('non mostrata'), 'no "non mostrata" line with a selector');
+  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'the count still names the other-board offer');
+  const selects = mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch');
+  assert.equal(selects.length, 1, 'one pipeline selector');
+  const labels = selects[0].childNodes.map((option) => option.textContent);
+  assert.deepEqual(labels, ['B2B Sales', 'Upsell'], 'one choice per composed pipeline, labeled');
+  assert.equal(selects[0].value, 'b2b-sales', 'the current pipeline is selected');
+  selects[0].value = 'upsell';
+  selects[0].dispatch('change');
+  assert.deepEqual(navigated, ['#/pipelines/upsell'], 'choosing a pipeline navigates to its board');
+});
+
+test('the selector lists every composed pipeline even when nothing is off-board', async () => {
+  const SECOND = { ...PIPELINE, name: 'upsell', label: 'Upsell' };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery')], { pipelines: [PIPELINE, SECOND] }),
+  });
+  await board.renderBoard('b2b-sales');
+  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 1, 'the selector is there with no off-board offer');
+  assert.ok(!mount.textContent.includes('offerta di'), 'no exclusion count when everything is on board');
+});
+
+test('a hostile pipeline label renders as inert text in the selector', async () => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const EVIL = { ...PIPELINE, name: 'evil', label: hostile };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery')], { pipelines: [PIPELINE, EVIL] }),
+  });
+  await board.renderBoard('b2b-sales');
+  const options = mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch')[0].childNodes;
+  assert.equal(options[1].textContent, hostile, 'the hostile label is text, never markup');
+  assert.equal(options[1].childNodes.length, 0, 'no element smuggled through the label');
+});
+
+test('with a single composed pipeline there is no selector, only the disclosure', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  await board.renderBoard('b2b-sales');
+  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 0, 'no selector for a single pipeline');
 });
 
 test('the summary counts the shown cards, never the off-pipeline offers', async () => {
@@ -845,7 +921,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Nessuna offerta da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
-    "1 offerta di un'altra pipeline (non mostrata).",
+    "1 offerta di un'altra pipeline.",
     'Vedi altra',
     'Fuori definizione (1)',
     'fase registrata: svincolata',
