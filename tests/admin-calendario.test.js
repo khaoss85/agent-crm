@@ -21,6 +21,7 @@ import {
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -779,6 +780,71 @@ test('a failed customer search says so in plain words, never a code', async () =
     await new Promise((resolve) => setImmediate(resolve));
   }
   assert.ok(texts(mount, 'p').some((text) => text.includes('non si è potuto leggere')), 'the failure is honest');
+});
+
+// BO-F6-11 fetta 8 review (P1: pageSize=5 is refused by
+// parseCustomerListQuery): the search asks for a supported server page and
+// shows five rows at most.
+test('the customer search asks for a supported page and shows five rows at most', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const rows = Array.from(
+    { length: 8 },
+    (_, index) => ({ resource: 'contact', id: `c${index}`, name: `Adalberto ${index}` }),
+  );
+  const client = stubClient({
+    customers: (path) => {
+      const params = new URL(path, 'http://stub.test').searchParams;
+      // The real server parses every list query strictly: an unsupported
+      // pageSize is a 400, never silent results.
+      parseCustomerListQuery(Object.fromEntries(params));
+      return customersOf(rows)(path);
+    },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Adalberto';
+  search.dispatch('input');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const asked = client.calls.find((call) => call.path.startsWith('/api/customer-data/customers'));
+  assert.ok(asked, 'the search reads the customer list');
+  const pageSize = new URL(asked.path, 'http://stub.test').searchParams.get('pageSize');
+  assert.ok(['10', '25', '50'].includes(pageSize ?? ''), `pageSize ${pageSize} is a page the server accepts`);
+  const names = mount.querySelector('[data-role="customer-results"]').findAll('button').map((node) => node.textContent);
+  assert.equal(names.length, 5, 'the search shows five rows at most');
+});
+
+// BO-F6-11 fetta 8 review (P2 detached box): a search resolving after a
+// re-render paints the live form, not the detached box it started from.
+test('a customer search resolving after a re-render paints the live form', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release = () => {};
+  const gate = new Promise((resolve) => {
+    release = () => resolve({ items: [{ resource: 'contact', id: 'c1', name: 'Ada' }] });
+  });
+  const client = stubClient({ customers: () => gate });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Ad';
+  search.dispatch('input');
+  for (let round = 0; round < 3; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  // The week moves while the search is in flight: the captured results box
+  // is detached by the re-render.
+  await view.render();
+  release();
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const live = mount.querySelector('[data-role="customer-results"]');
+  assert.ok(live, 'the live form has a results box');
+  assert.deepEqual(live.findAll('button').map((node) => node.textContent), ['Ada']);
 });
 
 test('picking a customer names them and «Cambia cliente» searches again', async () => {

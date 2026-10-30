@@ -1449,29 +1449,30 @@ export function createCalendarioView(deps) {
 
   /**
    * Customer name search for the manual form: the same read-only list the
-   * Clienti view pages (`GET /api/customer-data/customers?q=`), five rows at
-   * most. Paints into the live results box only — never a full re-render, so
-   * the operator keeps typing without losing focus. Stale answers lose the
-   * token race and paint nothing.
-   * @param {unknown} query @param {any} box
+   * Clienti view pages (`GET /api/customer-data/customers?q=`). The list
+   * only serves pages 10, 25 and 50, so the search asks for the smallest
+   * page and shows five rows at most. Late answers paint the live results
+   * box only — never a full re-render, so the operator keeps typing without
+   * losing focus. Stale answers lose the token race and paint nothing.
+   * @param {unknown} query
    */
-  async function searchCustomers(query, box) {
+  async function searchCustomers(query) {
     const token = ++customerSeq;
     const q = String(query ?? '').trim();
     if (q.length < 2) {
       if (token !== customerSeq) return;
       state.customerItems = [];
       state.customerError = null;
-      paintCustomerResults(box);
+      paintCustomerResults(liveCustomerBox());
       return;
     }
     try {
-      const params = new URLSearchParams({ q, page: '1', pageSize: '5' });
+      const params = new URLSearchParams({ q, page: '1', pageSize: '10' });
       const spaceId = readSpace();
       if (spaceId) params.set('spaceId', spaceId);
       const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
       if (token !== customerSeq) return;
-      state.customerItems = Array.isArray(answer?.items) ? answer.items : [];
+      state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
       state.customerError = null;
     } catch (error) {
       if (token !== customerSeq) return;
@@ -1480,7 +1481,16 @@ export function createCalendarioView(deps) {
         failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
       });
     }
-    paintCustomerResults(box);
+    paintCustomerResults(liveCustomerBox());
+  }
+
+  /**
+   * The customer-results box currently on screen, if the manual form is
+   * still mounted: a re-render (week move, roster, slots) while a search is
+   * in flight detaches the captured box, so late answers paint here.
+   */
+  function liveCustomerBox() {
+    return mount.querySelector('[data-role="customer-results"]');
   }
 
   /**
@@ -1618,7 +1628,7 @@ export function createCalendarioView(deps) {
     if (field) {
       field.addEventListener('input', () => {
         state.customerQuery = String(field.value ?? '');
-        void searchCustomers(state.customerQuery, box);
+        void searchCustomers(state.customerQuery);
       });
     }
     form.appendChild(search);
