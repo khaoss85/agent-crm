@@ -21,11 +21,13 @@ import { settingsTabs } from './admin-shell.js';
  * stale responses, and every mutation goes through the shared submission
  * controller (idempotency key per user submission).
  * Every row not bound to Stripe — manual or imported — offers Modifica
- * prezzi and Attiva/Disattiva: the first operator edit takes an imported
- * row over into manual management (the confirm says so), so a later sync
- * never rewrites it; Stripe rows stay read-only and the page says so.
- * Removing a product outright (Togli) has no backend operation yet and is
- * not offered here — deactivation archives it from quoting instead.
+ * prezzi, Attiva/Disattiva and Togli: the first operator edit takes an
+ * imported row over into manual management (the confirm says so), so a
+ * later sync never rewrites it; Stripe rows stay read-only and the page
+ * says so. Togli archives through the existing active route (the product
+ * deactivates and its current offers close; quoted evidence is never
+ * rewritten): there is deliberately no hard delete, since products are
+ * stable identity and the storage layer offers no row removal.
  *
  * DECISION (to be confirmed): the discount bands themselves (auto-approve,
  * owner max) stay composition config evaluated by the package — changing
@@ -298,6 +300,56 @@ export function createCatalogView(deps) {
       confirmBox.appendChild(confirmError);
     });
     const wrap = el('div', 'catalog-toggle-wrap');
+    wrap.appendChild(button);
+    wrap.appendChild(confirmBox);
+    return wrap;
+  }
+
+  /**
+   * Confirm-gated removal for one operator-managed product. There is no
+   * hard delete anywhere in the stack (products are stable identity and
+   * quoted evidence is never rewritten), so Togli archives through the
+   * existing `POST /api/catalog/products/:id/active` route with
+   * `{ active: false }`: the product deactivates, its current offers
+   * close, and it leaves quoting while staying in the archive. The
+   * confirm says exactly that, plus the takeover note on imported rows.
+   * @param {any} product
+   */
+  function renderRemoveAction(product) {
+    const button = el('button', 'catalog-remove', 'Togli');
+    const confirmBox = el('div', 'catalog-confirm');
+    const confirmError = el('p', 'field-error', '');
+    button.addEventListener('click', () => {
+      while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
+      confirmBox.appendChild(el('p', undefined, `Togliere ${product.name ?? product.productId} dal catalogo? Il prodotto si disattiva e le sue offerte si chiudono: resta in archivio e non è più quotabile.`));
+      if (product.source !== 'manual') {
+        confirmBox.appendChild(el('p', 'catalog-takeover-note', 'La riga importata passa alla gestione manuale: non seguirà più la fonte di importazione.'));
+      }
+      const yes = el('button', undefined, 'Conferma');
+      const no = el('button', undefined, 'Annulla');
+      no.addEventListener('click', () => {
+        while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
+      });
+      yes.addEventListener('click', async () => {
+        yes.disabled = true;
+        try {
+          await submissions.submit({
+            path: `/api/catalog/products/${encodeURIComponent(product.productId)}/active`,
+            method: 'POST',
+            body: { active: false },
+          });
+          await renderTable();
+        } catch (error) {
+          confirmError.textContent = error?.message ?? 'Rimozione fallita';
+        } finally {
+          yes.disabled = false;
+        }
+      });
+      confirmBox.appendChild(yes);
+      confirmBox.appendChild(no);
+      confirmBox.appendChild(confirmError);
+    });
+    const wrap = el('div', 'catalog-remove-wrap');
     wrap.appendChild(button);
     wrap.appendChild(confirmBox);
     return wrap;
@@ -792,6 +844,7 @@ export function createCatalogView(deps) {
       if (manageable) {
         priceCell.appendChild(renderPriceEditor(product));
         switchCell.appendChild(renderActiveToggle(product));
+        switchCell.appendChild(renderRemoveAction(product));
       }
       return row;
     };
