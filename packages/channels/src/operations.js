@@ -744,6 +744,27 @@ export function createChannelOperations(deps) {
    * on the same adapter each own their events, even when the provider
    * reuses an event id across the two accounts.
    */
+  /**
+   * The host-loggable content of one normalized channel event (backlog:32820692).
+   * Adapters that extract text and attachments hand the host what to log
+   * through `interaction-log@1`; adapters that carry none (statuses, kit
+   * minimal events) hand null. The inbox never sees this — rows stay
+   * envelope-only by design, so no attachment reference ever lands in the
+   * delivery log without the host choosing to log the message.
+   * @param {Record<string, any>} event one adapter-normalized channel event
+   */
+  function eventContent(event) {
+    const text = typeof event?.text === 'string' ? event.text : null;
+    const attachment = event && typeof event === 'object' && event.attachment !== undefined && event.attachment !== null
+      ? event.attachment
+      : null;
+    if (text === null && attachment === null) return null;
+    return Object.freeze({
+      text,
+      attachment: attachment === null ? null : Object.freeze({ ...attachment }),
+    });
+  }
+
   async function ingestChannelEvent(params) {
     const spaceId = assertSpaceId(params?.spaceId);
     const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
@@ -834,12 +855,21 @@ export function createChannelOperations(deps) {
     // one on this handle already (MEM_ACC_REUSE: the same proof the sibling
     // packages use): generated services nest on SAVEPOINT, a second outer
     // transaction would not.
+    // The host-loggable content rides on the result, never in the row
+    // (backlog:32820692): the inbox keeps the envelope only, and the host
+    // logs the message — with its attachment reference — through
+    // `interaction-log@1` when it chooses to. A duplicate replays the
+    // winner's row and carries the same content it arrived with.
     if (items.length === 1) {
-      return storeInboxItem(service, { ...storeParams, item: items[0] });
+      const stored = await storeInboxItem(service, { ...storeParams, item: items[0] });
+      return { ...stored, content: eventContent(rawEvents[0]) };
     }
     const storeBatch = async () => {
       const results = [];
-      for (const item of items) results.push(await storeInboxItem(service, { ...storeParams, item }));
+      for (let index = 0; index < items.length; index += 1) {
+        const stored = await storeInboxItem(service, { ...storeParams, item: items[index] });
+        results.push({ ...stored, content: eventContent(rawEvents[index]) });
+      }
       return results;
     };
     let batchTransaction = null;

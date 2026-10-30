@@ -3,6 +3,7 @@
 import { definePackage, selectPackageGraph } from '../../core/index.js';
 import {
   ASSIGNMENT_MODULE,
+  ATTACHMENT_KINDS,
   CALL_DIRECTIONS,
   CALL_MODULE,
   CALL_OUTCOMES,
@@ -36,6 +37,7 @@ import {
   readConversationThread,
   readSubjectConversations,
   readTimeline,
+  shapeAttachment,
   sortEntries,
   unreadCount,
   validateAssignRequest,
@@ -91,6 +93,7 @@ export const INTERACTIONS_RESOURCES = Object.freeze([
 
 export {
   ASSIGNMENT_MODULE,
+  ATTACHMENT_KINDS,
   CALL_DIRECTIONS,
   CALL_OUTCOMES,
   CHANNELS,
@@ -113,6 +116,7 @@ export {
   readConversationThread,
   readSubjectConversations,
   readTimeline,
+  shapeAttachment,
   sortEntries,
   unreadCount,
   validateAssignRequest,

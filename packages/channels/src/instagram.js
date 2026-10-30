@@ -11,6 +11,7 @@ import {
   checkMetaServiceWindow,
   isMetaSelfEcho,
   iterateMetaBatchItems,
+  normalizeGraphMessageContent,
   parseMetaWebhookBody,
   verifyMetaHubSignature,
 } from './meta-webhook.js';
@@ -36,11 +37,14 @@ import {
  *   production adapter refuses it like any other malformed event.
  *
  * One delivery normalizes to a LIST of channel events — one per message
- * of every entry, in document order — so a batched Graph webhook stores
- * one inbox row per message and never drops one (the same list path the
- * WhatsApp adapter uses; `operations.js` stores the rows in a single
- * transaction with dedup per providerEventId). Echoes off our own account,
- * read receipts and items without a message id stay out of the list.
+ * of every entry, in document order (one per attachment when a message
+ * carries several, so no photo is truncated to the first) — so a batched
+ * Graph webhook stores one inbox row per message and never drops one (the
+ * same list path the WhatsApp adapter uses; `operations.js` stores the
+ * rows in a single transaction with dedup per providerEventId). Text and
+ * attachments ride on the message event — the inbox keeps the envelope
+ * only. Echoes off our own account, read receipts and items without a
+ * message id stay out of the list.
  * Provider time is never trusted here: a skewed or forged instant travels
  * through as `occurredAt` and `operations.js` quarantines it centrally
  * (receive time + anomaly note), so it never becomes the window
@@ -103,7 +107,7 @@ export function instagramWebhookHeaders(rawBody, secret) {
 /** Build one provider-native Graph webhook body (tests only). */
 export function instagramEventBody({
   mid, sender = 'ig-user-1', recipient = 'ig-page-1', text = 'Ciao', timestampMs = null,
-  echo = false, extra = [],
+  echo = false, extra = [], attachments = undefined,
 }) {
   return JSON.stringify({
     object: 'instagram',
@@ -115,7 +119,7 @@ export function instagramEventBody({
         recipient: { id: recipient },
         timestamp: timestampMs ?? Date.now(),
         ...(echo ? { is_echo: true } : {}),
-        message: { mid, text },
+        message: { mid, text, ...(attachments === undefined ? {} : { attachments }) },
       }, ...extra],
     }],
   });
@@ -183,8 +187,17 @@ export function createInstagramChannelAdapter(options = {}) {
     },
   };
 
-  /** Normalize one Graph messaging item (a customer message, text or not). */
-  function normalizeGraphEvent(messaging) {
+  /**
+   * Normalize one Graph messaging item to a LIST of channel events
+   * (backlog:32820692): one per attachment, so a two-photo message stores
+   * two rows and the card shows both — never a first-only truncation. A
+   * message with zero or one attachment keeps its bare message id (stable
+   * with every key stored before attachments existed); of several
+   * attachments the first keeps the bare id and later siblings derive
+   * stable (`<mid>:a<index>`) ids, so a retry replays the same rows
+   * instead of conflicting. The caption rides on every sibling.
+   */
+  function normalizeGraphEvents(messaging) {
     const item = messaging && typeof messaging === 'object' ? messaging : null;
     const senderId = item?.sender?.id;
     const recipientId = item?.recipient?.id;
@@ -200,8 +213,7 @@ export function createInstagramChannelAdapter(options = {}) {
     if (typeof mid !== 'string' || mid === '' || mid.length > MAX_ID) {
       malformed('message id must be non-empty text (at most 256 characters)');
     }
-    const text = rawText === undefined ? '' : rawText;
-    if (typeof text !== 'string' || text.length > MAX_TEXT) {
+    if (rawText !== undefined && (typeof rawText !== 'string' || rawText.length > MAX_TEXT)) {
       malformed('message text must be text (at most 4096 characters)');
     }
     if (!Number.isSafeInteger(stamp)) malformed('timestamp must be an integer');
@@ -211,8 +223,12 @@ export function createInstagramChannelAdapter(options = {}) {
     // as `occurredAt` and `operations.js` quarantines a future-dated one
     // centrally (receive time + anomaly note), so one forged delivery can
     // never hold the window open nor poison the sequence.
-    return {
-      providerEventId: mid,
+    const content = normalizeGraphMessageContent(item?.message ?? {}, 'Instagram');
+    const text = content.text;
+    if (typeof text !== 'string' || text.length > MAX_TEXT) {
+      malformed('message text must be text (at most 4096 characters)');
+    }
+    const base = {
       subject: `${SUBJECT_PREFIX}${senderId}`,
       sequence: null,
       occurredAt: new Date(atMs).toISOString(),
@@ -220,6 +236,19 @@ export function createInstagramChannelAdapter(options = {}) {
       to: recipientId,
       text,
     };
+    if (content.attachments.length <= 1) {
+      return [{ providerEventId: mid, ...base, attachment: content.attachments[0] ?? null }];
+    }
+    // The first sibling keeps the bare message id (backlog:32820692): it is
+    // the identity every row stored before attachments existed carries, so a
+    // redelivery of a previously ingested message replays or conflicts on
+    // the same row instead of silently doubling the timeline. Later siblings
+    // derive stable `<mid>:a<index>` ids, so a retry replays the same rows.
+    return content.attachments.map((attachment, index) => ({
+      providerEventId: index === 0 ? mid : `${mid}:a${index}`,
+      ...base,
+      attachment,
+    }));
   }
 
   /** The kit's signed minimal dialect (test compositions only). */
@@ -293,7 +322,7 @@ export function createInstagramChannelAdapter(options = {}) {
           if (candidates.length === 0) {
             malformed('no message in this webhook delivery (receipts and echoes stay out of the inbox)');
           }
-          return candidates.map((item) => normalizeGraphEvent(item));
+          return candidates.flatMap((item) => normalizeGraphEvents(item));
         }
         if (testOnly) return [normalizeKitEvent(parsed)];
         malformed('only Graph webhook deliveries are accepted');

@@ -11,6 +11,7 @@ import {
   checkMetaServiceWindow,
   isMetaSelfEcho,
   iterateMetaBatchItems,
+  normalizeGraphMessageContent,
   parseMetaWebhookBody,
   verifyMetaHubSignature,
 } from './meta-webhook.js';
@@ -108,7 +109,7 @@ export function messengerWebhookHeaders(rawBody, secret) {
 /** Build one provider-native Page webhook body (tests only). */
 export function messengerEventBody({
   mid, sender = 'fb-user-1', recipient = 'fb-page-1', text = 'Ciao', timestampMs = null,
-  echo = false, extra = [],
+  echo = false, extra = [], attachments = undefined,
 }) {
   return JSON.stringify({
     object: 'page',
@@ -120,7 +121,7 @@ export function messengerEventBody({
         recipient: { id: recipient },
         timestamp: timestampMs ?? Date.now(),
         ...(echo ? { is_echo: true } : {}),
-        message: { mid, text },
+        message: { mid, text, ...(attachments === undefined ? {} : { attachments }) },
       }, ...extra],
     }],
   });
@@ -188,8 +189,14 @@ export function createMessengerChannelAdapter(options = {}) {
     },
   };
 
-  /** Normalize one Page messaging item (a customer message, text or not). */
-  function normalizePageEvent(messaging) {
+  /**
+   * Normalize one Page messaging item to a LIST of channel events
+   * (backlog:32820692): one per attachment, so a two-photo message stores
+   * two rows — the same sibling rule the Instagram adapter uses, because
+   * both ride the shared Graph shape. Zero or one attachment keeps the
+   * bare message id; several derive stable `<mid>:a<index>` ids.
+   */
+  function normalizePageEvents(messaging) {
     const item = messaging && typeof messaging === 'object' ? messaging : null;
     const senderId = item?.sender?.id;
     const recipientId = item?.recipient?.id;
@@ -205,8 +212,7 @@ export function createMessengerChannelAdapter(options = {}) {
     if (typeof mid !== 'string' || mid === '' || mid.length > MAX_ID) {
       malformed('message id must be non-empty text (at most 256 characters)');
     }
-    const text = rawText === undefined ? '' : rawText;
-    if (typeof text !== 'string' || text.length > MAX_TEXT) {
+    if (rawText !== undefined && (typeof rawText !== 'string' || rawText.length > MAX_TEXT)) {
       malformed('message text must be text (at most 4096 characters)');
     }
     if (!Number.isSafeInteger(stamp)) malformed('timestamp must be an integer');
@@ -216,8 +222,12 @@ export function createMessengerChannelAdapter(options = {}) {
     // as `occurredAt` and `operations.js` quarantines a future-dated one
     // centrally (receive time + anomaly note), so one forged delivery can
     // never hold the window open nor poison the sequence.
-    return {
-      providerEventId: mid,
+    const content = normalizeGraphMessageContent(item?.message ?? {}, 'Messenger');
+    const text = content.text;
+    if (typeof text !== 'string' || text.length > MAX_TEXT) {
+      malformed('message text must be text (at most 4096 characters)');
+    }
+    const base = {
       subject: `${SUBJECT_PREFIX}${senderId}`,
       sequence: null,
       occurredAt: new Date(atMs).toISOString(),
@@ -225,6 +235,17 @@ export function createMessengerChannelAdapter(options = {}) {
       to: recipientId,
       text,
     };
+    if (content.attachments.length <= 1) {
+      return [{ providerEventId: mid, ...base, attachment: content.attachments[0] ?? null }];
+    }
+    // The first sibling keeps the bare message id (backlog:32820692): the
+    // same stable identity Instagram uses, because both ride the shared
+    // Graph shape — a redelivery replays or conflicts instead of doubling.
+    return content.attachments.map((attachment, index) => ({
+      providerEventId: index === 0 ? mid : `${mid}:a${index}`,
+      ...base,
+      attachment,
+    }));
   }
 
   /** The kit's signed minimal dialect (test compositions only). */
@@ -299,7 +320,7 @@ export function createMessengerChannelAdapter(options = {}) {
           if (candidates.length === 0) {
             malformed('no message in this webhook delivery (receipts and echoes stay out of the inbox)');
           }
-          return candidates.map((item) => normalizePageEvent(item));
+          return candidates.flatMap((item) => normalizePageEvents(item));
         }
         if (testOnly) return [normalizeKitEvent(parsed)];
         malformed('only Page webhook deliveries are accepted');

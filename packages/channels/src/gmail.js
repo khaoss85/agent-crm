@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { verifyHmacWebhook } from './crypto.js';
+import { assertChannelAttachment } from './meta-webhook.js';
 
 /**
  * Gmail API channel adapter (backlog:2f621c1d81b0).
@@ -150,7 +151,7 @@ function fromBase64Url(value) {
 export function gmailPushBody({
   id, threadId, from, to, subject = '', snippet = '',
   internalDateMs = null, historyId = 'history-fake-1', subscription = 'projects/example/subscriptions/accordo-gmail',
-  publishTime = null,
+  publishTime = null, attachments = undefined,
 }) {
   const at = internalDateMs ?? Date.now();
   const data = toBase64Url(JSON.stringify({
@@ -158,6 +159,7 @@ export function gmailPushBody({
     historyId,
     message: {
       id, threadId, from, to, subject, snippet, internalDateMs: at,
+      ...(attachments === undefined ? {} : { attachments }),
     },
   }));
   return JSON.stringify({
@@ -169,6 +171,48 @@ export function gmailPushBody({
     },
     subscription,
   });
+}
+
+/**
+ * The Gmail MIME family the card renders as (backlog:32820692): images are
+ * photos, video and audio keep their kind, everything else — PDFs included —
+ * is a document. The fetch handle is the provider attachment id, fetched
+ * server-side with the call-time secret, never bytes in a row.
+ * @param {unknown} mimeType
+ */
+function gmailAttachmentKind(mimeType) {
+  const family = typeof mimeType === 'string' ? mimeType.toLowerCase().split(';')[0].trim() : '';
+  if (family.startsWith('image/')) return 'photo';
+  if (family.startsWith('video/')) return 'video';
+  if (family.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
+/**
+ * Every attachment of one Gmail message (backlog:32820692): the fake push
+ * payload carries `attachments[]` with `{filename, mimeType, size,
+ * attachmentId}`. Entries without a fetch id are skipped, never refused —
+ * one exotic part must not 422 the PDF beside it.
+ * @param {unknown} raw
+ */
+function normalizeGmailAttachments(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const attachments = [];
+  for (const candidate of list) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const entry = /** @type {Record<string, any>} */ (candidate);
+    if (typeof entry.attachmentId !== 'string' || entry.attachmentId === '') continue;
+    const name = typeof entry.filename === 'string' && entry.filename !== '' ? entry.filename : null;
+    const size = Number.isSafeInteger(entry.size) ? entry.size : null;
+    try {
+      attachments.push(assertChannelAttachment({
+        kind: gmailAttachmentKind(entry.mimeType), name, size, ref: entry.attachmentId, preview: null,
+      }, 'Gmail'));
+    } catch {
+      continue;
+    }
+  }
+  return attachments;
 }
 
 /** Normalize one Gmail message (the fake push payload) to the channel event shape. */
@@ -204,12 +248,31 @@ function normalizeGmailMessage(decoded, config) {
   // as `occurredAt` and `operations.js` quarantines a future-dated one
   // centrally (receive time + anomaly note), so it never becomes the
   // out-of-order sequence.
-  return {
-    providerEventId: item.id,
+  // Snippet plus attachments (backlog:32820692): the fake push payload
+  // carries the readable excerpt as `snippet` and provider parts as
+  // `attachments[]`; the text rides with the first attachment's siblings
+  // below, and the inbox keeps the envelope only.
+  const snippet = typeof item.snippet === 'string' ? item.snippet : '';
+  if (snippet.length > GMAIL_MAX_TEXT) malformedEvent('message snippet exceeds the bound');
+  const attachments = normalizeGmailAttachments(item.attachments);
+  const text = snippet;
+  const base = {
     subject: `${GMAIL_SUBJECT_PREFIX}${item.threadId}`,
     sequence: atMs,
     occurredAt: new Date(atMs).toISOString(),
+    text,
   };
+  if (attachments.length <= 1) {
+    return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
+  }
+  // The first sibling keeps the bare message id (backlog:32820692): the
+  // same stable identity the Meta adapters use, so a redelivery of a
+  // previously ingested message replays or conflicts instead of doubling.
+  return attachments.map((attachment, index) => ({
+    providerEventId: index === 0 ? item.id : `${item.id}:a${index}`,
+    ...base,
+    attachment,
+  }));
 }
 
 /** The kit's signed minimal dialect (test compositions only). */
@@ -397,24 +460,29 @@ export function createGmailChannelAdapter(options = {}) {
         if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > 4102444800000) {
           malformedEvent('seeded message needs a valid internalDateMs');
         }
-        const normalized = normalizeGmailMessage({
+        const one = normalizeGmailMessage({
           message: {
             id: item?.id,
             threadId: item?.threadId,
             from: item?.from,
             to: item?.to ?? config.mailbox,
             subject: item?.subject ?? '',
-            snippet: '',
+            snippet: typeof item?.snippet === 'string' ? item.snippet : '',
             internalDateMs: atMs,
+            ...(item?.attachments === undefined ? {} : { attachments: item.attachments }),
           },
         }, config);
         // A sent copy looping back carries no subject, so the import
         // quarantines it exactly like the push path does — with its
         // provider time, so the window keeps it instead of dropping it.
-        const event = normalized.subject === ''
-          ? { ...normalized, occurredAt: new Date(atMs).toISOString() }
-          : normalized;
-        state.mailboxHistory.push({ normalized: event, from: canonicalGmailAddress(item?.from) });
+        const events = (Array.isArray(one) ? one : [one]).map((normalized) => (
+          normalized.subject === ''
+            ? { ...normalized, occurredAt: new Date(atMs).toISOString() }
+            : normalized
+        ));
+        for (const event of events) {
+          state.mailboxHistory.push({ normalized: event, from: canonicalGmailAddress(item?.from) });
+        }
       }
     },
   };
@@ -469,7 +537,11 @@ export function createGmailChannelAdapter(options = {}) {
           } catch {
             malformedEvent('push data is not a Gmail notification');
           }
-          return [normalizeGmailMessage(decoded, config)];
+          // One message with several attachments normalizes to one event
+          // per attachment (backlog:32820692) — the same sibling rule the
+          // Meta adapters use — so no PDF is truncated to the first.
+          const normalized = normalizeGmailMessage(decoded, config);
+          return Array.isArray(normalized) ? normalized : [normalized];
         }
         if (config.testOnly) return [normalizeKitEvent(parsed)];
         malformedEvent('only Gmail push notifications are accepted');
