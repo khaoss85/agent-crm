@@ -169,6 +169,22 @@ async function pickCustomerByName(mount, name, rounds = 7) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+// BO-F6-11 fetta 9: the manual person is a choice among the known team while
+// the filter names someone — a design-system select, never a typed id. With
+// nobody known the plain text field stays.
+function personField(mount) {
+  return mount.querySelector('select[name="teamMemberId"]')
+    ?? mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId')
+    ?? null;
+}
+
+function choosePerson(mount, id) {
+  const field = personField(mount);
+  assert.ok(field, 'the manual form names its person');
+  field.value = id;
+  field.dispatch('change');
+}
+
 test('week keys are Monday..Sunday in Rome and the window covers the week', () => {
   // Sunday 2026-10-25 belongs to the Oct 19–25 week.
   const keys = romeWeekKeys(new Date('2026-10-25T10:00:00Z'));
@@ -370,8 +386,11 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   const ghost = mount.findAll('button').find((node) => node.textContent === '✦ Proposta 18:00');
   assert.ok((ghost.getAttribute('class') ?? '').split(/\s+/).includes('bo-add-button'), 'the ghost reuses the shared dashed control');
   // The draft still prefills the manual form (Rome wall time back into the inputs).
+  // The filter names marco, so the person is the team choice, not a typed id.
   const form = byName();
-  assert.equal(form.teamMemberId.value, 'marco');
+  const person = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(person, 'the known person is a choice, never a typed id');
+  assert.equal(person.value, 'marco', 'the draft person is the chosen one');
   assert.equal(form.serviceKey.value, 'taglio');
   assert.equal(form.date.value, '2026-10-22');
   assert.equal(form.start.value, '18:00');
@@ -2073,4 +2092,121 @@ test('the booking card paints the prototype texts with no invented link', async 
   for (const banned of ['NOT_FOUND', 'non composto', '404', 'undefined']) {
     assert.ok(!paragraphs.includes(banned), `no technical residue in the booking card: ${banned}`);
   }
+});
+
+// BO-F6-11 fetta 9 (backlog:5fbebe8559e9): the manual person is a choice
+// among the known team while the filter names someone — a design-system
+// select, never a typed opaque id.
+test('the manual person is a choice from the known team', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    memberships: [
+      { subject: 'marco', role: 'owner' },
+      { subject: 'sara', role: 'member' },
+    ],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  // The roster auto-fills the week: marco and sara are the known team with
+  // no typing (backlog:0533362e).
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const person = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(person, 'the known team paints a choice, not a text field');
+  assert.ok(!byName().teamMemberId, 'no opaque id to type while the team is known');
+  const labels = person.findAll('option').map((node) => node.textContent);
+  assert.ok(labels.some((label) => label.includes('marco')), 'marco is offered');
+  assert.ok(labels.some((label) => label.includes('sara')), 'sara is offered');
+  assert.equal(person.value, '', 'nobody is preselected: an empty choice books nothing');
+  await pickCustomerByName(mount, 'Ada');
+  choosePerson(mount, 'sara');
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'sara', 'the claim carries the chosen person');
+});
+
+// Fetta 9: with nobody known the plain person field stays, so the operator
+// can still book while the roster is unread.
+test('no known team keeps the plain person field', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'no choice from nobody');
+  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
+  assert.ok(field, 'the plain field stays as the honest fallback');
+  assert.equal(field.getAttribute('placeholder'), 'Persona del team');
+  await pickCustomerByName(mount, 'Ada');
+  choosePerson(mount, 'marco');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'marco');
+});
+
+// Fetta 9: a phrase draft naming someone outside the known team keeps the
+// typed field prefilled, so nothing the AI named is lost.
+test('a draft outsider keeps the typed person field', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const client = stubClient({ phrase: draft, slots: [], memberships: [{ subject: 'sara', role: 'member' }] });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  // The roster auto-fills the known team, so the person starts as a choice.
+  assert.ok(mount.querySelector('select[name="teamMemberId"]'), 'the known team starts as a choice');
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'an outsider is not forced into the choice');
+  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
+  assert.ok(field, 'the typed field keeps the drafted person');
+  assert.equal(field.value, 'marco');
+});
+
+// Fetta 9 (C22): the service label names no technical concept.
+test('the service field carries no listino jargon', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  const service = mount.findAll('input').find((node) => node.getAttribute('name') === 'serviceKey');
+  assert.ok(service, 'the service field paints');
+  assert.equal(service.getAttribute('placeholder'), 'Servizio');
+  const screen = mount.textContent;
+  assert.ok(!screen.includes('chiave listino'), 'no technical concept reaches the operator');
 });
