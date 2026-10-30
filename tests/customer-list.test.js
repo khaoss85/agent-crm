@@ -5,6 +5,7 @@ import { listCustomerRecords } from '../packages/customer-data/src/operations.js
 import {
   CUSTOMER_COLUMNS,
   CUSTOMER_PAGE_SIZES,
+  CUSTOMER_SCAN_LIMIT,
   CUSTOMER_VIEWS,
   applyCustomerListQuery,
   channelWordsIn,
@@ -483,4 +484,53 @@ test('budget is an opt-in column: cliente, canali, stato, ultimo and prossimo ar
   assert.deepEqual(on, { canali: true, stato: true, ultimo: true, prossimo: true });
   assert.equal(CUSTOMER_COLUMNS.find((column) => column.id === 'budget').ai, true);
   assert.equal(CUSTOMER_COLUMNS.find((column) => column.id === 'cliente').always, true);
+});
+
+test('the list names a finite count per view it can know, omitting the rest', async () => {
+  // C10: `<etichetta> <n>` beside the views, from the server — the pill
+  // count is the same predicate the page applies, so it agrees with the
+  // total of opening that view.
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({
+    contacts, companies, identities,
+    tasks: [{
+      id: 't1', title: 'Richiama', status: 'open', dueAt: '2026-10-20T18:00:00.000Z',
+      subjectResource: 'contact', subjectId: 'c1',
+    }],
+  });
+  const run = (request) => listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } }, request);
+  const page = await run({ vista: 'tutti', sort: 'name' });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.equal(byId.tutti.count, page.total, 'the active pill agrees with the title total');
+  for (const id of ['nuovi-lead', 'clienti-attivi', 'ricontattare-oggi']) {
+    assert.equal(byId[id].count, (await run({ vista: id })).total, `${id} counts what opening it shows`);
+  }
+  // No subscription module composed: the renewal count stays absent, never a
+  // floor dressed as a total.
+  assert.ok(!('count' in byId['rinnovi-30-giorni']), 'an unknowable view names no count');
+});
+
+test('a view whose dependency is unreadable still answers without its count', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({ contacts, companies, identities, omit: ['work-task'] });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'tutti' });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in byId['ricontattare-oggi']), 'no work-task read, no callback count');
+  assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
+});
+
+test('a truncated subject scan names no per-view counts', async () => {
+  const companies = [{ id: 'co1', name: 'Azienda' }];
+  const contacts = Array.from({ length: CUSTOMER_SCAN_LIMIT }, (_, index) => ({
+    id: `c${index}`, companyId: 'co1', firstName: `Nome${index}`, lastName: 'Prova',
+  }));
+  const modules = fakeModules({ contacts, companies, identities: [] });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'tutti' });
+  assert.equal(page.totalIsExact, false, 'the bound truncated the scan');
+  for (const view of page.views) {
+    assert.ok(!('count' in view), `${view.id} names no floor as a count`);
+  }
 });

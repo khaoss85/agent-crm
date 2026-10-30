@@ -183,17 +183,17 @@ export function viewFilters(view) {
 }
 
 /**
- * Filter, sort and paginate shaped rows in memory. The scan behind `rows`
- * is a bounded display read (see CUSTOMER_SCAN_LIMIT): the answer carries
- * `complete: false` when the bound truncated it, and the total is exact only
- * when `complete` is true.
+ * The row-matching stage of the list query, without sorting or pagination.
+ * Pure, so the endpoint reuses it for the per-view pill counts: a pill count
+ * is the same predicate the page itself applies, with that view's filters.
  * @param {Array<any>} rows shaped rows
- * @param {ReturnType<typeof parseCustomerListQuery>} query
+ * @param {ReturnType<typeof parseCustomerListQuery>} query explicit filters (q, canale, stato)
+ * @param {{id: string}} view the view whose extra predicates apply
  * @param {string} [todayIso] YYYY-MM-DD for the ricontattare-oggi view (injectable for tests)
  */
-export function applyCustomerListQuery(rows, query, todayIso) {
+export function filterCustomerRows(rows, query, view, todayIso) {
   const all = Array.isArray(rows) ? rows : [];
-  const viewExtra = viewFilters(query.view);
+  const viewExtra = viewFilters(view);
   const wantedStatus = query.stato !== 'all' ? query.stato : viewExtra.stato ?? 'all';
   const channelHits = query.q ? channelWordsIn(query.q) : [];
   const haystackOf = (row) => [
@@ -220,6 +220,20 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
     return true;
   });
+  return Object.freeze(filtered);
+}
+
+/**
+ * Filter, sort and paginate shaped rows in memory. The scan behind `rows`
+ * is a bounded display read (see CUSTOMER_SCAN_LIMIT): the answer carries
+ * `complete: false` when the bound truncated it, and the total is exact only
+ * when `complete` is true.
+ * @param {Array<any>} rows shaped rows
+ * @param {ReturnType<typeof parseCustomerListQuery>} query
+ * @param {string} [todayIso] YYYY-MM-DD for the ricontattare-oggi view (injectable for tests)
+ */
+export function applyCustomerListQuery(rows, query, todayIso) {
+  const filtered = filterCustomerRows(rows, query, query.view, todayIso);
 
   const byName = (a, b) => String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'it');
   const lastContactMs = (row) => {

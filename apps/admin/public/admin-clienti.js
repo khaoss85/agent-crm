@@ -336,8 +336,9 @@ export function createCustomerListView(deps) {
     viewsRow.setAttribute('role', 'tablist');
     viewsRow.setAttribute('aria-label', 'Viste rapide');
     for (const view of views) {
-      // The server names no per-view counts today, so pills render labels
-      // only; the day it ships a finite `count` per view the pill shows it.
+      // The server names a finite `count` per view when it can know it; a
+      // view without one renders its label only — honest absence, never a
+      // guessed number.
       const count = Number(view.count);
       const label = view.label + (Number.isFinite(count) ? ` ${count}` : '');
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
