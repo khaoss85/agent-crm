@@ -208,10 +208,10 @@ export function createPipelineBoard(deps) {
     }
     try {
       await postMove(pipeline, recordId, fromStage, toStage);
-      toast(`Spostata in ${toStage}.`);
+      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
       await renderBoard(pipeline.name); // re-render: server state is the truth
     } catch (error) {
-      toast(error?.message ?? 'Spostamento non riuscito', true);
+      toast(moveFailureText(error), true);
     }
   }
 
@@ -229,7 +229,10 @@ export function createPipelineBoard(deps) {
       }
       pipeline = (schema.pipelines ?? []).find((candidate) => candidate.name === pipelineName);
       if (!pipeline) {
-        showMessage(`Pipeline non trovata: ${pipelineName}`);
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] pipeline non composta', { pipelineName });
+        }
+        showMessage('Nessuna pipeline da mostrare in questo spazio.');
         return;
       }
       // The board currently supports the core opportunity module's list
@@ -278,8 +281,8 @@ export function createPipelineBoard(deps) {
     const titleBox = el(doc, 'div');
     // BO-F6-10 C1/C2: fixed page chrome from the spec. The pipeline label
     // is not painted: the /bo voice is the offers board, and the nav already
-    // names the routed pipeline. Unknown pipelines still fail honestly in
-    // renderBoard (`Pipeline not found`), where the name aids diagnosis.
+    // names the routed pipeline. Unknown pipelines show a friendly line in
+    // renderBoard (the name aids diagnosis in the console only).
     titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Pipeline' }));
     titleBox.appendChild(el(doc, 'h2', { text: 'Offerte' }));
     titleBox.appendChild(el(doc, 'p', {
@@ -746,6 +749,28 @@ export function createPipelineBoard(deps) {
     return `${probability}%`;
   }
 
+  /**
+   * BO-F6-10 C25: the board never paints technical text — no stage keys, no
+   * error codes (`SAME_STAGE`), no raw server messages. The technical detail
+   * goes to the console only; the DOM gets a friendly Italian line.
+   */
+  function stageLabel(pipeline, key) {
+    return pipeline.stages.find((stage) => stage.key === key)?.label ?? key;
+  }
+
+  function moveFailureText(error) {
+    const record = error !== null && typeof error === 'object' ? error : {};
+    const code = typeof record.code === 'string' ? record.code : '';
+    const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
+    const message = typeof record.message === 'string' ? record.message : '';
+    if (typeof console !== 'undefined' && typeof console.error === 'function') {
+      console.error('[bo] spostamento non riuscito', { code: code || 'UNKNOWN', status: record.status ?? null, message });
+    }
+    if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
+    if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
+    return 'Spostamento non riuscito. Riprova più tardi.';
+  }
+
   /** Toggle one hook class on a node without touching its other classes. */
   function toggleHook(node, hook, on) {
     const current = String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
@@ -886,13 +911,13 @@ export function createPipelineBoard(deps) {
           ? reasonInput.value
           : undefined;
         await postMove(pipeline, record.id, stage.key, select.value, reason);
-        toast(`Spostata in ${select.value}.`);
+        toast(`Spostata in ${stageLabel(pipeline, select.value)}.`);
         await renderBoard(pipeline.name); // re-render: server state is the truth
       } catch (error) {
         busy = false;
         moveButton.disabled = false;
         moveButton.setAttribute('aria-busy', 'false');
-        errorNode.textContent = error?.message ?? 'Spostamento non riuscito';
+        errorNode.textContent = moveFailureText(error);
         errorNode.setAttribute('class', 'field-error');
       }
     };
