@@ -80,3 +80,38 @@ test('a contact-scoped offer shows on its contact card only, a company-scoped on
     ['quote-ada-1', 'quote-co-1'].sort(),
     'a company card holds every quote under it');
 });
+
+/**
+ * Voce cc525cd6a3c5 (review head 02e64495, P2): opportunity records expose
+ * `stage`, never `status` — the profile item must still carry a renderable
+ * state, or the scheda opportunity-fallback offer line reads the bare name
+ * with no Italian state. Built through readCustomerProfile with a real
+ * staged opportunity and no quotes, never a hand-injected status.
+ */
+test('an opportunity-only card carries the opportunity stage as its item status', async (t) => {
+  const root = project(t, { withCommercial: true });
+  const context = await boot(root, join(root, 'data', 'offer-stage.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  const company = await app.services.companies.create({ name: 'Palestra', domain: 'palestra.example' }, { actor: ACTOR });
+  const ada = await app.services.contacts.create(
+    { companyId: company.id, firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra.example' }, { actor: ACTOR });
+
+  const opportunity = await app.services.opportunities.create(
+    { companyId: company.id, contactId: ada.id, name: 'Pacchetto Ada', valueCents: 10000, currency: 'EUR', owner: 'rep', stage: 'proposal' },
+    { actor: ACTOR });
+  assert.equal(opportunity.stage, 'proposal', 'the stored record carries a stage, never a status');
+  assert.ok(!('status' in opportunity) || opportunity.status == null, 'a real opportunity row has no status to copy');
+
+  const profile = await app.readCustomerProfile({ actor: ACTOR, resource: 'contact', id: ada.id });
+  assert.deepEqual(
+    profile.quotes.items.map((item) => item.id),
+    [],
+    'no quotes: the scheda falls back to the opportunity line');
+  assert.equal(profile.opportunities.items.length, 1, "Ada's card holds her opportunity");
+  assert.equal(
+    profile.opportunities.items[0].status,
+    'proposal',
+    'the opportunity item carries its stage as status, so the scheda reads «Pacchetto Ada · proposta»');
+});

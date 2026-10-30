@@ -191,7 +191,10 @@ export async function profileFor({ modules, core, names, subject }) {
         countNote: `${section.label} were read from a bounded page of the owning module, so this count is at least this many, not exactly this many`,
       }),
       items: Object.freeze(rows.slice(0, 50).map((row) => Object.freeze({
-        id: row.id, status: row.status ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
+        // Voce cc525cd6a3c5: stage-only records (opportunities expose stage,
+        // never status) still carry a renderable state for the scheda offer
+        // line — the card labels it in Italian, never raw English.
+        id: row.id, status: row.status ?? row.stage ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
         // Quotes only: the explicit hop this profile followed, kept on the
         // item so the scheda can name the quote after its opportunity and a
         // reader can see which opportunity each quote belongs to. Other

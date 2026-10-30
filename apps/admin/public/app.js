@@ -504,13 +504,25 @@ const marketingView = createMarketingView({
 // Shell persistence first: the views below read this at construction, so it
 // must exist before any of them (a later `const` would throw a temporal-dead-zone
 // error on every page load). Private mode keeps tab state without persisting.
+// The space a real session is bound to, set once the session profile is
+// read below. Under a session every view's active space IS this space: the
+// views read ACTIVE_SPACE_KEY from storage, which a fresh browser never wrote,
+// so without this every space-scoped read and write left with spaceId ''
+// and the pilot refused it (BO_SPACE_MISMATCH, production 30/10).
+let sessionSpaceId = null;
+
 function guardedStorage() {
+  let base = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
   try {
-    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+    if (typeof window !== 'undefined' && window.localStorage) base = window.localStorage;
   } catch {
     // Private mode: shell state simply does not persist.
   }
-  return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  return {
+    getItem: (key) => (key === ACTIVE_SPACE_KEY && sessionSpaceId !== null ? sessionSpaceId : base.getItem(key)),
+    setItem: (key, value) => base.setItem(key, value),
+    removeItem: (key) => base.removeItem(key),
+  };
 }
 
 const shellStorage = guardedStorage();
@@ -712,6 +724,7 @@ const shellUser = sessionProfile
   : { ...DEV_USER };
 const sessionLogoutUrl = resolveLogoutTarget({ profile: sessionProfile });
 let shellActiveSpace = sessionProfile ? sessionProfile.space.id : null;
+if (sessionProfile) sessionSpaceId = sessionProfile.space.id;
 if (!sessionProfile) {
   try {
     const stored = shellStorage.getItem(ACTIVE_SPACE_KEY);
