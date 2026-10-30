@@ -28,8 +28,20 @@ const page = readFileSync(join(root, 'apps/admin/public/login.html'), 'utf8');
 const loginSource = readFileSync(join(root, 'apps/admin/public/login.js'), 'utf8');
 
 test('the login page tells the four-channel story like the prototype', () => {
-  assert.match(page, /<div class="login-brand">[\s\S]*?<svg[\s\S]*?<span>Accordo<\/span>/,
+  // C2 pin, bounded to the logo row: the brand container holds no nested
+  // <div>, so the first closing tag ends it, and a brand moved elsewhere
+  // no longer matches (an unbounded [\s\S]*? would cross </div> tags).
+  const brandOf = (html) => html.match(/<div class="login-brand">([\s\S]*?)<\/div>/)?.[1] ?? '';
+  const brand = brandOf(page);
+  assert.ok(/<svg/.test(brand) && /<span>Accordo<\/span>/.test(brand),
     'the brand names Accordo inside the logo row, next to the mark (C2)');
+  const displaced = page
+    .replace('          <span>Accordo</span>\n', '')
+    .replace('    </main>', '          <span>Accordo</span>\n    </main>');
+  assert.ok(displaced !== page && displaced.includes('<span>Accordo</span>'),
+    'the displaced-brand probe really moves the brand out of the logo row');
+  assert.ok(!/<span>Accordo<\/span>/.test(brandOf(displaced)),
+    'a brand moved out of the logo row is rejected (C2)');
   for (const text of [
     'Ogni conversazione, un solo cliente.',
     'Instagram, email, telefono e WhatsApp',
