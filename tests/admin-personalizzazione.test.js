@@ -313,7 +313,7 @@ test('the Connettori sections reuse the catalog channels with honest destination
     }
   }
   assert.equal(cards, 9, 'six conversation channels plus three agenda cards, like the prototype');
-  assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[1]), '#/calendario');
+  assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[1]), '#/profilo');
   assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[2]), '#/quotes');
   assert.equal(connettoriHref({}), '#/connettori', 'an entry with no destination falls back to the hub');
   const live = [

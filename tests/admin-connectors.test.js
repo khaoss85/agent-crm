@@ -156,7 +156,7 @@ function stubBody(options) {
   return raw ?? {};
 }
 
-function stubClient({ schema = null, sync = null, calls = null, authorize = null, finish = null } = {}) {
+function stubClient({ schema = null, sync = null, calls = null, authorize = null, finish = null, profile = null } = {}) {
   const seen = calls ?? [];
   return {
     calls: seen,
@@ -168,6 +168,10 @@ function stubClient({ schema = null, sync = null, calls = null, authorize = null
         return schema;
       }
       if (path.startsWith('/api/connectors?')) return sync ?? { connectors: [] };
+      if (path === '/api/profile') {
+        if (profile === null) throw new Error('profile down');
+        return profile;
+      }
       if (path === '/api/connectors/authorize') {
         if (typeof authorize === 'function') return authorize(body);
         return { duplicate: false, connection: { connectionKey: 'ck', status: 'active', importable: true, sync: null } };
@@ -217,6 +221,22 @@ test('no composed channels renders an honest note', async () => {
   const client = stubClient({ schema: { domains: {} }, sync: { connectors: [] } });
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
   assert.ok(mount.textContent.includes('non sono composti'));
+});
+
+test('Google Calendar and Gmail offer Collega even without composed channels', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ schema: { domains: {} }, profile: { member: {}, connections: { available: true, reason: null,
+    items: [{ connector: 'calendar', status: 'disconnected', account: null }, { connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } } });
+  await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  await new Promise((resolve) => setImmediate(resolve));
+  const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'google-connections');
+  assert.ok(card, 'the Google card heads the screen');
+  assert.ok(card.textContent.includes('Collegamenti Google'));
+  const collega = card.findAll('a').find((node) => node.textContent === 'Collega');
+  assert.equal(collega.getAttribute('href'), '../profile/collega?connector=calendar');
+  assert.ok(card.textContent.includes('Collegato come dan@presti.it'));
+  assert.ok(mount.textContent.includes('non sono composti'), 'the channels note stays honest');
 });
 
 test('hostile server text stays text', async () => {

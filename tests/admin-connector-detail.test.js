@@ -135,13 +135,17 @@ test('"skill che lo usano" shows only declared dependencies', () => {
   assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('appointments')));
 });
 
-function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null } = {}) {
+function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true } = {}) {
   return {
     async request(path, options = {}) {
       calls.push(path);
       void options;
       if (path === '/api/schema') {
-        return { domains: { channels: { metadata: { channelsContract: 1, adapters } } } };
+        return channels ? { domains: { channels: { metadata: { channelsContract: 1, adapters } } } } : { domains: {} };
+      }
+      if (path === '/api/profile') {
+        if (profile === null) throw new Error('profile down');
+        return profile;
       }
       if (path === '/api/space-packages/catalog') {
         if (catalogError !== null) throw catalogError;
@@ -356,4 +360,26 @@ test('hostile server text stays text, never markup', async () => {
   const html = mount.innerHTML ?? '';
   assert.ok(!html.includes('<img src=x'), 'hostile account is text, never an element');
   assert.ok(!html.includes('<script>'), 'hostile adapter is text, never an element');
+});
+
+test('the Email detail offers Gmail Collega even without composed channels; other channels do not', async () => {
+  const profile = { member: {}, connections: { available: true, reason: null,
+    items: [{ connector: 'calendar', status: 'disconnected', account: null }, { connector: 'gmail', status: 'disconnected', account: null }] } };
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const calls = [];
+  const view = createConnectorDetailView({ doc, mount, client: stubClient({ profile, channels: false, calls }), navigate: () => {}, storage: null });
+  await view.render('email');
+  await new Promise((resolve) => setImmediate(resolve));
+  const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'google-connections');
+  assert.ok(card, 'the Gmail card sits under the title');
+  assert.deepEqual(card.findAll('div').filter((node) => node.getAttribute('data-connector')).map((node) => node.getAttribute('data-connector')), ['gmail']);
+  assert.equal(card.findAll('a').find((node) => node.textContent === 'Collega').getAttribute('href'), '../profile/collega?connector=gmail');
+  assert.ok(mount.textContent.includes('non sono composti'));
+
+  const other = createMount(doc);
+  const otherCalls = [];
+  await createConnectorDetailView({ doc, mount: other, client: stubClient({ profile, channels: false, calls: otherCalls }), navigate: () => {}, storage: null }).render('whatsapp');
+  assert.ok(!otherCalls.includes('/api/profile'), 'only Email reads the Google connections');
+  assert.ok(!other.findAll('section').some((node) => node.getAttribute('data-section') === 'google-connections'));
 });

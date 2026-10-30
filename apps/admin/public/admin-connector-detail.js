@@ -31,6 +31,7 @@
 import { humanReadError } from './admin-core.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Every channel the detail can render, in catalog order. */
@@ -407,6 +408,7 @@ export function createConnectorDetailView(deps) {
     channelsReady: false,
     loaded: false,
     loadError: null,
+    /** @type {any} */ google: null,
   };
 
   const refreshSpace = () => {
@@ -515,6 +517,9 @@ export function createConnectorDetailView(deps) {
     }
     mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice · Connettori'));
     mount.appendChild(el(doc, 'h2', undefined, `Connettore · ${entry.label}`));
+    // Email: Gmail connects per person through the pilot's Google consent,
+    // composed channels or not, so its Collega is always here.
+    if (state.google !== null) mount.appendChild(state.google.node);
     if (state.loadError !== null) {
       mount.appendChild(el(doc, 'p', 'field-error', state.loadError));
       return;
@@ -621,6 +626,10 @@ export function createConnectorDetailView(deps) {
       // Loading state: the mount never sits on stale content while the three
       // requests are in flight. render() clears it again on arrival.
       while (mount.firstChild) mount.removeChild(mount.firstChild);
+      state.google = channel === 'email'
+        ? googleConnectionsCard({ doc, client: deps.client,
+          entries: PROFILO_CONNECTORS.filter((entry) => entry.connector === 'gmail') })
+        : null;
       mount.appendChild(el(doc, 'p', 'bo-muted', 'Caricamento del connettore…'));
       await load();
       render(channel);
