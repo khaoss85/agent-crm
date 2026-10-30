@@ -9,8 +9,8 @@
 // never innerHTML, so hostile stage labels or record names are inert text.
 //
 // Views: Kanban columns plus a Lista table over the same filtered records.
-// Search, Referente (owner), Stato (pipeline stage) and expected-close date
-// bounds filter both views client-side; "Azzera filtri" resets them. The
+// Search plus the Referente, Creata and Stati pills filter both views
+// client-side; "Azzera filtri" resets them. The
 // summary (count + per-currency totals) and the forecast always describe the
 // filtered set. The forecast is a declared heuristic — won and paid at face
 // value plus 60% of the open ones — labeled as a stima, never a commitment.
@@ -74,7 +74,7 @@ function ownerInitials(name) {
 
 /**
  * @param {Record<string, any>} record
- * @param {{q: string, owner: string, stage: string, closeFrom: string, closeTo: string}} filters
+ * @param {{q: string, owner: string, stage: string, created: string}} filters
  */
 function matchesFilters(record, filters) {
   if (filters.owner && record.owner !== filters.owner) return false;
@@ -86,14 +86,33 @@ function matchesFilters(record, filters) {
       .toLowerCase();
     if (!haystack.includes(filters.q.toLowerCase())) return false;
   }
-  if (filters.closeFrom || filters.closeTo) {
-    const day = dayOf(record.expectedCloseDate);
-    if (!day) return false;
-    if (filters.closeFrom && day < filters.closeFrom) return false;
-    if (filters.closeTo && day > filters.closeTo) return false;
+  // BO-F6-10 C8: the `Creata` pill filters by creation recency. A record
+  // without a parseable creation day never matches an active interval
+  // (fail closed, like every other filter here); an unknown interval value
+  // matches nothing rather than silently lifting the filter.
+  if (filters.created) {
+    const days = filters.created === '7d' ? 7 : filters.created === '30d' ? 30 : 0;
+    const day = dayOf(record.createdAt);
+    if (!days || !day) return false;
+    const now = new Date();
+    const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days))
+      .toISOString().slice(0, 10);
+    if (day < cutoff) return false;
   }
   return true;
 }
+
+/**
+ * `Creata` intervals (C8): the prototype filters by creation recency —
+ * `Sempre`, then recent days. DECISION (to be confirmed): the recent
+ * buckets are 7 and 30 days; the expected-close range inputs are gone
+ * with the raw controls (no prototype shape for them).
+ */
+const CREATED_OPTIONS = [
+  { value: '', label: 'Sempre' },
+  { value: '7d', label: 'Ultimi 7 giorni' },
+  { value: '30d', label: 'Ultimi 30 giorni' },
+];
 
 /**
  * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void}} deps
@@ -107,7 +126,7 @@ export function createPipelineBoard(deps) {
   let renderToken = 0;
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
-  const state = { view: 'kanban', q: '', owner: '', stage: '', closeFrom: '', closeTo: '' };
+  const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
   /** @type {{pipeline: any, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, records: [] };
   /** Name of the pipeline the current filter state belongs to. A filter set
@@ -227,13 +246,12 @@ export function createPipelineBoard(deps) {
     if (token !== renderToken) return;
     if (filteredPipeline !== pipeline.name) {
       // New pipeline: drop the previous board's filters so a stage, owner
-      // or date bound from pipeline A cannot silently empty pipeline B.
+      // or creation interval from pipeline A cannot silently empty pipeline B.
       filteredPipeline = pipeline.name;
       state.q = '';
       state.owner = '';
       state.stage = '';
-      state.closeFrom = '';
-      state.closeTo = '';
+      state.created = '';
     }
     cached = { pipeline, records };
     return renderAll(token);
@@ -387,7 +405,89 @@ export function createPipelineBoard(deps) {
     return wrap;
   }
 
-  /** View toggle + search + Referente/Stato/date filters + Azzera filtri. */
+  /**
+   * One voice of a filter pill menu (C8): the shared `ui-add-option` shape
+   * (tile + bold title, no new classes — the dress stays in styles.css),
+   * with a ✓ tile on the active option like the prototype's check mark.
+   * The title travels through textContent only, so hostile owner or stage
+   * names stay inert text.
+   */
+  function filterVoice(key, { value, title, active, onPick }) {
+    const node = doc.createElement('button');
+    node.setAttribute('class', 'ui-add-option');
+    node.setAttribute('type', 'button');
+    node.setAttribute('role', 'menuitemradio');
+    node.setAttribute('aria-checked', active ? 'true' : 'false');
+    node.setAttribute('data-menu-voice', key);
+    node.setAttribute('data-value', value);
+    const tile = doc.createElement('span');
+    tile.setAttribute('class', 'ui-add-tile');
+    tile.setAttribute('aria-hidden', 'true');
+    tile.textContent = active ? '✓' : '';
+    node.appendChild(tile);
+    const words = doc.createElement('span');
+    words.setAttribute('class', 'ui-add-words');
+    const name = doc.createElement('span');
+    name.setAttribute('class', 'ui-add-title');
+    name.textContent = String(title);
+    words.appendChild(name);
+    node.appendChild(words);
+    node.addEventListener('click', () => onPick(value));
+    return node;
+  }
+
+  /**
+   * Prototype filter pill (C8): `Referente Tutti` — a menu-button with the
+   * grey label and the bold value, opening the shared `ui-add-menu` voice
+   * list. Same wrap/menu pair as `Nuova offerta` (MEM_ACC_REUSE: no screen
+   * CSS, no raw browser select or date input). A non-default value marks
+   * the pill with the established `active` hook, like `ui-seg`.
+   */
+  function renderFilterMenu({ key, label, valueText, filterLabel, current, voices, onPick }) {
+    const wrap = el(doc, 'div', { class: 'ui-conn-addwrap', attrs: { 'data-filtermenu': key } });
+    const button = uiButton(doc, {
+      variant: 'secondary',
+      attrs: {
+        type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false',
+        'aria-label': filterLabel,
+      },
+    });
+    if (current !== '') button.setAttribute('class', `${button.getAttribute('class')} active`);
+    button.appendChild(el(doc, 'span', { text: `${label} ` }));
+    button.appendChild(el(doc, 'strong', { text: valueText }));
+    button.appendChild(uiIcon(doc, 'chevron'));
+    const menu = el(doc, 'div', { class: 'ui-add-menu ui-conn-addmenu hidden', attrs: { role: 'menu' } });
+    const isHidden = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+    const sync = () => button.setAttribute('aria-expanded', isHidden() ? 'false' : 'true');
+    button.addEventListener('click', () => {
+      menu.setAttribute('class', isHidden() ? 'ui-add-menu ui-conn-addmenu' : 'ui-add-menu ui-conn-addmenu hidden');
+      sync();
+    });
+    const closeOnEscape = (event) => {
+      if (event?.key === 'Escape') {
+        menu.setAttribute('class', 'ui-add-menu ui-conn-addmenu hidden');
+        sync();
+      }
+    };
+    button.addEventListener('keydown', closeOnEscape);
+    menu.addEventListener('keydown', closeOnEscape);
+    for (const voice of voices) {
+      menu.appendChild(filterVoice(key, {
+        value: voice.value,
+        title: voice.title,
+        active: voice.value === current,
+        onPick: (picked) => {
+          onPick(picked);
+          renderAll(renderToken);
+        },
+      }));
+    }
+    wrap.appendChild(button);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+
+  /** View toggle + search + Referente/Creata/Stati pills + Azzera filtri. */
   function renderToolbar(pipeline, onBoard) {
     const toolbar = el(doc, 'div', { class: 'pipeline-toolbar', attrs: { 'data-toolbar': 'pipeline' } });
 
@@ -433,54 +533,42 @@ export function createPipelineBoard(deps) {
     });
     toolbar.appendChild(search);
 
+    // BO-F6-10 C8: the three prototype pills — `Referente Tutti`,
+    // `Creata Sempre`, `Stati Tutti` — with the check on the active voice.
     const owners = [...new Set(onBoard.map((record) => record.owner).filter((owner) => typeof owner === 'string' && owner))].sort();
-    const ownerSelect = el(doc, 'select', { attrs: { 'aria-label': 'Referente', 'data-filter': 'owner' } });
-    ownerSelect.appendChild(el(doc, 'option', { text: 'Tutti i referenti', attrs: { value: '' } }));
-    for (const owner of owners) {
-      const option = el(doc, 'option', { text: owner, attrs: { value: owner } });
-      if (owner === state.owner) option.setAttribute('selected', 'selected');
-      ownerSelect.appendChild(option);
-    }
-    ownerSelect.value = state.owner;
-    ownerSelect.addEventListener('change', () => {
-      state.owner = String(ownerSelect.value ?? '');
-      renderAll(renderToken);
-    });
-    toolbar.appendChild(ownerSelect);
-
-    const stageSelect = el(doc, 'select', { attrs: { 'aria-label': 'Stato', 'data-filter': 'stage' } });
-    stageSelect.appendChild(el(doc, 'option', { text: 'Tutti gli stati', attrs: { value: '' } }));
-    for (const stage of pipeline.stages) {
-      const option = el(doc, 'option', { text: stage.label ?? stage.key, attrs: { value: stage.key } });
-      if (stage.key === state.stage) option.setAttribute('selected', 'selected');
-      stageSelect.appendChild(option);
-    }
-    stageSelect.value = state.stage;
-    stageSelect.addEventListener('change', () => {
-      state.stage = String(stageSelect.value ?? '');
-      renderAll(renderToken);
-    });
-    toolbar.appendChild(stageSelect);
-
-    for (const bound of ['closeFrom', 'closeTo']) {
-      const input = el(doc, 'input', {
-        attrs: {
-          type: 'date',
-          'aria-label': bound === 'closeFrom' ? 'Chiusura prevista da' : 'Chiusura prevista a',
-          'data-filter': bound,
-        },
-      });
-      input.value = state[bound];
-      input.addEventListener('change', () => {
-        state[bound] = String(input.value ?? '');
-        renderAll(renderToken);
-      });
-      toolbar.appendChild(input);
-    }
+    toolbar.appendChild(renderFilterMenu({
+      key: 'owner',
+      label: 'Referente',
+      valueText: state.owner || 'Tutti',
+      filterLabel: 'Filtra per referente',
+      current: state.owner,
+      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: owner }))],
+      onPick: (picked) => { state.owner = picked; },
+    }));
+    toolbar.appendChild(renderFilterMenu({
+      key: 'created',
+      label: 'Creata',
+      valueText: (CREATED_OPTIONS.find((option) => option.value === state.created) ?? CREATED_OPTIONS[0]).label,
+      filterLabel: 'Filtra per data di creazione',
+      current: state.created,
+      voices: CREATED_OPTIONS.map((option) => ({ value: option.value, title: option.label })),
+      onPick: (picked) => { state.created = picked; },
+    }));
+    toolbar.appendChild(renderFilterMenu({
+      key: 'stage',
+      label: 'Stati',
+      valueText: pipeline.stages.find((stage) => stage.key === state.stage)?.label
+        ?? pipeline.stages.find((stage) => stage.key === state.stage)?.key
+        ?? 'Tutti',
+      filterLabel: 'Filtra per stato',
+      current: state.stage,
+      voices: [{ value: '', title: 'Tutti' }, ...pipeline.stages.map((stage) => ({ value: stage.key, title: stage.label ?? stage.key }))],
+      onPick: (picked) => { state.stage = picked; },
+    }));
 
     // BO-F6-10 C11: `Azzera filtri` exists only while a filter or search is
     // active, so the toolbar never offers a no-op reset.
-    if (state.q || state.owner || state.stage || state.closeFrom || state.closeTo) {
+    if (state.q || state.owner || state.stage || state.created) {
       const reset = el(doc, 'button', {
         class: 'small secondary', text: 'Azzera filtri',
         attrs: { type: 'button', 'data-action': 'clear-filters' },
@@ -489,8 +577,7 @@ export function createPipelineBoard(deps) {
         state.q = '';
         state.owner = '';
         state.stage = '';
-        state.closeFrom = '';
-        state.closeTo = '';
+        state.created = '';
         renderAll(renderToken);
       });
       toolbar.appendChild(reset);

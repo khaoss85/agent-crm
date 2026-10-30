@@ -11,7 +11,7 @@ import {
   createRecordModuleFromManifest,
   recordModuleMigrations,
 } from '../packages/core/src/record-module-runtime.js';
-import { createAppointmentBookCapability } from '../packages/appointments/src/appointments.js';
+import { createAppointmentBookCapability, readTeamWeek } from '../packages/appointments/src/appointments.js';
 import { assertPackageConforms } from './helpers/package-conformance.js';
 import { createCalendarSyncOperations } from '../packages/calendar-sync/src/sync.js';
 import { createCalendarSyncPackage } from '../packages/calendar-sync/src/index.js';
@@ -106,6 +106,29 @@ test('import books one appointment per future event and re-import duplicates not
   const second = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
   assert.ok(second.entries.every((e) => e.status === 'already-tracked'));
   assert.equal(ctx.appointmentRows().length, 2);
+});
+
+// The connected-calendar week (backlog:0533362e8efe): events imported
+// from the Google calendar are appointment rows, so the team-week read the
+// backoffice agenda paints already carries them — no second store, no
+// second read. The provider stays fake: no test dials Google.
+test('imported Google events surface in the team week read', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt-week-1', '21', '09:00', '10:00');
+  seedEvent(ctx, 'evt-week-2', '22', '11:00', '12:00');
+  const imported = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(imported.entries.filter((entry) => entry.status === 'imported').length, 2);
+  const week = await readTeamWeek(
+    { appointments: ctx.modules.get('appointment').service },
+    { teamMemberIds: [MEMBER], from: '2026-10-19T00:00:00.000Z', to: '2026-10-26T00:00:00.000Z' },
+  );
+  assert.equal(week.members.length, 1, 'one named member, one group');
+  assert.equal(week.members[0].teamMemberId, MEMBER);
+  assert.equal(week.members[0].appointments.length, 2, 'both Google events paint in the week');
+  for (const row of week.members[0].appointments) {
+    assert.ok(String(row.sourceKey).startsWith(`gcal:${CAL}:`), 'the row keeps its calendar origin');
+  }
 });
 
 test('a Google-side edit is visible locally after one pull', async (t) => {

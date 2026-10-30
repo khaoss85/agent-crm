@@ -983,6 +983,26 @@ test('the offer panel names the quote after its opportunity, with the state in I
   assert.ok(!text.includes('approved'), 'the raw English state is never shown');
 });
 
+test('the opportunity-fallback offer line reads the name with its Italian stage, never the bare name', async () => {
+  // Voce cc525cd6a3c5 (review head 02e64495, P2): no quotes, one staged
+  // opportunity. The item shape below is exactly what profile.js emits for a
+  // stage-only opportunity row (status carried over from stage).
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', name: 'Pacchetto sede' }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Pacchetto sede · proposta'),
+    'the fallback offer line reads with its Italian stage');
+  assert.ok(!text.includes('proposal'), 'the raw English stage is never shown');
+});
+
 test('an unreadable quotes section reads unavailable in Italian, never a confirmed no-offer', async () => {
   const mount = await renderCard(stubClient({
     profile: {

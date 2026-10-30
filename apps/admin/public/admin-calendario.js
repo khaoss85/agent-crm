@@ -8,9 +8,11 @@
 //
 // Honest states, never a blank screen: when the appointments package is not
 // composed the week panel says so (the route answers 404 and the nav voice
-// names the story); when no member is named the week asks for at least one
-// (a week for nobody would answer with the whole team's bookings); when
-// nothing is held the week shows seven empty days, not an error. The human
+// names the story); the team is the space roster when it reads, auto-listed
+// with its week on mount — the typed filter stays only while the roster is
+// unread, and a week for nobody is never answered with everyone's bookings;
+// when nothing is held the week shows seven empty days, not an error. With
+// no calendar connected the panel says so and points at Profilo. The human
 // confirms every booking: propose plans, confirm creates, and a slot click
 // only ever proposes — the confirm click is always the operator's own.
 //
@@ -361,11 +363,21 @@ export function createCalendarioView(deps) {
 
   const state = {
     memberFilter: '',
+    /** True while the filter holds the roster auto-fill nobody edited yet:
+     * a later roster refusal clears it back to the honest prompt instead of
+     * keeping names the space no longer lists. Any keystroke or toggle
+     * click is the operator's own choice and clears it. */
+    autoTeam: false,
     /** Deselected opaque member ids: their events stay loaded but hidden (C11). @type {Array<string>} */
     hiddenMembers: [],
     /** Organization team (`GET /api/spine/memberships` items), or null when
-     * unread or refused: the card then keeps its opaque named toggles. @type {any} */
+     * unread or refused: the card then keeps its typed-name fallback. @type {any} */
     members: null,
+    /** Connected-calendar state from `GET /api/profile` (the same shape the
+     * Profilo screen reads): null while unknown, else {connected}.
+     * Only a positive `connected` calendar counts — anything else is the
+     * honest "not connected" the week panel links to Profilo for. */
+    calendar: null,
     weekKeys: romeWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
@@ -503,12 +515,51 @@ export function createCalendarioView(deps) {
    * repaints only while the calendar is still mounted (same guard as the
    * profile read below).
    */
+  /**
+   * The connected-calendar state behind the week (backlog:0533362e8efe):
+   * the same `GET /api/profile` answer the Profilo screen reads, reduced
+   * to the calendar connector. Only status `connected` counts — a revoked,
+   * error or missing calendar is "not connected", and an unreadable profile
+   * stays unknown (null): the week keeps its old behavior instead of
+   * crying wolf about a link the operator may already have.
+   */
+  async function loadCalendar() {
+    try {
+      const answer = await client.request('/api/profile');
+      const items = answer?.connections?.available === true && Array.isArray(answer.connections.items)
+        ? answer.connections.items
+        : null;
+      const calendar = Array.isArray(items)
+        ? items.find((entry) => entry && entry.connector === 'calendar')
+        : null;
+      // Only the connector status travels: the account is the Profilo
+      // screen's own line, and this panel never prints provider data.
+      state.calendar = items === null ? null : { connected: calendar?.status === 'connected' };
+    } catch {
+      state.calendar = null;
+    }
+    if (mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
+
   async function loadMembers() {
     const token = ++memberToken;
     try {
       const answer = await client.request('/api/spine/memberships');
       if (token !== memberToken) return;
       state.members = Array.isArray(answer?.items) ? answer.items : [];
+      // The roster is the team: with nobody named yet, list the whole
+      // space and load its week at once — no typing (backlog:0533362e8efe).
+      // A named filter is the operator's own choice and is never overwritten.
+      const subjects = state.members
+        .filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
+        .map((member) => member.subject);
+      if (!state.autoTeam && parseMemberFilter(state.memberFilter).length === 0 && subjects.length > 0) {
+        state.memberFilter = [...new Set(subjects)].join(', ');
+        state.autoTeam = true;
+        if (mount.querySelector('.cal-wrap') !== null) renderAll();
+        void loadWeek([...new Set(subjects)]);
+        return;
+      }
     } catch (error) {
       if (token !== memberToken) return;
       // Fail-soft UI, but a failure nobody can diagnose blocks review
@@ -526,10 +577,16 @@ export function createCalendarioView(deps) {
       }
       // A failed reload repaints too: without it the card would keep
       // showing the previous roster and its Italian roles instead of
-      // falling back to the opaque named toggles (same mount guard as
+      // falling back to the named toggles (same mount guard as
       // the success path, so a late answer never paints over another
-      // screen sharing the mount).
+      // screen sharing the mount). An auto-filled roster is not the
+      // operator's choice: it clears back to the honest prompt, while a
+      // typed filter stays — the operator named those people themselves.
       state.members = null;
+      if (state.autoTeam) {
+        state.memberFilter = '';
+        state.autoTeam = false;
+      }
       if (mount.querySelector('.cal-wrap') !== null) renderAll();
       return;
     }
@@ -706,24 +763,34 @@ export function createCalendarioView(deps) {
     nav.appendChild(today);
     nav.appendChild(renderNewMenu());
     head.appendChild(nav);
+    // The team comes from the space roster when it is known
+    // (backlog:0533362e8efe): no text field, the toggles below are the
+    // team. The typed filter stays only while the roster is unread —
+    // the fallback that keeps the week reachable when the list refuses.
     const filterRow = el(doc, 'div', { className: 'cal-filter' });
-    const input = el(doc, 'input', { attrs: { type: 'text', name: 'members', placeholder: 'Persone del team: marco, sara' } });
-    input.value = state.memberFilter;
-    input.addEventListener('input', () => { state.memberFilter = String(input.value ?? ''); });
-    const show = el(doc, 'button', { className: 'primary small', text: 'Mostra settimana' });
-    show.addEventListener('click', () => {
-      state.memberFilter = String(input.value ?? '');
-      const members = parseMemberFilter(state.memberFilter);
-      if (members.length === 0) {
-        state.week = null;
-        state.weekError = 'Indica almeno una persona del team: la settimana di nessuno resterebbe vuota.';
-        renderAll();
-        return;
-      }
-      void loadWeek(members);
-    });
-    filterRow.appendChild(input);
-    filterRow.appendChild(show);
+    if (state.members === null) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'members', placeholder: 'Persone del team: marco, sara' } });
+      input.value = state.memberFilter;
+      input.addEventListener('input', () => {
+        state.memberFilter = String(input.value ?? '');
+        state.autoTeam = false;
+      });
+      const show = el(doc, 'button', { className: 'primary small', text: 'Mostra settimana' });
+      show.addEventListener('click', () => {
+        state.memberFilter = String(input.value ?? '');
+        state.autoTeam = false;
+        const members = parseMemberFilter(state.memberFilter);
+        if (members.length === 0) {
+          state.week = null;
+          state.weekError = 'Indica almeno una persona del team: la settimana di nessuno resterebbe vuota.';
+          renderAll();
+          return;
+        }
+        void loadWeek(members);
+      });
+      filterRow.appendChild(input);
+      filterRow.appendChild(show);
+    }
     state.filterRow = filterRow;
     const box = el(doc, 'div');
     box.appendChild(head);
@@ -772,7 +839,9 @@ export function createCalendarioView(deps) {
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: 'Nomina le persone del team sopra: qui compaiono come interruttori per filtrare la settimana.',
+        text: state.members === null
+          ? 'Nomina le persone del team sopra: qui compaiono come interruttori per filtrare la settimana.'
+          : 'Nello spazio non risulta ancora nessuna persona: quando il titolare invita il team, la settimana si riempie da sé.',
       }));
       return panel;
     }
@@ -797,6 +866,9 @@ export function createCalendarioView(deps) {
         toggle.appendChild(el(doc, 'span', { className: 'ui-hint', text: row.role }));
       }
       toggle.addEventListener('click', () => {
+        // A toggle click is the operator's own choice: the roster auto-fill
+        // no longer owns the filter from here on.
+        state.autoTeam = false;
         const current = parseMemberFilter(state.memberFilter);
         if (!current.includes(row.id)) {
           // A roster member nobody named yet: list them and load their week,
@@ -858,9 +930,33 @@ export function createCalendarioView(deps) {
    * each day head with its column, so the narrow-screen stack (heads above
    * their day, hours hidden) needs no extra markup.
    */
+  /**
+   * The connect notice (backlog:0533362e8efe): with no calendar connected
+   * the page says so in plain words and points at Profilo — the only place
+   * a connection is made — instead of leaving an empty week. It paints
+   * above the grid whenever the profile positively reports no connection;
+   * an unreadable profile stays silent (unknown is not "not connected").
+   */
+  function renderConnectNotice() {
+    if (state.calendar === null || state.calendar.connected) return null;
+    const notice = el(doc, 'div', { className: 'notice' });
+    notice.appendChild(el(doc, 'p', {
+      text: 'Il calendario di Google non è collegato: la settimana mostra solo gli appuntamenti presi qui. Collegalo dal Profilo per vedere anche quelli del calendario.',
+    }));
+    const go = uiButton(doc, {
+      variant: 'secondary', small: true, label: 'Vai al Profilo',
+      attrs: { type: 'button' },
+    });
+    go.addEventListener('click', () => navigate('#/profilo'));
+    notice.appendChild(go);
+    return notice;
+  }
+
   function renderWeek() {
     const panel = el(doc, 'div', { className: 'panel cal-week' });
     panel.appendChild(el(doc, 'h2', { text: 'Settimana del team' }));
+    const notice = renderConnectNotice();
+    if (notice) panel.appendChild(notice);
     if (state.weekError) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: state.weekError }));
       return panel;
@@ -1758,9 +1854,13 @@ export function createCalendarioView(deps) {
 
   async function render() {
     renderAll();
-    // The roster arrives beside the week and enriches the Team card once it
-    // lands; its failure is silent by design (opaque toggles stay).
+    // The roster arrives beside the week and becomes the team once it
+    // lands (auto-fill plus week load inside loadMembers); its failure is
+    // silent by design (the typed filter stays). The connection state
+    // arrives the same way and only adds the Profilo notice when the
+    // profile positively reports no connected calendar.
     void loadMembers();
+    void loadCalendar();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
   }
