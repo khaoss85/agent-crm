@@ -538,8 +538,31 @@ export function createCatalogView(deps) {
    * re-validates everything fail-closed. The form stays manual-only in
    * shape: provider rows are never created here, so Stripe keeps nothing
    * to read here either.
+   * @param {Set<unknown>} knownProductIds product ids already on screen
+   * before this submission: only a row that is both new and a full match
+   * of the submitted fields can reconcile an uncertain outcome, since the
+   * create route keeps no replay protection and SKUs may repeat.
    */
-  function renderCreateForm() {
+  /**
+   * Whether a freshly reloaded row can stand in for this creation: a full
+   * match of every submitted field on the single one-time flat component
+   * this form creates. The caller also requires the row to be new since
+   * the table loaded; a matching code alone never reconciles.
+   * @param {any} row @param {{sku: string, name: string, category: string | null, currency: string, unit: string | null, cents: number}} submitted
+   */
+  function reconcilesSubmission(row, submitted) {
+    if (row.sku !== submitted.sku || row.name !== submitted.name) return false;
+    if ((row.category ?? null) !== submitted.category) return false;
+    if ((row.unit ?? null) !== submitted.unit) return false;
+    const offers = Array.isArray(row.offers) ? row.offers : [];
+    if (offers.length !== 1 || offers[0].currency !== submitted.currency) return false;
+    const components = Array.isArray(offers[0].components) ? offers[0].components : [];
+    return components.length === 1
+      && components[0].pricingModel === 'flat_fee'
+      && components[0].flatAmountCents === submitted.cents;
+  }
+
+  function renderCreateForm(knownProductIds) {
     const wrap = el('div', 'catalog-create-wrap');
     const openButton = el('button', 'catalog-create', 'Aggiungi prodotto');
     const formBox = el('div', 'catalog-create-form');
@@ -574,6 +597,16 @@ export function createCatalogView(deps) {
         const cents = parseEuroToCents(fields.price.value);
         const unit = fields.unit.value.trim();
         const currency = fields.currency.value.trim();
+        // Declared outside the try so the catch can reconcile against the
+        // same submission (a const inside try is invisible in catch).
+        const submitted = {
+          sku,
+          name,
+          category: category === '' ? null : category,
+          currency,
+          unit: unit === '' ? null : unit,
+          cents,
+        };
         if (name === '' || sku === '') {
           formError.textContent = 'Nome e codice sono obbligatori.';
           return;
@@ -603,9 +636,9 @@ export function createCatalogView(deps) {
               body: {
                 sku,
                 name,
-                category: category === '' ? null : category,
+                category: submitted.category,
                 currency,
-                unit: unit === '' ? null : unit,
+                unit: submitted.unit,
                 components: [{
                   key: 'prezzo',
                   label: 'Prezzo',
@@ -623,17 +656,25 @@ export function createCatalogView(deps) {
             // An uncertain outcome (the creation POST may have committed
             // before its response was lost) never offers a blind retry: the
             // create route has no replay protection, so a second Conferma
-            // would create a duplicate product. Reconcile first — when the
-            // row with this code is already there, treat it as created;
-            // otherwise say so and keep Conferma disabled until the operator
-            // reloads and checks.
+            // would create a duplicate product. Reconcile first — only a row
+            // that is both new since this table loaded and a full match of
+            // the submitted fields (name, code, category, price, unit,
+            // currency) counts as this creation; a matching code alone never
+            // does, since SKUs may repeat. Anything else stays locked until
+            // the operator reloads and checks.
             if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
               let reconciled = false;
               try {
                 const reloaded = await client.request(`/api/catalog/products?limit=${LIST_LIMIT}`);
                 const rows = Array.isArray(reloaded?.products) ? reloaded.products : [];
-                reconciled = rows.some((row) => row && typeof row === 'object' && row.sku === sku);
-              } catch {
+                reconciled = rows.some((row) => row && typeof row === 'object'
+                  && typeof row.productId === 'string'
+                  && !knownProductIds.has(row.productId)
+                  && reconcilesSubmission(row, submitted));
+              } catch (reloadError) {
+                if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                  console.warn('bo-catalog reconcile unreadable:', reloadError instanceof Error ? reloadError.name : 'unknown');
+                }
                 reconciled = false;
               }
               if (reconciled) {
@@ -722,8 +763,8 @@ export function createCatalogView(deps) {
     }
     const summary = table.summary ?? {};
     page.appendChild(renderStripeBlock(summary));
-    page.appendChild(renderCreateForm());
     const loaded = table.products;
+    page.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId))));
 
     const filters = el('div', 'catalog-filters');
     const categoryInput = el('input');

@@ -793,3 +793,45 @@ test('acceptance 4: rows imported from a non-Stripe source are operator-managed 
     'converted revisions land on the manual book, never the provider book',
   );
 });
+
+test('a re-sync never rewrites taken-over rows, products or offers', async (t) => {
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  const first = await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  assert.equal(first.ok, true, 'the import syncs');
+
+  const yoga = (await app.listCatalogProducts({})).products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+  // The operator takes the row over: deactivate, rename, reprice.
+  await app.setManualProductActive({ productId: yoga.productId, active: false }, ACTOR);
+  await app.updateManualProduct({ productId: yoga.productId, name: 'Corso Yoga serale' }, ACTOR);
+  const repriced = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [yoga.offers[0].offerId],
+    offers: [{ name: 'Corso Yoga', components: [MANUAL_COMPONENT] }],
+  }, ACTOR);
+  assert.equal(repriced.offers[0].unchanged, false, 'the reprice converts the offer');
+  const before = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+
+  // The unchanged provider catalog re-syncs: taken-over rows are skipped,
+  // never rewritten back to provider values.
+  const second = await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  assert.equal(second.ok, true, 'the re-sync succeeds');
+  assert.ok(second.counts.takeoverSkipped > 0, 'the sync reports the skipped takeover');
+  assert.equal(second.counts.versionsCreated, 0, 'no new product version from the skipped sync');
+  assert.equal(second.counts.offersRevised, 0, 'no provider revision replaces manual prices');
+
+  const after = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+  assert.equal(after.name, 'Corso Yoga serale', 'the sync keeps the operator name');
+  assert.equal(after.active, false, 'the sync keeps the operator active flag');
+  assert.deepEqual(
+    after.offers.map((offer) => offer.offerId),
+    before.offers.map((offer) => offer.offerId),
+    'the offer chain does not move under the re-sync',
+  );
+  assert.equal(
+    after.offers[0].components[0].flatAmountCents,
+    MANUAL_COMPONENT.flatAmountCents,
+    'the operator price survives the re-sync',
+  );
+});

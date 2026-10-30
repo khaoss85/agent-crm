@@ -804,13 +804,27 @@ test('Aggiungi prodotto stays available once Stripe is connected', async () => {
 test('an uncertain creation reconciles the created row instead of retrying blindly', async () => {
   // The create route has no replay protection, so a second Conferma after a
   // lost response would create a duplicate product. On COMMIT_OUTCOME_UNKNOWN
-  // the view re-reads the catalog: the row with this code is already there,
-  // so it renders as created with a single attempt.
+  // the view re-reads the catalog: a NEW row (not on screen before) carrying
+  // every submitted field reconciles, so it renders as created with a single
+  // attempt.
   const created = { ...MANUAL_TABLE.products[0], productId: 'p9', sku: 'PACCHETTO-5', name: 'Pacchetto 5 lezioni' };
   const reconciled = { products: [...MANUAL_TABLE.products, created], summary: MANUAL_TABLE.summary };
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient({ tables: { '': MANUAL_TABLE, 'limit=200': reconciled } });
+  // The initial load shows the table without the new row; only the reload
+  // after the uncertain outcome carries it, so it reads as new.
+  const base = stubClient({ tables: { '': MANUAL_TABLE } });
+  let loads = 0;
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
+        loads += 1;
+        if (loads > 1) return reconciled;
+      }
+      return base.request(path, options);
+    },
+  };
   let attempts = 0;
   const submissions = {
     async submit() {
@@ -824,7 +838,8 @@ test('an uncertain creation reconciles the created row instead of retrying blind
   clickButton(mount, 'Aggiungi prodotto');
   fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
   fillCreateField(mount, 'Codice', 'PACCHETTO-5');
-  fillCreateField(mount, 'Prezzo', '10.00');
+  fillCreateField(mount, 'Categoria', 'pacchetti');
+  fillCreateField(mount, 'Prezzo', '99.00');
   clickButton(mount, 'Rivedi');
   clickButton(mount, 'Conferma');
   await flush();
@@ -832,6 +847,38 @@ test('an uncertain creation reconciles the created row instead of retrying blind
   assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
   assert.ok(!mount.textContent.includes('Esito incerto'), 'no uncertain warning when the row reconciles');
   assert.ok(mount.textContent.includes('Pacchetto 5 lezioni'), 'the created row renders as created');
+});
+
+test('an uncertain creation with only the code matching stays locked', async () => {
+  // SKUs may repeat, so a pre-existing row with the submitted code but
+  // different details never reconciles an uncertain outcome: the form stays
+  // locked instead of closing on a row this submission did not create.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': MANUAL_TABLE } });
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Lezioni serali');
+  fillCreateField(mount, 'Codice', 'YOGA-10');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(mount.textContent.includes('Esito incerto'), 'a code-only match never reconciles');
+  const yes = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(yes, 'the confirm button is still there');
+  assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
 });
 
 test('an uncertain creation without the row stays locked instead of duplicating', async () => {

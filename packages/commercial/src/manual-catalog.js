@@ -180,6 +180,19 @@ export function isStripeSource(provider) {
 }
 
 /**
+ * Whether a row is still owned by its price source. Taken-over rows
+ * (`sourceKind: 'internal'`, `provider: 'manual'`) are operator-managed.
+ * The catalog sync reuses this exact derivation, so the write guard and
+ * the sync never disagree about ownership.
+ * @param {{sourceKind?: unknown, provider?: unknown} | null} row
+ */
+export function isProviderOwned(row) {
+  const provider = row?.provider ?? 'unknown';
+  return row?.sourceKind === 'provider'
+    || (row?.sourceKind === undefined && typeof provider === 'string' && provider !== MANUAL_PROVIDER);
+}
+
+/**
  * The price-source guard: Stripe-owned rows are read-only for manual
  * writers. Any other provider row (a static import with no live sync) is
  * operator-managed — the caller takes it over (see the module header).
@@ -187,8 +200,7 @@ export function isStripeSource(provider) {
  */
 function requireManageableRow(row, what) {
   const provider = row?.provider ?? 'unknown';
-  const providerOwned = row?.sourceKind === 'provider'
-    || (row?.sourceKind === undefined && typeof provider === 'string' && provider !== MANUAL_PROVIDER);
+  const providerOwned = isProviderOwned(row);
   if (providerOwned && isStripeSource(provider)) {
     throw new AppError(
       `${what} is owned by price source "${typeof provider === 'string' ? provider : 'unknown'}": provider prices are read-only — change them at the source and re-sync`,

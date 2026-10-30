@@ -12,7 +12,7 @@ import {
   requireAmount,
 } from '../../core/index.js';
 import { requireCurrency, validatePriceComponent } from './money.js';
-import { isUnchangedCommercial, normalizeRowFields } from './manual-catalog.js';
+import { MANUAL_PROVIDER, isProviderOwned, isUnchangedCommercial, normalizeRowFields } from './manual-catalog.js';
 
 /**
  * Catalog synchronization (ADR-016): pull a provider's normalized catalog into
@@ -309,6 +309,7 @@ export function createCatalogSync({ database, events, modules, commercial, confi
             unchanged: 0,
             deactivated: 0,
             ineligibleOffers: 0,
+            takeoverSkipped: 0,
           };
           const products = service(names.product);
           const versions = service(names.productVersion);
@@ -347,6 +348,8 @@ export function createCatalogSync({ database, events, modules, commercial, confi
 
           /** @type {Map<string, {product: any, versionId: string}>} */
           const productByKey = new Map();
+          /** Source keys the operator took over: the sync writes neither the row nor its offers. */
+          const takenOver = new Set();
           for (const incoming of catalog.products) {
             const commercialData = {
               sku: incoming.sku,
@@ -359,6 +362,17 @@ export function createCatalogSync({ database, events, modules, commercial, confi
             };
             const sourceFingerprint = computeDefinitionFingerprint(commercialData);
             const existing = (await products.listWhere({ sourceKey: incoming.sourceKey }))[0];
+            if (existing && !isProviderOwned(existing)) {
+              // Taken over into manual management: the operator owns the
+              // description and the active flag, so the sync writes neither.
+              // The row stays linked for its offers, which the offer loop
+              // skips below through the same set.
+              takenOver.add(incoming.sourceKey);
+              counts.takeoverSkipped += 1;
+              const currentVersion = existing.currentVersionId ? await versions.get(existing.currentVersionId) : null;
+              productByKey.set(incoming.sourceKey, { product: existing, versionId: currentVersion?.id ?? null });
+              continue;
+            }
             if (!existing) {
               const product = await products.createManaged(
                 { sourceKey: incoming.sourceKey, sourceKind: 'provider', provider: provider.name, externalId: incoming.externalId, active: incoming.active },
@@ -440,6 +454,14 @@ export function createCatalogSync({ database, events, modules, commercial, confi
             const sourceFingerprint = computeDefinitionFingerprint(declared);
             const revisions = await offers.listWhere({ logicalKey: incoming.sourceKey });
             const current = revisions.sort((a, b) => b.revision - a.revision)[0];
+            if (takenOver.has(incoming.productSourceKey) || (current && current.provider === MANUAL_PROVIDER)) {
+              // The operator owns this product or price chain (a reprice
+              // converts imported offers to manual revisions under the same
+              // logical key): the sync never revises manual prices back to
+              // provider values.
+              counts.takeoverSkipped += 1;
+              continue;
+            }
             if (current && current.sourceFingerprint === sourceFingerprint && current.active === incoming.active) {
               counts.unchanged += 1;
               if (!incoming.quoteEligible) counts.ineligibleOffers += 1;
