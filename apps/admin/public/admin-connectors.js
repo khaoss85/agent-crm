@@ -27,6 +27,7 @@
 
 import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { googleConnectionsCard } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** The three guided steps, in order. */
@@ -314,6 +315,7 @@ export function createConnectorsView(deps) {
     loadError: null,
     /** @type {any} */ flow: null,
     busyControls: /** @type {Array<any>} */ ([]),
+    /** @type {any} */ google: null,
   };
 
   const setBusy = (busy) => {
@@ -680,6 +682,10 @@ export function createConnectorsView(deps) {
     mount.appendChild(el(doc, 'h2', undefined, 'Connettori'));
     mount.appendChild(el(doc, 'p', 'bo-muted',
       'Collega un connettore in 3 passi: autorizza, scegli cosa sincronizzare, fatto.'));
+    // Google Calendar and Gmail connect per person through the pilot's
+    // Google consent, not through the channels package: they show here
+    // whether or not the channels are composed.
+    if (state.google !== null) mount.appendChild(state.google.node);
 
     const spaceRow = el(doc, 'p', 'bo-field');
     spaceRow.appendChild(el(doc, 'span', undefined, 'Spazio: '));
@@ -725,6 +731,10 @@ export function createConnectorsView(deps) {
   }
 
   return {
-    render: async () => { await load(); render(); },
+    render: async () => {
+      state.google = googleConnectionsCard({ doc, client: deps.client });
+      await load();
+      render();
+    },
   };
 }

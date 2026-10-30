@@ -369,7 +369,7 @@ test('summary totals the filtered set per currency without mixing', async () => 
   assert.ok(text.includes('25 USD'), `alice USD total stays separate (${text})`);
 });
 
-test('forecast is labeled as a stima and weights open stages by probability', async () => {
+test('forecast shows the month title, won plus 60% of open, and the risk name (C4/C5)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
@@ -377,12 +377,75 @@ test('forecast is labeled as a stima and weights open stages by probability', as
 
   const box = forecastBox(mount);
   assert.ok(box, 'a forecast section exists');
-  assert.match(box.textContent, /stima/i, 'the forecast is labeled as an estimate');
+  const months = [
+    'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+    'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
+  ];
+  assert.ok(
+    box.textContent.includes(`✦ Previsione di ${months[new Date().getMonth()]}`),
+    `the title names the current month (${box.textContent})`,
+  );
+  // EUR: won 100_000 at face value + 60% of open (100_000 + 50_000) = 190_000;
+  // USD: 60% of the 2_500 open demo = 1_500; lost stages never forecast.
+  assert.ok(box.textContent.includes('1.900 €'), `EUR forecast total (${box.textContent})`);
+  assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
+  assert.ok(
+    !box.textContent.includes('Il rischio più alto'),
+    `no global risk ranking across currencies (Codex P2 on #467) (${box.textContent})`,
+  );
   assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
-  // discovery 100_000 @10% = 10_000 plus 50_000 @10% = 5_000 → EUR 150.00;
-  // demo USD 2_500 @30% = 750 → USD 7.50; won/lost stages never forecast.
-  assert.ok(box.textContent.includes('150 €'), `EUR weighted total (${box.textContent})`);
-  assert.ok(box.textContent.includes('7,50 USD'), `USD weighted total (${box.textContent})`);
+});
+
+test('forecast names the highest-value open offer when one currency is in play', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { owner: 'alice' }),
+      record('b', 'demo', { valueCents: 50_000, owner: 'bob' }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(
+    box.textContent.includes('Il rischio più alto è alice.'),
+    `the risk names the owner of the highest-value open offer (${box.textContent})`,
+  );
+});
+
+test('forecast with closed offers but no open ones shows totals and no risk line', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('d', 'won'), record('e', 'lost', { closeReason: 'No budget' })]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(box.textContent.includes('1.000 €'), `won value at face value (${box.textContent})`);
+  assert.ok(!box.textContent.includes('Il rischio più alto'), 'no risk line without open offers');
+});
+
+test('forecast with no valued offers stays honest and technical-text free', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery', { valueCents: undefined })]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(box.textContent.includes('Nessuna offerta da stimare'), `empty state (${box.textContent})`);
 });
 
 test('dropping a card posts the same move-stage action as the Move button', async () => {
@@ -682,8 +745,8 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Tutti i referenti',
     'Tutti gli stati',
     'Cerca offerta o cliente',
-    'Previsione · stima',
-    'Nessun valore aperto da stimare',
+    '✦ Previsione di ',
+    'Nessuna offerta da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
     "1 offerta di un'altra pipeline (non mostrata).",
@@ -905,4 +968,107 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   assert.equal(closeOf('a')?.textContent, 'chiusura 2026-11-20', 'C13: close line follows `chiusura <data>`');
   assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
   assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
+});
+
+function newOfferMenu(mount) {
+  return mount.findAll('div').find((node) => node.getAttribute('data-newoffer') === 'menu');
+}
+
+function newOfferButton(menu) {
+  return menu.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+}
+
+function newOfferVoices(menu) {
+  return menu.findAll('button').filter((node) => node.getAttribute('data-voice') !== null);
+}
+
+test('Nuova offerta button sits under the description with the two prototype voices (C3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  assert.ok(menu, 'a Nuova offerta menu exists');
+  const button = newOfferButton(menu);
+  assert.ok(button.textContent.includes('Nuova offerta'), 'the green button is labelled');
+  assert.ok((button.getAttribute('class') ?? '').includes('ui-btn-cta'), 'the button uses the green cta variant');
+  assert.equal(button.getAttribute('aria-haspopup'), 'menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false', 'the menu starts closed');
+  const panel = menu.findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('ui-add-menu'));
+  assert.ok(panel, 'the voices live in the shared add menu');
+  assert.ok((panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu starts hidden');
+
+  button.dispatch('click');
+  assert.equal(button.getAttribute('aria-expanded'), 'true', 'the button opens the menu');
+  assert.ok(!(panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu is visible');
+
+  const voices = newOfferVoices(menu);
+  assert.equal(voices.length, 2, 'exactly the two prototype voices');
+  const ai = voices.find((voice) => voice.getAttribute('data-voice') === 'ai');
+  const manual = voices.find((voice) => voice.getAttribute('data-voice') === 'manual');
+  assert.ok(ai.textContent.includes("Crea con l'AI"), 'AI voice title');
+  assert.ok(ai.textContent.includes('Es. «cucina per Giulia, 27.500 €»'), 'AI voice example');
+  assert.ok(manual.textContent.includes('Compila manualmente'), 'manual voice title');
+  assert.ok(manual.textContent.includes('Titolo, cliente, valore e scadenza'), 'manual voice line');
+
+  // Escape closes the menu; a second Escape while closed stays closed.
+  panel.dispatch('keydown', { key: 'Escape' });
+  assert.ok((panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'Escape closes the menu');
+  assert.equal(button.getAttribute('aria-expanded'), 'false');
+});
+
+test("Crea con l'AI opens the assistant on the pipeline screen (C3)", async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const asked = [];
+  const board = createPipelineBoard({
+    doc, mount, client: stubClient([record('a', 'discovery')]),
+    onAskAi: (screenId, description) => { asked.push({ screenId, description }); },
+  });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'ai').dispatch('click');
+  assert.equal(asked.length, 1, 'the assistant opens once');
+  assert.equal(asked[0].screenId, 'pipeline', 'on the pipeline screen');
+  assert.ok(typeof asked[0].description === 'string' && asked[0].description.length > 0, 'with a description');
+  const panel = menu.findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('ui-add-menu'));
+  assert.ok((panel.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'picking a voice closes the menu');
+});
+
+test('Compila manualmente navigates to the governed create form (C3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const board = createPipelineBoard({
+    doc, mount, client: stubClient([record('a', 'discovery')]),
+    navigate: (hash) => { navigated.push(hash); },
+  });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
+  assert.deepEqual(navigated, ['#/modules/opportunity/new'], 'the module create form, not a local write');
+});
+
+test('Nuova offerta voices stay honest without shell seams (C3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const board = createPipelineBoard({
+    doc, mount, client: stubClient([record('a', 'discovery')]),
+    toast: (message) => { toasts.push(String(message)); },
+  });
+  await board.renderBoard('b2b-sales');
+
+  const menu = newOfferMenu(mount);
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'ai').dispatch('click');
+  assert.ok(toasts.some((message) => message.includes('⌘K')), 'AI voice names the AI bar instead of faking it');
+  newOfferButton(menu).dispatch('click');
+  newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
+  assert.ok(toasts.some((message) => message.includes('manuale')), 'manual voice says it cannot create instead of writing');
 });

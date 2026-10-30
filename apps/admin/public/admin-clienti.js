@@ -80,6 +80,19 @@ const shortDay = (value) => {
   const date = new Date(raw.length === 10 ? `${raw}T12:00:00Z` : raw);
   return Number.isNaN(date.getTime()) ? raw.slice(0, 10) : ROME_DAY.format(date).replace('.', '');
 };
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' });
+const ROME_HM = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' });
+/**
+ * The prototype's quando: «oggi 10:20» for a contact of today (Rome), the
+ * short day otherwise; the raw value only when it does not parse.
+ */
+const contactWhen = (value, todayKey = ROME_DAY_KEY.format(new Date())) => {
+  const raw = String(value ?? '');
+  const date = new Date(raw.length === 10 ? `${raw}T12:00:00Z` : raw);
+  if (Number.isNaN(date.getTime())) return raw.slice(0, 10);
+  if (ROME_DAY_KEY.format(date) === todayKey) return `oggi ${ROME_HM.format(date)}`;
+  return ROME_DAY.format(date).replace('.', '');
+};
 const channelLabel = (system) => CHANNEL_LABELS[String(system ?? '').toLowerCase()] ?? String(system ?? 'canale');
 
 /**
@@ -535,9 +548,23 @@ export function createCustomerListView(deps) {
         return node;
       }
       case 'ultimo': {
+        // Prototype "04 Clienti": the channel mark, the message excerpt, then
+        // the mono line «<canale> · <quando>». Calls carry no text, so the
+        // excerpt stays out there; every value travels as text, never HTML.
         if (!row.lastContactAt) return el('span', 'bo-muted', 'mai');
-        const channel = row.lastContactChannel ? `${channelLabel(row.lastContactChannel)} · ` : '';
-        return el('span', 'bo-clienti-when', `${channel}${shortDay(row.lastContactAt)}`);
+        const wrap = el('span');
+        const channel = String(row.lastContactChannel ?? '');
+        if (channel !== '') {
+          const mark = el('span', `bo-clienti-tile bo-tile-${channel.toLowerCase()}`, channelMark(channel));
+          mark.setAttribute('title', channelLabel(channel));
+          mark.setAttribute('aria-label', channelLabel(channel));
+          wrap.appendChild(mark);
+        }
+        if (typeof row.lastContactText === 'string' && row.lastContactText !== '') {
+          wrap.appendChild(el('span', undefined, row.lastContactText));
+        }
+        wrap.appendChild(el('span', 'bo-clienti-when', `${channelLabel(channel)} · ${contactWhen(row.lastContactAt)}`));
+        return wrap;
       }
       case 'prossimo': {
         if (!row.nextStep) return el('span', 'bo-muted', '—');

@@ -366,11 +366,39 @@ export function createCustomerCardView(deps) {
     // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
     // label and a role label, never a bare id or UUID. The English cluster
     // note stays in the API response, never on screen.
+    // Voce 59def6cb805d (C10): one row per observed channel — the badge the
+    // prototype paints plus the handle the outside world called this customer.
+    // Only systems with an Italian label read on screen (the enrichment-only
+    // `google-contacts` system and UUID handles never do); a sync direction
+    // (`↔ sincronizzato` / `← in entrata`) is NOT printed here because the
+    // profile carries no connector direction — that needs the
+    // channel-connection exposure of arch fetta 3, noted in the PR.
     box.appendChild(el('h4', undefined, 'Identità collegate'));
     const cluster = profile?.canonicalIdentity;
     if (!cluster) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
       return;
+    }
+    const rawIdentities = Array.isArray(profile?.externalIdentities) ? profile.externalIdentities : [];
+    const channelRows = rawIdentities.filter((row) => {
+      const system = String(row?.system ?? '').toLowerCase();
+      if (ownLabel(CHANNEL_LABELS, system) === undefined) return false;
+      if (typeof row?.externalId !== 'string' || row.externalId.trim() === '') return false;
+      return !isUuid(row.externalId);
+    });
+    const systems = new Set(channelRows.map((row) => String(row.system).toLowerCase()));
+    box.appendChild(el('p', 'bo-muted',
+      channelRows.length === 0
+        ? 'nessun canale osservato'
+        : `${systems.size} ${systems.size === 1 ? 'canale' : 'canali'}`));
+    for (const row of channelRows) {
+      const system = String(row.system).toLowerCase();
+      const line = el('p', 'bo-scheda-identity');
+      line.setAttribute('data-channel', system);
+      const known = Object.hasOwn(CARD_CHANNEL_MARKS, system);
+      line.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? system : 'other'}`, known ? CARD_CHANNEL_MARKS[system] : '·'));
+      line.appendChild(el('span', undefined, ` ${channelLabel(system)} · ${String(row.externalId)}`));
+      box.appendChild(line);
     }
     const members = Array.isArray(cluster.members) ? cluster.members : [];
     box.appendChild(el('p', 'bo-muted',
@@ -396,6 +424,18 @@ export function createCustomerCardView(deps) {
         line.appendChild(el('span', 'bo-muted', ` (${when ? `${who} il ${when}` : who})`));
       }
       box.appendChild(line);
+    }
+    // Voce 59def6cb805d (C11): the prototype's violet note under the
+    // identities — the union motivation the decider recorded, never an
+    // invented one. One note per distinct recorded reason; with no linked
+    // union, or no recorded reason, no note is shown.
+    if (cluster.linked === true) {
+      const reasons = [...new Set(members
+        .map((member) => (typeof member?.reason === 'string' ? member.reason.trim() : ''))
+        .filter((reason) => reason !== ''))];
+      for (const reason of reasons) {
+        box.appendChild(el('p', 'bo-scheda-union-note', `✦ ${reason}`));
+      }
     }
   }
 

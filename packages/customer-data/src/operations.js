@@ -581,12 +581,16 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
     let lastContactAt = null;
     let lastContactChannel = null;
+    // The preview is the latest message body read above — calls name no
+    // body field, so a latest call (or a non-string body) previews as null.
+    let lastContactText = null;
     for (const row of myMessages) {
       const time = Date.parse(String(row?.occurredAt ?? ''));
       if (!Number.isFinite(time)) continue;
       if (lastContactAt === null || time > Date.parse(String(lastContactAt))) {
         lastContactAt = row.occurredAt;
         lastContactChannel = row.channel ?? null;
+        lastContactText = typeof row?.body === 'string' ? row.body : null;
       }
     }
     const renewalWithinDays = evidenceReads.subscriptions.rows.filter(mine).some((row) => (
@@ -598,7 +602,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     return shapeCustomerRow({ contact, company }, {
       identitiesBySubject,
       statusBySubject,
-      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel }]]),
+      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {
         valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
       }]]),

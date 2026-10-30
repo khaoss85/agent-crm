@@ -297,8 +297,9 @@ export function previewTitleFor(previewFor, units = []) {
  * Entries with a `channel` reuse the guided `#/connettori` flow for that
  * channel; the channel must be a CONNECTOR_CATALOG member (pinned by test),
  * otherwise the card falls back to the hub link instead of a deep link.
- * Google Calendar and Stripe live on their own screens, so their cards link
- * there (DECISION to be confirmed: `#/calendario` and `#/quotes`).
+ * Google Calendar connects per person on Profilo, where its Collega lives;
+ * Stripe lives on its own screen, so their cards link
+ * there (`#/profilo` and `#/quotes`, DECISION to be confirmed for Stripe).
  */
 export const CONNETTORI_SECTIONS = Object.freeze([
   {
@@ -340,7 +341,7 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['Ogni invio del form crea o aggiorna un contatto.', 'di Accordo · ← in entrata']),
       },
       {
-        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: '#/calendario',
+        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: '#/profilo',
         lines: Object.freeze(['Appuntamenti del team e disponibilità condivisa.', 'di Google · ↔ bidirezionale']),
       },
       {
