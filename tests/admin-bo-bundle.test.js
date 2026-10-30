@@ -4,17 +4,24 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compileFunction } from 'node:vm';
-import { adminBundleWiring, buildAdminBundle, renderHtml } from '../scripts/admin-bundle.js';
-import { staticCacheControl } from '../apps/server/src/index.js';
+import {
+  adminBundleWiring,
+  buildAdminBundle,
+  getAdminBundle,
+  resetAdminBundleCache,
+} from '../scripts/admin-bundle.js';
+import { readStaticFile, staticCacheControl } from '../apps/server/src/index.js';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createAdminShellMount } from '../packages/app/src/admin-mount.js';
 
 /**
  * Backoffice first paint (backlog:3f74a2f296ec): the shell used to load 30+
  * ES modules one by one (`app.js` importing `admin-*.js` in a cascade), so
- * the first `/bo` paint waited ~20 s on a cold connection. The shell now
- * ships one content-hashed bundle plus a branded loading splash: first
- * access is `index.html` (no-store) + 1 JS + 1 CSS, both immutable.
+ * the first `/bo` paint waited ~20 s on a cold connection. The server now
+ * generates one content-hashed bundle at serve time and keeps it in memory:
+ * first access is `index.html` (no-store) + 1 JS + 1 CSS, both immutable.
+ * Only the sources live in git — a checked-in bundle would go stale on
+ * every merge to main with many design PRs in parallel.
  */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -24,21 +31,20 @@ const publicFile = (name) => readFileSync(join(PUBLIC_DIR, name), 'utf8');
 
 const scriptSrcs = (html) => [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/g)].map((match) => match[1]);
 
-test('the committed bundle matches the sources (build is fresh)', () => {
-  const built = buildAdminBundle();
-  const { indexHtml, loginHtml } = renderHtml(built);
-  assert.equal(publicFile('index.html'), indexHtml, 'index.html names the current bundle');
-  assert.equal(publicFile('login.html'), loginHtml, 'login.html names the current stylesheet');
-  assert.equal(publicFile(built.jsName), built.jsBody, `${built.jsName} is current`);
-  assert.equal(publicFile(built.cssName), built.cssSource, `${built.cssName} is current`);
-  const stale = readdirSync(PUBLIC_DIR).filter(
-    (name) => /^bo(-styles)?-[0-9a-f]+\.(js|css)$/.test(name) && name !== built.jsName && name !== built.cssName,
+test('the bundle is generated at serve time, never committed', () => {
+  const generated = readdirSync(PUBLIC_DIR).filter(
+    (name) => /^bo(-styles)?-[0-9a-f]+\.(js|css)$/.test(name),
   );
-  assert.deepEqual(stale, [], 'no stale hashed bundle files');
-  assert.match(built.jsName, /^bo-[0-9a-f]{12}\.js$/, 'bundle name carries its content hash');
-  assert.match(built.cssName, /^bo-styles-[0-9a-f]{12}\.css$/, 'stylesheet name carries its content hash');
-  assert.ok(built.order.includes('app.js'), 'the entry is in the bundle');
-  assert.ok(built.order.length > 30, `the cascade is gone from the wire (${built.order.length} modules bundled)`);
+  assert.deepEqual(generated, [], 'no generated bundle files on disk');
+  assert.match(publicFile('index.html'), /<script\s+type="module"\s+src="app\.js"><\/script>/, 'index.html names the source entry');
+  assert.match(publicFile('index.html'), /<link\s+rel="stylesheet"\s+href="styles\.css"\s*\/>/, 'index.html names the source stylesheet');
+  resetAdminBundleCache();
+  const bundle = getAdminBundle(PUBLIC_DIR);
+  assert.match(bundle.jsName, /^bo-[0-9a-f]{12}\.js$/, 'bundle name carries its content hash');
+  assert.match(bundle.cssName, /^bo-styles-[0-9a-f]{12}\.css$/, 'stylesheet name carries its content hash');
+  assert.ok(bundle.order.includes('app.js'), 'the entry is in the bundle');
+  assert.ok(bundle.order.length > 30, `the cascade is gone from the wire (${bundle.order.length} modules bundled)`);
+  assert.equal(getAdminBundle(PUBLIC_DIR), bundle, 'the build is cached in memory, rebuilt never per request');
 });
 
 test('the bundle is one self-contained scope with no surviving module syntax', () => {
@@ -66,19 +72,23 @@ test('every bundled import resolves to a provided export (no undefined at load)'
   }
 });
 
-test('first access loads at most 3 JS files, all versioned', () => {
-  const { indexHtml } = renderHtml(buildAdminBundle());
-  const srcs = scriptSrcs(indexHtml);
+test('first access loads at most 3 JS files, all versioned', async () => {
+  resetAdminBundleCache();
+  const found = await readStaticFile(PUBLIC_DIR, '/index.html');
+  assert.ok(found, 'the entry is served');
+  const srcs = scriptSrcs(found.data.toString('utf8'));
   assert.ok(srcs.length >= 1 && srcs.length <= 3, `first access loads ${srcs.length} JS file(s), not 30+`);
   for (const src of srcs) {
     assert.match(src, /^bo-[0-9a-f]+\.js$/, `first-access script is versioned: ${src}`);
   }
-  assert.ok(!indexHtml.includes('app.js'), 'the module cascade entry is not referenced');
-  assert.ok(!/admin-[a-z-]+\.js/.test(indexHtml), 'no per-module script survives in the shell HTML');
+  assert.ok(!found.data.toString('utf8').includes('app.js'), 'the module cascade entry is not referenced');
+  assert.ok(!/admin-[a-z-]+\.js/.test(found.data.toString('utf8')), 'no per-module script survives in the shell HTML');
 });
 
-test('the shell never serves a blank page: a branded splash paints before the bundle', () => {
-  const { indexHtml } = renderHtml(buildAdminBundle());
+test('the shell never serves a blank page: a branded splash paints before the bundle', async () => {
+  resetAdminBundleCache();
+  const found = await readStaticFile(PUBLIC_DIR, '/');
+  const indexHtml = found.data.toString('utf8');
   assert.match(indexHtml, /id="bo-splash"/, 'the splash element ships in the served HTML');
   assert.match(indexHtml, /Accordo/, 'the splash carries the brand');
   assert.match(indexHtml, /Caricamento/, 'the splash says it is loading, in Italian');
@@ -94,7 +104,8 @@ test('the shell never serves a blank page: a branded splash paints before the bu
 });
 
 test('staticCacheControl: hashed bundles immutable, HTML no-store, rest unchanged', () => {
-  const built = buildAdminBundle();
+  resetAdminBundleCache();
+  const built = getAdminBundle(PUBLIC_DIR);
   assert.equal(staticCacheControl('/'), 'no-store');
   assert.equal(staticCacheControl('/index.html'), 'no-store');
   assert.equal(staticCacheControl('/bo/'), 'no-store');
@@ -108,7 +119,8 @@ test('staticCacheControl: hashed bundles immutable, HTML no-store, rest unchange
 });
 
 test('served /bo answers carry the cache policy, the splash and one script', async () => {
-  const built = buildAdminBundle();
+  resetAdminBundleCache();
+  const built = getAdminBundle(PUBLIC_DIR);
   const app = createAccordoApp({ dbPath: ':memory:' });
   try {
     const mount = createAdminShellMount(app, { basePath: '/bo' });
@@ -121,12 +133,27 @@ test('served /bo answers carry the cache policy, the splash and one script', asy
     const bundle = await mount.handle({ method: 'GET', path: `/bo/${built.jsName}`, headers: {} });
     assert.equal(bundle.status, 200);
     assert.equal(bundle.headers['cache-control'], 'public, max-age=31536000, immutable');
+    assert.equal(bundle.body.toString('utf8'), built.jsBody, 'the bundle bytes are the in-memory build');
     const css = await mount.handle({ method: 'GET', path: `/bo/${built.cssName}`, headers: {} });
     assert.equal(css.status, 200);
     assert.equal(css.headers['cache-control'], 'public, max-age=31536000, immutable');
     const login = await mount.handle({ method: 'GET', path: '/bo/login.html', headers: {} });
     assert.equal(login.status, 200);
     assert.equal(login.headers['cache-control'], 'no-store');
+  } finally {
+    app.close();
+  }
+});
+
+test('a hashed name from a previous deploy is a 404, not a stale bundle', async () => {
+  resetAdminBundleCache();
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  try {
+    const mount = createAdminShellMount(app, { basePath: '/bo' });
+    const stale = await mount.handle({ method: 'GET', path: '/bo/bo-000000000000.js', headers: {} });
+    assert.equal(stale.status, 404);
+    const staleCss = await mount.handle({ method: 'GET', path: '/bo/bo-styles-000000000000.css', headers: {} });
+    assert.equal(staleCss.status, 404);
   } finally {
     app.close();
   }
