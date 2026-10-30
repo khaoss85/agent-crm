@@ -41,7 +41,7 @@ const BOARD_LIMIT = 200;
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiButton, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian month names for the `✦ Previsione di <mese>` title (C4). A static
@@ -96,7 +96,7 @@ function matchesFilters(record, filters) {
 }
 
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
@@ -268,6 +268,9 @@ export function createPipelineBoard(deps) {
       class: 'lede',
       text: "Apri una card per vedere com'è composta e costruire l'offerta. Trascinala per cambiarne lo stato.",
     }));
+    // C3: the green `Nuova offerta` button sits under the description,
+    // like the prototype. The violet forecast stays beside the title.
+    titleBox.appendChild(renderNewOfferMenu(pipeline));
     // Honest bounds: the board loads at most BOARD_LIMIT records, and records
     // not on this pipeline are excluded by documented behavior, not hidden.
     if (records.length >= BOARD_LIMIT) {
@@ -316,6 +319,72 @@ export function createPipelineBoard(deps) {
     }
     mount.appendChild(panel);
     return panel;
+  }
+
+  /**
+   * `Nuova offerta` menu button (C3): the green button under the page
+   * description, opening the prototype's two voices. The buttons are the
+   * shared `ui-add-option` voices (MEM_ACC_REUSE: same pattern as the
+   * Clienti add menu and the shell `+ Nuovo` menu), positioned by the
+   * generic `ui-conn-addwrap` / `ui-conn-addmenu` pair — no screen CSS.
+   * Both voices do real work: `Crea con l'AI` opens the BO-F0-04
+   * assistant on the pipeline screen (or says where the AI bar is when
+   * the shell offers no entry), `Compila manualmente` navigates to the
+   * governed module create form. Nothing is previewed or written here.
+   */
+  function renderNewOfferMenu(pipeline) {
+    const wrap = el(doc, 'div', { class: 'ui-conn-addwrap', attrs: { 'data-newoffer': 'menu' } });
+    const button = uiButton(doc, {
+      variant: 'cta',
+      attrs: { type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-action': 'new-offer' },
+    });
+    button.appendChild(el(doc, 'span', { text: 'Nuova offerta' }));
+    button.appendChild(uiIcon(doc, 'chevron'));
+    const menu = el(doc, 'div', { class: 'ui-add-menu ui-conn-addmenu hidden', attrs: { role: 'menu' } });
+    const isHidden = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+    const sync = () => button.setAttribute('aria-expanded', isHidden() ? 'false' : 'true');
+    const close = () => {
+      menu.setAttribute('class', 'ui-add-menu ui-conn-addmenu hidden');
+      sync();
+    };
+    button.addEventListener('click', () => {
+      menu.setAttribute('class', isHidden() ? 'ui-add-menu ui-conn-addmenu' : 'ui-add-menu ui-conn-addmenu hidden');
+      sync();
+    });
+    const closeOnEscape = (event) => {
+      if (event?.key === 'Escape') close();
+    };
+    button.addEventListener('keydown', closeOnEscape);
+    menu.addEventListener('keydown', closeOnEscape);
+    const aiVoice = uiAddOption(doc, {
+      kind: 'ai', title: "Crea con l'AI", line: 'Es. «cucina per Giulia, 27.500 €»',
+      attrs: { 'data-voice': 'ai' },
+    });
+    aiVoice.addEventListener('click', () => {
+      close();
+      if (typeof deps.onAskAi === 'function') {
+        deps.onAskAi('pipeline', 'Voglio creare un\u2019offerta: ti incollo i dettagli.');
+      } else {
+        toast('Apri la barra AI (⌘K) e descrivi l\u2019offerta che vuoi creare.');
+      }
+    });
+    const manualVoice = uiAddOption(doc, {
+      kind: 'manual', title: 'Compila manualmente', line: 'Titolo, cliente, valore e scadenza',
+      attrs: { 'data-voice': 'manual' },
+    });
+    manualVoice.addEventListener('click', () => {
+      close();
+      if (typeof deps.navigate === 'function') {
+        deps.navigate(`#/modules/${encodeURIComponent(pipeline.module)}/new`);
+      } else {
+        toast('La creazione manuale non è disponibile da qui.');
+      }
+    });
+    menu.appendChild(aiVoice);
+    menu.appendChild(manualVoice);
+    wrap.appendChild(button);
+    wrap.appendChild(menu);
+    return wrap;
   }
 
   /** View toggle + search + Referente/Stato/date filters + Azzera filtri. */
