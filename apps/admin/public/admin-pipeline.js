@@ -12,9 +12,13 @@
 // Search, Referente (owner), Stato (pipeline stage) and expected-close date
 // bounds filter both views client-side; "Azzera filtri" resets them. The
 // summary (count + per-currency totals) and the forecast always describe the
-// filtered set. The forecast is a declared heuristic — value weighted by the
-// stage probability of open stages — labeled as a stima, never a commitment.
+// filtered set. The forecast is a declared heuristic — won and paid at face
+// value plus 60% of the open ones — labeled as a stima, never a commitment.
 //
+// C4/C5 forecast: `✦ Previsione di <mese>` over the filtered set — won and
+// paid record values at face value plus 60% of the open ones, per currency
+// (currencies are never summed). The risk line names the owner or customer of
+// the highest-value open offer. A stima, never a commitment.
 // Cards move through the same server `move-stage` action as the Move button,
 // including drag-and-drop onto a column: the drop posts { toStage, fromStage }
 // with the actor audited server-side (the action runtime records it). A drop
@@ -38,6 +42,15 @@ const BOARD_LIMIT = 200;
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+
+/**
+ * Italian month names for the `✦ Previsione di <mese>` title (C4). A static
+ * list keeps the title deterministic without ICU locale data.
+ */
+const MONTHS_IT = [
+  'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+  'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
+];
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
@@ -461,35 +474,63 @@ export function createPipelineBoard(deps) {
   }
 
   /**
-   * Heuristic forecast over open stages: value weighted by stage
-   * probability, per currency. Labeled as a stima — an estimate from the
-   * configured probabilities, never a commitment.
+   * Forecast over the filtered set (C4/C5): won and paid records at face
+   * value plus 60% of the open ones, per currency — currencies are never
+   * summed. The risk line names the owner or customer of the highest-value
+   * open offer. Labeled as a stima, never a commitment. Class hooks
+   * (`pipeline-forecast`, `forecast-total`) are unchanged: the supervisor
+   * owns the visual dress (ANSWER 28/10).
    */
   function renderForecast(pipeline, visible) {
     const box = el(doc, 'div', { class: 'pipeline-forecast', attrs: { 'data-forecast': 'estimate' } });
-    box.appendChild(el(doc, 'h3', { text: '✦ Previsione · stima' }));
-    const probabilityOf = new Map(pipeline.stages.map((stage) => [stage.key, stage.probability]));
+    box.appendChild(el(doc, 'h3', { text: `✦ Previsione di ${MONTHS_IT[new Date().getMonth()]}` }));
+    const closedKeys = new Set(
+      pipeline.stages.filter((stage) => stage.type === 'won' || stage.type === 'paid').map((stage) => stage.key),
+    );
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open').map((stage) => stage.key));
-    const weighted = new Map();
+    const closed = new Map();
+    const waiting = new Map();
+    const openCurrencies = new Set();
+    let riskiest = null;
     for (const record of visible) {
-      if (!openKeys.has(record.pipelineStage)) continue;
       if (!Number.isSafeInteger(record.valueCents)) continue;
-      const probability = probabilityOf.get(record.pipelineStage);
-      if (typeof probability !== 'number' || probability < 0 || probability > 100) continue;
-      const share = Math.round((record.valueCents * probability) / 100);
-      weighted.set(record.currency, (weighted.get(record.currency) ?? 0) + share);
+      if (closedKeys.has(record.pipelineStage)) {
+        closed.set(record.currency, (closed.get(record.currency) ?? 0) + record.valueCents);
+      } else if (openKeys.has(record.pipelineStage)) {
+        waiting.set(record.currency, (waiting.get(record.currency) ?? 0) + record.valueCents);
+        openCurrencies.add(record.currency);
+        if (!riskiest || record.valueCents > riskiest.valueCents) riskiest = record;
+      }
     }
-    if (!weighted.size) {
-      box.appendChild(el(doc, 'p', { class: 'hint', text: 'Nessun valore aperto da stimare — stima euristica dalle probabilità di fase, non un impegno.' }));
+    const total = new Map();
+    for (const [currency, amount] of closed.entries()) {
+      total.set(currency, (total.get(currency) ?? 0) + amount);
+    }
+    for (const [currency, amount] of waiting.entries()) {
+      total.set(currency, (total.get(currency) ?? 0) + Math.round(amount * 0.6));
+    }
+    if (!total.size) {
+      box.appendChild(el(doc, 'p', { class: 'hint', text: 'Nessuna offerta da stimare — non un impegno.' }));
       return box;
     }
-    for (const [currency, total] of [...weighted.entries()].sort()) {
-      box.appendChild(el(doc, 'p', { class: 'forecast-total', text: formatAmount(total, currency) }));
+    for (const [currency, amount] of [...total.entries()].sort()) {
+      box.appendChild(el(doc, 'p', { class: 'forecast-total', text: formatAmount(amount, currency) }));
     }
     box.appendChild(el(doc, 'p', {
       class: 'hint',
-      text: 'Stima euristica dalle probabilità di fase — non un impegno.',
+      text: 'Vinte e pagate, più il 60% di quelle in attesa — stima, non un impegno.',
     }));
+    // No global ranking across currencies: raw cents are not comparable
+    // without exchange rates, so the risk line shows only when every valued
+    // open offer shares one currency (Codex P2 on #467).
+    const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
+      ? riskiest.owner
+      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
+        ? riskiest.companyName
+        : null;
+    if (riskName) {
+      box.appendChild(el(doc, 'p', { class: 'hint', text: `Il rischio più alto è ${riskName}.` }));
+    }
     return box;
   }
 
