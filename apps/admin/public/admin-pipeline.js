@@ -48,6 +48,18 @@ function dayOf(value) {
 }
 
 /**
+ * Two-letter initials of the referente name for the card badge, like the
+ * prototype (C15): the badge shows the initials, the accessible title the
+ * full name. Same word rule as `initialsOf` in admin-clienti.js (first
+ * letter of the first two lettered words, `·` when none), kept local like
+ * the other views — no cross-view import for a presentation mark.
+ */
+function ownerInitials(name) {
+  const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
+  return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
+/**
  * @param {Record<string, any>} record
  * @param {{q: string, owner: string, stage: string, closeFrom: string, closeTo: string}} filters
  */
@@ -613,12 +625,19 @@ export function createPipelineBoard(deps) {
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
     card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
+    // BO-F6-10 C15: the referente badge shows the initials; the accessible
+    // title carries the full name. Class hook unchanged (supervisor owns CSS).
     if (typeof record.owner === 'string' && record.owner) {
-      card.appendChild(el(doc, 'p', { class: 'card-owner', text: record.owner }));
+      card.appendChild(el(doc, 'p', {
+        class: 'card-owner',
+        text: ownerInitials(record.owner),
+        attrs: { title: record.owner },
+      }));
     }
+    // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
     const closeDay = dayOf(record.expectedCloseDate);
     if (closeDay) {
-      card.appendChild(el(doc, 'p', { class: 'card-close', text: closeDay }));
+      card.appendChild(el(doc, 'p', { class: 'card-close', text: `chiusura ${closeDay}` }));
     }
     if (stage.type === 'lost' && record.closeReason) {
       card.appendChild(el(doc, 'p', { class: 'card-reason', text: String(record.closeReason) }));

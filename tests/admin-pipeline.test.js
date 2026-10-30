@@ -870,3 +870,39 @@ test('Azzera filtri appears only while a filter or search is active (C11)', asyn
   assert.match(summaryText(mount), /5 offerte/, 'reset restores the full board');
   assert.equal(resetButton(), undefined, 'reset disappears once filters are clear');
 });
+
+test('kanban cards follow the prototype: chiusura label and referente initials badge (C13, C15)', async () => {
+  // BO-F6-10 (backlog:31bed527): la card mostra l'etichetta `chiusura <data>`
+  // e il badge del referente con le iniziali; il nome intero resta nel
+  // titolo accessibile. Nessun controllo nuovo, solo testo.
+  const records = [
+    record('a', 'discovery', {
+      name: 'Cucina per Giulia',
+      companyName: 'Rossi',
+      owner: 'Maria Rossi',
+      expectedCloseDate: '2026-11-20T00:00:00.000Z',
+    }),
+    record('b', 'demo', { owner: 'maria', expectedCloseDate: '2026-12-01T00:00:00.000Z' }),
+    record('c', 'demo', { owner: 'pluto' }),
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+
+  const ownerOf = (id) => mount.findAll('p')
+    .filter((n) => (n.getAttribute('class') ?? '') === 'card-owner')
+    .find((n) => n.textContent === ({ a: 'MR', b: 'M', c: 'P' })[id]);
+  const cardA = ownerOf('a');
+  assert.ok(cardA, 'card a shows the referente initials');
+  assert.equal(cardA.getAttribute('title'), 'Maria Rossi', 'the badge title names the referente');
+  assert.equal(ownerOf('b').getAttribute('title'), 'maria', 'single-word names keep their title');
+  assert.equal(ownerOf('c').textContent, 'P', 'single-word names badge the first letter');
+
+  const closeOf = (id) => mount.findAll('div')
+    .find((n) => n.getAttribute('data-record') === id)
+    .findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'card-close');
+  assert.equal(closeOf('a')?.textContent, 'chiusura 2026-11-20', 'C13: close line follows `chiusura <data>`');
+  assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
+  assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
+});
