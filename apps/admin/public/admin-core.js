@@ -657,6 +657,7 @@ export function customerDataDeferredLine(deferred) {
   const itemLabels = Object.freeze({
     'global search': 'ricerca globale',
     'saved views': 'viste salvate',
+    'physical merge': 'unione delle schede',
     'physical merge or consolidation': 'unione delle schede',
     'retention and erasure workflow': 'conservazione e cancellazione',
   });

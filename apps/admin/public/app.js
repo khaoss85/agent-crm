@@ -837,6 +837,7 @@ function shellScreenFor(target) {
     case 'customer-profile':
     case 'customer-card': return { id: 'clienti', label: 'Clienti' };
     case 'customer-import': return { id: 'clienti', label: 'Importazione clienti' };
+    case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
@@ -1045,6 +1046,10 @@ async function route() {
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
   if (target.view !== 'customer-data') clientiListView.invalidate();
+  // backlog:273de560: the form paints straight into the shared mount, so a
+  // save still in flight must die when the operator leaves the form —
+  // otherwise its late response clears the screen just opened.
+  if (target.view !== 'customer-new') customerFormView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
     // Space home (BO-F3-04): the Oggi screen, never the demo. The
@@ -1082,7 +1087,7 @@ async function route() {
       (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
-      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card' || target.view === 'customer-import') && link.getAttribute('href') === '#/customer-data')
+      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card' || target.view === 'customer-import' || target.view === 'customer-new') && link.getAttribute('href') === '#/customer-data')
       || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);

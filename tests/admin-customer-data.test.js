@@ -95,9 +95,12 @@ test('every limit renders as content, in the ordinary state', async () => {
   for (const sentence of CUSTOMER_DATA_DISCLAIMERS) {
     assert.ok(text.includes(sentence), `missing verbatim limit: ${sentence.slice(0, 50)}…`);
   }
-  // The deferred track has one home, and it is named.
-  assert.ok(text.includes('Customer Data Operations v2'));
-  assert.ok(text.includes('global search'));
+  // The deferred track has one home, and it reads in Italian: the import is
+  // an operator tool, not a developer surface (backlog:273de560).
+  assert.ok(text.includes('Altri strumenti in arrivo: ricerca globale, viste salvate, unione delle schede.'));
+  assert.ok(text.includes('ricerca globale'));
+  assert.ok(!text.includes('Customer Data Operations v2'), 'no English program name on the surface');
+  assert.ok(!text.includes('global search'), 'no English roadmap item on the surface');
   // The server still describes the import in English (META.import): the
   // view renders its own Italian copy and never the raw server text.
   assert.ok(!text.includes(META.import.preview), 'the raw server preview text never renders');
@@ -127,8 +130,10 @@ test('a preview states plainly that it wrote nothing, and shows every receipt', 
   const text = mount.textContent;
   assert.ok(text.includes('L\u2019anteprima non ha scritto nulla.'), text.slice(0, 200));
   assert.ok(text.includes('riga 0'), 'each receipt is rendered');
-  assert.ok(text.includes('INVALID_EMAIL'), 'including the rejected one');
-  assert.ok(text.includes('rejected'), 'and its outcome');
+  assert.ok(text.includes('email non valida'), 'including the rejected one, in Italian');
+  assert.ok(text.includes('scartata'), 'and its outcome, in Italian');
+  assert.ok(!text.includes('INVALID_EMAIL'), 'no raw reason code on the surface');
+  assert.ok(!text.includes('rejected'), 'no raw outcome on the surface');
 
   const posted = client.calls.filter((call) => call.method === 'POST');
   assert.equal(posted.length, 1);
@@ -250,7 +255,8 @@ test('a duplicate candidate offers a human decision, never an automatic one', as
 test('the data-quality queue records a decision and says the finding is kept', async () => {
   const client = stubClient();
   const mount = await render(client);
-  assert.ok(mount.textContent.includes('invalid_email'));
+  assert.ok(mount.textContent.includes('email non valida'), 'the kind reads in Italian');
+  assert.ok(!mount.textContent.includes('invalid_email'), 'no raw kind code on the surface');
   assert.ok(mount.textContent.includes('La segnalazione e le sue prove restano.'));
 
   const govern = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'govern-data-quality-issue');
