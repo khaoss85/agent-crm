@@ -518,6 +518,7 @@ export function createCatalogView(deps) {
       return;
     }
     const summary = table.summary ?? {};
+    const stripeConnected = stripeIsConnected(summary);
     page.appendChild(renderStripeBlock(summary));
     const loaded = table.products;
 
@@ -609,7 +610,11 @@ export function createCatalogView(deps) {
       const switchCell = el('div', 'catalog-cell-switch');
       row.appendChild(switchCell);
       const manual = product.source === 'manual' && product.priceReadOnly !== true;
-      if (product.priceReadOnly === true) {
+      // Provider prices stay read-only text (the write path refuses them
+      // with PROVIDER_PRICE_READONLY), but the "change it on Stripe" note
+      // only makes sense while a Stripe source is actually connected: with
+      // Stripe disconnected no row may promise a Stripe edit.
+      if (product.priceReadOnly === true && stripeConnected) {
         priceCell.appendChild(el('p', 'catalog-readonly', 'Sola lettura: si cambia su Stripe.'));
       }
       const offers = Array.isArray(product.offers) ? product.offers : [];
