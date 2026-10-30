@@ -7,9 +7,11 @@ import {
   CUSTOMER_PAGE_SIZES,
   CUSTOMER_SCAN_LIMIT,
   CUSTOMER_VIEWS,
+  LAST_CONTACT_PREVIEW_CHARS,
   applyCustomerListQuery,
   channelWordsIn,
   parseCustomerListQuery,
+  previewLastContactText,
   shapeCustomerRow,
 } from '../packages/customer-data/src/customers.js';
 
@@ -280,7 +282,7 @@ const matchShape = (rows, filters) => rows.filter((row) => Object.entries(filter
 }));
 
 /** A module map with exact-match reads and no writes: any write attempt throws. */
-function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], omit = [] }) {
+function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], omit = [] }) {
   const exact = (rows) => ({
     listWhere: async (filters) => matchShape(rows, filters),
     createManaged: async () => { throw new Error('the list writes nothing'); },
@@ -293,6 +295,8 @@ function fakeModules({ contacts, companies, identities = [], orders = [], opport
     ['opportunity', { service: exact(opportunities) }],
     ['work-task', { service: exact(tasks) }],
     ['call-signal', { service: exact(signals) }],
+    ['interaction-message', { service: exact(messages) }],
+    ['interaction-call', { service: exact(calls) }],
   ]);
   for (const name of omit) map.delete(name);
   return {
@@ -519,6 +523,78 @@ test('a view whose dependency is unreadable still answers without its count', as
   const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
   assert.ok(!('count' in byId['ricontattare-oggi']), 'no work-task read, no callback count');
   assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
+});
+
+/* --------------------------------- ultimo contatto: preview + quando --- */
+
+test('the preview keeps one short line, never the full body or a call', () => {
+  // backlog:22d4dd0f, C16: the Ultimo contatto cell shows the channel mark
+  // plus a short message excerpt. Calls carry no text, so a latest call (or
+  // no activity) previews as null — the view renders channel and date alone.
+  assert.equal(previewLastContactText('Ci vediamo domani per la prova?'), 'Ci vediamo domani per la prova?');
+  assert.equal(previewLastContactText('  prima riga\nseconda   riga  '), 'prima riga seconda riga');
+  assert.equal(previewLastContactText(''), null, 'empty bodies preview as nothing');
+  assert.equal(previewLastContactText('   \n  '), null, 'blank bodies preview as nothing');
+  assert.equal(previewLastContactText(null), null, 'a call names no body field');
+  assert.equal(previewLastContactText(undefined), null);
+  assert.equal(previewLastContactText(42), null, 'a non-string body never leaks through');
+  const exact = 'x'.repeat(LAST_CONTACT_PREVIEW_CHARS);
+  assert.equal(previewLastContactText(exact), exact, 'a body at the bound stays whole');
+  const long = `${'y'.repeat(LAST_CONTACT_PREVIEW_CHARS + 20)} tail`;
+  const preview = previewLastContactText(long);
+  assert.ok(preview.endsWith('…'), 'a long body truncates with an ellipsis');
+  assert.ok(preview.length <= LAST_CONTACT_PREVIEW_CHARS + 1, 'the truncated preview stays bounded');
+  assert.ok(!preview.includes('tail'), 'the truncation cuts, never keeps the tail');
+});
+
+test('a row carries the latest message excerpt beside channel and date', () => {
+  const withText = rowOf({}, {
+    ...baseReads(),
+    activityBySubject: new Map([['contact:c1', {
+      occurredAt: '2026-10-20T09:00:00.000Z', channel: 'whatsapp', text: 'Ci vediamo domani per la prova?',
+    }]]),
+  });
+  assert.equal(withText.lastContactAt, '2026-10-20T09:00:00.000Z');
+  assert.equal(withText.lastContactChannel, 'whatsapp');
+  assert.equal(withText.lastContactText, 'Ci vediamo domani per la prova?');
+  const callOnly = rowOf({}, {
+    ...baseReads(),
+    activityBySubject: new Map([['contact:c1', {
+      occurredAt: '2026-10-20T09:00:00.000Z', channel: 'phone', text: null,
+    }]]),
+  });
+  assert.equal(callOnly.lastContactText, null, 'a latest call previews as nothing, never an invented excerpt');
+  assert.equal(rowOf({}, baseReads()).lastContactText, null, 'no activity previews as nothing');
+});
+
+test('the operation previews the latest message body, never a call', async () => {
+  // backlog:22d4dd0f, C16: the server owns the excerpt; the view renders it.
+  const { contacts, companies, identities } = SCENE();
+  const message = {
+    id: 'm1', subjectResource: 'contact', subjectId: 'c1',
+    occurredAt: '2026-10-20T09:00:00.000Z', channel: 'whatsapp',
+    body: 'Ci vediamo domani per la prova gratuita?',
+  };
+  const call = {
+    id: 'k1', subjectResource: 'contact', subjectId: 'c1',
+    occurredAt: '2026-10-21T10:00:00.000Z', channel: 'phone',
+  };
+  const run = (extra) => listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities, ...extra }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const withMessage = (await run({ messages: [message] })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(withMessage.lastContactChannel, 'whatsapp');
+  assert.equal(withMessage.lastContactText, 'Ci vediamo domani per la prova gratuita?');
+  const withCall = (await run({ messages: [message], calls: [call] })).items
+    .find((item) => item.name === 'Guido Presti');
+  assert.equal(withCall.lastContactAt, '2026-10-21T10:00:00.000Z', 'the latest contact stays the call');
+  assert.equal(withCall.lastContactChannel, 'phone');
+  assert.equal(withCall.lastContactText, null, 'the newer call names no body, so no excerpt is invented');
+  const hostile = (await run({
+    messages: [{ ...message, id: 'm2', occurredAt: '2026-10-22T10:00:00.000Z', body: '<img src=x onerror=alert(1)>' }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(hostile.lastContactText, '<img src=x onerror=alert(1)>', 'the server keeps the text verbatim; escaping stays the view\u2019s');
 });
 
 test('a truncated subject scan names no per-view counts', async () => {
