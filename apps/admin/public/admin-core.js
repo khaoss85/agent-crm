@@ -316,6 +316,15 @@ export function parseModuleRoute(hash) {
     if (rawParts.some((part) => part === '') || rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'customer-import' };
   }
+  // New customer form: #/clienti/nuovo (backlog:273de560). "Compila
+  // manualmente" opens a customer form here, not the JSON import tool:
+  // the prototype's Clienti screen carries no import tool, and the import
+  // stays a separate tool on #/import-clienti.
+  if (rawParts.length && rawParts[0] === 'clienti') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length === 2 && rawParts[1] === 'nuovo') return { view: 'customer-new' };
+    return { view: 'invalid' };
+  }
   // Customer scheda route: #/customer-card/<resource>/<id> (BO-F1-06). The
   // three-column customer view, a read-only projection over the hub. Same
   // canonical discipline as the profile route above.
@@ -568,6 +577,99 @@ export function isNotComposedFailure(error) {
 export function isUnsupportedContractFailure(error) {
   const record = error !== null && typeof error === 'object' ? error : {};
   return record.code === 'UNSUPPORTED_CONTRACT';
+}
+
+/**
+ * Italian labels for the import receipts (backlog:273de560). The outcome and
+ * reason code sets are finite and server-declared; an unknown value renders
+ * as stored, never as a blank. The free-text server reason stays as-is: it
+ * is per-row diagnostic content, and translating it in the browser would be
+ * a guess, not a label.
+ */
+const CUSTOMER_IMPORT_OUTCOME_LABELS = Object.freeze({
+  accepted: 'accettata',
+  rejected: 'scartata',
+  skipped: 'da decidere',
+});
+
+/** @param {unknown} outcome */
+export function customerImportOutcomeLabel(outcome) {
+  const label = CUSTOMER_IMPORT_OUTCOME_LABELS[String(outcome ?? '')];
+  return typeof label === 'string' ? label : String(outcome ?? '');
+}
+
+const CUSTOMER_IMPORT_REASON_LABELS = Object.freeze({
+  MATCHED_EXISTING: 'scheda esistente ritrovata',
+  CREATED_RECORD: 'scheda creata',
+  AMBIGUOUS_CANDIDATES: 'schede simili da decidere',
+  INVALID_EMAIL: 'email non valida',
+  INVALID_DOMAIN: 'dominio non valido',
+  MISSING_REQUIRED_IDENTITY: 'manca chi è: serve email o azienda',
+  UNSAFE_VALUE: 'valore non ammesso',
+  DUPLICATE_WITHIN_BATCH: 'doppione nella stessa importazione',
+});
+
+/** @param {unknown} code */
+export function customerImportReasonLabel(code) {
+  const label = CUSTOMER_IMPORT_REASON_LABELS[String(code ?? '')];
+  return typeof label === 'string' ? label : String(code ?? '');
+}
+
+/** Italian resource words for the candidate pairs; unknown modules read raw. */
+const CUSTOMER_RESOURCE_LABELS = Object.freeze({
+  contact: 'contatto',
+  company: 'azienda',
+});
+
+/** @param {unknown} resource */
+export function customerResourceLabel(resource) {
+  const label = CUSTOMER_RESOURCE_LABELS[String(resource ?? '')];
+  return typeof label === 'string' ? label : String(resource ?? '');
+}
+
+/** Italian kind words for the data-quality queue; unknown kinds read raw. */
+const CUSTOMER_ISSUE_KIND_LABELS = Object.freeze({
+  missing_required_identity: 'manca chi è',
+  conflicting_external_identity: 'identità esterna in conflitto',
+  identity_conflict_windowed_scope: 'conflitto di identità',
+  invalid_email: 'email non valida',
+  invalid_domain: 'dominio non valido',
+  duplicate_candidate_open: 'possibile doppione aperto',
+  orphaned_reference: 'riferimento orfano',
+  unresolved_import_row: 'riga importata da decidere',
+});
+
+/** @param {unknown} kind */
+export function customerIssueKindLabel(kind) {
+  const label = CUSTOMER_ISSUE_KIND_LABELS[String(kind ?? '')];
+  return typeof label === 'string' ? label : String(kind ?? '');
+}
+
+/**
+ * The deferred-track line in Italian (backlog:273de560): the import screen
+ * is an operator tool, not a developer surface, so the program name and its
+ * roadmap items read in Italian. Unknown tracks or items render as stored,
+ * never as a blank.
+ * @param {{track?: unknown, items?: unknown}} [deferred]
+ */
+export function customerDataDeferredLine(deferred) {
+  const trackLabels = Object.freeze({ 'Customer Data Operations v2': 'strumenti dati futuri' });
+  const itemLabels = Object.freeze({
+    'global search': 'ricerca globale',
+    'saved views': 'viste salvate',
+    'physical merge or consolidation': 'unione delle schede',
+    'retention and erasure workflow': 'conservazione e cancellazione',
+  });
+  const rawItems = Array.isArray(deferred?.items) ? deferred.items : [];
+  const items = rawItems.map((item) => {
+    const label = itemLabels[String(item ?? '')];
+    return typeof label === 'string' ? label : String(item ?? '');
+  });
+  const track = trackLabels[String(deferred?.track ?? '')] ?? null;
+  if (items.length === 0) {
+    return track === null ? 'Altri strumenti in arrivo.' : `Altri strumenti in arrivo (${track}).`;
+  }
+  return `Altri strumenti in arrivo: ${items.join(', ')}.`;
 }
 
 export { IMMUTABLE_FIELDS };
