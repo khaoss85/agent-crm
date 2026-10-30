@@ -2,7 +2,7 @@
 
 import { NotFoundError, normalizeError } from '../../core/src/errors.js';
 import { createExecutionRunStore } from '../../core/src/execution-run-store.js';
-import { runIdempotentWrite, usesWriteOutcomes } from '../../core/src/write-outcome-runtime.js';
+import { boundedFailureCode, runIdempotentWrite, usesWriteOutcomes } from '../../core/src/write-outcome-runtime.js';
 
 /**
  * @typedef {{
@@ -61,6 +61,23 @@ export class WorkflowEngine {
       description: workflow.description,
       steps: workflow.steps.map((step) => step.name),
     }));
+  }
+
+  /**
+   * Trace bookkeeping must never replace the verdict it records. After a step
+   * fails, the enclosing SERIALIZABLE transaction is often already aborted,
+   * so the failure write itself can fail (25P02 masking the primary error as
+   * STORAGE_UNAVAILABLE): note it with its bounded code and let the original
+   * error out, per the review guideline on swallowed exceptions.
+   * @param {string} what
+   * @param {() => unknown} write
+   */
+  async #noteTraceFailure(what, write) {
+    try {
+      await write();
+    } catch (traceError) {
+      console.error(`[accordo] workflow trace ${what} write failed: ${boundedFailureCode(traceError)}`);
+    }
   }
 
   /** @param {string} name @param {any} input @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string}} [context] */
@@ -126,7 +143,7 @@ export class WorkflowEngine {
           await this.#runs.completeSpan({ spanId, output });
         } catch (error) {
           const normalized = normalizeError(error);
-          await this.#runs.failSpan({ spanId, error: normalized.message });
+          await this.#noteTraceFailure('span', () => this.#runs.failSpan({ spanId, error: normalized.message }));
           throw normalized;
         }
       }
@@ -154,7 +171,7 @@ export class WorkflowEngine {
           console.error(`[accordo] compensation failed in ${item.definition.name}: ${compensation.message}`);
         }
       }
-      await this.#runs.failRun({ runId, error: normalized.message, output: state });
+      await this.#noteTraceFailure('run', () => this.#runs.failRun({ runId, error: normalized.message, output: state }));
       normalized.details = {
         ...(normalized.details && typeof normalized.details === 'object' ? normalized.details : {}),
         workflowRunId: runId,

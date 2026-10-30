@@ -298,8 +298,33 @@ export class OpportunityService {
       ], where,
     };
     let claimed;
-    if (isSyncStorage(this.database)) claimed = this.database.storage.sync.execute(write);
-    else claimed = await storageMutate(this.database, 'opportunity_stage', async (tx) => tx.execute(write));
+    try {
+      if (isSyncStorage(this.database)) claimed = this.database.storage.sync.execute(write);
+      else claimed = await storageMutate(this.database, 'opportunity_stage', async (tx) => tx.execute(write));
+    } catch (error) {
+      // A pinned intent that loses the commit contest is decided, not
+      // retryable: the write-outcome envelope would otherwise retry this same
+      // run with a fresh read, re-basing an intent formed on a stage that is
+      // gone and committing a transition this request never evaluated (two
+      // terminal changes committing twice). A serialization or deadlock loss
+      // on this fenced claim always means a concurrent writer moved the row
+      // first, so the loser reports 409; a genuinely new intent needs a
+      // genuinely new request. The re-read is best-effort: the contest may
+      // have left this transaction aborted.
+      const transient = /** @type {any} */ (error)?.code === 'CONFLICT'
+        && /** @type {any} */ (error)?.details?.transient === true;
+      if (!transient) throw error;
+      let current = null;
+      try {
+        current = await Promise.resolve(this.get(id));
+      } catch {
+        current = null;
+      }
+      throw new ConflictError(
+        `Opportunity stage changed under this caller: ${from} → ${current?.stage ?? '?'} (wanted ${stage})`,
+        { from, to: stage, current: current?.stage ?? null },
+      );
+    }
     if (Number(claimed?.affectedRows ?? 0) !== 1) {
       const current = await Promise.resolve(this.get(id));
       throw new ConflictError(
