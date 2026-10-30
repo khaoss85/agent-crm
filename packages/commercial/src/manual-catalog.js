@@ -212,13 +212,15 @@ function requireManageableRow(row, what) {
 /**
  * Take a non-Stripe provider product over into manual management, so the
  * operator's edit is never silently rewritten by a later sync of that
- * provider. Stripe rows never reach here (the guard above refuses them);
- * manual rows are already managed and read back unchanged. The import's
- * external id stays on the row as provenance.
+ * provider. Eligibility is the same `isProviderOwned` derivation the guard
+ * and the sync use — including legacy rows stored without a sourceKind —
+ * so the three never disagree. Stripe rows never reach here (the guard
+ * above refuses them); manual rows are already managed and read back
+ * unchanged. The import's external id stays on the row as provenance.
  * @param {{applyManaged: (id: string, patch: Record<string, unknown>, context: unknown) => Promise<any>}} products
  */
 async function takeoverProviderProduct(products, product, context) {
-  if (product.sourceKind !== 'provider' || isStripeSource(product.provider)) return product;
+  if (!isProviderOwned(product) || isStripeSource(product.provider)) return product;
   return products.applyManaged(product.id, { sourceKind: 'internal', provider: MANUAL_PROVIDER }, context);
 }
 
@@ -533,7 +535,16 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
     let book;
     if (input.priceBookId !== undefined && input.priceBookId !== null) {
       book = await service(names.priceBook).get(String(input.priceBookId));
-      requireManageableRow(book, `Price book "${book.id}"`);
+      // An explicitly selected book is never a provider book: on main this
+      // refused with PROVIDER_PRICE_READONLY, and persisting manual
+      // products on a provider book would mix manual revisions into a
+      // provider source. setPrices converts instead; creation refuses.
+      if (isProviderOwned(book)) {
+        throw new AppError(
+          `Price book "${book.id}" is owned by price source "${typeof book.provider === 'string' ? book.provider : 'unknown'}": provider prices are read-only — change them at the source and re-sync`,
+          { code: PRICE_SOURCE_READONLY, status: 409 },
+        );
+      }
       if (book.currency !== currency) {
         throw new AppError(`Price book "${book.id}" is in ${book.currency}, the product declares ${currency}`, { code: 'CURRENCY_MISMATCH', status: 409 });
       }

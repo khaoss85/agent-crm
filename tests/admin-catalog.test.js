@@ -909,3 +909,97 @@ test('an uncertain creation without the row stays locked instead of duplicating'
   assert.ok(yes, 'the confirm button is still there');
   assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
 });
+
+test('an uncertain creation never reconciles a matching imported row', async () => {
+  // This form only creates manual rows: a reloaded row that matches every
+  // submitted field but is still owned by its import source is a
+  // pre-existing import, not this creation. Reconciling it would hide the
+  // uncertainty and the operator would never reload and check.
+  const imported = {
+    ...structuredClone(MANUAL_TABLE.products[0]),
+    productId: 'p9',
+    sku: 'PACCHETTO-5',
+    name: 'Pacchetto 5 lezioni',
+    source: 'presti-listino',
+    priceReadOnly: true,
+  };
+  const reloaded = { products: [...MANUAL_TABLE.products, imported], summary: MANUAL_TABLE.summary };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ tables: { '': MANUAL_TABLE } });
+  let loads = 0;
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
+        loads += 1;
+        if (loads > 1) return reloaded;
+      }
+      return base.request(path, options);
+    },
+  };
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Categoria', 'pacchetti');
+  fillCreateField(mount, 'Prezzo', '99.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(mount.textContent.includes('Esito incerto'), 'a matching imported row never reconciles');
+  const yes = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(yes, 'the confirm button is still there');
+  assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
+});
+
+test('an uncertain creation reloads with the table filters', async () => {
+  // knownProductIds only covers the filtered page the operator saw: the
+  // reconcile reloads with the same filters, so a filtered-out pre-existing
+  // row never reads as new.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ tables: { '': MANUAL_TABLE } });
+  const loads = [];
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
+        loads.push(path);
+      }
+      return base.request(path, options);
+    },
+  };
+  const submissions = {
+    async submit() {
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({ source: 'manual', category: 'pacchetti' });
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(loads.length, 2, 'the initial load plus one reconcile reload');
+  const reload = new URL(loads[1], 'http://admin.test');
+  assert.equal(reload.searchParams.get('source'), 'manual', 'the reconcile reload keeps the source filter');
+  assert.equal(reload.searchParams.get('category'), 'pacchetti', 'the reconcile reload keeps the category filter');
+  assert.equal(reload.searchParams.get('limit'), '200', 'the reconcile reload keeps the row limit');
+});

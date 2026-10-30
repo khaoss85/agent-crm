@@ -841,3 +841,61 @@ test('a re-sync never rewrites taken-over rows, products or offers', async (t) =
     'the operator price survives the re-sync',
   );
 });
+
+test('manual creation on an explicitly selected non-Stripe provider book refuses', async (t) => {
+  // Main refused any explicit provider book with PROVIDER_PRICE_READONLY;
+  // only setPrices converts provider offers onto the manual book. Creation
+  // on a provider book would mix manual revisions into a provider source.
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  const books = app.modules.get('price-book').service.listWhere({});
+  const providerBook = books.find((book) => book.sourceKind === 'provider');
+  assert.ok(providerBook, 'a non-Stripe provider book exists to prove the booking guard');
+  assert.equal(providerBook.currency, 'EUR', 'the fixture book matches the creation currency');
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'X', name: 'X', currency: 'EUR', priceBookId: providerBook.id, components: [MANUAL_COMPONENT] }, ACTOR),
+    (error) => error.code === 'PROVIDER_PRICE_READONLY',
+    'manual products never land on a provider book, Stripe or not',
+  );
+});
+
+test('takeover covers legacy provider rows read without a sourceKind', async (t) => {
+  // Databases written before the sourceKind column existed read provider
+  // rows back without it. The guard already treats that shape as
+  // provider-owned; the takeover must agree, or the edit leaves the row
+  // behind and the next sync rewrites it.
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  const yoga = (await app.listCatalogProducts({})).products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+
+  const products = app.modules.get('product').service;
+  const realGet = products.get.bind(products);
+  products.get = async (id) => {
+    const row = await realGet(id);
+    // Only the pre-takeover read is legacy-shaped: later reads in the same
+    // flow (e.g. applyManaged re-reading the row) see the taken-over row
+    // and pass through untouched.
+    if (id === yoga.productId && row.sourceKind === 'provider') {
+      const { sourceKind, ...legacy } = row;
+      assert.equal(sourceKind, 'provider', 'the fixture row starts provider-owned');
+      return legacy;
+    }
+    return row;
+  };
+  t.after(() => { products.get = realGet; });
+  const renamed = await app.updateManualProduct({ productId: yoga.productId, name: 'Corso Yoga serale' }, ACTOR);
+  assert.equal(renamed.unchanged, false, 'the edit on the legacy shape is real');
+  products.get = realGet;
+  const stored = products.listWhere({}).find((row) => row.id === yoga.productId);
+  assert.equal(stored.sourceKind, 'internal', 'the legacy row is taken over into manual management');
+  assert.equal(stored.provider, 'manual');
+
+  const second = await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  assert.equal(second.ok, true, 'the re-sync succeeds');
+  assert.ok(second.counts.takeoverSkipped > 0, 'the re-sync skips the taken-over legacy row');
+  const after = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+  assert.equal(after.name, 'Corso Yoga serale', 'the sync keeps the operator name on the legacy row');
+});

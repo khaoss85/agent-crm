@@ -542,15 +542,22 @@ export function createCatalogView(deps) {
    * before this submission: only a row that is both new and a full match
    * of the submitted fields can reconcile an uncertain outcome, since the
    * create route keeps no replay protection and SKUs may repeat.
+   * @param {{category?: string, active?: string, source?: string}} filters
+   * the filters the table was read with: the reconcile reloads with the
+   * same filters, so a filtered-out pre-existing row never reads as new.
    */
   /**
    * Whether a freshly reloaded row can stand in for this creation: a full
    * match of every submitted field on the single one-time flat component
-   * this form creates. The caller also requires the row to be new since
-   * the table loaded; a matching code alone never reconciles.
+   * this form creates, on a row the operator manages. The caller also
+   * requires the row to be new since the table loaded; a matching code
+   * alone never reconciles, and an imported or Stripe-owned row never does
+   * either — this form only creates manual rows, so a matching provider
+   * row is a pre-existing import, not this creation.
    * @param {any} row @param {{sku: string, name: string, category: string | null, currency: string, unit: string | null, cents: number}} submitted
    */
   function reconcilesSubmission(row, submitted) {
+    if (row?.source !== 'manual' || row?.priceReadOnly !== false) return false;
     if (row.sku !== submitted.sku || row.name !== submitted.name) return false;
     if ((row.category ?? null) !== submitted.category) return false;
     if ((row.unit ?? null) !== submitted.unit) return false;
@@ -562,7 +569,7 @@ export function createCatalogView(deps) {
       && components[0].flatAmountCents === submitted.cents;
   }
 
-  function renderCreateForm(knownProductIds) {
+  function renderCreateForm(knownProductIds, filters = {}) {
     const wrap = el('div', 'catalog-create-wrap');
     const openButton = el('button', 'catalog-create', 'Aggiungi prodotto');
     const formBox = el('div', 'catalog-create-form');
@@ -665,7 +672,12 @@ export function createCatalogView(deps) {
             if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
               let reconciled = false;
               try {
-                const reloaded = await client.request(`/api/catalog/products?limit=${LIST_LIMIT}`);
+                const reloadParams = new URLSearchParams();
+                if (typeof filters.category === 'string' && filters.category.trim() !== '') reloadParams.set('category', filters.category.trim());
+                if (filters.active === 'true' || filters.active === 'false') reloadParams.set('active', filters.active);
+                if (typeof filters.source === 'string' && filters.source.trim() !== '') reloadParams.set('source', filters.source.trim());
+                reloadParams.set('limit', String(LIST_LIMIT));
+                const reloaded = await client.request(`/api/catalog/products?${reloadParams.toString()}`);
                 const rows = Array.isArray(reloaded?.products) ? reloaded.products : [];
                 reconciled = rows.some((row) => row && typeof row === 'object'
                   && typeof row.productId === 'string'
@@ -764,7 +776,7 @@ export function createCatalogView(deps) {
     const summary = table.summary ?? {};
     page.appendChild(renderStripeBlock(summary));
     const loaded = table.products;
-    page.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId))));
+    page.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
 
     const filters = el('div', 'catalog-filters');
     const categoryInput = el('input');
