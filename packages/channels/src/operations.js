@@ -744,6 +744,27 @@ export function createChannelOperations(deps) {
    * on the same adapter each own their events, even when the provider
    * reuses an event id across the two accounts.
    */
+  /**
+   * The host-loggable content of one normalized channel event (backlog:32820692).
+   * Adapters that extract text and attachments hand the host what to log
+   * through `interaction-log@1`; adapters that carry none (statuses, kit
+   * minimal events) hand null. The inbox never sees this — rows stay
+   * envelope-only by design, so no attachment reference ever lands in the
+   * delivery log without the host choosing to log the message.
+   * @param {Record<string, any>} event one adapter-normalized channel event
+   */
+  function eventContent(event) {
+    const text = typeof event?.text === 'string' ? event.text : null;
+    const attachment = event && typeof event === 'object' && event.attachment !== undefined && event.attachment !== null
+      ? event.attachment
+      : null;
+    if (text === null && attachment === null) return null;
+    return Object.freeze({
+      text,
+      attachment: attachment === null ? null : Object.freeze({ ...attachment }),
+    });
+  }
+
   async function ingestChannelEvent(params) {
     const spaceId = assertSpaceId(params?.spaceId);
     const connectionKey = typeof params?.connectionKey === 'string' ? params.connectionKey : '';
