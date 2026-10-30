@@ -14,6 +14,7 @@ import {
   parseMemberFilter,
   romeMinutes,
   romeWeekKeys,
+  slotInGrid,
   teamRows,
   teamRowsWithRoles,
   weekLabel,
@@ -75,7 +76,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -90,6 +91,10 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, f
       if (failWith) throw failWith;
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profiles && Object.hasOwn(profiles, path)) return profiles[path];
+        throw notFound();
+      }
+      if (path.startsWith('/api/customer-data/customers')) {
+        if (customers) return customers(path);
         throw notFound();
       }
       if (path === '/api/appointments/confirm' && failConfirmWith) throw failConfirmWith;
@@ -129,6 +134,32 @@ function clickButton(mount, label) {
   assert.ok(button, `button "${label}" exists`);
   button.dispatch('click');
   return button;
+}
+
+// The roster behind the manual customer search: name buttons only, the same
+// read-only list the Clienti view pages.
+function customersOf(items) {
+  return (path) => {
+    const query = new URL(path, 'http://stub.test').searchParams.get('q') ?? '';
+    const needle = query.toLowerCase();
+    return { items: items.filter((item) => String(item?.name ?? '').toLowerCase().includes(needle)) };
+  };
+}
+
+// BO-F6-11 fetta 8 (owner 29/10): the manual customer rides a name search,
+// never a typed id. Types the query, waits out the search, clicks the name.
+async function pickCustomerByName(mount, name, rounds = 7) {
+  const search = mount.querySelector('input[name="customerSearch"]');
+  assert.ok(search, 'the manual form searches the customer by name');
+  search.value = name;
+  search.dispatch('input');
+  for (let round = 0; round < rounds; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const choice = mount.findAll('button').find((node) => node.textContent === name);
+  assert.ok(choice, `the search lists ${name} by name`);
+  choice.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 test('week keys are Monday..Sunday in Rome and the window covers the week', () => {
@@ -350,7 +381,11 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     endsAt: '2026-10-22T16:30:00.000Z',
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
-  const client = stubClient({ phrase: draft, slots });
+  const client = stubClient({
+    phrase: draft,
+    slots,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -362,9 +397,9 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     }
   };
   await flush();
-  // The operator names the customer once; the slot brings person and time.
+  // The operator picks the customer by name; the slot brings person and time.
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.serviceKey.value = 'taglio';
   form.price.value = '45.00';
   const confirm = mount.querySelector('.cal-slots').findAll('button')
@@ -379,6 +414,7 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   assert.equal(body.startsAt, '2026-10-22T16:00:00.000Z');
   assert.equal(body.endsAt, '2026-10-22T16:30:00.000Z');
   assert.equal(body.priceCents, 4500);
+  assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T16:00:00.000Z:c1');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
@@ -492,12 +528,12 @@ test('a phrase without a person says who is missing', async () => {
 test('propose plans, confirm books: nothing is written before Conferma', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.price.value = '45.00';
@@ -513,6 +549,7 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   assert.equal(payload(proposes[0]).priceCents, 4500);
   assert.equal(payload(proposes[0]).startsAt, '2026-10-22T16:00:00.000Z');
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 0);
+  assert.deepEqual(payload(proposes[0]).subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.ok(texts(mount, 'p').some((text) => text.includes('Conferma')));
   clickButton(mount, 'Conferma');
   await new Promise((resolve) => setImmediate(resolve));
@@ -527,12 +564,12 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
 test('late-evening wall times book the same Rome day, never tomorrow', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.date.value = '2026-10-22';
@@ -551,13 +588,18 @@ test('late-evening wall times book the same Rome day, never tomorrow', async () 
 test('unsubmitted manual edits survive a week reload', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({
+    customers: customersOf([
+      { resource: 'contact', id: 'c1', name: 'Ada' },
+      { resource: 'contact', id: 'c2', name: 'Bo' },
+    ]),
+  });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.date.value = '2026-10-22';
@@ -569,27 +611,26 @@ test('unsubmitted manual edits survive a week reload', async () => {
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
   assert.equal(payload(proposes[0]).subject.id, 'c1');
-  // The operator retypes the customer before reloading the week.
-  const edited = byName();
-  edited.customerId.value = 'c2';
-  edited.customerId.dispatch('input');
+  // The operator changes their mind about the customer before reloading.
+  clickButton(mount, 'Cambia cliente');
+  await pickCustomerByName(mount, 'Bo');
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(byName().customerId.value, 'c2');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the pick survives the reload');
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/propose').length, 1);
 });
 
 test('conferma books directly: no propose call on the confirm path', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
   const form = byName();
-  form.customerId.value = 'c1';
   form.teamMemberId.value = 'marco';
   form.serviceKey.value = 'taglio';
   form.date.value = '2026-10-22';

@@ -1449,10 +1449,10 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
-    const customerId = manualValue('customerId');
+    const customer = pickedCustomer();
     const claim = {
       spaceId: readSpace(),
-      subject: { resource: manualValue('customerResource') || 'contact', id: customerId, owner: 'host' },
+      subject: { resource: customer.resource, id: customer.id, owner: 'host' },
       teamMemberId: member,
       serviceKey: manualValue('serviceKey'),
       priceCents: priceToCents(manualValue('price')),
@@ -1460,7 +1460,7 @@ export function createCalendarioView(deps) {
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
-      sourceKey: `calendario:${member}:${startsAt}:${customerId === '' ? 'senza-cliente' : customerId}`,
+      sourceKey: `calendario:${member}:${startsAt}:${customer.id === '' ? 'senza-cliente' : customer.id}`,
       source: { package: 'host', action: 'calendar-book' },
     };
     try {
@@ -1487,6 +1487,50 @@ export function createCalendarioView(deps) {
     if (members.length > 0 && state.confirmed) void loadWeek(members);
   }
 
+  /**
+   * The manual form's customer block: a name search, never an id or a
+   * resource field (owner 29/10 gap). Without a pick the operator types at
+   * least two letters into the shared search field and picks one of the
+   * five name buttons; with a pick the block names the chosen customer and
+   * offers «Cambia cliente» to search again. Ids and resources never reach
+   * the screen — they ride the claim from `pickedCustomer()` only.
+   * @param {any} form
+   */
+  function renderCustomerPick(form) {
+    const pick = state.customerPick;
+    if (pick && typeof pick?.name === 'string') {
+      form.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: `Cliente: ${pick.name}` }));
+      const change = uiSecondaryButton(doc, 'Cambia cliente');
+      change.addEventListener('click', () => {
+        state.customerPick = null;
+        state.customerQuery = '';
+        state.customerItems = [];
+        state.customerError = null;
+        renderAll();
+      });
+      form.appendChild(change);
+      state.manualFirst = change;
+      return;
+    }
+    const search = uiSearchField(doc, {
+      name: 'customerSearch',
+      placeholder: 'Cerca il cliente per nome…',
+      value: state.customerQuery,
+    });
+    const box = el(doc, 'div', { attrs: { 'data-role': 'customer-results' } });
+    const field = search.querySelector('input');
+    if (field) {
+      field.addEventListener('input', () => {
+        state.customerQuery = String(field.value ?? '');
+        void searchCustomers(state.customerQuery, box);
+      });
+    }
+    form.appendChild(search);
+    form.appendChild(box);
+    paintCustomerResults(box);
+    if (field) state.manualFirst = field;
+  }
+
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM, so a draft can still prefill it.
@@ -1498,9 +1542,11 @@ export function createCalendarioView(deps) {
       text: 'Compila e premi «Proponi»: niente è scritto finché non premi «Conferma».',
     }));
     const form = el(doc, 'div', { className: 'cal-form' });
+    // The customer is picked by name from the search, never typed as an id
+    // or a resource (owner 29/10): the search block below owns the pick, so
+    // no raw customer field paints here.
+    renderCustomerPick(form);
     const fields = [
-      ['customerResource', 'text', 'Cliente (risorsa: contact)'],
-      ['customerId', 'text', 'Cliente (id)'],
       ['teamMemberId', 'text', 'Persona del team'],
       ['serviceKey', 'text', 'Servizio (chiave listino)'],
       ['price', 'text', 'Prezzo EUR (es. 45.00)'],
@@ -1526,7 +1572,9 @@ export function createCalendarioView(deps) {
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
-    state.manualFirst = inputs.customerResource ?? null;
+    // state.manualFirst is the customer search field (or the «Cambia
+    // cliente» button over an existing pick), set by renderCustomerPick
+    // above so «Compila manualmente» focuses the customer first.
     if (state.draftFill) {
       state.manualOpen = true;
       const draft = state.draftFill;
@@ -1583,10 +1631,13 @@ export function createCalendarioView(deps) {
     const endsAt = day !== '' && end !== '' ? romeInstant(day, end) : null;
     const priceCents = priceToCents(read('price'));
     const member = read('teamMemberId');
+    // The customer rides the name-search pick, never a typed id or
+    // resource: without a pick the historical contact/empty fallback stays.
+    const customer = pickedCustomer();
     return {
       claim: {
         spaceId: readSpace(),
-        subject: { resource: read('customerResource') || 'contact', id: read('customerId'), owner: 'host' },
+        subject: { resource: customer.resource, id: customer.id, owner: 'host' },
         teamMemberId: member,
         serviceKey: read('serviceKey'),
         priceCents,
@@ -1595,7 +1646,7 @@ export function createCalendarioView(deps) {
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
         sourceKey: member !== '' && startsAt
-          ? `calendario:${member}:${startsAt}:${read('customerId') || 'senza-cliente'}`
+          ? `calendario:${member}:${startsAt}:${customer.id || 'senza-cliente'}`
           : undefined,
         source: { package: 'host', action: 'calendar-book' },
       },
