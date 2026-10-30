@@ -267,6 +267,8 @@ test('channel markup stays readable, without raw markup', () => {
   assert.equal(readableCloudText('```codice``` fatto'), 'codice fatto');
   assert.equal(readableCloudText('2*3=6 resta'), '2*3=6 resta');
   assert.equal(readableCloudText('*senza chiusura resta'), '*senza chiusura resta');
+  assert.equal(readableCloudText('ordine order_123_inviato ok'), 'ordine order_123_inviato ok');
+  assert.equal(readableCloudText('(*nota*) qui'), '(nota) qui');
   const validated = validateMessageRequest({
     sourceKey: 'wa:fmt:1', conversationId: 'conv-1', direction: 'inbound',
     channel: 'whatsapp', body: 'Riga uno.\nRiga due con *grassetto*.',
@@ -289,6 +291,16 @@ test('a photo with no caption needs no body, and text-only messages keep the old
       sourceKey: 'wa:cap:2', conversationId: 'conv-1', direction: 'inbound',
       channel: 'whatsapp', subject: SUBJECT,
       occurredAt: '2026-10-17T12:00:00.000Z', source: SOURCE,
+    }),
+    /body is required/,
+  );
+  // A wrong-typed body is refused even beside an attachment (fail-closed).
+  assert.throws(
+    () => validateMessageRequest({
+      sourceKey: 'wa:cap:3', conversationId: 'conv-1', direction: 'inbound',
+      channel: 'whatsapp', body: 123,
+      attachment: { kind: 'photo', ref: 'media-photo-9' },
+      subject: SUBJECT, occurredAt: '2026-10-17T12:00:00.000Z', source: SOURCE,
     }),
     /body is required/,
   );

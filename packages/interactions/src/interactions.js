@@ -794,8 +794,11 @@ export function validateMessageRequest(request) {
   // stores as null and the card renders the attachment instead of a blank
   // bubble. Text-only messages keep the old contract exactly.
   const attachment = validateAttachment(value.attachment);
-  const rawBody = typeof value.body === 'string' ? value.body : '';
-  const body = rawBody.replace(/\r\n/g, '\n').trim() === '' && attachment !== null
+  const bodyAbsent = value.body === undefined || value.body === null
+    || (typeof value.body === 'string' && value.body.replace(/\r\n/g, '\n').trim() === '');
+  // A wrong-typed body is still refused (fail-closed): only an absent or
+  // blank body may ride along with an attachment, stored as null.
+  const body = bodyAbsent && attachment !== null
     ? null
     : safeMessageBody(value.body, 'body', MAX_BODY);
   return {

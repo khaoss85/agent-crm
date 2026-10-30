@@ -176,10 +176,11 @@ export function assertChannelAttachment(value, providerLabel) {
  * The Cloud API text the card reads (backlog:32820692): WhatsApp markup is
  * display-only — `*bold*`, `_italic_`, `~strike~`, triple-backtick code —
  * so paired markers come off and the words stay, on one line at a time
- * (markers never span a line break). An unmatched marker stays as written
- * rather than eating its line, and plain-text artefacts like `2*3=6` keep
- * their asterisk. Graph and Gmail text travel untouched: no markup dialect
- * there to misread.
+ * (markers never span a line break) and only on word boundaries, so
+ * `order_123_sent` keeps its underscores. An unmatched marker stays as
+ * written rather than eating its line, and plain-text artefacts like
+ * `2*3=6` keep their asterisk. Graph and Gmail text travel untouched: no
+ * markup dialect there to misread.
  *
  * @param {string} text the provider caption or body
  */
@@ -187,7 +188,10 @@ export function readableCloudText(text) {
   if (typeof text !== 'string' || text === '') return text;
   return text.split('\n').map((line) => {
     let out = line.replace(/```([^`]+?)```/g, '$1');
-    out = out.replace(/(\*|_|~)([^*_~\n]+?)\1/g, '$2');
+    // Markers only read as markup on word boundaries: `order_123_sent` and
+    // `2*3=6` keep their characters, while `*Promo*` and `(_note_)` render
+    // as words. An unmatched marker stays as written.
+    out = out.replace(/(^|[\s(\[{>])([*_~])([^*_~\n]+?)\2(?=[\s)\]}>.,;:!?]|$)/g, '$1$3');
     return out;
   }).join('\n');
 }
@@ -212,7 +216,7 @@ export function normalizeCloudMessageContent(item, providerLabel) {
   }
   const name = item.type === 'document' && typeof media.filename === 'string' ? media.filename : null;
   return {
-    text: readableCloudText(caption),
+    text: checkText(readableCloudText(caption)),
     attachment: assertChannelAttachment({ kind: mediaKind, name, size: null, ref: media.id, preview: null }, providerLabel),
   };
 }
