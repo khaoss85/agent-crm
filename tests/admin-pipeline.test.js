@@ -1211,7 +1211,7 @@ function newOfferVoices(menu) {
   return menu.findAll('button').filter((node) => node.getAttribute('data-voice') !== null);
 }
 
-test('Nuova offerta button sits under the description with the two prototype voices (C3)', async () => {
+test('Nuova offerta button sits top-right on the title row with the two prototype voices (C3, backlog 339ca222)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
@@ -1219,6 +1219,23 @@ test('Nuova offerta button sits under the description with the two prototype voi
 
   const menu = newOfferMenu(mount);
   assert.ok(menu, 'a Nuova offerta menu exists');
+  // Backlog 339ca222: the menu rides the title-row actions — second child
+  // of the panel heading, after the title box — like Clienti and Calendario.
+  const actions = menu.parentNode;
+  assert.equal(actions?.getAttribute('data-pipeline-actions'), 'title', 'the menu rides the title-row actions');
+  const heading = actions?.parentNode;
+  assert.ok((heading?.getAttribute('class') ?? '').split(/\s+/).includes('panel-heading'), 'the actions live in the panel heading');
+  const headKids = heading.childNodes.filter((node) => typeof node.tagName === 'string');
+  assert.equal(headKids.length, 2, 'the title row holds the title box and exactly one action group');
+  assert.ok(headKids[0].findAll('h2').some((node) => node.textContent === 'Offerte'), 'the title comes first');
+  assert.equal(headKids[1], actions, 'the action group is second — top-right');
+  // The violet forecast left the title row for its own row below, unchanged.
+  const forecast = mount.findAll('div').find((node) => node.getAttribute('data-forecast') === 'estimate');
+  assert.ok(forecast, 'the forecast still renders with the same hook');
+  assert.ok(!heading.contains(forecast), 'the forecast is no longer in the title row');
+  assert.equal(forecast.parentNode, heading.parentNode, 'the forecast is a panel row below the heading');
+  const panelKids = heading.parentNode.childNodes.filter((node) => typeof node.tagName === 'string');
+  assert.ok(panelKids.indexOf(heading) < panelKids.indexOf(forecast), 'the forecast follows the heading');
   const button = newOfferButton(menu);
   assert.ok(button.textContent.includes('Nuova offerta'), 'the green button is labelled');
   assert.ok((button.getAttribute('class') ?? '').includes('ui-btn-cta'), 'the button uses the green cta variant');
@@ -1300,6 +1317,29 @@ test('Nuova offerta voices stay honest without shell seams (C3)', async () => {
   newOfferButton(menu).dispatch('click');
   newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
   assert.ok(toasts.some((message) => message.includes('manuale')), 'manual voice says it cannot create instead of writing');
+});
+
+test('kanban rides a scroll wrap hiding the end cue at the end (backlog 339ca222)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  await board.renderBoard('b2b-sales');
+
+  const wrap = mount.findAll('div').find((node) => node.getAttribute('data-board') === 'scroll');
+  assert.ok(wrap, 'a scroll wrap exists around the kanban');
+  const scrolled = wrap.findAll('div')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('pipeline-board'));
+  assert.ok(scrolled, 'the board lives inside the wrap');
+  assert.equal(wrap.getAttribute('data-ateend'), 'false', 'cue on when scroll metrics are unreadable (fail closed)');
+
+  scrolled.scrollWidth = 1200;
+  scrolled.clientWidth = 300;
+  scrolled.scrollLeft = 0;
+  scrolled.dispatch('scroll');
+  assert.equal(wrap.getAttribute('data-ateend'), 'false', 'cue stays while columns sit off-screen');
+  scrolled.scrollLeft = 900;
+  scrolled.dispatch('scroll');
+  assert.equal(wrap.getAttribute('data-ateend'), 'true', 'cue hides once the board reaches its end');
 });
 
 /**
