@@ -403,17 +403,61 @@ export function createCustomerDataView(deps) {
         });
         const counts = applied?.counts ?? countReceipts(applied?.receipts ?? []);
         let summary = `Importazione registrata: ${counts.accepted ?? 0} accettate, ${counts.rejected ?? 0} scartate, ${counts.skipped ?? 0} da decidere.`;
-        if (phones.length > 0) {
+        // Phones ride a second apply apart (the server row contract has no
+        // phone field): only rows the main apply accepted can receive one. A
+        // rejected or skipped row never lends its email to the phone batch,
+        // so a phone is never created for a record that was never made.
+        const ownerByEmail = new Map();
+        for (const receipt of applied?.receipts ?? []) {
+          if (receipt?.outcome !== 'accepted') continue;
+          const sent = built[receipt?.index];
+          const email = String(sent?.values?.email ?? '').trim().toLowerCase();
+          if (email !== '' && receipt?.subject?.id != null) {
+            ownerByEmail.set(email, { resource: receipt.subject.resource ?? null, id: receipt.subject.id });
+          }
+        }
+        const phoneOwnerKey = (row) => String(row?.email ?? '').trim().toLowerCase();
+        const phonesForAccepted = phones.filter((row) => ownerByEmail.has(phoneOwnerKey(row)));
+        const phonesSkipped = phones.length - phonesForAccepted.length;
+        if (phonesForAccepted.length > 0) {
           try {
             const linked = await client.request('/api/customer-data/import/apply', {
               method: 'POST',
-              body: JSON.stringify({ system: 'phone', rows: phones, acceptance: file.acceptance }),
+              body: JSON.stringify({ system: 'phone', rows: phonesForAccepted, acceptance: file.acceptance }),
             });
-            const phoneCounts = countReceipts(linked?.receipts ?? []);
-            summary += ` Telefoni: ${phoneCounts.accepted ?? 0} collegati su ${phones.length}.`;
+            // A phone receipt counts as linked only when it names the
+            // intended customer, like the manual form checks
+            // (admin-cliente-nuovo.js linkPhone): the external-identity rule
+            // may accept the phone under its first owner instead.
+            let linkedCount = 0;
+            let elsewhereCount = 0;
+            let failedCount = 0;
+            for (const receipt of linked?.receipts ?? []) {
+              const sent = phonesForAccepted[receipt?.index];
+              const owner = sent ? ownerByEmail.get(phoneOwnerKey(sent)) : undefined;
+              const namesOwner = owner !== undefined
+                && receipt?.subject?.id === owner.id
+                && (receipt?.subject?.resource == null || owner.resource == null
+                  || receipt.subject.resource === owner.resource);
+              if (receipt?.outcome === 'accepted' && namesOwner) linkedCount += 1;
+              else if (receipt?.outcome === 'accepted') elsewhereCount += 1;
+              else failedCount += 1;
+            }
+            summary += ` Telefoni: ${linkedCount} collegati su ${phonesForAccepted.length}.`;
+            if (elsewhereCount > 0) {
+              summary += ` ${elsewhereCount} telefoni risultano già collegati a un'altra scheda e non sono stati spostati.`;
+            }
+            if (failedCount > 0) {
+              summary += ` ${failedCount} telefoni non si sono collegati: tocca reimportare solo quella colonna, oppure aggiungerli dalla scheda.`;
+            }
+            if (phonesSkipped > 0) {
+              summary += ` ${phonesSkipped} telefoni scartati insieme alla loro riga.`;
+            }
           } catch {
             summary += ' I telefoni non si sono collegati: tocca reimportare solo quella colonna, oppure aggiungerli dalla scheda.';
           }
+        } else if (phones.length > 0) {
+          summary += ' Nessun telefono collegato: le righe con telefono sono state scartate.';
         }
         if (unlinkedPhones > 0) summary += ` ${unlinkedPhones} telefoni senza email non si collegano.`;
         fileState.preview = null;

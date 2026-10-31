@@ -34,8 +34,19 @@ const PREVIEW_RECEIPTS = [
   { index: 1, outcome: 'rejected', reasonCode: 'INVALID_EMAIL', reason: 'the email is not a valid address shape', matchRule: 'none' },
 ];
 
-function stubClient() {
+const APPLY_RECEIPTS = [
+  { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'no existing record matched', matchRule: 'none', subject: { resource: 'person', id: 'p-ada' } },
+  { index: 1, outcome: 'rejected', reasonCode: 'INVALID_EMAIL', reason: 'the email is not a valid address shape', matchRule: 'none', subject: null },
+];
+
+const PHONE_RECEIPTS = [
+  { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-ada' } },
+];
+
+function stubClient(overrides = {}) {
   const calls = [];
+  const mainReceipts = overrides.mainReceipts ?? APPLY_RECEIPTS;
+  const phoneReceipts = overrides.phoneReceipts ?? PHONE_RECEIPTS;
   return {
     calls,
     async request(path, options = {}) {
@@ -54,13 +65,13 @@ function stubClient() {
         const body = JSON.parse(options.body);
         if (body.system === 'phone') {
           return {
-            counts: { rows: 1, accepted: 1, rejected: 0, skipped: 0 },
-            receipts: [{ index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none' }],
+            counts: { rows: phoneReceipts.length, accepted: phoneReceipts.length, rejected: 0, skipped: 0 },
+            receipts: phoneReceipts,
           };
         }
         return {
-          counts: { rows: 2, accepted: 1, rejected: 1, skipped: 0 },
-          receipts: PREVIEW_RECEIPTS,
+          counts: { rows: mainReceipts.length, accepted: 1, rejected: 1, skipped: 0 },
+          receipts: mainReceipts,
         };
       }
       return { items: [] };
@@ -202,6 +213,66 @@ test('applying registers the import and links the phones, then says so', async (
   // The mapping survives the apply: the operator keeps working from it.
   const mapping = mount.findAll('select').find((node) => node.getAttribute('name') === 'mapping-0');
   assert.equal(mapping?.value, 'firstName');
+});
+
+test('a phone is never sent for a row the main import rejected', async () => {
+  const csv = 'nome,email,telefono\nAda,ada@esempio.it,+39 333 1234567\nZed,zed@esempio.it,+39 333 9999999\n';
+  const client = stubClient({
+    mainReceipts: [
+      { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-ada' } },
+      { index: 1, outcome: 'rejected', reasonCode: 'INVALID_DOMAIN', reason: 'bad domain', matchRule: 'none', subject: null },
+    ],
+  });
+  const { mount } = await renderTool(client);
+  await loadCsv(mount, 'clienti.csv', csv);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  const posts = client.calls.filter((call) => call.method === 'POST'
+    && call.path === '/api/customer-data/import/apply');
+  assert.equal(posts.length, 2, 'main rows plus the phone batch');
+  assert.deepEqual(JSON.parse(posts[1].body).rows, [
+    { externalId: '+393331234567', email: 'ada@esempio.it' },
+  ], 'the rejected row lends no phone to the batch');
+  assert.ok(mount.textContent.includes('1 telefoni scartati insieme alla loro riga.'), mount.textContent.slice(0, 600));
+});
+
+test('a phone accepted under another customer is not counted as linked', async () => {
+  const csv = 'nome,email,telefono\nAda,ada@esempio.it,+39 333 1234567\n';
+  const client = stubClient({
+    mainReceipts: [
+      { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-ada' } },
+    ],
+    phoneReceipts: [
+      { index: 0, outcome: 'accepted', reasonCode: 'CREATED_RECORD', reason: 'ok', matchRule: 'none', subject: { resource: 'person', id: 'p-other' } },
+    ],
+  });
+  const { mount } = await renderTool(client);
+  await loadCsv(mount, 'clienti.csv', csv);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  const text = mount.textContent;
+  assert.ok(text.includes('Telefoni: 0 collegati su 1.'), text.slice(0, 600));
+  assert.ok(text.includes("già collegati a un'altra scheda"), 'the conflict is named, never counted as linked');
+});
+
+test('no phone batch is sent when every row is rejected', async () => {
+  const csv = 'nome,email,telefono\nAda,ada@esempio.it,+39 333 1234567\n';
+  const client = stubClient({
+    mainReceipts: [
+      { index: 0, outcome: 'rejected', reasonCode: 'INVALID_DOMAIN', reason: 'bad domain', matchRule: 'none', subject: null },
+    ],
+  });
+  const { mount } = await renderTool(client);
+  await loadCsv(mount, 'clienti.csv', csv);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-customer-import').dispatch('click');
+  await tick();
+
+  const posts = client.calls.filter((call) => call.method === 'POST'
+    && call.path === '/api/customer-data/import/apply');
+  assert.equal(posts.length, 1, 'the phone batch is skipped when nothing was accepted');
+  assert.ok(mount.textContent.includes('Nessun telefono collegato: le righe con telefono sono state scartate.'));
 });
 
 test('a changed column clears a preview that belongs to another mapping', async () => {
