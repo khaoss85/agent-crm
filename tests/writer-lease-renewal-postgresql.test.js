@@ -61,15 +61,53 @@ test('the same application without its renewer stops being able to read, which i
   );
 });
 
-test('renewing does not weaken the single writer: a second composition is still refused', async (t) => {
+test('renewing does not weaken the single writer: a second composition is still refused', { timeout: 90_000 }, async (t) => {
   const booted = await bootPostgresqlApp(t, { leaseTtlMs: SHORT_TTL_MS });
   if (!booted) return;
   booted.app.leaseRenewer.start();
   t.after(() => booted.app.leaseRenewer.stop());
 
-  await assert.rejects(
-    () => bootPostgresqlApp(t, { planes: booted.planes, leaseTtlMs: SHORT_TTL_MS }),
-    (error) => error.code === 'WRITER_LEASE_HELD',
-    'a renewed lease must still exclude a second writer',
+  // The refusal below is only meaningful after a renewal has happened: an
+  // unexpired initial lease refuses a second writer even with the renewer
+  // dead. Wait for the steady state first, bounded so a dead renewer fails
+  // here instead of weakening the assertion.
+  const renewalDeadline = Date.now() + 20_000;
+  while (booted.app.leaseRenewer.status().renewals < 1) {
+    if (Date.now() >= renewalDeadline) {
+      assert.fail(
+        `the renewer never renewed within 20 s, saw ${JSON.stringify(booted.app.leaseRenewer.status())}`,
+      );
+    }
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+  }
+
+  // One probe is timing-sensitive under a loaded CI: a transient transport
+  // failure (a killed socket, a saturated pool) is not a verdict on the
+  // single-writer property. Only two outcomes are decisive: HELD (the
+  // property holds) and a successful second composition (it is violated).
+  // Anything else is retried until the deadline, then fails with the last
+  // error attached. A broken guard still fails fast: the intruder composes
+  // and the test refuses below without another attempt.
+  const attemptDeadline = Date.now() + 45_000;
+  let lastError = null;
+  for (;;) {
+    let intruder = null;
+    try {
+      intruder = await bootPostgresqlApp(t, { planes: booted.planes, leaseTtlMs: SHORT_TTL_MS });
+    } catch (error) {
+      if (error?.code === 'WRITER_LEASE_HELD') return;
+      lastError = error;
+      if (Date.now() >= attemptDeadline) break;
+      await new Promise((resolve) => { setTimeout(resolve, 500); });
+      continue;
+    }
+    if (intruder) {
+      try { await intruder.app.close(); } catch { /* the test already failed */ }
+    }
+    assert.fail('a renewed lease must still exclude a second writer: the second composition unexpectedly succeeded');
+  }
+  assert.fail(
+    `no decisive verdict within 45 s: the second composition was never refused with `
+    + `WRITER_LEASE_HELD (last: ${lastError?.code ?? lastError?.name ?? lastError})`,
   );
 });
