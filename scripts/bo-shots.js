@@ -311,12 +311,15 @@ const DEMO_PROFILE = {
 // keys, spread across open and terminal stages like the prototype board.
 const DEMO_PIPELINE = accordoSalesPipeline;
 
+// BO-F6-10 (backlog:61800913): demo deals carry the card fields the story
+// proves (referente owner, chiusura date), so the committed PNGs show the
+// sigla badge and the `chiusura <data>` line like the prototype cards.
 const DEMO_DEALS = [
-  { id: 'a', name: 'Palestra Esempio', companyName: 'Palestra Esempio', valueCents: 120000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'richiesta-info' },
-  { id: 'b', name: 'Studio Aurora', companyName: 'Studio Aurora', valueCents: 50000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'prova' },
-  { id: 'c', name: 'Deal estero', companyName: 'Gym Intl', valueCents: 2500, currency: 'USD', pipelineKey: 'accordo-sales', pipelineStage: 'proposta' },
-  { id: 'd', name: 'Cliente vinto', companyName: 'Fit Club', valueCents: 9900, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'pagato' },
-  { id: 'e', name: 'Perso per budget', companyName: 'Acme', valueCents: 30000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'perso', closeReason: 'No budget' },
+  { id: 'a', name: 'Palestra Esempio', companyName: 'Palestra Esempio', valueCents: 120000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'richiesta-info', owner: 'Marco Ferri', expectedCloseDate: '2026-11-15T00:00:00.000Z' },
+  { id: 'b', name: 'Studio Aurora', companyName: 'Studio Aurora', valueCents: 50000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'prova', owner: 'Sara Conti', expectedCloseDate: '2026-11-30T00:00:00.000Z' },
+  { id: 'c', name: 'Deal estero', companyName: 'Gym Intl', valueCents: 2500, currency: 'USD', pipelineKey: 'accordo-sales', pipelineStage: 'proposta', owner: 'Marco Ferri', expectedCloseDate: '2026-12-10T00:00:00.000Z' },
+  { id: 'd', name: 'Cliente vinto', companyName: 'Fit Club', valueCents: 9900, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'pagato', owner: 'Sara Conti' },
+  { id: 'e', name: 'Perso per budget', companyName: 'Acme', valueCents: 30000, currency: 'EUR', pipelineKey: 'accordo-sales', pipelineStage: 'perso', owner: 'Marco Ferri', closeReason: 'No budget' },
 ];
 
 const DEMO_WEEK = {
