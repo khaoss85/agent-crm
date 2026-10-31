@@ -163,7 +163,7 @@ test('the preview fills one Italian outcome per row and sends the mapped rows', 
   const table = mount.findAll('table')[0];
   const esiti = table.findAll('td').filter((node) => node.getAttribute('class') === 'bo-import-esito')
     .map((node) => node.textContent);
-  console.log([...mount.textContent.slice(mount.textContent.indexOf("Controlla")+100, mount.textContent.indexOf("Controlla")+140)].map((c) => c.codePointAt(0).toString(16)).join(" ")); console.log(JSON.stringify(mount.textContent.slice(mount.textContent.indexOf("Controlla"), mount.textContent.indexOf("Controlla")+200)));   assert.ok(mount.textContent.includes('L\u2019anteprima non scrive nulla.'));
+  assert.ok(mount.textContent.includes('L\u2019anteprima non scrive nulla:'));
 
   const posted = client.calls.filter((call) => call.method === 'POST'
     && call.path === '/api/customer-data/import/preview').at(-1);
