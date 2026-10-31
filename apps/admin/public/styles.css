@@ -558,7 +558,7 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
  * word. Voce d525f4aa48b2: grid-auto-rows 1fr keeps every row — both rows
  * of the 2x2 — at the same height, so all four tiles read equal. */
 .bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; }
-.bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 3px 10px; font-size: 12px; overflow-wrap: break-word; }
+.bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 4px 10px; font-size: 12px; line-height: 1.25; overflow-wrap: normal; word-break: keep-all; hyphens: none; }
 .bo-scheda-tile[data-action="call-customer"]::before { content: "☎"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="add-phone"]::before { content: "✚"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="compose-message"]::before { content: "✉"; font-size: 17px; line-height: 1; }
@@ -566,7 +566,12 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-tile[data-action="new-appointment"]::before { content: "◷"; font-size: 17px; line-height: 1; }
 /* Voce d525f4aa48b2: the AI voice in Dettagli wears the assistant's violet,
  * like the ✦ summary card — same tokens, no new visual identity. */
-.bo-scheda-ask-ai { border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
+button.bo-scheda-tile { font-size: 12px; padding: 12px 4px 10px; overflow-wrap: normal; word-break: keep-all; }
+button.bo-scheda-ask-ai { width: 100%; margin-top: 8px; border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
+button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
+/* Il link dell'offerta resta nel testo della card: niente blu e sottolineato del browser. */
+.bo-scheda-offer-link { color: inherit; text-decoration: none; }
+.bo-scheda-offer-link:hover .bo-scheda-offer-name { text-decoration: underline; text-underline-offset: 3px; }
 .bo-scheda-disabled { min-height: 76px; padding: 12px 6px 10px; font-size: 11.5px; }
 /* Voce c2793930850a: the note form lives in the padding-less timeline card,
  * so it carries the card's own inner margins (like .bo-scheda-timeline);

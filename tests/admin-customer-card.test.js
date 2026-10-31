@@ -240,7 +240,7 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   assert.ok(text.includes('stesso numero su WhatsApp e Instagram'), 'the link motivation is shown');
   assert.ok(text.includes('elena'), 'the decider is shown');
   assert.ok(text.includes("Arricchito dall'AI"), 'the enriched section exists');
-  assert.ok(text.includes('nessun dato arricchito registrato'), 'the empty enriched section stays honest');
+  assert.ok(text.includes('Nessun dato arricchito ancora'), 'the empty enriched section stays honest');
 
   // The grid holds exactly three columns.
   const grid = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-grid');
@@ -786,7 +786,7 @@ test('BO-F4-03: a failing enrichment read is an error, never a quiet "no data"',
   assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'the card stays');
   assert.ok(mount.textContent.includes("I dati arricchiti non si sono potuti leggere. Riprova più tardi."),
     'the enriched section names the failure');
-  assert.ok(!mount.textContent.includes('nessun dato arricchito registrato'),
+  assert.ok(!mount.textContent.includes('Nessun dato arricchito ancora'),
     'a 500 never reads as no enriched data');
 });
 
@@ -898,7 +898,7 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
   assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
-  assert.ok(text.includes('alcune sezioni non leggibili'), 'unreadable evidence never reads as a definitive none');
+  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'unreadable evidence never reads as a definitive none');
 });
 
 test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
@@ -946,7 +946,7 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   const text = mount.textContent;
   assertCustomerItalian(text, 'proven-empty card');
   assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
-  assert.ok(!text.includes('alcune sezioni non leggibili'), 'proven absence carries no hedge');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'proven absence carries no hedge');
   assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
 });
@@ -1086,7 +1086,7 @@ test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', a
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
-  assert.ok(mount.textContent.includes('nessun dato arricchito registrato'), 'the section starts empty');
+  assert.ok(mount.textContent.includes('Nessun dato arricchito ancora'), 'the section starts empty');
   current = {
     customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
     linked: false, optedOut: null,
@@ -1939,8 +1939,10 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const tileRules = [...css.matchAll(/\.bo-scheda-tile\s*\{([^}]*)\}/g)].map((match) => match[1]);
   assert.ok(tileRules.length > 0, 'the tile rule exists in styles.css');
   const tileRule = tileRules[tileRules.length - 1];
-  assert.ok(/overflow-wrap\s*:\s*break-word/.test(tileRule),
-    'the tile wraps at spaces (break-word), never mid-word (anywhere)');
+  // 31/10 (bo:shots su 79efbf01): break-word spezza ancora una parola più
+  // larga della tessera; la regola giusta non spezza mai dentro una parola.
+  assert.ok(/word-break\s*:\s*keep-all/.test(tileRule) && !/overflow-wrap\s*:\s*break-word/.test(tileRule),
+    'the tile never breaks inside a word (keep-all, no break-word)');
   assert.ok(!/overflow-wrap\s*:\s*anywhere/.test(tileRule),
     'the tile rule no longer shrinks below its longest word');
 });
