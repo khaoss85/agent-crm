@@ -403,8 +403,50 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
   const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
   await confirm.listeners.click[0]();
   await flush(20);
-  assert.ok(seen.toast.some((row) => row.error && /human user actor/.test(row.message)), 'the refusal is said aloud');
+  // backlog:9046f940: the refusal is Italian next to the command, never the
+  // technical message — the detail stays in the log, not in the DOM.
+  const said = seen.toast.find((row) => row.error);
+  assert.ok(said, 'the refusal is said aloud');
+  assert.match(said.message, /non \u00e8 riuscita|non permette/, 'the spoken refusal is Italian');
+  assert.ok(!/human user actor|HUMAN_APPROVAL/.test(said.message), 'no technical detail is spoken');
+  assert.ok(!/human user actor|HUMAN_APPROVAL/.test(text(mount)), 'no technical detail is rendered');
+  assert.match(text(mount), /non \u00e8 riuscita|non permette/, 'the refusal renders next to the switches');
   assert.ok(mount.findAll('button').some((node) => node.getAttribute('role') === 'switch'), 'the switches stay usable');
+});
+
+// backlog:9046f940: a 405 on the AI switch keeps the switch as it was and
+// names the refusal in Italian next to the command (never silence).
+test('a 405 flip keeps the switch and shows an Italian refusal', async () => {
+  const refusing = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/context') return { membership: { role: 'owner' }, roles: { owner: [] } };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path.startsWith('/api/space-permissions/effective')) return { spaceId: 'spazio-1', overrides: [] };
+      if (path === '/api/space-permissions/set-permission') {
+        throw Object.assign(new Error('Method Not Allowed'), { code: 'METHOD_NOT_ALLOWED', status: 405 });
+      }
+      if (path.startsWith('/api/connectors') || path.startsWith('/api/customer-data/customers')) {
+        return { connectors: [], items: [], total: 0, totalIsExact: true };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const { mount, seen, view: v } = view({ client: refusing });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
+  assert.equal(toggle.getAttribute('aria-checked'), 'false', 'the switch starts off');
+  await toggle.listeners.click[0]();
+  await flush();
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  await confirm.listeners.click[0]();
+  await flush(20);
+  const said = seen.toast.find((row) => row.error);
+  assert.ok(said, 'the 405 is said aloud');
+  assert.match(said.message, /non permette/, 'the 405 names the refusal in Italian');
+  assert.match(text(mount), /non permette/, 'the 405 renders next to the switches');
+  const kept = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
+  assert.equal(kept.getAttribute('aria-checked'), 'false', 'the switch is back as it was');
 });
 
 test('the switches speak the prototype verbatim, the header states the honest team scope (BO-F6-17 slices 1-2)', async () => {

@@ -533,14 +533,20 @@ export function formatAmount(minorUnits, currency) {
  *   (a distinct state: retrying cannot help, enabling can). Without it a
  *   404 also answers `failed`.
  */
-export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
+/**
+ * Shared rejection shape for the read and write helpers: code, status and
+ * the technical message for the log, plus the log function itself. The
+ * message lives on the record for plain rejections ({code, status,
+ * message}), not on an Error prototype — read it there first, so the log
+ * keeps the real cause instead of '[object Object]'. A message-less object
+ * (e.g. a bare {status: 404}) logs as JSON, never String(object).
+ * @param {unknown} error the rejection from `client.request`
+ * @param {(message: string, cause: unknown) => void | null} log
+ */
+function normalizeFailure(error, log = null) {
   const record = error !== null && typeof error === 'object' ? error : {};
   const code = typeof record.code === 'string' ? record.code : 'UNKNOWN';
   const status = typeof record.status === 'number' ? record.status : null;
-  // A plain rejection object ({code, status, message}) carries the message on
-  // the record, not on an Error prototype: read it there first, so the log
-  // keeps the real cause instead of '[object Object]'. A message-less object
-  // (e.g. a bare {status: 404}) logs as JSON, never String(object).
   const message = typeof record.message === 'string' && record.message !== ''
     ? record.message
     : (error instanceof Error
@@ -551,8 +557,36 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
     : (typeof console !== 'undefined' && typeof console.error === 'function'
       ? (text, cause) => console.error(text, cause)
       : () => {});
+  return { code, status, message, report };
+}
+
+export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
+  const { code, status, message, report } = normalizeFailure(error, log);
   report('[bo] lettura fallita', { code, status, message });
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
+  return failed;
+}
+
+/**
+ * Regola per le scritture (backlog:9046f940): una scrittura rifiutata non
+ * resta mai in silenzio — vicino al comando compare un testo italiano che
+ * dice cosa è successo e cosa fare. Il dettaglio tecnico va solo nel log,
+ * mai nel DOM. Lo stato 405 (operazione non permessa) e il 422 (dati non
+ * validi) hanno un testo proprio; tutto il resto risponde `failed`.
+ *
+ * @param {unknown} error the rejection from `client.request`
+ * @param {{ failed: string, notComposed?: string|null, log?: (message: string, cause: unknown) => void }} options
+ */
+export function humanWriteError(error, { failed, notComposed = null, log = null } = {}) {
+  const { code, status, message, report } = normalizeFailure(error, log);
+  report('[bo] scrittura rifiutata', { code, status, message });
+  if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
+  if (status === 405 || code === 'METHOD_NOT_ALLOWED') {
+    return 'Il server non permette questa operazione qui. Chiedi a un operatore di abilitare la funzione e riprova.';
+  }
+  if (status === 422 || code === 'VALIDATION_FAILED' || code === 'VALIDATION_ERROR') {
+    return 'Alcuni dati non sono validi: controlla i campi e riprova.';
+  }
   return failed;
 }
 

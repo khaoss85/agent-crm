@@ -40,7 +40,7 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
-import { humanReadError } from './admin-core.js';
+import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { settingsTabs } from './admin-shell.js';
 
@@ -644,9 +644,17 @@ export function createSpaziAccessiView(deps) {
             say(`${row.subject} rimosso dal team.`);
           } catch (error) {
             const failure = errorOf(error);
-            state.refusal = failure.message ?? String(failure.code ?? 'rimozione rifiutata');
-            say(state.refusal, true);
+            const message = humanWriteError(failure, {
+              failed: 'La rimozione non è riuscita. Riprova più tardi.',
+            });
+            say(message, true);
+            await load();
+            state.confirmRemove = null;
+            state.refusal = message;
+            render();
+            return;
           }
+          state.confirmRemove = null;
           await refresh();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
@@ -701,8 +709,14 @@ export function createSpaziAccessiView(deps) {
         say(`${who} invitato come ${spaceRoleLabel(picked)}.`);
       } catch (error) {
         const failure = errorOf(error);
-        state.refusal = failure.message ?? String(failure.code ?? 'invito rifiutato');
-        say(state.refusal, true);
+        const message = humanWriteError(failure, {
+          failed: 'L’invito non è riuscito. Riprova più tardi.',
+        });
+        say(message, true);
+        await load();
+        state.refusal = message;
+        render();
+        return;
       }
       await refresh();
     });
@@ -774,9 +788,17 @@ export function createSpaziAccessiView(deps) {
             say(`\u00AB${entry.label}\u00BB ${pending.to ? 'accesa' : 'spenta'}.`);
           } catch (error) {
             const failure = errorOf(error);
-            state.refusal = failure.message ?? String(failure.code ?? 'modifica rifiutata');
-            say(state.refusal, true);
+            const message = humanWriteError(failure, {
+              failed: 'La modifica non è riuscita. Riprova più tardi.',
+            });
+            say(message, true);
+            await load();
+            state.confirmFlip = null;
+            state.refusal = message;
+            render();
+            return;
           }
+          state.confirmFlip = null;
           await refresh();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
