@@ -22,7 +22,7 @@
 // createElement + textContent/setAttribute — never innerHTML with data, so a
 // hostile channel, account or adapter label is inert text, never markup.
 
-import { humanReadError } from './admin-core.js';
+import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
@@ -720,6 +720,7 @@ export function createSyncView(deps) {
     channelsReady: false,
     /** @type {any} */ activity: null,
     /** @type {Array<any>} */ candidates: [],
+    candidatesError: /** @type {string | null} */ (null),
     loaded: false,
     loadError: null,
     /** @type {Set<string>} */ syncing: new Set(),
@@ -748,6 +749,7 @@ export function createSyncView(deps) {
     state.loadError = null;
     state.activity = null;
     state.candidates = [];
+    state.candidatesError = null;
     let schema;
     try {
       schema = await client.request('/api/schema');
@@ -768,13 +770,34 @@ export function createSyncView(deps) {
       return;
     }
     // Unresolved identity candidates for the purple cards: the same
-    // records endpoint the shell badge counts (MEM_ACC_REUSE). A failed or
-    // uncomposed read leaves zero cards, never a broken screen.
+    // records endpoint the shell badge counts (MEM_ACC_REUSE), narrowed to
+    // the unresolved rows on the server — a resolved history beyond the
+    // page bound must never hide an outstanding decision. The cards still
+    // ignore anything but unresolved, so an unfiltered answer stays safe.
     try {
-      const read = await client.request('/api/modules/duplicate-candidate/records?limit=100');
+      const read = await client.request('/api/modules/duplicate-candidate/records?filter.status=unresolved&limit=100');
       state.candidates = Array.isArray(read?.items) ? read.items : [];
-    } catch {
+      state.candidatesError = null;
+    } catch (error) {
       state.candidates = [];
+      // An uncomposed module (or an older Admin) is an expected absence,
+      // not a fault: zero cards, silent. A failed read is a distinct state:
+      // the screen must not claim everything is fixed while the identity
+      // decisions were never read. The technical cause goes only to the
+      // log (AGENTS.md): error name or code with the workspace id, never
+      // the message or personal data.
+      if (isNotComposedFailure(error) || isUnsupportedContractFailure(error)) {
+        state.candidatesError = null;
+      } else {
+        state.candidatesError = 'Le decisioni sulle doppie schede non si sono potute leggere. Riprova più tardi.';
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            'bo-sync candidates unreadable:',
+            error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+            `spaceId=${state.spaceId}`,
+          );
+        }
+      }
     }
   }
 
@@ -901,7 +924,7 @@ export function createSyncView(deps) {
     // BO-F6-16: the section names its count like the prototype
     // (`Da sistemare <n>`); the quiet banner is the prototype wording.
     box.appendChild(el(doc, 'h3', undefined, total === 0 ? 'Da sistemare' : `Da sistemare ${total}`));
-    if (total === 0) {
+    if (total === 0 && state.candidatesError === null) {
       box.appendChild(el(doc, 'p', 'bo-sync-note', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
       return;
     }
@@ -949,6 +972,11 @@ export function createSyncView(deps) {
       list.appendChild(card);
     }
     box.appendChild(list);
+    // A failed candidates read never hides behind the fixes: the section
+    // names what it could not read, without counting it as a fix.
+    if (state.candidatesError !== null) {
+      box.appendChild(el(doc, 'p', 'bo-sync-note', state.candidatesError));
+    }
   }
 
   // The prototype's `Canali` card (BO-F6-16, fetta 2): nine fixed rows with
