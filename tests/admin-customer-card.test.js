@@ -543,6 +543,39 @@ test('826e377c review giro-6: with the timeline in error the identities name the
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 
+test('826e377c review giro-7: a truncated timeline names a partial list, never an exact count', async () => {
+  // The review on head 3c77ca1 (P2): mergeLinkedIdentities ignored the
+  // timeline truncation flags, so a customer with a channel beyond the page
+  // read an exact «N canali». The section now renders the page it read and
+  // names it partial.
+  const mount = await renderCard(stubClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, truncated: true, count: 9 } },
+  }));
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(sectionText.includes('3 canali (elenco parziale)'), 'the partial page names itself partial, not exact');
+  assert.ok(sectionText.includes('+39 333 1234567'), 'the read rows still render');
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'a partial read never claims zero channels');
+});
+
+test('826e377c review giro-7: a null timeline names unavailability, never zero channels', async () => {
+  // A 404 timeline (the package is not composed for this reader) loads as
+  // null with no error: the section used to merge null to zero rows and
+  // print «nessun canale osservato» — a false zero for a read that never
+  // happened. It now names its state and stops.
+  const mount = await renderCard(stubClient({ timeline: null }));
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(
+    sectionText.includes('I canali osservati non sono disponibili.'),
+    'an unavailable observed read names its state',
+  );
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'an unavailable read claims no zero channels');
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no observed row renders without a timeline');
+});
+
 test('voce 908f2eb9bbfb: with enrichment or calls in error only that section names the failure', async () => {
   const failure = Object.assign(new Error('boom'), { status: 500 });
   const mount = await renderCard(stubClient({ enrichedError: failure, callsError: failure }), 'call-x');

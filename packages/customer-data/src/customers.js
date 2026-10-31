@@ -290,7 +290,11 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ *   observedComplete is scan-wide (backlog:826e377c): false when the
+ *   message or call scan behind the observed channels was partial or
+ *   unreadable — the row then reads channelsComplete:false instead of an
+ *   exact union. Absent means exact, so hand-built reads stay honest.
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
  *   observed channels name the message channels read for this customer in
@@ -331,6 +335,12 @@ export function shapeCustomerRow(subject, reads = {}) {
     .map((channel) => String(channel ?? '').toLowerCase())
     .filter((channel) => channel !== '' && CUSTOMER_CHANNELS.includes(/** @type {any} */ (channel)));
   const channels = [...new Set([...heldChannels, ...observedChannels])].sort();
+  // Review giro-7 on 826e377c (P1 head 3c77ca1): the union is exact only
+  // when the observed half behind it was fully read. A partial or
+  // unreadable message/call scan still shapes its best-effort channels,
+  // but the row marks them partial — canale-filtered queries refuse
+  // upstream instead of filtering over this short union.
+  const channelsComplete = reads.observedComplete !== false;
   const phoneIdentity = identities.find((row) => PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) ?? null;
   const status = reads.statusBySubject?.get(key)
     ?? { value: 'contatto', reason: 'no signed-business evidence was read for this customer in the list scan' };
@@ -347,6 +357,7 @@ export function shapeCustomerRow(subject, reads = {}) {
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),
+    channelsComplete,
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,

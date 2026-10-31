@@ -285,7 +285,11 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
  * and in the Clienti CANALI column, not in this section. Evidence that
  * names no handle (a call from an unknown number, a thread with no peer)
  * still counts as an observed channel — a display-only row with no handle,
- * never an invented one — instead of a silent under-count.
+ * never an invented one — instead of a silent under-count. A timeline
+ * without readable conversations/entries sections (a 404 null, a foreign
+ * shape) merges to available:false, never to an empty channel list; a
+ * truncated section merges its page with complete:false, never an exact
+ * count — the section names the shortfall instead.
  * @param {any} timeline the read-customer-timeline answer
  */
 export function mergeLinkedIdentities(timeline) {
@@ -303,41 +307,54 @@ export function mergeLinkedIdentities(timeline) {
     seen.add(key);
     rows.push(Object.freeze({ system, externalId: String(externalId), source: 'observed' }));
   };
-  const threads = Array.isArray(timeline?.conversations?.items) ? timeline.conversations.items : [];
-  const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  // Review giro-7 on 826e377c (P2 head 3c77ca1): the merge honors the
+  // timeline's own availability and truncation flags before claiming a
+  // count. A null timeline (honest 404: the package is not composed) or a
+  // shape without readable sections is unavailable, never an empty list;
+  // a truncated section is a partial page, never an exact total.
+  const sections = timeline != null && typeof timeline === 'object' ? timeline : null;
+  const threads = Array.isArray(sections?.conversations?.items) ? sections.conversations.items : null;
+  const entries = Array.isArray(sections?.entries?.items) ? sections.entries.items : null;
+  const available = threads !== null && entries !== null;
+  const truncated = available
+    && (sections.conversations?.truncated === true || sections.entries?.truncated === true);
   // Every labeled channel the timeline names, with or without a handle: a
   // channel observed without a handle still reads here (as a handle-less
   // row below), never as a silent under-count. The list CANALI column shares
   // the in-filter observed channels with these rows and adds every held
   // identity system — the two surfaces overlap, they are not one union.
   const seenChannels = new Set();
-  for (const thread of threads) {
-    const system = String(thread?.channel ?? '').toLowerCase();
-    if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
-    seenChannels.add(system);
-    if (typeof thread?.peer !== 'string' || thread.peer.trim() === '') continue;
-    if (isUuid(thread.peer)) continue;
-    push(system, thread.peer);
-  }
-  for (const entry of entries) {
-    const system = String(entry?.channel ?? '').toLowerCase();
-    if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
-    seenChannels.add(system);
-    if (typeof entry?.remoteHandle !== 'string' || entry.remoteHandle.trim() === '') continue;
-    if (isUuid(entry.remoteHandle)) continue;
-    push(system, entry.remoteHandle);
-  }
-  // Channels observed without any handle (a call from an unknown number, a
-  // thread with no peer): one display-only row per channel, with no handle
-  // to link. The display vocabulary is wider than the list filter's, so an
-  // observed legacy channel reads here while CANALI skips it.
-  for (const system of [...seenChannels].sort()) {
-    if (rows.some((row) => row.system === system)) continue;
-    rows.push(Object.freeze({ system, externalId: null, source: 'observed' }));
+  if (available) {
+    for (const thread of threads) {
+      const system = String(thread?.channel ?? '').toLowerCase();
+      if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
+      seenChannels.add(system);
+      if (typeof thread?.peer !== 'string' || thread.peer.trim() === '') continue;
+      if (isUuid(thread.peer)) continue;
+      push(system, thread.peer);
+    }
+    for (const entry of entries) {
+      const system = String(entry?.channel ?? '').toLowerCase();
+      if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
+      seenChannels.add(system);
+      if (typeof entry?.remoteHandle !== 'string' || entry.remoteHandle.trim() === '') continue;
+      if (isUuid(entry.remoteHandle)) continue;
+      push(system, entry.remoteHandle);
+    }
+    // Channels observed without any handle (a call from an unknown number, a
+    // thread with no peer): one display-only row per channel, with no handle
+    // to link. The display vocabulary is wider than the list filter's, so an
+    // observed legacy channel reads here while CANALI skips it.
+    for (const system of [...seenChannels].sort()) {
+      if (rows.some((row) => row.system === system)) continue;
+      rows.push(Object.freeze({ system, externalId: null, source: 'observed' }));
+    }
   }
   return Object.freeze({
     rows: Object.freeze(rows),
     channelCount: new Set(rows.map((row) => row.system)).size,
+    available,
+    complete: available && !truncated,
   });
 }
 
@@ -600,11 +617,21 @@ export function createCustomerCardView(deps) {
       return;
     }
     const merged = mergeLinkedIdentities(timeline);
+    // Voce 826e377c review giro-7 (P2 head 3c77ca1): the count is exact
+    // only on a complete read. An unavailable timeline (honest 404: the
+    // package is not composed) names its state instead of zero channels;
+    // a truncated page names itself partial instead of an exact total.
+    if (merged.available !== true) {
+      box.appendChild(el('p', 'bo-muted', 'I canali osservati non sono disponibili.'));
+      return;
+    }
     const count = merged.channelCount;
     box.appendChild(el('p', 'bo-muted',
       merged.rows.length === 0
         ? 'nessun canale osservato'
-        : `${count} ${count === 1 ? 'canale' : 'canali'}`));
+        : (merged.complete === true
+          ? `${count} ${count === 1 ? 'canale' : 'canali'}`
+          : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');

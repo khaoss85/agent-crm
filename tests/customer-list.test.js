@@ -691,3 +691,43 @@ test('a truncated subject scan names no per-view counts', async () => {
     assert.ok(!('count' in view), `${view.id} names no floor as a count`);
   }
 });
+
+test('826e377c review giro-7: a canale filter over a partial message scan refuses instead of dropping customers', async () => {
+  // The review on head 3c77ca1 (P1): observedChannels ignored
+  // messages/calls readability, so a customer whose extra channel sat
+  // beyond a list-only page vanished from canale filtering with no
+  // disclosure. A channel-filtered query now refuses; the unfiltered list
+  // still answers, flagging the union as partial in channelsComplete.
+  const { contacts, companies, identities } = SCENE();
+  const messages = [{
+    id: 'm1', subjectResource: 'contact', subjectId: 'c1',
+    occurredAt: '2026-10-20T09:00:00.000Z', channel: 'whatsapp', body: 'Ciao',
+  }];
+  const exact = fakeModules({ contacts, companies, identities, messages });
+  // A message service exposing only list(): the observed half is partial.
+  const listOnly = (rows) => ({ list: async () => rows });
+  const partial = fakeModules({ contacts, companies, identities });
+  const swap = (name, service) => ({ get: (key) => (key === name ? { service } : partial.get(key)) });
+  const partialModules = swap('interaction-message', listOnly(messages));
+  const runPartial = (request) => listCustomerRecords(
+    { modules: partialModules, core: {}, names: { identity: 'external-identity' } }, request);
+  await assert.rejects(
+    runPartial({ canale: 'whatsapp' }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /interaction-message/.test(error.message),
+    'a canale filter over a partial message scan refuses with its reason',
+  );
+  await assert.rejects(
+    runPartial({ q: 'guido whatsapp' }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE',
+    'channel words in q filter the same union, so they refuse the same way',
+  );
+  const page = await runPartial({ vista: 'tutti', sort: 'name', pageSize: '10' });
+  const guido = page.items.find((item) => item.name === 'Guido Presti');
+  assert.deepEqual(guido.channels, ['whatsapp'], 'the unfiltered list still names what it read');
+  assert.equal(guido.channelsComplete, false, 'the union flags its partial observed half');
+  const exactGuido = (await listCustomerRecords(
+    { modules: exact, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  )).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(exactGuido.channelsComplete, true, 'a fully read scan still claims an exact union');
+});
