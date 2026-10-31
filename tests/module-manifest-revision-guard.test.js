@@ -91,7 +91,7 @@ const RECORDED = Object.freeze({
   "customer-import-run": { revision: 1, sqlite: "862a20a5645c9d0e76025994e1b36c03cb78d1ad7549458c850c7c59287db518", pg: "4a9f9bb2229938861a1481fc56b2f42eedcea9f2b8d078576133be30bb7a5832" },
   "data-quality-issue": { revision: 2, sqlite: "b08c6b8c1e2182fc432cdb77417541416a44b7301e3c01f01a88a99b230de656", pg: "44aec90d03eb7f00803870bf7b18201100e008d6be97ef8153918100c6a565cf" },
   "duplicate-candidate": { revision: 1, sqlite: "21ea35b59c6903bc8ebe9f08b80eab64d0c3f31103bddcb55f3b548e81ab6d71", pg: "a293307bf8b26661912cc5e5f0a4804e8ea4b86bae830cee070d0d985918d1b9" },
-  "enriched-field": { revision: 1, sqlite: "763e9afa35f299980ca88986afa0906717d0b0e6f2d35816bf4c70ad22995239", pg: "b89b8a3eeee3a9a4a5b0e2a3cb30211f6d6b5e92ca1bdbf3c3310ef5b020840b" },
+  "enriched-field": { revision: 2, sqlite: "839b7e25bec6bbd9c2a25000bace9e240fa554165cf67cf4c8265f6488343025", pg: "729cfafe688aad8c4afcbd5dea95ecfe37ba8bfc22368b3679065f57726816f0" },
   "enrichment-opt-out": { revision: 1, sqlite: "7c4c20685c2f6f98d255dd2b7f5e8304700e80d80a92d4151dd07dba7181e42a", pg: "6f751aabef31bc38d0ae3f3c4236161a08e3711e2ae72b85474c7e57614cea2c" },
   "external-identity": { revision: 1, sqlite: "d5db3f31a322009dc197a56400384a69cf90a90c34dad4767a528c4cb66a4272", pg: "c978464ecc4540266ab2bd26225e9238a801086f1e428f36c183e5858015030e" },
   "delivery-acceptance-evidence": { revision: 1, sqlite: "dc044031292bff40169c34a18086a1dbe78a2836bc661f46a557a3a6c2cd23d5", pg: "6cebef1df565bf0c1dda9c2e4636cb2da7a22e062dab788e8be5157d775cbe13" },
