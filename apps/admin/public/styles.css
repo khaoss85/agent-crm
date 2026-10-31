@@ -1652,6 +1652,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-profilo-pill-muted { background: var(--surface-soft); color: var(--muted); }
 .bo-profilo-pill-warn { background: var(--pending-soft); color: var(--pending-ink); }
 .bo-profilo-card { border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 6px; }
+/* Connettori: la card Canali sotto i Collegamenti Google, con lo stesso respiro tra le card delle altre schermate. */
+.bo-canali-card { margin-top: 16px; }
 .bo-profilo-card .bo-profilo-card-title { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
 .bo-profilo-card-lede { margin: 0 0 10px; font-size: 14px; color: var(--muted); line-height: 1.5; }
 .bo-profilo-conns { display: flex; flex-direction: column; }
