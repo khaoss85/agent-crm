@@ -31,12 +31,13 @@ Esito per schermata: **UGUALE** = struttura e testi come il prototipo, differenz
 - Prossimo appuntamento: occhiello mono e riga «↔ Google Calendar · Marco» mancanti.
 - Cronologia: buona; mancano ora a destra, «Segnali» e i chip viola dell'AI quando ci sono.
 
-## Pipeline — backlog:31bed52727ae — DIFFERENZE (grandi)
-- Importi in formato inglese «EUR 1,200.00»: devono essere «1.200 €» (anche totali di colonna, previsione e riepilogo).
-- Manca il bottone verde «Nuova offerta» sotto il sottotitolo.
-- Previsione: un solo importo grande «113.600 €» e la frase sotto; qui due righe mono per valuta.
-- Filtri: il prototipo ha pillole «Referente Tutti», «Creata Sempre», «Stati Tutti» e «Personalizza stati»; qui select e campi data del browser.
-- Card: il prototipo ha sigla del referente, importo, riga stato, barra di avanzamento con «chiusura <data>» e il suggerimento viola; qui «Sposta in» con select e bottone «Sposta» dentro ogni card.
+## Pipeline — backlog:61800913 (aggiornato 31/10/2026 su main 74097955, proof in tests/fixtures/bo-shots-proof/pipeline-*.png) — DIFFERENZE (piccole, una strutturale)
+- Importi: «1.200 €», totali di colonna, previsione e riepilogo in italiano — come il prototipo (design pass 4, #433).
+- «Nuova offerta» verde in alto a destra sulla riga del titolo, con le due voci del prototipo — come il prototipo (#468, #492 backlog:339ca222).
+- Previsione «✦ Previsione di ottobre» con mese, formula e rischio («Vinte e pagate, più il 60% di quelle in attesa — stima, non un impegno»): due righe per valuta perché le valute non si sommano mai (scelta di progetto, #467). Frase e mese come il prototipo.
+- Filtri a pillole «Referente Tutti», «Creata Sempre», «Stati Tutti» — come il prototipo (#473). «Personalizza stati» resta della storia F2-02 (rinomina/riordina/stati, backlog:7332a341): non di questa voce.
+- Card: sigla del referente (MF/SC, titolo accessibile col nome intero), importo, «chiusura <data>», motivo di perdita, badge di tipo «Aperta/Vinta ✓/Persa ✕» e dot di stato — come il prototipo (#463, #411, #488 backlog:96e7b579). Il controllo «Sposta in» resta dentro la card come alternativa accessibile al trascinamento (scelta di progetto). Probabilità di stato solo nella vista Lista, non sulla card.
+- RESTA (strutturale, follow-up): il dettaglio offerta nel prototipo è un pannello laterale con schede Panoramica/Offerta/Attività; qui il bottone «Apri» espande il dettaglio dentro la card (importo, chiusura, referente modificabili, #488). La scheda Attività dipende dalla composizione locale (appointments/interactions), esclusa da questa voce.
 
 ## Calendario — backlog:5fbebe8559e9 — DIFFERENZE (grandi)
 - In alto nella colonna sinistra manca la card dell'appuntamento scelto (titolo, data, persona, «Prenotato da … su WhatsApp», «↔ Google Calendar · invito al cliente inviato», «Apri scheda cliente»).

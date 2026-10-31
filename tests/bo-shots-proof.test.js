@@ -15,7 +15,7 @@
  *   committed there under docs/backoffice/design-pass-{1,2}/; copied here
  *   byte-identical. #408 after them touched only the login files, so these
  *   eight still depict the current tree.
- * - cliente, pipeline, reporting, connettori, componenti: rendered by the
+ * - cliente, reporting, connettori, componenti: rendered by the
  *   CI `bo-shots` workflow (run 40750281740, 2026-10-28T19:31Z, self-hosted
  *   Mac runner). Their paint inputs (view modules, fixtures, harness) are
  *   byte-identical between that run's tree and this one — that tree changes
@@ -23,6 +23,11 @@
  *   `admin-customer-data.js` (loaded by no harness page, only by app.js).
  *   Only the global stylesheet moved since (#406), so these show the same
  *   screens and demo data in the previous dressing.
+ * - pipeline: rendered by `npm run bo:shots -- --screen pipeline` on main
+ *   74097955 for backlog:61800913 (this PR). The fixture deals carry owner
+ *   and expectedCloseDate, so the pair proves the C13/C15 card lines (sigla
+ *   referente, `chiusura <data>`); the probe gate (`pipeline-ready`, 5 cards)
+ *   passed on the same render.
  * - login: rendered by the CI `bo-shots` workflow on the self-hosted Mac
  *   runner for this branch (workflow_dispatch run 40775943607 on
  *   `minimal/5acdfd87-login`; `login.html`/`login.js` byte-identical to
