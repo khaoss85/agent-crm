@@ -144,3 +144,24 @@ test('the login proof pair is a render of the current tree, never the stale pre-
     );
   }
 });
+
+// The stato-sync proof pair (BO-F6-16, backlog:08f42565) carries the same
+// freshness gate as login, catalogo and personalizzazione: the committed
+// PNGs must differ from the #413-era blobs (rendered for the #406 restyle,
+// before the BO-F6-16 hero #371 and the channel-table passes #415/#502), so
+// a restyle without a fresh `npm run bo-shots -- --screen stato-sync`
+// render fails here first.
+const STALE_STATO_SYNC_BLOBS = Object.freeze({
+  'stato-sync-1440x1800.png': '7af0609762f4a97221ee261f35969fb0ff2b920d673164ad3facffbeac89b7df',
+  'stato-sync-390x1600.png': '161964f6dbeea3b4b50083b370f0bc7a55cbd7beff4bc680b08a6a67635dadac',
+});
+
+test('the stato-sync proof pair is a render of the current tree, never the pre-#371 pair', () => {
+  for (const [file, stale] of Object.entries(STALE_STATO_SYNC_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale pre-#371 render: re-run \`npm run bo:shots -- --screen stato-sync\`, copy the pair here`,
+    );
+  }
+});
