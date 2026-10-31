@@ -443,110 +443,49 @@ test('the header reads the prototype verbatim: eyebrow, title, subtitle', async 
   ), 'the subtitle is verbatim');
 });
 
-test('Nuova sequenza opens a two-entry menu and Escape closes it', async () => {
+test('Nuova sequenza is the primary CTA with Crea con l’AI beside it', async () => {
+  // Owner 31/10: no menu — «Nuova sequenza» is the green CTA on the title row
+  // and «✦ Crea con l'AI» sits beside it in the assistant's colours.
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createSequenzeView({ doc, mount, client: stubClient() });
   await view.renderSequenze();
   await flush();
-  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-seq-menu'));
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  assert.ok(menus()[0].classList.contains('hidden'), 'the menu starts closed');
+  assert.ok(mount.querySelector('.bo-seq-actions'), 'the two header voices share one top-right wrap');
+  const manual = () => mount.querySelector('button[data-action="new-manual"]');
+  const ai = () => mount.querySelector('button[data-action="new-ai"]');
+  assert.equal(manual().textContent, 'Nuova sequenza');
   assert.deepEqual(
-    String(opener().getAttribute('class') ?? '').split(/\s+/).filter((cls) => cls.startsWith('ui-btn-')),
+    String(manual().getAttribute('class') ?? '').split(/\s+/).filter((cls) => cls.startsWith('ui-btn-')),
     ['ui-btn-cta'],
     'Nuova sequenza is the single green CTA, like the prototype',
   );
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
-  await flush();
-  assert.ok(!menus()[0].classList.contains('hidden'), 'click opens the menu');
-  assert.ok(menus()[0].textContent.includes("Crea con l'AI"));
-  assert.ok(menus()[0].textContent.includes('Es. «lead dal sito: WhatsApp subito, email dopo 2 giorni»'));
-  assert.ok(menus()[0].textContent.includes('Compila manualmente'));
-  assert.ok(menus()[0].textContent.includes('Quando parte, passi e canali'));
-  assert.equal(opener().getAttribute('aria-expanded'), 'true');
-  menus()[0].dispatch('keydown', { key: 'Escape' });
-  await flush();
-  assert.ok(menus()[0].classList.contains('hidden'), 'Escape closes the menu');
+  assert.ok(ai().textContent.includes('Crea con l'), 'the AI voice names the assistant entry');
+  assert.ok(ai().textContent.includes('✦'), 'the AI voice carries the assistant star');
+  const aiClasses = String(ai().getAttribute('class') ?? '').split(/\s+/);
+  assert.ok(aiClasses.includes('ui-btn'), 'the AI voice carries a ui-* system class');
+  assert.ok(aiClasses.includes('bo-seq-ai'), 'the AI voice wears the assistant colours');
+  assert.ok(!mount.querySelector('.bo-seq-menu'), 'no menu is painted anymore');
 });
 
-test('the opening click does not close the menu via the document handler', async () => {
-  const doc = createFakeDocument();
-  const docClicks = [];
-  const docWithOutside = {
-    ...doc,
-    addEventListener: (type, handler) => {
-      if (type === 'click') docClicks.push(handler);
-    },
-  };
-  const mount = createMount();
-  const view = createSequenzeView({ doc: docWithOutside, mount, client: stubClient() });
-  await view.renderSequenze();
-  await flush();
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-seq-menu'));
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
-  await flush();
-  assert.ok(!menus()[0].classList.contains('hidden'), 'the menu stays open after its own opening click');
-  for (const handler of docClicks) handler({ target: opener() });
-  await flush();
-  assert.ok(!menus()[0].classList.contains('hidden'), 'the bubbled opening click does not close the menu');
-  for (const handler of docClicks) handler({ target: mount });
-  await flush();
-  assert.ok(menus()[0].classList.contains('hidden'), 'an outside click closes the menu');
-});
-
-test('Escape at document level closes the menu when focus left the opener', async () => {
-  // Opening the menu moves focus to its first entry; the document-level
-  // Escape stays as the fallback for focus that left the view entirely.
-  const docHandlers = [];
-  const doc = {
-    ...createFakeDocument(),
-    addEventListener: (type, handler) => {
-      docHandlers.push({ type, handler });
-    },
-  };
-  const mount = createMount();
-  const view = createSequenzeView({ doc, mount, client: stubClient() });
-  await view.renderSequenze();
-  await flush();
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-seq-menu'));
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
-  await flush();
-  assert.ok(!menus()[0].classList.contains('hidden'), 'click opens the menu');
-  for (const { type, handler } of docHandlers) {
-    if (type === 'keydown') handler({ key: 'Escape', target: mount });
-  }
-  await flush();
-  assert.ok(menus()[0].classList.contains('hidden'), 'a document-level Escape closes the menu');
-  assert.equal(opener().__focused, true, 'a document-level Escape returns focus to the opener');
-});
-
-test('the menu keeps keyboard focus across its repaints', async () => {
+test('Nuova sequenza names the manual next step in Italian, twice hides it', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createSequenzeView({ doc, mount, client: stubClient() });
   await view.renderSequenze();
   await flush();
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  const firstEntry = () => mount.querySelector('button[data-action="new-ai"]');
-  const menu = () => mount.querySelector('.bo-seq-menu');
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  const manual = () => mount.querySelector('button[data-action="new-manual"]');
+  manual().dispatch('click', {});
   await flush();
-  assert.equal(firstEntry().__focused, true, 'opening the menu moves focus to its first entry');
-  menu().dispatch('keydown', { key: 'Escape' });
+  assert.ok(mount.textContent.includes('la vedi qui appena è pronta'), 'the manual voice names the outcome, in Italian');
+  assert.equal(manual().getAttribute('aria-expanded'), 'true');
+  assert.equal(manual().__focused, true, 'the repaint keeps keyboard focus on the voice');
+  manual().dispatch('click', {});
   await flush();
-  assert.ok(menu().classList.contains('hidden'), 'Escape closes the menu');
-  assert.equal(opener().__focused, true, 'Escape in the menu returns focus to the opener');
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
-  await flush();
-  firstEntry().dispatch('click', {});
-  await flush();
-  assert.equal(opener().__focused, true, 'picking an entry returns focus to the opener');
+  assert.ok(!mount.textContent.includes('la vedi qui appena è pronta'), 'a second press hides the hint');
 });
 
-test('the AI entry focuses the shell AI bar instead of painting a help sentence', async () => {
+test('the AI voice focuses the shell AI bar instead of painting a help sentence', async () => {
   const doc = createFakeDocument();
   const aiInput = doc.createElement('input');
   aiInput.setAttribute('class', 'bo-ai-input ui-field');
@@ -558,42 +497,23 @@ test('the AI entry focuses the shell AI bar instead of painting a help sentence'
   const view = createSequenzeView({ doc: docWithBar, mount, client: stubClient() });
   await view.renderSequenze();
   await flush();
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
   await flush();
-  mount.findAll('button').find((node) => node.textContent.includes("Crea con l'AI")).dispatch('click', {});
-  await flush();
-  assert.equal(aiInput.__focused, true, 'the AI entry moves focus to the real AI bar');
+  assert.equal(aiInput.__focused, true, 'the AI voice moves focus to the real AI bar');
   assert.ok(!mount.textContent.includes('barra AI'), 'no invented help sentence is painted');
 });
 
-test('without the shell bar the AI entry just closes the menu', async () => {
+test('without the shell bar the AI voice keeps focus and paints no hint', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createSequenzeView({ doc, mount, client: stubClient() });
   await view.renderSequenze();
   await flush();
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
-  await flush();
-  mount.findAll('button').find((node) => node.textContent.includes("Crea con l'AI")).dispatch('click', {});
+  const ai = () => mount.querySelector('button[data-action="new-ai"]');
+  ai().dispatch('click', {});
   await flush();
   assert.ok(!mount.textContent.includes('barra AI'), 'no hint without the bar');
-  assert.equal(opener().__focused, true, 'focus falls back to the opener');
-});
-
-test('picking the manual entry closes the menu and names the next step in Italian', async () => {
-  const doc = createFakeDocument();
-  const mount = createMount();
-  const view = createSequenzeView({ doc, mount, client: stubClient() });
-  await view.renderSequenze();
-  await flush();
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
-  await flush();
-  mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).dispatch('click', {});
-  await flush();
-  assert.ok(mount.textContent.includes('la vedi qui appena è pronta'), 'the manual entry names the outcome, in Italian');
+  assert.equal(ai().__focused, true, 'focus stays on the AI voice');
 });
 
 test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', async () => {
@@ -612,6 +532,17 @@ test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', as
   assert.ok(mount.textContent.includes('Risposte'));
   assert.ok(mount.textContent.includes('Call fissate'));
   assert.ok(mount.textContent.includes('—'), 'the call card stays an honest dash without appointments data');
+  const cards = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('metric'));
+  assert.equal(cards.length, 3, 'the dettaglio paints the 3 KPI cards with the Reporting classes');
+  for (const card of cards) {
+    const kids = card.childNodes ?? [];
+    assert.equal(kids.length, 3, 'each KPI card is label + big number + a line below');
+    assert.equal(String(kids[0].tagName ?? '').toLowerCase(), 'span');
+    assert.equal(String(kids[1].tagName ?? '').toLowerCase(), 'strong');
+    assert.equal(String(kids[2].tagName ?? '').toLowerCase(), 'span');
+  }
+  assert.ok(mount.textContent.includes('persone dentro adesso'));
+  assert.ok(mount.textContent.includes('non lette in questa vista'), 'the dash card says why it has no number');
   assert.ok(mount.textContent.includes(
     'Con «Inviare risposte senza approvazione» spento, ogni messaggio della sequenza aspetta il tuo ok prima di partire.',
   ));
@@ -695,10 +626,9 @@ test('the sequenze screen renders no raw control', async () => {
   await view.renderSequenze();
   await flush();
   assert.deepEqual(rawControls(mount), [], 'every control of the header carries a ui-* class');
-  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
-  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
   await flush();
-  assert.deepEqual(rawControls(mount), [], 'the open menu adds no raw control');
+  assert.deepEqual(rawControls(mount), [], 'the manual hint adds no raw control');
   mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
   await flush();
   assert.deepEqual(rawControls(mount), [], 'the dettaglio adds no raw control');

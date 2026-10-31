@@ -702,28 +702,27 @@ a.bo-oggi-title:hover { text-decoration: underline; }
  */
 .bo-seq { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
 .bo-seq-top { display: grid; grid-template-columns: minmax(0, 640px) auto; justify-content: space-between; column-gap: 24px; align-items: end; }
-.bo-seq-top > :not(.bo-seq-menuwrap) { grid-column: 1; }
-.bo-seq-top > .bo-seq-menuwrap { grid-column: 2; grid-row: 1 / span 3; align-self: end; position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.bo-seq-menuwrap > .ui-btn-cta { height: 42px; padding: 0 14px 0 16px; border-radius: 12px; font-size: 14px; font-weight: 700; white-space: nowrap; }
-.bo-seq-menu { position: absolute; right: 0; top: 48px; z-index: 5; width: 300px; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 14px; border: 1px solid var(--line-soft); background: var(--surface); box-shadow: 0 12px 32px rgba(23, 25, 18, .12); }
-.bo-seq-menu.hidden { display: none; }
-.bo-seq-item.ui-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 10px 12px; border: none; border-radius: 10px; background: transparent; text-align: left; font-size: 14px; font-weight: 700; }
-.bo-seq-item.ui-btn:hover { background: var(--surface-soft); }
-.bo-seq-item .bo-muted { font-size: 12.5px; font-weight: 400; color: var(--muted); }
-.bo-seq-hint { margin: 0; max-width: 300px; font-size: 12.5px; color: var(--muted); text-align: right; }
+.bo-seq-top > :not(.bo-seq-actions) { grid-column: 1; }
+.bo-seq-top > .bo-seq-actions { grid-column: 2; grid-row: 1 / span 3; align-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.bo-seq-actions > .ui-btn-cta { height: 42px; padding: 0 16px; border-radius: 12px; font-size: 14px; font-weight: 700; white-space: nowrap; }
+button.bo-seq-ai { height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--agent-line); background: var(--agent-card); color: var(--agent-ink); font-size: 14px; font-weight: 700; white-space: nowrap; }
+button.bo-seq-ai:hover { border-color: var(--agent-ink); }
+.bo-seq-hint { margin: 0; max-width: 300px; flex-basis: 100%; font-size: 12.5px; color: var(--muted); text-align: right; }
 .bo-seq-quando { margin: 0; font-size: 13px; line-height: 1.4; color: var(--muted); }
 .bo-seq-pills { display: flex; flex-wrap: wrap; gap: 6px; }
 .bo-seq-pill { margin: 0; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; }
 .bo-seq-pill-trigger { background: var(--data-soft); color: var(--data-ink); }
 .bo-seq-pill-stop { background: var(--accent-soft); color: var(--accent); }
-.bo-seq-kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.bo-seq-kpi-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 14px 16px; }
-.bo-seq-kpi-label { margin: 0; font-size: 12.5px; color: var(--muted); }
-.bo-seq-kpi-value { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.03em; }
+/* The dettaglio KPI cards wear the Reporting dress (owner 31/10): the same
+   `metrics`/`metric` classes share the `.bo-rep` rules, so grid and padding
+   stay identical by construction. */
 @media (max-width: 700px) {
   .bo-seq-top { grid-template-columns: minmax(0, 1fr); row-gap: 14px; }
-  .bo-seq-top > .bo-seq-menuwrap { grid-column: 1; grid-row: auto; align-items: flex-start; }
+  .bo-seq-top > .bo-seq-actions { grid-column: 1; grid-row: auto; justify-content: flex-start; }
   .bo-seq-hint { text-align: left; }
+}
+@media (max-width: 560px) {
+  .bo-seq-detail .metrics { grid-template-columns: 1fr 1fr; }
 }
 .bo-seq-top .bo-kicker { margin-bottom: 10px; }
 .bo-seq-title { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
@@ -1516,8 +1515,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep > .actions { gap: 4px; }
 .bo-rep > .actions .ui-btn { height: 32px; padding: 0 12px; border-radius: 9px; font-size: 13px; }
 .bo-rep > .lede { margin: 0; font-size: 13px; color: var(--muted); }
-.bo-rep .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-.bo-rep .metric { padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); box-shadow: none; }
+.bo-rep .metrics, .bo-seq-detail .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.bo-rep .metric, .bo-seq-detail .metric { padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); box-shadow: none; }
 .bo-rep-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; align-items: start; }
 .bo-rep-grid > * { grid-column: span 2; min-width: 0; }
 .bo-rep-grid > .bo-rep-wide { grid-column: span 4; }

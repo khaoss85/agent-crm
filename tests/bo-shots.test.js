@@ -147,6 +147,9 @@ test('the clienti harness names counted pills and one label-only fallback', () =
     assert.ok(page.includes(view), `the demo names ${view}`);
   }
   assert.ok(page.includes('button[role="tab"]'), 'the probe reads the pill tabs');
+  // backlog:22d4dd0f, C16: the demo row carries a message excerpt, so the
+  // next render paints sigla + anteprima + «canale · quando» like the prototype.
+  assert.ok(page.includes('lastContactText'), 'the demo row carries an excerpt');
 });
 
 test('every screen photographs with its shell identity from the /bo router', () => {
