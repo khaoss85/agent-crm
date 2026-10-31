@@ -317,9 +317,21 @@ export function createPipelineBoard(deps) {
       class: 'lede',
       text: "Apri una card per vedere com'è composta e costruire l'offerta. Trascinala per cambiarne lo stato.",
     }));
-    // C3: the green `Nuova offerta` button sits under the description,
-    // like the prototype. The violet forecast stays beside the title.
-    titleBox.appendChild(renderNewOfferMenu(pipeline));
+    heading.appendChild(titleBox);
+    // Backlog 339ca222: the green `Nuova offerta` button sits top-right on
+    // the title row, like the other /bo primary buttons (Clienti
+    // `Aggiungi cliente`, Calendario `Nuovo appuntamento`). The violet
+    // forecast leaves the title row and moves to its own row below, so the
+    // row holds the title on the left and exactly one primary action on
+    // the right. DECISION (to be confirmed): the forecast keeps its card
+    // dress and full content, only its position changes.
+    const actions = el(doc, 'div', { class: 'pipeline-actions', attrs: { 'data-pipeline-actions': 'title' } });
+    actions.appendChild(renderNewOfferMenu(pipeline));
+    heading.appendChild(actions);
+    panel.appendChild(heading);
+    // Supervisor design pass (backlog 339ca222): forecast below the title
+    // row, full width, over the filtered set — unchanged content.
+    panel.appendChild(renderForecast(pipeline, visible));
     // Honest bounds: the board loads at most BOARD_LIMIT records, and records
     // not on this pipeline are excluded by documented behavior, not hidden.
     if (records.length >= BOARD_LIMIT) {
@@ -331,12 +343,6 @@ export function createPipelineBoard(deps) {
     if (offPipeline > 0 || composedPipelineNames(pipelines).length > 1) {
       titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline));
     }
-    heading.appendChild(titleBox);
-    // Supervisor design pass (prototype 06): the forecast is the violet card
-    // beside the title, the count and totals close the single tool row.
-    heading.appendChild(renderForecast(pipeline, visible));
-    panel.appendChild(heading);
-
     const tools = renderToolbar(pipeline, onBoard);
     tools.appendChild(renderSummary(visible));
     panel.appendChild(tools);
@@ -344,11 +350,17 @@ export function createPipelineBoard(deps) {
     if (state.view === 'lista') {
       panel.appendChild(renderList(pipeline, visible));
     } else {
+      // Backlog 339ca222: the board rides a positioned wrap so the phone
+      // fade cue (CSS) can overlay the scroll edge without scrolling away.
+      const scroller = el(doc, 'div', { class: 'pipeline-board-wrap', attrs: { 'data-board': 'scroll' } });
       const board = el(doc, 'div', { class: 'pipeline-board' });
       for (const stage of pipeline.stages) {
         board.appendChild(renderColumn(pipeline, stage, visible.filter((record) => record.pipelineStage === stage.key), token));
       }
-      panel.appendChild(board);
+      scroller.appendChild(board);
+      panel.appendChild(scroller);
+      syncScrollCue(scroller, board);
+      board.addEventListener('scroll', () => syncScrollCue(scroller, board));
     }
 
     if (offDefinition.length) {
@@ -371,8 +383,25 @@ export function createPipelineBoard(deps) {
   }
 
   /**
-   * `Nuova offerta` menu button (C3): the green button under the page
-   * description, opening the prototype's two voices. The buttons are the
+   * Hide the phone fade cue once the board is scrolled to its end: the
+   * wrap carries `data-ateend="true"` and the CSS overlay fades out. Any
+   * unreadable scroll metric fails closed to "not at end" (cue stays).
+   * @param {{setAttribute: (name: string, value: string) => void}} scroller
+   * @param {{scrollLeft?: unknown, scrollWidth?: unknown, clientWidth?: unknown}} board
+   */
+  function syncScrollCue(scroller, board) {
+    const left = Number(board?.scrollLeft ?? 0);
+    const width = Number(board?.scrollWidth ?? NaN);
+    const seen = Number(board?.clientWidth ?? NaN);
+    const atEnd = Number.isFinite(width) && Number.isFinite(seen)
+      && (width - seen <= 4 || left >= width - seen - 4);
+    scroller.setAttribute('data-ateend', atEnd ? 'true' : 'false');
+  }
+
+  /**
+   * `Nuova offerta` menu button (C3, moved top-right by backlog 339ca222):
+   * the green button on the title row, opening the prototype's two voices.
+   * The buttons are the
    * shared `ui-add-option` voices (MEM_ACC_REUSE: same pattern as the
    * Clienti add menu and the shell `+ Nuovo` menu), positioned by the
    * generic `ui-conn-addwrap` / `ui-conn-addmenu` pair — no screen CSS.
