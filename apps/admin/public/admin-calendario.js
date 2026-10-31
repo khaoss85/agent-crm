@@ -22,6 +22,7 @@
 import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { spaceRoleLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
@@ -1918,6 +1919,16 @@ export function createCalendarioView(deps) {
   }
 
   async function render() {
+    // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
+    // one-time pick the calendar takes here, once, on entry — read and
+    // cleared, so a later visit starts unpicked. A fresh pick opens the
+    // manual form around the named customer; without one the form keeps its
+    // own state (an operator search in progress is never clobbered).
+    const freshPick = takePendingCustomerPick(storage, 'appointment');
+    if (freshPick !== null) {
+      state.customerPick = freshPick;
+      state.manualOpen = true;
+    }
     renderAll();
     // The roster arrives beside the week and becomes the team once it
     // lands (auto-fill plus week load inside loadMembers); its failure is

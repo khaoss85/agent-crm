@@ -24,6 +24,11 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   lost: ['discovery'],
 });
 
+// Voce 714433c2: the governed transition table, readable by clients that
+// must offer only legal moves (the /bo «Cambia stato» menu). The static
+// Admin view mirrors it and a test pins the mirror to this table.
+export { ALLOWED_TRANSITIONS as OPPORTUNITY_ALLOWED_TRANSITIONS };
+
 // Test probe (mirrors injectPostgresqlCommitFault in core
 // postgresql-storage): armed only by tests that must force two stage claims
 // to overlap. The workflow pins its intent at load-opportunity, before

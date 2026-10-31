@@ -20,6 +20,7 @@ import {
   isUnsupportedContractFailure,
 } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
+import { takePendingCustomerPick } from './admin-prefill.js';
 
 function memoryStorage() {
   /** @type {Map<string, string>} */
@@ -184,7 +185,180 @@ export function createModuleAdmin(deps) {
 
   // ---- Create form ------------------------------------------------------
 
+  /**
+   * Voce 714433c2: the «Nuova offerta» creation screen. The opportunity
+   * module is not an exposable generated module (no generic create form
+   * exists for it), so this view renders the governed create directly: the
+   * customer stashed by the scheda («Nuova offerta») is taken once here —
+   * read and cleared — and filed as companyId/contactId, while the operator
+   * types titolo, valore, scadenza and referente. Ids never reach the
+   * screen; the server stays authoritative and refuses a stale pick (unknown
+   * company or a contact outside its company). On success the board lists
+   * the new offer (`#/pipelines/accordo-sales`, packages/pipelines/
+   * accordo-sales.js). Without a pick the screen says how to start — from
+   * the customer scheda — instead of inventing a customer.
+   */
+  async function renderOpportunityNew() {
+    const store = deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage);
+    const pick = takePendingCustomerPick(store, 'offer');
+    clear();
+    const companyId = pick !== null && pick.resource === 'company'
+      ? pick.id
+      : (pick?.company?.id ?? null);
+    const contactId = pick !== null && pick.resource === 'contact' ? pick.id : null;
+    const companyName = pick !== null && pick.resource === 'company'
+      ? pick.name
+      : (pick?.company?.name ?? null);
+
+    const panel = el(doc, 'section', { class: 'panel' });
+    const heading = el(doc, 'div', { class: 'panel-heading' });
+    const titleBox = el(doc, 'div');
+    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Offerta' }));
+    titleBox.appendChild(el(doc, 'h2', { text: 'Nuova offerta' }));
+    heading.appendChild(titleBox);
+    const back = el(doc, 'button', { class: 'small secondary', text: 'Torna alle offerte' });
+    back.addEventListener('click', () => navigate('#/pipelines/accordo-sales'));
+    heading.appendChild(back);
+    panel.appendChild(heading);
+
+    if (companyId === null) {
+      panel.appendChild(el(doc, 'p', {
+        class: 'empty',
+        text: 'Scegli il cliente dalla sua scheda: la nuova offerta parte dal cliente, con «Nuova offerta».',
+      }));
+      mount.appendChild(panel);
+      return panel;
+    }
+    panel.appendChild(el(doc, 'p', {
+      class: 'lede',
+      text: companyName !== null && contactId !== null && pick !== null && pick.name !== companyName
+        ? `Cliente: ${pick.name} · Azienda: ${companyName}`
+        : `Azienda: ${companyName ?? pick?.name ?? ''}`,
+    }));
+
+    const form = el(doc, 'form', { class: 'record-form' });
+    form.setAttribute('novalidate', 'novalidate');
+    const generalError = el(doc, 'p', { class: 'form-error hidden', attrs: { role: 'alert' } });
+    form.appendChild(generalError);
+
+    /** @type {Record<string, any>} */
+    const inputs = {};
+    /** @type {Record<string, any>} */
+    const fieldErrors = {};
+    const addField = (name, label, { type = 'text', placeholder = '', required = false } = {}) => {
+      const row = el(doc, 'div', { class: 'field-row' });
+      const inputId = `field-opportunity-${name}`;
+      const labelNode = el(doc, 'label', { text: label, attrs: { for: inputId } });
+      if (required) labelNode.appendChild(el(doc, 'span', { class: 'req', text: ' *' }));
+      row.appendChild(labelNode);
+      const input = el(doc, 'input', { attrs: { id: inputId, name, type, placeholder } });
+      if (required) input.setAttribute('required', 'required');
+      input.setAttribute('aria-describedby', `${inputId}-error`);
+      row.appendChild(input);
+      const errorNode = el(doc, 'small', { class: 'field-error hidden', attrs: { id: `${inputId}-error` } });
+      row.appendChild(errorNode);
+      form.appendChild(row);
+      inputs[name] = input;
+      fieldErrors[name] = errorNode;
+    };
+    addField('title', 'Titolo', { placeholder: 'es. Pacchetto 10 ingressi', required: true });
+    addField('value', 'Valore EUR', { placeholder: 'es. 250.00', required: true });
+    addField('expiry', 'Scadenza', { type: 'date' });
+    addField('owner', 'Referente', { placeholder: 'Chi la segue', required: true });
+
+    const submit = el(doc, 'button', { class: 'primary', text: 'Crea offerta', attrs: { type: 'submit' } });
+    form.appendChild(submit);
+    panel.appendChild(form);
+
+    let inFlight = false;
+    function setBusy(busy) {
+      inFlight = busy;
+      submit.disabled = busy;
+      submit.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
+    function clearErrors() {
+      generalError.textContent = '';
+      generalError.setAttribute('class', 'form-error hidden');
+      for (const node of Object.values(fieldErrors)) {
+        node.textContent = '';
+        node.setAttribute('class', 'field-error hidden');
+      }
+    }
+    function showErrors(fieldMap = {}, general) {
+      clearErrors();
+      if (general) {
+        generalError.textContent = general;
+        generalError.setAttribute('class', 'form-error');
+      }
+      for (const [name, message] of Object.entries(fieldMap)) {
+        if (fieldErrors[name]) {
+          fieldErrors[name].textContent = message;
+          fieldErrors[name].setAttribute('class', 'field-error');
+        } else if (!general) {
+          generalError.textContent = message;
+          generalError.setAttribute('class', 'form-error');
+        }
+      }
+    }
+    /** Euro text to integer cents, or null when not a plain non-negative amount. */
+    function parseEuroToCents(raw) {
+      const text = String(raw ?? '').trim().replace(',', '.');
+      if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
+      const cents = Math.round(Number(text) * 100);
+      return Number.isSafeInteger(cents) ? cents : null;
+    }
+
+    async function handleSubmit(event) {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (inFlight) return;
+      clearErrors();
+      const title = String(inputs.title.value ?? '').trim();
+      const owner = String(inputs.owner.value ?? '').trim();
+      const cents = parseEuroToCents(inputs.value.value);
+      const expiry = String(inputs.expiry.value ?? '').trim();
+      /** @type {Record<string, string>} */
+      const failures = {};
+      if (title === '') failures.title = 'Il titolo è obbligatorio.';
+      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250.00).';
+      if (owner === '') failures.owner = 'Il referente è obbligatorio.';
+      if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
+      if (Object.keys(failures).length > 0) {
+        showErrors(failures);
+        return;
+      }
+      setBusy(true);
+      try {
+        const created = await client.request('/api/opportunities', {
+          method: 'POST',
+          body: JSON.stringify({
+            companyId,
+            ...(contactId !== null ? { contactId } : {}),
+            name: title,
+            valueCents: cents,
+            currency: 'EUR',
+            ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
+            owner,
+          }),
+        });
+        toast('Offerta creata');
+        navigate('#/pipelines/accordo-sales');
+        return created;
+      } catch (error) {
+        setBusy(false);
+        showErrors({}, humanReadError(error, { failed: 'Offerta non creata. Riprova più tardi.' }));
+        return null;
+      }
+    }
+    form.addEventListener('submit', handleSubmit);
+    form.__submit = handleSubmit;
+    form.__inputs = inputs;
+
+    mount.appendChild(panel);
+    return form;
+  }
+
   async function renderNew(moduleName) {
+    if (moduleName === 'opportunity') return renderOpportunityNew();
     const token = ++renderToken;
     showMessage('Loading…');
     let meta;

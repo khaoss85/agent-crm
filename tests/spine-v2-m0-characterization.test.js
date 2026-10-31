@@ -194,7 +194,24 @@ test('M0 freezes the synchronous SQLite composition and mixed sync/async service
 test('M0 freezes package v1 as synchronous declaration and operation metadata', async () => {
   const work = createWorkPackage();
   assert.equal(work.packageContract, 1);
-  assert.equal(work.operations, undefined, 'Work v1 declares no application operations');
+  // Voce 714433c2: Work v1 gains one application operation, the scheda
+  // cliente's operator note. A note is a subject-timeline write with no
+  // task, so it cannot ride an action; the frozen v1 declaration moves
+  // deliberately here, the way #380 moved it for `postpone`.
+  assert.deepEqual(
+    (work.operations ?? []).map(({ name, operationContract, appMethod }) => ({ name, operationContract, appMethod })),
+    [{ name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' }],
+    'Work v1 declares exactly the operator-note application operation',
+  );
+  assert.deepEqual(
+    work.operations[0].input.map(({ name, type }) => ({ name, type })),
+    [
+      { name: 'resource', type: 'string' },
+      { name: 'id', type: 'string' },
+      { name: 'body', type: 'string' },
+    ],
+    'the operator-note operation takes a subject and plain-text body',
+  );
   assert.deepEqual(work.capabilities.map(({ name, version }) => ({ name, version })), [
     { name: 'follow-up', version: 1 },
   ]);
