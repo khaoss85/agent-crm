@@ -220,13 +220,17 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
 
-  // Left: quick actions are real links, identities carry their motivation.
+  // Left: quick actions are a Chiama link and the Scrivi composer button —
+  // no mailto: anywhere (backlog:e9b4fc2f). Identities carry their motivation.
   const links = mount.findAll('a');
   const call = links.find((node) => node.getAttribute('data-action') === 'call-customer');
   assert.ok(call, 'a Chiama action exists');
   assert.equal(call.getAttribute('href'), 'tel:+393331234567');
-  const mail = links.find((node) => node.getAttribute('data-action') === 'mail-customer');
-  assert.equal(mail.getAttribute('href'), 'mailto:guido@palestra-esempio.it');
+  assert.ok(links.every((node) => !String(node.getAttribute('href') ?? '').startsWith('mailto:')),
+    'no mailto: link in the quick actions');
+  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
+  assert.ok(write, 'a Scrivi action opens the composer');
+  assert.equal(write.textContent, 'Scrivi');
 
   assert.ok(text.includes('stesso numero su WhatsApp e Instagram'), 'the link motivation is shown');
   assert.ok(text.includes('elena'), 'the decider is shown');
@@ -1710,4 +1714,132 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
     resource: 'contact', id: 'c1', name: 'Guido Presti',
     company: { id: 'co1', name: 'Palestra Esempio' },
   }, 'the appointment pick names the same record');
+});
+
+// Backlog e9b4fc2f: «Scrivi» opens the composer inside the scheda with the
+// customer's own channels. Email is linked (Gmail), WhatsApp has the number
+// but no linked connection — it reads switched off with its Connettori link.
+// A channel without any address (Messenger) names that instead. Invia posts
+// the preselected recipient, never a caller-supplied address.
+const COMPOSER_CONNECTORS = {
+  connectors: [
+    { channel: 'email', status: 'active', connectionKey: 'gmail-1' },
+    { channel: 'instagram', status: 'active', connectionKey: 'ig-1' },
+  ],
+};
+
+function composerClient({ connectors = COMPOSER_CONNECTORS } = {}) {
+  const base = stubClient();
+  const posts = [];
+  return {
+    posts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return connectors;
+      if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') {
+        posts.push(JSON.parse(options.body));
+        return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+      }
+      return base.request(path, options);
+    },
+  };
+}
+
+const flushComposer = async (rounds = 6) => {
+  for (let round = 0; round < rounds; round += 1) {
+    await new Promise((resolve) => { setImmediate(resolve); });
+  }
+};
+
+async function openComposerMount({ client = composerClient(), spaceId = 'presti', toast = undefined } = {}) {
+  const toasts = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, spaceId, toast: toast ?? ((message) => toasts.push(message)),
+  }).renderCard('contact', 'c1');
+  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
+  assert.ok(write, 'a Scrivi action exists');
+  write.dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(panel, 'the composer panel opens inside the scheda');
+  return { mount, panel, toasts, client };
+}
+
+test('e9b4fc2f: Scrivi opens the composer with the customer channels', async () => {
+  const { panel } = await openComposerMount();
+  const text = panel.textContent;
+  assert.ok(text.includes('Scrivi al cliente'), 'the panel names its purpose');
+  for (const label of ['Email', 'WhatsApp', 'Instagram']) {
+    assert.ok(text.includes(label), `the ${label} channel is offered`);
+  }
+  assert.ok(text.includes('guido@palestra-esempio.it'), 'the email recipient is preselected');
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  assert.ok(byValue('email'), 'the email channel row exists');
+  assert.equal(byValue('email').getAttribute('disabled'), null, 'the linked email channel is selectable');
+  assert.equal(byValue('whatsapp').getAttribute('disabled'), 'disabled', 'WhatsApp without a connection is switched off');
+  assert.ok(text.includes('non collegato'), 'the off channel says it is not linked');
+  const connectors = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(connectors, 'the off channel links to Connettori');
+  assert.equal(connectors.getAttribute('href'), '#/connettori');
+  assert.ok(!panel.textContent.includes('mailto:'), 'no mailto: in the composer either');
+});
+
+test('e9b4fc2f: Invia posts the preselected recipient through the outbox route', async () => {
+  const { panel, toasts, client } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  assert.ok(area, 'the composer has its text field');
+  area.value = 'Certo, domani alle 18.';
+  const subject = panel.findAll('input').find((node) => String(node.getAttribute('class') ?? '').includes('composer-subject'));
+  if (subject) subject.value = 'Re: Preventivo';
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send').dispatch('click');
+  await flushComposer();
+  assert.equal(client.posts.length, 1, 'exactly one send is queued');
+  const [post] = client.posts;
+  assert.equal(post.channel, 'email');
+  assert.equal(post.text, 'Certo, domani alle 18.');
+  assert.equal(post.resource, 'contact');
+  assert.equal(post.id, 'c1');
+  assert.ok(!('to' in post), 'the recipient stays server-derived: the panel never sends one');
+  assert.deepEqual(toasts, ['Messaggio in consegna'], 'the operator reads the queued confirmation');
+});
+
+test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] } }),
+  });
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.ok(send, 'the Invia button exists');
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
+});
+
+test('e9b4fc2f: the composer names its honest limit and shows the text refusal', async () => {
+  const refusal = {
+    status: 400,
+    code: 'VALIDATION_ERROR',
+    message: 'Il messaggio non entra nella cronologia (limite: 2000 caratteri): il testo è lungo',
+    details: { field: 'text' },
+  };
+  const base = composerClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') throw refusal;
+      return base.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  assert.ok(panel.textContent.includes('Massimo 2000 caratteri'), 'the composer names its honest limit');
+  const area = panel.findAll('textarea')[0];
+  assert.ok(area, 'the composer has its text field');
+  area.value = `Salve, ${'x'.repeat(1994)}`;
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send').dispatch('click');
+  await flushComposer();
+  const err = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('field-error'));
+  assert.ok(err, 'the composer has its error line');
+  assert.ok(
+    String(err.textContent ?? '').includes('limite: 2000 caratteri'),
+    'the text refusal names the limit instead of a generic failure',
+  );
 });

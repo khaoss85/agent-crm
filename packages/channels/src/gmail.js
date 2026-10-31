@@ -129,6 +129,17 @@ export function gmailThreadIdForSubject(subject) {
   return THREAD.test(threadId) ? threadId : null;
 }
 
+/**
+ * Whether a provider-returned value is usable as a Gmail thread id
+ * (backlog:e9b4fc2f): the worker trusts it only when it passes the THREAD
+ * rule, so a message id or any other provider text never lands in the
+ * `email:` thread namespace. Provider text stays provider text until this
+ * says otherwise — never a thread id by position.
+ */
+export function isGmailThreadId(value) {
+  return typeof value === 'string' && THREAD.test(value);
+}
+
 function toBase64Url(text) {
   return Buffer.from(text, 'utf8').toString('base64url');
 }
@@ -416,7 +427,7 @@ export function createGmailChannelAdapter(options = {}) {
   const state = {
     mode: 'ok',
     flakyRemaining: 0,
-    /** @type {Map<string, {providerMessageId: string, request: any}>} */
+    /** @type {Map<string, {providerMessageId: string, providerThreadId?: string, request: any}>} */
     sentByKey: new Map(),
     sendCalls: 0,
     /** @type {Array<{id: string, threadId: string, from: string, to?: string, subject?: string, internalDateMs: number}>} */
@@ -601,22 +612,35 @@ export function createGmailChannelAdapter(options = {}) {
           throw new AppError('Gmail provider temporarily unavailable', { code: 'CHANNEL_SEND_TRANSIENT', status: 503 });
         }
         const existing = state.sentByKey.get(idempotencyKey);
-        if (existing) return { providerMessageId: existing.providerMessageId };
+        if (existing) {
+          return {
+            providerMessageId: existing.providerMessageId,
+            ...(existing.providerThreadId === undefined ? {} : { providerThreadId: existing.providerThreadId }),
+          };
+        }
         const request = buildGmailSendRequest({
           message,
           config: { mailbox: config.mailbox, baseUrl: config.baseUrl },
           secret,
         });
         const providerMessageId = `gmailmsg.fake-${state.sentByKey.size + 1}`;
+        // A reply stays in the thread the inbound opened; a first-ever send
+        // opens a new one, and the fake mints its id the way the Gmail API
+        // returns `threadId` next to the message `id` (THREAD-shaped, never
+        // the message id itself, so the two namespaces cannot be confused).
+        const providerThreadId = typeof message.threadId === 'string' && message.threadId !== ''
+          ? message.threadId
+          : `gmailthread.fake-${state.sentByKey.size + 1}`;
         // The Bearer [REDACTED] is call-time only: the retained copy keeps the
         // wire shape minus the secret, so no dump of sentRequests() leaks it.
         const { Authorization: _withheld, ...publicHeaders } = request.headers;
         void _withheld;
         state.sentByKey.set(idempotencyKey, {
           providerMessageId,
+          providerThreadId,
           request: { method: request.method, url: request.url, headers: publicHeaders, body: request.body },
         });
-        return { providerMessageId };
+        return { providerMessageId, providerThreadId };
       },
     },
     api,

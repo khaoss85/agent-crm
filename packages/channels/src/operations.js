@@ -1,5 +1,6 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
 import {
   AppError,
   SENSITIVE_KEY,
@@ -14,8 +15,10 @@ import {
   withTimeout,
 } from '../../core/index.js';
 import { assertHistoryPage, CHANNEL_HISTORY_PAGE_MAX } from './adapter.js';
+import { composerTimelineRefusal } from './composer-text.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
+import { gmailThreadSubject, isGmailThreadId } from './gmail.js';
 import { advanceLetter, assertJobTransition, jobSendState, transitionInbox } from './transitions.js';
 
 /**
@@ -122,6 +125,40 @@ export const CHANNEL_IMPORT_NOTE_SEQUENCE = 'sequence differs from the stored ro
 export const CHANNEL_IMPORT_NOTE_OCCURRED_AT = 'occurredAt differs from the stored row: adopted as the same event';
 export const CHANNEL_IMPORT_NOTE_SENDER_CONFLICT = 'sender evidence conflicts with the earlier sighting: left for a human to confirm';
 export const CHANNEL_IMPORT_NOTE_SENDER_REFUSED = 'sender resolution refused: left for a human to confirm';
+
+/**
+ * The conversation a proven send is logged under (backlog:e9b4fc2f): the
+ * single source of truth every email path shares with the inbox
+ * (`gmailThreadSubject` / `gmailThreadIdForSubject`), so a provider
+ * message id can never land in the `email:` thread namespace and a later
+ * composer can never reuse one as a thread id. Precedence: the explicit
+ * conversation the caller queued (the customer's current thread) wins;
+ * then the provider's authoritative receipt (`providerThreadId`, what the
+ * message actually landed in), then the queued reply thread; then the
+ * peer-routed subject for windowed adapters; last a fallback that
+ * `gmailThreadIdForSubject` provably refuses (colon inside, so the THREAD
+ * rule rejects it), keeping unthreaded sends out of the thread namespace
+ * instead of polluting it.
+ *
+ * @param {{channel: string, adapter?: any, message?: any, providerMessageId?: unknown, providerThreadId?: unknown, explicitConversationId?: string|null}} input
+ * @returns {string} the conversationId to log
+ */
+export function resolveSentConversationId({
+  channel, adapter, message, providerMessageId, providerThreadId, explicitConversationId,
+}) {
+  if (typeof explicitConversationId === 'string' && explicitConversationId !== '') return explicitConversationId;
+  if (channel === 'email') {
+    const receipt = isGmailThreadId(providerThreadId) ? providerThreadId : null;
+    const queued = message && isGmailThreadId(message.threadId) ? message.threadId : null;
+    const thread = receipt ?? queued;
+    if (thread !== null) return gmailThreadSubject(thread);
+    return `email:send:${typeof providerMessageId === 'string' ? providerMessageId : 'unknown'}`;
+  }
+  const peer = typeof message?.to === 'string' ? message.to : null;
+  const subjectForRecipient = adapter?.outboundWindow?.subjectForRecipient;
+  if (peer !== null && typeof subjectForRecipient === 'function') return subjectForRecipient(peer);
+  return `${channel}:${typeof providerMessageId === 'string' ? providerMessageId : 'unknown'}`;
+}
 
 /**
  * Same-process serialization for import progress commits, one FIFO chain
@@ -314,6 +351,7 @@ const SYSTEM = () => trustedSystemActor('channel package internal write');
  *   resolveSecret: (reference: string, context: {spaceId: string, purpose: string}) => Promise<string>,
  *   tenantId: string,
  *   config?: Record<string, any>,
+ *   interactionLog?: { logMessage: (request: any) => Promise<any> } | null,
  * }} deps `resolveSecret` is the deployment's custody edge (platform
  * runtime-vault in production, a fixture map in tests): the reference is
  * stored, the value is resolved at call time and never persisted.
@@ -378,6 +416,18 @@ export function createChannelOperations(deps) {
   if (llm !== null && (typeof llm !== 'object' || typeof llm.complete !== 'function')) {
     throw new ValidationError('channel llm must open the composed llm-complete@1 capability (complete)', {
       field: 'llm',
+    });
+  }
+  // The opened `interaction-log@1` handle (backlog:e9b4fc2f): the scheda
+  // cliente composer. Optional: without it a queued send still sends, but
+  // the worker logs no timeline row — the host keeps logging sends itself,
+  // exactly as before. Opened by the composition with the channels package
+  // as consumer and a system writer actor, so the logged row carries the
+  // worker as writer and the sending human as team author.
+  const interactionLog = deps.interactionLog ?? null;
+  if (interactionLog !== null && (typeof interactionLog !== 'object' || typeof interactionLog.logMessage !== 'function')) {
+    throw new ValidationError('channel interactionLog must open the composed interaction-log@1 capability (logMessage)', {
+      field: 'interactionLog',
     });
   }
   const sendTimeoutMs = Number.isSafeInteger(deps.config?.sendTimeoutMs) ? deps.config.sendTimeoutMs : CHANNEL_SEND_TIMEOUT_MS;
@@ -1802,6 +1852,71 @@ export function createChannelOperations(deps) {
    * carries routing and content only — the handler resolves the secret at
    * execution time, so no secret material ever rests in the jobs table.
    */
+  /**
+   * The host subject one queued send belongs to (backlog:e9b4fc2f): the
+   * scheda cliente composer names the customer record the message is sent
+   * to, so the worker can log the proven send as that subject's outbound
+   * timeline row. Validated here, fail-fast: a subject the timeline would
+   * refuse must refuse the queue, never a dead letter after the send.
+   * Absent means no host row — the send still sends, exactly as before.
+   */
+  /**
+   * The timeline body fence (backlog:e9b4fc2f): the composed
+   * `interaction-log@1` writer stores at most 2000 characters and refuses
+   * control characters except LF (its safeMessageBody fence), while the
+   * channel adapters allow far more (Gmail: 30000 chars, tabs and lone CR
+   * included). A queued send the timeline writer is guaranteed to refuse
+   * must refuse the queue — never a provider send followed by a
+   * CHANNEL_TIMELINE_UNLOGGED dead letter with no cronologia row and a
+   * duplicate on retry. The fence itself lives in `./composer-text.js`,
+   * shared with the HTTP route so the route and the queue refuse the same
+   * text the same way (never an import of the interactions package: a
+   * domain package reaches another only through its declared capability).
+   */
+  function assertTimelineBodyFitsTimeline(message) {
+    const text = typeof message?.text === 'string' ? message.text : '';
+    if (text === '') return;
+    const refusal = composerTimelineRefusal(text);
+    if (refusal !== null) malformedMessage(refusal);
+  }
+  function assertTimelineRequest(value) {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw new ValidationError('timeline must be an object naming the host subject', { field: 'timeline' });
+    }
+    const subject = /** @type {any} */ (value).subject;
+    if (!subject || typeof subject !== 'object' || Array.isArray(subject)) {
+      throw new ValidationError('timeline.subject is required', { field: 'timeline.subject' });
+    }
+    const resource = typeof subject.resource === 'string' ? subject.resource.trim() : '';
+    const id = typeof subject.id === 'string' ? subject.id.trim() : '';
+    if (resource === '' || resource.length > 64 || id === '' || id.length > 128) {
+      throw new ValidationError('timeline.subject needs a bounded resource and id', { field: 'timeline.subject' });
+    }
+    const owner = subject.owner === undefined ? 'host' : subject.owner;
+    if (owner !== 'host' && owner !== 'package') {
+      throw new ValidationError('timeline.subject.owner must be "host" or "package"', { field: 'timeline.subject' });
+    }
+    const ownerPackage = owner === 'package'
+      ? (typeof subject.ownerPackage === 'string' ? subject.ownerPackage.trim() : '')
+      : null;
+    if (owner === 'package' && ownerPackage === '') {
+      throw new ValidationError('timeline.subject.ownerPackage is required when owner is "package"', { field: 'timeline.subject' });
+    }
+    const conversationId = /** @type {any} */ (value).conversationId;
+    if (conversationId !== undefined && conversationId !== null
+      && (typeof conversationId !== 'string' || conversationId.trim() === '' || conversationId.length > 128)) {
+      throw new ValidationError('timeline.conversationId must be bounded text when present', { field: 'timeline.conversationId' });
+    }
+    return {
+      subject: {
+        resource, id, owner,
+        ...(ownerPackage === null ? {} : { ownerPackage }),
+      },
+      ...(conversationId === undefined || conversationId === null ? {} : { conversationId: conversationId.trim() }),
+    };
+  }
+
   async function queueChannelSend(params) {
     const actor = requireUser(params?.actor);
     const spaceId = assertSpaceId(params?.spaceId);
@@ -1809,6 +1924,8 @@ export function createChannelOperations(deps) {
     const connection = requireActiveConnection(spaceId, connectionKey);
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
+    const timeline = assertTimelineRequest(params?.timeline);
+    if (timeline !== null) assertTimelineBodyFitsTimeline(message);
     const messageKey = typeof params?.messageKey === 'string' && params.messageKey !== ''
       ? params.messageKey : null;
     const keyInput = messageKey ?? fingerprintPayload(JSON.stringify(message));
@@ -1818,7 +1935,15 @@ export function createChannelOperations(deps) {
       job = await jobs().enqueue({
         kind: CHANNEL_SEND_KIND,
         handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
-        payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
+        payload: {
+          spaceId,
+          connectionKey: connection.sourceKey,
+          idempotencyKey,
+          message,
+          ...(timeline === null ? {} : {
+            timeline: { ...timeline, teamAuthorId: actorId(actor) },
+          }),
+        },
         idempotencyRoot: idempotencyKey,
         outcomeReference: idempotencyKey,
         recoveryPolicy: 'reconcilable_at_least_once',
@@ -2323,6 +2448,51 @@ export function createChannelOperations(deps) {
    * attempts remain. Anything else is terminal: the real code lands in the
    * dead-letter row first, then the job settles terminal.
    */
+  /**
+   * The provenance the worker stamps on the rows it logs (backlog:e9b4fc2f):
+   * the composition opens `interaction-log@1` with the channels package as
+   * consumer, so the request must name it — any other package is refused by
+   * the capability binding, never quietly stored.
+   */
+  const CHANNEL_TIMELINE_SOURCE_PACKAGE = 'channels';
+  const CHANNEL_TIMELINE_SOURCE_ACTION = 'channel-send';
+
+  /**
+   * Log one proven provider send as its subject's outbound timeline row.
+   * Text-only: template sends carry no loggable text, so the provider
+   * receipt stays their only record and no row is faked for them. The row
+   * key derives from the send idempotency key, so a worker retry replays
+   * the same row instead of writing a second one. Throws on any refusal —
+   * the caller settles terminal, never a retry past a completed send.
+   */
+  async function logSentTimeline({ timeline, connection, adapter, message, providerMessageId, providerThreadId, idempotencyKey }) {
+    const text = typeof message?.text === 'string' ? message.text : '';
+    if (text === '') return;
+    const keyHash = createHash('sha256').update(idempotencyKey, 'utf8').digest('hex');
+    const explicit = typeof timeline.conversationId === 'string' ? timeline.conversationId : null;
+    const conversationId = resolveSentConversationId({
+      channel: connection.channel,
+      adapter,
+      message,
+      providerMessageId,
+      providerThreadId,
+      explicitConversationId: explicit,
+    });
+    await interactionLog.logMessage({
+      sourceKey: `${CHANNEL_TIMELINE_SOURCE_PACKAGE}-send:${keyHash}`,
+      conversationId,
+      direction: 'outbound',
+      channel: connection.channel,
+      body: text,
+      attachment: null,
+      teamAuthorId: timeline.teamAuthorId,
+      remoteHandle: typeof message?.to === 'string' ? message.to : null,
+      subject: timeline.subject,
+      occurredAt: nowIso(),
+      source: { package: CHANNEL_TIMELINE_SOURCE_PACKAGE, action: CHANNEL_TIMELINE_SOURCE_ACTION },
+    });
+  }
+
   function registerChannelSendHandlers(registry) {
     registry.register({
       kind: CHANNEL_SEND_KIND,
@@ -2409,6 +2579,27 @@ export function createChannelOperations(deps) {
           const providerMessageId = sent && typeof sent.providerMessageId === 'string' ? sent.providerMessageId : '';
           if (providerMessageId === '' || providerMessageId.length > 256) {
             return failTerminal('CHANNEL_SEND_UNPROVEN');
+          }
+          // The provider's authoritative thread receipt (Gmail returns the
+          // thread id next to the message id): the timeline row names the
+          // thread the message actually landed in, never the message id.
+          // Adapters that return none keep the legacy fallback below.
+          const providerThreadId = sent && typeof sent.providerThreadId === 'string' ? sent.providerThreadId : null;
+          // The scheda cliente composer (backlog:e9b4fc2f): a proven send
+          // with a host subject becomes that subject's outbound timeline
+          // row, so the message the operator just sent reads back in the
+          // scheda cronologia. The row is idempotent on the send key — a
+          // worker retry replays it, never a second row. A refused row is
+          // terminal, never a retry: the provider already sent, so retrying
+          // would send twice.
+          const timeline = body.timeline && typeof body.timeline === 'object' && !Array.isArray(body.timeline)
+            ? body.timeline : null;
+          if (timeline !== null && interactionLog !== null) {
+            try {
+              await logSentTimeline({ timeline, connection, adapter, message, providerMessageId, providerThreadId, idempotencyKey });
+            } catch (error) {
+              return failTerminal('CHANNEL_TIMELINE_UNLOGGED');
+            }
           }
           return { outcomeReference: idempotencyKey };
         } catch (error) {

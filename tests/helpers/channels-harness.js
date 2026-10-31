@@ -49,6 +49,7 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   secretRef?: string, secretValue?: string,
  *   tenantId?: string, config?: Record<string, any>,
  *   resolveSender?: ((request: any) => Promise<any>) | null,
+ *   interactionLog?: { logMessage: (request: any) => Promise<any> } | null,
  *   dbPath?: string, nowMs?: () => number, extraAdapters?: any[],
  * }} options `nowMs` is the single clock the harness hands to both the
  *   package operations and (via the caller) the adapter, so ingest receive
@@ -57,6 +58,10 @@ export const CHANNEL_MANIFEST_NAMES = Object.freeze([
  *   capability where the test proves the engine rather than the
  *   reconciliation itself. `dbPath` opens a file database instead of
  *   `:memory:` so two harnesses can share one store like two processes.
+ *   `interactionLog` is the opened `interaction-log@1` handle (usually a
+ *   recording fake): with it a queued send naming a host subject logs the
+ *   proven send as that subject's outbound timeline row, like the worker
+ *   does in production beside the composed interactions package.
  */
 export function createChannelsHarness(options) {
   const secretRef = options.secretRef ?? 'vault://kit/channel-a';
@@ -99,6 +104,7 @@ export function createChannelsHarness(options) {
   const ops = createChannelOperations({
     database, modules, registries, resolveSecret, tenantId, config: options.config,
     resolveSender: options.resolveSender ?? null,
+    ...(options.interactionLog === undefined ? {} : { interactionLog: options.interactionLog }),
     ...(typeof options.nowMs === 'function' ? { nowMs: options.nowMs } : {}),
   });
 
@@ -165,8 +171,9 @@ export function createChannelsHarness(options) {
     register: (spaceId, input) => ops.registerChannelConnection({ spaceId, ...input, actor: input.actor ?? userActor }),
     activate,
     ingest: (spaceId, { connectionKey, rawBody, headers }) => ops.ingestChannelEvent({ spaceId, connectionKey, rawBody, headers }),
-    queue: (spaceId, { connectionKey, message, messageKey }) => ops.queueChannelSend({
+    queue: (spaceId, { connectionKey, message, messageKey, timeline }) => ops.queueChannelSend({
       spaceId, connectionKey, message, messageKey, actor: userActor,
+      ...(timeline === undefined ? {} : { timeline }),
     }),
     pump,
     connections: (spaceId) => ops.listConnections(spaceId),

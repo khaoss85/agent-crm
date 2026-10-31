@@ -359,7 +359,9 @@ test('the card renders as one self-contained phone page', async (t) => {
 
   assert.ok(html.includes('<meta name="viewport"'), 'the page scales to a phone viewport');
   assert.ok(html.includes('tel:+393331234567'), 'the phone is a tap-to-call link');
-  assert.ok(html.includes(`mailto:${EMAIL}`), 'the email is a tap-to-write link');
+  assert.ok(html.includes(EMAIL), 'the email address reads on the page');
+  assert.ok(!html.includes('mailto:'), 'no mailto: link — replies go through the /bo Scrivi composer');
+  assert.ok(html.includes('usa Scrivi nella scheda cliente'), 'the page names where to reply');
   assert.ok(html.includes('Guido Presti'), 'the name is on the page');
   assert.ok(html.includes('stato: contatto'), 'the status badge is on the page');
   assert.ok(html.includes('guido.presti'), 'the social handle is on the page');

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, definePackage, selectPackageGraph } from '../../core/index.js';
+import { AppError, ValidationError, definePackage, selectPackageGraph, trustedSystemActor } from '../../core/index.js';
 import { CHANNELS, ChannelRegistries } from './adapter.js';
 import { CONNECTION_STATUSES, assertConnectionTransition, assertGrantExpiresAt, assertSecretReference } from './connection.js';
 import { createChannelOperations } from './operations.js';
@@ -160,6 +160,39 @@ function openLlmComplete(llmCapability, runtime) {
   return opened;
 }
 
+/**
+ * Open the handed-over `interaction-log@1` capability for one runtime
+ * (backlog:e9b4fc2f, the scheda cliente composer). Absent until a queued
+ * send names a host subject: sends without one keep sending with no
+ * timeline row, exactly as before. Opened with the channels package as
+ * consumer and the package system writer, so the worker logs under the
+ * provenance the timeline binding expects.
+ */
+function openInteractionLog(logCapability, runtime) {
+  if (logCapability === undefined || logCapability === null) return null;
+  if (typeof logCapability.create !== 'function') {
+    throw new AppError(
+      'The channels package needs the interactions package capability interaction-log@1: '
+      + 'compose it with the provider definition, e.g. createChannelsPackage({ interactions }) '
+      + 'beside createInteractionsPackage()',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  const opened = logCapability.create({
+    modules: runtime.modules,
+    consumer: CHANNELS_PACKAGE,
+    actor: trustedSystemActor('channels worker timeline write'),
+  });
+  if (!opened || typeof opened.logMessage !== 'function') {
+    throw new AppError(
+      'The channels package needs the interactions package capability interaction-log@1: '
+      + 'the created capability opens no logMessage',
+      { code: 'PACKAGE_DEPENDENCY_MISSING', status: 409 },
+    );
+  }
+  return opened;
+}
+
 /** @param {Record<string, string>} [config] */
 export function buildChannelConnectionActions(config = {}) {
   void config;
@@ -242,6 +275,7 @@ export function buildChannelConnectionActions(config = {}) {
  *   customerData?: { capabilities?: Array<any> },
  *   spacePermissions?: { capabilities?: Array<any> },
  *   llm?: { capabilities?: Array<any> },
+ *   interactions?: { capabilities?: Array<any> },
  * }} [options] `resolveSecret` is the deployment's custody edge; `tenantId`
  *   namespaces the jobs table inside the bound instance. Both are required
  *   because a package that sends without them would invent custody.
@@ -258,6 +292,11 @@ export function buildChannelConnectionActions(config = {}) {
  *   `send-without-approval` through the former and drafts "Scrivi con AI"
  *   text through the latter. Both stay optional at composition — the reply
  *   flow refuses when it needs one that is missing, never at boot.
+ *   `interactions` is the composed interactions package definition, same
+ *   hand-over for its `interaction-log@1` capability: the worker logs a
+ *   proven send with a host subject as that subject's outbound timeline
+ *   row. Optional too — sends without a subject, or without the package
+ *   composed, keep today's behavior exactly.
  */
 export function createChannelsPackage(options = {}) {
   const registries = new ChannelRegistries({ channelAdapters: options.channelAdapters ?? [] });
@@ -297,6 +336,13 @@ export function createChannelsPackage(options = {}) {
     ? options.llm.capabilities.find((entry) => entry?.name === 'llm-complete' && entry?.version === 1) ?? null
     : null;
 
+  // The timeline writer (backlog:e9b4fc2f): the interactions package
+  // definition composed beside channels. Absent is fine until a queued
+  // send names a host subject — such sends keep sending with no row.
+  const logOffered = Array.isArray(options.interactions?.capabilities)
+    ? options.interactions.capabilities.find((entry) => entry?.name === 'interaction-log' && entry?.version === 1) ?? null
+    : null;
+
   // One composed instance PER APPLICATION runtime: operations close over
   // the registries and custody edge, and over the runtime's own database
   // and modules — the same per-runtime pattern the signature operations use,
@@ -315,6 +361,7 @@ export function createChannelsPackage(options = {}) {
         resolveSender: openSenderResolution(offered, runtime),
         permissionGate: openPermissionGate(gateOffered, runtime),
         llm: openLlmComplete(llmOffered, runtime),
+        interactionLog: openInteractionLog(logOffered, runtime),
       });
       composedByRuntime.set(runtime, composed);
     }
@@ -598,7 +645,8 @@ export {
   inboundOnlyOutbound,
   validateChannelAdapter,
 } from './adapter.js';
-export { createChannelOperations } from './operations.js';
+export { createChannelOperations, resolveSentConversationId } from './operations.js';
+export { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from './composer-text.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
 export { createFixtureChannelAdapter, fixtureEnvelopeEvent, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
 export {
@@ -654,6 +702,7 @@ export {
   gmailPushBody,
   gmailThreadIdForSubject,
   gmailThreadSubject,
+  isGmailThreadId,
 } from './gmail.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
 export {
