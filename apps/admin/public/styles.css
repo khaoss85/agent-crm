@@ -1337,6 +1337,9 @@ select.bo-spazi-input { flex: none; }
 .catalog-create-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; }
 .catalog-create-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .catalog-ai-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+/* La via AI è la principale (CRM 2.0): colori dell'assistente, come «Chiedi all'AI» della scheda. */
+button.catalog-ai-open { border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
+button.catalog-ai-open:hover { border-color: var(--agent-ink); }
 .catalog-create-form { display: grid; gap: 6px; }
 .catalog-create-label { font-size: 12px; color: var(--muted); }
 .catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
@@ -1345,7 +1348,7 @@ select.bo-spazi-input { flex: none; }
 .catalog-offer { padding: 0; margin: 0; }
 .catalog-offer + .catalog-offer { margin-top: 6px; }
 .catalog-offer-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.catalog-price { margin: 0; font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.catalog-price { margin: 0; font-size: 14px; font-weight: 600; }
 .catalog-ineligible { margin: 2px 0; font-size: 12px; color: var(--pending-ink); }
 .catalog-edit-wrap, .catalog-toggle-wrap { margin-top: 6px; display: grid; gap: 8px; }
 .catalog-edit-wrap > .ui-btn { justify-self: start; height: 28px; padding: 0 10px; border: none; background: transparent; color: var(--accent); font-size: 12px; font-weight: 700; box-shadow: none; }
@@ -1372,7 +1375,10 @@ select.bo-spazi-input { flex: none; }
   .catalog-row { grid-template-columns: minmax(0, 1fr) auto; }
   .catalog-category, .catalog-meta { grid-column: 1; }
   .catalog-cell-price { grid-column: 1 / -1; }
+  .catalog-bar { flex-direction: column; align-items: stretch; }
   .catalog-filters { flex-direction: column; align-items: stretch; }
+  /* In colonna il flex-basis (110-180 px) diventava altezza: menu e ricerca alti 100 px. */
+  .catalog-filters > *, .catalog-filters select[name="source"], .catalog-filters .catalog-search { flex: none; max-width: none; }
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
