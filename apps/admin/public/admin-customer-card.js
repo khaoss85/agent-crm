@@ -730,8 +730,14 @@ export function createCustomerCardView(deps) {
       (sync) => {
         panel.removeChild(wait);
         const entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
-        const voice = matchConnections('voice', entries)
-          .find((entry) => entry.status === 'active') ?? null;
+        // The same gate the calls route enforces: active AND a non-empty
+      // connectionKey. An entry without a key would be refused 409
+      // VOICE_CONNECTION_NOT_ACTIVE after the operator already filled the
+      // outcome form, so the form is offered exactly when the route would
+      // accept it.
+      const voice = matchConnections('voice', entries)
+        .find((entry) => entry.status === 'active'
+          && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') ?? null;
         if (voice === null) {
           panel.appendChild(el('p', 'bo-muted',
             'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
@@ -771,6 +777,29 @@ export function createCustomerCardView(deps) {
     }
     panel.appendChild(outcomeLabel);
     panel.appendChild(outcome);
+    // The 'Fallita' outcome needs the errorCode validateCallRequest
+    // requires, and no other outcome may send one: the code field lives in
+    // this wrapper only while 'failed' is picked, so the payload carries
+    // errorCode exactly when the server demands it.
+    const codeWrap = el('div');
+    codeWrap.setAttribute('data-code', 'error-code');
+    const codeLabel = el('label', 'bo-scheda-field-label', 'Codice errore (solo se fallita)');
+    codeLabel.setAttribute('for', 'call-error-code');
+    const code = el('input');
+    code.setAttribute('id', 'call-error-code');
+    code.value = '';
+    const syncCodeField = () => {
+      if (outcome.value === 'failed') {
+        if (!codeWrap.contains(code)) {
+          codeWrap.appendChild(codeLabel);
+          codeWrap.appendChild(code);
+        }
+      } else {
+        codeWrap.textContent = '';
+      }
+    };
+    outcome.addEventListener('change', syncCodeField);
+    panel.appendChild(codeWrap);
     const durationLabel = el('label', 'bo-scheda-field-label', 'Durata in secondi (solo se completata)');
     durationLabel.setAttribute('for', 'call-duration');
     const duration = el('input');
@@ -791,16 +820,25 @@ export function createCustomerCardView(deps) {
       busy = true;
       err.textContent = '';
       try {
+        const callBody = {
+          spaceId,
+          resource: navCtx.resource,
+          id: navCtx.id,
+          callKey: freshMessageKey(),
+          outcome: outcome.value,
+          durationSec: Number(duration.value),
+        };
+        if (outcome.value === 'failed') {
+          const errorCode = code.value.trim();
+          if (errorCode === '') {
+            err.textContent = 'Indica il codice di errore per una chiamata fallita.';
+            return;
+          }
+          callBody.errorCode = errorCode;
+        }
         await client.request('/api/customer-hub/calls', {
           method: 'POST',
-          body: JSON.stringify({
-            spaceId,
-            resource: navCtx.resource,
-            id: navCtx.id,
-            callKey: freshMessageKey(),
-            outcome: outcome.value,
-            durationSec: Number(duration.value),
-          }),
+          body: JSON.stringify(callBody),
         });
         toast('Chiamata registrata');
         await renderCard(navCtx.resource, navCtx.id);

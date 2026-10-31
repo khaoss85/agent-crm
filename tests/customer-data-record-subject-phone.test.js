@@ -81,6 +81,27 @@ test('the same number beside the same subject refreshes, beside another refuses 
   assert.equal((await heldBy(app, other.id)).length, 0, 'a refused holding writes nothing');
 });
 
+test('a refused cross-subject holding leaves the winner row and its sighting untouched', async (t) => {
+  const { app, contact, other } = await scene(t);
+  await app.recordSubjectPhone({
+    resource: 'contact', id: contact.id, phone: '+393331234567', actor: OPERATOR,
+  });
+  const before = (await heldBy(app, contact.id))[0];
+  assert.ok(before, 'the winner holds the number');
+  await assert.rejects(
+    () => app.recordSubjectPhone({
+      resource: 'contact', id: other.id, phone: '+393331234567', actor: OPERATOR,
+    }),
+    (error) => error?.code === 'PHONE_ALREADY_HELD' && error?.status === 409,
+    'the loser refuses 409 instead of reporting a foreign refresh as success',
+  );
+  const after = (await heldBy(app, contact.id))[0];
+  assert.equal(after.subjectId, contact.id, 'the row still names the winner');
+  assert.equal(after.lastObservedRunId, before.lastObservedRunId, 'no sighting is bumped by the refused hold');
+  assert.equal(after.lastObservedAt, before.lastObservedAt, 'no timestamp is bumped by the refused hold');
+  assert.equal((await heldBy(app, other.id)).length, 0, 'the loser card never shows the number');
+});
+
 test('a company holds a number the same way', async (t) => {
   const { app, company } = await scene(t);
   const recorded = await app.recordSubjectPhone({

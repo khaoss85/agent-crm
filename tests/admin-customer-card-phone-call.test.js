@@ -164,6 +164,72 @@ test('105563eea902: with a linked voice the operator declares the outcome and th
     'the save either toasts or re-reads the card');
 });
 
+test('105563eea902: a voice entry without a connectionKey is not callable: tel: fallback, no form', async () => {
+  const client = stubClient({
+    card: CARD_WITH_PHONE,
+    connectors: [{ channel: 'voice', status: 'active', connectionKey: '' }],
+  });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun connettore voce collegato'),
+    'an empty connectionKey reads as no linked voice, like the route 409');
+  assert.equal(button(mount, 'log-call'), null, 'no outcome form is offered when the route would refuse it');
+  assert.ok(mount.findAll('a').some((node) => node.getAttribute('data-action') === 'call-fallback'),
+    'the device dialer is offered instead');
+  assert.ok(!client.posts.some((post) => post.path === '/api/customer-hub/calls'),
+    'no call the CRM never placed is logged');
+});
+
+test('105563eea902: Fallita sends its errorCode, other outcomes send none, an empty code never posts', async () => {
+  const failed = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const failedMount = await renderCard(failed);
+  failedMount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer')
+    .listeners.click[0]();
+  await flush();
+  const outcome = failedMount.findAll('select')[0];
+  assert.equal(failedMount.findAll('input').filter((node) => node.getAttribute('id') === 'call-error-code').length, 0,
+    'no code field until Fallita is picked');
+  outcome.value = 'failed';
+  outcome.listeners.change[0]();
+  const code = failedMount.findAll('input').find((node) => node.getAttribute('id') === 'call-error-code');
+  assert.ok(code, 'picking Fallita shows the error-code field');
+  code.value = 'LINE_BUSY';
+  await button(failedMount, 'log-call').listeners.click[0]();
+  const logged = failed.posts.filter((post) => post.path === '/api/customer-hub/calls');
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].body.outcome, 'failed');
+  assert.equal(logged[0].body.errorCode, 'LINE_BUSY', 'Fallita carries the code validateCallRequest requires');
+
+  const empty = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const emptyMount = await renderCard(empty);
+  emptyMount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer')
+    .listeners.click[0]();
+  await flush();
+  const emptyOutcome = emptyMount.findAll('select')[0];
+  emptyOutcome.value = 'failed';
+  emptyOutcome.listeners.change[0]();
+  await button(emptyMount, 'log-call').listeners.click[0]();
+  assert.equal(empty.posts.filter((post) => post.path === '/api/customer-hub/calls').length, 0,
+    'Fallita without a code never posts');
+  assert.ok(emptyMount.textContent.includes('Indica il codice di errore'),
+    'the missing code reads Italian');
+
+  const completed = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const completedMount = await renderCard(completed);
+  completedMount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer')
+    .listeners.click[0]();
+  await flush();
+  const completedOutcome = completedMount.findAll('select')[0];
+  completedOutcome.value = 'completed';
+  completedOutcome.listeners.change[0]();
+  completedMount.findAll('input')[0].value = '62';
+  await button(completedMount, 'log-call').listeners.click[0]();
+  const done = completed.posts.filter((post) => post.path === '/api/customer-hub/calls');
+  assert.equal(done.length, 1);
+  assert.ok(!('errorCode' in done[0].body), 'a completed call sends no errorCode');
+});
+
 test('105563eea902: a hostile held value stays text, never markup', async () => {
   const nasty = '"><img src=x onerror=alert(1)>';
   const client = stubClient({

@@ -431,6 +431,22 @@ export function createCustomerDataOperations({ database, modules, events, config
             });
           }
         }
+        if (outcome === 'refreshed') {
+          // A concurrent hold beside another customer may have committed
+          // between the pre-check above and the write: the shared row
+          // helper refreshes any sighting, so the holder is re-read inside
+          // the same transaction and a foreign row refuses 409 instead of
+          // reporting success for it. The throw rolls the foreign refresh
+          // back with the transaction — no sighting is bumped, and the
+          // number never lands on the wrong card.
+          const current = (await deciding(trusted(modules, names.identity), { sourceKey }))[0] ?? null;
+          const holder = heldBy(current);
+          if (holder === null || holder.resource !== resource || holder.id !== subject.id) {
+            throw new AppError('This phone number is already held beside another customer', {
+              code: 'PHONE_ALREADY_HELD', status: 409,
+            });
+          }
+        }
         return Object.freeze({
           outcome, system: 'phone', externalId,
           subject: Object.freeze({ resource, id: subject.id }),
