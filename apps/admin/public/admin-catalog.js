@@ -867,6 +867,11 @@ export function createCatalogView(deps) {
           unit: parsed.fields.unit,
           cents: parsed.fields.cents,
         };
+        // The review freezes the interpreted text: the sentence box locks so
+        // a later edit cannot silently confirm a stale snapshot, and Conferma
+        // refuses a text that changed since Interpreta instead of sending it.
+        const interpretedText = input.value;
+        input.disabled = true;
         const review = el('div', 'catalog-review');
         review.appendChild(el('p', undefined, `Creare ${submitted.name} (${submitted.sku}) a ${money(submitted.cents, submitted.currency)}?`));
         if (submitted.category) review.appendChild(el('p', 'catalog-change', `Categoria: ${submitted.category}`));
@@ -876,6 +881,14 @@ export function createCatalogView(deps) {
         no.addEventListener('click', async () => { await renderTable(); });
         yes.addEventListener('click', async () => {
           yes.disabled = true;
+          if (input.value !== interpretedText) {
+            formError.textContent = 'La frase è cambiata dopo Interpreta: premi di nuovo Interpreta prima di confermare.';
+            review.appendChild(formError);
+            input.disabled = false;
+            formBox.appendChild(parseButton);
+            yes.disabled = false;
+            return;
+          }
           try {
             await submissions.submit({
               path: '/api/catalog/products',
@@ -931,17 +944,25 @@ export function createCatalogView(deps) {
   /**
    * Live text filters over the loaded page: the category and source boxes
    * narrow the rows while typing, like the search field, without a refetch.
-   * The server params stay the authority on reload (Filtra / the state
-   * select); typing only hides rows already on screen, never values.
+   * The category box uses the server's own semantics (category exact,
+   * case-insensitive), so a partial text that matches nothing live also
+   * matches nothing on reload (Filtra / the state select) instead of
+   * wiping a visible row. The source box matches the raw source and the
+   * visible Fonte label alike, so typing what the column shows never
+   * empties the table by itself.
    * @param {any} product
    * @param {unknown} categoryQuery
    * @param {unknown} sourceQuery
    */
   function matchesLiveFilters(product, categoryQuery, sourceQuery) {
     const categoryQ = String(categoryQuery ?? '').trim().toLowerCase();
-    if (categoryQ !== '' && !String(product?.category ?? '').toLowerCase().includes(categoryQ)) return false;
+    if (categoryQ !== '' && String(product?.category ?? '').trim().toLowerCase() !== categoryQ) return false;
     const sourceQ = String(sourceQuery ?? '').trim().toLowerCase();
-    if (sourceQ !== '' && !String(product?.source ?? '').toLowerCase().includes(sourceQ)) return false;
+    if (sourceQ !== '') {
+      const raw = String(product?.source ?? '').toLowerCase();
+      const label = String(sourceLabel(product?.source) ?? '').toLowerCase();
+      if (!raw.includes(sourceQ) && !label.includes(sourceQ)) return false;
+    }
     return true;
   }
 

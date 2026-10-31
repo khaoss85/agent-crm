@@ -1262,3 +1262,98 @@ test('✦ Aggiungi con l\u2019AI names what is missing and sends nothing', async
   assert.ok(mount.textContent.includes('Dalla frase mancano: codice, prezzo'), 'the missing fields are named');
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'an unreadable sentence sends nothing');
 });
+
+test('a partial category matches nothing live and the state change re-reads it as exact', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length;
+  const before = reads();
+
+  byName('category').value = 'pac';
+  byName('category').dispatch('input');
+  assert.equal(rowCount(mount), 0, 'a substring is not an exact category: nothing matches live');
+  assert.ok(mount.textContent.includes('Nessun risultato per questi filtri'), 'the gentle note covers text filters without a query');
+  assert.equal(reads(), before, 'typing never refetches');
+
+  const select = mount.findAll('select').find((node) => node.getAttribute('name') === 'active');
+  select.value = 'true';
+  select.dispatch('change');
+  await flush();
+  assert.equal(reads(), before + 1, 'choosing a state re-reads from the server at once');
+  const reread = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
+  assert.equal(reread.searchParams.get('category'), 'pac', 'the live text travels as the exact server filter');
+  assert.equal(reread.searchParams.get('active'), 'true', 'the state travels as a query param');
+  assert.equal(rowCount(mount), 0, 'the reload hides nothing that was visible: nothing was');
+});
+
+test('the source box matches the visible Fonte label, not only the raw source', async () => {
+  const stripeRow = {
+    productId: 'p3',
+    sku: 'YOGA-1',
+    name: 'Corso Yoga',
+    description: 'Abbonamento.',
+    category: 'corsi',
+    source: 'stripe-test',
+    priceReadOnly: true,
+    active: true,
+    version: 1,
+    offers: [],
+  };
+  const mixed = { products: [...SEARCH_TABLE.products, stripeRow], summary: { manual: 2, byProvider: { 'stripe-test': 1 }, stripeConnected: true } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': mixed } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length;
+  const before = reads();
+
+  byName('source').value = 'manuale';
+  byName('source').dispatch('input');
+  assert.equal(rowCount(mount), 2, 'the visible label Manuale matches both manual rows');
+  assert.ok(mount.textContent.includes('Pacchetto 10 lezioni'), 'a manual row stays');
+  assert.ok(mount.textContent.includes('Corso serale'), 'the other manual row stays');
+
+  byName('source').value = 'stripe';
+  byName('source').dispatch('input');
+  assert.equal(rowCount(mount), 1, 'stripe matches the provider row by raw source and label');
+  assert.ok(mount.textContent.includes('Corso Yoga'), 'the provider row stays');
+  assert.equal(reads(), before, 'typing never refetches');
+});
+
+test('✦ Aggiungi con l\u2019AI locks the sentence after Interpreta and refuses a stale confirmation', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, '✦ Aggiungi con l\u2019AI');
+  const sentence = mount.findAll('input').find((node) => node.getAttribute('name') === 'sentence');
+  sentence.value = 'Pacchetto 5 lezioni PACCHETTO-5 a 120,50 euro categoria pacchetti';
+  clickButton(mount, 'Interpreta');
+  assert.ok(mount.textContent.includes('Creare Pacchetto 5 lezioni (PACCHETTO-5)'), 'the review echoes the parsed sentence');
+  assert.equal(sentence.disabled, true, 'the interpreted sentence locks: no silent edit after review');
+
+  sentence.value = 'Pacchetto 5 lezioni PACCHETTO-5 a 9,99 euro categoria pacchetti';
+  clickButton(mount, 'Conferma');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'a sentence changed after Interpreta sends nothing');
+  assert.ok(mount.textContent.includes('premi di nuovo Interpreta'), 'the stale confirmation names the way back');
+  assert.equal(sentence.disabled, false, 'the sentence unlocks so it can be re-interpreted');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Interpreta'), 'Interpreta is back for the corrected sentence');
+
+  sentence.value = 'Pacchetto 5 lezioni PACCHETTO-5 a 120,50 euro categoria pacchetti';
+  clickButton(mount, 'Conferma');
+  await flush();
+  const created = client.calls.find((call) => call.path === '/api/catalog/products' && call.method === 'POST');
+  assert.ok(created, 'the unchanged review still confirms');
+  assert.equal(created.body.components[0].flatAmountCents, 12050, 'the confirmed price is the reviewed one, never the stale edit');
+});
