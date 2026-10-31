@@ -508,6 +508,9 @@ const catalogView = createCatalogView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // Voce 19c2e22a64a1 (1): the Stato sync badge on the Catalogo tab row
+  // counts this same live space, like every other space-scoped view.
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   // «✦ Aggiungi con l'AI»: same assistant seam as Pipeline and Clienti —
   // the voice opens the BO-F0-04 panel on the catalog screen.
   onAskAi: (screenId, description) => {

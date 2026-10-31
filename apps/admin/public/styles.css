@@ -1008,6 +1008,16 @@ select.bo-spazi-input { flex: none; }
 .bo-tile-instagram { background: var(--human-soft); color: var(--human-ink); }
 .bo-tile-facebook, .bo-tile-sms { background: var(--data-soft); color: var(--data-ink); }
 .bo-tile-tiktok { background: var(--surface-soft); color: var(--ink); }
+/* Voce 19c2e22a64a1 (5): every channel key the scheda can paint maps to the
+   existing palette — mail with the message family, voice with the agent
+   family, site surfaces neutral like TikTok, calendar with the accent.
+   Unknown keys fall back to the explicit neutral tile, never an unpainted
+   ad-hoc class. */
+.bo-tile-email, .bo-tile-gmail, .bo-tile-outlook, .bo-tile-messenger { background: var(--data-soft); color: var(--data-ink); }
+.bo-tile-phone, .bo-tile-tel, .bo-tile-mobile, .bo-tile-voice { background: var(--agent-soft); color: var(--agent-ink); }
+.bo-tile-web, .bo-tile-form { background: var(--surface-soft); color: var(--ink); }
+.bo-tile-calendar { background: var(--accent-soft); color: var(--accent); }
+.bo-tile-other { background: var(--surface-soft); color: var(--muted); }
 .bo-clienti-pill { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--surface-soft); color: var(--ink); }
 .bo-pill-cliente { background: var(--accent-soft); color: var(--accent); }
 .bo-clienti-when { font-size: 13px; }

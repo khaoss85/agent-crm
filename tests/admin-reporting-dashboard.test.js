@@ -610,3 +610,28 @@ test('reporting renders no button, select, input or textarea outside the visual 
   walk(mount);
   assert.deepEqual(raw, [], 'every control carries a ui-* system class');
 });
+
+// Voce 19c2e22a64a1 (4): the dashboard grid carries the prototype six-column
+// layout classes — channels wide beside the funnel, three charts per row,
+// the forecast full width, the team beside the insights. A mis-tagged grid
+// fails here, by direct panel reference (never lastChild).
+test('the dashboard grid carries the six-column layout classes', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const grid = mount.findAll('div')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-rep-grid'));
+  assert.ok(grid, 'the dashboard paints the grid');
+  const layout = grid.childNodes
+    .map((node) => String(node.className ?? '').split(/\s+/).filter((cls) => cls.startsWith('bo-rep-')));
+  assert.deepEqual(layout, [
+    ['bo-rep-wide'],
+    ['bo-rep-narrow'],
+    ['bo-rep-third'],
+    ['bo-rep-third'],
+    ['bo-rep-third'],
+    ['bo-rep-full'],
+    ['bo-rep-wide'],
+    ['bo-rep-narrow'],
+    ['bo-rep-narrow'],
+  ], 'channels wide, three thirds, forecast full, team wide beside insights');
+});

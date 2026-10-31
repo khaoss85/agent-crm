@@ -36,7 +36,7 @@ const UNITS = [
   { name: 'skill:debug-crm-run', kind: 'skill', label: 'Diagnosi', blurb: 'Diagnosi di un workflow.' },
 ];
 
-function stubClient({ catalog = UNITS, rows = [], preview = null, connectors = [], calls = null, failCatalog = null } = {}) {
+function stubClient({ catalog = UNITS, rows = [], preview = null, connectors = [], calls = null, failCatalog = null, needsBySpace = null } = {}) {
   return {
     async request(path, options = {}) {
       const rawBody = options?.body ?? null;
@@ -66,6 +66,14 @@ function stubClient({ catalog = UNITS, rows = [], preview = null, connectors = [
         return { unit, status: 'removed' };
       }
       if (path.startsWith('/api/connectors?')) return { connectors };
+      if (path.includes('/api/modules/data-quality-issue/records')) return { items: [] };
+      if (path.includes('/api/modules/duplicate-candidate/records')) return { items: [] };
+      if (path.startsWith('/api/connectors/activity')) {
+        const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? '';
+        const needsFix = needsBySpace !== null && Object.hasOwn(needsBySpace, spaceId)
+          ? needsBySpace[spaceId] : 0;
+        return { needsFix };
+      }
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -153,6 +161,30 @@ test('Scopri shows cards with Prova and +, activating moves the unit to I tuoi',
   await flush();
   assert.ok(calls.some((call) => call.path === '/api/space-packages/activate' && call.body?.unit === 'channels'));
   assert.ok(mount.textContent.includes('I tuoi'), 'after activation the view flips to I tuoi');
+});
+
+// Voce 19c2e22a64a1 (1): the tab badge counts this space live — a space
+// with attention rows lights the badge, a quiet space never wears the
+// other space's count.
+test('the tab badge counts the view space live — never another space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const client = stubClient({ needsBySpace: { 'spazio-a': 4, 'spazio-b': 0 }, calls: seen });
+  let space = 'spazio-a';
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: () => {}, spaceId: () => space });
+  await view.render();
+  await flush();
+  const badge = () => mount.findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge'));
+  assert.ok(seen.some((call) => call.path.includes('/api/connectors/activity')
+    && call.path.includes('spaceId=spazio-a')), 'the badge read names its own space');
+  assert.ok(badge(), 'spazio-a lights the badge');
+  assert.equal(badge().textContent, '4', 'the badge carries spazio-a count');
+  space = 'spazio-b';
+  await view.render();
+  await flush();
+  assert.equal(badge(), undefined, 'spazio-b wears no badge — never spazio-a count');
 });
 
 test('I tuoi renders the status table and deactivating keeps history server-side', async () => {
