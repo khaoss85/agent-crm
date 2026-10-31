@@ -703,6 +703,18 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
    * pilot (manual → the package operations, AI → the assistant seam), so a
    * pick only names the next step in plain Italian — never a fake record.
    */
+  // The shell's AI bar is the real creation entry for the AI pick: its
+  // sequenze placeholder already says what to write, so picking the entry
+  // moves keyboard focus to it instead of painting a help sentence the
+  // prototype has not. Without the bar (a standalone mount) the menu
+  // just closes: no invented text, no dead control.
+  function focusAiBar() {
+    if (!documentNode || typeof documentNode.querySelector !== 'function') return false;
+    const bar = documentNode.querySelector('.bo-ai-input');
+    if (!bar || typeof bar.focus !== 'function') return false;
+    bar.focus();
+    return true;
+  }
   function renderNewMenu() {
     const wrap = el(documentNode, 'div', 'bo-seq-menuwrap');
     // Green CTA like the prototype and like Calendario's «Nuovo appuntamento»:
@@ -733,14 +745,18 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     wrap.appendChild(button);
     const menu = el(documentNode, 'div', state.menuOpen ? 'bo-seq-menu ui-add-menu' : 'bo-seq-menu ui-add-menu hidden');
     menu.setAttribute('role', 'menu');
-    const addItem = (action, label, hint, pick) => {
+    const addItem = (action, label, hint, pick, focusAi = false) => {
       const item = uiAddOption(documentNode, { kind: action === 'new-ai' ? 'ai' : 'manual', title: label, line: hint,
         attrs: { 'data-action': action } });
       item.addEventListener('click', () => {
         state.menuOpen = false;
         state.menuHint = pick;
         paint();
-        refocusMenu(false);
+        if (focusAi === true) {
+          if (!focusAiBar()) refocusMenu(false);
+        } else {
+          refocusMenu(false);
+        }
       });
       menu.appendChild(item);
     };
@@ -759,7 +775,8 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       'new-ai',
       "Crea con l'AI",
       'Es. «lead dal sito: WhatsApp subito, email dopo 2 giorni»',
-      'Descrivi la sequenza nella barra AI (✦ in alto): parte da sola quando succede qualcosa.',
+      '',
+      true,
     );
     addItem(
       'new-manual',

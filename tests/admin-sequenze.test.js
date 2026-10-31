@@ -546,7 +546,28 @@ test('the menu keeps keyboard focus across its repaints', async () => {
   assert.equal(opener().__focused, true, 'picking an entry returns focus to the opener');
 });
 
-test('picking a menu entry closes the menu and names the next step in Italian', async () => {
+test('the AI entry focuses the shell AI bar instead of painting a help sentence', async () => {
+  const doc = createFakeDocument();
+  const aiInput = doc.createElement('input');
+  aiInput.setAttribute('class', 'bo-ai-input ui-field');
+  const docWithBar = {
+    ...doc,
+    querySelector: (selector) => (selector === '.bo-ai-input' ? aiInput : null),
+  };
+  const mount = createMount();
+  const view = createSequenzeView({ doc: docWithBar, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
+  opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
+  await flush();
+  mount.findAll('button').find((node) => node.textContent.includes("Crea con l'AI")).dispatch('click', {});
+  await flush();
+  assert.equal(aiInput.__focused, true, 'the AI entry moves focus to the real AI bar');
+  assert.ok(!mount.textContent.includes('barra AI'), 'no invented help sentence is painted');
+});
+
+test('without the shell bar the AI entry just closes the menu', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createSequenzeView({ doc, mount, client: stubClient() });
@@ -557,7 +578,17 @@ test('picking a menu entry closes the menu and names the next step in Italian', 
   await flush();
   mount.findAll('button').find((node) => node.textContent.includes("Crea con l'AI")).dispatch('click', {});
   await flush();
-  assert.ok(mount.textContent.includes('barra AI'), 'the AI entry points at the AI bar, in Italian');
+  assert.ok(!mount.textContent.includes('barra AI'), 'no hint without the bar');
+  assert.equal(opener().__focused, true, 'focus falls back to the opener');
+});
+
+test('picking the manual entry closes the menu and names the next step in Italian', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  const opener = () => mount.findAll('button').find((node) => String(node.getAttribute('data-menu') ?? '') === 'nuova-sequenza');
   opener().dispatch('click', { target: opener(), stopPropagation: () => {} });
   await flush();
   mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).dispatch('click', {});
