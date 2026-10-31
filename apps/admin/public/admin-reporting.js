@@ -105,6 +105,21 @@ export function channelColor(channel) {
     : CHANNEL_FALLBACK_COLOR;
 }
 
+/**
+ * Owner initials for the persona filter (spec: person sigle in cerchio).
+ * First letters of the first two words, uppercased (`Maria Rossi` → `MR`,
+ * `bob` → `B`). The full name stays on the button `title`, so the sigla
+ * never hides who it filters. Non-names render a neutral dot, never a
+ * guessed letter.
+ * @param {unknown} owner
+ */
+export function ownerSigla(owner) {
+  if (typeof owner !== 'string') return '·';
+  const parts = owner.split(/\s+/).map((part) => part.trim()).filter((part) => part !== '');
+  if (parts.length === 0) return '·';
+  return parts.slice(0, 2).map((part) => Array.from(part)[0].toUpperCase()).join('');
+}
+
 /** Current UTC month as YYYY-MM (the default dashboard period). */
 export function currentPeriod(nowIso) {
   const at = typeof nowIso === 'string' && nowIso.length >= 7 ? nowIso.slice(0, 7) : new Date().toISOString().slice(0, 7);
@@ -428,11 +443,18 @@ export function createReportingView(deps) {
       dashboard.owner = '';
       renderReporting();
     }));
+    // Person sigle (spec: sigle delle persone in cerchio): one button per
+    // owner showing initials, with the full name on `title`. The circle
+    // shape is the supervisor's vestito (styles.css); the structure and
+    // the recalculation contract are here.
     for (const owner of model.owners ?? []) {
-      filters.appendChild(pill(owner, dashboard.owner === owner, () => {
+      const sigla = pill(ownerSigla(owner), dashboard.owner === owner, () => {
         dashboard.owner = owner;
         renderReporting();
-      }));
+      });
+      sigla.setAttribute('title', String(owner));
+      sigla.setAttribute('data-owner', String(owner));
+      filters.appendChild(sigla);
     }
     section.appendChild(filters);
   }
