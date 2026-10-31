@@ -532,7 +532,13 @@ test('826e377c review giro-4: with the timeline in error the identities name the
     'the observed read names the failure instead of merging in silence',
   );
   assert.ok(text.includes('nessun canale osservato'), 'no observed channel is invented on a failed read');
-  assert.ok(!text.includes('+39 333 1234567'), 'no held identity leaks into the read-only section');
+  // The number still reads in Contatti (the card's own phone field), so the
+  // no-leak check scopes to the Identità collegate section: a held
+  // external-identity from the profile must not render there.
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no held identity leaks into the read-only section');
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 

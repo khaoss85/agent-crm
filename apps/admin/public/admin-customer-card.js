@@ -265,8 +265,10 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
  * Manual Collega/Scollega (backlog:826e377c) was split into a follow-up voce
  * by the owner: this PR keeps only the read of observed identities, so the
  * card offers no link buttons. When the follow-up returns, its Collega gate
- * mirrors `CHANNEL_SYSTEMS` and its Scollega gate mirrors
- * `UNLINKABLE_SYSTEMS` in packages/customer-data/src/sender.js.
+ * mirrors `CHANNEL_SYSTEMS` in packages/customer-data/src/sender.js and its
+ * Scollega gate accepts every system a held row can carry (imports accept
+ * any lowercase system identifier, e.g. sms, gmail, voice), not just the
+ * sender vocabulary.
  */
 
 /**

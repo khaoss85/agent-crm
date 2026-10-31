@@ -55,11 +55,8 @@ export const CHANNEL_SYSTEMS = Object.freeze([
  * split into a follow-up voce by the owner (this PR keeps only the read of
  * observed identities); when it returns, its unlink gate must accept every
  * system a held row can carry, not just the sender vocabulary.
+ * (Kept as a comment: no code reads this list while link/unlink is out.)
  */
-export const UNLINKABLE_SYSTEMS = Object.freeze([
-  ...CHANNEL_SYSTEMS,
-  'sms', 'voice', 'tel', 'mobile', 'gmail', 'outlook', 'messenger', 'calendar', 'web', 'form',
-]);
 
 /** Provenance for identities and candidates this resolution writes: it runs outside any import run. */
 export const SENDER_RUN_ID = 'channel-sender';
