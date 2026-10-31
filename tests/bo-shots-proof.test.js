@@ -190,3 +190,20 @@ test('the calendario proof pair is a render of the current tree, never the pre-#
     );
   }
 });
+
+// The assistente proof pair (BO-F4-04, backlog:27dde5f048ee) carries the
+// AC-3 viewable proof: the assistant panel with record sources, the
+// execution trace and the conserved session history, at desktop and phone
+// widths. There is no bo:shots screen for the assistant (it is a
+// cross-screen slot, not a router screen): the pair is rendered by
+// `tests/admin-assistente-shots.test.js`, and this gate ties the committed
+// blobs to a filled render at both widths, like the size gate above.
+test('the assistente proof pair shows the panel with sources and trace at both widths', () => {
+  for (const [viewport, floor] of [[DESKTOP, 20000], [PHONE, 10000]]) {
+    const file = `assistente-${viewport.width}x${viewport.height}.png`;
+    const shot = readPngSize(join(proofDir, file));
+    assert.equal(shot.width, viewport.width, `${file} renders at ${viewport.width}px wide`);
+    assert.equal(shot.height, viewport.height, `${file} renders at ${viewport.height}px tall`);
+    assert.ok(shot.bytes > floor, `${file} is a filled render (${shot.bytes}B over the ${floor}B floor)`);
+  }
+});

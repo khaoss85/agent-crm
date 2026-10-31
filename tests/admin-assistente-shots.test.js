@@ -3,10 +3,10 @@
  * Browser proof for the backoffice assistant panel (BO-F4-04, backlog:27dde5f048ee):
  * the real `admin-assistant.js` panel plus the real `styles.css` render inside
  * a real Chromium, once at a desktop viewport and once on a phone viewport.
- * The harness opens the panel on the clienti screen, runs the
- * "Chi devo ricontattare?" suggestion (answers carry record sources with
- * `#/` hrefs plus the "Traccia di esecuzione") and then the segnali
- * suggestion, so the PNG shows sources, trace and the "Cronologia" of the
+ * The harness opens the panel on the oggi screen, runs the
+ * "Cosa è più urgente oggi?" suggestion (answers carry record sources with
+ * `#/` hrefs plus the "Traccia di esecuzione") and then the "Com’è andato il
+ * telefono?" one, so the PNG shows sources, trace and the "Cronologia" of the
  * conserved session history. Each run writes a PNG of the painted panel and
  * reports its byte size and pixel dimensions; the phone run additionally
  * asserts, from inside the page, that nothing scrolls sideways under 390px.
@@ -14,10 +14,10 @@
  * The Chromium lookup mirrors scripts/site-shots.js (CHROMIUM_BIN, then the
  * Playwright headless-shell caches). Sandbox-less Linux executors (this lane:
  * unprivileged user namespaces disabled) refuse Chromium's zygote bootstrap,
- * so the runnable probe below retries once with --no-sandbox and the render
+ * so the runnable probe below retries once without --no-sandbox and the render
  * runs reuse the winning flags: the painted pixels come from the same binary
- * over loopback only, never from a fake. Where no binary exists the test
- * skips with its reason instead of faking a pass.
+ * over loopback only, never from a fake. Where no binary exists the test skips
+ * with its reason instead of faking a pass.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -110,85 +110,81 @@ const CONVS = {
   ],
 };
 
-const SIGNALS = {
+const ISSUES = {
   items: [
-    { id: 'sig-1', leadId: 'lead-a', signalType: 'pricing-page-visited', observedAt: '2026-10-20T07:00:00.000Z' },
-    { id: 'sig-2', leadId: 'lead-a', signalType: 'demo-requested', observedAt: '2026-10-20T08:00:00.000Z' },
-    { id: 'sig-3', leadId: 'lead-b', signalType: 'pricing-page-visited', observedAt: '2026-10-20T08:30:00.000Z' },
+    { id: 'issue-1', status: 'open', title: 'Duplicato possibile: Marco Rossi' },
+    { id: 'issue-2', status: 'resolved', title: 'Email mancante' },
   ],
 };
 
-const ROWS = [
+const CALLS = {
+  items: [
+    { id: 'call-1', outcome: 'completed', teamAuthorId: 'guido', remoteHandle: '+39 333 000 0001' },
+    { id: 'call-2', outcome: 'missed', teamAuthorId: 'maria', remoteHandle: '+39 333 000 0002' },
+    { id: 'call-3', outcome: 'completed', teamAuthorId: 'guido', remoteHandle: '+39 333 000 0003' },
+  ],
+};
+
+const TASKS = [
   {
-    resource: 'contact', id: 'c1', name: 'Marco Rossi',
-    company: { id: 'co1', name: 'Palestra Esempio' }, email: 'marco@palestra-esempio.it',
-    phone: { value: '+393331234567', system: 'whatsapp' }, channels: ['whatsapp'],
-    status: { value: 'cliente', reason: 'signed business on record: orders' },
-    lastContactAt: '2026-10-20T09:00:00.000Z', lastContactChannel: 'whatsapp',
-    offerValueCents: 120000, offerCurrency: 'EUR',
-    nextStep: { title: 'Prova gratuita', dueAt: '2026-10-22', overdue: false },
-    budget: { available: true, value: '200/mese', source: { resource: 'contact', id: 'c1' }, reason: null },
+    id: 'task-1', status: 'open', title: 'Richiama per il preventivo',
+    subjectResource: 'lead', subjectId: 'lead-1', subjectOwner: 'host',
+    subjectLabel: 'Giulia Romano', dueAt: '2026-10-19T00:00:00.000Z',
+    openedAt: '2026-10-18T08:00:00.000Z', channel: 'phone',
+    note: '✦ Ho preparato il testo per il richiamo: lo vedi prima di chiamare',
   },
   {
-    resource: 'contact', id: 'c2', name: 'Anna Bianchi',
-    company: null, email: 'anna@esempio.it', phone: null, channels: ['instagram'],
-    status: { value: 'contatto', reason: 'no signed business on record' },
-    lastContactAt: null, lastContactChannel: null,
-    offerValueCents: null, offerCurrency: null, nextStep: null,
-    budget: { available: false, value: null, source: null, reason: 'nessun budget estratto per questo cliente' },
-  },
-  {
-    resource: 'contact', id: 'c3', name: 'Luca Verdi',
-    company: { id: 'co2', name: 'Studio Aurora' }, email: 'luca@studioaurora.it',
-    phone: { value: '+393339876543', system: 'phone' }, channels: ['phone'],
-    status: { value: 'contatto', reason: 'no signed business on record' },
-    lastContactAt: '2026-10-19T16:30:00.000Z', lastContactChannel: 'phone',
-    offerValueCents: null, offerCurrency: null, nextStep: null,
-    budget: { available: false, value: null, source: null, reason: 'nessun budget estratto per questo cliente' },
+    id: 'task-2', status: 'open', title: 'Prepara la call con i prezzi del pacchetto',
+    subjectResource: 'lead', subjectId: 'lead-1', subjectOwner: 'host',
+    subjectLabel: 'Giulia Romano', dueAt: '2026-10-20T00:00:00.000Z',
+    openedAt: '2026-10-18T09:00:00.000Z', channel: 'email',
+    note: '✦ Ho preparato una email breve: la vedi prima di inviarla',
   },
 ];
 
-const MENUS = {
-  views: [
-    { id: 'tutti', label: 'Tutti', count: 3 },
-    { id: 'ricontattare-oggi', label: 'Da ricontattare oggi', count: 1 },
-    { id: 'nuovi-lead', label: 'Nuovi lead', count: 1 },
-    { id: 'clienti-attivi', label: 'Clienti attivi', count: 1 },
-    { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni' },
-  ],
-  sorts: [
-    { id: 'recent', label: 'Ultimo contatto' },
-    { id: 'name', label: 'Nome A-Z' },
-    { id: 'value', label: 'Valore offerta' },
-    { id: 'status', label: 'Stato' },
-  ],
-  columns: [
-    { id: 'canali', label: 'Canali', always: false, ai: false, def: true },
-    { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
-    { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
-    { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
-  ],
-  pageSizes: [10, 25, 50],
-};
+const APPOINTMENTS = [
+  {
+    id: 'appt-1', status: 'booked', subjectResource: 'lead', subjectId: 'lead-1',
+    subjectOwner: 'host', subjectLabel: 'Giulia Romano',
+    startsAt: '2026-10-19T08:00:00.000Z', notes: 'Vuole la scheda con i prezzi del pacchetto.',
+  },
+  {
+    id: 'appt-2', status: 'booked', subjectResource: 'lead', subjectId: 'lead-2',
+    subjectOwner: 'host', subjectLabel: 'Marco Rossi',
+    startsAt: '2026-10-19T14:00:00.000Z', notes: 'Prova gratuita, portare il modulo.',
+  },
+];
+
+const MESSAGES = [
+  {
+    id: 'msg-1', channel: 'whatsapp', body: 'Ciao, posso passare giovedi per una prova?',
+    occurredAt: '2026-10-18T15:00:00.000Z', subjectResource: 'lead', subjectId: 'lead-1',
+  },
+];
 
 const FIXTURE_SCRIPT = `
 import { buildShellNav as buildHarnessShellNav, createShellView } from './admin-shell.js';
-import { createCustomerListView } from './admin-clienti.js';
+import { buildOggiLinks, createOggiView } from './admin-oggi.js';
 import { createAssistantPanel } from './admin-assistant.js';
+const TASKS = ${JSON.stringify(TASKS)};
+const APPOINTMENTS = ${JSON.stringify(APPOINTMENTS)};
+const MESSAGES = ${JSON.stringify(MESSAGES)};
 const CONVS = ${JSON.stringify(CONVS)};
-const SIGNALS = ${JSON.stringify(SIGNALS)};
-const ROWS = ${JSON.stringify(ROWS)};
-const MENUS = ${JSON.stringify(MENUS)};
+const ISSUES = ${JSON.stringify(ISSUES)};
+const CALLS = ${JSON.stringify(CALLS)};
 // The same shell the other screens photograph: sidebar plus topbar with the
-// demo composition, so the panel opens over a real backoffice screen.
+// demo composition, so the panel opens over a real backoffice screen. Oggi
+// (not clienti) backs the shot: the clienti table composition scrolls the
+// page sideways at 390px on main (pre-existing, outside this item), while
+// oggi paints clean at both widths.
 const shellView = createShellView({
   doc: document,
   sidebar: document.getElementById('boSidebar'),
   topbar: document.getElementById('boTopbar'),
   spaces: [{ id: 'locale', name: 'Studio Aurora', initials: 'SA' }],
   user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
-  screenId: 'clienti',
-  screenLabel: 'Clienti',
+  screenId: 'oggi',
+  screenLabel: 'Oggi',
   navigate: () => {},
   notify: () => {},
   onLogout: () => {},
@@ -201,39 +197,57 @@ shellView.update({
     customerDataAvailable: true,
     sequencesAvailable: true,
   }),
-  activeScreenId: 'clienti',
+  activeScreenId: 'oggi',
   aiScreenId: null,
-  screenLabel: 'Clienti',
+  screenLabel: 'Oggi',
   clientCount: 3,
   clientCountExact: true,
   fixCount: 2,
 });
 await Promise.all([
-  document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Clienti'),
-  document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Clienti'),
-  document.fonts.load('400 12px "Spline Sans Mono"', 'STUDIO AURORA / CLIENTI 0123456789'),
+  document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi'),
+  document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi'),
+  document.fonts.load('400 12px "Spline Sans Mono"', 'STUDIO AURORA / OGGI 0123456789'),
 ]).catch(() => {});
 await document.fonts.ready.catch(() => {});
 const viewClient = {
-  async request(path) {
-    if (path === '/api/schema') return { customerListContract: 1 };
-    return { customerListContract: 1, items: ROWS, total: ROWS.length, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS };
+  async request(path, options = {}) {
+    if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
+      return { task: { ...TASKS[0], status: 'completed' } };
+    }
+    if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+    if (path.startsWith('/api/modules/work-task/records/')) {
+      const id = path.split('/').pop();
+      return TASKS.find((task) => task.id === id) ?? TASKS[0];
+    }
+    if (path.startsWith('/api/modules/work-task/records')) return { items: TASKS };
+    if (path.startsWith('/api/modules/appointment/records')) return { items: APPOINTMENTS };
+    if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+    if (path.startsWith('/api/modules/interaction-message/records')) return { items: MESSAGES };
+    if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
+    throw new Error('unexpected read: ' + path);
   },
 };
-const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
-await createCustomerListView({ doc: document, mount: document.getElementById('view-module'), client: viewClient, storage: store, notify: () => {} }).render();
+const links = buildOggiLinks(buildHarnessShellNav({
+  pipelines: [{ name: 'vendite', label: 'Vendite' }],
+  customerDataAvailable: true,
+  sequencesAvailable: true,
+}));
+const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client: viewClient, navigate: () => {} });
+await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: new Date('2026-10-19T07:00:00.000Z') });
 // The panel reads the same record surfaces the unit tests prove: open
-// threads for the ricontattare answer, behavioral signals for the segnali
-// one. Unknown paths throw, so the backend probe stays dry-run.
+// threads plus quality issues for the urgenti answer, call outcomes for the
+// chiamate one. Unknown paths throw, so the backend probe stays dry-run.
 const panelClient = {
   async request(path) {
     if (path === '/api/modules/conversation/records?limit=50') return CONVS;
-    if (path === '/api/modules/behavioral-signal/records?limit=100') return SIGNALS;
+    if (path === '/api/modules/data-quality-issue/records?limit=50') return ISSUES;
+    if (path === '/api/modules/interaction-call/records?limit=100') return CALLS;
     throw new Error('no such module (' + path + ')');
   },
 };
 const panel = createAssistantPanel({ doc: document, mount: document.getElementById('boAssistant'), client: panelClient, navigate: () => {}, notify: () => {} });
-await panel.open('clienti');
+await panel.open('oggi');
 const clickSuggestion = (title) => [...document.querySelectorAll('.bo-assistant-suggestion')].find((b) => b.textContent.includes(title)).click();
 const settle = async (ready) => {
   for (let i = 0; i < 100; i += 1) {
@@ -242,11 +256,11 @@ const settle = async (ready) => {
   }
   throw new Error('the assistant panel did not settle');
 };
-clickSuggestion('Chi devo ricontattare?');
+clickSuggestion('Cosa è più urgente oggi?');
 await settle(() => document.querySelectorAll('#boAssistant .bo-assistant-trace-read').length >= 1);
-clickSuggestion('Quali lead mostrano segnali caldi?');
+clickSuggestion('Com’è andato il telefono?');
 await settle(() => document.querySelectorAll('#boAssistant .bo-assistant-history-open').length === 2);
-const links = [...document.querySelectorAll('#boAssistant .bo-assistant-source-link')].map((a) => a.getAttribute('href'));
+const links2 = [...document.querySelectorAll('#boAssistant .bo-assistant-source-link')].map((a) => a.getAttribute('href'));
 document.getElementById('probe').textContent = JSON.stringify({
   suggestions: document.querySelectorAll('#boAssistant .bo-assistant-suggestion').length,
   sourcesHeading: document.getElementById('boAssistant').textContent.includes('Fonti'),
@@ -254,9 +268,9 @@ document.getElementById('probe').textContent = JSON.stringify({
   historyHeading: document.getElementById('boAssistant').textContent.includes('Cronologia'),
   historyEntries: document.querySelectorAll('#boAssistant .bo-assistant-history-open').length,
   traceReads: document.querySelectorAll('#boAssistant .bo-assistant-trace-read').length,
-  sourceLinks: links.length,
-  sourceHrefsRecord: links.filter((href) => typeof href === 'string' && (href.startsWith('#/modules/') || href.startsWith('#/customer-card/'))).length,
-  customers: document.getElementById('view-module').textContent.includes('Marco Rossi'),
+  sourceLinks: links2.length,
+  sourceHrefsRecord: links2.filter((href) => typeof href === 'string' && (href.startsWith('#/modules/') || href.startsWith('#/customer-card/'))).length,
+  today: document.getElementById('view-module').textContent.includes('Richiama per il preventivo'),
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
 });
@@ -342,12 +356,12 @@ async function runBrowser({ width, height }) {
   // failure can never disguise itself as a passing render.
   const served = await fetch(page).then((response) => response.text());
   assert.ok(served.includes('admin-assistant.js'), 'the harness serves the real panel module');
-  const out = join(mkdirTmp(), `assistente-${width}x1600.png`);
+  const out = join(mkdirTmp(), `assistente-${width}x${height}.png`);
   try {
     const run = await runChromium([
       '--headless',
       `--screenshot=${out}`,
-      `--window-size=${width},1600`,
+      `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
       '--hide-scrollbars',
       '--disable-background-networking',
@@ -356,7 +370,7 @@ async function runBrowser({ width, height }) {
     assert.equal(run.status, 0, `chromium exits 0 (stderr: ${(run.stderr ?? '').slice(-500)})`);
     const dom = await runChromium([
       '--headless', '--dump-dom',
-      `--window-size=${width},1600`,
+      `--window-size=${width},${height}`,
       '--virtual-time-budget=8000',
       '--disable-background-networking',
       page,
@@ -388,7 +402,7 @@ function assertProbeFields(probe) {
   assert.ok(probe.traceReads >= 1, `the displayed answer traces its reads (${probe.traceReads})`);
   assert.ok(probe.sourceLinks >= 2, `the displayed answer cites records (${probe.sourceLinks})`);
   assert.equal(probe.sourceHrefsRecord, probe.sourceLinks, 'every citation opens its record of origin (#/modules/ or #/customer-card/)');
-  assert.equal(probe.customers, true, 'the screen behind the panel paints the clienti rows');
+  assert.equal(probe.today, true, 'the screen behind the panel paints the oggi view');
 }
 
 test('the assistant answers with sources and an inspectable trace: desktop PNG', { skip: SHOTS_SKIP }, async () => {

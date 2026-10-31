@@ -348,10 +348,6 @@ button[aria-busy="true"] { opacity: .6; }
  * pair. No new hues. Disabled voices are ink on soft, never red.
  */
 .bo-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 0; align-items: start; }
-/* The view mount is a flex item of .bo-main: without min-width 0 it refuses
- * to shrink past its min-content (wide tables), and the whole page scrolls
- * sideways on phones (BO-F4-04 assistente phone proof). */
-#view-module { min-width: 0; }
 .bo-main { min-width: 0; display: flex; flex-direction: column; padding: 0 32px 56px; }
 .bo-main > .bo-topbar + * { margin-top: 30px; }
 /* The Admin build footer is not part of the backoffice the customer sees. */
