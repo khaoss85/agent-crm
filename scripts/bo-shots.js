@@ -352,8 +352,8 @@ const DEMO_SLOTS = [
 ];
 
 const DEMO_SEQUENCES = [
-  { id: 7, sourceKey: 'seq-bentornato', spaceId: 'presti', name: 'Bentornato in palestra', status: 'draft' },
-  { id: 8, sourceKey: 'seq-promemoria', spaceId: 'presti', name: 'Promemoria appuntamento', status: 'active' },
+  { id: 7, sourceKey: 'seq-bentornato', spaceId: 'presti', name: 'Bentornato in palestra', status: 'draft', triggerLabel: 'un nuovo contatto scrive', stopLabel: 'il cliente risponde' },
+  { id: 8, sourceKey: 'seq-promemoria', spaceId: 'presti', name: 'Promemoria appuntamento', status: 'active', triggerLabel: 'manca poco all\u2019appuntamento', stopLabel: 'il cliente conferma' },
 ];
 
 const DEMO_SEQUENCE_STEPS = [
