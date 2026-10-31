@@ -5,7 +5,7 @@
  *
  * Drives the real view code with the repo's fake DOM: filters refetch with
  * periodo/persona parameters (ricalcolo, never a client-side slice), the
- * forecast renders the heuristic badge, the proposal reveals with zero
+ * forecast renders the stima line, the proposal reveals with zero
  * requests (it cannot reassign by itself), and hostile owner keys stay text.
  */
 
@@ -66,9 +66,9 @@ const MODEL = {
   owners: ['alice', 'bob'],
   forecast: {
     currency: 'EUR', closedMinor: 14000, probableMinor: 9333, bestMinor: 14000, targetMinor: 2000000,
-    heuristic: true, label: 'Stima euristica',
+    heuristic: true, label: 'Stima',
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
-    note: 'Obiettivo 2.000.000,00 € dal bundle reporting.',
+    note: 'Obiettivo 20.000,00 €.',
   },
   channels: {
     weeks: [
@@ -172,7 +172,7 @@ test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', as
   assert.match(text, /Valore per fase/);
   assert.match(text, /Chiusure attese per mese/);
   assert.match(text, /Vendite per persona/);
-  assert.match(text, /Stima euristica/);
+  assert.match(text, /✦ Stima:/);
   assert.match(text, /non è una promessa/);
   assert.match(text, /Team e vendite/);
   assert.match(text, /Cosa noto/);
@@ -261,14 +261,14 @@ test('without a proposal the button says so honestly, still with zero requests',
   assert.match(text, /Nessuna ridistribuzione da proporre/);
 });
 
-test('header shows the bundle badges under the title (C2)', async () => {
+test('header shows user-word badges under the title (C2, backlog:1ce3a1f0)', async () => {
   const { mount, view } = harness();
   await view.renderReporting();
   const badges = mount.findAll('span').map((node) => node.textContent);
   assert.deepEqual(REPORTING_BADGES, [
-    'reporting@1.2.0',
-    'Bundle separato dal kernel',
-    'Generato dal tuo agente di coding · 3 giorni fa',
+    'Clienti, preventivi e vendite',
+    'Si toglie senza rompere niente',
+    'Fatto dal tuo agente di coding',
   ]);
   for (const badge of REPORTING_BADGES) {
     assert.ok(badges.includes(badge), `badge renders: ${badge}`);
@@ -521,7 +521,7 @@ test('forecast renders the honest gap below target and nothing without one (C13)
       forecast: {
         ...MODEL.forecast,
         targetMinor: null,
-        note: 'Obiettivo non impostato: aggiungi una riga obiettivo nel bundle reporting.',
+        note: 'Obiettivo non impostato: aggiungi una riga obiettivo nel report.',
       },
     },
   });
@@ -530,6 +530,67 @@ test('forecast renders the honest gap below target and nothing without one (C13)
   assert.ok(!bare.includes('Sei in linea'), 'no target: no status line invented');
   assert.ok(!bare.includes('Ti mancano'), 'no target: no gap invented');
   assert.ok(bare.includes('Obiettivo non impostato'), 'the missing-obiettivo note still renders');
+});
+
+test('obiettivo 20.000 € renders as 20.000 € with the honest gap (backlog:1ce3a1f0)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.ok(text.includes('Obiettivo 20.000,00 €.'), 'the obiettivo shows euros, never cents');
+  assert.ok(!text.includes('2.000.000'), 'cents are never shown as euros');
+  assert.ok(
+    text.includes(`✦ Ti mancano ${formatMoney(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
+    'the gap is target minus reached, in Italian money',
+  );
+});
+
+test('reporting dashboard speaks user words: no bundle/kernel/euristica/version (backlog:1ce3a1f0)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  // User-facing dashboard texts only: badges, titles, subtitles, totals,
+  // ledes, lists and buttons. The developer commands (`pre code`) keep
+  // their exact CLI spelling (`bundle create …`) and are out of scope.
+  const text = [
+    ...mount.findAll('h1'), ...mount.findAll('h2'), ...mount.findAll('h3'),
+    ...mount.findAll('p'), ...mount.findAll('li'), ...mount.findAll('span'),
+    ...mount.findAll('td'), ...mount.findAll('th'), ...mount.findAll('button'),
+  ].map((node) => node.textContent).join(' | ');
+  assert.ok(!/bundle/i.test(text), 'no «bundle» on the screen');
+  assert.ok(!/kernel/i.test(text), 'no «kernel» on the screen');
+  assert.ok(!/euristica/i.test(text), 'no «euristica» on the screen');
+  assert.ok(!/@\d+\.\d+\.\d+/.test(text), 'no version code on the screen');
+});
+
+test('accents are correct on the reporting screen (backlog:1ce3a1f0)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const text = [...mount.findAll('p'), ...mount.findAll('li')]
+    .map((node) => node.textContent).join(' | ');
+  assert.ok(text.includes('non è una promessa'), 'the stima method keeps its accent');
+  assert.ok(text.includes('dell\u2019operatore'), 'the proposal note keeps its accent');
+  assert.ok(!text.includes('non e una promessa'), 'no unaccented «e» for «è»');
+  assert.ok(!/all operatore/.test(text), 'no unaccented «all» for «all’»');
+});
+
+test('forecast legend dots never touch their labels (backlog:1ce3a1f0)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const legends = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-rep-legend'));
+  assert.equal(legends.length, 1, 'one forecast legend row');
+  const dots = [];
+  const walk = (node) => {
+    if (String(node.tagName ?? '').toLowerCase() === 'span'
+      && String(node.getAttribute('style') ?? '').includes('margin-right:6px')) {
+      dots.push(String(node.getAttribute('style') ?? ''));
+    }
+    for (const child of node.childNodes ?? []) walk(child);
+  };
+  walk(legends[0]);
+  assert.equal(dots.length, FORECAST_LEGEND.length, 'every legend dot stands off its label');
+  for (const swatch of ['background:var(--accord);', 'opacity:0.45', 'repeating-linear-gradient']) {
+    assert.ok(dots.some((style) => style.includes(swatch)), `legend swatch matches the bar: ${swatch}`);
+  }
 });
 
 test('reporting renders no button, select, input or textarea outside the visual system', async () => {

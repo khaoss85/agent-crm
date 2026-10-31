@@ -479,11 +479,11 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     bestMinor: openInPeriod.minor,
     targetMinor: target === null ? null : target.valueMinor,
     heuristic: true,
-    label: 'Stima euristica',
+    label: 'Stima',
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
     note: target === null
-      ? 'Obiettivo non impostato: aggiungi una riga obiettivo nel bundle reporting.'
-      : `Obiettivo ${formatMinor(target.valueMinor, query.currency)} dal bundle reporting.`,
+      ? 'Obiettivo non impostato: aggiungi una riga obiettivo nel report.'
+      : `Obiettivo ${formatMinor(target.valueMinor, query.currency)}.`,
   });
 
   const insights = [];

@@ -250,11 +250,11 @@ test('team table recalculates with periodo: September differs from October', (t)
   assert.deepEqual(september.team.map((entry) => entry.owner), ['bob', 'alice']);
 });
 
-test('forecast is labelled heuristic with history-weighted probabili', (t) => {
+test('forecast is labelled stima with history-weighted probabili', (t) => {
   const database = fixtureDatabase(t);
   const model = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   assert.equal(model.forecast.heuristic, true);
-  assert.equal(model.forecast.label, 'Stima euristica');
+  assert.equal(model.forecast.label, 'Stima');
   assert.match(model.forecast.method, /non è una promessa/);
   assert.equal(model.forecast.closedMinor, 14000);
   // 14000 open-in-period × 2/3 historical win rate, rounded.
@@ -276,7 +276,10 @@ test('obiettivo row from the bundle sets the target, never an invented one', (t)
   ];
   const model = buildDashboardModel(results, rows, QUERY_OCT, TS);
   assert.equal(model.forecast.targetMinor, 2000000);
-  assert.match(model.forecast.note, /dal bundle reporting/);
+  assert.equal(model.forecast.note, `Obiettivo ${formatMinor(2000000, 'EUR')}.`);
+  assert.match(model.forecast.note, /Obiettivo 20\.000,00\s€\./);
+  assert.ok(!/2\.000\.000/.test(model.forecast.note), 'cents are never shown as euros (backlog:1ce3a1f0)');
+  assert.ok(!/bundle|kernel|euristica/i.test(model.forecast.note), 'the note speaks user words (backlog:1ce3a1f0)');
   assert.equal(pickTarget('nope', QUERY_OCT), null);
   assert.equal(pickTarget([{ metric: 'obiettivo', period: '2026-10', value: -5, unit: 'EUR' }], QUERY_OCT), null);
 });
@@ -532,7 +535,7 @@ test('GET /api/reporting/dashboard serves the registry model and writes nothing'
   assert.equal(model.kpis.length, 5);
   assert.equal(model.kpis[0].display, formatMinor(26000, 'EUR'));
   assert.equal(model.forecast.heuristic, true);
-  assert.equal(model.forecast.label, 'Stima euristica');
+  assert.equal(model.forecast.label, 'Stima');
   assert.equal(model.forecast.probableMinor, 9333);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   assert.ok(Array.isArray(model.insights) && model.insights.length > 0);
