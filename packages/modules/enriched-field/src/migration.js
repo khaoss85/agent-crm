@@ -39,6 +39,39 @@ export const enrichedFieldMigrations = [
       "CREATE INDEX IF NOT EXISTS enriched_fields_source ON enriched_fields(source);" + '\n' +
       "CREATE INDEX IF NOT EXISTS enriched_fields_status ON enriched_fields(status);",
   },
+  {
+    name: "evolve_enriched_fields_r2",
+    sql:
+      "CREATE TABLE enriched_fields__evolve__r2 (" + '\n' +
+      "  id TEXT PRIMARY KEY," + '\n' +
+      "  source_key TEXT UNIQUE," + '\n' +
+      "  subject_resource TEXT," + '\n' +
+      "  subject_id TEXT," + '\n' +
+      "  subject_owner TEXT CHECK(subject_owner IN ('host', 'package'))," + '\n' +
+      "  subject_owner_package TEXT," + '\n' +
+      "  subject_label TEXT," + '\n' +
+      "  field TEXT," + '\n' +
+      "  value TEXT," + '\n' +
+      "  source TEXT," + '\n' +
+      "  source_detail TEXT," + '\n' +
+      "  observed_at TEXT," + '\n' +
+      "  observed_by_run_id TEXT," + '\n' +
+      "  status TEXT CHECK(status IN ('active', 'proposed', 'dismissed', 'purged'))," + '\n' +
+      "  purged_at TEXT," + '\n' +
+      "  purge_reason TEXT," + '\n' +
+      "  decision_reason TEXT," + '\n' +
+      "  created_at TEXT NOT NULL," + '\n' +
+      "  updated_at TEXT NOT NULL" + '\n' +
+      ") STRICT;" + '\n' +
+      "INSERT INTO enriched_fields__evolve__r2 (id, source_key, subject_resource, subject_id, subject_owner, subject_owner_package, subject_label, field, value, source, source_detail, observed_at, observed_by_run_id, status, purged_at, purge_reason, created_at, updated_at) SELECT id, source_key, subject_resource, subject_id, subject_owner, subject_owner_package, subject_label, field, value, source, source_detail, observed_at, observed_by_run_id, status, purged_at, purge_reason, created_at, updated_at FROM enriched_fields;" + '\n' +
+      "DROP TABLE enriched_fields;" + '\n' +
+      "ALTER TABLE enriched_fields__evolve__r2 RENAME TO enriched_fields;" + '\n' +
+      "CREATE INDEX IF NOT EXISTS enriched_fields_subject_resource ON enriched_fields(subject_resource);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS enriched_fields_subject_id ON enriched_fields(subject_id);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS enriched_fields_field ON enriched_fields(field);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS enriched_fields_source ON enriched_fields(source);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS enriched_fields_status ON enriched_fields(status);",
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */

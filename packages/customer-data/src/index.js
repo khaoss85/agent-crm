@@ -10,6 +10,7 @@ import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import { createContactEnrichment } from './enrichment.js';
+import { EXTRACTION_SOURCE_KINDS, createEnrichmentExtraction } from './extraction.js';
 import { createCustomerDataOperations, LIMITATIONS } from './operations.js';
 import { MATCH_POLICY_KIND, MATCH_RULES, defineCustomerMatchPolicy } from './policy.js';
 import { CHANNEL_SYSTEMS, createChannelSenderResolution } from './sender.js';
@@ -277,6 +278,73 @@ export function createCustomerDataPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'extract-customer-enrichment',
+        appMethod: 'extractCustomerEnrichment',
+        label: 'Extract enrichment fields with AI over linked sources',
+        description:
+          'Ask the caller-built AI adapter to extract contact fields from one customer\'s linked sources '
+          + '(signatures, channel messages, company website) and store each as a proposed row citing its '
+          + 'source — never a fact until a human accepts it. Without an adapter it refuses with '
+          + 'ENRICHMENT_AI_UNAVAILABLE. The contact record is never written.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind, e.g. "company" or "contact".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'sources', type: 'json', hint: 'One to ten linked sources, each with kind, text and an opaque detail.' },
+          { name: 'adapter', type: 'json', hint: 'The caller-built extraction adapter answering extractFields (the fake in tests, the OpenAI wiring in the pilot worker). Absent means no AI is active.' },
+        ],
+        create(runtime) {
+          const extraction = createEnrichmentExtraction({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            names,
+          });
+          return (request) => extraction.extractCustomerEnrichment(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-customer-enrichment-proposals',
+        appMethod: 'readCustomerEnrichmentProposals',
+        label: 'Read the pending enrichment proposals of one customer',
+        description:
+          'Read the proposed (not yet decided) enriched fields of one customer, each with the source that '
+          + 'produced it — what the scheda shows beside the facts to accept or dismiss. Creates nothing. '
+          + 'Facts keep reading through read-customer-enrichment, never from here.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind, e.g. "company" or "contact".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+        ],
+        create(runtime) {
+          const extraction = createEnrichmentExtraction({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            names,
+          });
+          return (request) => extraction.readCustomerEnrichmentProposals(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'decide-enrichment-proposal',
+        appMethod: 'decideEnrichmentProposal',
+        label: 'Accept or dismiss one enrichment proposal',
+        description:
+          'Record a human decision on one proposed field: accepted flips it to an active fact, dismissed '
+          + 'records the refusal with its reason. Deciding twice answers the stored decision. The contact '
+          + 'record itself is never written.',
+        input: [
+          { name: 'id', type: 'string', hint: 'The proposed enriched-field row id.' },
+          { name: 'decision', type: 'enum', values: ['accepted', 'dismissed'], hint: 'Whether the field becomes a fact or a recorded refusal.' },
+          { name: 'reason', type: 'string', hint: 'Why it was dismissed (or accepted with a note), recorded beside the row.' },
+        ],
+        create(runtime) {
+          const extraction = createEnrichmentExtraction({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            names,
+          });
+          return (request) => extraction.decideEnrichmentProposal(request);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'list-customer-records',
         appMethod: 'listCustomers',
         label: 'List customers with filters, sorting and server pagination',
@@ -426,6 +494,14 @@ export function createCustomerDataPackage(options = {}) {
           paidServices: 'none: Google Contacts (free People API) and locally parsed email signatures only',
           ambiguity: 'evidence naming two different contacts becomes an unresolved duplicate candidate; nothing is ever merged automatically',
           optOut: 'an opted-out subject is never enriched again and its active enriched fields are purged; channel identities stay',
+          aiExtraction: {
+            sources: [...EXTRACTION_SOURCE_KINDS],
+            adapter: 'caller-built, passed per call (the OpenAI wiring in the pilot worker, the fake in tests): the framework never holds a key',
+            noAi: 'without an adapter the extraction refuses with ENRICHMENT_AI_UNAVAILABLE instead of running anything',
+            proposals: 'one proposed enriched-field row per extracted field, each citing the linked source read — never a fact until a human decides',
+            decisions: 'accepted flips the row to active, dismissed records the refusal with its reason; deciding twice answers the stored decision and a dismissal is never resurrected by a re-run',
+            providerSilence: 'an adapter failure becomes ENRICHMENT_EXTRACTION_FAILED with a fixed message: provider text never leaves the package',
+          },
         },
         canonicalIdentity: {
           semantics: 'logical canonical merge — a link, never a deletion',

@@ -9,7 +9,7 @@ capabilities. It **requires nothing**.
 | Requires | **nothing** |
 | Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1`, `customer-channel-origins@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
-| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins` (ADR-032) |
+| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins`, `extract-customer-enrichment`, `read-customer-enrichment-proposals`, `decide-enrichment-proposal` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
 
@@ -176,6 +176,16 @@ enrich  →  stored beside the contact with source and date — the record itsel
   naming the subject is ever proposed as a union: `recordCandidatePairs`
   skips opted-out contacts on every path (owner decision Q-G1, BO-F1-04).
   Channel identities stay: they route messages, they are not enrichment.
+- **«Aggiorna» proposes, a human decides.** `extract-customer-enrichment`
+  asks the caller-built AI adapter to read the customer's linked sources
+  (Gmail signature blocks, channel messages, the company website) and
+  stores one `proposed` row per field, each citing its source — never a
+  fact until `decide-enrichment-proposal` flips it to `active` (accepted)
+  or `dismissed` (refused, with the reason). A dismissal is final: a
+  re-run replays instead of resurrecting. Without an adapter the call
+  refuses with `ENRICHMENT_AI_UNAVAILABLE` instead of running anything,
+  and provider text never leaves the package. The contact record is never
+  written on any of these paths.
 
 ## Canonical identity: a human decision, and a logical link
 
@@ -315,6 +325,7 @@ Legal or Finance role enforcement, and this README does not pretend otherwise.
 - `tests/customer-data-operations-v2.test.js` — bulk actions and export at scale: per-record receipts, partial honesty, resume and replay, truncation refusal
 - `tests/customer-data-faults.test.js` — faults, two-connection races, restart, detach and old-database upgrade
 - `tests/contact-enrichment.test.js` — free-source enrichment: flag, source and date on every field, manual-wins, candidates, opt-out purge
+- `tests/customer-enrichment-extraction.test.js` — AI extraction: proposed rows citing their source, accept/dismiss decisions, replay without resurrection, no-AI refusal, provider silence
 - `tests/admin-customer-data.test.js` — the Admin section, including the failure states
 - `examples/scenarios/customer-identity-governance.scenario.json` — the DX6 journey and what it does *not* establish
 - `docs/ADMIN_SMOKE.md` — the 32-check real-Chromium matrix
