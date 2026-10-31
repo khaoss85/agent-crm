@@ -95,6 +95,33 @@ async function requireLinkSubject({ modules }, subject) {
   if (!record) throw new NotFoundError(subject.resource === 'contact' ? 'Contact' : 'Company', subject.id);
 }
 
+/**
+ * The one source of truth for a manual identity link (backlog:826e377c).
+ *
+ * Round 1 let a released (superseded) handle be reclaimed by re-pointing
+ * the row; round 2 showed the decision must run on the row as stored when
+ * the link commits — a snapshot captured before a concurrent reclaim
+ * committed is not an input here, so a late link can only lose with
+ * IDENTITY_HELD_ELSEWHERE, never overwrite the winner. The caller reads
+ * the fresh row inside its committing transaction and hands it in; there
+ * is no other parameter for "what the row looked like earlier".
+ * @param {{status?: unknown, subjectResource?: unknown, subjectId?: unknown} | null} fresh
+ * @param {{resource: string, id: string}} subject
+ * @param {string} system
+ */
+export function decideIdentityLinkStep(fresh, subject, system) {
+  if (fresh && fresh.status === 'active') {
+    const heldHere = fresh.subjectResource === subject.resource && fresh.subjectId === subject.id;
+    if (!heldHere) {
+      throw new AppError(`that ${system} handle is already linked to another customer`, {
+        code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
+      });
+    }
+    return 'already-linked';
+  }
+  return fresh ? 'reactivate' : 'create';
+}
+
 export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
@@ -421,27 +448,19 @@ export function createCustomerDataOperations({ database, modules, events, config
         subject: Object.freeze({ ...subject }),
         system, externalId, sourceKey, ...extra,
       });
-      const existing = (await deciding(identities, { sourceKey }))[0] ?? null;
-      if (existing && existing.status === 'active') {
-        if (!heldHere(existing)) {
-          throw new AppError(`that ${system} handle is already linked to another customer`, {
-            code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
-          });
-        }
-        return shape('already-linked', { replayed: true });
-      }
       const write = async () => {
-        if (existing && existing.status === 'active' && !heldHere(existing)) {
-          throw new AppError(`that ${system} handle is already linked to another customer`, {
-            code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
-          });
-        }
-        if (existing) {
+        // The decision reads the row inside the committing transaction:
+        // nothing captured before it (in particular a superseded snapshot
+        // taken before a concurrent reclaim committed) reaches decide().
+        const fresh = (await deciding(identities, { sourceKey }))[0] ?? null;
+        const step = decideIdentityLinkStep(fresh, subject, system);
+        if (step === 'already-linked') return shape('already-linked', { replayed: true });
+        if (step === 'reactivate') {
           // A superseded row names nobody, so linking re-points it at the
           // linking subject and reactivates it — the same subject healing an
           // unlink, or a new customer reclaiming a released handle. The
           // sourceKey stays unique, so no second row is ever written.
-          await identities.applyManaged(existing.id, {
+          await identities.applyManaged(fresh.id, {
             ...subjectFields(subject),
             status: 'active',
             firstObservedRunId: MANUAL_LINK_RUN_ID, lastObservedRunId: MANUAL_LINK_RUN_ID,

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { boot, project } from './helpers/customer-data-project.js';
+import { decideIdentityLinkStep } from '../packages/customer-data/src/operations.js';
 
 /**
  * **Manual channel identity link/unlink (backlog:826e377c).**
@@ -205,6 +206,208 @@ test('unlink of an unknown or foreign handle answers not-found', async (t) => {
     (error) => error.code === 'NOT_FOUND' && error.status === 404,
     'the second unlink of the same handle is not-found, not a silent success',
   );
+});
+
+test('decideIdentityLinkStep: the link table both rounds share', (t) => {
+  // NOT_GENERAL (backlog:826e377c): the round-1 reclaim cases and the
+  // round-2 stale-snapshot case run through this one function, on the row
+  // as read inside the committing transaction. There is no stale-snapshot
+  // parameter: a snapshot taken before a concurrent reclaim committed
+  // cannot reach the decision, so the last row below — fresh active row
+  // held elsewhere after an earlier read saw it superseded — refuses.
+  const ada = { resource: 'contact', id: 'ada' };
+  const bianca = { resource: 'contact', id: 'bianca' };
+  const row = (overrides) => ({
+    subjectResource: 'contact', subjectId: 'ada', status: 'active', ...overrides,
+  });
+  assert.equal(decideIdentityLinkStep(null, ada, 'whatsapp'), 'create');
+  assert.equal(decideIdentityLinkStep(row({}), ada, 'whatsapp'), 'already-linked');
+  assert.equal(decideIdentityLinkStep(row({ status: 'superseded' }), ada, 'whatsapp'), 'reactivate');
+  assert.equal(
+    decideIdentityLinkStep(row({ status: 'superseded' }), bianca, 'whatsapp'),
+    'reactivate',
+    'a released handle re-points at the claiming customer (round-1 reclaim)',
+  );
+  t.diagnostic('stale superseded snapshot, fresh active row held elsewhere');
+  assert.throws(
+    () => decideIdentityLinkStep(row({}), bianca, 'whatsapp'),
+    (error) => error.code === 'IDENTITY_HELD_ELSEWHERE' && error.status === 409,
+    'the fresh row decides: a late link loses, never overwrites (round 2)',
+  );
+  assert.throws(
+    () => decideIdentityLinkStep(row({}), { resource: 'company', id: 'ada' }, 'whatsapp'),
+    (error) => error.code === 'IDENTITY_HELD_ELSEWHERE' && error.status === 409,
+    'same id on another resource is still elsewhere',
+  );
+});
+
+test('link decisions: one source of truth across every round', async (t) => {
+  // NOT_GENERAL (backlog:826e377c): the round-1 reclaim finding and the
+  // round-2 stale-snapshot finding share one decision — which stored state
+  // lets a link land. Every row below decides on the row as stored when the
+  // link commits, and the race case pins that a snapshot captured before a
+  // concurrent reclaim never decides.
+  const { app } = await scene(t, 'identity-link-table');
+  const ada = await adaByEmail(app);
+  const bianca = (await app.resolveChannelSender({
+    channel: 'email', handle: 'bianca@example.it',
+    firstName: 'Bianca', lastName: 'Verdi', actor: ACTOR,
+  })).contact;
+  const carlo = (await app.resolveChannelSender({
+    channel: 'email', handle: 'carlo@example.it',
+    firstName: 'Carlo', lastName: 'Neri', actor: ACTOR,
+  })).contact;
+  const identities = () => app.modules.get('external-identity').service
+    .listWhere({ subjectResource: 'contact' });
+
+  // Absent row: a fresh handle creates one held row.
+  const created = await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+  });
+  assert.equal(created.outcome, 'linked');
+  assert.equal(created.reactivated, false);
+
+  // Active row held here: a repeat replays, never a second row.
+  const replay = await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+  });
+  assert.equal(replay.outcome, 'already-linked');
+  assert.equal(replay.replayed, true);
+
+  // Active row held elsewhere: 409 and nobody's rows move (round 1).
+  await assert.rejects(
+    app.linkCustomerIdentity({
+      resource: 'contact', id: bianca.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+    }),
+    (error) => error.code === 'IDENTITY_HELD_ELSEWHERE' && error.status === 409,
+  );
+
+  // Superseded row, same subject: unlink then relink reactivates the row.
+  await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+  });
+  const healed = await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+  });
+  assert.equal(healed.outcome, 'linked');
+  assert.equal(healed.reactivated, true);
+
+  // Superseded row, other subject: a released handle re-points at the
+  // claiming customer instead of refusing forever (round 1 reclaim).
+  await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+  });
+  const reclaimed = await app.linkCustomerIdentity({
+    resource: 'contact', id: bianca.id, system: 'whatsapp', externalId: '+39 000 000 010', actor: ACTOR,
+  });
+  assert.equal(reclaimed.outcome, 'linked');
+  assert.equal(reclaimed.reactivated, true);
+
+  // Fresh decision after a completed reclaim (round 2): Carlo holds the
+  // recycled handle now, so Bianca's late link refuses and Carlo's row is
+  // untouched — whatever Bianca saw before Carlo committed.
+  await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'instagram', externalId: '@numero-riciclato', actor: ACTOR,
+  });
+  await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'instagram', externalId: '@numero-riciclato', actor: ACTOR,
+  });
+  await app.linkCustomerIdentity({
+    resource: 'contact', id: carlo.id, system: 'instagram', externalId: '@numero-riciclato', actor: ACTOR,
+  });
+  await assert.rejects(
+    app.linkCustomerIdentity({
+      resource: 'contact', id: bianca.id, system: 'instagram', externalId: '@numero-riciclato', actor: ACTOR,
+    }),
+    (error) => error.code === 'IDENTITY_HELD_ELSEWHERE' && error.status === 409,
+  );
+  const rows = await app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'instagram:@numero-riciclato' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'active');
+  assert.equal(rows[0].subjectId, carlo.id);
+  assert.equal((await identities()).filter((row) => row.sourceKey === 'whatsapp:+39000000010').length, 1);
+});
+
+test('a reclaim that commits mid-link loses with 409 instead of overwriting the winner', async (t) => {
+  // The round-2 P1 shape: X captures the released (superseded) row before
+  // Y's reclaim commits, then X's write must still refuse on the fresh row
+  // instead of re-pointing the now-active winner to X.
+  const { app, root } = await scene(t, 'identity-link-race');
+  const ada = await adaByEmail(app);
+  const carlo = (await app.resolveChannelSender({
+    channel: 'email', handle: 'carlo@example.it',
+    firstName: 'Carlo', lastName: 'Neri', actor: ACTOR,
+  })).contact;
+  const bianca = (await app.resolveChannelSender({
+    channel: 'email', handle: 'bianca@example.it',
+    firstName: 'Bianca', lastName: 'Verdi', actor: ACTOR,
+  })).contact;
+  await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+  await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+
+  // Two connections on the same file: X reads the released row, then its
+  // read resolves only after Y's reclaim has committed — so X's write can
+  // only decide on a snapshot taken before the winner existed.
+  const { app: appY, close: closeY } = await boot(root, join(root, 'data', 'identity-link-race.sqlite'));
+  t.after(() => closeY());
+  const service = app.modules.get('external-identity').service;
+  const originalListWhere = service.listWhere.bind(service);
+  let releaseX;
+  const gate = new Promise((resolve) => { releaseX = resolve; });
+  let reads = 0;
+  service.listWhere = async (filters) => {
+    reads += 1;
+    const pending = originalListWhere(filters);
+    if (reads === 1) await gate;
+    return pending;
+  };
+  let yOutcome;
+  try {
+    const xLink = app.linkCustomerIdentity({
+      resource: 'contact', id: bianca.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+    });
+    for (let waited = 0; reads === 0 && waited < 2000; waited += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => { setImmediate(resolve); });
+    }
+    assert.equal(reads, 1, 'X is parked inside its pre-commit read');
+    // Y starts while X is parked and blocks on the write lock until X's
+    // transaction releases it; whichever reclaim commits first wins.
+    const yLink = appY.linkCustomerIdentity({
+      resource: 'contact', id: carlo.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+    });
+    releaseX();
+    yOutcome = await yLink.then(
+      (won) => ({ won, lost: null }),
+      (lost) => ({ won: null, lost }),
+    );
+    if (yOutcome.won) {
+      assert.equal(yOutcome.won.outcome, 'linked', 'the first reclaim to commit wins');
+      await assert.rejects(
+        xLink,
+        (error) => error.code === 'IDENTITY_HELD_ELSEWHERE' && error.status === 409,
+        'the late link refuses on the fresh row instead of overwriting the winner',
+      );
+    } else {
+      assert.equal(yOutcome.lost?.code, 'IDENTITY_HELD_ELSEWHERE');
+      assert.equal(yOutcome.lost?.status, 409);
+      assert.equal((await xLink).outcome, 'linked', 'the first beginner wins');
+    }
+  } finally {
+    service.listWhere = originalListWhere;
+  }
+
+  const rows = await app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'whatsapp:+39000000001' });
+  assert.equal(rows.length, 1, 'no second row was written');
+  assert.equal(rows[0].status, 'active');
+  const winnerId = yOutcome.won ? carlo.id : bianca.id;
+  assert.equal(rows[0].subjectId, winnerId, 'the row still names the winner');
 });
 
 test('malformed requests and ghost subjects refuse before anything is read or written', async (t) => {
