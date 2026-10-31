@@ -340,7 +340,12 @@ async function readSectionRows(service, references, subject = null) {
     const settled = await Promise.all(active.map((filters) => Promise.resolve()
       .then(() => service.listWhere(filters))
       .then(
-        (rows) => ({ ok: true, rows }),
+        // Voce 908f2eb9bbfb, review round 2: the contract is an array of
+        // rows. A shape answering anything else (undefined, an object, a
+        // scalar from a handwritten service) is a shape the module does not
+        // declare — skipped exactly like a rejecting shape, so one malformed
+        // shape never poisons the shapes that did answer.
+        (rows) => (Array.isArray(rows) ? { ok: true, rows } : { ok: false, rows: [] }),
         () => ({ ok: false, rows: [] }),
       )));
     const byId = new Map();

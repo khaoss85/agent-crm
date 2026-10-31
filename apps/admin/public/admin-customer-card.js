@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError } from './admin-core.js';
+import { humanReadError, isNotComposedFailure } from './admin-core.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 
 /**
@@ -289,42 +289,43 @@ export function createCustomerCardView(deps) {
   // keeps meaning "not composed here" (null, section hidden or empty as
   // before); any other failure is kept beside the value so the section
   // can name it instead of failing the card.
-  const settle = (work) => work.then(
+  // Voce 908f2eb9bbfb, review round 2: the work arrives as a thunk, so a
+  // synchronously-throwing read settles like a rejection instead of escaping
+  // while the Promise.all array is still being built.
+  const settle = (thunk) => Promise.resolve().then(
+    typeof thunk === 'function' ? thunk : () => thunk,
+  ).then(
     (value) => ({ value, error: null }),
     (error) => ({ value: null, error }),
   );
-  const nullOn404 = (settled) => {
-    if (settled.error && settled.error && settled.error.status === 404) {
-      return { value: null, error: null };
-    }
-    return settled;
-  };
+  const nullOn404 = (settled) => (settled.error && isNotComposedFailure(settled.error)
+    ? { value: null, error: null }
+    : settled);
 
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
-    const [card, timeline, profile, enrichmentRaw, callsRaw] = await Promise.all([
-      settle(client.request(`/api/customer-hub/card/${encoded}`)),
-      settle(client.request(`/api/customer-hub/timeline/${encoded}`)),
-      settle(client.request(`/api/customer-data/profile/${encoded}`)),
+    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw] = await Promise.all([
+      settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
+      settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
+      settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
       // yet answers 404, and the scheda must stay honest about the section
       // instead of failing the whole card.
-      settle(client.request(`/api/customer-data/enriched/${encoded}`).catch((error) => {
-        if (error && error.status === 404) return null;
-        throw error;
-      })),
+      settle(() => client.request(`/api/customer-data/enriched/${encoded}`)),
       // Without intelligence composed (honest 404) or without a space the
       // calls read stays unavailable — never a failed card.
       spaceId === null
         ? { value: null, error: null }
-        : await settle(client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)
-          .catch((error) => {
-            if (error && error.status === 404) return null;
-            throw error;
-          })),
+        : settle(() => client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)),
     ]);
+    // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
+    // retry — the package is not composed for this reader, so the read stays
+    // null and the section keeps its honest not-composed state. Only a
+    // non-404 failure names the retry error on the section.
+    const timeline = nullOn404(timelineRaw);
+    const profile = nullOn404(profileRaw);
     const enrichment = nullOn404(enrichmentRaw);
     const calls = nullOn404(callsRaw);
     return {
@@ -478,7 +479,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(row);
   }
 
-  function linkedIdentities(box, profile) {
+  function linkedIdentities(box, profile, profileError = null) {
     // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
     // label and a role label, never a bare id or UUID. The English cluster
     // note stays in the API response, never on screen.
@@ -490,6 +491,13 @@ export function createCustomerCardView(deps) {
     // profile carries no connector direction — that needs the
     // channel-connection exposure of arch fetta 3, noted in the PR.
     box.appendChild(el('h4', undefined, 'Identità collegate'));
+    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
+    // section too — hiding it would read as "no identities", which is a
+    // different claim from "the read failed".
+    if (profileError) {
+      readError(box, profileError, 'Le identità non si sono potute leggere. Riprova più tardi.');
+      return;
+    }
     const cluster = profile?.canonicalIdentity;
     if (!cluster) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
@@ -930,7 +938,14 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function nextSteps(box, profile) {
+  function nextSteps(box, profile, profileError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
+    // section too, instead of vanishing as "no next steps".
+    if (profileError) {
+      box.appendChild(el('h4', undefined, 'Prossimi passi'));
+      readError(box, profileError, 'I prossimi passi non si sono potuti leggere. Riprova più tardi.');
+      return true;
+    }
     // Voce 1a066ddfe42a: an uncomposed work package hides the whole block
     // instead of printing its English reason.
     if (profile?.workTasks?.available !== true) return false;
@@ -948,7 +963,14 @@ export function createCustomerCardView(deps) {
     return true;
   }
 
-  function offer(box, profile, offerCtx) {
+  function offer(box, profile, offerCtx, profileError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
+    // section too, instead of vanishing as "no offer".
+    if (profileError) {
+      box.appendChild(el('h4', undefined, 'Offerta'));
+      readError(box, profileError, "L'offerta non si è potuta leggere. Riprova più tardi.");
+      return true;
+    }
     // Voce cc525cd6a3c5: the offer panel shows one commercial line for THIS
     // customer only — the profile behind it is already scoped to the customer
     // (contact-scoped records never leak onto a company-mate's card), so the
@@ -1079,8 +1101,14 @@ export function createCustomerCardView(deps) {
   // file, so it names the set instead of importing it).
   const TERMINAL_APPOINTMENT = Object.freeze(['done', 'no-show', 'cancelled']);
 
-  function nextAppointment(box, timeline) {
+  function nextAppointment(box, timeline, timelineError = null) {
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // section too, instead of vanishing as "no appointment booked".
+    if (timelineError) {
+      readError(box, timelineError, 'Il prossimo appuntamento non si è potuto leggere. Riprova più tardi.');
+      return;
+    }
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     // readSchedule lists every booking soonest-first, past and terminal rows
     // included: the next appointment is the soonest booking that can still
@@ -1215,7 +1243,15 @@ export function createCustomerCardView(deps) {
   async function renderCard(resource, id) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     channelFilter = 'all';
-    const loaded = await load(resource, id);
+    // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
+    // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
+    // id) used to blank the scheda with neither the card nor the error panel.
+    let loaded;
+    try {
+      loaded = await load(resource, id);
+    } catch (error) {
+      loaded = { card: null, cardError: error };
+    }
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
@@ -1251,7 +1287,7 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     section(left, '', quickActions, card, { resource, id });
-    section(left, '', linkedIdentities, profile);
+    section(left, '', linkedIdentities, profile, profileError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
     if (timelineError) {
@@ -1267,15 +1303,17 @@ export function createCustomerCardView(deps) {
         box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
         readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
       });
+      section(right, '', (box) => {
+        box.appendChild(el('h4', undefined, 'Chiamate'));
+        readError(box, callsError, 'Le chiamate non si sono potute leggere. Riprova più tardi.');
+      });
     } else {
       section(right, 'bo-scheda-ai', aiSummary, calls);
       section(right, '', callsBox, calls);
     }
-    section(right, '', nextSteps, profile);
-    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id });
-    if (!timelineError) {
-      section(right, 'bo-scheda-card-appt', nextAppointment, timeline);
-    }
+    section(right, '', nextSteps, profile, profileError);
+    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError);
+    section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);
