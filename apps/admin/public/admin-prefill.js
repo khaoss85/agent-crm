@@ -8,11 +8,13 @@
  * path-only hashes (no query tail), and the target screens own separate
  * state, so the card stashes the pick here and the target takes it once:
  * `takePendingCustomerPick` reads and clears, so a later visit starts
- * unpicked again. The pick is `{ resource, id, name }` — the same shape the
- * calendar manual form already holds — and only names a record; every
- * creation still validates server-side, so a stale pick refuses there,
- * never books the wrong customer. Without a storage the write is a noop
- * and the take is null: the creation screen opens unpicked, never broken.
+ * unpicked again. The pick is `{ resource, id, name, company }` — the same
+ * shape the calendar manual form already holds, plus the linked company the
+ * offer form files under (null when the scheda knows none) — and only names
+ * records; every creation still validates server-side, so a stale pick
+ * refuses there, never books the wrong customer. Without a storage the
+ * write is a noop and the take is null: the creation screen opens unpicked,
+ * never broken.
  */
 
 const KEY_PREFIX = 'accordo.bo.customer-pick.';
@@ -37,8 +39,25 @@ function storageApi(storage) {
 }
 
 /**
+ * The company linked to the picked record, when the scheda knows one. The
+ * offer form needs it — an opportunity is always filed under a company —
+ * while the appointment form ignores it. Auxiliary, never identity: a broken
+ * company degrades to null instead of refusing the record.
+ * @param {unknown} company
+ * @returns {{id: string, name: string} | null}
+ */
+function validCompany(company) {
+  if (company === null || company === undefined) return null;
+  if (typeof company !== 'object') return null;
+  const { id, name } = /** @type {{id: unknown, name: unknown}} */ (company);
+  if (typeof id !== 'string' || id === '') return null;
+  if (typeof name !== 'string' || name.trim() === '') return null;
+  return { id, name: name.trim() };
+}
+
+/**
  * @param {unknown} pick
- * @returns {{resource: string, id: string, name: string} | null}
+ * @returns {{resource: string, id: string, name: string, company: {id: string, name: string} | null} | null}
  */
 function validPick(pick) {
   if (pick === null || typeof pick !== 'object') return null;
@@ -46,7 +65,8 @@ function validPick(pick) {
   if (!VALID_RESOURCES.has(/** @type {string} */ (resource))) return null;
   if (typeof id !== 'string' || id === '') return null;
   if (typeof name !== 'string' || name.trim() === '') return null;
-  return { resource: /** @type {string} */ (resource), id, name: name.trim() };
+  const company = validCompany(/** @type {{company?: unknown}} */ (pick).company);
+  return { resource: /** @type {string} */ (resource), id, name: name.trim(), company };
 }
 
 /**

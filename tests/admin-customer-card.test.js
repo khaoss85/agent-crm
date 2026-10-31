@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import {
+  createCustomerCardView,
+  offerStageTargets,
+  OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
+} from '../apps/admin/public/admin-customer-card.js';
+import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
+import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -1231,9 +1237,11 @@ test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline'
 });
 
 // Voce 714433c2: lo stato si cambia da un menu. The menu moves the shown
-// opportunity through the governed stage workflow; the current stage is not
-// offered again and every voice reads Italian.
-test('714433c2: Cambia stato lists the other stages in Italian and moves the opportunity', async () => {
+// opportunity through the governed stage workflow, offering only the legal
+// moves: the transitions the workflow allows from the shown stage, never the
+// current stage again, never the governed system state approval_pending (it
+// is entered only through the approval gate). Every voice reads Italian.
+test('714433c2: Cambia stato lists the legal moves in Italian and moves the opportunity', async () => {
   const seen = [];
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
   const client = recordingClient(base, () => ({ output: { outcome: 'stage_changed' } }));
@@ -1251,12 +1259,13 @@ test('714433c2: Cambia stato lists the other stages in Italian and moves the opp
   change.dispatch('click');
   const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
   const labels = voices.map((node) => node.textContent);
-  for (const label of ['scoperta', 'proposta', 'trattativa', 'vinta', 'persa', 'in attesa di approvazione']) {
-    assert.ok(labels.includes(label), `the menu offers «${label}»`);
-  }
-  assert.ok(!labels.includes('qualificazione'), 'the current stage is not offered again');
+  // qualification allows proposal/approval_pending/lost; approval_pending is
+  // a system state, so only proposta and persa are offered.
+  assert.deepEqual(labels, ['proposta', 'persa'], 'from qualificazione only proposta and persa are offered');
   assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'qualification'),
     'the current stage key is not a voice');
+  assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'approval_pending'),
+    'the governed system state is never a voice');
   assert.ok(!labels.some((label) => label === 'discovery' || label === 'proposal' || label === 'negotiation'),
     'no raw stage key reaches the screen');
 
@@ -1270,6 +1279,21 @@ test('714433c2: Cambia stato lists the other stages in Italian and moves the opp
   assert.deepEqual(seen, [{ message: 'Stato aggiornato', error: false }], 'the move toasts in Italian');
 });
 
+// Voce 714433c2: the menu mirror is pinned to the governed transition table
+// of the opportunity service — not to a stubbed client. Every stage offers
+// exactly its legal moves minus the governed system state, and nothing else.
+test('714433c2: the menu targets match the real transition table on every stage', () => {
+  assert.deepEqual(CARD_TRANSITIONS, SERVICE_TRANSITIONS,
+    'the card mirror is the governed table, not a copy that can drift');
+  for (const stage of OPPORTUNITY_STAGES) {
+    const targets = offerStageTargets(stage);
+    const legal = (SERVICE_TRANSITIONS[stage] ?? []).filter((key) => key !== 'approval_pending');
+    assert.deepEqual(targets, legal, `from ${stage} the menu offers exactly the legal non-system moves`);
+    assert.ok(!targets.includes('approval_pending'), `from ${stage} the system state is never offered`);
+    assert.ok(!targets.includes(stage), `from ${stage} the current stage is never offered`);
+  }
+});
+
 test('714433c2: an approval-gated move toasts the approval, and a quote line carries no menu', async () => {
   const seen = [];
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
@@ -1281,7 +1305,7 @@ test('714433c2: an approval-gated move toasts the approval, and a quote line car
   }).renderCard('contact', 'c1');
 
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'won').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'proposal').dispatch('click');
   await flushClicks();
   assert.deepEqual(seen, [{ message: 'Stato aggiornato: serve un\u2019approvazione', error: false }],
     'an approval-gated move says so honestly');
@@ -1295,4 +1319,41 @@ test('714433c2: an approval-gated move toasts the approval, and a quote line car
     0,
     'a quote line carries no stage menu',
   );
+});
+
+// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
+// customer as a one-time pick — with the linked company the offer form needs
+// — and navigate to the creation screens. The destinations take the pick.
+test('714433c2: quick actions stash the picked customer and navigate to the creation screens', async () => {
+  const map = new Map();
+  const storage = {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+  };
+  const navs = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client: stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }), storage,
+    navigate: (hash) => navs.push(hash),
+  }).renderCard('contact', 'c1');
+
+  const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+  byAction('new-offer').dispatch('click');
+  assert.deepEqual(navs, ['#/modules/opportunity/new'], 'Nuova offerta opens the offer creation screen');
+  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.offer')), {
+    resource: 'contact', id: 'c1', name: 'Guido Presti',
+    company: { id: 'co1', name: 'Palestra Esempio' },
+  }, 'the offer pick names the record and its company');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
+    'no appointment pick leaks from the offer voice');
+
+  byAction('new-appointment').dispatch('click');
+  assert.deepEqual(navs, ['#/modules/opportunity/new', '#/calendario'],
+    'Nuovo appuntamento opens the calendar manual booking');
+  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
+    resource: 'contact', id: 'c1', name: 'Guido Presti',
+    company: { id: 'co1', name: 'Palestra Esempio' },
+  }, 'the appointment pick names the same record');
 });

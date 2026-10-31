@@ -202,13 +202,41 @@ const OFFER_STATUS_LABELS = Object.freeze({
 const offerStatusLabel = (status) => ownLabel(OFFER_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
 // Voce 714433c2: the opportunity stages the «Cambia stato» menu offers.
-// Mirrors OPPORTUNITY_STAGES in packages/core/src/schema.js (this view ships
-// as a static file, so it names the set instead of importing it, like
-// TERMINAL_APPOINTMENT below). Every key has an Italian voice in
-// OFFER_STATUS_LABELS above, so the menu never prints a raw stage key.
-const OPPORTUNITY_STAGE_ORDER = Object.freeze([
-  'discovery', 'qualification', 'proposal', 'negotiation', 'won', 'lost', 'approval_pending',
-]);
+// Mirrors ALLOWED_TRANSITIONS in
+// packages/modules/opportunity/src/opportunity-service.js (this view ships
+// as a static file, so it names the table instead of importing it, like
+// TERMINAL_APPOINTMENT below). A test pins this mirror to the governed
+// table, so a workflow change that the menu ignores fails loudly. Every key
+// has an Italian voice in OFFER_STATUS_LABELS above, so the menu never
+// prints a raw stage key.
+export const OPPORTUNITY_ALLOWED_TRANSITIONS = Object.freeze({
+  discovery: ['qualification', 'lost'],
+  qualification: ['proposal', 'approval_pending', 'lost'],
+  proposal: ['approval_pending', 'negotiation', 'won', 'lost'],
+  approval_pending: ['proposal', 'qualification', 'lost'],
+  negotiation: ['proposal', 'won', 'lost'],
+  won: [],
+  lost: ['discovery'],
+});
+
+// System states the workflow enters on its own (only approval_pending
+// today): the menu never offers them — they are reached through the approval
+// gate, never hand-picked by the operator.
+const GOVERNED_SYSTEM_STAGES = Object.freeze(['approval_pending']);
+
+/**
+ * The legal «Cambia stato» voices for the shown stage: the workflow's
+ * allowed transitions minus the governed system states. Never the current
+ * stage, never a raw key without an Italian voice upstream.
+ * @param {unknown} current
+ * @returns {Array<string>}
+ */
+export function offerStageTargets(current) {
+  const key = String(current ?? '').toLowerCase();
+  const allowed = OPPORTUNITY_ALLOWED_TRANSITIONS[key];
+  if (!Array.isArray(allowed)) return [];
+  return allowed.filter((stage) => stage !== key && !GOVERNED_SYSTEM_STAGES.includes(stage));
+}
 
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
 const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
@@ -363,7 +391,17 @@ export function createCustomerCardView(deps) {
     const name = typeof card?.name === 'string' ? card.name.trim() : '';
     if ((resource !== 'contact' && resource !== 'company')) return null;
     if (typeof id !== 'string' || id === '' || name === '') return null;
-    return { resource, id, name };
+    // The offer form files under a company: a company pick is its own
+    // company, a contact pick rides the linked one (null when the scheda
+    // knows none — the offer form then says so honestly).
+    const companyId = typeof card?.company?.id === 'string' && card.company.id !== '' ? card.company.id : null;
+    const companyName = typeof card?.company?.name === 'string' && card.company.name.trim() !== ''
+      ? card.company.name.trim()
+      : null;
+    const company = resource === 'company'
+      ? { id, name }
+      : (companyId !== null && companyName !== null ? { id: companyId, name: companyName } : null);
+    return { resource, id, name, company };
   }
 
   function quickActions(box, card, navCtx) {
@@ -929,7 +967,7 @@ export function createCustomerCardView(deps) {
     if (shownOpportunity && typeof shownOpportunity.id === 'string' && shownOpportunity.id !== ''
       && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
       const current = String(shownOpportunity.status ?? '').toLowerCase();
-      const targets = OPPORTUNITY_STAGE_ORDER.filter((stage) => stage !== current);
+      const targets = offerStageTargets(current);
       if (targets.length > 0) {
         const wrap = el('div', 'bo-scheda-stage-menu');
         const button = el('button', undefined, 'Cambia stato');

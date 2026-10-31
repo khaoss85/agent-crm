@@ -436,6 +436,32 @@ import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js'
 
 const generatedNav = document.querySelector('#generatedNav');
 
+// Shell persistence first: the views below read this at construction, so it
+// must exist before any of them (a later `const` would throw a temporal-dead-zone
+// error on every page load). Private mode keeps tab state without persisting.
+// The space a real session is bound to, set once the session profile is
+// read below. Under a session every view's active space IS this space: the
+// views read ACTIVE_SPACE_KEY from storage, which a fresh browser never wrote,
+// so without this every space-scoped read and write left with spaceId ''
+// and the pilot refused it (BO_SPACE_MISMATCH, production 30/10).
+let sessionSpaceId = null;
+
+function guardedStorage() {
+  let base = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) base = window.localStorage;
+  } catch {
+    // Private mode: shell state simply does not persist.
+  }
+  return {
+    getItem: (key) => (key === ACTIVE_SPACE_KEY && sessionSpaceId !== null ? sessionSpaceId : base.getItem(key)),
+    setItem: (key, value) => base.setItem(key, value),
+    removeItem: (key) => base.removeItem(key),
+  };
+}
+
+const shellStorage = guardedStorage();
+
 const moduleAdmin = createModuleAdmin({
   doc: document,
   mount: moduleView,
@@ -443,6 +469,9 @@ const moduleAdmin = createModuleAdmin({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   toast,
+  // Voce 714433c2: «Nuova offerta» takes the one-time customer pick the
+  // scheda stashed — the same shell storage the card writes through.
+  storage: shellStorage,
 });
 
 const pipelineBoard = createPipelineBoard({
@@ -502,32 +531,6 @@ const marketingView = createMarketingView({
   navigate: (hash) => { window.location.hash = hash; },
 });
 
-// Shell persistence first: the views below read this at construction, so it
-// must exist before any of them (a later `const` would throw a temporal-dead-zone
-// error on every page load). Private mode keeps tab state without persisting.
-// The space a real session is bound to, set once the session profile is
-// read below. Under a session every view's active space IS this space: the
-// views read ACTIVE_SPACE_KEY from storage, which a fresh browser never wrote,
-// so without this every space-scoped read and write left with spaceId ''
-// and the pilot refused it (BO_SPACE_MISMATCH, production 30/10).
-let sessionSpaceId = null;
-
-function guardedStorage() {
-  let base = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) base = window.localStorage;
-  } catch {
-    // Private mode: shell state simply does not persist.
-  }
-  return {
-    getItem: (key) => (key === ACTIVE_SPACE_KEY && sessionSpaceId !== null ? sessionSpaceId : base.getItem(key)),
-    setItem: (key, value) => base.setItem(key, value),
-    removeItem: (key) => base.removeItem(key),
-  };
-}
-
-const shellStorage = guardedStorage();
-
 // Customer scheda (BO-F1-06): the three-column customer view, a read-only
 // projection over the hub. Renders only while the server publishes the
 // customer-hub package; otherwise the view itself says so.
@@ -540,6 +543,9 @@ const customerCardView = createCustomerCardView({
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
+  // customer here; without the shell storage the buttons only navigate.
+  storage: shellStorage,
 });
 
 // Clienti list (BO-F1-05, backlog:80b25fb0): the table alone, no import tool.

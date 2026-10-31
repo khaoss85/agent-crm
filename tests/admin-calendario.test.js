@@ -2210,3 +2210,34 @@ test('the service field carries no listino jargon', async () => {
   const screen = mount.textContent;
   assert.ok(!screen.includes('chiave listino'), 'no technical concept reaches the operator');
 });
+
+// Voce 714433c2: «Nuovo appuntamento» from the scheda cliente takes the
+// one-time pick on render — the manual form opens with the customer chosen,
+// and the pick is consumed so a later visit starts unpicked.
+test('a stashed appointment pick opens the manual form with the customer', async () => {
+  const map = new Map();
+  const storage = {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+  };
+  storage.setItem('accordo.bo.customer-pick.appointment', JSON.stringify({
+    resource: 'contact', id: 'c1', name: 'Guido Presti',
+  }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), storage, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  assert.ok(mount.textContent.includes('Cliente: Guido Presti'),
+    'the manual form starts with the picked customer named');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
+    'the pick is read once, never kept');
+  // Without a pick the form stays closed with the name search, never a ghost.
+  const plain = createMount();
+  const plainView = createCalendarioView({
+    doc: createFakeDocument(), mount: plain, client: stubClient(), storage,
+    now: () => new Date('2026-10-25T10:00:00Z'),
+  });
+  await plainView.render();
+  assert.ok(!plain.textContent.includes('Cliente: Guido Presti'), 'no pick, no named customer');
+});

@@ -17,11 +17,15 @@ function memoryStorage() {
 }
 
 const PICK = { resource: 'contact', id: 'c1', name: 'Guido Presti' };
+const PICK_WITH_COMPANY = {
+  resource: 'contact', id: 'c1', name: 'Guido Presti',
+  company: { id: 'co1', name: 'Palestra Esempio' },
+};
 
 test('a written pick reads back once, then clears', () => {
   const storage = memoryStorage();
   assert.equal(writePendingCustomerPick(storage, 'appointment', PICK), true);
-  assert.deepEqual(takePendingCustomerPick(storage, 'appointment'), PICK);
+  assert.deepEqual(takePendingCustomerPick(storage, 'appointment'), { ...PICK, company: null });
   assert.equal(takePendingCustomerPick(storage, 'appointment'), null, 'the second take finds nothing');
 });
 
@@ -29,7 +33,19 @@ test('screens do not see each other\'s picks', () => {
   const storage = memoryStorage();
   assert.equal(writePendingCustomerPick(storage, 'offer', PICK), true);
   assert.equal(takePendingCustomerPick(storage, 'appointment'), null, 'no offer pick on the appointment screen');
-  assert.deepEqual(takePendingCustomerPick(storage, 'offer'), PICK);
+  assert.deepEqual(takePendingCustomerPick(storage, 'offer'), { ...PICK, company: null });
+});
+
+test('the linked company rides the pick for the offer form', () => {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', PICK_WITH_COMPANY), true);
+  assert.deepEqual(takePendingCustomerPick(storage, 'offer'), PICK_WITH_COMPANY);
+});
+
+test('a broken company degrades to null, never forges the record', () => {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', { ...PICK, company: { id: '', name: 'x' } }), true);
+  assert.deepEqual(takePendingCustomerPick(storage, 'offer'), { ...PICK, company: null });
 });
 
 test('garbage never becomes a pick', () => {
@@ -44,7 +60,7 @@ test('garbage never becomes a pick', () => {
   storage.setItem('accordo.bo.customer-pick.offer', '{not json');
   assert.equal(takePendingCustomerPick(storage, 'offer'), null, 'a corrupt stash reads null');
   storage.setItem('accordo.bo.customer-pick.offer', JSON.stringify({ resource: 'contact', id: 'c1', name: 'x' }));
-  assert.deepEqual(takePendingCustomerPick(storage, 'offer'), { resource: 'contact', id: 'c1', name: 'x' });
+  assert.deepEqual(takePendingCustomerPick(storage, 'offer'), { resource: 'contact', id: 'c1', name: 'x', company: null });
   storage.setItem('accordo.bo.customer-pick.offer', JSON.stringify({ resource: 'lead', id: 'c1', name: 'x' }));
   assert.equal(takePendingCustomerPick(storage, 'offer'), null, 'a corrupt stash reads null, never a forged pick');
 });
