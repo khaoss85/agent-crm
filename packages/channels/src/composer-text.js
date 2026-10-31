@@ -31,14 +31,14 @@ const COMPOSER_TEXT_CONTROL_RE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028
  * @returns {string|null} the refusal reason, or null when timeline-storable
  */
 export function composerTimelineRefusal(text) {
-  if (typeof text !== 'string') return 'message text must be a string';
+  if (typeof text !== 'string') return 'il testo del messaggio deve essere una stringa';
   const normalized = text.replace(/\r\n/g, '\n').trim();
-  if (normalized === '') return 'message text is blank: the timeline row stores no blank text';
+  if (normalized === '') return 'il testo è vuoto: la riga cronologia non registra righe vuote';
   if (normalized.length > COMPOSER_TIMELINE_BODY_MAX) {
-    return `message text is ${normalized.length} characters: the composer timeline row holds at most ${COMPOSER_TIMELINE_BODY_MAX}`;
+    return `il testo è di ${normalized.length} caratteri: la riga cronologia ne tiene al massimo ${COMPOSER_TIMELINE_BODY_MAX}`;
   }
   if (COMPOSER_TEXT_CONTROL_RE.test(normalized.replace(/\n/g, ''))) {
-    return 'message text carries a control character the timeline row refuses (line breaks excepted)';
+    return 'il testo contiene un tab o un carattere di controllo che la riga cronologia rifiuta (gli a capo sono ammessi)';
   }
   return null;
 }

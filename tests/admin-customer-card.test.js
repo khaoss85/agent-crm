@@ -1813,3 +1813,33 @@ test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled
   assert.ok(send, 'the Invia button exists');
   assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
 });
+
+test('e9b4fc2f: the composer names its honest limit and shows the text refusal', async () => {
+  const refusal = {
+    status: 400,
+    code: 'VALIDATION_ERROR',
+    message: 'Il messaggio non entra nella cronologia (limite: 2000 caratteri): il testo è lungo',
+    details: { field: 'text' },
+  };
+  const base = composerClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') throw refusal;
+      return base.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  assert.ok(panel.textContent.includes('Massimo 2000 caratteri'), 'the composer names its honest limit');
+  const area = panel.findAll('textarea')[0];
+  assert.ok(area, 'the composer has its text field');
+  area.value = `Salve, ${'x'.repeat(1994)}`;
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send').dispatch('click');
+  await flushComposer();
+  const err = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('field-error'));
+  assert.ok(err, 'the composer has its error line');
+  assert.ok(
+    String(err.textContent ?? '').includes('limite: 2000 caratteri'),
+    'the text refusal names the limit instead of a generic failure',
+  );
+});

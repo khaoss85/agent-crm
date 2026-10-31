@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError, isNotComposedFailure } from './admin-core.js';
+import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 
@@ -667,6 +667,7 @@ export function createCustomerCardView(deps) {
     const text = el('textarea', 'bo-scheda-composer-text');
     text.setAttribute('rows', '4');
     text.setAttribute('placeholder', 'Scrivi il messaggio…');
+    const limitHint = el('p', 'bo-muted', 'Massimo 2000 caratteri: il testo entra nella cronologia.');
     const err = el('p', 'field-error', '');
     const send = el('button', undefined, 'Invia');
     send.setAttribute('type', 'button');
@@ -718,6 +719,7 @@ export function createCustomerCardView(deps) {
     panel.appendChild(toLine);
     panel.appendChild(subjectHolder);
     panel.appendChild(text);
+    panel.appendChild(limitHint);
     panel.appendChild(send);
     panel.appendChild(err);
     if (selected !== null) select(selected);
@@ -748,7 +750,9 @@ export function createCustomerCardView(deps) {
         toast('Messaggio in consegna');
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
-        err.textContent = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
+        const logged = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
+        const formErrors = apiErrorToFormErrors(error);
+        err.textContent = formErrors.fields.text ?? logged;
       } finally {
         busy = false;
       }

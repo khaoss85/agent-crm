@@ -64,6 +64,7 @@ test('e9b4fc2f: a 2001-char email is refused at the route, nothing queued', asyn
   assert.equal(payload?.error?.code, 'VALIDATION_ERROR');
   assert.equal(payload?.error?.details?.field, 'text');
   assert.match(payload?.error?.message ?? '', /cronologia/);
+  assert.match(payload?.error?.message ?? '', /limite: 2000 caratteri/);
   assert.equal(queued.length, 0, 'the queue never saw the text, let alone the provider');
 });
 

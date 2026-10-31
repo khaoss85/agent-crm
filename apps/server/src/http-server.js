@@ -17,7 +17,7 @@ import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
-import { composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
+import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
@@ -710,7 +710,7 @@ export function buildRouter(app) {
     // here is 400 VALIDATION_ERROR on field `text`.
     const textRefusal = composerTimelineRefusal(text);
     if (textRefusal !== null) {
-      throw new ValidationError(`a composed message must fit its cronologia row: ${textRefusal}`, { field: 'text' });
+      throw new ValidationError(`Il messaggio non entra nella cronologia (limite: ${COMPOSER_TIMELINE_BODY_MAX} caratteri): ${textRefusal}`, { field: 'text' });
     }
     let subject;
     if (input.subject !== undefined && input.subject !== null) {
