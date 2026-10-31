@@ -220,15 +220,16 @@ export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 export const REPORTING_LIMIT = 100;
 
 /**
- * Badge row under the Reporting title (spec checklist C2): the bundle
- * identity, fixed text. The version names the composed bundle
- * (`bundles/reporting/1.2.0/bundle.json`); a new bundle version updates
- * this list, never a silent drift.
+ * Badge row under the Reporting title (spec checklist C2): fixed text in
+ * the operator's own words (backlog:1ce3a1f0: no bundle/kernel/version on
+ * the screen). It names what the screen shows and its boundary, never a
+ * technical identity: the composed bundle version stays in the bundle
+ * manifest (`bundles/reporting/1.2.0/bundle.json`), not on the screen.
  */
 export const REPORTING_BADGES = Object.freeze([
-  'reporting@1.2.0',
-  'Bundle separato dal kernel',
-  'Generato dal tuo agente di coding · 3 giorni fa',
+  'Clienti, preventivi e vendite',
+  'Si toglie senza rompere niente',
+  'Fatto dal tuo agente di coding',
 ]);
 
 /**
@@ -245,7 +246,7 @@ export const REPORTING_CODE_FILES = Object.freeze([
 ]);
 
 /** Lede of the code card (spec C17): fixed Italian text, never technical codes. */
-export const REPORTING_CODE_LEDE = 'I moduli personalizzati sono bundle separati dal kernel: li aggiorni o li togli senza toccare clienti, pipeline e calendario. Per cambiarlo chiedi al tuo agente di coding, per esempio «aggiungi il tempo medio di risposta per canale».';
+export const REPORTING_CODE_LEDE = 'I moduli personalizzati sono separati dal resto: li aggiorni o li togli senza toccare clienti, pipeline e calendario. Per cambiarlo chiedi al tuo agente di coding, per esempio «aggiungi il tempo medio di risposta per canale».';
 
 /**
  * Starter prompt copied by «Copia il prompt» (spec C17). Fixed text so the
@@ -594,8 +595,10 @@ export function createReportingView(deps) {
     panel.appendChild(band);
     // Legend of the three band segments, as in the prototype (C13): each
     // label carries its segment's own swatch, so the chart stays readable
-    // where styles fail. Same dot idiom as the channel card.
-    const legend = el(doc, 'div', { class: 'actions' });
+    // where styles fail. Same dot idiom as the channel card: the swatch
+    // never touches its label (backlog:1ce3a1f0), and the row never touches
+    // the band above or the totals below (`.bo-rep-legend` in styles.css).
+    const legend = el(doc, 'div', { class: 'actions bo-rep-legend' });
     const swatches = [
       'background:var(--accord);',
       'background:var(--accord);opacity:0.45;',
@@ -603,10 +606,11 @@ export function createReportingView(deps) {
     ];
     FORECAST_LEGEND.forEach((label, index) => {
       const dot = el(doc, 'span');
-      dot.setAttribute('style', `display:inline-block;width:10px;height:10px;border-radius:99px;${swatches[index]}`);
+      dot.setAttribute('style', `display:inline-block;width:10px;height:10px;border-radius:99px;margin-right:6px;${swatches[index]}`);
       const item = el(doc, 'span', { text: label });
       item.setAttribute('style', 'margin-right:14px;font-size:13px;');
       const wrap = el(doc, 'span');
+      wrap.setAttribute('style', 'display:inline-flex;align-items:center;');
       wrap.appendChild(dot);
       wrap.appendChild(item);
       legend.appendChild(wrap);
@@ -622,7 +626,7 @@ export function createReportingView(deps) {
     if (status !== null) {
       panel.appendChild(el(doc, 'p', { class: 'lede', text: status }));
     }
-    // The heuristic badge is the acceptance contract: the number below is
+    // The stima line is the acceptance contract: the number below is
     // arithmetic over history, never a promise.
     panel.appendChild(el(doc, 'p', { class: 'lede', text: `✦ ${forecast.label}: ${forecast.method}` }));
     panel.appendChild(el(doc, 'p', { class: 'lede', text: forecast.note }));

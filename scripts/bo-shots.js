@@ -48,6 +48,11 @@ import { fileURLToPath } from 'node:url';
 // a default), so no project changes behavior.
 import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 
+// The photographed Previsione reuses the production money formatter
+// (backlog:1ce3a1f0): the obiettivo line can never again show cents as
+// euros, because no second formatter exists for it.
+import { formatMinor } from '../packages/analytics/src/dashboard.js';
+
 const scriptDir = join(fileURLToPath(import.meta.url), '..');
 
 export const DESKTOP = Object.freeze({ width: 1440, height: 1800 });
@@ -407,9 +412,9 @@ const DEMO_REPORT = {
   owners: ['alice', 'bob'],
   forecast: {
     currency: 'EUR', closedMinor: 14000, probableMinor: 9333, bestMinor: 14000, targetMinor: 2000000,
-    heuristic: true, label: 'Stima euristica',
-    method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non e una promessa.',
-    note: 'Obiettivo 2.000.000,00 EUR dal bundle reporting.',
+    heuristic: true, label: 'Stima',
+    method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
+    note: `Obiettivo ${formatMinor(2000000, 'EUR')}.`,
   },
   channels: {
     weeks: [
@@ -426,12 +431,12 @@ const DEMO_REPORT = {
     undated: 0,
   },
   insights: [
-    { id: 'redistribute', text: 'alice tiene molto aperto con il tasso piu basso: propone di spostare i lead senza data a bob.' },
+    { id: 'redistribute', text: 'alice tiene molto aperto con il tasso più basso: propone di spostare i lead senza data a bob.' },
   ],
   proposal: {
     title: 'Proposta di ridistribuzione lead',
     moves: [{ from: 'alice', to: 'bob', count: 1, reason: '1 preventivi senza data, tasso 50% contro 100%' }],
-    note: 'La proposta non sposta nulla da sola: la riassegnazione resta all operatore.',
+    note: 'La proposta non sposta nulla da sola: la riassegnazione resta dell\u2019operatore.',
   },
   csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;2;14000;1;9000;1;50%\n' },
 };
