@@ -1,7 +1,8 @@
 {
   "manifestVersion": 1,
+  "revision": 2,
   "name": "enriched-field",
-  "description": "One contact attribute filled from a free enrichment source (Google Contacts, an email signature), held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
+  "description": "One contact attribute filled from a free enrichment source (Google Contacts, an email signature) or proposed by an AI extraction over the customer's linked sources, held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
   "fields": [
     {
       "name": "sourceKey",
@@ -77,6 +78,8 @@
       "type": "enum",
       "values": [
         "active",
+        "proposed",
+        "dismissed",
         "purged"
       ],
       "index": true,
@@ -89,6 +92,11 @@
     },
     {
       "name": "purgeReason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "decisionReason",
       "type": "string",
       "writable": "managed"
     }

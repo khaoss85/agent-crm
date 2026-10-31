@@ -1,0 +1,101 @@
+{
+  "module": "enriched-field",
+  "previousManifests": [
+    {
+      "manifestVersion": 1,
+      "name": "enriched-field",
+      "description": "One contact attribute filled from a free enrichment source (Google Contacts, an email signature), held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
+      "fields": [
+        {
+          "name": "sourceKey",
+          "type": "string",
+          "unique": true,
+          "writable": "managed"
+        },
+        {
+          "name": "subjectResource",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "subjectId",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "subjectOwner",
+          "type": "enum",
+          "values": [
+            "host",
+            "package"
+          ],
+          "writable": "managed"
+        },
+        {
+          "name": "subjectOwnerPackage",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "subjectLabel",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "field",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "value",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "sourceDetail",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "observedAt",
+          "type": "timestamp",
+          "writable": "managed"
+        },
+        {
+          "name": "observedByRunId",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "status",
+          "type": "enum",
+          "values": [
+            "active",
+            "purged"
+          ],
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "purgedAt",
+          "type": "timestamp",
+          "writable": "managed"
+        },
+        {
+          "name": "purgeReason",
+          "type": "string",
+          "writable": "managed"
+        }
+      ]
+    }
+  ]
+}

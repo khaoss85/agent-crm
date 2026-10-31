@@ -69,7 +69,7 @@ function requireEmail(value) {
   return shaped.value;
 }
 
-function canonicalPhone(raw) {
+export function canonicalPhone(raw) {
   // Twin of the signature parser's rule: separators stripped, leading `+`
   // kept. A phone-bearing identity IS a phone number only when it dials.
   const digits = String(raw).replaceAll(/[ .\-()/]/g, '');
@@ -713,8 +713,14 @@ export function createContactEnrichment({
 
     /**
      * Opt one contact out of enrichment: records the refusal and purges
-     * the subject's active enriched fields (status `purged`, value
-     * cleared). Channel identities are not enrichment and stay.
+     * every non-purged enriched field of that contact only — active
+     * facts, pending AI proposals and recorded dismissals alike (status
+     * `purged`, value cleared). Rows of other canonical-cluster members
+     * are never touched: cluster privacy is enforced at read time
+     * (proposals read empty when any member opted out) and at write
+     * time (extract and accept refuse cluster-wide), never by deleting
+     * data of subjects who never opted out. Channel identities are not
+     * enrichment and stay.
      * @param {any} request
      */
     async optOutContactEnrichment(request) {
@@ -749,15 +755,25 @@ export function createContactEnrichment({
             if (!isUniqueConflict(error)) throw error;
           }
         }
-        const active = await deciding(rows, {
-          subjectResource: 'contact', subjectId: contact.id, status: 'active',
+        // Only the named contact's rows go: active facts, pending AI
+        // proposals and recorded dismissals alike. A proposal the subject
+        // refused must not survive with its value intact — but rows of
+        // other cluster members keep their values (privacy for them is
+        // enforced in the proposals read and in the cluster-wide write
+        // guards, never by deleting their data here).
+        const stored = await deciding(rows, {
+          subjectResource: 'contact', subjectId: contact.id,
         });
-        for (const row of active) {
+        let purged = 0;
+        for (const row of stored) {
+          if (row.status === 'purged') continue;
           await rows.applyManaged(row.id, {
-            status: 'purged', value: null, purgedAt: now, purgeReason: reason ?? 'opt-out',
+            status: 'purged', value: null, sourceDetail: null, decisionReason: null,
+            purgedAt: now, purgeReason: reason ?? 'opt-out',
           }, { actor });
+          purged += 1;
         }
-        return active.length;
+        return purged;
       });
       events.emit?.('customer-data.enrichment.opted-out', { purged });
       return Object.freeze({
