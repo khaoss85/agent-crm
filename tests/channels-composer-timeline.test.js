@@ -98,6 +98,54 @@ test('e9b4fc2f: retrying the same send replays the row, never a second one', asy
   assert.equal(logged.length, 1, 'one row, never two');
 });
 
+test('e9b4fc2f: a 2500-char email with a timeline refuses the queue, never a dead letter after the send', async (t) => {
+  const { harness, api } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key,
+      message: { to: CUSTOMER, text: `Salve, ${'dettaglio '.repeat(250)}` },
+      messageKey: 'composer-gmail-toolong',
+      timeline: TIMELINE,
+    }),
+    (error) => error?.code === 'CHANNEL_MESSAGE_MALFORMED',
+    'the queue refuses what the timeline writer would refuse',
+  );
+  assert.equal(api.state.sentByKey.size, 0, 'the provider never sent: nothing to dead-letter, nothing to retry twice');
+});
+
+test('e9b4fc2f: a tab the adapter allows refuses the queue when a timeline is present', async (t) => {
+  const { harness, api } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key,
+      message: { to: CUSTOMER, text: 'Ciao,\tecco il preventivo.' },
+      messageKey: 'composer-gmail-tab',
+      timeline: TIMELINE,
+    }),
+    (error) => error?.code === 'CHANNEL_MESSAGE_MALFORMED',
+    'tabs pass the Gmail adapter but not the timeline row',
+  );
+  assert.equal(api.state.sentByKey.size, 0, 'the provider never sent');
+});
+
+test('e9b4fc2f: the same long email without a timeline still sends (adapter bound unchanged)', async (t) => {
+  const { harness, api, logged } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: { to: CUSTOMER, text: `Salve, ${'dettaglio '.repeat(250)}` },
+    messageKey: 'composer-gmail-longnotimeline',
+  });
+  assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
+  assert.equal(api.state.sentByKey.size, 1, 'Gmail allows 30000 chars: no timeline, no new fence');
+  assert.equal(logged.length, 0);
+});
+
 test('e9b4fc2f: a send without a host subject sends with no timeline row', async (t) => {
   const { harness, api, logged } = setup();
   t.after(() => harness.close());

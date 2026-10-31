@@ -1824,6 +1824,34 @@ export function createChannelOperations(deps) {
    * refuse must refuse the queue, never a dead letter after the send.
    * Absent means no host row — the send still sends, exactly as before.
    */
+  /**
+   * The timeline body fence (backlog:e9b4fc2f): the composed
+   * `interaction-log@1` writer stores at most 2000 characters and refuses
+   * control characters except LF (its safeMessageBody fence), while the
+   * channel adapters allow far more (Gmail: 30000 chars, tabs and lone CR
+   * included). A queued send the timeline writer is guaranteed to refuse
+   * must refuse the queue — never a provider send followed by a
+   * CHANNEL_TIMELINE_UNLOGGED dead letter with no cronologia row and a
+   * duplicate on retry. Mirrored here as plain bounds (never an import of
+   * the interactions package: a domain package reaches another only
+   * through its declared capability), kept in step with safeMessageBody.
+   */
+  const TIMELINE_BODY_MAX = 2000;
+  const TIMELINE_BODY_CONTROL_RE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
+  function assertTimelineBodyFitsTimeline(message) {
+    const text = typeof message?.text === 'string' ? message.text : '';
+    if (text === '') return;
+    const normalized = text.replace(/\r\n/g, '\n').trim();
+    if (normalized === '') {
+      malformedMessage('message text is blank: the timeline writer stores no blank row');
+    }
+    if (normalized.length > TIMELINE_BODY_MAX) {
+      malformedMessage(`message text is ${normalized.length} characters: the timeline row holds at most ${TIMELINE_BODY_MAX}`);
+    }
+    if (TIMELINE_BODY_CONTROL_RE.test(normalized.replace(/\n/g, ''))) {
+      malformedMessage('message text carries a control character the timeline row refuses');
+    }
+  }
   function assertTimelineRequest(value) {
     if (value === undefined || value === null) return null;
     if (typeof value !== 'object' || Array.isArray(value)) {
@@ -1870,6 +1898,7 @@ export function createChannelOperations(deps) {
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
     const timeline = assertTimelineRequest(params?.timeline);
+    if (timeline !== null) assertTimelineBodyFitsTimeline(message);
     const messageKey = typeof params?.messageKey === 'string' && params.messageKey !== ''
       ? params.messageKey : null;
     const keyInput = messageKey ?? fingerprintPayload(JSON.stringify(message));
