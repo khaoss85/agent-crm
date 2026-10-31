@@ -52,6 +52,7 @@ import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 // (backlog:1ce3a1f0): the obiettivo line can never again show cents as
 // euros, because no second formatter exists for it.
 import { formatMinor } from '../packages/analytics/src/dashboard.js';
+import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 
 const scriptDir = join(fileURLToPath(import.meta.url), '..');
 
@@ -1104,6 +1105,8 @@ document.getElementById('probe').textContent = JSON.stringify({
   rows: document.querySelectorAll('#view-module .bo-connector-row').length,
   previews: document.querySelectorAll('#view-module .bo-connect-preview').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
+  unavailable: [...document.querySelectorAll('#view-module .bo-connector-badge')]
+    .filter((node) => node.textContent.includes('Non disponibile')).length,
 });
 document.title = 'connettori-ready';`;
     case 'componenti': return `
@@ -1353,7 +1356,7 @@ export function readProbe(stdout, name) {
  * steps, the catalog holds the product table with its Stripe state and
  * price-rule bands, spazi-accessi holds both spaces plus the dashed new-space
  * box with both members,
- * connettori holds all eight channel rows with their connect previews and
+ * connettori holds every catalog channel row with their connect previews and
  * guided-flow buttons, the login page its magic-link form with the installed
  * enhancement. The
  * per-screen counts for oggi/clienti/pipeline/reporting prove the demo
@@ -1492,13 +1495,22 @@ export function assertProbe(name, probe) {
       return;
     }
     case 'connettori': {
-      // Eight is the CONNECTOR_CATALOG length: every connectable channel
-      // paints its row, its what-happens preview and its guided-flow button.
-      if (probe.rows !== 8) throw new Error(`connettori: the probe lists ${String(probe.rows)} channel rows, expected 8`);
-      if (probe.previews !== 8) {
-        throw new Error(`connettori: the probe lists ${String(probe.previews)} connect previews, expected 8`);
+      // One row per CONNECTOR_CATALOG entry (read from the catalog, not a
+      // number: #513 added Telegram and the hard-coded 8 broke the shots):
+      // every connectable channel paints its row, its what-happens preview
+      // and its guided-flow button.
+      const n = CONNECTOR_CATALOG.length;
+      if (probe.rows !== n) throw new Error(`connettori: the probe lists ${String(probe.rows)} channel rows, expected ${n}`);
+      if (probe.previews !== n) {
+        throw new Error(`connettori: the probe lists ${String(probe.previews)} connect previews, expected ${n}`);
       }
-      if (probe.flows !== 8) throw new Error(`connettori: the probe lists ${String(probe.flows)} guided flows, expected 8`);
+      // A channel with no adapter in the composition reads «Non disponibile
+      // qui»: it keeps its preview but offers no guided flow (Telegram in
+      // the demo data). Every other row offers one.
+      const connectable = n - (typeof probe.unavailable === 'number' ? probe.unavailable : 0);
+      if (probe.flows !== connectable) {
+        throw new Error(`connettori: the probe lists ${String(probe.flows)} guided flows, expected ${connectable}`);
+      }
       return;
     }
     case 'componenti': {
