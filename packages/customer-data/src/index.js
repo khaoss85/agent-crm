@@ -192,6 +192,28 @@ export function createCustomerDataPackage(options = {}) {
       // committing transaction) as acceptance criteria.
       {
         operationContract: 1,
+        name: 'record-subject-phone',
+        appMethod: 'recordSubjectPhone',
+        label: 'Record an operator-held phone number on a customer',
+        description:
+          'Hold one callable E.164 phone number beside a contact or company, so the scheda cliente can dial it. '
+          + 'A human decision: the actor must be a user. The same number beside the same subject refreshes its '
+          + 'sighting; beside another subject it refuses 409 PHONE_ALREADY_HELD.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'phone', type: 'string', hint: 'The callable number in E.164, e.g. "+393331234567".' },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.recordSubjectPhone(request);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'apply-bulk-customer-action',
         appMethod: 'applyBulkCustomerAction',
         label: 'Apply one decision across many records',
