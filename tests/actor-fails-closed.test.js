@@ -290,6 +290,12 @@ test('framework self-authority stays at its reviewed named outbox boundary', asy
     // system actor attributes the write, while sends and connection changes
     // still require a human user actor (requireUser).
     "packages/channels/src/operations.js:<line>:const SYSTEM = () => trustedSystemActor('channel package internal write');",
+    // Channels composer (backlog:e9b4fc2f). The send is queued under a human
+    // user actor (requireUser) and the provider send runs unattended in the
+    // worker, where no caller actor exists: this authority only logs the
+    // proven send as the subject's outbound timeline row, with the sending
+    // human recorded as team author. It opens no record and decides nothing.
+    "packages/channels/src/index.js:<line>:    actor: trustedSystemActor('channels worker timeline write'),",
   ].sort(),
     'a new trustedSystemActor call site is a new place the framework claims root — '
     + 'justify it here and update this expectation deliberately');
