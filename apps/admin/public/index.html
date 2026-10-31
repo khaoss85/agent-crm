@@ -5,8 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Accordo</title>
     <link rel="stylesheet" href="styles.css" />
+    <style>
+      #bo-splash { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #f7f3e9; color: #171912; font-family: 'Bricolage Grotesque', 'Avenir Next', Avenir, ui-sans-serif, system-ui, sans-serif; }
+      #bo-splash .bo-splash-mark { font-size: 30px; font-weight: 800; letter-spacing: -0.01em; margin: 0; }
+      #bo-splash .bo-splash-sub { font-size: 13px; color: #62655b; margin: 0; }
+      #bo-splash .bo-splash-bar { width: 160px; height: 3px; border-radius: 2px; background: #e4e0d3; overflow: hidden; }
+      #bo-splash .bo-splash-bar > span { display: block; height: 100%; width: 40%; border-radius: 2px; background: #176b2a; animation: bo-splash-slide 1.2s ease-in-out infinite; }
+      @keyframes bo-splash-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+      @media (prefers-reduced-motion: reduce) { #bo-splash .bo-splash-bar > span { animation: none; width: 100%; margin: 0; } }
+    </style>
   </head>
   <body>
+    <div id="bo-splash" role="status" aria-label="Caricamento del backoffice Accordo">
+      <p class="bo-splash-mark">Accordo</p>
+      <p class="bo-splash-sub">Caricamento del backoffice…</p>
+      <div class="bo-splash-bar" aria-hidden="true"><span></span></div>
+      <noscript><p class="bo-splash-sub">Il backoffice richiede JavaScript.</p></noscript>
+    </div>
     <main class="bo-shell">
       <aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>
       <div class="bo-main">

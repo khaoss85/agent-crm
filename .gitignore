@@ -27,6 +27,12 @@ site/.used-claims.json
 packages/.scaffold-*
 **/.scaffold-*
 
+# Backoffice bundle (backlog:3f74a2f296ec): generated in memory at serve
+# time, never committed — with many design PRs in parallel a checked-in
+# bundle goes stale on every merge to main.
+apps/admin/public/bo-*.js
+apps/admin/public/bo-styles-*.css
+
 # Screenshots from the render audit — a local artifact, never published.
 site/.render-check/
 

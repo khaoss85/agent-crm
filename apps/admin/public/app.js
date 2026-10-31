@@ -1163,6 +1163,11 @@ async function route() {
 window.addEventListener('hashchange', route);
 populateNav();
 route();
+// backlog:3f74a2f296ec: the shell frame (nav + view skeleton) is on screen
+// from here, so the branded loading splash leaves now; the views fill their
+// data in afterwards. If the boot above ever throws, the splash stays —
+// a brand, never a blank page.
+document.getElementById('bo-splash')?.remove();
 // The demo dashboard fetches framework records: standalone only. Under a
 // mount the home is the Oggi frame, which reads no record at all.
 if (!MOUNTED) refresh();

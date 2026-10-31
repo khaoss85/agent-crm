@@ -16,6 +16,7 @@ import { isExposableGeneratedModule } from '../../../packages/core/src/generated
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
+import { getAdminBundle } from './admin-bundle.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
@@ -1795,6 +1796,29 @@ function sendJson(response, status, body, extraHeaders = {}) {
  */
 export async function readStaticFile(publicDir, pathname) {
   const requestPath = pathname === '/' ? '/index.html' : pathname;
+  // The backoffice bundle is generated at serve time, never committed
+  // (backlog:3f74a2f296ec): the entry HTML and the hashed bundle files come
+  // from the in-memory build, keyed to the sources on disk. A hashed name
+  // from a previous deploy is not the current build, so it 404s — the entry
+  // HTML is no-store, so the browser refetches it and learns the new name.
+  // Only the top-level entry points are virtual; anything nested still reads
+  // from disk below.
+  if (requestPath === '/index.html' || requestPath === '/login.html') {
+    const bundle = getAdminBundle(publicDir);
+    const html = requestPath === '/index.html' ? bundle.indexHtml : bundle.loginHtml;
+    return { data: Buffer.from(html, 'utf8'), contentType: 'text/html; charset=utf-8' };
+  }
+  const leaf = requestPath.split('/').pop() ?? '';
+  if (/^bo-[0-9a-f]+\.js$/.test(leaf) || /^bo-styles-[0-9a-f]+\.css$/.test(leaf)) {
+    const bundle = getAdminBundle(publicDir);
+    if (leaf === bundle.jsName) {
+      return { data: Buffer.from(bundle.jsBody, 'utf8'), contentType: 'text/javascript; charset=utf-8' };
+    }
+    if (leaf === bundle.cssName) {
+      return { data: Buffer.from(bundle.cssSource, 'utf8'), contentType: 'text/css; charset=utf-8' };
+    }
+    return null;
+  }
   const safePath = normalize(requestPath).replace(/^(\.\.(\/|\\|$))+/, '');
   const filePath = resolve(join(publicDir, safePath));
   if (!filePath.startsWith(publicDir)) return null;
@@ -1807,6 +1831,29 @@ export async function readStaticFile(publicDir, pathname) {
   }
 }
 
+/**
+ * Cache policy for Admin shell static files (backlog:3f74a2f296ec).
+ *
+ * The first paint of `/bo` used to wait for 30+ unversioned modules, so
+ * everything rode `no-cache`. The server now generates one content-hashed
+ * bundle at serve time (`bo-<sha>.js`, `bo-styles-<sha>.css`, built in
+ * memory by `apps/server/src/admin-bundle.js`, never committed): a new deploy is a
+ * new name, so hashed files are immutable for a year. HTML entry points are
+ * never cached — they carry the current hashed names (and, under a mount, a
+ * per-operator session profile). Anything else (fonts and friends,
+ * referenced by stable names) keeps the old `no-cache`.
+ *
+ * @param {string} pathname the mount-relative request path, `/` included
+ */
+export function staticCacheControl(pathname) {
+  const name = String(pathname ?? '').split('/').pop() ?? '';
+  if (name === '' || name === 'index.html' || name === 'login.html') return 'no-store';
+  if (/^bo-[0-9a-f]+\.js$/.test(name) || /^bo-styles-[0-9a-f]+\.css$/.test(name)) {
+    return 'public, max-age=31536000, immutable';
+  }
+  return 'no-cache';
+}
+
 /** @param {string} publicDir @param {string} pathname @param {import('node:http').ServerResponse} response */
 async function serveStatic(publicDir, pathname, response) {
   const found = await readStaticFile(publicDir, pathname);
@@ -1814,7 +1861,7 @@ async function serveStatic(publicDir, pathname, response) {
   response.writeHead(200, {
     'content-type': found.contentType,
     'content-length': found.data.byteLength,
-    'cache-control': 'no-cache',
+    'cache-control': staticCacheControl(pathname),
   });
   response.end(found.data);
   return true;

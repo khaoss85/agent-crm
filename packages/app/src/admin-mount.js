@@ -94,6 +94,7 @@ import {
   isResponseEnvelope,
   readStaticFile,
   requestIdentity,
+  staticCacheControl,
 } from '../../../apps/server/src/index.js';
 
 const DEFAULT_PUBLIC_DIR = resolve(
@@ -324,9 +325,9 @@ export function createAdminShellMount(app, options = {}) {
       let data = found.data;
       // Per-user bytes must never ride a shared cache: once a session
       // profile is injected the HTML differs per operator and space, so it
-      // leaves with private headers. The untouched shell (no sessionFor, or
-      // a profile failure that degrades to no profile) stays byte-identical
-      // for every viewer, and keeps the shared-cacheable policy.
+      // leaves with private headers. Untouched HTML is `no-store` anyway —
+      // it names the current content-hashed bundle — while the hashed
+      // bundle files themselves are the shared-cacheable ones.
       let profileInjected = false;
       if (found.contentType.startsWith('text/html')) {
         let html = injectAdminBase(found.data.toString('utf8'), basePath);
@@ -356,11 +357,14 @@ export function createAdminShellMount(app, options = {}) {
       }
       // `content-length` is measured after the HTML injection above, and
       // `HEAD` answers the same headers with an empty body — the static
-      // branch mirrors `serveStatic`, which always sends it.
+      // branch mirrors `serveStatic`, which always sends it. The cache
+      // policy is the server's own (`staticCacheControl`, backlog:3f74a2f296ec):
+      // content-hashed bundles are immutable, HTML entry points are
+      // no-store, and only a per-operator profile forces private headers.
       const responseHeaders = {
         'content-type': found.contentType,
         'content-length': String(data.byteLength),
-        'cache-control': profileInjected ? 'private, no-store' : 'no-cache',
+        'cache-control': profileInjected ? 'private, no-store' : staticCacheControl(pathname),
         ...(profileInjected ? { vary: 'Cookie' } : {}),
       };
       if (method === 'HEAD') return { status: 200, headers: responseHeaders, body: Buffer.alloc(0) };

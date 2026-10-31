@@ -78,7 +78,9 @@ test('served shell HTML carries no demo text, mounted or standalone', async () =
       }
       assert.match(html, /id="boSidebar"/);
       assert.match(html, /id="boTopbar"/);
-      assert.match(html, /src="app\.js"/);
+      // backlog:3f74a2f296ec: the shell loads one content-hashed bundle,
+      // not the 30+ module cascade.
+      assert.match(html, /src="bo-[0-9a-f]+\.js"/);
     }
   } finally {
     app.close();
@@ -627,7 +629,7 @@ test('the mount injects the embedder session profile into served HTML only', asy
   }
 });
 
-test('per-user session HTML leaves with private headers; shared HTML stays cacheable', async () => {
+test('per-user session HTML leaves with private headers; shared HTML is no-store (backlog:3f74a2f296ec)', async () => {
   const app = readApp();
   try {
     const profile = {
@@ -654,11 +656,13 @@ test('per-user session HTML leaves with private headers; shared HTML stays cache
     const js = await sessioned.handle({ method: 'GET', path: '/bo/app.js', headers: {} });
     assert.equal(js.headers['cache-control'], 'no-cache');
     assert.equal(js.headers.vary, undefined);
-    // No sessionFor: the bytes are identical for every viewer.
+    // No sessionFor: the bytes are identical for every viewer, but HTML
+    // entry points are no-store — they name the current content-hashed
+    // bundle — while the hashed bundles themselves carry the long cache.
     const plain = createAdminShellMount(app, { basePath: '/bo' });
     const shared = await plain.handle({ method: 'GET', path: '/bo/', headers: {}, cookies: {} });
     assert.ok(!shared.body.toString('utf8').includes('id="bo-session"'));
-    assert.equal(shared.headers['cache-control'], 'no-cache');
+    assert.equal(shared.headers['cache-control'], 'no-store');
     assert.equal(shared.headers.vary, undefined);
     // A profile failure degrades to the shared page, never to per-user bytes.
     const failing = createAdminShellMount(app, {
@@ -674,7 +678,7 @@ test('per-user session HTML leaves with private headers; shared HTML stays cache
       console.warn = originalWarn;
     }
     assert.ok(!degraded.body.toString('utf8').includes('id="bo-session"'));
-    assert.equal(degraded.headers['cache-control'], 'no-cache');
+    assert.equal(degraded.headers['cache-control'], 'no-store');
     assert.equal(degraded.headers.vary, undefined);
   } finally {
     app.close();
