@@ -801,6 +801,54 @@ test('Aggiungi prodotto stays available once Stripe is connected', async () => {
   assert.ok(mount.textContent.includes('sola lettura'), 'Stripe rows stay read-only and the page says so');
 });
 
+test('the rows read the r2 row fields: unit, sconto max, quantità', async () => {
+  // Spec catalogo.md C11/C12/C14-C16 (voce figlia c7deb9c21f3b): the table
+  // renders the product-version r2 row fields as read-only text on every
+  // row, manual and provider alike. A hostile unit stays text, never markup.
+  const withFields = structuredClone(MANUAL_TABLE.products[0]);
+  withFields.unit = 'ingressi';
+  withFields.maxDiscountBps = 1000;
+  withFields.stockQuantity = 7;
+  const hostile = structuredClone(MANUAL_TABLE.products[0]);
+  hostile.productId = 'p5';
+  hostile.name = 'Ostfang';
+  hostile.sku = 'OST-1';
+  hostile.unit = '<img src=x>';
+  hostile.maxDiscountBps = null;
+  hostile.stockQuantity = null;
+  const table = {
+    products: [withFields, hostile],
+    summary: { manual: 2, byProvider: {}, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  const text = mount.textContent;
+  assert.ok(text.includes('Prezzo del pacchetto: 99 € · per ingressi'), `the unit reads "· per <unità>" (${text})`);
+  assert.ok(text.includes('Sconto max 10%'), 'the discount ceiling reads as a percent');
+  assert.ok(text.includes('Quantità 7'), 'the stock count reads as a number');
+  assert.ok(text.includes('Sconto max —'), 'a missing ceiling reads an honest dash, never blank');
+  assert.ok(text.includes('Quantità —'), 'a service with no stock reads a dash, never blank');
+  assert.ok(text.includes('<img src=x>'), 'a hostile unit stays text');
+  assert.equal(mount.findAll('img').length, 0, 'no markup from the unit reaches the DOM');
+});
+
+test('an empty catalog is a gentle note with the action, never a bare header', async () => {
+  // Spec catalogo.md C19 (voce figlia c7deb9c21f3b): with zero products the
+  // list names the empty state and points at «Aggiungi prodotto», which
+  // stays on the page above.
+  const table = { products: [], summary: { manual: 0, byProvider: {}, stripeConnected: false } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('Nessun prodotto in catalogo'), 'the empty state names itself');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Aggiungi prodotto'), 'the create action stays reachable');
+});
+
 test('an uncertain creation reconciles the created row instead of retrying blindly', async () => {
   // The create route has no replay protection, so a second Conferma after a
   // lost response would create a duplicate product. On COMMIT_OUTCOME_UNKNOWN

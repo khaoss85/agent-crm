@@ -122,7 +122,7 @@ export function createCatalogView(deps) {
     return `fino a ${tier.upTo}: ${amount}`;
   }
 
-  function priceLine(component, currency) {
+  function priceLine(component, currency, unit) {
     const base = component.pricingModel === 'flat_fee'
       ? money(component.flatAmountCents, currency)
       : money(component.unitAmountCents, currency);
@@ -135,7 +135,25 @@ export function createCatalogView(deps) {
     const schedule = Array.isArray(component.tiers) && component.tiers.length > 0
       ? ` — ${component.tiers.map((tier) => tierLabel(tier, currency)).join(' · ')}`
       : '';
-    return `${component.label ?? 'Prezzo'}: ${base}${per}${every}${schedule}`;
+    // The row's own unit (product-version r2, spec catalogo.md C11): a unit
+    // the operator typed reads "· per <unità>", an absent one reads nothing.
+    // It renders as text, never HTML, like every other value on this screen.
+    const unitSuffix = typeof unit === 'string' && unit.trim() !== '' ? ` · per ${unit.trim()}` : '';
+    return `${component.label ?? 'Prezzo'}: ${base}${per}${every}${schedule}${unitSuffix}`;
+  }
+
+  /**
+   * The row's own fields (product-version r2, spec catalogo.md C14-C16):
+   * "sconto max" reads the percent ceiling or an honest dash, "quantità"
+   * reads the stock count or a dash for services with no stock to count.
+   * Read-only text on every row, manual and provider alike: changing them
+   * stays in the price editor's review flow, not in this table.
+   * @param {any} product
+   */
+  function rowFieldsLine(product) {
+    const discount = bpsLabel(product?.maxDiscountBps) ?? '—';
+    const stock = Number.isInteger(product?.stockQuantity) ? String(product.stockQuantity) : '—';
+    return { discount, stock };
   }
 
   /**
@@ -859,6 +877,11 @@ export function createCatalogView(deps) {
       row.appendChild(el('p', 'catalog-category', product.category ?? '—'));
       const priceCell = el('div', 'catalog-cell-price');
       row.appendChild(priceCell);
+      // The r2 row fields (spec catalogo.md C14-C16): sconto max and
+      // quantità as read-only text columns, like the prototype's columns.
+      const fields = rowFieldsLine(product);
+      row.appendChild(el('p', 'catalog-max-discount', `Sconto max ${fields.discount}`));
+      row.appendChild(el('p', 'catalog-stock', `Quantità ${fields.stock}`));
       const meta = el('p', 'catalog-meta');
       meta.appendChild(el('span', `catalog-source catalog-source-${product.source === 'manual' ? 'manual' : 'provider'}`, sourceLabel(product.source)));
       row.appendChild(meta);
@@ -890,7 +913,7 @@ export function createCatalogView(deps) {
         }
         const components = Array.isArray(offer.components) ? offer.components : [];
         for (const component of components) {
-          offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined)));
+          offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined, product.unit)));
         }
         priceCell.appendChild(offerBox);
       }
@@ -909,7 +932,7 @@ export function createCatalogView(deps) {
       const rows = loaded.filter((product) => matchesSearch(product, query));
       while (list.firstChild) list.removeChild(list.firstChild);
       const head = el('div', 'catalog-thead');
-      for (const label of ['Prodotto', 'Categoria', 'Prezzo', 'Fonte', 'Attivo']) head.appendChild(el('span', undefined, label));
+      for (const label of ['Prodotto', 'Categoria', 'Prezzo', 'Sconto max', 'Quantità', 'Fonte', 'Attivo']) head.appendChild(el('span', undefined, label));
       list.appendChild(head);
       if (rows.length === 0 && q !== '') {
         const empty = el('div', 'catalog-no-results');
@@ -920,6 +943,12 @@ export function createCatalogView(deps) {
           paintList('');
         });
         empty.appendChild(clearSearch);
+        list.appendChild(empty);
+      } else if (rows.length === 0) {
+        // An empty catalog is a gentle note with the action, never a bare
+        // header (spec catalogo.md C19): the create form stays above.
+        const empty = el('div', 'catalog-no-results');
+        empty.appendChild(el('p', undefined, 'Nessun prodotto in catalogo. Usa «Aggiungi prodotto» per crearne uno.'));
         list.appendChild(empty);
       } else {
         for (const product of rows) list.appendChild(buildRow(product));
