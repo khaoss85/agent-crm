@@ -85,6 +85,108 @@ export function parseEuroToCents(raw) {
   return Number.isSafeInteger(cents) ? cents : null;
 }
 
+/**
+ * Parse one operator sentence into the manual-create fields, deterministically
+ * and fail-closed: no backend, no LLM, the review screen stays the gate.
+ * Understood shape (Italian, free order): a name, a code (an UPPERCASE token
+ * with a digit, dash or underscore, or `codice X`), a price (`a 99 euro`,
+ * `99 €`, `prezzo 99,00`), an optional `categoria X` and an optional unit
+ * (`unità X` or `per X`). Anything missing reads in `missing` (`nome`,
+ * `codice`, `prezzo`) and `ok` is false: the caller shows what is missing
+ * instead of guessing.
+ * @param {unknown} raw
+ */
+export function parseProductSentence(raw) {
+  const text = typeof raw === 'string' ? raw : '';
+  /** @type {{name: string|null, sku: string|null, category: string|null, currency: string, unit: string|null, cents: number|null}} */
+  const fields = { name: null, sku: null, category: null, currency: 'EUR', unit: null, cents: null };
+  /** @type {string[]} */
+  const missing = [];
+  const used = [];
+  const take = (match) => { if (match && typeof match.index === 'number') used.push([match.index, match.index + match[0].length]); };
+
+  const currencyMatch = text.match(/€|\$|£|\beuro?\b|\beur\b|\busd\b|\bdollari?\b|\bgbp\b|\bsterline?\b/i);
+  if (currencyMatch) {
+    const token = currencyMatch[0].toLowerCase();
+    if (token === '$' || token === 'usd' || token.startsWith('dollar')) fields.currency = 'USD';
+    else if (token === '£' || token === 'gbp' || token.startsWith('sterlin')) fields.currency = 'GBP';
+    else fields.currency = 'EUR';
+  }
+  // The first number-like token is not always the price ("10 lezioni" in
+  // "Pacchetto 10 lezioni ... a 99 euro"): scan every candidate and keep the
+  // first one that names a currency or follows a/prezzo/costo. A bare
+  // "a <num>" reads EUR; anything else stays missing, never guessed.
+  for (const candidate of text.matchAll(/(?:^|\s)(?:a|prezzo|costo)?\s*(\d+(?:[.,]\d{1,2})?)\s*(€|euro|eur|\$|usd|gbp|£)?(?=\s|$|[.,;])/gi)) {
+    if (candidate[2] || /(?:^|\s)(?:a|prezzo|costo)\s*\d/i.test(candidate[0])) {
+      fields.cents = parseEuroToCents(candidate[1]);
+      take(candidate);
+      break;
+    }
+  }
+  const codeMatch = text.match(/\bcodice\s+([A-Za-z0-9][A-Za-z0-9_-]{0,29})/i)
+    ?? text.match(/\b([A-Z0-9][A-Z0-9_-]{2,29})\b/);
+  if (codeMatch) {
+    const candidate = codeMatch[1] ?? codeMatch[0];
+    const explicit = /^codice\s/i.test(codeMatch[0]);
+    if (explicit || /[0-9_-]/.test(candidate)) {
+      fields.sku = candidate;
+      take(codeMatch);
+    }
+  }
+  const categoryMatch = text.match(/\bcategoria\s+([^\s,.;]+)/i);
+  if (categoryMatch) {
+    fields.category = categoryMatch[1];
+    take(categoryMatch);
+  }
+  const unitMatch = text.match(/\bunit[àa]\s+([^\s,.;]+)/i) ?? text.match(/\bper\s+([^\s,.;]+)/i);
+  if (unitMatch) {
+    fields.unit = unitMatch[1];
+    take(unitMatch);
+  }
+  used.sort((a, b) => a[0] - b[0]);
+  let name = '';
+  let cursor = 0;
+  for (const [start, end] of used) {
+    if (start > cursor) name += ` ${text.slice(cursor, start)}`;
+    cursor = Math.max(cursor, end);
+  }
+  name += ` ${text.slice(cursor)}`;
+  fields.name = name
+    .replace(/\b(crea|creare|aggiungi|aggiungere|nuovo|nuova|un nuovo|una nuova|prodotto|il prodotto)\b/gi, ' ')
+    .replace(/[«»".,;]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() || null;
+  if (fields.name === null) missing.push('nome');
+  if (fields.sku === null) missing.push('codice');
+  if (fields.cents === null) missing.push('prezzo');
+  return { ok: missing.length === 0, fields, missing };
+}
+
+/**
+ * The single one-time flat component body the manual create form posts.
+ * Shared by the field form and the sentence form (MEM_ACC_REUSE): one
+ * builder, one route, one review shape.
+ */
+export function buildCreateBody({ sku, name, category, currency, unit, cents }) {
+  return {
+    sku,
+    name,
+    category,
+    currency,
+    unit,
+    components: [{
+      key: 'prezzo',
+      label: 'Prezzo',
+      chargeType: 'one_time',
+      pricingModel: 'flat_fee',
+      unitAmountCents: null,
+      flatAmountCents: cents,
+      externalPriceId: null,
+      tiers: [],
+    }],
+  };
+}
+
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, submissions?: any, storage?: any}} deps */
 export function createCatalogView(deps) {
   const { doc, mount } = deps;
@@ -122,7 +224,7 @@ export function createCatalogView(deps) {
     return `fino a ${tier.upTo}: ${amount}`;
   }
 
-  function priceLine(component, currency, unit) {
+  function priceLine(component, currency) {
     const base = component.pricingModel === 'flat_fee'
       ? money(component.flatAmountCents, currency)
       : money(component.unitAmountCents, currency);
@@ -135,11 +237,9 @@ export function createCatalogView(deps) {
     const schedule = Array.isArray(component.tiers) && component.tiers.length > 0
       ? ` — ${component.tiers.map((tier) => tierLabel(tier, currency)).join(' · ')}`
       : '';
-    // The row's own unit (product-version r2, spec catalogo.md C11): a unit
-    // the operator typed reads "· per <unità>", an absent one reads nothing.
-    // It renders as text, never HTML, like every other value on this screen.
-    const unitSuffix = typeof unit === 'string' && unit.trim() !== '' ? ` · per ${unit.trim()}` : '';
-    return `${component.label ?? 'Prezzo'}: ${base}${per}${every}${schedule}${unitSuffix}`;
+    // The product's own unit reads in the Unità column, never here, so no
+    // cell repeats what the grid already says.
+    return `${component.label ?? 'Prezzo'}: ${base}${per}${every}${schedule}`;
   }
 
   /**
@@ -587,6 +687,33 @@ export function createCatalogView(deps) {
       && components[0].flatAmountCents === submitted.cents;
   }
 
+  /**
+   * Re-read the catalog after a COMMIT_OUTCOME_UNKNOWN creation: only a row
+   * that is both new since this table loaded and a full match of the
+   * submitted fields counts as this creation (the create route has no replay
+   * protection). Shared by the field form and the sentence form.
+   */
+  async function reconcileUncertainCreation(knownProductIds, filters, submitted) {
+    try {
+      const reloadParams = new URLSearchParams();
+      if (typeof filters.category === 'string' && filters.category.trim() !== '') reloadParams.set('category', filters.category.trim());
+      if (filters.active === 'true' || filters.active === 'false') reloadParams.set('active', filters.active);
+      if (typeof filters.source === 'string' && filters.source.trim() !== '') reloadParams.set('source', filters.source.trim());
+      reloadParams.set('limit', String(LIST_LIMIT));
+      const reloaded = await client.request(`/api/catalog/products?${reloadParams.toString()}`);
+      const rows = Array.isArray(reloaded?.products) ? reloaded.products : [];
+      return rows.some((row) => row && typeof row === 'object'
+        && typeof row.productId === 'string'
+        && !knownProductIds.has(row.productId)
+        && reconcilesSubmission(row, submitted));
+    } catch (reloadError) {
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('bo-catalog reconcile unreadable:', reloadError instanceof Error ? reloadError.name : 'unknown');
+      }
+      return false;
+    }
+  }
+
   function renderCreateForm(knownProductIds, filters = {}) {
     const wrap = el('div', 'catalog-create-wrap');
     const openButton = el('button', 'catalog-create', 'Aggiungi prodotto');
@@ -658,23 +785,7 @@ export function createCatalogView(deps) {
             await submissions.submit({
               path: '/api/catalog/products',
               method: 'POST',
-              body: {
-                sku,
-                name,
-                category: submitted.category,
-                currency,
-                unit: submitted.unit,
-                components: [{
-                  key: 'prezzo',
-                  label: 'Prezzo',
-                  chargeType: 'one_time',
-                  pricingModel: 'flat_fee',
-                  unitAmountCents: null,
-                  flatAmountCents: cents,
-                  externalPriceId: null,
-                  tiers: [],
-                }],
-              },
+              body: buildCreateBody(submitted),
             });
             await renderTable();
           } catch (error) {
@@ -688,26 +799,7 @@ export function createCatalogView(deps) {
             // does, since SKUs may repeat. Anything else stays locked until
             // the operator reloads and checks.
             if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
-              let reconciled = false;
-              try {
-                const reloadParams = new URLSearchParams();
-                if (typeof filters.category === 'string' && filters.category.trim() !== '') reloadParams.set('category', filters.category.trim());
-                if (filters.active === 'true' || filters.active === 'false') reloadParams.set('active', filters.active);
-                if (typeof filters.source === 'string' && filters.source.trim() !== '') reloadParams.set('source', filters.source.trim());
-                reloadParams.set('limit', String(LIST_LIMIT));
-                const reloaded = await client.request(`/api/catalog/products?${reloadParams.toString()}`);
-                const rows = Array.isArray(reloaded?.products) ? reloaded.products : [];
-                reconciled = rows.some((row) => row && typeof row === 'object'
-                  && typeof row.productId === 'string'
-                  && !knownProductIds.has(row.productId)
-                  && reconcilesSubmission(row, submitted));
-              } catch (reloadError) {
-                if (typeof console !== 'undefined' && typeof console.warn === 'function') {
-                  console.warn('bo-catalog reconcile unreadable:', reloadError instanceof Error ? reloadError.name : 'unknown');
-                }
-                reconciled = false;
-              }
-              if (reconciled) {
+              if (await reconcileUncertainCreation(knownProductIds, filters, submitted)) {
                 await renderTable();
                 return;
               }
@@ -733,6 +825,92 @@ export function createCatalogView(deps) {
   }
 
   /**
+   * Sentence-first creation ("✦ Aggiungi con l'AI"): the operator writes one
+   * sentence, the deterministic `parseProductSentence` reads the fields, and
+   * the same review -> Conferma gate as the field form posts the same
+   * `buildCreateBody` over the same route. Nothing is ever sent from the
+   * sentence alone: an unreadable sentence names what is missing and stays
+   * editable, never guessed.
+   * @param {Set<unknown>} knownProductIds product ids already on screen
+   * @param {{category?: string, active?: string, source?: string}} filters
+   */
+  function renderAiCreateForm(knownProductIds, filters = {}) {
+    const wrap = el('div', 'catalog-ai-wrap');
+    const openButton = el('button', 'catalog-ai-open', '✦ Aggiungi con l\u2019AI');
+    const formBox = el('div', 'catalog-ai-form');
+    const formError = el('p', 'field-error', '');
+    openButton.addEventListener('click', () => {
+      while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+      formBox.appendChild(el('label', 'catalog-create-label', 'Descrivi il prodotto in una frase'));
+      const input = el('input', 'catalog-ai-sentence');
+      input.setAttribute('name', 'sentence');
+      input.setAttribute('aria-label', 'Descrivi il prodotto in una frase');
+      input.setAttribute('placeholder', 'Pacchetto 10 lezioni PACCHETTO-10 a 99 euro categoria pacchetti');
+      formBox.appendChild(input);
+      const parseButton = el('button', undefined, 'Interpreta');
+      parseButton.addEventListener('click', () => {
+        formError.textContent = '';
+        const parsed = parseProductSentence(input.value);
+        while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+        formBox.appendChild(input);
+        if (!parsed.ok) {
+          formError.textContent = `Dalla frase mancano: ${parsed.missing.join(', ')}. Esempio: Pacchetto 10 lezioni PACCHETTO-10 a 99 euro categoria pacchetti.`;
+          formBox.appendChild(parseButton);
+          formBox.appendChild(formError);
+          return;
+        }
+        const submitted = {
+          sku: parsed.fields.sku,
+          name: parsed.fields.name,
+          category: parsed.fields.category,
+          currency: parsed.fields.currency,
+          unit: parsed.fields.unit,
+          cents: parsed.fields.cents,
+        };
+        const review = el('div', 'catalog-review');
+        review.appendChild(el('p', undefined, `Creare ${submitted.name} (${submitted.sku}) a ${money(submitted.cents, submitted.currency)}?`));
+        if (submitted.category) review.appendChild(el('p', 'catalog-change', `Categoria: ${submitted.category}`));
+        review.appendChild(el('p', 'catalog-change', `Unità: ${submitted.unit ?? '—'}`));
+        const yes = el('button', undefined, 'Conferma');
+        const no = el('button', undefined, 'Annulla');
+        no.addEventListener('click', async () => { await renderTable(); });
+        yes.addEventListener('click', async () => {
+          yes.disabled = true;
+          try {
+            await submissions.submit({
+              path: '/api/catalog/products',
+              method: 'POST',
+              body: buildCreateBody(submitted),
+            });
+            await renderTable();
+          } catch (error) {
+            if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+              if (await reconcileUncertainCreation(knownProductIds, filters, submitted)) {
+                await renderTable();
+                return;
+              }
+              formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
+              review.appendChild(formError);
+              return;
+            }
+            formError.textContent = error?.message ?? 'Creazione fallita';
+            review.appendChild(formError);
+            yes.disabled = false;
+          }
+        });
+        review.appendChild(yes);
+        review.appendChild(no);
+        formBox.appendChild(review);
+      });
+      formBox.appendChild(parseButton);
+      formBox.appendChild(formError);
+    });
+    wrap.appendChild(openButton);
+    wrap.appendChild(formBox);
+    return wrap;
+  }
+
+  /**
    * The prototype's search filters the visible rows by product name and
    * code (spec catalogo.md C9/C21): the read vocabulary has no search
    * param, so the match runs client-side over the loaded page, like the
@@ -748,6 +926,23 @@ export function createCatalogView(deps) {
       .filter((value) => typeof value === 'string')
       .map((value) => value.toLowerCase());
     return hay.some((text) => text.includes(q));
+  }
+
+  /**
+   * Live text filters over the loaded page: the category and source boxes
+   * narrow the rows while typing, like the search field, without a refetch.
+   * The server params stay the authority on reload (Filtra / the state
+   * select); typing only hides rows already on screen, never values.
+   * @param {any} product
+   * @param {unknown} categoryQuery
+   * @param {unknown} sourceQuery
+   */
+  function matchesLiveFilters(product, categoryQuery, sourceQuery) {
+    const categoryQ = String(categoryQuery ?? '').trim().toLowerCase();
+    if (categoryQ !== '' && !String(product?.category ?? '').toLowerCase().includes(categoryQ)) return false;
+    const sourceQ = String(sourceQuery ?? '').trim().toLowerCase();
+    if (sourceQ !== '' && !String(product?.source ?? '').toLowerCase().includes(sourceQ)) return false;
+    return true;
   }
 
   /**
@@ -794,7 +989,10 @@ export function createCatalogView(deps) {
     const summary = table.summary ?? {};
     page.appendChild(renderStripeBlock(summary));
     const loaded = table.products;
-    page.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
+    const createBar = el('div', 'catalog-create-bar');
+    createBar.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
+    createBar.appendChild(renderAiCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
+    page.appendChild(createBar);
 
     const filters = el('div', 'catalog-filters');
     const categoryInput = el('input');
@@ -827,9 +1025,21 @@ export function createCatalogView(deps) {
     searchInput.setAttribute('placeholder', 'Cerca prodotto o codice');
     searchInput.value = typeof search === 'string' ? search : '';
     const readSearch = () => searchInput.value ?? '';
-    const repaint = () => { paintList(readSearch()); };
+    // Every text box filters the loaded rows while typing (no refetch,
+    // focus stays in the field); the state select re-reads from the server
+    // at once, so no control waits for Filtra.
+    const repaint = () => { paintList(readSearch(), categoryInput.value ?? '', sourceInput.value ?? ''); };
     searchInput.addEventListener('input', repaint);
     searchInput.addEventListener('search', repaint);
+    categoryInput.addEventListener('input', repaint);
+    sourceInput.addEventListener('input', repaint);
+    activeSelect.addEventListener('change', async () => {
+      try {
+        await renderTable({ category: categoryInput.value, active: activeSelect.value, source: sourceInput.value, search: readSearch() });
+      } catch (error) {
+        filterError.textContent = error?.message ?? 'Filtro fallito';
+      }
+    });
     applyButton.addEventListener('click', async () => {
       applyButton.disabled = true;
       try {
@@ -867,25 +1077,40 @@ export function createCatalogView(deps) {
     page.appendChild(bar);
 
     const list = el('div', 'catalog-list');
+    const HEAD_LABELS = ['Prodotto', 'Categoria', 'Prezzo', 'Unità', 'Sconto max', 'Quantità', 'Fonte', 'Attivo'];
     const buildRow = (product) => {
       const row = el('div', 'catalog-row');
       if (product.productId !== undefined) row.setAttribute('data-product', String(product.productId));
       const cell = el('div', 'catalog-cell-name');
+      cell.setAttribute('data-label', 'Prodotto');
       cell.appendChild(el('h3', undefined, product.name ?? 'Senza nome'));
       cell.appendChild(el('p', 'catalog-sku', product.sku ?? '—'));
       row.appendChild(cell);
-      row.appendChild(el('p', 'catalog-category', product.category ?? '—'));
+      const categoryCell = el('p', 'catalog-category', product.category ?? '—');
+      categoryCell.setAttribute('data-label', 'Categoria');
+      row.appendChild(categoryCell);
       const priceCell = el('div', 'catalog-cell-price');
+      priceCell.setAttribute('data-label', 'Prezzo');
       row.appendChild(priceCell);
-      // The r2 row fields (spec catalogo.md C14-C16): sconto max and
-      // quantità as read-only text columns, like the prototype's columns.
+      // One row per product, one column per value: no cell repeats its
+      // column name. The unit reads in its own column; sconto max and
+      // quantità read as bare values with an honest dash when absent.
       const fields = rowFieldsLine(product);
-      row.appendChild(el('p', 'catalog-max-discount', `Sconto max ${fields.discount}`));
-      row.appendChild(el('p', 'catalog-stock', `Quantità ${fields.stock}`));
+      const unitCell = el('p', 'catalog-unit', typeof product?.unit === 'string' && product.unit.trim() !== '' ? product.unit : '—');
+      unitCell.setAttribute('data-label', 'Unità');
+      row.appendChild(unitCell);
+      const discountCell = el('p', 'catalog-max-discount', fields.discount);
+      discountCell.setAttribute('data-label', 'Sconto max');
+      row.appendChild(discountCell);
+      const stockCell = el('p', 'catalog-stock', fields.stock);
+      stockCell.setAttribute('data-label', 'Quantità');
+      row.appendChild(stockCell);
       const meta = el('p', 'catalog-meta');
+      meta.setAttribute('data-label', 'Fonte');
       meta.appendChild(el('span', `catalog-source catalog-source-${product.source === 'manual' ? 'manual' : 'provider'}`, sourceLabel(product.source)));
       row.appendChild(meta);
       const switchCell = el('div', 'catalog-cell-switch');
+      switchCell.setAttribute('data-label', 'Attivo');
       switchCell.appendChild(el('span', 'catalog-active-state', product.active === true ? 'Attivo' : 'Non attivo'));
       row.appendChild(switchCell);
       // Only Stripe-bound rows stay read-only: the write path refuses them
@@ -913,7 +1138,7 @@ export function createCatalogView(deps) {
         }
         const components = Array.isArray(offer.components) ? offer.components : [];
         for (const component of components) {
-          offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined, product.unit)));
+          offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined)));
         }
         priceCell.appendChild(offerBox);
       }
@@ -924,22 +1149,27 @@ export function createCatalogView(deps) {
       }
       return row;
     };
-    // Search repaints the rows in place (no refetch, focus stays in the
-    // field); a search with no match is a gentle note with an action
+    // Text filters repaint the rows in place (no refetch, focus stays in
+    // the field); filters with no match are a gentle note with an action
     // (spec catalogo.md C19), never a blank table or a technical text.
-    const paintList = (query) => {
+    const paintList = (query, categoryQuery = '', sourceQuery = '') => {
       const q = String(query ?? '').trim();
-      const rows = loaded.filter((product) => matchesSearch(product, query));
+      const rows = loaded.filter((product) => matchesSearch(product, query)
+        && matchesLiveFilters(product, categoryQuery, sourceQuery));
       while (list.firstChild) list.removeChild(list.firstChild);
       const head = el('div', 'catalog-thead');
-      for (const label of ['Prodotto', 'Categoria', 'Prezzo', 'Sconto max', 'Quantità', 'Fonte', 'Attivo']) head.appendChild(el('span', undefined, label));
+      for (const label of HEAD_LABELS) head.appendChild(el('span', undefined, label));
       list.appendChild(head);
-      if (rows.length === 0 && q !== '') {
+      if (rows.length === 0 && (q !== '' || String(categoryQuery ?? '').trim() !== '' || String(sourceQuery ?? '').trim() !== '')) {
         const empty = el('div', 'catalog-no-results');
-        empty.appendChild(el('p', undefined, `Nessun risultato per «${q}». Prova con un altro nome o codice.`));
+        empty.appendChild(el('p', undefined, q !== ''
+          ? `Nessun risultato per «${q}». Prova con un altro nome o codice.`
+          : 'Nessun risultato per questi filtri. Prova a svuotarli.'));
         const clearSearch = el('button', 'catalog-clear-search', 'Cancella ricerca');
         clearSearch.addEventListener('click', () => {
           searchInput.value = '';
+          categoryInput.value = '';
+          sourceInput.value = '';
           paintList('');
         });
         empty.appendChild(clearSearch);
@@ -954,14 +1184,15 @@ export function createCatalogView(deps) {
         for (const product of rows) list.appendChild(buildRow(product));
       }
       const n = rows.length;
-      status.textContent = q !== ''
-        ? `${n} ${n === 1 ? 'risultato' : 'risultati'} per «${q}».`
+      const filtered = q !== '' || String(categoryQuery ?? '').trim() !== '' || String(sourceQuery ?? '').trim() !== '';
+      status.textContent = filtered
+        ? `${n} ${n === 1 ? 'risultato' : 'risultati'} per i filtri.`
         : (loaded.length >= LIST_LIMIT
           ? `Mostrati i primi ${LIST_LIMIT} prodotti.`
           : `${loaded.length} ${loaded.length === 1 ? 'prodotto' : 'prodotti'}.`);
     };
     page.appendChild(list);
-    paintList(search);
+    paintList(search, category, source);
     page.appendChild(renderRulesBlock(schema));
   }
 

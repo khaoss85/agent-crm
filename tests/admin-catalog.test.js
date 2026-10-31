@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents } from '../apps/admin/public/admin-catalog.js';
+import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents, parseProductSentence, buildCreateBody } from '../apps/admin/public/admin-catalog.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -804,7 +804,8 @@ test('Aggiungi prodotto stays available once Stripe is connected', async () => {
 test('the rows read the r2 row fields: unit, sconto max, quantità', async () => {
   // Spec catalogo.md C11/C12/C14-C16 (voce figlia c7deb9c21f3b): the table
   // renders the product-version r2 row fields as read-only text on every
-  // row, manual and provider alike. A hostile unit stays text, never markup.
+  // row, manual and provider alike — each in its own column, never repeating
+  // the column name. A hostile unit stays text, never markup.
   const withFields = structuredClone(MANUAL_TABLE.products[0]);
   withFields.unit = 'ingressi';
   withFields.maxDiscountBps = 1000;
@@ -826,12 +827,19 @@ test('the rows read the r2 row fields: unit, sconto max, quantità', async () =>
   await view.renderTable({});
 
   const text = mount.textContent;
-  assert.ok(text.includes('Prezzo del pacchetto: 99 € · per ingressi'), `the unit reads "· per <unità>" (${text})`);
-  assert.ok(text.includes('Sconto max 10%'), 'the discount ceiling reads as a percent');
-  assert.ok(text.includes('Quantità 7'), 'the stock count reads as a number');
-  assert.ok(text.includes('Sconto max —'), 'a missing ceiling reads an honest dash, never blank');
-  assert.ok(text.includes('Quantità —'), 'a service with no stock reads a dash, never blank');
-  assert.ok(text.includes('<img src=x>'), 'a hostile unit stays text');
+  const units = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-unit'))
+    .map((node) => node.textContent);
+  assert.deepEqual(units, ['ingressi', '<img src=x>'], 'the unit reads in its own column');
+  assert.ok(!text.includes('· per'), 'no unit suffix repeats the column in the price cell');
+  const discounts = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-max-discount'))
+    .map((node) => node.textContent);
+  assert.deepEqual(discounts, ['10%', '—'], 'the discount ceiling reads as a bare value with an honest dash');
+  const stocks = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-stock'))
+    .map((node) => node.textContent);
+  assert.deepEqual(stocks, ['7', '—'], 'the stock count reads as a bare value with a dash for services');
   assert.equal(mount.findAll('img').length, 0, 'no markup from the unit reaches the DOM');
 });
 
@@ -1050,4 +1058,207 @@ test('an uncertain creation reloads with the table filters', async () => {
   assert.equal(reload.searchParams.get('source'), 'manual', 'the reconcile reload keeps the source filter');
   assert.equal(reload.searchParams.get('category'), 'pacchetti', 'the reconcile reload keeps the category filter');
   assert.equal(reload.searchParams.get('limit'), '200', 'the reconcile reload keeps the row limit');
+});
+
+test('the header names the eight columns in order and every row carries eight cells', async () => {
+  // Supervisor review on main after #506: the header wrapped over two lines
+  // and Fonte/Attivo/Togli fell on a second row, because the grid declared
+  // fewer columns than the cells. The header and every row now share the
+  // same eight columns, in the reviewed order.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': SEARCH_TABLE } }) });
+  await view.renderTable({});
+
+  const heads = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-thead'));
+  assert.equal(heads.length, 1, 'one header');
+  const labels = heads[0].childNodes.map((node) => node.textContent);
+  assert.deepEqual(
+    labels,
+    ['Prodotto', 'Categoria', 'Prezzo', 'Unità', 'Sconto max', 'Quantità', 'Fonte', 'Attivo'],
+    'the reviewed column order',
+  );
+  const rows = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-row'));
+  assert.equal(rows.length, 2, 'one row per product');
+  for (const row of rows) {
+    assert.equal(row.childNodes.length, 8, 'every row carries exactly the eight grid cells');
+  }
+});
+
+test('no cell repeats its column name', async () => {
+  // Supervisor acceptance: each value reads bare, never prefixed with the
+  // column label. The review runs on texts, so the check reads texts.
+  const table = structuredClone(MANUAL_TABLE);
+  table.products[0].unit = 'ingressi';
+  table.products[0].maxDiscountBps = 1000;
+  table.products[0].stockQuantity = 7;
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  const valueOf = (cls) => mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes(cls))
+    .map((node) => node.textContent);
+  for (const text of valueOf('catalog-max-discount')) {
+    assert.ok(!text.toLowerCase().includes('sconto'), `the discount cell never names its column (${text})`);
+  }
+  for (const text of valueOf('catalog-stock')) {
+    assert.ok(!text.toLowerCase().includes('quantit'), `the stock cell never names its column (${text})`);
+  }
+  for (const text of valueOf('catalog-unit')) {
+    assert.ok(!/unit|ingressi:/i.test(text) || text === 'ingressi', `the unit cell reads the bare unit (${text})`);
+  }
+  assert.equal(valueOf('catalog-unit')[0], 'ingressi', 'the unit reads bare');
+  assert.equal(valueOf('catalog-max-discount')[0], '10%', 'the ceiling reads bare');
+  assert.equal(valueOf('catalog-stock')[0], '7', 'the stock reads bare');
+});
+
+test('the Stripe count and the Fonte chips stay coherent', async () => {
+  // The Stripe block and every Fonte chip read the same derivation: rows
+  // whose source names Stripe, counted by provider.
+  const striped = structuredClone(STRIPE_TABLE.products[0]);
+  const second = structuredClone(striped);
+  second.productId = 'p9';
+  second.name = 'Corso Pilates';
+  const table = {
+    products: [striped, second],
+    summary: { manual: 0, byProvider: { 'stripe-test': 2 }, stripeConnected: true },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('2 prodotti importati da Stripe'), 'the block counts the Stripe rows');
+  const chips = mount.findAll('span')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-source'))
+    .map((node) => node.textContent);
+  assert.deepEqual(chips, ['Stripe', 'Stripe'], 'every Stripe row carries the Fonte chip');
+});
+
+test('the Stripe block falls back to the same by-provider derivation as the chips', async () => {
+  // A summary without the stripeConnected flag (older payloads) still reads
+  // connected when a provider names Stripe — exactly like the row chips do.
+  const table = {
+    products: structuredClone(STRIPE_TABLE.products),
+    summary: { manual: 0, byProvider: { 'stripe-test': 1 } },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('Collegato a Stripe'), 'the block derives the connection like the chips');
+  assert.ok(mount.textContent.includes('1 prodotto importato da Stripe'), 'the count matches the single Stripe row');
+  assert.ok(!mount.textContent.includes('non collegato'), 'no conflicting invite while a Stripe row is on screen');
+});
+
+test('category and source filter while typing, the state select re-reads at once', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length;
+  const before = reads();
+
+  byName('category').value = 'pacchetti';
+  byName('category').dispatch('input');
+  assert.equal(rowCount(mount), 1, 'the category narrows the loaded rows while typing');
+  assert.ok(mount.textContent.includes('Pacchetto 10 lezioni'), 'the matching row stays');
+  assert.equal(reads(), before, 'typing never refetches');
+
+  byName('category').value = '';
+  byName('category').dispatch('input');
+  byName('source').value = 'manual';
+  byName('source').dispatch('input');
+  assert.equal(rowCount(mount), 2, 'the source matches both manual rows');
+
+  byName('source').value = 'stripe';
+  byName('source').dispatch('input');
+  assert.equal(rowCount(mount), 0, 'a source with no loaded rows reads empty');
+  assert.ok(mount.textContent.includes('Nessun risultato per questi filtri'), 'the gentle note covers text filters without a query');
+
+  const select = mount.findAll('select').find((node) => node.getAttribute('name') === 'active');
+  assert.ok(select, 'the state select renders');
+  select.value = 'true';
+  select.dispatch('change');
+  await flush();
+  assert.equal(reads(), before + 1, 'choosing a state re-reads from the server at once');
+  const reread = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
+  assert.equal(reread.searchParams.get('active'), 'true', 'the state travels as a query param');
+});
+
+test('parseProductSentence reads a sentence fail-closed', () => {
+  const full = parseProductSentence('Pacchetto 10 lezioni PACCHETTO-10 a 99 euro categoria pacchetti per ingressi');
+  assert.equal(full.ok, true, 'a complete sentence parses');
+  assert.equal(full.fields.name, 'Pacchetto 10 lezioni', 'the name is what is left over');
+  assert.equal(full.fields.sku, 'PACCHETTO-10', 'the uppercase token is the code');
+  assert.equal(full.fields.cents, 9900, 'the price becomes cents');
+  assert.equal(full.fields.currency, 'EUR', 'euro reads EUR');
+  assert.equal(full.fields.category, 'pacchetti', 'categoria reads the category');
+  assert.equal(full.fields.unit, 'ingressi', 'per reads the unit');
+
+  const short = parseProductSentence('YOGA a 49,50 €');
+  assert.equal(short.ok, false, 'a sentence without a code refuses');
+  assert.deepEqual(short.missing, ['codice'], 'only the missing field is named');
+
+  const hostile = parseProductSentence('<script>alert(1)</script> PROVA-1 a 10 euro');
+  assert.equal(hostile.ok, true, 'markup never blocks a complete sentence');
+  assert.ok(!/<script>/.test(hostile.fields.sku ?? ''), 'the markup leaves through the name, never a field');
+});
+
+test('buildCreateBody posts the single one-time flat component', () => {
+  const body = buildCreateBody({ sku: 'X-1', name: 'Prova', category: 'c', currency: 'EUR', unit: 'u', cents: 100 });
+  assert.equal(body.sku, 'X-1');
+  assert.equal(body.components.length, 1, 'one price from the sentence or the fields');
+  assert.equal(body.components[0].pricingModel, 'flat_fee', 'manual creations stay one-time flat');
+  assert.equal(body.components[0].flatAmountCents, 100);
+});
+
+test('✦ Aggiungi con l\u2019AI creates a product from a sentence after confirmation', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, '✦ Aggiungi con l\u2019AI');
+  const sentence = mount.findAll('input').find((node) => node.getAttribute('name') === 'sentence');
+  assert.ok(sentence, 'the sentence field renders');
+  sentence.value = 'Pacchetto 5 lezioni PACCHETTO-5 a 120,50 euro categoria pacchetti';
+  clickButton(mount, 'Interpreta');
+  assert.ok(mount.textContent.includes('Creare Pacchetto 5 lezioni (PACCHETTO-5)'), 'the review echoes the parsed sentence');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'interpreting sends nothing');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const created = client.calls.find((call) => call.path === '/api/catalog/products' && call.method === 'POST');
+  assert.ok(created, 'confirmation sends the creation');
+  assert.equal(created.body.sku, 'PACCHETTO-5');
+  assert.equal(created.body.name, 'Pacchetto 5 lezioni');
+  assert.equal(created.body.category, 'pacchetti');
+  assert.equal(created.body.currency, 'EUR');
+  assert.equal(created.body.components.length, 1, 'one price from the sentence');
+  assert.equal(created.body.components[0].flatAmountCents, 12050, 'the comma decimal becomes cents');
+  assert.equal(created.body.components[0].pricingModel, 'flat_fee');
+});
+
+test('✦ Aggiungi con l\u2019AI names what is missing and sends nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, '✦ Aggiungi con l\u2019AI');
+  const sentence = mount.findAll('input').find((node) => node.getAttribute('name') === 'sentence');
+  sentence.value = 'una cosa bella';
+  clickButton(mount, 'Interpreta');
+  assert.ok(mount.textContent.includes('Dalla frase mancano: codice, prezzo'), 'the missing fields are named');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'an unreadable sentence sends nothing');
 });
