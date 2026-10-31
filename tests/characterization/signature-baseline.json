@@ -2788,7 +2788,7 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "7c36670f1aa94cdca3a4e2424a314d9b79ed6b895a990fb477bb5aef3ee4e52c",
+    "apps/server/src/http-server.js": "5fd4646fcf4c9b97ea490adbbf200e9489da941c5fc70bf7f5dc0069b1ee5e25",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "examples/starters/b2b-lead-qualification/signature.js": "e2f34c4e71f9a03f8ced77ba23b9a09c3da8ab6b9731db91cee12cf778ba4765",
     "packages/app/src/create-app.js": "bf7d8b8b9f4d7acea14cafd90cf1c6de73e044c9a5fc36675fb0958a7430dbb8",

@@ -1116,6 +1116,24 @@ export function buildRouter(app) {
     await gate(app, identity, organizationId, 'records.read');
     return await app.services.opportunities.get(params.id);
   });
+  // Voce 96e7b579: the pipeline card edits importo, data di chiusura and
+  // referente in place. Only the three editable keys reach the service —
+  // anything else (companyId, stage, pipeline-managed keys included) is
+  // refused rather than silently dropped, so an edit can never move the
+  // customer, the lifecycle stage or the pipeline position of an offer.
+  router.add('PATCH', '/api/opportunities/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    const patch = {};
+    for (const key of ['valueCents', 'expectedCloseDate', 'owner']) {
+      if (input[key] !== undefined) patch[key] = input[key];
+    }
+    const unknown = Object.keys(input).filter((key) => !['valueCents', 'expectedCloseDate', 'owner'].includes(key));
+    if (unknown.length > 0) {
+      throw new ValidationError(`Opportunity update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
+    }
+    return await app.services.opportunities.update(params.id, patch, writeContext(app, { actor, identity, organizationId, headers }));
+  });
   router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     return await app.workflows.run(

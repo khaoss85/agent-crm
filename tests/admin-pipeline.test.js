@@ -185,12 +185,21 @@ test('move toasts name the stage label and failures stay friendly (C25)', async 
 
   // Missing reason for a lost move: motivo line, no field name.
   {
-    const { mount } = await rendering({ message: 'reason is required when moving to the lost stage', status: 400, code: 'VALIDATION', details: { field: 'reason' } });
+    const { mount, client } = await rendering({ message: 'reason is required when moving to the lost stage', status: 400, code: 'VALIDATION', details: { field: 'reason' } });
     const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
     card.__select.value = 'persa';
     await card.__move();
+    const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+    assert.equal(postsBefore, 0, 'Sposta to persa posts nothing before Conferma');
+    const question = card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question');
+    assert.ok(question.textContent.includes('motivo della perdita'), `the confirm asks for the reason (${question.textContent})`);
+    await card.__confirm();
     const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
-    assert.ok(error.textContent.includes('motivo'), `motivo line (${error.textContent})`);
+    assert.ok(error.textContent.includes('motivo'), `empty Conferma refuses without a reason (${error.textContent})`);
+    card.__reason.value = 'Budget congelato';
+    await card.__confirm();
+    const post = client.calls.filter((call) => call.method === 'POST').at(-1);
+    assert.deepEqual(JSON.parse(post.body), { toStage: 'persa', fromStage: 'richiesta', reason: 'Budget congelato' });
     assert.ok(!error.textContent.includes('reason is required'), 'no raw message in the DOM');
   }
 
@@ -636,7 +645,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
   assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), 'success is toasted with the stage label');
 });
 
-test('same-stage drops post nothing; drops onto lost ask for a reason first', async () => {
+test('same-stage drops post nothing; drops onto lost ask for confirmation first', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient(boardRecords());
@@ -650,10 +659,57 @@ test('same-stage drops post nothing; drops onto lost ask for a reason first', as
 
   const lostColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'lost');
   await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
-  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without Conferma');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
   assert.equal(card.__reason.getAttribute('class'), '', 'the reason input is revealed');
-  assert.match(card.findAll('small')[0].textContent, /motivo della perdita/i);
+  assert.match(
+    card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question').textContent,
+    /motivo della perdita/i,
+  );
+});
+
+test('drops onto won reveal the Conferma panel and post nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(boardRecords());
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+  const wonColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'won');
+  await wonColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without Conferma');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  const question = card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question');
+  assert.ok(question.textContent.includes('come Won?'), `the confirm names the won label (${question.textContent})`);
+  assert.ok(question.textContent.includes('Deal a'), 'the confirm names the offer');
+  assert.equal(card.__reason.getAttribute('class'), 'hidden', 'no reason input for a won move');
+});
+
+test('Vinta asks Conferma from Sposta, then posts; Annulla posts nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(boardRecords());
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  card.__select.value = 'won';
+  await card.__move();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'Sposta to won posts nothing before Conferma');
+  await card.__confirm();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, postsBefore + 1, 'Conferma posts once');
+  assert.equal(posts.at(-1).path, '/api/modules/opportunity/records/a/actions/move-stage');
+  assert.deepEqual(JSON.parse(posts.at(-1).body), { toStage: 'won', fromStage: 'discovery' }, 'no reason rides a won move');
+
+  // Annulla drops the pending move: nothing posts.
+  const fresh = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  fresh.__select.value = 'lost';
+  await fresh.__move();
+  fresh.__cancelConfirm();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore + 1, 'Annulla posts nothing');
 });
 
 test('hostile owner names render as inert option text', async () => {
@@ -943,7 +999,9 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'richiesta' }));
   const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   assert.equal(fresh.__reason.getAttribute('class'), '', 'the reason input is revealed');
-  assert.match(fresh.findAll('small')[0].textContent, /motivo della perdita/, 'the reason prompt is Italian');
+  const confirmQuestion = fresh.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question');
+  assert.match(confirmQuestion.textContent, /Segnare «Offerta A» come Persa\?/, 'the confirm names the offer and the label');
+  assert.match(confirmQuestion.textContent, /motivo della perdita/, 'the reason prompt is Italian');
   assertNoEnglish('after lost reveal');
 
   // Lista: headers and the empty-filter message.
@@ -1242,4 +1300,141 @@ test('Nuova offerta voices stay honest without shell seams (C3)', async () => {
   newOfferButton(menu).dispatch('click');
   newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
   assert.ok(toasts.some((message) => message.includes('manuale')), 'manual voice says it cannot create instead of writing');
+});
+
+/**
+ * Voce 96e7b579: a card opens and edits importo, data di chiusura and
+ * referente. Apri reads the rendered record (Valore, Chiusura,
+ * Referente); Modifica swaps it for the three inputs prefilled from the
+ * record; Salva PATCHes the offer; Annulla drops the edits. The board
+ * re-renders from the server after a save, so the card shows the saved
+ * values, never an optimistic copy.
+ */
+function editableClient(records, { failPatch } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path === '/api/schema') {
+        return {
+          pipelineContract: 1,
+          pipelines: [{
+            pipelineContract: 1,
+            name: 'b2b-sales',
+            label: 'B2B Sales',
+            module: 'opportunity',
+            defaultStage: 'discovery',
+            stages: [
+              { key: 'discovery', label: 'Discovery', order: 10, type: 'open', probability: 10 },
+              { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
+            ],
+          }],
+        };
+      }
+      if (path.startsWith('/api/opportunities/')) {
+        if (options.method === 'PATCH') {
+          if (failPatch) throw Object.assign(new Error(failPatch.message), failPatch);
+          const record = records.find((candidate) => `/api/opportunities/${candidate.id}` === path);
+          Object.assign(record, JSON.parse(options.body));
+          return { ...record };
+        }
+        return { ...records.find((candidate) => `/api/opportunities/${candidate.id}` === path) };
+      }
+      return { items: records };
+    },
+  };
+}
+
+function openCard(mount, id) {
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === id);
+  card.__open();
+  return mount.findAll('div').find((n) => n.getAttribute('data-record') === id);
+}
+
+test('Apri reads the card facts; Modifica edits them through PATCH', async () => {
+  const records = [record('a', 'discovery', {
+    name: 'Cucina per Giulia', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20T00:00:00.000Z', owner: 'maria',
+  })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const client = editableClient(records);
+  const board = createPipelineBoard({ doc, mount, client, toast: (message) => toasts.push(String(message)) });
+  await board.renderBoard('b2b-sales');
+
+  // Closed until opened: no detail on the painted card.
+  assert.ok(!mount.textContent.includes('Referente:'), 'the detail stays shut until Apri');
+  const opened = openCard(mount, 'a');
+  assert.ok(opened.textContent.includes('Valore:'), 'Apri reads the valore');
+  assert.ok(opened.textContent.includes('2026-11-20'), 'Apri reads the chiusura');
+  assert.ok(opened.textContent.includes('maria'), 'Apri reads the referente');
+
+  // Modifica prefills from the record; Salva PATCHes the three fields.
+  opened.__edit();
+  const editing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.equal(editing.__editInputs.value.value, '27500.00', 'the valore prefills in euro');
+  assert.equal(editing.__editInputs.expiry.value, '2026-11-20', 'the chiusura prefills as a day');
+  assert.equal(editing.__editInputs.owner.value, 'maria', 'the referente prefills');
+  editing.__editInputs.value.value = '300.50';
+  editing.__editInputs.expiry.value = '2026-12-01';
+  editing.__editInputs.owner.value = 'guido';
+  await editing.__save({ preventDefault() {} });
+
+  const patches = client.calls.filter((call) => call.method === 'PATCH');
+  assert.equal(patches.length, 1, 'one PATCH on Salva');
+  assert.equal(patches[0].path, '/api/opportunities/a');
+  assert.deepEqual(
+    JSON.parse(patches[0].body),
+    { valueCents: 30050, expectedCloseDate: '2026-12-01', owner: 'guido' },
+    'euro text becomes integer cents; the date and referente travel verbatim',
+  );
+  assert.ok(toasts.some((message) => message.includes('Offerta aggiornata.')), 'the save toasts in Italian');
+  assert.ok(mount.textContent.includes('guido'), 'the re-rendered card shows the saved referente');
+});
+
+test('the card edit validates before writing and keeps the form on a refused save', async () => {
+  const records = [record('a', 'discovery', { valueCents: 100000, owner: 'maria' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = editableClient(records, { failPatch: { message: 'boom', status: 500 } });
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const opened = openCard(mount, 'a');
+  opened.__edit();
+  const editing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  editing.__editInputs.value.value = 'not-a-number';
+  editing.__editInputs.owner.value = '';
+  await editing.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH on invalid input');
+  assert.ok(editing.__editError.textContent.includes('euro'), 'the euro rule is explained');
+
+  // A refused save keeps the form with a friendly line, never a blank card.
+  editing.__editInputs.value.value = '200.00';
+  editing.__editInputs.owner.value = 'guido';
+  await editing.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 1, 'the valid retry PATCHes');
+  const stillEditing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.ok(stillEditing.__editInputs, 'the form stays open after a refused save');
+  assert.ok(stillEditing.__editError.textContent.includes('Riprova più tardi'), 'the failure stays friendly');
+});
+
+test('Annulla drops the edits without writing', async () => {
+  const records = [record('a', 'discovery', { valueCents: 100000, owner: 'maria' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = editableClient(records);
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const opened = openCard(mount, 'a');
+  opened.__edit();
+  const editing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  editing.__editInputs.owner.value = 'guido';
+  editing.__cancelEdit();
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'Annulla writes nothing');
+  assert.ok(mount.textContent.includes('maria'), 'the card still shows the stored referente');
+  assert.ok(!mount.textContent.includes('guido'), 'the dropped edit never paints');
 });
