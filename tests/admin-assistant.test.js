@@ -962,11 +962,28 @@ const SCHEDA_CARD = {
   subject: { resource: 'contact', id: 'c1' },
   name: 'Guido Presti',
   phone: { available: true, value: '+39 333 1234567' },
-  notes: { available: true, items: [{ id: 'n1' }, { id: 'n2' }] },
+  // Production shape: the card never serves notes (packages/customer-hub/src/card.js).
+  notes: { available: false, items: null },
 };
 
-const schedaClient = (card = SCHEDA_CARD) => stubClient({
+const SCHEDA_TIMELINE = {
+  customerTimelineContract: 1,
+  subject: { resource: 'contact', id: 'c1' },
+  entries: {
+    available: true,
+    count: 3,
+    truncated: false,
+    items: [
+      { entry: 'note', id: 'n1', body: 'Prima nota' },
+      { entry: 'message', id: 'm1' },
+      { entry: 'note', id: 'n2', body: 'Seconda nota' },
+    ],
+  },
+};
+
+const schedaClient = (card = SCHEDA_CARD, timeline = SCHEDA_TIMELINE) => stubClient({
   '/api/customer-hub/card/contact/c1': card,
+  '/api/customer-hub/timeline/contact/c1': timeline,
 });
 
 test('scheda-cliente: le due proposte leggono la scheda viva e citano la scheda', async () => {
@@ -979,8 +996,21 @@ test('scheda-cliente: le due proposte leggono la scheda viva e citano la scheda'
   assert.equal(phone.trace.reads.length, 1);
   assert.equal(phone.trace.reads[0].status, 'ok');
   const note = await runSuggestion(schedaClient(), 'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
+  // Only timeline entries with entry==='note' count: the message stays out.
   assert.ok(note.lines.join('\n').includes('Note registrate per Guido Presti: 2.'));
   assert.equal(note.unavailable.length, 0);
+  assert.deepEqual(note.trace.reads.map((read) => read.target), ['customer-hub/card', 'customer-hub/timeline']);
+});
+
+test('scheda-cliente: la cronologia troncata dichiara il minimo, non il totale', async () => {
+  const truncated = {
+    ...SCHEDA_TIMELINE,
+    entries: { ...SCHEDA_TIMELINE.entries, truncated: true },
+  };
+  const note = await runSuggestion(
+    schedaClient(SCHEDA_CARD, truncated),
+    'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
+  assert.ok(note.lines.join('\n').includes('Note registrate per Guido Presti: almeno 2 (cronologia troncata).'));
 });
 
 test('scheda-cliente: senza cliente nel contesto nessuna lettura, nessuna azione', async () => {
@@ -1003,9 +1033,11 @@ test('scheda-cliente: scheda illeggibile nominata, mai inventata', async () => {
     schedaClient({ ...SCHEDA_CARD, phone: { available: false, value: null } }),
     'bo04:scheda:cambia-telefono', { resource: 'contact', id: 'c1' });
   assert.ok(noPhone.lines.join('\n').includes('non ha un telefono collegato'));
+  // The timeline route is not served here, so the note count has no honest
+  // source even though the card itself reads fine.
+  const noTimeline = stubClient({ '/api/customer-hub/card/contact/c1': SCHEDA_CARD });
   const noNotes = await runSuggestion(
-    schedaClient({ ...SCHEDA_CARD, notes: { available: false, items: null } }),
-    'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
+    noTimeline, 'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
   assert.ok(noNotes.lines.join('\n').includes('non sono leggibili in questo spazio'));
 });
 
@@ -1023,7 +1055,10 @@ test('scheda-cliente: ogni azione collegata chiede conferma prima di toccare il 
       assert.ok(gated.confirmLabel.includes('Guido Presti'));
       assert.deepEqual(seen, [], 'nothing navigates without confirmation');
     }
-    assert.equal(client.calls.length, 1, 'the only request is the card read');
+    // The phone proposal reads the card only; the note proposal also reads
+    // the live timeline for the count, and nothing else.
+    const expectedCalls = suggestionId === 'bo04:scheda:aggiungi-nota' ? 2 : 1;
+    assert.equal(client.calls.length, expectedCalls, 'only the card and timeline reads run');
     const confirmed = await runAssistantAction(client, answer.actions[0], {
       navigate: () => {},
       confirmedActionId: answer.actions[0].id,

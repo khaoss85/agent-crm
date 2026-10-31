@@ -892,11 +892,37 @@ async function answerSchedaTelefono(client, customer) {
 }
 
 /**
+ * Read the live customer timeline behind a scheda proposal. Null when the
+ * server does not serve it — the proposal then names the missing read,
+ * never invents the notes the scheda itself renders from these entries.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {{ resource: string, id: string }} who
+ * @param {Array<TraceRead>} traceReads
+ */
+async function readSchedaTimeline(client, who, traceReads) {
+  try {
+    const body = await client.request(
+      `/api/customer-hub/timeline/${encodeURIComponent(who.resource)}/${encodeURIComponent(who.id)}`);
+    if (body !== null && typeof body === 'object') {
+      traceRead(traceReads, 'customer-hub/timeline', null, 'ok', 1);
+      return body;
+    }
+    traceRead(traceReads, 'customer-hub/timeline', null, 'invalid', 0);
+    return null;
+  } catch {
+    traceRead(traceReads, 'customer-hub/timeline', null, 'missing', 0);
+    return null;
+  }
+}
+
+/**
  * Voce d525f4aa48b2: «Aggiungi una nota: …» — the customer notes read from
- * the live card, with where to write one. The note itself is written only
- * in the scheda cronologia («Aggiungi nota», behind its own save); the
- * linked action only brings the operator back to the card, and being
- * customer-facing it confirms first.
+ * the live timeline (the same entries the scheda cronologia renders), with
+ * where to write one. The production card never serves notes (card.notes is
+ * always {available:false}), so a card-backed count would stay dead. The
+ * note itself is written only in the scheda cronologia («Aggiungi nota»,
+ * behind its own save); the linked action only brings the operator back to
+ * the card, and being customer-facing it confirms first.
  */
 async function answerSchedaNota(client, customer) {
   const answer = emptyAnswer('bo04:scheda:aggiungi-nota', 'Aggiungi una nota: …');
@@ -911,12 +937,15 @@ async function answerSchedaNota(client, customer) {
     return answer;
   }
   const name = shortText(card?.name, 60) || 'Il cliente';
-  const notes = card?.notes;
-  if (notes?.available === true) {
-    const count = Array.isArray(notes.items) ? notes.items.length : 0;
-    answer.lines.push(`Note registrate per ${name}: ${count}.`);
-  } else {
+  const timeline = await readSchedaTimeline(client, who, answer.trace.reads);
+  const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : null;
+  if (items === null) {
     answer.lines.push(`Le note di ${name} non sono leggibili in questo spazio.`);
+  } else {
+    const count = items.filter((item) => item?.entry === 'note').length;
+    answer.lines.push(timeline.entries.truncated === true
+      ? `Note registrate per ${name}: almeno ${count} (cronologia troncata).`
+      : `Note registrate per ${name}: ${count}.`);
   }
   answer.lines.push('Per scriverne una: cronologia → «Aggiungi nota». La nota resta nella cronologia, non viene inviata a nessuno.');
   answer.sources.push({
