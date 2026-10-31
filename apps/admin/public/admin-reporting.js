@@ -35,6 +35,35 @@ export const REPORTING_ROUTE = '#/reporting';
 export const REPORTING_CURRENCY = 'EUR';
 
 /**
+ * Legend of the three forecast band segments, as in the prototype
+ * («Chiuse / Probabili / Se chiudi tutto», spec checklist C13): fixed
+ * Italian labels, never data.
+ */
+export const FORECAST_LEGEND = Object.freeze(['Chiuse', 'Probabili', 'Se chiudi tutto']);
+
+/**
+ * On-track status of the forecast against the operator-set obiettivo
+ * (spec checklist C13: «✦ Sei in linea con l'obiettivo»). Pure: reached
+ * (closed + probable) versus target, all integer minor units. Returns the
+ * line text, or null when there is nothing honest to say (no target set,
+ * or a payload that did not carry integer amounts): the caller renders no
+ * line instead of inventing one. Only the on-track wording is the
+ * prototype's exact text; the gap wording below is plain Italian written
+ * for this screen.
+ * @param {{closedMinor?: unknown, probableMinor?: unknown, targetMinor?: unknown} | null | undefined} forecast
+ * @param {string} [currency]
+ */
+export function forecastStatus(forecast, currency = REPORTING_CURRENCY) {
+  if (forecast === null || forecast === undefined || typeof forecast !== 'object') return null;
+  const { closedMinor, probableMinor, targetMinor } = forecast;
+  if (!Number.isInteger(closedMinor) || !Number.isInteger(probableMinor)) return null;
+  if (targetMinor === null || targetMinor === undefined) return null;
+  if (!Number.isInteger(targetMinor) || targetMinor < 0) return null;
+  if (closedMinor + probableMinor >= targetMinor) return '✦ Sei in linea con l\u2019obiettivo';
+  return `✦ Ti mancano ${formatMoney(targetMinor - closedMinor - probableMinor, currency)} per l\u2019obiettivo`;
+}
+
+/**
  * Channel names and bar colors of the "Nuovi clienti per canale" card, as in
  * the prototype. Colors read the :root tokens (never literals, per the
  * authority-tokens contract) and paint through inline `background:var(--…)`,
@@ -540,10 +569,36 @@ export function createReportingView(deps) {
       band.appendChild(marker);
     }
     panel.appendChild(band);
+    // Legend of the three band segments, as in the prototype (C13): each
+    // label carries its segment's own swatch, so the chart stays readable
+    // where styles fail. Same dot idiom as the channel card.
+    const legend = el(doc, 'div', { class: 'actions' });
+    const swatches = [
+      'background:var(--accord);',
+      'background:var(--accord);opacity:0.45;',
+      'background:repeating-linear-gradient(45deg,var(--stripe) 0 6px,transparent 6px 12px);',
+    ];
+    FORECAST_LEGEND.forEach((label, index) => {
+      const dot = el(doc, 'span');
+      dot.setAttribute('style', `display:inline-block;width:10px;height:10px;border-radius:99px;${swatches[index]}`);
+      const item = el(doc, 'span', { text: label });
+      item.setAttribute('style', 'margin-right:14px;font-size:13px;');
+      const wrap = el(doc, 'span');
+      wrap.appendChild(dot);
+      wrap.appendChild(item);
+      legend.appendChild(wrap);
+    });
+    panel.appendChild(legend);
     panel.appendChild(el(doc, 'p', {
       class: 'forecast-total',
       text: `Chiuse ${formatMoney(forecast.closedMinor, model.currency)} · probabili +${formatMoney(forecast.probableMinor, model.currency)} · se chiudi tutto +${formatMoney(forecast.bestMinor, model.currency)}`,
     }));
+    // On-track status against the obiettivo (C13): rendered only when the
+    // payload carries integer amounts and a target, never invented.
+    const status = forecastStatus(forecast, model.currency);
+    if (status !== null) {
+      panel.appendChild(el(doc, 'p', { class: 'lede', text: status }));
+    }
     // The heuristic badge is the acceptance contract: the number below is
     // arithmetic over history, never a promise.
     panel.appendChild(el(doc, 'p', { class: 'lede', text: `✦ ${forecast.label}: ${forecast.method}` }));
