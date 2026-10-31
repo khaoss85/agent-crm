@@ -254,7 +254,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
     ['calendario', ['days:', 'events:', 'lede:', 'filled:']],
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
-    ['spazi-accessi', ['spaces:', 'members:', 'switches:']],
+    ['spazi-accessi', ['spaces:', 'members:', 'switches:', 'stats:', 'apri:']],
     ['connettori', ['rows:', 'previews:', 'flows:']],
   ]);
   for (const [name, fields] of probes) {
@@ -325,8 +325,35 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('connettori', { rows: 8, previews: 8, flows: 8 }));
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));
   assert.doesNotThrow(() => assertProbe('spazi-accessi', {
-    spaces: 3, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2, switches: 5,
+    spaces: 3,
+    here: 'Stai lavorando qui',
+    members: 2,
+    avatars: 2,
+    pills: 2,
+    switches: 5,
+    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
+    apri: 1,
   }));
+  assert.throws(() => assertProbe('spazi-accessi', {
+    spaces: 3,
+    here: 'Stai lavorando qui',
+    members: 2,
+    avatars: 2,
+    pills: 2,
+    switches: 5,
+    stats: ['2 canali · 2 persone · 3 clienti'],
+    apri: 1,
+  }), /stats/);
+  assert.throws(() => assertProbe('spazi-accessi', {
+    spaces: 3,
+    here: 'Stai lavorando qui',
+    members: 2,
+    avatars: 2,
+    pills: 2,
+    switches: 5,
+    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
+    apri: 0,
+  }), /Apri/);
   assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
   assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
   assert.throws(() => assertProbe('oggi', null), /not a JSON object/);

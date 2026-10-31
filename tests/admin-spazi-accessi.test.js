@@ -673,6 +673,24 @@ test('the card statistic qualifies the organization-wide numbers', async () => {
   assert.match(stats[0].getAttribute('title') ?? '', /organizzazione/, 'the title qualifies the org-wide numbers');
 });
 
+test('Apri on another space picks it and goes back to Oggi; the active card never offers Apri', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const spaces = [
+    { id: 'spazio-1', name: 'Negozio', initials: 'NE' },
+    { id: 'spazio-2', name: 'Palestra', initials: 'PA' },
+  ];
+  const { mount, seen, view: v } = view({ client: stubClient({ members }), spaces, active: 'spazio-1' });
+  await v.render();
+  await flush();
+  const openers = mount.findAll('button').filter((node) => node.textContent === 'Apri');
+  assert.equal(openers.length, 1, 'one Apri: on the non-active card only');
+  assert.match(text(mount), /Stai lavorando qui/, 'the active card marks where you work');
+  await openers[0].listeners.click[0]();
+  await flush();
+  assert.deepEqual(seen.picked, ['spazio-2'], 'picking switches to the other space');
+  assert.deepEqual(seen.navigated, ['#/'], 'picking goes back to Oggi');
+});
+
 test('the dashed new-space box stays last and opens the verbatim C20 menu', async () => {
   // specs/account.md C11 + C20 (fetta 5): riquadro after the cards, menu with
   // the two verbatim voices and subtitles. Picking a voice invents nothing:

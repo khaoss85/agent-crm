@@ -1033,6 +1033,9 @@ document.title = 'stato-sync-ready';`;
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 const SPACES = ${JSON.stringify(DEMO_SPACES)};
 const MEMBERS = ${JSON.stringify(DEMO_MEMBERS)};
+// The proof exercises the wired production path (app.js passes onPickSpace
+// and serves the same reads): connectors and the exact customer total paint
+// the C7 statistic on both cards, and the non-active card paints «Apri».
 const client = {
   async request(path, options) {
     const opts = options || {};
@@ -1045,6 +1048,12 @@ const client = {
     if (path.indexOf('/api/space-permissions/effective') === 0) {
       return { spaceId: 'spazio-1', overrides: [] };
     }
+    if (path.indexOf('/api/connectors') === 0) {
+      return { connectors: [{ status: 'active' }, { status: 'active' }, { status: 'revoked' }] };
+    }
+    if (path.indexOf('/api/customer-data/customers') === 0) {
+      return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
+    }
     throw new Error('unexpected ' + path);
   },
 };
@@ -1054,16 +1063,19 @@ const view = createSpaziAccessiView({
   client,
   spaces: function () { return SPACES; },
   activeSpaceId: function () { return 'spazio-1'; },
+  onPickSpace: function () {},
 });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  spaces: document.querySelectorAll('.bo-spazi-card').length,
-  here: document.querySelector('.bo-spazi-here')
-    ? document.querySelector('.bo-spazi-here').textContent : null,
-  members: document.querySelectorAll('.bo-spazi-member').length,
-  avatars: document.querySelectorAll('.bo-spazi-avatar').length,
-  pills: document.querySelectorAll('.bo-spazi-role').length,
-  switches: document.querySelectorAll('button[role="switch"]').length,
+  spaces: document.querySelectorAll('#view-module .bo-spazi-card').length,
+  here: document.querySelector('#view-module .bo-spazi-here')
+    ? document.querySelector('#view-module .bo-spazi-here').textContent : null,
+  members: document.querySelectorAll('#view-module .bo-spazi-member').length,
+  avatars: document.querySelectorAll('#view-module .bo-spazi-avatar').length,
+  pills: document.querySelectorAll('#view-module .bo-spazi-role').length,
+  switches: document.querySelectorAll('#view-module button[role="switch"]').length,
+  stats: Array.from(document.querySelectorAll('#view-module .bo-spazi-stat'), (node) => node.textContent),
+  apri: Array.from(document.querySelectorAll('#view-module button')).filter((node) => node.textContent === 'Apri').length,
 });
 document.title = 'spazi-accessi-ready';`;
     case 'connettori': return `
@@ -1458,6 +1470,17 @@ export function assertProbe(name, probe) {
       if (probe.spaces !== 3) throw new Error(`spazi-accessi: the probe holds ${String(probe.spaces)} spaces, expected 3`);
       if (probe.members !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.members)} members, expected 2`);
       if (probe.switches !== 5) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 5`);
+      // C7: both cards paint the real statistic (2 active connectors,
+      // 2 rendered members, exact total 3). A card that cannot count paints
+      // no row, so the gate requires both rows here.
+      const stats = Array.isArray(probe.stats) ? probe.stats : [];
+      const expectedStat = '2 canali · 2 persone · 3 clienti';
+      if (stats.length !== 2 || stats.some((stat) => stat !== expectedStat)) {
+        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected two ${JSON.stringify(expectedStat)}`);
+      }
+      // The non-active card paints «Apri» (the wired production path passes
+      // onPickSpace); the active card marks «Stai lavorando qui» instead.
+      if (probe.apri !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.apri)} Apri buttons, expected 1`);
       return;
     }
     case 'connettori': {

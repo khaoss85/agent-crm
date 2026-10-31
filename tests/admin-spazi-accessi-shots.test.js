@@ -122,6 +122,7 @@ const view = createSpaziAccessiView({
   client: client,
   spaces: function () { return SPACES; },
   activeSpaceId: function () { return 'spazio-1'; },
+  onPickSpace: function () {},
 });
 await view.render();
 const panels = document.querySelector('.bo-spazi-panels');
@@ -143,6 +144,8 @@ const probe = {
   pillText: document.querySelector('.bo-spazi-role')
     ? document.querySelector('.bo-spazi-role').textContent : null,
   switches: document.querySelectorAll('button[role="switch"]').length,
+  stats: Array.from(document.querySelectorAll('.bo-spazi-stat'), (node) => node.textContent),
+  apri: Array.from(document.querySelectorAll('button')).filter((node) => node.textContent === 'Apri').length,
   panelsDirection: panels ? getComputedStyle(panels).flexDirection : null,
   teamTop: teamRect ? Math.round(teamRect.top) : null,
   aiTop: aiRect ? Math.round(aiRect.top) : null,
@@ -274,6 +277,8 @@ test('the spazi screen renders in a real browser: desktop PNG, team and AI side 
   assert.equal(probe.avatars, 2, 'every member has an avatar');
   assert.equal(probe.pills, 2, 'every member has a role pill');
   assert.equal(probe.switches, 5, 'the five AI switches render');
+  assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], 'both cards paint the real C7 statistic');
+  assert.equal(probe.apri, 1, 'the non-active card paints Apri, the active one marks Stai lavorando qui');
   assert.equal(probe.panelsDirection, 'row', 'team and AI panels share one row on desktop');
   assert.equal(probe.teamTop, probe.aiTop, 'team and AI panels start on the same row');
   const shot = pngSize(out);
@@ -289,6 +294,8 @@ test('the spazi screen renders in a real browser: phone PNG without sideways scr
   const probe = readProbe(dom);
   assert.equal(probe.members, 2, 'the phone render holds the team');
   assert.equal(probe.switches, 5, 'the phone render holds the five AI switches');
+  assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], 'the phone render holds both card statistics');
+  assert.equal(probe.apri, 1, 'the phone render holds Apri on the non-active card');
   assert.equal(probe.panelsDirection, 'column', 'the panels stack in one column on the phone');
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
   const shot = pngSize(out);
