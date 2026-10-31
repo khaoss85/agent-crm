@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createCustomerCardView,
+  mergeLinkedIdentities,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
 } from '../apps/admin/public/admin-customer-card.js';
@@ -515,6 +516,64 @@ test('voce 908f2eb9bbfb: with the timeline in error the scheda keeps the card an
   assert.ok(text.includes('Guido Presti'), 'the name still shows');
   assert.ok(text.includes('Tutti i contatti'), 'the timeline section stays');
   assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
+});
+
+test('826e377c review giro-6: with the timeline in error the identities name the failure, never zero channels', async () => {
+  // The review on head f1ed030c (P1): linkedIdentities merged null on a
+  // timeline failure (zero rows), so the zero-row branch printed
+  // 'nessun canale osservato' beside the failure notice — a failed read
+  // claiming knowledge of zero channels. The section now names the failure
+  // and stops: no count, no empty claim, no rows.
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ timelineError: failure }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Identità collegate'), 'the identities section stays');
+  assert.ok(
+    text.includes('I canali osservati non si sono potuti leggere. Riprova più tardi.'),
+    'the observed read names the failure instead of merging in silence',
+  );
+  // The number still reads in Contatti (the card's own phone field), so the
+  // absence checks scope to the Identità collegate section.
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'a failed observed read claims no zero channels');
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no observed row renders on a failed read');
+  assert.ok(!sectionText.includes('guido.presti'), 'no observed handle renders on a failed read');
+  assert.ok(!text.includes('503'), 'no raw status on screen');
+});
+
+test('826e377c review giro-7: a truncated timeline names a partial list, never an exact count', async () => {
+  // The review on head 3c77ca1 (P2): mergeLinkedIdentities ignored the
+  // timeline truncation flags, so a customer with a channel beyond the page
+  // read an exact «N canali». The section now renders the page it read and
+  // names it partial.
+  const mount = await renderCard(stubClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, truncated: true, count: 9 } },
+  }));
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(sectionText.includes('3 canali (elenco parziale)'), 'the partial page names itself partial, not exact');
+  assert.ok(sectionText.includes('+39 333 1234567'), 'the read rows still render');
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'a partial read never claims zero channels');
+});
+
+test('826e377c review giro-7: a null timeline names unavailability, never zero channels', async () => {
+  // A 404 timeline (the package is not composed for this reader) loads as
+  // null with no error: the section used to merge null to zero rows and
+  // print «nessun canale osservato» — a false zero for a read that never
+  // happened. It now names its state and stops.
+  const mount = await renderCard(stubClient({ timeline: null }));
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(
+    sectionText.includes('I canali osservati non sono disponibili.'),
+    'an unavailable observed read names its state',
+  );
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'an unavailable read claims no zero channels');
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no observed row renders without a timeline');
 });
 
 test('voce 908f2eb9bbfb: with enrichment or calls in error only that section names the failure', async () => {
@@ -1121,23 +1180,35 @@ test('an unreadable quotes section reads unavailable in Italian, never a confirm
     'an empty opportunities read never proves there are no quotes');
 });
 
-// Voce 59def6cb805d (C10): Identità collegate conta i canali osservati e
-// mostra una riga per canale con sigla e recapito, mai chiavi grezze o UUID.
+// Voce 59def6cb805d (C10), unita a 826e377c: Identità collegate conta i
+// canali osservati e mostra una riga per canale con sigla e recapito, mai
+// chiavi grezze o UUID. Le righe detenute e quelle osservate sui messaggi si
+// fondono: lo stesso recapito in due forme non fa due righe.
 test('59def6cb805d: the identities section counts channels with one row each (C10)', async () => {
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
-  assert.ok(text.includes('2 canali'), 'the header counts the observed channels');
+  // Observed WhatsApp +39 333 1234567 and Instagram guido.presti read one
+  // row each, while the phone call on the same number is its own system.
+  // Held identities are not listed here (owner split: read-only section).
+  assert.ok(text.includes('3 canali'), 'the header counts the merged channels');
   const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
     && node.getAttribute('class') === 'bo-scheda-identity');
-  assert.equal(rows.length, 2, 'one row per observed channel');
+  assert.equal(rows.length, 3, 'one row per merged identity');
   assert.ok(text.includes('+39 333 1234567'), 'the WhatsApp handle reads as value');
   assert.ok(text.includes('guido.presti'), 'the Instagram handle reads as value');
 });
 
 // Voce 59def6cb805d (C10): i sistemi senza etichetta italiana e gli UUID non
-// vanno mai su schermo.
+// vanno mai su schermo — gli osservati sui messaggi; i detenuti non si
+// leggono in questa sezione (owner split: solo osservate).
 test('59def6cb805d: unlabelled systems and UUID handles never reach the screen (C10)', async () => {
+  const emptyTimeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: { available: true, count: 0, truncated: false, items: [] },
+  };
   const mount = await renderCard(stubClient({
+    timeline: emptyTimeline,
     profile: {
       ...PROFILE,
       externalIdentities: [
@@ -1167,13 +1238,199 @@ test('59def6cb805d: the union note carries the recorded motivation (C11)', async
 
 // Voce 59def6cb805d (C11): scheda non unita o senza motivazione, nessuna nota.
 test('59def6cb805d: no union note is invented without a linked union (C11)', async () => {
-  const mount = await renderCard(stubClient({ profile: PROFILE_BARE }));
+  const silentTimeline = {
+    ...TIMELINE_BARE,
+    entries: { available: true, count: 0, truncated: false, items: [] },
+  };
+  const mount = await renderCard(stubClient({ profile: PROFILE_BARE, timeline: silentTimeline }));
   assert.deepEqual(
     mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-union-note'),
     [],
     'an unlinked record shows no union note',
   );
   assert.ok(mount.textContent.includes('nessun canale osservato'), 'and no channel is claimed');
+});
+
+// Voce 826e377c: Ada Rossi ha messaggi WhatsApp (+39 000 000 001) e
+// Instagram (@ada-rossi.esempio) nella cronologia ma nessuna identità
+// detenuta: Identità collegate elenca il numero e l'handle osservati, con il
+// canale, invece di «nessun canale osservato».
+test('826e377c: observed WhatsApp number and Instagram handle list with no held identities', async () => {
+  const adaTimeline = {
+    ...TIMELINE,
+    conversations: {
+      available: true, count: 2, truncated: false, unthreadedMessages: 0, unthreadedCalls: 0,
+      items: [
+        { channel: 'whatsapp', peer: '+39 000 000 001' },
+        { channel: 'instagram', peer: '@ada-rossi.esempio' },
+      ],
+    },
+    entries: {
+      available: true, count: 2, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno, vorrei una prova', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+        {
+          entry: 'message', id: 'm-ig', conversationId: 't-ig', channel: 'instagram', direction: 'inbound',
+          sync: 'received', body: 'Quanto costa il pacchetto?', teamAuthorId: null,
+          remoteHandle: '@ada-rossi.esempio', errorCode: null, occurredAt: '2026-10-20T11:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline: adaTimeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('nessun canale osservato'), 'messages name their channels, never an empty claim');
+  assert.ok(text.includes('2 canali'), 'the header counts the two observed channels');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed identity');
+  assert.equal(rows[0].getAttribute('data-channel'), 'whatsapp');
+  assert.equal(rows[0].getAttribute('data-source'), 'observed');
+  assert.equal(rows[1].getAttribute('data-channel'), 'instagram');
+  assert.equal(rows[1].getAttribute('data-source'), 'observed');
+  assert.ok(text.includes('+39 000 000 001'), 'the WhatsApp number reads as value');
+  assert.ok(text.includes('@ada-rossi.esempio'), 'the Instagram handle reads as value');
+  const held = rows.filter((node) => node.getAttribute('data-source') === 'held');
+  assert.deepEqual(held, [], 'no held row is invented from messages alone');
+});
+
+test('826e377c review giro-5: a call with no handle still names its channel', () => {
+  // Review on head 23aac0b6 (P2 card.js:305): the list CANALI column counts
+  // calls, but the merge only kept timeline evidence with a handle — a
+  // calls-only customer read phone in the list and «nessun canale osservato»
+  // on the scheda. The union is authoritative: a handle-less channel lists
+  // as a display-only observed row, never an invented handle.
+  const merged = mergeLinkedIdentities({
+    conversations: { items: [{ channel: 'phone', peer: null }] },
+    entries: {
+      items: [
+        { entry: 'call', channel: 'phone', remoteHandle: null, occurredAt: '2026-10-21T10:00:00.000Z' },
+      ],
+    },
+  });
+  assert.equal(merged.rows.length, 1, 'one row for the handle-less phone channel');
+  assert.equal(merged.rows[0].system, 'phone');
+  assert.equal(merged.rows[0].externalId, null, 'no handle is invented');
+  assert.equal(merged.rows[0].source, 'observed');
+  assert.equal(merged.channelCount, 1);
+});
+
+test('826e377c review giro-5: the handle-less channel renders without Collega', async () => {
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 1 },
+    entries: {
+      available: true, count: 1, truncated: false,
+      items: [
+        {
+          entry: 'call', id: 'k-1', conversationId: null, channel: 'phone', direction: 'inbound',
+          sync: 'completed', durationSec: 120, teamAuthorId: null,
+          remoteHandle: null, errorCode: null, occurredAt: '2026-10-21T10:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('nessun canale osservato'), 'a calls-only customer names its channel');
+  assert.ok(text.includes('senza identificativo'), 'the handle-less channel reads honestly');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 1, 'one row for the handle-less phone channel');
+  assert.equal(rows[0].getAttribute('data-channel'), 'phone');
+  const buttons = mount.findAll('button').filter((node) => node.textContent === 'Collega');
+  assert.deepEqual(buttons, [], 'no Collega without a handle to link');
+});
+
+test('826e377c: every labeled observed channel lists read-only, with no buttons', () => {
+  // Owner split: manual Collega/Scollega is a follow-up voce, so the section
+  // lists every labeled channel from the messages and offers no action.
+  const merged = mergeLinkedIdentities({
+    conversations: { items: [] },
+    entries: {
+      items: [
+        { channel: 'whatsapp', remoteHandle: '+39 000 000 001' },
+        { channel: 'sms', remoteHandle: '+39 000 000 002' },
+        { channel: 'gmail', remoteHandle: 'ada.rossi@example.it' },
+      ],
+    },
+  });
+  assert.equal(merged.rows.length, 3, 'one row per observed channel');
+  const byChannel = Object.fromEntries(merged.rows.map((row) => [row.system, row]));
+  for (const system of ['whatsapp', 'sms', 'gmail']) {
+    assert.equal(byChannel[system].source, 'observed');
+    assert.ok(!('linked' in byChannel[system]), `${system} carries no linked flag`);
+    assert.ok(!('linkable' in byChannel[system]), `${system} carries no linkable flag`);
+  }
+});
+
+test('826e377c: held identities are not listed in the read-only section', async () => {
+  // Owner split: the section reads only observed identities. Held rows stay
+  // in the profile and in the Clienti CANALI column, never here.
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE_BARE,
+      externalIdentities: [
+        { system: 'whatsapp', externalId: '+39 000 000 001' },
+        { system: 'sms', externalId: '+39000000002' },
+      ],
+    },
+    timeline: {
+      ...TIMELINE,
+      conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+      entries: { available: true, count: 0, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('nessun canale osservato'), 'held rows alone name no observed channel');
+  assert.ok(!text.includes('+39 000 000 001'), 'no held handle leaks into the section');
+  const buttons = mount.findAll('button')
+    .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
+  assert.deepEqual(buttons, [], 'no link buttons without the follow-up voce');
+});
+
+test('826e377c: observed rows on any labeled channel render with no buttons', async () => {
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: {
+      available: true, count: 2, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+        {
+          entry: 'message', id: 'm-sms', conversationId: 't-sms', channel: 'sms', direction: 'inbound',
+          sync: 'received', body: 'Ci vediamo domani', teamAuthorId: null,
+          remoteHandle: '+39 000 000 002', errorCode: null, occurredAt: '2026-10-20T10:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('+39 000 000 002'), 'the sms channel still lists, display-only');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed identity');
+  const buttons = mount.findAll('button')
+    .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
+  assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
 test('a customer with no linked offer reads none registered, never another customer offer', async () => {

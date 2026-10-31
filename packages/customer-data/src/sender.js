@@ -47,6 +47,17 @@ export const CHANNEL_SYSTEMS = Object.freeze([
   'whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone',
 ]);
 
+/**
+ * Systems a held identity row may carry besides the sender vocabulary
+ * above (backlog:826e377c): imports accept any lowercase system identifier,
+ * so legacy rows (sms, gmail, outlook, voice, tel, mobile, messenger,
+ * calendar, web, form) exist and are held. Manual Collega/Scollega was
+ * split into a follow-up voce by the owner (this PR keeps only the read of
+ * observed identities); when it returns, its unlink gate must accept every
+ * system a held row can carry, not just the sender vocabulary.
+ * (Kept as a comment: no code reads this list while link/unlink is out.)
+ */
+
 /** Provenance for identities and candidates this resolution writes: it runs outside any import run. */
 export const SENDER_RUN_ID = 'channel-sender';
 
@@ -61,7 +72,7 @@ const PHONE_SEPARATOR_RE = /[ .\-()/]/g;
  *
  * @param {unknown} error
  */
-function isWinnerConflict(error) {
+export function isWinnerConflict(error) {
   if (error instanceof ConflictError) return true;
   if (error instanceof Error) {
     if (error.message.includes('UNIQUE constraint failed')) return true;

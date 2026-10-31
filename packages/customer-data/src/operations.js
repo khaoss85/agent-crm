@@ -5,16 +5,15 @@ import { createBulkRunner } from './bulk.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
-  CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
-  CUSTOMER_VIEWS, applyCustomerListQuery, filterCustomerRows, parseCustomerListQuery, shapeCustomerRow,
+  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, channelWordsIn, filterCustomerRows,
+  parseCustomerListQuery, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
-import {
-  createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
-} from './sender.js';
+import { createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -45,6 +44,11 @@ import { ENRICHABLE_FIELDS } from './enrichment.js';
  */
 
 /** @param {any} runtime @param {any} registries */
+/**
+ * Manual identity link/unlink (backlog:826e377c) was split into a follow-up
+ * voce by the owner: this PR keeps only the read of observed identities.
+ */
+
 export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
@@ -342,6 +346,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       const { origins, undated } = aggregateChannelOrigins(rows);
       return Object.freeze({ origins, undated });
     },
+
   };
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
@@ -549,6 +554,20 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     }
   }
 
+  // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
+  // is only exact when both the message and the call scans are readable and
+  // complete. A partial or unreadable scan must not feed an exact-looking
+  // channel filter: a canale-filtered query refuses, and shaped rows carry
+  // the shortfall in channelsComplete instead of an exact union.
+  const observedComplete = messages.readable === true && messages.complete !== false
+    && calls.readable === true && calls.complete !== false;
+  const channelFiltered = query.canale !== 'all' || channelWordsIn(query.q ?? '').length > 0;
+  if (channelFiltered && observedComplete !== true) {
+    const missing = messages.readable !== true || messages.complete === false
+      ? 'interaction-message' : 'interaction-call';
+    throw new AppError(`the canale filter needs the ${missing} records, which are not readable here`, { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+
   // A derived view over an unreadable dependency refuses with its reason,
   // never with an exact-looking empty page: the two derived views need the
   // work and subscription packages, and without them "no renewals" would be
@@ -613,6 +632,20 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    // The channels observed on this customer's own messages and calls, read
+    // from the rows already in hand (backlog:826e377c): no new query, only
+    // on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
+    // enforces, so the observed half never names a channel its own filter
+    // refuses. The held half stays unfiltered (every system main listed,
+    // including legacy sms/gmail/voice): the CANALI union is held plus
+    // in-filter observed, not the scheda section's observed-only display
+    // vocabulary — see shapeCustomerRow. When either scan behind the
+    // observed half is partial or unreadable, the union is best effort and
+    // the row says so in channelsComplete (canale-filtered queries already
+    // refused above).
+    const observedChannels = [...new Set(myMessages
+      .map((row) => String(row?.channel ?? '').toLowerCase())
+      .filter((channel) => CUSTOMER_CHANNELS.includes(channel)))].sort();
     let lastContactAt = null;
     let lastContactChannel = null;
     // The preview is the latest message body read above — calls name no
@@ -635,6 +668,8 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const budgetSignal = mySignals[0] ?? null;
     return shapeCustomerRow({ contact, company }, {
       identitiesBySubject,
+      observedChannelsBySubject: new Map(observedChannels.length === 0 ? [] : [[key, observedChannels]]),
+      observedComplete,
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {

@@ -561,6 +561,9 @@ export function buildRouter(app) {
     return await app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
+  // Manual channel identity link/unlink (backlog:826e377c) was split into a
+  // follow-up voce by the owner: this PR keeps only the read of observed
+  // identities, so the link and unlink routes return with that voce.
   router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerProfile !== 'function') {

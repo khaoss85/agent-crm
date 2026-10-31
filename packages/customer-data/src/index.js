@@ -183,6 +183,12 @@ export function createCustomerDataPackage(options = {}) {
           return (request) => senders.resolveChannelSender(request);
         },
       },
+      // Manual link/unlink (backlog:826e377c) was split into a follow-up voce
+      // by the owner: this PR keeps only the read of observed identities.
+      // The follow-up re-adds the link-customer-identity and
+      // unlink-customer-identity capabilities with the open findings
+      // (card dedupe keyed by stored sourceKey, subject re-check inside the
+      // committing transaction) as acceptance criteria.
       {
         operationContract: 1,
         name: 'apply-bulk-customer-action',

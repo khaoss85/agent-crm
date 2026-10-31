@@ -258,6 +258,106 @@ const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase
  */
 const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
 
+/** Identity systems whose handle is a phone number once display separators are stripped. */
+const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', 'tel', 'mobile']);
+
+/**
+ * Manual Collega/Scollega (backlog:826e377c) was split into a follow-up voce
+ * by the owner: this PR keeps only the read of observed identities, so the
+ * card offers no link buttons. When the follow-up returns, its Collega gate
+ * mirrors `CHANNEL_SYSTEMS` in packages/customer-data/src/sender.js and its
+ * Scollega gate accepts every system a held row can carry (imports accept
+ * any lowercase system identifier, e.g. sms, gmail, voice), not just the
+ * sender vocabulary.
+ */
+
+/**
+ * List the channels observed on the customer's own messages (voce 826e377c,
+ * read-only since the owner split manual Collega/Scollega into a follow-up
+ * voce): one row per (system, handle). Rows come from the timeline the
+ * scheda already loads — thread peers and entry remote handles, inbound and
+ * outbound alike naming the customer — with the same honesty filter the
+ * section always applied (Italian label only, no UUID handles). One number
+ * in two display forms reads as one row (separators stripped on phone-like
+ * systems, lowercased email), since no action depends on the key anymore.
+ * Email appears when observed on the email channel — the contact record
+ * email stays in Dettagli, not here. Held identities stay in the profile
+ * and in the Clienti CANALI column, not in this section. Evidence that
+ * names no handle (a call from an unknown number, a thread with no peer)
+ * still counts as an observed channel — a display-only row with no handle,
+ * never an invented one — instead of a silent under-count. A timeline
+ * without readable conversations/entries sections (a 404 null, a foreign
+ * shape) merges to available:false, never to an empty channel list; a
+ * truncated section merges its page with complete:false, never an exact
+ * count — the section names the shortfall instead.
+ * @param {any} timeline the read-customer-timeline answer
+ */
+export function mergeLinkedIdentities(timeline) {
+  const rows = [];
+  const seen = new Set();
+  const dedupeKey = (system, externalId) => {
+    const value = String(externalId);
+    if (PHONE_LIKE_SYSTEMS.includes(system)) return `${system}|${value.replace(/[ .\-()/]/g, '')}`;
+    if (system === 'email' || system === 'gmail' || system === 'outlook') return `${system}|${value.toLowerCase()}`;
+    return `${system}|${value}`;
+  };
+  const push = (system, externalId) => {
+    const key = dedupeKey(system, externalId);
+    if (seen.has(key)) return;
+    seen.add(key);
+    rows.push(Object.freeze({ system, externalId: String(externalId), source: 'observed' }));
+  };
+  // Review giro-7 on 826e377c (P2 head 3c77ca1): the merge honors the
+  // timeline's own availability and truncation flags before claiming a
+  // count. A null timeline (honest 404: the package is not composed) or a
+  // shape without readable sections is unavailable, never an empty list;
+  // a truncated section is a partial page, never an exact total.
+  const sections = timeline != null && typeof timeline === 'object' ? timeline : null;
+  const threads = Array.isArray(sections?.conversations?.items) ? sections.conversations.items : null;
+  const entries = Array.isArray(sections?.entries?.items) ? sections.entries.items : null;
+  const available = threads !== null && entries !== null;
+  const truncated = available
+    && (sections.conversations?.truncated === true || sections.entries?.truncated === true);
+  // Every labeled channel the timeline names, with or without a handle: a
+  // channel observed without a handle still reads here (as a handle-less
+  // row below), never as a silent under-count. The list CANALI column shares
+  // the in-filter observed channels with these rows and adds every held
+  // identity system — the two surfaces overlap, they are not one union.
+  const seenChannels = new Set();
+  if (available) {
+    for (const thread of threads) {
+      const system = String(thread?.channel ?? '').toLowerCase();
+      if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
+      seenChannels.add(system);
+      if (typeof thread?.peer !== 'string' || thread.peer.trim() === '') continue;
+      if (isUuid(thread.peer)) continue;
+      push(system, thread.peer);
+    }
+    for (const entry of entries) {
+      const system = String(entry?.channel ?? '').toLowerCase();
+      if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
+      seenChannels.add(system);
+      if (typeof entry?.remoteHandle !== 'string' || entry.remoteHandle.trim() === '') continue;
+      if (isUuid(entry.remoteHandle)) continue;
+      push(system, entry.remoteHandle);
+    }
+    // Channels observed without any handle (a call from an unknown number, a
+    // thread with no peer): one display-only row per channel, with no handle
+    // to link. The display vocabulary is wider than the list filter's, so an
+    // observed legacy channel reads here while CANALI skips it.
+    for (const system of [...seenChannels].sort()) {
+      if (rows.some((row) => row.system === system)) continue;
+      rows.push(Object.freeze({ system, externalId: null, source: 'observed' }));
+    }
+  }
+  return Object.freeze({
+    rows: Object.freeze(rows),
+    channelCount: new Set(rows.map((row) => row.system)).size,
+    available,
+    complete: available && !truncated,
+  });
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
@@ -479,7 +579,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(row);
   }
 
-  function linkedIdentities(box, profile, profileError = null) {
+  function linkedIdentities(box, profile, timeline, profileError = null, timelineError = null) {
     // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
     // label and a role label, never a bare id or UUID. The English cluster
     // note stays in the API response, never on screen.
@@ -490,6 +590,10 @@ export function createCustomerCardView(deps) {
     // (`↔ sincronizzato` / `← in entrata`) is NOT printed here because the
     // profile carries no connector direction — that needs the
     // channel-connection exposure of arch fetta 3, noted in the PR.
+    // Voce 826e377c, read-only since the owner split manual Collega/Scollega
+    // into a follow-up voce: the rows list only the channels observed on the
+    // customer's own messages (the timeline the scheda already loads), so
+    // messages list their number, handle or address with no buttons.
     box.appendChild(el('h4', undefined, 'Identità collegate'));
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too — hiding it would read as "no identities", which is a
@@ -503,25 +607,41 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
       return;
     }
-    const rawIdentities = Array.isArray(profile?.externalIdentities) ? profile.externalIdentities : [];
-    const channelRows = rawIdentities.filter((row) => {
-      const system = String(row?.system ?? '').toLowerCase();
-      if (ownLabel(CHANNEL_LABELS, system) === undefined) return false;
-      if (typeof row?.externalId !== 'string' || row.externalId.trim() === '') return false;
-      return !isUuid(row.externalId);
-    });
-    const systems = new Set(channelRows.map((row) => String(row.system).toLowerCase()));
+    // Voce 826e377c review giro-6 (P1 head f1ed030c): a timeline read
+    // failure must not claim knowledge of zero channels — merging null
+    // yields zero rows and the zero-row branch would print 'nessun canale
+    // osservato' beside the failure notice. The section names the failure
+    // and stops: no count, no empty claim, no rows.
+    if (timelineError) {
+      readError(box, timelineError, 'I canali osservati non si sono potuti leggere. Riprova più tardi.');
+      return;
+    }
+    const merged = mergeLinkedIdentities(timeline);
+    // Voce 826e377c review giro-7 (P2 head 3c77ca1): the count is exact
+    // only on a complete read. An unavailable timeline (honest 404: the
+    // package is not composed) names its state instead of zero channels;
+    // a truncated page names itself partial instead of an exact total.
+    if (merged.available !== true) {
+      box.appendChild(el('p', 'bo-muted', 'I canali osservati non sono disponibili.'));
+      return;
+    }
+    const count = merged.channelCount;
     box.appendChild(el('p', 'bo-muted',
-      channelRows.length === 0
+      merged.rows.length === 0
         ? 'nessun canale osservato'
-        : `${systems.size} ${systems.size === 1 ? 'canale' : 'canali'}`));
-    for (const row of channelRows) {
-      const system = String(row.system).toLowerCase();
+        : (merged.complete === true
+          ? `${count} ${count === 1 ? 'canale' : 'canali'}`
+          : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
+    for (const row of merged.rows) {
+      const { system } = row;
       const line = el('p', 'bo-scheda-identity');
       line.setAttribute('data-channel', system);
+      line.setAttribute('data-source', row.source);
       const known = Object.hasOwn(CARD_CHANNEL_MARKS, system);
       line.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? system : 'other'}`, known ? CARD_CHANNEL_MARKS[system] : '·'));
-      line.appendChild(el('span', undefined, ` ${channelLabel(system)} · ${String(row.externalId)}`));
+      line.appendChild(el('span', undefined, row.externalId == null
+        ? ` ${channelLabel(system)} · senza identificativo`
+        : ` ${channelLabel(system)} · ${row.externalId}`));
       box.appendChild(line);
     }
     const members = Array.isArray(cluster.members) ? cluster.members : [];
@@ -1287,7 +1407,7 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     section(left, '', quickActions, card, { resource, id });
-    section(left, '', linkedIdentities, profile, profileError);
+    section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
     if (timelineError) {
