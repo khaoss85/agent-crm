@@ -56,6 +56,7 @@ export const CHANNEL_ADAPTER_CONTRACT = 1;
 export const CHANNELS = Object.freeze([
   'whatsapp',
   'instagram',
+  'telegram',
   'facebook',
   'tiktok',
   'sms',

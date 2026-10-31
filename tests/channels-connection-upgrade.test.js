@@ -14,28 +14,26 @@ import {
 } from '../packages/core/src/record-module-runtime.js';
 
 /**
- * channel-connection revision 3 adopts main's revision 2 (backlog:ffce3d1cd636).
+ * channel-connection revision 4 adopts revision 3 (backlog:2a5651e1933d).
  *
- * Main already shipped revision 2 (the grantExpiresAt column, another PR,
- * already in production), while this branch added the calendar/stripe enum
- * as its own revision 2. The realignment keeps main's revision 2 as history
- * and ships this branch's change as revision 3. Every suite that composes
- * revision 3 on an empty table proves the manifest parses — not that a
+ * Revision 3 added the calendar/stripe enum (backlog:ffce3d1cd636);
+ * revision 4 widens the same enum with telegram. Every suite that composes
+ * revision 4 on an empty table proves the manifest parses — not that a
  * database main migrated keeps its rows. So this test migrates a genuine
- * revision-2 database (the checked-in history entry, byte-identical to
- * main's manifest), stores a connection through the revision-2 service,
- * applies only the revision-3 evolution, and proves the row survived and
- * the new enum values register.
+ * revision-2 database (the checked-in history entry), stores a connection
+ * through the revision-2 service, applies the revision-3 and revision-4
+ * evolutions, and proves the row survived and the new enum values
+ * register.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
 const modulesDir = join(here, '..', 'packages', 'channels', 'modules');
 const history = JSON.parse(readFileSync(join(modulesDir, 'channel-connection.history.json'), 'utf8'));
 const rev2 = history.previousManifests[1];
-const rev3 = JSON.parse(readFileSync(join(modulesDir, 'channel-connection.module.json'), 'utf8'));
+const rev4 = JSON.parse(readFileSync(join(modulesDir, 'channel-connection.module.json'), 'utf8'));
 
 assert.equal(rev2.revision, 2);
-assert.equal(rev3.revision, 3);
+assert.equal(rev4.revision, 4);
 
 function serviceFor(database, manifest) {
   const audit = new AuditLog(database);
@@ -43,7 +41,7 @@ function serviceFor(database, manifest) {
   return createRecordModuleFromManifest(manifest, { database, audit, events, references: {} }).service;
 }
 
-test('a revision-2 database adopts revision 3 without losing its connections', async (t) => {
+test('a revision-2 database adopts revision 4 without losing its connections', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'channel-connection-upgrade-'));
   t.after(() => {
     try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
@@ -80,16 +78,18 @@ test('a revision-2 database adopts revision 3 without losing its connections', a
   }, { actor: { type: 'user', id: 'upgrade-kit' } });
   assert.equal(stored.channel, 'whatsapp');
 
-  // Phase 2: only the revision-3 evolution runs — the bootstrap and the
-  // revision-2 evolution are already recorded, exactly like the ledger.
-  const rev3Migrations = recordModuleMigrations([{ name: 'channel-connection', manifest: rev3 }]);
-  const pending = rev3Migrations.filter((migration) => !applied.has(migration.name));
-  assert.equal(pending.length, 1);
+  // Phase 2: the revision-3 and revision-4 evolutions run — the bootstrap
+  // and the revision-2 evolution are already recorded, exactly like the
+  // ledger.
+  const rev4Migrations = recordModuleMigrations([{ name: 'channel-connection', manifest: rev4 }]);
+  const pending = rev4Migrations.filter((migration) => !applied.has(migration.name));
+  assert.equal(pending.length, 2);
   assert.match(pending[0].name, /_r3$/);
-  database.raw.exec(pending[0].sql);
+  assert.match(pending[1].name, /_r4$/);
+  for (const migration of pending) database.raw.exec(migration.sql);
 
   // The old row survived byte-for-byte, and the new enum values register.
-  const after = serviceFor(database, rev3);
+  const after = serviceFor(database, rev4);
   const rows = after.listWhere({ sourceKey: 'wa:presti:+390200000099' });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].account, '+390200000099');
@@ -109,4 +109,19 @@ test('a revision-2 database adopts revision 3 without losing its connections', a
     createdBy: 'upgrade-kit',
   }, { actor: { type: 'user', id: 'upgrade-kit' } });
   assert.equal(added.channel, 'stripe');
+  const telegram = await after.createManaged({
+    sourceKey: 'telegram:presti:445001122',
+    spaceId: 'presti',
+    channel: 'telegram',
+    account: '445001122',
+    adapter: 'telegram-bot',
+    adapterVersion: 1,
+    adapterFingerprint: 'fake',
+    status: 'pending',
+    statusReason: 'kit',
+    secretRef: 'vault://presti/telegram-a',
+    secretRotatedAt: '2026-10-01T10:00:00.000Z',
+    createdBy: 'upgrade-kit',
+  }, { actor: { type: 'user', id: 'upgrade-kit' } });
+  assert.equal(telegram.channel, 'telegram');
 });

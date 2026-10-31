@@ -4,17 +4,17 @@
   "goal": {
     "id": "activate-support-and-manage-cases",
     "statement": "Activate premium support from what the customer already bought, enforce response targets, and manage a support case from first report to close.",
-    "outcome": "A support team that can see exactly what each customer is covered for, refuse work nobody bought, and hold defensible evidence of when it responded \u2014 without anyone claiming a signature, a bill or a customer login that does not exist."
+    "outcome": "A support team that can see exactly what each customer is covered for, refuse work nobody bought, and hold defensible evidence of when it responded — without anyone claiming a signature, a bill or a customer login that does not exist."
   },
   "metric": {
     "name": "share_of_cases_with_a_recorded_first_response_inside_target",
     "definition": "Proportion of support cases whose recorded first response is at or before the elapsed-time target on their entitlement, over cases opened in the period.",
-    "baseline": "unknown \u2014 see evidence entry unavailable.no-prior-case-history",
+    "baseline": "unknown — see evidence entry unavailable.no-prior-case-history",
     "target": "stated by the support organization; this plan does not invent one"
   },
   "application": {
     "inspectionContract": 1,
-    "inspectionFingerprint": "89d4f1713e1bb0a74eb3d45f4ff99fde17dbf04c0dbe868ce8729127e66a1b74",
+    "inspectionFingerprint": "e3d85d2d7eb580c6346e37f1b60a90be1fd62f77ecfa8eb8367f762bd52021e8",
     "packages": [
       {
         "name": "contracts",

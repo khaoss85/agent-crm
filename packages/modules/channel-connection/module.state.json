@@ -1,11 +1,11 @@
 {
   "stateVersion": 2,
   "module": "channel-connection",
-  "revision": 3,
-  "fingerprint": "a37812680fa623864f697736d523ce35d5e8ef9f8a4a90f4a5193e72f69789da",
+  "revision": 4,
+  "fingerprint": "922483cf075d125c6ac16cd0b59f7d4c8e2b5e4b249143c662b804363b6f318b",
   "manifest": {
     "manifestVersion": 1,
-    "revision": 3,
+    "revision": 4,
     "name": "channel-connection",
     "description": "One channel account bound to one space (backlog:e5532d1c9146). Read-only publicly: every field is managed, so a connection exists only through the package's register operation and changes only through its audited actions. The secret itself is never stored here — only the reference the deployment's secret resolver understands.",
     "table": "channel_connections",
@@ -45,7 +45,8 @@
           "voice",
           "site-form",
           "calendar",
-          "stripe"
+          "stripe",
+          "telegram"
         ],
         "classification": "non-personal"
       },
@@ -154,6 +155,11 @@
       "name": "create_channel_connections",
       "checksum": "64af6c70e065b58ca41f600139ecb27470d1190a261c0459a0dd66b3274c0bba",
       "sql": "CREATE TABLE IF NOT EXISTS channel_connections (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  channel TEXT CHECK(channel IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form', 'calendar', 'stripe')),\n  account TEXT,\n  adapter TEXT,\n  adapter_version INTEGER,\n  adapter_fingerprint TEXT,\n  status TEXT CHECK(status IN ('pending', 'active', 'suspended', 'revoked')),\n  status_reason TEXT,\n  secret_ref TEXT,\n  secret_rotated_at TEXT,\n  grant_expires_at TEXT,\n  created_by TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS channel_connections_space_id ON channel_connections(space_id);\nCREATE INDEX IF NOT EXISTS channel_connections_account ON channel_connections(account);\nCREATE INDEX IF NOT EXISTS channel_connections_status ON channel_connections(status);\n"
+    },
+    {
+      "name": "evolve_channel_connections_r4",
+      "checksum": "b97c9efcb2341f57c7917aaad3dd69321dc66fbe54272d5e96dd6abfc11449e1",
+      "sql": "CREATE TABLE channel_connections__evolve__r4 (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  channel TEXT CHECK(channel IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form', 'calendar', 'stripe', 'telegram')),\n  account TEXT,\n  adapter TEXT,\n  adapter_version INTEGER,\n  adapter_fingerprint TEXT,\n  status TEXT CHECK(status IN ('pending', 'active', 'suspended', 'revoked')),\n  status_reason TEXT,\n  secret_ref TEXT,\n  secret_rotated_at TEXT,\n  grant_expires_at TEXT,\n  created_by TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nINSERT INTO channel_connections__evolve__r4 (id, source_key, space_id, channel, account, adapter, adapter_version, adapter_fingerprint, status, status_reason, secret_ref, secret_rotated_at, grant_expires_at, created_by, created_at, updated_at) SELECT id, source_key, space_id, channel, account, adapter, adapter_version, adapter_fingerprint, status, status_reason, secret_ref, secret_rotated_at, grant_expires_at, created_by, created_at, updated_at FROM channel_connections;\nDROP TABLE channel_connections;\nALTER TABLE channel_connections__evolve__r4 RENAME TO channel_connections;\nCREATE INDEX IF NOT EXISTS channel_connections_space_id ON channel_connections(space_id);\nCREATE INDEX IF NOT EXISTS channel_connections_account ON channel_connections(account);\nCREATE INDEX IF NOT EXISTS channel_connections_status ON channel_connections(status);\n"
     }
   ],
   "postgres": {
@@ -166,6 +172,12 @@
         "fingerprint": "a37812680fa623864f697736d523ce35d5e8ef9f8a4a90f4a5193e72f69789da"
       }
     },
-    "evolutions": []
+    "evolutions": [
+      {
+        "name": "pg_evolve_channel_connections_r4",
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nALTER TABLE \"accordo\".\"channel_connections\" DROP CONSTRAINT IF EXISTS \"channel_connections_channel_check\";\nALTER TABLE \"accordo\".\"channel_connections\" ADD CONSTRAINT \"channel_connections_channel_check\" CHECK (\"channel\" IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form', 'calendar', 'stripe', 'telegram'));\n",
+        "checksum": "f2befde27b5f2f261c9a7b0547199db7dd49322266564b2814ec03bceaa38497"
+      }
+    ]
   }
 }

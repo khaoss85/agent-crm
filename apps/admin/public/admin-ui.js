@@ -34,7 +34,7 @@ export const UI_BUTTON_VARIANTS = Object.freeze(['primary', 'cta', 'secondary', 
 export const UI_AUTHORITIES = Object.freeze(['agent', 'pending', 'human', 'evidence', 'accord', 'data']);
 
 /** Channel chips of the prototype: IG WA TEL @ CAL S FB TT WEB (Form sito). */
-export const UI_CHANNELS = Object.freeze(['IG', 'WA', 'TEL', '@', 'CAL', 'S', 'FB', 'TT', 'WEB']);
+export const UI_CHANNELS = Object.freeze(['IG', 'WA', 'TEL', '@', 'CAL', 'S', 'FB', 'TT', 'WEB', 'TG']);
 
 const CHANNEL_TINT = Object.freeze({
   IG: 'ui-chip-ig',
@@ -46,6 +46,7 @@ const CHANNEL_TINT = Object.freeze({
   FB: 'ui-chip-fb',
   TT: 'ui-chip-tt',
   WEB: 'ui-chip-web',
+  TG: 'ui-chip-tg',
 });
 
 /**

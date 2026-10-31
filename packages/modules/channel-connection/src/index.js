@@ -24,7 +24,7 @@ export const channelConnectionModuleDefinition = Object.freeze({
   fields: Object.freeze([
     {"name":"sourceKey","type":"string","required":false,"unique":true,"writable":"managed"},
     {"name":"spaceId","type":"string","required":false,"unique":false,"writable":"managed","classification":"non-personal"},
-    {"name":"channel","type":"enum","required":false,"unique":false,"writable":"managed","values":["whatsapp","instagram","facebook","tiktok","sms","email","voice","site-form","calendar","stripe"],"classification":"non-personal"},
+    {"name":"channel","type":"enum","required":false,"unique":false,"writable":"managed","values":["whatsapp","instagram","facebook","tiktok","sms","email","voice","site-form","calendar","stripe","telegram"],"classification":"non-personal"},
     {"name":"account","type":"string","required":false,"unique":false,"writable":"managed","classification":"identification"},
     {"name":"adapter","type":"string","required":false,"unique":false,"writable":"managed","classification":"non-personal"},
     {"name":"adapterVersion","type":"integer","required":false,"unique":false,"writable":"managed","classification":"non-personal"},

@@ -315,6 +315,10 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['DM, risposte alle storie e commenti ai post.', 'di Meta · ↔ bidirezionale']),
       },
       {
+        key: 'telegram', label: 'Telegram', chip: 'TG', channel: 'telegram',
+        lines: Object.freeze(['Messaggi da chat e bot Telegram.', 'di Telegram · ↔ bidirezionale']),
+      },
+      {
         key: 'facebook', label: 'Facebook', chip: 'FB', channel: 'facebook',
         lines: Object.freeze(['Messenger e lead dalle inserzioni.', 'di Meta · ↔ bidirezionale']),
       },

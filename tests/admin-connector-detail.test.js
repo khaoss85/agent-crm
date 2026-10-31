@@ -98,6 +98,7 @@ test('without a connection every section says so on the same null key', () => {
 
 test('inbound-only channels refuse sends honestly, sms declares no direction', () => {
   assert.equal(directionOf('whatsapp'), 'in-out');
+  assert.equal(directionOf('telegram'), 'in-out');
   assert.equal(directionOf('tiktok'), 'in-only');
   assert.equal(directionOf('sms'), null);
   const tiktok = detailSections({

@@ -92,7 +92,7 @@ export class ChannelConnectionService {
       channelConnection.spaceId = patch.spaceId === null ? null : requiredString(patch.spaceId, 'spaceId');
     }
     if (Object.hasOwn(patch, 'channel')) {
-      channelConnection.channel = patch.channel === null ? null : enumValue(patch.channel, ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form", "calendar", "stripe"], 'channel');
+      channelConnection.channel = patch.channel === null ? null : enumValue(patch.channel, ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form", "calendar", "stripe", "telegram"], 'channel');
     }
     if (Object.hasOwn(patch, 'account')) {
       channelConnection.account = patch.account === null ? null : requiredString(patch.account, 'account');
@@ -249,7 +249,7 @@ export class ChannelConnectionService {
         changes.spaceId = value;
       }
       if (Object.hasOwn(patch, 'channel')) {
-        const value = patch.channel === null ? null : enumValue(patch.channel, ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form", "calendar", "stripe"], 'channel');
+        const value = patch.channel === null ? null : enumValue(patch.channel, ["whatsapp", "instagram", "facebook", "tiktok", "sms", "email", "voice", "site-form", "calendar", "stripe", "telegram"], 'channel');
         assignments.push({ column: 'channel', value: value });
         changes.channel = value;
       }
