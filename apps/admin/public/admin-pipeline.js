@@ -21,10 +21,12 @@
 // the highest-value open offer. A stima, never a commitment.
 // Cards move through the same server `move-stage` action as the Move button,
 // including drag-and-drop onto a column: the drop posts { toStage, fromStage }
-// with the actor audited server-side (the action runtime records it). A drop
-// onto the lost stage does not invent a reason: it reveals the card's reason
-// input and asks for one before posting. The Lista rows are read-only; moves
-// happen on Kanban cards.
+// with the actor audited server-side (the action runtime records it). A move
+// to a won or lost stage — from Sposta or a drop — never posts straight:
+// it reveals the card's Conferma panel (Persa adds the mandatory reason
+// input) and only Conferma posts. The Lista rows are read-only; moves
+// happen on Kanban cards. Apri opens a card to read and edit its three
+// commercial facts (importo, chiusura, referente) through PATCH.
 //
 // BO-F6-10 fetta Lista (backlog:31bed527): testi esatti C7/C16/C21, intestazioni
 // C19 nell'ordine del prototipo, pill di stato con pallino e percentuale di
@@ -134,6 +136,27 @@ export function createPipelineBoard(deps) {
   let filteredPipeline = null;
   /** Record id → live card controls (reason reveal on drops to lost). */
   const cardNodes = new Map();
+  /** Record ids with the detail section open (Apri) or being edited. */
+  const expandedCards = new Set();
+  const editingCards = new Set();
+  /** Record id → pending won/lost move awaiting Conferma. */
+  const pendingConfirm = new Map();
+
+  /** Euro text to integer cents, or null when not a plain non-negative amount. */
+  function parseEuroToCents(raw) {
+    const text = String(raw ?? '').trim().replace(',', '.');
+    if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
+    const cents = Math.round(Number(text) * 100);
+    return Number.isSafeInteger(cents) ? cents : null;
+  }
+
+  /** PATCH the three fields the card edits — never a stage or customer move. */
+  async function patchOffer(recordId, patch) {
+    return client.request(
+      `/api/opportunities/${encodeURIComponent(recordId)}`,
+      { method: 'PATCH', body: JSON.stringify(patch) },
+    );
+  }
   /** Live stage columns of the current render: drop and dragend sweep their
    * drop-target hook, so a cancelled drag never leaves a column marked. */
   const columnNodes = [];
@@ -172,8 +195,9 @@ export function createPipelineBoard(deps) {
   /**
    * Drop handler for a column: same server action as the Move button, with
    * the actor audited server-side. Same-stage drops are ignored (the server
-   * would 409 SAME_STAGE); drops onto lost without a reason reveal the
-   * card's reason input instead of posting.
+   * would 409 SAME_STAGE); drops onto a won or lost stage never post
+   * directly — they reveal the card's Conferma panel (with the mandatory
+   * reason input for lost), like the Sposta button.
    */
   async function handleDrop(pipeline, toStage, payload) {
     let parsed;
@@ -193,16 +217,12 @@ export function createPipelineBoard(deps) {
     }
     const target = pipeline.stages.find((stage) => stage.key === toStage);
     if (!target) return;
-    if (target.type === 'lost') {
-      const controls = cardNodes.get(recordId);
-      if (controls) {
-        controls.select.value = toStage;
-        controls.reasonInput.setAttribute('class', '');
-        controls.errorNode.textContent = 'Scrivi il motivo della perdita, poi premi Sposta.';
-        controls.errorNode.setAttribute('class', 'field-error');
-        if (typeof controls.reasonInput.focus === 'function') controls.reasonInput.focus();
-      } else {
-        toast('Per la perdita serve un motivo — apri prima la card.', true);
+    if (target.type === 'won' || target.type === 'lost') {
+      const revealed = revealConfirm(pipeline, record, fromStage, toStage);
+      if (!revealed) {
+        toast(target.type === 'lost'
+          ? 'Per la perdita serve un motivo — apri prima la card.'
+          : 'Per la vittoria serve conferma — apri prima la card.', true);
       }
       return;
     }
@@ -259,6 +279,12 @@ export function createPipelineBoard(deps) {
       state.created = '';
     }
     cached = { pipeline, pipelines: composed, records };
+    // A fresh server read may have moved the records: an open detail, an
+    // in-progress edit or a pending Conferma from the previous read is
+    // stale, never replayed onto the new truth.
+    expandedCards.clear();
+    editingCards.clear();
+    pendingConfirm.clear();
     return renderAll(token);
   }
 
@@ -911,6 +937,23 @@ export function createPipelineBoard(deps) {
       unmarkDropTargets();
     });
 
+    // Voce 96e7b579: Apri shows what the card is made of and edits the
+    // three commercial facts (importo, chiusura, referente) through the
+    // PATCH route — never a stage or customer move. Only the opportunity
+    // board offers it: a generated staged module has its own record
+    // screen behind its rows.
+    const editable = pipeline.module === 'opportunity';
+    if (editable) {
+      const opener = renderOfferOpener(pipeline, record);
+      card.appendChild(opener);
+      card.__open = opener.__toggle; // test hook
+      card.__edit = opener.__edit;
+      card.__save = opener.__save;
+      card.__cancelEdit = opener.__cancelEdit;
+      card.__editInputs = opener.__inputs;
+      card.__editError = opener.__error;
+    }
+
     // Terminal stages have no move control (server enforces it regardless).
     if (stage.type !== 'open') return card;
 
@@ -920,57 +963,271 @@ export function createPipelineBoard(deps) {
     const select = el(doc, 'select', { attrs: { id: selectId } });
     for (const target of pipeline.stages) {
       if (target.key === stage.key) continue;
-      // Reason for "lost" is collected via prompt-free minimal UX: the lost
-      // option is labeled so the requirement is visible; the reason input
-      // appears when selected.
       select.appendChild(el(doc, 'option', { text: target.label, attrs: { value: target.key } }));
     }
-    const reasonInput = el(doc, 'input', {
+    const moveButton = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button' } });
+    const errorNode = el(doc, 'small', { class: 'field-error hidden' });
+
+    // Voce 96e7b579: Vinta and Persa never post straight from Sposta or a
+    // drop. They reveal the Conferma panel — the question names the offer
+    // and the target label, Persa adds the mandatory reason input — and
+    // only Conferma posts the same move-stage action. Moves between open
+    // stages keep the direct post.
+    const confirmBox = el(doc, 'div', { class: 'card-confirm hidden' });
+    const confirmQuestion = el(doc, 'p', { class: 'confirm-question' });
+    const confirmReason = el(doc, 'input', {
       class: 'hidden',
       attrs: { type: 'text', placeholder: 'Motivo (obbligatorio per la perdita)', 'aria-label': 'Motivo di chiusura' },
     });
-    const lostStage = pipeline.stages.find((candidate) => candidate.type === 'lost');
-    select.addEventListener('change', () => {
-      const isLost = lostStage && select.value === lostStage.key;
-      reasonInput.setAttribute('class', isLost ? '' : 'hidden');
-    });
-    const moveButton = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button' } });
-    const errorNode = el(doc, 'small', { class: 'field-error hidden' });
+    const confirmYes = el(doc, 'button', { class: 'small primary', text: 'Conferma', attrs: { type: 'button' } });
+    const confirmNo = el(doc, 'button', { class: 'small secondary', text: 'Annulla', attrs: { type: 'button' } });
+    const confirmError = el(doc, 'small', { class: 'field-error hidden' });
+    confirmBox.appendChild(confirmQuestion);
+    confirmBox.appendChild(confirmReason);
+    confirmBox.appendChild(confirmYes);
+    confirmBox.appendChild(confirmNo);
+    confirmBox.appendChild(confirmError);
+
     let busy = false;
-    const submit = async () => {
+    const doPost = async (toStage, reason) => {
       if (busy) return;
       busy = true;
       moveButton.disabled = true;
       moveButton.setAttribute('aria-busy', 'true');
+      confirmYes.disabled = true;
       errorNode.textContent = '';
       errorNode.setAttribute('class', 'field-error hidden');
+      confirmError.textContent = '';
+      confirmError.setAttribute('class', 'field-error hidden');
       try {
-        const reason = lostStage && select.value === lostStage.key && reasonInput.value
-          ? reasonInput.value
-          : undefined;
-        await postMove(pipeline, record.id, stage.key, select.value, reason);
-        toast(`Spostata in ${stageLabel(pipeline, select.value)}.`);
+        await postMove(pipeline, record.id, stage.key, toStage, reason);
+        toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
         await renderBoard(pipeline.name); // re-render: server state is the truth
       } catch (error) {
         busy = false;
         moveButton.disabled = false;
         moveButton.setAttribute('aria-busy', 'false');
+        confirmYes.disabled = false;
         errorNode.textContent = moveFailureText(error);
         errorNode.setAttribute('class', 'field-error');
       }
     };
+    const confirm = async () => {
+      const pending = pendingConfirm.get(String(record.id));
+      if (!pending) return;
+      const target = pipeline.stages.find((candidate) => candidate.key === pending.toStage);
+      if (target && target.type === 'lost') {
+        const reason = String(confirmReason.value ?? '').trim();
+        if (!reason) {
+          confirmError.textContent = 'Scrivi il motivo della perdita, poi premi Conferma.';
+          confirmError.setAttribute('class', 'field-error');
+          return;
+        }
+        await doPost(pending.toStage, reason);
+        return;
+      }
+      await doPost(pending.toStage, undefined);
+    };
+    const cancelConfirm = () => {
+      pendingConfirm.delete(String(record.id));
+      confirmBox.setAttribute('class', 'card-confirm hidden');
+      select.value = stage.key;
+      renderAll(renderToken);
+    };
+    const submit = async () => {
+      if (busy) return;
+      errorNode.textContent = '';
+      errorNode.setAttribute('class', 'field-error hidden');
+      const toStage = select.value;
+      const target = pipeline.stages.find((candidate) => candidate.key === toStage);
+      if (target && (target.type === 'won' || target.type === 'lost')) {
+        revealConfirm(pipeline, record, stage.key, toStage);
+        return;
+      }
+      await doPost(toStage, undefined);
+    };
     moveButton.addEventListener('click', submit);
+    confirmYes.addEventListener('click', confirm);
+    confirmNo.addEventListener('click', cancelConfirm);
     controls.appendChild(label);
     controls.appendChild(select);
-    controls.appendChild(reasonInput);
     controls.appendChild(moveButton);
     controls.appendChild(errorNode);
     card.appendChild(controls);
-    cardNodes.set(String(record.id), { select, reasonInput, errorNode });
+    card.appendChild(confirmBox);
+    cardNodes.set(String(record.id), { select, errorNode, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError });
     card.__move = submit; // test hook
     card.__select = select;
-    card.__reason = reasonInput;
+    card.__reason = confirmReason;
+    card.__confirm = confirm;
+    card.__cancelConfirm = cancelConfirm;
     return card;
+  }
+
+  /**
+   * Voce 96e7b579: reveal the Conferma panel for a won/lost move — shared
+   * by the Sposta button and drops onto won/lost columns. The question
+   * names the offer and the target label; Persa shows the mandatory reason
+   * input. Answers false when the card has no live controls (a terminal
+   * card), so the caller can say so honestly instead of posting blind.
+   * @param {any} pipeline @param {Record<string, any>} record
+   * @param {string} fromStage @param {string} toStage
+   */
+  function revealConfirm(pipeline, record, fromStage, toStage) {
+    const controls = cardNodes.get(String(record.id));
+    if (!controls) return false;
+    const target = pipeline.stages.find((candidate) => candidate.key === toStage);
+    if (!target) return false;
+    pendingConfirm.set(String(record.id), { fromStage, toStage });
+    controls.select.value = toStage;
+    controls.confirmQuestion.textContent = target.type === 'lost'
+      ? `Segnare «${String(record.name ?? record.id)}» come ${target.label ?? toStage}? Scrivi il motivo della perdita, poi premi Conferma.`
+      : `Segnare «${String(record.name ?? record.id)}» come ${target.label ?? toStage}?`;
+    controls.confirmReason.value = '';
+    controls.confirmReason.setAttribute('class', target.type === 'lost' ? '' : 'hidden');
+    controls.confirmError.textContent = '';
+    controls.confirmError.setAttribute('class', 'field-error hidden');
+    controls.confirmBox.setAttribute('class', 'card-confirm');
+    if (typeof controls.confirmReason.focus === 'function' && target.type === 'lost') {
+      controls.confirmReason.focus();
+    }
+    return true;
+  }
+
+  /**
+   * Voce 96e7b579: the Apri toggle plus the detail/edit section of one
+   * card. Detail reads the record just rendered (Valore, Chiusura,
+   * Referente); Modifica swaps it for the three inputs; Salva validates
+   * like the Nuova offerta form (euro text, optional ISO date, mandatory
+   * referente) and PATCHes; Annulla drops the edits by re-reading the
+   * cached record, so nothing stale stays on screen. A refused save keeps
+   * the form with the server's Italian error, never a blank card.
+   * @param {any} pipeline @param {Record<string, any>} record
+   */
+  function renderOfferOpener(pipeline, record) {
+    const wrap = el(doc, 'div', { class: 'card-offer' });
+    const id = String(record.id);
+    const toggle = () => {
+      if (expandedCards.has(id)) {
+        expandedCards.delete(id);
+        editingCards.delete(id);
+      } else {
+        expandedCards.add(id);
+      }
+      renderAll(renderToken);
+    };
+    const open = el(doc, 'button', {
+      class: 'small secondary',
+      text: expandedCards.has(id) ? 'Chiudi' : 'Apri',
+      attrs: { type: 'button', 'data-action': 'open-offer' },
+    });
+    open.addEventListener('click', toggle);
+    wrap.appendChild(open);
+    wrap.__toggle = toggle; // test hook
+
+    if (!expandedCards.has(id)) return wrap;
+
+    const detail = el(doc, 'div', { class: 'card-detail' });
+    const row = (label, value) => {
+      const line = el(doc, 'p', { class: 'card-fact' });
+      line.appendChild(el(doc, 'span', { text: `${label}: ` }));
+      line.appendChild(el(doc, 'strong', { text: value }));
+      detail.appendChild(line);
+    };
+
+    if (!editingCards.has(id)) {
+      row('Valore', formatAmount(record.valueCents, record.currency));
+      row('Chiusura', dayOf(record.expectedCloseDate) ?? '—');
+      row('Referente', typeof record.owner === 'string' && record.owner ? record.owner : '—');
+      const edit = el(doc, 'button', {
+        class: 'small secondary', text: 'Modifica', attrs: { type: 'button', 'data-action': 'edit-offer' },
+      });
+      const startEdit = () => {
+        editingCards.add(id);
+        renderAll(renderToken);
+      };
+      edit.addEventListener('click', startEdit);
+      detail.appendChild(edit);
+      wrap.appendChild(detail);
+      wrap.__edit = startEdit; // test hook
+      return wrap;
+    }
+
+    // Edit form: the same euro/date/referente rules as Nuova offerta.
+    const form = el(doc, 'form', { class: 'card-edit' });
+    const errorNode = el(doc, 'small', { class: 'field-error hidden' });
+    form.appendChild(errorNode);
+    /** @type {Record<string, any>} */
+    const inputs = {};
+    const addField = (name, label, { type = 'text', value = '' } = {}) => {
+      const fieldRow = el(doc, 'div', { class: 'field-row' });
+      const inputId = `edit-${id}-${name}`;
+      fieldRow.appendChild(el(doc, 'label', { text: label, attrs: { for: inputId } }));
+      const input = el(doc, 'input', { attrs: { id: inputId, name, type } });
+      input.value = value;
+      fieldRow.appendChild(input);
+      form.appendChild(fieldRow);
+      inputs[name] = input;
+    };
+    addField('value', 'Valore EUR', {
+      value: Number.isSafeInteger(record.valueCents) ? (record.valueCents / 100).toFixed(2) : '',
+    });
+    addField('expiry', 'Chiusura', { type: 'date', value: dayOf(record.expectedCloseDate) ?? '' });
+    addField('owner', 'Referente', { value: typeof record.owner === 'string' ? record.owner : '' });
+
+    let busy = false;
+    const save = async (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      if (busy) return;
+      const cents = parseEuroToCents(inputs.value.value);
+      const owner = String(inputs.owner.value ?? '').trim();
+      const expiry = String(inputs.expiry.value ?? '').trim();
+      /** @type {Record<string, string>} */
+      const failures = {};
+      if (cents === null) failures.value = "Il valore è obbligatorio, in euro (es. 250.00).";
+      if (owner === '') failures.owner = 'Il referente è obbligatorio.';
+      if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
+      if (Object.keys(failures).length > 0) {
+        errorNode.textContent = Object.values(failures)[0];
+        errorNode.setAttribute('class', 'field-error');
+        return;
+      }
+      busy = true;
+      try {
+        await patchOffer(id, {
+          valueCents: cents,
+          expectedCloseDate: expiry === '' ? null : expiry,
+          owner,
+        });
+        editingCards.delete(id);
+        toast('Offerta aggiornata.');
+        await renderBoard(pipeline.name); // re-render: server state is the truth
+      } catch (error) {
+        busy = false;
+        errorNode.textContent = humanReadError(error, { failed: 'Modifica non riuscita. Riprova più tardi.' });
+        errorNode.setAttribute('class', 'field-error');
+      }
+    };
+    const cancelEdit = () => {
+      editingCards.delete(id);
+      renderAll(renderToken);
+    };
+    form.addEventListener('submit', save);
+    const saveButton = el(doc, 'button', { class: 'small primary', text: 'Salva', attrs: { type: 'submit' } });
+    const cancelButton = el(doc, 'button', {
+      class: 'small secondary', text: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-edit' },
+    });
+    cancelButton.addEventListener('click', cancelEdit);
+    form.appendChild(saveButton);
+    form.appendChild(cancelButton);
+    detail.appendChild(form);
+    wrap.appendChild(detail);
+    wrap.__edit = () => {};
+    wrap.__save = save; // test hook
+    wrap.__cancelEdit = cancelEdit;
+    wrap.__inputs = inputs;
+    wrap.__error = errorNode;
+    return wrap;
   }
 
   return { renderBoard };
