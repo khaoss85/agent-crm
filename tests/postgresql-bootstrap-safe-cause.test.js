@@ -211,3 +211,33 @@ test('a corrupt driver row inside the data transaction is wrapped by the inner c
     },
   );
 });
+
+// backlog:86652c075724: every refused or failed composition used to leak the
+// pools whose storage was never created (each WRITER_LEASE_HELD refusal left
+// a data pool with four idle connections until the process exited). The
+// failure path now ends them; this test fails if it stops doing so.
+test('a failed composition ends every pool, including one whose storage was never created', async () => {
+  const ended = [];
+  const countingPool = (name, client) => ({
+    connect: async () => client,
+    end: async () => { ended.push(name); },
+    on: () => {},
+  });
+  const controlPool = countingPool('control', okClient());
+  const dataPool = countingPool('data', scriptedClient(async (sql) => {
+    if (sql.startsWith('SELECT version, name, checksum')) return { rows: [null] };
+    return { rows: [] };
+  }));
+  await assert.rejects(
+    () => bootstrapPostgresqlApplication({
+      control: { host: 'db.test', port: 5432, database: 'accordo_control', user: 'u', password: 'p' },
+      data: { host: 'db.test', port: 5432, database: 'accordo', user: 'u', password: 'p' },
+      tenantId: 'acme',
+      identityVerifier: createTestVerifier({ tenantId: 'acme' }),
+      createPool: async (endpoint) => (endpoint.database === 'accordo_control' ? controlPool : dataPool),
+    }),
+    (error) => error.code === 'STORAGE_UNAVAILABLE',
+  );
+  assert.ok(ended.includes('control'), `the control pool is ended, saw [${ended.join(', ')}]`);
+  assert.ok(ended.includes('data'), `the data pool is ended even though no data storage was created, saw [${ended.join(', ')}]`);
+});

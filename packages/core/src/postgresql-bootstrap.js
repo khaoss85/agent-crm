@@ -604,6 +604,23 @@ async function rollbackQuietly(client) {
   try { await client.query('ROLLBACK'); } catch { /* primary wins */ }
 }
 
+/**
+ * Close one bootstrap side on the failure path. A storage that was never
+ * created cannot close its pool, so the pool is ended here: without this,
+ * every refused or failed composition (for example each WRITER_LEASE_HELD
+ * refusal, which fails before any data storage exists) leaks its pool —
+ * four idle connections per attempt — until the process exits.
+ */
+async function closePostgresqlPoolForStorage(storage, pool) {
+  if (storage != null) {
+    try {
+      await storage.close();
+      return;
+    } catch { /* fall through: the pool itself may still be open */ }
+  }
+  try { await pool?.end(); } catch { /* teardown is best-effort */ }
+}
+
 async function commitOrUnknown(client) {
   try {
     await exec(client, 'COMMIT');
@@ -1043,8 +1060,8 @@ export async function bootstrapPostgresqlApplication(options) {
       },
     });
   } catch (error) {
-    try { await dataStorage?.close(); } catch { try { await dataPool.end(); } catch { /* ignore */ } }
-    try { await controlStorage?.close(); } catch { try { await controlPool.end(); } catch { /* ignore */ } }
+    await closePostgresqlPoolForStorage(dataStorage, dataPool);
+    await closePostgresqlPoolForStorage(controlStorage, controlPool);
     // Same wrap as the four inner points: a raw driver error from attestation
     // or pool setup (message can carry host, user or URL) never leaves startup
     // unwrapped (backlog:bfab36ae).
