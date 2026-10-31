@@ -1847,3 +1847,29 @@ test('e9b4fc2f: the composer names its honest limit and shows the text refusal',
     'the text refusal names the limit instead of a generic failure',
   );
 });
+
+// Voce c2793930850a: the four quick actions are equal tiles — Chiama,
+// Scrivi, Nuova offerta and Nuovo appuntamento all carry the tile class, so
+// the 2x2 grid never shows a bare overflowing button. The note field, its
+// button and the help sentence live in the note form block inside the card,
+// and the ✦ union note keeps its class (its card-text size is CSS).
+test('c2793930850a: quick actions are equal tiles, the note form holds field, button and help', async () => {
+  const mount = await renderCard(stubClient());
+  const byAction = (action) => mount.findAll('button')
+    .find((node) => node.getAttribute('data-action') === action);
+  for (const action of ['call-customer', 'compose-message', 'new-offer', 'new-appointment']) {
+    const tile = byAction(action);
+    assert.ok(tile, `the ${action} quick action exists`);
+    assert.ok(String(tile.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile'),
+      `${action} is a tile like the other three`);
+  }
+  const form = mount.findAll('div')
+    .find((node) => node.getAttribute('class') === 'bo-scheda-note-form');
+  assert.ok(form, 'the note field lives in the note form block');
+  assert.ok(form.findAll('input').some((node) => node.getAttribute('name') === 'noteBody'),
+    'the note field is inside the form');
+  assert.ok(form.findAll('button').some((node) => node.getAttribute('data-action') === 'add-note'),
+    'the note button is inside the form');
+  assert.ok(form.textContent.includes('Non viene inviata a nessuno'),
+    'the help sentence stays inside the card form');
+});
