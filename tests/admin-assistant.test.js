@@ -297,8 +297,8 @@ test('ai-puo: registri llm-call-audit reali + capability deterministiche', async
   const client = stubClient({
     '/api/modules/llm-call-audit/records?limit=20': {
       items: [
-        { id: 'audit-1', purpose: 'assistant', model: 'gpt-5.6-luna', dryRun: true },
-        { id: 'audit-2', purpose: 'suggest', model: 'gpt-5.6-luna', dryRun: true },
+        { id: 'audit-1', purpose: 'assistant', model: 'gpt-6-luna', dryRun: true },
+        { id: 'audit-2', purpose: 'suggest', model: 'gpt-6-luna', dryRun: true },
       ],
     },
   });

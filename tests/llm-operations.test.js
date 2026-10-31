@@ -795,7 +795,7 @@ test('an allowlisted and priced model runs, the rest refuse fail-closed', async 
 });
 
 test('a malformed pricing table refuses at composition', () => {
-  assert.throws(() => createLlmOperations({ pricing: { 'gpt-5.6-luna': { input: 'cheap' } } }), /pricing/);
+  assert.throws(() => createLlmOperations({ pricing: { 'gpt-6-luna': { input: 'cheap' } } }), /pricing/);
   assert.throws(() => createLlmOperations({ pricing: {} }), /pricing/);
   assert.throws(
     () => estimateCostCents({ inputTokens: 10, outputTokens: 4, model: 'no-such-model' }),
