@@ -16,7 +16,9 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  * the AI entry point degrades to a hint without an LLM backend, and hostile
  * server text stays text. The Aggiungi cliente menu offers the AI paste and
  * the manual contact factory, one menu opens at a time, pills carry server
- * counts when named, and no control renders without a ui-* system class.
+ * counts when named, the toolbar carries the three prototype icons (the AI
+ * filter entry lives in the Filtri menu), and no control renders without a
+ * ui-* system class.
  */
 
 const MENUS = {
@@ -107,6 +109,11 @@ const render = async (client, deps = {}) => {
 
 const buttons = (mount) => mount.findAll('button');
 const byAttr = (mount, tag, attr, value) => mount.findAll(tag).find((node) => node.getAttribute(attr) === value);
+// Prototype toolbar toggles are icons: their accessible name carries the meaning.
+const toolToggle = (mount, name) => mount.findAll('button').find((node) => {
+  const label = String(node.getAttribute('aria-label') ?? '');
+  return label === name || label.startsWith(`${name}:`);
+});
 
 test('page numbers collapse to first, last and neighbours with ellipses', () => {
   assert.deepEqual(pageNumbers(1, 1), [1]);
@@ -260,13 +267,43 @@ test('BO-F6-08 fetta 1: the search bar shows the prototype placeholder and an Az
   assert.ok(!client.calls[1].includes('q='), `the search is gone: ${client.calls[1]}`);
 });
 
-test('BO-F6-08 fetta 1: the toolbar names Filtri, Ordina and Colonne with its visible count', async () => {
+test('BO-F6-08 fetta 2: the toolbar is three prototype icons with their counts', async () => {
+  // CONFRONTO 29/10: the prototype bar carries three icons (filters, sort,
+  // columns 5/10), not four words. The AI filter entry joins the Filtri
+  // menu; the toolbar keeps exactly three toggles, each with its icon and
+  // its accessible name.
   const { mount } = await render(stubClient());
-  const labels = buttons(mount).map((node) => node.textContent);
-  assert.ok(labels.includes('Filtri'), 'Filtri button renders');
-  assert.ok(labels.includes('Ordina'), 'Ordina button renders');
-  assert.ok(labels.includes('Colonne 4/8'), `Colonne carries visible/total, got: ${labels.join(' | ')}`);
+  const filters = toolToggle(mount, 'Filtri');
+  const sort = toolToggle(mount, 'Ordina');
+  const columns = toolToggle(mount, 'Colonne');
+  assert.ok(filters && sort && columns, 'Filtri, Ordina and Colonne toggles render');
+  assert.equal(filters.getAttribute('aria-label'), 'Filtri', 'no active filter, no badge in the name');
+  assert.equal(sort.getAttribute('aria-label'), 'Ordina: Ultimo contatto', 'the sort toggle names the current order');
+  assert.equal(columns.getAttribute('aria-label'), 'Colonne: 4 di 8 visibili', 'the columns toggle carries visible/total');
+  assert.ok(columns.textContent.includes('4/8'), 'the columns count reads on the toggle');
+  for (const toggle of [filters, sort, columns]) {
+    assert.ok(toggle.findAll('svg').length >= 1, 'the icon toggle paints its glyph');
+  }
+  const words = ['Filtri', 'Ordina', 'Colonne'];
+  const toolbarWords = buttons(mount)
+    .filter((node) => node.getAttribute('aria-haspopup') === 'true' && node.textContent !== 'Aggiungi cliente')
+    .map((node) => node.textContent);
+  for (const word of words) {
+    assert.ok(!toolbarWords.includes(word), `no word toggle ${word} stays on the bar`);
+  }
+  sort.dispatch('click');
   assert.ok(mount.textContent.includes('Ordina per'), 'the sort menu names its title');
+});
+
+test('BO-F6-08 fetta 2: the Filtri toggle badges the active filters', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const openFilters = () => toolToggle(mount, 'Filtri').dispatch('click');
+  openFilters();
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  const filters = toolToggle(mount, 'Filtri');
+  assert.equal(filters.getAttribute('aria-label'), 'Filtri: 1 attivi', 'one active filter badges the toggle');
 });
 
 test('BO-F6-08 fetta 1: the table header names Cliente plus only the visible columns', async () => {
@@ -456,25 +493,26 @@ test('a hostile excerpt stays text, and no contact still reads «mai»', async (
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {
+  // Fetta 2: the AI filter entry lives in the Filtri menu (the toolbar
+  // carries the three prototype icons), so the menu opens first.
   let asked = null;
   let notified = null;
   const wired = await render(stubClient(), { onAskAi: (question) => { asked = question; } });
-  wired.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
-  byAttr(wired.mount, 'button', 'data-action', 'add-ai').dispatch('click');
+  toolToggle(wired.mount, 'Filtri').dispatch('click');
+  byAttr(wired.mount, 'button', 'data-action', 'ai-filter').dispatch('click');
   assert.ok(asked, 'with the assistant panel the AI entry asks through it');
   const plain = await render(stubClient(), { notify: (message) => { notified = message; } });
-  plain.mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
-  byAttr(plain.mount, 'button', 'data-action', 'add-ai').dispatch('click');
+  toolToggle(plain.mount, 'Filtri').dispatch('click');
+  byAttr(plain.mount, 'button', 'data-action', 'ai-filter').dispatch('click');
   assert.ok(notified, 'without onAskAi the entry explains itself instead of breaking');
 });
 
 test('only one menu opens at a time, and Escape closes it', async () => {
   const { mount } = await render(stubClient());
   const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
-  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label);
-  opener('Filtri').dispatch('click');
+  toolToggle(mount, 'Filtri').dispatch('click');
   assert.ok(!menus()[1].classList.contains('hidden'), 'the filters menu opens');
-  opener('Ordina').dispatch('click');
+  toolToggle(mount, 'Ordina').dispatch('click');
   assert.ok(!menus()[2].classList.contains('hidden'), 'the sort menu opens');
   assert.ok(menus()[1].classList.contains('hidden'), 'opening a second menu closes the first');
   menus()[2].dispatch('keydown', { key: 'Escape' });
@@ -515,9 +553,8 @@ test('the opening click does not close the menu via the document handler', async
 test('opening a second menu syncs the first button back to closed', async () => {
   // P2: aria-expanded desynchronised when another menu opened.
   const { mount } = await render(stubClient());
-  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label);
-  const filtersButton = opener('Filtri');
-  const sortButton = opener('Ordina');
+  const filtersButton = toolToggle(mount, 'Filtri');
+  const sortButton = toolToggle(mount, 'Ordina');
   filtersButton.dispatch('click');
   assert.equal(filtersButton.getAttribute('aria-expanded'), 'true');
   sortButton.dispatch('click');
@@ -563,23 +600,21 @@ test('title row and open menu lines reuse styled classes only', async () => {
   const title = mount.findAll('h1')[0];
   assert.ok(title, 'the screen renders its h1 title');
   styled(title.parentNode, 'title row');
-  const opener = (label) => mount.findAll('button').find((node) => node.textContent === label)
-    ?? mount.findAll('button').find((node) => String(node.textContent).startsWith(label));
   const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
-  opener('Aggiungi cliente').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Aggiungi cliente').dispatch('click');
   assert.ok(!menus()[0].classList.contains('hidden'), 'the add menu opens');
   styled(menus()[0], 'Aggiungi menu');
-  opener('Filtri').dispatch('click');
+  toolToggle(mount, 'Filtri').dispatch('click');
   assert.ok(!menus()[1].classList.contains('hidden'), 'the filters menu opens');
   styled(menus()[1], 'Filtri menu');
-  opener('Colonne').dispatch('click');
+  toolToggle(mount, 'Colonne').dispatch('click');
   assert.ok(!menus()[3].classList.contains('hidden'), 'the columns menu opens');
   styled(menus()[3], 'Colonne menu');
 });
 
 test('the columns menu names its title and the always-visible Cliente row', async () => {
   const { mount } = await render(stubClient());
-  mount.findAll('button').find((node) => node.textContent === 'Colonne 4/8').dispatch('click');
+  toolToggle(mount, 'Colonne').dispatch('click');
   assert.ok(mount.textContent.includes('Colonne visibili'), 'the menu names its title');
   assert.ok(mount.textContent.includes('Cliente · sempre visibile'), 'the fixed Cliente row names itself');
   assert.ok(mount.textContent.includes('Ripristina'), 'the reset stays');
@@ -587,7 +622,7 @@ test('the columns menu names its title and the always-visible Cliente row', asyn
 
 test('the filters menu carries the prototype example', async () => {
   const { mount } = await render(stubClient());
-  mount.findAll('button').find((node) => node.textContent === 'Filtri').dispatch('click');
+  toolToggle(mount, 'Filtri').dispatch('click');
   assert.ok(mount.textContent.includes('Es. «clienti di Milano con offerta sopra 10.000 €»'));
 });
 
@@ -644,7 +679,7 @@ test('changing the view or the page size returns to page 1', async () => {
 test('the sort menu lists the four prototype orders', async () => {
   // C13: Ordina per, then Ultimo contatto, Nome A–Z, Valore offerta, Stato.
   const { mount } = await render(stubClient());
-  mount.findAll('button').find((node) => node.textContent === 'Ordina').dispatch('click');
+  toolToggle(mount, 'Ordina').dispatch('click');
   for (const label of ['Ordina per', 'Ultimo contatto', 'Nome A–Z', 'Valore offerta', 'Stato']) {
     assert.ok(mount.textContent.includes(label), `the sort menu offers ${label}`);
   }
