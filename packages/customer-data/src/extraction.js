@@ -348,6 +348,16 @@ export function createEnrichmentExtraction({ database, modules, events, names })
    */
   async function readCustomerEnrichmentProposals(request) {
     const { resource, id } = requireSubject(request);
+    // Cluster privacy at read time: when any member opted out, no proposal
+    // of the cluster is listed — the rows of other members stay stored
+    // (the opt-out purges only the named contact), but the opted-out
+    // scheda shows none of them.
+    if (await optedOutAnywhere(resource, id)) {
+      return Object.freeze({
+        subject: Object.freeze({ resource, id }),
+        proposals: Object.freeze([]),
+      });
+    }
     const cluster = await canonicalClusterFor({ modules, names, subject: { resource, id } });
     const memberIndex = new Map(cluster.members.map((member, index) => [subjectKey(member), index]));
     const fieldOrder = new Map(ENRICHABLE_FIELDS.map((field, index) => [field, index]));

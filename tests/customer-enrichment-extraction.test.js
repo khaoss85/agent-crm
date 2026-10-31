@@ -331,30 +331,48 @@ test('proposals and opt-outs follow the canonical cluster, not just the named re
     'the company scheda lists the member contact proposal beside its facts');
   assert.equal(fromCompany.proposals[0].field, 'companyName');
 
-  // A proposal stored under the company id is purged by the member
-  // opt-out too: the purge covers the whole canonical cluster, like the
-  // facts and proposals reads.
+  // Two proposals stored under the company id: one becomes an active
+  // fact before the opt-out, one stays pending.
   const companyAnswer = await app.extractCustomerEnrichment({
     actor: ACTOR,
     resource: 'company', id: company.id,
     sources: companySources,
     adapter: fakeAdapter([
       { field: 'role', value: 'Istruttore', source: 'company-website' },
+      { field: 'companyName', value: 'Presti Group', source: 'company-website' },
     ]),
   });
-  assert.equal(companyAnswer.proposals.length, 1);
+  assert.equal(companyAnswer.proposals.length, 2);
+  const acceptedCompany = await app.decideEnrichmentProposal({
+    actor: ACTOR,
+    id: companyAnswer.proposals.find((proposal) => proposal.field === 'role').id,
+    decision: 'accepted', reason: 'confermato dal cliente',
+  });
+  assert.equal(acceptedCompany.outcome, 'accepted');
 
-  // The member contact opts out: an extraction named for the company must refuse too.
+  // The member contact opts out: only the contact's own rows are purged.
+  // The company rows keep their values, but the cluster's proposals are
+  // no longer listed while any member carries an opt-out.
   const left = await app.optOutContactEnrichment({
     actor: ACTOR, email: 'luca@prestigroup.example', reason: 'non mi interessa',
   });
   assert.equal(left.outcome, 'opted-out');
+  assert.equal(left.purged, 1, 'only the opted-out contact rows are purged');
+  const enriched = app.modules.get('enriched-field').service;
+  for (const row of enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id })) {
+    assert.equal(row.status, 'purged', 'every row of the opted-out contact is purged');
+    assert.equal(row.value, null, 'no refused contact value survives readable');
+  }
+  const companyRows = enriched.listWhere({ subjectResource: 'company', subjectId: company.id });
+  assert.ok(companyRows.some((row) => row.status === 'active' && row.value === 'Istruttore'),
+    'the rows of members who never opted out keep their values');
   assert.deepEqual((await app.readCustomerEnrichmentProposals({ resource: 'company', id: company.id })).proposals, [],
-    'a company proposal is no longer readable after a member opt-out');
+    'no cluster proposal is listed after a member opt-out');
   assert.deepEqual((await app.readCustomerEnrichmentProposals(subject)).proposals, [],
     'no member proposal survives its own opt-out on the scheda');
-  assert.deepEqual((await app.readCustomerEnrichment({ resource: 'company', id: company.id })).items, [],
-    'no company fact survives a member opt-out on the scheda');
+  const companyFacts = await app.readCustomerEnrichment({ resource: 'company', id: company.id });
+  assert.ok(companyFacts.items.some((item) => item.field === 'role' && item.value === 'Istruttore'),
+    'the facts of members who never opted out stay readable');
   await assert.rejects(
     app.extractCustomerEnrichment({
       actor: ACTOR,
@@ -366,14 +384,15 @@ test('proposals and opt-outs follow the canonical cluster, not just the named re
     }),
     (error) => error.code === 'ENRICHMENT_OPTED_OUT');
 
-  // The purge already decided the company row: accepting it afterwards
-  // answers the stored decision and stores no new fact.
-  const afterPurge = await app.decideEnrichmentProposal({
-    actor: ACTOR, id: companyAnswer.proposals[0].id, decision: 'accepted', reason: 'ripensamento',
-  });
-  assert.equal(afterPurge.outcome, 'already-decided', 'a purged company row is never resurrected by deciding');
-  assert.deepEqual((await app.readCustomerEnrichment({ resource: 'company', id: company.id })).items, [],
-    'deciding after the member purge stores no new fact');
+  // Accepting the surviving company proposal after the member opt-out
+  // refuses: extract and accept stay blocked cluster-wide.
+  await assert.rejects(
+    app.decideEnrichmentProposal({
+      actor: ACTOR,
+      id: companyAnswer.proposals.find((proposal) => proposal.field === 'companyName').id,
+      decision: 'accepted', reason: 'ripensamento',
+    }),
+    (error) => error.code === 'ENRICHMENT_OPTED_OUT');
 });
 
 test('an undialable AI phone is refused with the run, and an accepted phone links its identity', async (t) => {

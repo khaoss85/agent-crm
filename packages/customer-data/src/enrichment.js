@@ -7,7 +7,6 @@ import { emailShape, requireExternalId, safeString } from './normalize.js';
 import {
   createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
-import { canonicalClusterFor } from './profile.js';
 import {
   deciding, orderedPair, subjectFields, trusted,
 } from './store.js';
@@ -714,9 +713,13 @@ export function createContactEnrichment({
 
     /**
      * Opt one contact out of enrichment: records the refusal and purges
-     * every non-purged enriched field of the whole canonical cluster —
-     * active facts, pending AI proposals and recorded dismissals alike
-     * (status `purged`, value cleared). Channel identities are not
+     * every non-purged enriched field of that contact only — active
+     * facts, pending AI proposals and recorded dismissals alike (status
+     * `purged`, value cleared). Rows of other canonical-cluster members
+     * are never touched: cluster privacy is enforced at read time
+     * (proposals read empty when any member opted out) and at write
+     * time (extract and accept refuse cluster-wide), never by deleting
+     * data of subjects who never opted out. Channel identities are not
      * enrichment and stay.
      * @param {any} request
      */
@@ -752,27 +755,23 @@ export function createContactEnrichment({
             if (!isUniqueConflict(error)) throw error;
           }
         }
-        // Every non-purged row of the whole canonical cluster goes: active
-        // facts, pending AI proposals and recorded dismissals alike. Facts
-        // and proposals read cluster-wide, so a contact-scoped purge would
-        // leave company rows readable on the opted-out scheda. A proposal
-        // the subject refused must not survive with its value intact.
-        const cluster = await canonicalClusterFor({
-          modules, names, subject: { resource: 'contact', id: contact.id },
+        // Only the named contact's rows go: active facts, pending AI
+        // proposals and recorded dismissals alike. A proposal the subject
+        // refused must not survive with its value intact — but rows of
+        // other cluster members keep their values (privacy for them is
+        // enforced in the proposals read and in the cluster-wide write
+        // guards, never by deleting their data here).
+        const stored = await deciding(rows, {
+          subjectResource: 'contact', subjectId: contact.id,
         });
         let purged = 0;
-        for (const member of cluster.members) {
-          const stored = await deciding(rows, {
-            subjectResource: member.resource, subjectId: member.id,
-          });
-          for (const row of stored) {
-            if (row.status === 'purged') continue;
-            await rows.applyManaged(row.id, {
-              status: 'purged', value: null, sourceDetail: null, decisionReason: null,
-              purgedAt: now, purgeReason: reason ?? 'opt-out',
-            }, { actor });
-            purged += 1;
-          }
+        for (const row of stored) {
+          if (row.status === 'purged') continue;
+          await rows.applyManaged(row.id, {
+            status: 'purged', value: null, sourceDetail: null, decisionReason: null,
+            purgedAt: now, purgeReason: reason ?? 'opt-out',
+          }, { actor });
+          purged += 1;
         }
         return purged;
       });
