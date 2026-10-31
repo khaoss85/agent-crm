@@ -17,6 +17,7 @@
  */
 
 import test from 'node:test';
+import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -322,7 +323,11 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('catalogo', {
     table: '…Pacchetto 10 lezioni…', stripe: 'Collegato a Stripe', rules: 'auto 10%',
   }));
-  assert.doesNotThrow(() => assertProbe('connettori', { rows: 8, previews: 8, flows: 8 }));
+  const channels = CONNECTOR_CATALOG.length;
+  assert.doesNotThrow(() => assertProbe('connettori', { rows: channels, previews: channels, flows: channels, unavailable: 0 }));
+  // A channel with no adapter keeps its preview and offers no guided flow.
+  assert.doesNotThrow(() => assertProbe('connettori', { rows: channels, previews: channels, flows: channels - 1, unavailable: 1 }));
+  assert.throws(() => assertProbe('connettori', { rows: channels, previews: channels, flows: channels - 1, unavailable: 0 }), /guided flows/);
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));
   assert.doesNotThrow(() => assertProbe('spazi-accessi', {
     spaces: 3,
