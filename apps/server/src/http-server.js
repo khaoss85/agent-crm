@@ -741,11 +741,19 @@ export function buildRouter(app) {
         code: 'VOICE_CONNECTION_NOT_ACTIVE', status: 409,
       });
     }
+    // The author is the signed-in operator, never a caller claim: like the
+    // dialed `to`, a caller-supplied `teamAuthorId` is ignored, so a call
+    // can never be attributed to another operator.
+    const authorId = typeof actor?.id === 'string' && actor.id.trim() !== '' ? actor.id.trim() : null;
+    if (authorId === null) {
+      throw new ValidationError('a subject call needs its signed-in operator', { field: 'teamAuthorId' });
+    }
     return respond(201, await app.logSubjectCall({
       ...stripServerControlledKeys(input),
       resource: input.resource,
       id: String(input.id ?? ''),
       callKey,
+      teamAuthorId: authorId,
       remoteHandle: dialable,
       actor,
     }));

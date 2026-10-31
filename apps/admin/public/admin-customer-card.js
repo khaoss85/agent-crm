@@ -592,15 +592,37 @@ export function createCustomerCardView(deps) {
   function quickActions(box, card, navCtx, extra = {}) {
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
-    if (card?.phone?.available === true && card.phone.value) {
-      const dialable = String(card.phone.value).replaceAll(/[^\d+]/g, '');
-      const call = link(`tel:${dialable === '' ? card.phone.value : dialable}`, 'Chiama', 'call-customer');
-      call.setAttribute('class', 'bo-scheda-tile');
-      call.setAttribute('title', `Chiama ${card.phone.value}`);
+    const phone = card?.phone?.available === true
+      && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
+    if (phone !== null) {
+      // Voce 105563eea902: voice-aware «Chiama» — the number is dialed from
+      // the CRM only through a linked voice connection (the call then enters
+      // the scheda cronologia through POST /api/customer-hub/calls); without
+      // one the card says so and falls back to `tel:`, never logging a call
+      // the CRM never placed. A hostile value stays text in the title: the
+      // href is built only from the fallback branch below, never here.
+      const call = el('button', 'bo-scheda-tile', 'Chiama');
+      call.setAttribute('type', 'button');
+      call.setAttribute('data-action', 'call-customer');
+      call.setAttribute('title', `Chiama ${phone}`);
+      call.addEventListener('click', () => {
+        openCallPanel(box, card, navCtx, phone);
+      });
       row.appendChild(call);
     } else {
       // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
+      // Voce 105563eea902: the empty state offers its own cure — the
+      // operator holds the number here, through POST /api/customer-hub/phone.
+      const add = el('button', 'bo-scheda-tile', 'Aggiungi telefono');
+      add.setAttribute('type', 'button');
+      add.setAttribute('data-action', 'add-phone');
+      add.setAttribute('title', 'Salva il numero del cliente per chiamarlo dalla scheda');
+      add.addEventListener('click', () => {
+        openPhonePanel(box, navCtx);
+      });
+      row.appendChild(add);
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -617,6 +639,178 @@ export function createCustomerCardView(deps) {
       });
       row.appendChild(write);
     }
+  /**
+   * The «Aggiungi telefono» panel (voce 105563eea902): the operator holds
+   * one callable number beside the customer, through
+   * `POST /api/customer-hub/phone`. The server validates E.164 and refuses
+   * a number already held beside another customer (409); the panel shows
+   * the Italian sentence, never the code. A saved number re-reads the whole
+   * card, like the Dettagli form — the shown number is the server's, never
+   * an optimistic copy.
+   */
+  function openPhonePanel(box, navCtx) {
+    const old = box.querySelector('div[data-phone="open"]');
+    if (old) {
+      while (old.firstChild) old.removeChild(old.firstChild);
+    }
+    const panel = old ?? el('div', 'bo-scheda-composer');
+    panel.setAttribute('data-phone', 'open');
+    if (!old) box.appendChild(panel);
+    panel.appendChild(el('h4', undefined, 'Aggiungi telefono'));
+    const input = el('input');
+    input.setAttribute('type', 'tel');
+    input.setAttribute('placeholder', '+393331234567');
+    input.setAttribute('aria-label', 'Numero di telefono in formato internazionale');
+    panel.appendChild(input);
+    const err = el('p', 'field-error', '');
+    const row = el('div', 'bo-scheda-form-actions');
+    const save = el('button', undefined, 'Salva');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'save-phone');
+    const cancel = el('button', undefined, 'Annulla');
+    cancel.setAttribute('type', 'button');
+    cancel.setAttribute('data-action', 'cancel-phone');
+    row.appendChild(save);
+    row.appendChild(cancel);
+    panel.appendChild(row);
+    panel.appendChild(err);
+    let busy = false;
+    save.addEventListener('click', async () => {
+      if (busy) return;
+      const phone = input.value.trim();
+      if (phone === '') {
+        err.textContent = 'Scrivi il numero prima di salvarlo.';
+        return;
+      }
+      busy = true;
+      err.textContent = '';
+      try {
+        await client.request('/api/customer-hub/phone', {
+          method: 'POST',
+          body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone }),
+        });
+        toast('Telefono salvato');
+        await renderCard(navCtx.resource, navCtx.id);
+      } catch (error) {
+        err.textContent = humanReadError(error, { failed: 'Numero non salvato. Riprova più tardi.' });
+      } finally {
+        busy = false;
+      }
+    });
+    cancel.addEventListener('click', async () => {
+      await renderCard(navCtx.resource, navCtx.id);
+    });
+  }
+  /**
+   * The voice-aware «Chiama» panel (voce 105563eea902): with an active
+   * voice connection the operator declares the outcome and the call is
+   * logged through `POST /api/customer-hub/calls`, entering the scheda
+   * cronologia; without one the panel says so and offers the device
+   * dialer (`tel:`) instead — never a logged call the CRM never placed.
+   * The dialed number is shown, never sent: the server re-derives it from
+   * the card.
+   */
+  function openCallPanel(box, card, navCtx, phone) {
+    const old = box.querySelector('div[data-call="open"]');
+    if (old) {
+      while (old.firstChild) old.removeChild(old.firstChild);
+    }
+    const panel = old ?? el('div', 'bo-scheda-composer');
+    panel.setAttribute('data-call', 'open');
+    if (!old) box.appendChild(panel);
+    panel.appendChild(el('h4', undefined, 'Chiama dal CRM'));
+    const spaceId = activeSpaceId();
+    if (spaceId === null) {
+      panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
+      return;
+    }
+    const wait = el('p', 'bo-muted', 'Controllo il connettore voce…');
+    panel.appendChild(wait);
+    client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
+      (sync) => {
+        panel.removeChild(wait);
+        const entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
+        const voice = matchConnections('voice', entries)
+          .find((entry) => entry.status === 'active') ?? null;
+        if (voice === null) {
+          panel.appendChild(el('p', 'bo-muted',
+            'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
+          const dialable = phone.replaceAll(/[^\d+]/g, '');
+          panel.appendChild(link(
+            `tel:${dialable === '' ? phone : dialable}`,
+            `Chiama ${phone} (tel:)`, 'call-fallback'));
+          return;
+        }
+        buildCallForm(panel, navCtx, spaceId, phone);
+      },
+      (error) => {
+        panel.removeChild(wait);
+        panel.appendChild(el('p', 'field-error', humanReadError(error, {
+          failed: 'Il connettore voce non si è potuto leggere. Riprova più tardi.',
+        })));
+      },
+    );
+  }
+  function buildCallForm(panel, navCtx, spaceId, phone) {
+    panel.appendChild(el('p', 'bo-muted',
+      `Chiamata al ${phone} dal CRM: dopo la chiamata dichiara com'è andata.`));
+    const outcomeLabel = el('label', 'bo-scheda-field-label', "Com'è andata la chiamata?");
+    outcomeLabel.setAttribute('for', 'call-outcome');
+    const outcome = el('select');
+    outcome.setAttribute('id', 'call-outcome');
+    for (const choice of [
+      { value: 'completed', label: 'Completata' },
+      { value: 'missed', label: 'Persa' },
+      { value: 'no-answer', label: 'Senza risposta' },
+      { value: 'failed', label: 'Fallita' },
+    ]) {
+      const option = el('option', undefined, choice.label);
+      option.setAttribute('value', choice.value);
+      outcome.appendChild(option);
+      if (outcome.value === undefined || outcome.value === '') outcome.value = choice.value;
+    }
+    panel.appendChild(outcomeLabel);
+    panel.appendChild(outcome);
+    const durationLabel = el('label', 'bo-scheda-field-label', 'Durata in secondi (solo se completata)');
+    durationLabel.setAttribute('for', 'call-duration');
+    const duration = el('input');
+    duration.setAttribute('id', 'call-duration');
+    duration.setAttribute('inputmode', 'numeric');
+    duration.value = '0';
+    panel.appendChild(durationLabel);
+    panel.appendChild(duration);
+    const err = el('p', 'field-error', '');
+    const save = el('button', undefined, 'Registra chiamata');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'log-call');
+    panel.appendChild(save);
+    panel.appendChild(err);
+    let busy = false;
+    save.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      err.textContent = '';
+      try {
+        await client.request('/api/customer-hub/calls', {
+          method: 'POST',
+          body: JSON.stringify({
+            spaceId,
+            resource: navCtx.resource,
+            id: navCtx.id,
+            callKey: freshMessageKey(),
+            outcome: outcome.value,
+            durationSec: Number(duration.value),
+          }),
+        });
+        toast('Chiamata registrata');
+        await renderCard(navCtx.resource, navCtx.id);
+      } catch (error) {
+        err.textContent = humanReadError(error, { failed: 'Chiamata non registrata. Riprova più tardi.' });
+      } finally {
+        busy = false;
+      }
+    });
+  }
   /**
    * The «Scrivi» composer panel (backlog:e9b4fc2f): channel choice among
    * the customer's own channels, preselected recipient, text, Invia.

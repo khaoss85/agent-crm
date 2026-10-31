@@ -109,6 +109,17 @@ test('105563eea902: Chiama dal CRM dials the card number through voice and answe
   assert.equal(payload?.remoteHandle, '+393331234567');
 });
 
+test('105563eea902: a caller-supplied teamAuthorId is ignored, the signed-in operator authors', async (t) => {
+  const calls = [];
+  const { status } = await post(t, stubApp({ calls }), '/api/customer-hub/calls', {
+    ...CALL_BASE, teamAuthorId: 'someone-else',
+  });
+  assert.equal(status, 201);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].teamAuthorId, 'scheda-route',
+    'authorship is server-derived from the actor, never a caller claim');
+});
+
 test('105563eea902: without an active voice connection the call refuses 409', async (t) => {
   const calls = [];
   const { status, payload } = await post(

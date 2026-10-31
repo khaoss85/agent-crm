@@ -220,12 +220,16 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
 
-  // Left: quick actions are a Chiama link and the Scrivi composer button —
-  // no mailto: anywhere (backlog:e9b4fc2f). Identities carry their motivation.
+  // Left: quick actions are a voice-aware Chiama button (the tel: fallback
+  // appears only after the voice check names no connector, voce 105563eea902)
+  // and the Scrivi composer button — no mailto: anywhere (backlog:e9b4fc2f).
+  // Identities carry their motivation.
   const links = mount.findAll('a');
-  const call = links.find((node) => node.getAttribute('data-action') === 'call-customer');
+  const call = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer');
   assert.ok(call, 'a Chiama action exists');
-  assert.equal(call.getAttribute('href'), 'tel:+393331234567');
+  assert.equal(call.textContent, 'Chiama');
+  assert.ok(!links.some((node) => String(node.getAttribute('href') ?? '').startsWith('tel:')),
+    'no device-dial link before the voice check');
   assert.ok(links.every((node) => !String(node.getAttribute('href') ?? '').startsWith('mailto:')),
     'no mailto: link in the quick actions');
   const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
