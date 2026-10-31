@@ -899,3 +899,119 @@ test('takeover covers legacy provider rows read without a sourceKind', async (t)
   const after = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
   assert.equal(after.name, 'Corso Yoga serale', 'the sync keeps the operator name on the legacy row');
 });
+
+test('a no-op reprice on a provider-owned row writes nothing, not even the takeover', async (t) => {
+  // P1 manual-catalog.js:677: setPrices took the imported product over
+  // before the per-offer unchanged check, so confirming an unchanged
+  // reprice ("Nessuna modifica: confermare non scrive nulla") still
+  // flipped the row to manual and hid it from future syncs. A no-op
+  // reprice must leave the import source alone, like updateManualProduct.
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  const yoga = (await app.listCatalogProducts({})).products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+
+  // Convert the offers to manual revisions with a real change first, so a
+  // second identical reprice is a true no-op at the fingerprint level.
+  const declaration = { name: 'Corso Yoga', components: [MANUAL_COMPONENT] };
+  const converted = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [yoga.offers[0].offerId],
+    offers: [declaration],
+  }, ACTOR);
+  assert.equal(converted.offers[0].unchanged, false, 'the first reprice converts the offer');
+
+  // Restore the provider-owned row behind manual-shaped offers: the state
+  // a no-op confirm must never write to, whatever the provider sent.
+  const products = app.modules.get('product').service;
+  const offers = app.modules.get('offer').service;
+  const versionBefore = (await products.get(yoga.productId)).currentVersionId;
+  await products.applyManaged(yoga.productId, { sourceKind: 'provider', provider: 'presti-listino' }, { actor: ACTOR });
+  const offerCountBefore = offers.listWhere({}).filter((row) => row.productId === yoga.productId).length;
+
+  const noop = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [converted.offers[0].offerId],
+    offers: [declaration],
+  }, ACTOR);
+  assert.equal(noop.offers[0].unchanged, true, 'the identical reprice is a no-op');
+  const stored = products.listWhere({}).find((row) => row.id === yoga.productId);
+  assert.equal(stored.sourceKind, 'provider', 'the no-op leaves the import source alone');
+  assert.equal(stored.provider, 'presti-listino');
+  assert.equal(stored.currentVersionId, versionBefore, 'the no-op opens no version');
+  assert.equal(
+    offers.listWhere({}).filter((row) => row.productId === yoga.productId).length,
+    offerCountBefore,
+    'the no-op revises no offer',
+  );
+});
+
+function takeoverDeactivateProject(t) {
+  const root = freshRoot(t, 'accordo-takeover-deactivate-');
+  writeFileSync(join(root, 'takeover-fixture.mjs'), [
+    `let prices = ${JSON.stringify([
+      { id: 'price_take_a', product: 'prod_take', active: true, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+      { id: 'price_take_b', product: 'prod_take', active: true, currency: 'eur', unit_amount: 5000, billing_scheme: 'per_unit' },
+    ])};`,
+    'export const stripe = {',
+    "  source: 'takeover-fixture',",
+    "  async listProducts() { return [{ id: 'prod_take', name: 'Take', active: true }]; },",
+    '  async listPrices() { return structuredClone(prices); },',
+    '};',
+    'export function setPrices(next) { prices = next; }',
+    '',
+  ].join('\n'));
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
+    "import { createStripeCatalogProvider } from '../../commercial/src/index.js';",
+    "import { stripe } from '../../../takeover-fixture.mjs';",
+    'const catalogProviders = [createStripeCatalogProvider({ name: \'presti-takeover\', version: 1, stripe })];',
+    'export const generatedDomains = [',
+    '  createCommercialDomain({ catalogProviders }),',
+    '];',
+    '',
+  ].join('\n'));
+  return root;
+}
+
+test('a re-sync with deactivateMissing never deactivates offers of taken-over products', async (t) => {
+  // P1 catalog-sync.js:548: the missing-offer sweep deactivated offers of
+  // taken-over products, losing quotability against the "sync writes
+  // neither the row nor its offers" promise.
+  const root = takeoverDeactivateProject(t);
+  const app = await bootApp(root);
+  t.after(() => app.close());
+  const first = await app.syncCatalog({ provider: 'presti-takeover', actor: ACTOR });
+  assert.equal(first.ok, true, 'the import syncs');
+
+  const table = await app.listCatalogProducts({});
+  assert.equal(table.products.length, 1, 'one imported product');
+  const imported = table.products[0];
+  assert.equal(imported.offers.length, 2, 'two imported offers');
+  const amountOf = (offer) => offer.components[0]?.unitAmountCents ?? offer.components[0]?.flatAmountCents;
+  const offerB = imported.offers.find((offer) => amountOf(offer) === 5000);
+  assert.ok(offerB, 'the second offer reads back');
+
+  // The operator takes the row over with a rename: the product turns
+  // manual while its offers stay provider-owned and active.
+  const renamed = await app.updateManualProduct({ productId: imported.productId, name: 'Take serale' }, ACTOR);
+  assert.equal(renamed.unchanged, false, 'the rename is real');
+
+  // The provider payload drops the second offer with deactivateMissing on
+  // (the Stripe default).
+  const { setPrices } = await import(pathToFileURL(join(root, 'takeover-fixture.mjs')).href);
+  setPrices([
+    { id: 'price_take_a', product: 'prod_take', active: true, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+  ]);
+  const second = await app.syncCatalog({ provider: 'presti-takeover', actor: ACTOR });
+  assert.equal(second.ok, true, 'the re-sync succeeds');
+  const offers = app.modules.get('offer').service.listWhere({});
+  const storedB = offers.find((row) => row.id === offerB.offerId);
+  assert.ok(storedB, 'the omitted offer row still exists');
+  assert.equal(storedB.active, true, 'the omitted offer of the taken-over product stays active');
+  assert.equal(second.counts.deactivated, 0, 'the sweep deactivates nothing it does not own');
+  assert.ok(second.counts.takeoverSkipped > 0, 'the sweep reports the skipped takeover');
+  const after = (await app.listCatalogProducts({})).products[0];
+  assert.equal(after.name, 'Take serale', 'the sync keeps the operator name');
+});

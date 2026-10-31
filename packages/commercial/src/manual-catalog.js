@@ -661,7 +661,8 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
      * offer (the previous revision deactivates, history is never rewritten).
      * Stripe-owned offers refuse with PROVIDER_PRICE_READONLY; offers
      * imported from any other provider convert to manual revisions on the
-     * manual book of their currency (the product row is taken over below).
+     * manual book of their currency (the product row is taken over on the
+     * first real change, never on a no-op).
      */
     async setPrices(input = {}, actor) {
       return runManual('set-manual-prices', actor, async (context) => {
@@ -674,11 +675,15 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
         const offersService = service(names.offer);
         const product = await products.get(productId);
         requireManageableRow(product, `Product "${product.id}"`);
-        await takeoverProviderProduct(products, product, context);
         if (!product.currentVersionId) {
           throw new AppError(`Product "${product.id}" has no current version`, { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
         }
-        const results = [];
+        // Read-only first: validate every offer and decide which ones
+        // revise, so a no-op reprice writes nothing — not the takeover,
+        // not the manual book, not a revision. Converted offers land on
+        // the manual book of their currency, whose currency always equals
+        // the current book's, so the unchanged check below needs no write.
+        const plans = [];
         for (const [index, offer] of offers.entries()) {
           const current = await offersService.get(String(input.offerIds[index]));
           if (current.productId !== product.id) {
@@ -701,15 +706,9 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
             );
           }
           const book = await service(names.priceBook).get(current.priceBookId);
-          // Converted offers land on the manual book of their currency:
-          // provider books are never reused for manual revisions, so sources
-          // stay clean (the same rule manual creation follows).
-          const targetBook = book.provider === MANUAL_PROVIDER
-            ? book
-            : await manualBookFor(book.currency, context);
           const declared = {
             name: offer.name,
-            currency: targetBook.currency,
+            currency: book.currency,
             quoteEligible: true,
             unsupportedReason: null,
             productVersionId: product.currentVersionId,
@@ -729,10 +728,35 @@ export function createManualCatalog({ database, events, modules, moduleNames = {
             })),
           };
           const sourceFingerprint = computeDefinitionFingerprint(declared);
-          if (current.sourceFingerprint === sourceFingerprint && current.active === offer.active) {
+          plans.push({
+            offer,
+            current,
+            book,
+            changed: current.sourceFingerprint !== sourceFingerprint || current.active !== offer.active,
+          });
+        }
+        if (plans.every((plan) => !plan.changed)) {
+          return {
+            productId: product.id,
+            offers: plans.map((plan) => ({ offerId: plan.current.id, revision: plan.current.revision, unchanged: true })),
+          };
+        }
+        // A real change takes an imported row over, mirroring
+        // updateManualProduct: a no-op leaves the import source alone.
+        await takeoverProviderProduct(products, product, context);
+        const results = [];
+        for (const plan of plans) {
+          const { offer, current, book } = plan;
+          if (!plan.changed) {
             results.push({ offerId: current.id, revision: current.revision, unchanged: true });
             continue;
           }
+          // Converted offers land on the manual book of their currency:
+          // provider books are never reused for manual revisions, so sources
+          // stay clean (the same rule manual creation follows).
+          const targetBook = book.provider === MANUAL_PROVIDER
+            ? book
+            : await manualBookFor(book.currency, context);
           await offersService.applyManaged(current.id, { active: false }, context);
           const created = await persistOfferRevision(
             {

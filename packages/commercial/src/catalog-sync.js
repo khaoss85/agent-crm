@@ -545,11 +545,27 @@ export function createCatalogSync({ database, events, modules, commercial, confi
               }
             }
             const sentOffers = new Set(catalog.offers.map((offer) => offer.sourceKey));
+            const productById = new Map((await products.listWhere({})).map((row) => [row.id, row]));
             for (const record of await offers.listWhere({ provider: provider.name, active: true })) {
-              if (!sentOffers.has(record.logicalKey)) {
-                await offers.applyManaged(record.id, { active: false }, context);
-                counts.deactivated += 1;
+              if (sentOffers.has(record.logicalKey)) continue;
+              if (record.provider === MANUAL_PROVIDER) {
+                // A manual revision under a provider filter (converted rows
+                // keep their history): the operator owns the price chain.
+                counts.takeoverSkipped += 1;
+                continue;
               }
+              // Offers of taken-over products stay operator-owned even
+              // before the first reprice converts them to manual revisions:
+              // the product sweep above already spares the taken-over row,
+              // so the missing-offer sweep must spare its offers too, like
+              // the offer loop does through the same takenOver set.
+              const owner = productById.get(record.productId);
+              if (owner && !isProviderOwned(owner)) {
+                counts.takeoverSkipped += 1;
+                continue;
+              }
+              await offers.applyManaged(record.id, { active: false }, context);
+              counts.deactivated += 1;
             }
           }
 
