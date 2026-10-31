@@ -231,9 +231,13 @@ export function canonicalTelegramChatId(value) {
 
 /** The retained copy of one send: the wire shape with the bot token redacted. */
 export function redactTelegramSendRequest(request) {
+  // The token segment sits right before /sendMessage (the builder's shape);
+  // the end anchor keeps a `/bot…/` prefix inside a custom baseUrl path
+  // from being redacted instead of the token.
+  const url = String(request.url).replace(/\/bot[^/]+(\/sendMessage)$/, '/bot<redacted>$1');
   return {
     method: request.method,
-    url: String(request.url).replace(/\/bot[^/]*\//, '/bot<redacted>/'),
+    url: url === request.url ? String(request.url).replace(/\/bot[^/]*\//, '/bot<redacted>/') : url,
     headers: { ...request.headers },
     body: request.body,
   };

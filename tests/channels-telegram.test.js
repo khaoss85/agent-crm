@@ -166,9 +166,16 @@ test('a photo caption travels as the text; a captionless message lands empty', a
   const { harness, definition } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
-  const captioned = telegramEventBody({
-    chatId: Number(CHAT_A), userId: Number(CHAT_A), dateSeconds: DATE_S, text: undefined,
-    extraMessage: { photo: [{ file_id: 'pic' }], caption: 'Ecco la sala' },
+  const captioned = JSON.stringify({
+    update_id: 1002,
+    message: {
+      message_id: 12,
+      from: { id: Number(CHAT_A), is_bot: false },
+      chat: { id: Number(CHAT_A), type: 'private' },
+      date: DATE_S,
+      photo: [{ file_id: 'pic' }],
+      caption: 'Ecco la sala',
+    },
   });
   const out = await harness.ingest(SPACE_A, { connectionKey: key, rawBody: captioned, headers: secretHeaders() });
   assert.equal(out.effect, 'applied');
@@ -210,14 +217,15 @@ test('a reply produces the sendMessage request; the token never reaches storage'
   assert.ok(!dump.includes(SECRET), 'the bot token is nowhere in stored rows, jobs or audit');
 });
 
-test('a secret mismatch at send time refuses; the token comparison is constant-time', async () => {
+test('a secret mismatch at send time refuses; the token comparison is constant-time', async (t) => {
   assert.equal(verifyTelegramWebhookToken(SECRET, SECRET), true);
   assert.equal(verifyTelegramWebhookToken('wrong', SECRET), false);
   assert.equal(verifyTelegramWebhookToken(undefined, SECRET), false);
   assert.equal(verifyTelegramWebhookToken(SECRET, ''), false);
   assert.equal(verifyTelegramWebhookToken('short', 'a-much-longer-secret'), false);
 
-  const { definition } = setup();
+  const { harness, definition } = setup();
+  t.after(() => harness.close());
   await assert.rejects(
     definition.sendOutbound({ message: { to: CHAT_A, text: 'x' }, secret: 'wrong-secret', idempotencyKey: 'k1' }),
     (error) => error.code === 'CHANNEL_SEND_REFUSED',
@@ -245,7 +253,7 @@ test('recipient shaping accepts chat ids and @usernames, refuses the rest', () =
   assert.equal(canonicalTelegramChatId('-1001234567890'), '-1001234567890');
   assert.equal(canonicalTelegramChatId('@nome_del_bot'), '@nome_del_bot');
   for (const bad of ['', 'wa:+390200000001', 'ig-user', '@ab', '12.5', null, undefined, {}]) {
-    assert.throws(() => canonicalTelegramChatId(bad), /CHANNEL_MESSAGE_MALFORMED/);
+    assert.throws(() => canonicalTelegramChatId(bad), (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED');
   }
   const redacted = redactTelegramSendRequest({
     method: 'POST',

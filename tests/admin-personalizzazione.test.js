@@ -256,7 +256,7 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   assert.ok(text.includes('Curato da Accordo'), 'the hero keeps the prototype eyebrow verbatim (spec C10)');
   assert.ok(text.includes('Canali di conversazione'), 'the first section renders');
   assert.ok(text.includes('Agenda, lead e pagamenti'), 'the second section renders');
-  for (const label of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
+  for (const label of ['WhatsApp', 'Instagram', 'Telegram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
     assert.ok(text.includes(label), `the ${label} card renders`);
   }
   const buttons = mount.findAll('button');
@@ -312,7 +312,7 @@ test('the Connettori sections reuse the catalog channels with honest destination
       }
     }
   }
-  assert.equal(cards, 9, 'six conversation channels plus three agenda cards, like the prototype');
+  assert.equal(cards, 10, 'seven conversation channels plus three agenda cards, like the prototype');
   assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[1]), '#/profilo');
   assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[2]), '#/quotes');
   assert.equal(connettoriHref({}), '#/connettori', 'an entry with no destination falls back to the hub');
@@ -337,7 +337,7 @@ test('Connettori opens by default with the prototype copy, filtered badges and a
   assert.ok(search, 'the search field renders');
   assert.equal(search.getAttribute('placeholder'), 'Cerca', 'the placeholder is the prototype verbatim (spec C8)');
   const badges = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-count'));
-  assert.deepEqual(badges.map((node) => node.textContent), ['6', '3'], 'badges count the visible cards (spec C13-C14)');
+  assert.deepEqual(badges.map((node) => node.textContent), ['7', '3'], 'badges count the visible cards (spec C13-C14)');
   view.test.state.query = 'stripe';
   await view.render();
   await flush();
@@ -413,7 +413,7 @@ test('the Connettori toggle splits connected and discoverable cards (spec C7)', 
   const seg = mount.findAll('button').filter((node) => node.getAttribute('data-seg'));
   assert.deepEqual(seg.map((node) => node.textContent), ['I tuoi', 'Scopri'], 'the toggle shows both views');
   const cardLabels = () => mount.findAll('strong').map((node) => node.textContent);
-  assert.equal(cardLabels().length, 9, 'Scopri shows every card');
+  assert.equal(cardLabels().length, 10, 'Scopri shows every card');
   const mine = mount.findAll('button').find((node) => node.getAttribute('data-seg') === 'tuoi');
   assert.ok(mine, 'the I tuoi voice renders');
   mine.dispatch('click');
@@ -475,7 +475,7 @@ test('the Stato and Ordina menus list the prototype voci in order (spec C22-C23)
   menuVoices('Stato').find((node) => node.textContent === 'Da attivare').dispatch('click');
   await flush();
   assert.ok(!cardLabels().includes('WhatsApp'), 'Da attivare hides connected cards');
-  assert.equal(cardLabels().length, 8, 'Da attivare keeps the other eight');
+  assert.equal(cardLabels().length, 9, 'Da attivare keeps the other nine');
   toggleFor('Stato').dispatch('click');
   menuVoices('Stato').find((node) => node.textContent === 'Tutti').dispatch('click');
   await flush();
@@ -583,7 +583,7 @@ test('Personalizzazione › Connettori shows Telegram in Canali di conversazione
   const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId });
   await view.render();
   await flush();
-  const text = mount.findAll('article').map((node) => node.textContent).join('\n');
+  const text = mount.textContent;
   assert.ok(text.includes('Canali di conversazione'), 'the conversation section renders');
   const telegram = mount.findAll('article').find((node) => node.textContent.includes('Telegram'));
   assert.ok(telegram, 'the Telegram card renders');
