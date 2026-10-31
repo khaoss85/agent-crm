@@ -863,7 +863,7 @@ test('channel invite counts connected of nine, and hides when all nine connect',
     },
   });
   assert.ok(mount.textContent.includes('7 di 9 collegati'), 'seven nine-channels active, whatever the lead list says');
-  assert.ok(mount.textContent.includes('Collega Facebook, TikTok, SMS per non perdere nessun lead'), 'invite names the missing lead channels');
+  assert.ok(mount.textContent.includes('Collega Telegram, Facebook, TikTok, SMS per non perdere nessun lead'), 'invite names the missing lead channels');
 
   const full = createMount();
   const fullConnections = CONNECTOR_CATALOG.map((entry) => ({ channel: entry.channel, status: 'active' }));
