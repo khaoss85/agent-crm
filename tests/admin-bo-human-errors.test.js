@@ -645,10 +645,18 @@ test('le frasi elencate non appaiono in nessuna vista montata', async () => {
     });
     await view.render();
     await flush();
-    const rows = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'rows');
-    const system = mount.findAll('input').find((node) => node.getAttribute('name') === 'system');
-    system.value = 'crm-export';
-    rows.value = JSON.stringify([{ email: 'a@b.example' }]);
+    // Since backlog:5b164ab5 the tool loads a CSV file, not a JSON field:
+    // the sweep walks the same file flow the operator walks.
+    const fileInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'file');
+    assert.ok(fileInput, 'the customer-data sweep finds the file control');
+    fileInput.files = [{
+      name: 'clienti.csv',
+      async arrayBuffer() {
+        return new TextEncoder().encode('nome,email\nAda,a@b.example').buffer;
+      },
+    }];
+    fileInput.dispatch('change');
+    await new Promise((resolve) => setTimeout(resolve, 20));
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'preview-customer-import').dispatch('click');
     await new Promise((resolve) => setTimeout(resolve, 20));
     collect('dati clienti', mount.textContent);

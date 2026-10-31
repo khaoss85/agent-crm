@@ -314,7 +314,7 @@ test('Aggiungi cliente opens a menu with the two prototype entries', async () =>
   assert.ok(menus[0].textContent.includes('Incolla un messaggio o un biglietto da visita'));
   assert.ok(menus[0].textContent.includes('Compila manualmente'));
   assert.ok(menus[0].textContent.includes('Nome, recapiti e azienda'));
-  assert.ok(menus[0].textContent.includes('Importa da JSON'), 'the governed import stays reachable as its own tool');
+  assert.ok(menus[0].textContent.includes('Importa da file'), 'the governed import stays reachable as its own tool');
   byAttr(mount, 'button', 'data-action', 'add-manual').dispatch('click');
   assert.equal(manualCalls, 1, 'manual entry routes to the customer form, never a parallel creation');
   assert.ok(menus[0].classList.contains('hidden'), 'choosing an entry closes the menu');

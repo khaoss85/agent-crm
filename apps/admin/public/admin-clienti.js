@@ -24,10 +24,11 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 import { humanReadError } from './admin-core.js';
 
 /**
- * Where the governed JSON import lives since the Clienti screen stopped
- * embedding it (backlog:80b25fb0): the list never writes. Manual entry
- * opens the customer form (backlog:273de560, `#/clienti/nuovo`); the
- * import stays a separate tool, reached from the menu's own voice.
+ * Where the governed file import lives since the Clienti screen stopped
+ * embedding it (backlog:80b25fb0, restyle backlog:5b164ab5): the list never
+ * writes. Manual entry opens the customer form (backlog:273de560,
+ * `#/clienti/nuovo`); the import stays a separate tool, reached from the
+ * menu's own voice.
  */
 export const CLIENTI_IMPORT_ROUTE = '#/import-clienti';
 
@@ -336,7 +337,7 @@ export function createCustomerListView(deps) {
           navigate(CLIENTI_NUOVO_ROUTE);
         }
       });
-      addItem('add-import', 'Importa da JSON', 'Strumento: anteprima e applicazione da righe', () => {
+      addItem('add-import', 'Importa da file', 'CSV: abbina le colonne e importa', () => {
         navigate(CLIENTI_IMPORT_ROUTE);
       });
     }, 'Aggiungi cliente', 'bo-clienti-menubutton ui-btn-primary'));
