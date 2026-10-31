@@ -196,7 +196,7 @@ const statusMicrocopy = (card, profile) => {
     && profile[key]?.countIsComplete !== false);
   return proven
     ? 'Nessuna attività firmata collegata'
-    : 'Nessuna attività firmata visibile (alcune sezioni non leggibili)';
+    : 'Ordini e contratti non leggibili adesso';
 };
 
 const OFFER_STATUS_LABELS = Object.freeze({
@@ -1350,7 +1350,7 @@ export function createCustomerCardView(deps) {
         `arricchimento disattivato${when ? ` il ${when}` : ''} (opt-out): nessun nuovo dato verrà salvato`));
     }
     if (items.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun dato arricchito registrato per questo cliente'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
       return;
     }
     for (const item of items) {
