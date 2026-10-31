@@ -555,14 +555,18 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
  * over the label on every tile, long labels wrap inside, never outside.
  * break-word (not anywhere) so «Nuovo appuntamento» wraps at the space,
  * never cut mid-word: anywhere would shrink the tile below its longest
- * word. */
-.bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+ * word. Voce d525f4aa48b2: grid-auto-rows 1fr keeps every row — both rows
+ * of the 2x2 — at the same height, so all four tiles read equal. */
+.bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; }
 .bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 3px 10px; font-size: 12px; overflow-wrap: break-word; }
 .bo-scheda-tile[data-action="call-customer"]::before { content: "☎"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="add-phone"]::before { content: "✚"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="compose-message"]::before { content: "✉"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="new-offer"]::before { content: "◈"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="new-appointment"]::before { content: "◷"; font-size: 17px; line-height: 1; }
+/* Voce d525f4aa48b2: the AI voice in Dettagli wears the assistant's violet,
+ * like the ✦ summary card — same tokens, no new visual identity. */
+.bo-scheda-ask-ai { border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
 .bo-scheda-disabled { min-height: 76px; padding: 12px 6px 10px; font-size: 11.5px; }
 /* Voce c2793930850a: the note form lives in the padding-less timeline card,
  * so it carries the card's own inner margins (like .bo-scheda-timeline);
@@ -581,6 +585,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 }
 @media (max-width: 700px) {
   .bo-scheda-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Voce d525f4aa48b2: one column reads in DOM order — Azioni rapide above
+   * Tutti i contatti — so the ≤1100px timeline-first rule stops here. */
+  .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: auto; order: 0; }
 }
 
 /*
