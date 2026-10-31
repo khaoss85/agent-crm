@@ -19,7 +19,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
+import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
@@ -107,7 +107,28 @@ export function parseMemberFilter(value) {
   )];
 }
 
-/** Week label for the nav (\"19 – 25 ott 2026\"), null when unparsable. */
+/**
+ * Required manual booking fields, checked before any request
+ * (backlog:9046f940). Pure and DOM-free so it is unit-tested without a
+ * browser. The customer rides the name-search pick, never a typed id:
+ * without a pick the claim would book «senza-cliente», so a missing pick
+ * counts as missing too. Returns the Italian labels of the empty fields.
+ * @param {{teamMemberId?: unknown, serviceKey?: unknown, date?: unknown, start?: unknown, end?: unknown}} values
+ * @param {unknown} hasCustomerPick
+ */
+export function missingBookingFields(values, hasCustomerPick) {
+  const read = (name) => String(values?.[name] ?? '').trim();
+  const missing = [];
+  if (hasCustomerPick !== true) missing.push('cliente');
+  if (read('teamMemberId') === '') missing.push('persona del team');
+  if (read('serviceKey') === '') missing.push('servizio');
+  if (read('date') === '') missing.push('giorno');
+  if (read('start') === '') missing.push('inizio');
+  if (read('end') === '') missing.push('fine');
+  return missing;
+}
+
+/** Week label for the nav ("19 – 25 ott 2026"), null when unparsable. */
 export function weekLabel(weekKeys) {
   if (!Array.isArray(weekKeys) || weekKeys.length === 0) return null;
   const first = romeShortDay(`${weekKeys[0]}T12:00:00Z`);
@@ -1584,7 +1605,7 @@ export function createCalendarioView(deps) {
         state.aiNote = 'Registrata come proposta: lo spazio non fissa in automatico.';
       }
     } catch (error) {
-      state.aiNote = humanReadError(error, {
+      state.aiNote = humanWriteError(error, {
         failed: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.',
         notComposed: 'Il calendario non è composto in questo spazio.',
       });
@@ -1871,6 +1892,24 @@ export function createCalendarioView(deps) {
     return String(value).padStart(2, '0');
   }
 
+  /**
+   * Required manual fields of the live form nodes, checked before any
+   * request: empty ones are named in Italian next to the form, and nothing
+   * is sent until the operator fills them (backlog:9046f940).
+   */
+  function missingManualFields(inputs) {
+    return missingBookingFields(
+      {
+        teamMemberId: String(inputs.teamMemberId?.value ?? ''),
+        serviceKey: String(inputs.serviceKey?.value ?? ''),
+        date: String(inputs.date?.value ?? ''),
+        start: String(inputs.start?.value ?? ''),
+        end: String(inputs.end?.value ?? ''),
+      },
+      Boolean(state.customerPick && typeof state.customerPick.id === 'string' && state.customerPick.id !== ''),
+    );
+  }
+
   /** @param {any} inputs @param {boolean} confirm */
   async function submitBooking(inputs, confirm) {
     const { claim } = claimFrom(inputs);
@@ -1880,6 +1919,12 @@ export function createCalendarioView(deps) {
     state.manual = snapshotManual(inputs);
     state.draftFill = null;
     state.confirmed = null;
+    const missing = missingManualFields(inputs);
+    if (missing.length > 0) {
+      state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      renderAll();
+      return;
+    }
     try {
       if (!confirm) {
         const proposed = await client.request('/api/appointments/propose', {
@@ -1908,7 +1953,7 @@ export function createCalendarioView(deps) {
         state.bookingNote = 'Registrata come proposta: lo spazio non fissa in automatico.';
       }
     } catch (error) {
-      state.bookingNote = humanReadError(error, {
+      state.bookingNote = humanWriteError(error, {
         failed: 'Prenotazione non riuscita. Riprova più tardi.',
         notComposed: 'Il calendario non è composto in questo spazio.',
       });
