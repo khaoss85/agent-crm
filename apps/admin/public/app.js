@@ -592,6 +592,7 @@ const customerDataView = createCustomerDataView({
   mount: moduleView,
   client: moduleClient,
   submissions,
+  navigate: (hash) => { window.location.hash = hash; },
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   spaceName: () => currentSpaceName(),
 });
