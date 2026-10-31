@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import net from 'node:net';
 import pg from 'pg';
 import { TRANSACTION_PROOF, proveCallerTransaction } from '../packages/core/index.js';
 import {
@@ -397,9 +398,12 @@ test('M3B close returns while a max:1 transaction still holds its client', { tim
     await hold;
   });
   await started;
-  await db.close();
-  try { release(); } catch { /* already released */ }
-  await first.catch(() => {});
+  try {
+    await db.close();
+  } finally {
+    try { release(); } catch { /* already released */ }
+    await first.catch(() => {});
+  }
 });
 
 test('M3B database open bounds setup statements instead of hanging', { timeout: 15_000 }, async (t) => {
@@ -441,8 +445,8 @@ test('M3B timed-out setup drops the schema it already created', { timeout: 15_00
   }
   assert.equal(outcome.code, 'STORAGE_TIMEOUT');
   const admin = new pg.Client({ connectionString: PG_TEST_URL, connectionTimeoutMillis: 2000 });
-  await admin.connect();
   try {
+    await admin.connect();
     const found = await admin.query('SELECT 1 AS orphan FROM pg_namespace WHERE nspname = $1', [schema]);
     assert.equal(found.rowCount, 0, `timed-out setup left schema ${schema} behind`);
   } finally {
@@ -490,8 +494,8 @@ test('M3B timed-out CREATE SCHEMA leaves no orphan schema behind', { timeout: 15
   assert.equal(outcome.code, 'STORAGE_TIMEOUT');
   assert.match(String(outcome.message), /setup deadline exceeded/);
   const admin = new pg.Client({ connectionString: PG_TEST_URL, connectionTimeoutMillis: 2000 });
-  await admin.connect();
   try {
+    await admin.connect();
     const found = await admin.query('SELECT 1 AS orphan FROM pg_namespace WHERE nspname = $1', [schema]);
     assert.equal(found.rowCount, 0, `timed-out CREATE left schema ${schema} behind`);
   } finally {
@@ -685,4 +689,54 @@ test('M3B connection failure with sentinel credentials never echoes them', async
     assert.doesNotMatch(String(error.message), /pg-user|s3cret/);
     return true;
   });
+});
+
+test('M3B fixture retries a flapping connection before refusing the suite', { timeout: 30_000 }, async (t) => {
+  // The scheduled verify opens dozens of fixtures at once: the first connect
+  // can hit a busy server while the database itself is healthy. The fixture
+  // retries transient opens for a few seconds instead of throwing
+  // ACCORDO_PG_TEST_REQUIRED on the first failure (backlog:732c0a9a5dd3).
+  // A local proxy drops the first connections, then forwards to the real
+  // Postgres: without the retry the fixture never opens; with it, the suite
+  // keeps going. The proxy counts handshakes, not seconds, so the test is
+  // deterministic.
+  const backend = new URL(PG_TEST_URL);
+  let seen = 0;
+  const proxy = net.createServer((incoming) => {
+    seen += 1;
+    if (seen <= 3) {
+      incoming.destroy();
+      return;
+    }
+    const outgoing = net.connect(
+      { host: backend.hostname, port: Number(backend.port || 5432) },
+      () => { incoming.pipe(outgoing); outgoing.pipe(incoming); },
+    );
+    outgoing.on('error', () => incoming.destroy());
+    incoming.on('error', () => outgoing.destroy());
+  });
+  await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
+  // One teardown in registration order: the fixture close drops its schema
+  // through the proxy, so it must run before the proxy stops listening.
+  // (node:test runs after-hooks FIFO; closing the proxy first would stall
+  // until the pool's 10 s idle timeout and orphan the schema.)
+  let db = null;
+  let proxyClosed = false;
+  t.after(async () => {
+    try { if (db) await db.close(); } catch { /* already reported */ }
+    if (!proxyClosed) {
+      proxyClosed = true;
+      await new Promise((resolve) => proxy.close(resolve));
+    }
+  });
+  const proxyUrl = new URL(PG_TEST_URL);
+  proxyUrl.hostname = '127.0.0.1';
+  proxyUrl.port = String(proxy.address().port);
+  db = await openPostgresqlFixture(t, {
+    connection: proxyUrl.toString(), max: 1, acquisitionDeadlineMs: 800,
+  });
+  if (!db) return;
+  assert.ok(seen > 1, `expected dropped handshakes before the open, saw ${seen}`);
+  await db.storage.execute(insertCompany('flap-recovered', 'Recovered'));
+  assert.equal((await db.storage.maybeOne(selectName('flap-recovered'))).name, 'Recovered');
 });
