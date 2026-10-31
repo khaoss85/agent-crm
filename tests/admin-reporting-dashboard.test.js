@@ -12,6 +12,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  FORECAST_LEGEND,
   REPORTING_BADGES,
   REPORTING_CODE_FILES,
   REPORTING_CODE_LEDE,
@@ -21,6 +22,7 @@ import {
   createReportingView,
   currentPeriod,
   dashboardPath,
+  forecastStatus,
   formatMoney,
   isDashboardPayload,
   periodOptions,
@@ -430,6 +432,72 @@ test('an empty channel breakdown renders title, zero and empty bars, never blank
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Nuovi clienti per canale/);
   assert.match(text, /0 nel periodo/);
+});
+
+test('forecastStatus is on track at and past the obiettivo, honest below it (C13)', () => {
+  assert.deepEqual(FORECAST_LEGEND, ['Chiuse', 'Probabili', 'Se chiudi tutto']);
+  assert.equal(
+    forecastStatus({ closedMinor: 14000, probableMinor: 9333, targetMinor: 20000 }, 'EUR'),
+    '✦ Sei in linea con l\u2019obiettivo',
+    'reached beats the target: the prototype exact wording',
+  );
+  assert.equal(
+    forecastStatus({ closedMinor: 10000, probableMinor: 10000, targetMinor: 20000 }, 'EUR'),
+    '✦ Sei in linea con l\u2019obiettivo',
+    'exactly on target counts as on track',
+  );
+  assert.equal(
+    forecastStatus({ closedMinor: 14000, probableMinor: 9333, targetMinor: 2000000 }, 'EUR'),
+    `✦ Ti mancano ${formatMoney(1976667, 'EUR')} per l\u2019obiettivo`,
+    'below target names the honest gap in Italian money',
+  );
+  assert.equal(forecastStatus({ closedMinor: 0, probableMinor: 0, targetMinor: 0 }, 'EUR'),
+    '✦ Sei in linea con l\u2019obiettivo', 'a zero target with nothing reached is on track');
+  assert.equal(forecastStatus({ closedMinor: 14000, probableMinor: 9333, targetMinor: null }, 'EUR'), null,
+    'no target: no line, the note already says the obiettivo is missing');
+  assert.equal(forecastStatus(null, 'EUR'), null, 'no forecast: no line');
+  assert.equal(forecastStatus({ closedMinor: 1.5, probableMinor: 0, targetMinor: 10 }, 'EUR'), null,
+    'non-integer amounts: no line, never a guess');
+  assert.equal(forecastStatus({ closedMinor: 5, probableMinor: 5, targetMinor: -1 }, 'EUR'), null,
+    'a negative target is unreadable: no line');
+});
+
+test('forecast renders the legend and the on-track status (C13)', async () => {
+  const onTrack = {
+    ...MODEL,
+    forecast: { ...MODEL.forecast, closedMinor: 14000, probableMinor: 9333, targetMinor: 20000 },
+  };
+  const { mount, view } = harness({ dashboard: onTrack });
+  await view.renderReporting();
+  const spans = mount.findAll('span').map((node) => node.textContent);
+  for (const label of FORECAST_LEGEND) {
+    assert.ok(spans.includes(label), `legend shows ${label}`);
+  }
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.ok(text.includes('✦ Sei in linea con l\u2019obiettivo'), 'on-track status renders');
+});
+
+test('forecast renders the honest gap below target and nothing without one (C13)', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.ok(text.includes('✦ Ti mancano'), 'below target the gap renders');
+  assert.ok(text.includes('per l\u2019obiettivo'), 'the gap names the obiettivo in plain Italian');
+  const noTarget = harness({
+    dashboard: {
+      ...MODEL,
+      forecast: {
+        ...MODEL.forecast,
+        targetMinor: null,
+        note: 'Obiettivo non impostato: aggiungi una riga obiettivo nel bundle reporting.',
+      },
+    },
+  });
+  await noTarget.view.renderReporting();
+  const bare = noTarget.mount.findAll('p').map((node) => node.textContent).join(' | ');
+  assert.ok(!bare.includes('Sei in linea'), 'no target: no status line invented');
+  assert.ok(!bare.includes('Ti mancano'), 'no target: no gap invented');
+  assert.ok(bare.includes('Obiettivo non impostato'), 'the missing-obiettivo note still renders');
 });
 
 test('reporting renders no button, select, input or textarea outside the visual system', async () => {
