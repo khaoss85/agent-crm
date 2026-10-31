@@ -597,6 +597,53 @@ test('the operation previews the latest message body, never a call', async () =>
   assert.equal(hostile.lastContactText, '<img src=x onerror=alert(1)>', 'the server keeps the text verbatim; escaping stays the view\u2019s');
 });
 
+test('826e377c: the CANALI column unions held identities with observed message channels', () => {
+  // The scheda's Identità collegate reads held plus observed; the list reads
+  // the same union, so a customer with messages but no held identity still
+  // shows its channels.
+  const heldOnly = rowOf({}, baseReads());
+  assert.deepEqual(heldOnly.channels, ['whatsapp']);
+  const observedOnly = rowOf({}, {
+    identitiesBySubject: new Map([['contact:c1', []]]),
+    observedChannelsBySubject: new Map([['contact:c1', ['instagram', 'whatsapp']]]),
+    statusBySubject: new Map([['contact:c1', { value: 'contatto', reason: 'x' }]]),
+  });
+  assert.deepEqual(observedOnly.channels, ['instagram', 'whatsapp']);
+  const both = rowOf({}, {
+    ...baseReads(),
+    observedChannelsBySubject: new Map([['contact:c1', ['instagram', 'whatsapp']]]),
+  });
+  assert.deepEqual(both.channels, ['instagram', 'whatsapp'], 'one entry per channel, never doubled');
+});
+
+test('826e377c: the operation reads observed channels from the scanned messages and calls', async () => {
+  const { contacts, companies } = SCENE();
+  const run = (extra) => listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities: [], ...extra }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const messaged = (await run({
+    messages: [
+      {
+        id: 'm1', subjectResource: 'contact', subjectId: 'c1',
+        occurredAt: '2026-10-20T09:00:00.000Z', channel: 'whatsapp', body: 'Ciao',
+      },
+      {
+        id: 'm2', subjectResource: 'contact', subjectId: 'c1',
+        occurredAt: '2026-10-20T11:00:00.000Z', channel: 'instagram', body: 'Quanto costa?',
+      },
+    ],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.deepEqual(messaged.channels, ['instagram', 'whatsapp'], 'messages with no held identity still name their channels');
+  const silent = (await run({})).items.find((item) => item.name === 'Guido Presti');
+  assert.deepEqual(silent.channels, [], 'no messages and no identities reads empty, never invented');
+  const filtered = await listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities: [], messages: [{ id: 'm1', subjectResource: 'contact', subjectId: 'c1', occurredAt: '2026-10-20T09:00:00.000Z', channel: 'whatsapp', body: 'Ciao' }] }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', canale: 'whatsapp' },
+  );
+  assert.equal(filtered.total, 1, 'the channel filter follows the same union');
+});
+
 test('a truncated subject scan names no per-view counts', async () => {
   const companies = [{ id: 'co1', name: 'Azienda' }];
   const contacts = Array.from({ length: CUSTOMER_SCAN_LIMIT }, (_, index) => ({

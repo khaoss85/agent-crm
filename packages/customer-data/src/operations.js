@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { AppError, NotFoundError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
@@ -13,8 +13,10 @@ import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './impo
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
 import {
-  createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
+  CHANNEL_SYSTEMS, createPolicyReader, createSubjectForRow, isWinnerConflict, normalizeChannelHandle,
+  recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
+import { requireSystem, safeString } from './normalize.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -45,6 +47,53 @@ import { ENRICHABLE_FIELDS } from './enrichment.js';
  */
 
 /** @param {any} runtime @param {any} registries */
+/** Provenance for manually linked/unlinked identities: the scheda operator, not an import or sender run. */
+const MANUAL_LINK_RUN_ID = 'manual-link';
+const MANUAL_UNLINK_RUN_ID = 'manual-unlink';
+
+/**
+ * Validate a manual identity link/unlink request. Throws fail-closed before
+ * anything is read or written: a missing or empty subject, an unknown
+ * channel, or an unshapable handle refuses with ValidationError.
+ * @param {any} request
+ */
+function requireIdentityLink(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new ValidationError('an identity link needs a request object');
+  }
+  const resource = safeString(request.resource, 'resource', { max: 64, required: true });
+  if (resource !== 'contact' && resource !== 'company') {
+    throw new ValidationError('an identity link names a contact or a company subject', { field: 'resource' });
+  }
+  const id = safeString(request.id, 'id', { required: true });
+  const system = requireSystem(String(request.system ?? '').toLowerCase());
+  if (!CHANNEL_SYSTEMS.includes(/** @type {any} */ (system))) {
+    throw new ValidationError(`system must be one of ${CHANNEL_SYSTEMS.join(', ')}`, { field: 'system' });
+  }
+  // The stored form is the sender's own normalization, so a manual link of
+  // an observed handle meets the automatic row instead of doubling it.
+  const externalId = normalizeChannelHandle(system, request.externalId);
+  return { subject: { resource, id }, system, externalId };
+}
+
+/**
+ * The named customer must exist: like the card, a link for a ghost record
+ * answers NOT_FOUND, never a held identity pointing at nobody.
+ * @param {{modules: any}} runtime @param {{resource: string, id: string}} subject
+ */
+async function requireLinkSubject({ modules }, subject) {
+  const service = optional(modules, subject.resource);
+  let record = null;
+  if (service && typeof service.get === 'function') {
+    try {
+      record = await service.get(subject.id);
+    } catch {
+      record = null;
+    }
+  }
+  if (!record) throw new NotFoundError(subject.resource === 'contact' ? 'Contact' : 'Company', subject.id);
+}
+
 export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
@@ -342,6 +391,110 @@ export function createCustomerDataOperations({ database, modules, events, config
       const { origins, undated } = aggregateChannelOrigins(rows);
       return Object.freeze({ origins, undated });
     },
+
+    /**
+     * Manually link one channel identity to the customer named on the
+     * scheda (backlog:826e377c): the operator saw the number, handle or
+     * address in the customer's messages and records it as a held
+     * `external-identity`, with their own actor on the write. The stored
+     * form is `normalizeChannelHandle`, the same normalization the sender
+     * resolution records — so a manual link of an observed handle replays
+     * the automatic row instead of doubling it. A handle already held by
+     * another customer refuses with IDENTITY_HELD_ELSEWHERE, never by
+     * touching the other customer's row.
+     * @param {any} request
+     */
+    async linkCustomerIdentity(request) {
+      const { subject, system, externalId } = requireIdentityLink(request);
+      const actor = normalizeActor(request?.actor);
+      await requireLinkSubject({ modules }, subject);
+      const identities = trusted(modules, names.identity);
+      const sourceKey = `${system}:${externalId}`;
+      const now = new Date().toISOString();
+      const heldHere = (row) => row?.subjectResource === subject.resource && row?.subjectId === subject.id;
+      const shape = (outcome, extra = {}) => Object.freeze({
+        outcome, replayed: false, reactivated: false,
+        subject: Object.freeze({ ...subject }),
+        system, externalId, sourceKey, ...extra,
+      });
+      const existing = (await deciding(identities, { sourceKey }))[0] ?? null;
+      if (existing && existing.status === 'active') {
+        if (!heldHere(existing)) {
+          throw new AppError(`that ${system} handle is already linked to another customer`, {
+            code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
+          });
+        }
+        return shape('already-linked', { replayed: true });
+      }
+      const write = async () => {
+        if (existing) {
+          if (!heldHere(existing)) {
+            throw new AppError(`that ${system} handle is already linked to another customer`, {
+              code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
+            });
+          }
+          // A manually unlinked identity linked again: reactivate the same
+          // row (the sourceKey is unique) instead of a second row.
+          await identities.applyManaged(existing.id, {
+            status: 'active', lastObservedRunId: MANUAL_LINK_RUN_ID, lastObservedAt: now,
+          }, { actor });
+          return shape('linked', { reactivated: true });
+        }
+        await identities.createManaged({
+          sourceKey, system, externalId,
+          ...subjectFields(subject),
+          status: 'active',
+          firstObservedRunId: MANUAL_LINK_RUN_ID, lastObservedRunId: MANUAL_LINK_RUN_ID,
+          firstObservedAt: now, lastObservedAt: now,
+        }, { actor });
+        return shape('linked');
+      };
+      try {
+        return await database.transactionAsync(write);
+      } catch (error) {
+        if (!isWinnerConflict(error)) throw error;
+        // A concurrent link won: replay the winner, never a second row.
+        const winner = (await deciding(identities, { sourceKey }))[0] ?? null;
+        if (winner && winner.status === 'active' && heldHere(winner)) {
+          return shape('already-linked', { replayed: true });
+        }
+        throw new AppError(`that ${system} handle is already linked to another customer`, {
+          code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
+        });
+      }
+    },
+
+    /**
+     * Manually unlink one channel identity from the customer named on the
+     * scheda (backlog:826e377c): the held row moves `active` → `superseded`
+     * with the operator's actor on the write — a superseded identity names
+     * nobody anymore, so the profile, the card and the list stop reading it
+     * without deleting the observation. Only the row held by this subject
+     * unlinks; anything else (unknown handle, another customer's handle,
+     * already unlinked) answers NOT_FOUND, never another customer's state.
+     * @param {any} request
+     */
+    async unlinkCustomerIdentity(request) {
+      const { subject, system, externalId } = requireIdentityLink(request);
+      const actor = normalizeActor(request?.actor);
+      await requireLinkSubject({ modules }, subject);
+      const identities = trusted(modules, names.identity);
+      const sourceKey = `${system}:${externalId}`;
+      const existing = (await deciding(identities, { sourceKey }))[0] ?? null;
+      if (!existing || existing.status !== 'active'
+        || existing.subjectResource !== subject.resource || existing.subjectId !== subject.id) {
+        throw new NotFoundError('external-identity', sourceKey);
+      }
+      const now = new Date().toISOString();
+      await database.transactionAsync(() => identities.applyManaged(existing.id, {
+        status: 'superseded', lastObservedRunId: MANUAL_UNLINK_RUN_ID, lastObservedAt: now,
+      }, { actor }));
+      return Object.freeze({
+        outcome: 'unlinked',
+        subject: Object.freeze({ ...subject }),
+        system, externalId, sourceKey,
+      });
+    },
   };
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
@@ -613,6 +766,12 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    // The channels observed on this customer's own messages and calls, read
+    // from the rows already in hand (backlog:826e377c): no new query, and the
+    // CANALI column shares the scheda's union of held plus observed.
+    const observedChannels = [...new Set(myMessages
+      .map((row) => String(row?.channel ?? '').toLowerCase())
+      .filter((channel) => channel !== ''))].sort();
     let lastContactAt = null;
     let lastContactChannel = null;
     // The preview is the latest message body read above — calls name no
@@ -635,6 +794,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const budgetSignal = mySignals[0] ?? null;
     return shapeCustomerRow({ contact, company }, {
       identitiesBySubject,
+      observedChannelsBySubject: new Map(observedChannels.length === 0 ? [] : [[key, observedChannels]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {

@@ -290,9 +290,14 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
+ *   observed channels name the message channels read for this customer in
+ *   the same scan (backlog:826e377c): the CANALI column reads the same
+ *   union the scheda's Identità collegate reads — held identities plus
+ *   channels observed on the customer's messages — so a customer with
+ *   messages but no held identity still shows its channels.
  */
 export function shapeCustomerRow(subject, reads = {}) {
   const contact = subject?.contact ?? null;
@@ -305,9 +310,11 @@ export function shapeCustomerRow(subject, reads = {}) {
     ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
     : company?.name ?? null;
   const identities = reads.identitiesBySubject?.get(key) ?? [];
-  const channels = [...new Set(identities
-    .map((row) => String(row?.system ?? '').toLowerCase())
-    .filter((system) => system !== ''))].sort();
+  const observed = reads.observedChannelsBySubject?.get(key) ?? [];
+  const channels = [...new Set([
+    ...identities.map((row) => String(row?.system ?? '').toLowerCase()),
+    ...observed.map((channel) => String(channel ?? '').toLowerCase()),
+  ].filter((system) => system !== ''))].sort();
   const phoneIdentity = identities.find((row) => PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) ?? null;
   const status = reads.statusBySubject?.get(key)
     ?? { value: 'contatto', reason: 'no signed-business evidence was read for this customer in the list scan' };

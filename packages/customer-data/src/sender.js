@@ -61,7 +61,7 @@ const PHONE_SEPARATOR_RE = /[ .\-()/]/g;
  *
  * @param {unknown} error
  */
-function isWinnerConflict(error) {
+export function isWinnerConflict(error) {
   if (error instanceof ConflictError) return true;
   if (error instanceof Error) {
     if (error.message.includes('UNIQUE constraint failed')) return true;
