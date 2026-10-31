@@ -128,6 +128,15 @@ export const SUGGESTION_CATALOG = Object.freeze({
   'nuovo-modulo': Object.freeze([
     { id: 'bo05:nuovo-modulo:crea-ai', title: 'Come creo un modulo con l’AI?', detail: 'Il percorso guidato: descrizione, manifest, comandi veri.' },
   ]),
+  // Voce d525f4aa48b2: the customer card's own proposals behind
+  // «✦ Chiedi all'AI» in Dettagli. The card opens the panel with the
+  // customer already in the context; these read that live card, never
+  // invent, and every write still confirms — on the panel gate for the
+  // linked actions, on Salva/Invia for the scheda forms.
+  'scheda-cliente': Object.freeze([
+    { id: 'bo04:scheda:cambia-telefono', title: 'Cambia il telefono in …', detail: 'Il numero collegato al cliente, letto dalla scheda, e dove cambiarlo.' },
+    { id: 'bo04:scheda:aggiungi-nota', title: 'Aggiungi una nota: …', detail: 'Le note del cliente, lette dalla scheda, e dove scriverne una.' },
+  ]),
   impostazioni: Object.freeze([
     { id: 'bo04:impostazioni:ai-puo', title: 'Cosa può fare l’AI senza chiedermi?', detail: 'Cosa fa da sola, cosa chiede, cosa dicono i registri.' },
   ]),
@@ -803,7 +812,126 @@ async function answerAiPuo(client) {
  * @param {unknown} suggestionId
  * @returns {Promise<Answer>}
  */
-export async function runSuggestion(client, suggestionId) {
+/**
+ * Voce d525f4aa48b2: the customer the card handed to the panel, validated
+ * like every record identity the panel touches — a hostile or missing
+ * context reads as no customer, never as a request to a crafted route.
+ * @param {unknown} input
+ */
+function schedaCustomer(input) {
+  const resource = input?.resource;
+  const id = input?.id;
+  if (!isSafeModule(resource) || !isSafeRecordId(id)) return null;
+  return { resource, id };
+}
+
+/**
+ * Read the live customer card behind a scheda proposal. Null when the
+ * server does not serve it — the proposal then names the missing read,
+ * never invents the number or the notes.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {{ resource: string, id: string }} who
+ * @param {Array<TraceRead>} traceReads
+ */
+async function readSchedaCard(client, who, traceReads) {
+  try {
+    const body = await client.request(
+      `/api/customer-hub/card/${encodeURIComponent(who.resource)}/${encodeURIComponent(who.id)}`);
+    if (body !== null && typeof body === 'object') {
+      traceRead(traceReads, 'customer-hub/card', null, 'ok', 1);
+      return body;
+    }
+    traceRead(traceReads, 'customer-hub/card', null, 'invalid', 0);
+    return null;
+  } catch {
+    traceRead(traceReads, 'customer-hub/card', null, 'missing', 0);
+    return null;
+  }
+}
+
+/**
+ * Voce d525f4aa48b2: «Cambia il telefono in …» — the linked number read
+ * from the live card, with where to change it. The change itself stays on
+ * the scheda forms (Dettagli → Modifica, Azioni rapide → Aggiungi
+ * telefono), each behind its own Salva; the linked action only brings the
+ * operator back to the card, and being customer-facing it confirms first.
+ */
+async function answerSchedaTelefono(client, customer) {
+  const answer = emptyAnswer('bo04:scheda:cambia-telefono', 'Cambia il telefono in …');
+  const who = schedaCustomer(customer);
+  if (!who) {
+    answer.unavailable.push('Nessun cliente nel contesto: apri la barra con «✦ Chiedi all\u2019AI» dalla scheda del cliente.');
+    return answer;
+  }
+  const card = await readSchedaCard(client, who, answer.trace.reads);
+  if (!card) {
+    answer.unavailable.push('Scheda non leggibile in questo spazio.');
+    return answer;
+  }
+  const name = shortText(card?.name, 60) || 'Il cliente';
+  const phone = card?.phone?.available === true
+    && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
+    ? card.phone.value.trim() : null;
+  if (phone) {
+    answer.lines.push(`Telefono collegato a ${name}: ${phone}.`);
+    answer.lines.push('Per cambiarlo: Dettagli → Modifica, oppure «Aggiungi telefono» nelle Azioni rapide. La modifica chiede Salva.');
+  } else {
+    answer.lines.push(`${name} non ha un telefono collegato.`);
+    answer.lines.push('Per aggiungerlo: «Aggiungi telefono» nelle Azioni rapide. Il salvataggio chiede Salva.');
+  }
+  answer.sources.push({
+    kind: 'record', module: who.resource, id: who.id, label: name,
+    href: `#/customer-card/${who.resource}/${encodeURIComponent(who.id)}`,
+  });
+  answer.actions.push({
+    id: `bo04:scheda:telefono:${who.id}`, label: `Apri la scheda di ${name}`,
+    kind: 'navigate', href: `#/customer-card/${who.resource}/${encodeURIComponent(who.id)}`,
+    customerFacing: true, confirmLabel: `Apri la scheda di ${name} per cambiare il numero?`,
+  });
+  return answer;
+}
+
+/**
+ * Voce d525f4aa48b2: «Aggiungi una nota: …» — the customer notes read from
+ * the live card, with where to write one. The note itself is written only
+ * in the scheda cronologia («Aggiungi nota», behind its own save); the
+ * linked action only brings the operator back to the card, and being
+ * customer-facing it confirms first.
+ */
+async function answerSchedaNota(client, customer) {
+  const answer = emptyAnswer('bo04:scheda:aggiungi-nota', 'Aggiungi una nota: …');
+  const who = schedaCustomer(customer);
+  if (!who) {
+    answer.unavailable.push('Nessun cliente nel contesto: apri la barra con «✦ Chiedi all\u2019AI» dalla scheda del cliente.');
+    return answer;
+  }
+  const card = await readSchedaCard(client, who, answer.trace.reads);
+  if (!card) {
+    answer.unavailable.push('Scheda non leggibile in questo spazio.');
+    return answer;
+  }
+  const name = shortText(card?.name, 60) || 'Il cliente';
+  const notes = card?.notes;
+  if (notes?.available === true) {
+    const count = Array.isArray(notes.items) ? notes.items.length : 0;
+    answer.lines.push(`Note registrate per ${name}: ${count}.`);
+  } else {
+    answer.lines.push(`Le note di ${name} non sono leggibili in questo spazio.`);
+  }
+  answer.lines.push('Per scriverne una: cronologia → «Aggiungi nota». La nota resta nella cronologia, non viene inviata a nessuno.');
+  answer.sources.push({
+    kind: 'record', module: who.resource, id: who.id, label: name,
+    href: `#/customer-card/${who.resource}/${encodeURIComponent(who.id)}`,
+  });
+  answer.actions.push({
+    id: `bo04:scheda:nota:${who.id}`, label: `Apri la scheda di ${name}`,
+    kind: 'navigate', href: `#/customer-card/${who.resource}/${encodeURIComponent(who.id)}`,
+    customerFacing: true, confirmLabel: `Apri la scheda di ${name} per scrivere la nota?`,
+  });
+  return answer;
+}
+
+export async function runSuggestion(client, suggestionId, customer = null) {
   if (client === null || typeof client !== 'object' || typeof client.request !== 'function') {
     throw new Error('L’assistente ha bisogno del client API per leggere i record.');
   }
@@ -818,6 +946,8 @@ export async function runSuggestion(client, suggestionId) {
     case 'bo04:reporting:call': return answerCallReport(client);
     case 'bo05:nuovo-modulo:crea-ai': return answerNuovoAi();
     case 'bo04:impostazioni:ai-puo': return answerAiPuo(client);
+    case 'bo04:scheda:cambia-telefono': return answerSchedaTelefono(client, customer);
+    case 'bo04:scheda:aggiungi-nota': return answerSchedaNota(client, customer);
     default: throw new Error(`Suggerimento sconosciuto: ${shortText(suggestionId, 60) || '?'}`);
   }
 }
@@ -1270,7 +1400,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.pendingConfirmId = null;
     render();
     try {
-      state.answer = await runSuggestion(client, suggestionId);
+      state.answer = await runSuggestion(client, suggestionId, state.customerCtx);
       pushHistory(state.answer);
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Suggerimento fallito.';
@@ -1377,11 +1507,15 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
      * @param {unknown} screenId
      * @param {unknown} [draft] a caller-typed description to prefill the
      * free-question input with (BO-F5-01); anything else clears the draft.
+     * @param {unknown} [customer] the customer in context
+     * (`{ resource, id }`, validated like every record identity); anything
+     * else clears the context, so a later screen never reuses a stale one.
      */
-    async open(screenId, draft) {
+    async open(screenId, draft, customer) {
       state.open = true;
       if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
       state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
+      state.customerCtx = schedaCustomer(customer);
       state.status = await probeAssistantBackend(client);
       render();
     },
@@ -1393,6 +1527,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return {
         open: state.open,
         screenId: state.screenId,
+        customerCtx: state.customerCtx,
         mode: state.status?.mode ?? null,
         suggestionCount: suggestionsFor(state.screenId).length,
         answerTitle: state.answer?.title ?? null,

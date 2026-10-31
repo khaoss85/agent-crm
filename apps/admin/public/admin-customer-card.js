@@ -196,7 +196,7 @@ const statusMicrocopy = (card, profile) => {
     && profile[key]?.countIsComplete !== false);
   return proven
     ? 'Nessuna attività firmata collegata'
-    : 'Nessuna attività firmata visibile (verifiche non complete)';
+    : 'Nessuna attività firmata visibile (alcune sezioni non leggibili)';
 };
 
 const OFFER_STATUS_LABELS = Object.freeze({
@@ -257,10 +257,13 @@ const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
- *   spaceId?: string | (() => (string | null | undefined))}} deps
+ *   spaceId?: string | (() => (string | null | undefined)),
+ *   onAskAi?: (screenId: string, draft: string, customer: { resource: string, id: string }) => void}} deps
  * `spaceId` is the shell's active space (string or thunk): the calls read
  * stays space-explicit, never inferred. Without it the calls section stays
- * honestly unavailable.
+ * honestly unavailable. `onAskAi` is the BO-F0-04 assistant seam (same as the
+ * Clienti, Pipeline and Reporting views): the «✦ Chiedi all'AI» voice opens
+ * the panel with this customer in the context instead of navigating away.
  */
 const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
 
@@ -374,6 +377,9 @@ export function createCustomerCardView(deps) {
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
+  // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
+  // button toasts the ⌘K hint, like the Clienti seam in app.js.
+  const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
@@ -1122,14 +1128,15 @@ export function createCustomerCardView(deps) {
     }
     // Voce 59def6cb805d (C11): the prototype's violet note under the
     // identities — the union motivation the decider recorded, never an
-    // invented one. One note per distinct recorded reason; with no linked
-    // union, or no recorded reason, no note is shown.
+    // invented one. Voce d525f4aa48b2: the ✦ phrase reads exactly once —
+    // distinct recorded reasons join into one note, never one note each.
+    // With no linked union, or no recorded reason, no note is shown.
     if (cluster.linked === true) {
       const reasons = [...new Set(members
         .map((member) => (typeof member?.reason === 'string' ? member.reason.trim() : ''))
         .filter((reason) => reason !== ''))];
-      for (const reason of reasons) {
-        box.appendChild(el('p', 'bo-scheda-union-note', `✦ ${reason}`));
+      if (reasons.length > 0) {
+        box.appendChild(el('p', 'bo-scheda-union-note', `✦ ${reasons.join(' · ')}`));
       }
     }
   }
@@ -1194,6 +1201,26 @@ export function createCustomerCardView(deps) {
       edit.setAttribute('data-action', 'edit-details');
       edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx));
       box.appendChild(edit);
+    }
+    // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
+    // It opens the BO-F0-04 bar with this customer already in the context —
+    // the panel then proposes «cambia telefono in …» and «aggiungi nota: …»,
+    // and every write still passes its own confirmation, on the panel for
+    // the assistant actions and on Salva/Invia for the scheda forms. Company
+    // schede get it too: the context is the shown subject, not the edit path.
+    if (editCtx && typeof editCtx.resource === 'string' && editCtx.resource !== ''
+      && typeof editCtx.id === 'string' && editCtx.id !== '') {
+      const ask = el('button', 'bo-scheda-ask-ai', "✦ Chiedi all'AI");
+      ask.setAttribute('type', 'button');
+      ask.setAttribute('data-action', 'ask-ai');
+      ask.setAttribute('title', 'Chiedi all\u2019assistente con questo cliente nel contesto (⌘K)');
+      ask.addEventListener('click', () => {
+        const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'senza nome';
+        const customer = { resource: editCtx.resource, id: editCtx.id };
+        if (onAskAi) onAskAi('scheda-cliente', `Cliente ${name} (${editCtx.resource}/${editCtx.id})`, customer);
+        else toast('Apri la barra AI (⌘K) e descrivi cosa vuoi fare per questo cliente.');
+      });
+      box.appendChild(ask);
     }
   }
 
@@ -1314,7 +1341,7 @@ export function createCustomerCardView(deps) {
     }
     const items = Array.isArray(enrichment?.items) ? enrichment.items : null;
     if (items === null) {
-      box.appendChild(el('p', 'bo-muted', 'non disponibile: dati arricchiti non leggibili per questo cliente'));
+      box.appendChild(el('p', 'bo-muted', 'I dati arricchiti non si sono potuti leggere per questo cliente'));
       return;
     }
     if (enrichment?.optedOut) {
@@ -1727,7 +1754,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
     const latest = latestSummarized(calls);
     if (!latest) {
-      box.appendChild(el('p', 'bo-muted', 'non disponibile: nessun riepilogo registrato per questo cliente'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun riepilogo registrato per questo cliente'));
       return;
     }
     const updated = dateTimeParts(latest?.recordedAt);
@@ -1743,7 +1770,7 @@ export function createCustomerCardView(deps) {
     if (items.length === 0) {
       box.appendChild(el('p', 'bo-muted',
         calls === null || calls === undefined
-          ? 'non disponibile: nessun dato di chiamata registrato per questo cliente'
+          ? 'Nessun dato di chiamata registrato per questo cliente'
           : 'nessuna chiamata registrata per questo cliente'));
       return;
     }

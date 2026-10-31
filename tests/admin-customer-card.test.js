@@ -660,7 +660,7 @@ test('BO-F1-08: a purged transcript reads as erased, never as missing, and wiped
   };
   const mount = await renderCard(stubClient({ calls: purged }), 'call-a');
   const text = mount.textContent;
-  assert.ok(text.includes('non disponibile: nessun riepilogo registrato'), 'no summary is invented after erasure');
+  assert.ok(text.includes('Nessun riepilogo registrato'), 'no summary is invented after erasure');
   assert.ok(text.includes('Dubbi'), 'the surviving signal label is shown');
   assert.ok(text.includes('citazione cancellata: retention scaduta'), 'the wiped excerpt reads as erased, never as an empty quote');
   assert.deepEqual(
@@ -687,14 +687,14 @@ test('BO-F1-08: a hostile excerpt on an available transcript stays text', async 
 test('BO-F1-08: without a space or without intelligence composed the card stays honest', async () => {
   const nospace = stubClient({ calls: CALLS });
   const mount = await renderCard(nospace);
-  assert.ok(mount.textContent.includes('non disponibile: nessun dato di chiamata registrato'),
+  assert.ok(mount.textContent.includes('Nessun dato di chiamata registrato'),
     'without a space the calls section stays unavailable');
   assert.ok(!nospace.calls.some((path) => path.startsWith('/api/call-intelligence/')),
     'without a space no calls read is attempted');
 
   const uncomposed = await renderCard(stubClient({ failCalls: true }), 'call-a');
   assert.ok(uncomposed.textContent.includes('Riepilogo AI'), 'the card still renders');
-  assert.ok(uncomposed.textContent.includes('non disponibile: nessun riepilogo registrato'),
+  assert.ok(uncomposed.textContent.includes('Nessun riepilogo registrato'),
     'without intelligence composed no summary is shown');
 });
 
@@ -754,7 +754,7 @@ test('BO-F4-03: an opted-out customer reads as opted out, never as empty', async
 
 test('BO-F4-03: an unreadable enrichment read stays unavailable, never blank', async () => {
   const mount = await renderCard(stubClient({ enriched: null }));
-  assert.ok(mount.textContent.includes('non disponibile: dati arricchiti non leggibili'),
+  assert.ok(mount.textContent.includes('I dati arricchiti non si sono potuti leggere'),
     'an older server without the route leaves an honest section, not a failed card');
   assert.ok(mount.textContent.includes('Richiamare per la prova'), 'the rest of the scheda still renders');
 });
@@ -898,7 +898,7 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
   assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
-  assert.ok(text.includes('verifiche non complete'), 'unreadable evidence never reads as a definitive none');
+  assert.ok(text.includes('alcune sezioni non leggibili'), 'unreadable evidence never reads as a definitive none');
 });
 
 test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
@@ -946,7 +946,7 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   const text = mount.textContent;
   assertCustomerItalian(text, 'proven-empty card');
   assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
-  assert.ok(!text.includes('verifiche non complete'), 'proven absence carries no hedge');
+  assert.ok(!text.includes('alcune sezioni non leggibili'), 'proven absence carries no hedge');
   assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
 });
@@ -1884,4 +1884,107 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
     'the tile wraps at spaces (break-word), never mid-word (anywhere)');
   assert.ok(!/overflow-wrap\s*:\s*anywhere/.test(tileRule),
     'the tile rule no longer shrinks below its longest word');
+});
+
+// Voce d525f4aa48b2: «✦ Chiedi all'AI» in Dettagli apre la barra AI con il
+// cliente nel contesto; senza pannello, il bottone indica la barra ⌘K.
+test("d525f4aa48b2: Dettagli shows «✦ Chiedi all'AI» beside Modifica and opens the AI bar with the customer in context", async () => {
+  const seen = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc,
+    mount,
+    client: stubClient(),
+    onAskAi: (screenId, draft, customer) => seen.push({ screenId, draft, customer }),
+  }).renderCard('contact', 'c1');
+  const details = mount.findAll('section')
+    .find((node) => node.findAll('h4').some((head) => head.textContent === 'Dettagli'));
+  assert.ok(details, 'the Dettagli section renders');
+  const edit = details.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details');
+  const ask = details.findAll('button').find((node) => node.getAttribute('data-action') === 'ask-ai');
+  assert.ok(edit, 'Modifica is shown');
+  assert.ok(ask, 'the AI voice is shown in Dettagli');
+  assert.equal(ask.textContent, "✦ Chiedi all'AI");
+  ask.dispatch('click', {});
+  assert.deepEqual(seen, [{
+    screenId: 'scheda-cliente',
+    draft: 'Cliente Guido Presti (contact/c1)',
+    customer: { resource: 'contact', id: 'c1' },
+  }]);
+});
+
+test("d525f4aa48b2: company schede get «✦ Chiedi all'AI» even without Modifica, and the fallback toasts the ⌘K hint", async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  await createCustomerCardView({
+    doc,
+    mount,
+    client: stubClient({
+      card: { ...CARD, subject: { resource: 'company', id: 'co1' } },
+      profile: { ...PROFILE, identity: {} },
+    }),
+    toast: (message) => toasts.push(message),
+  }).renderCard('company', 'co1');
+  const buttons = mount.findAll('button');
+  assert.equal(buttons.filter((node) => node.getAttribute('data-action') === 'edit-details').length, 0,
+    'a company scheda shows no Modifica');
+  const ask = buttons.find((node) => node.getAttribute('data-action') === 'ask-ai');
+  assert.ok(ask, 'the AI voice is shown on a company scheda too');
+  ask.dispatch('click', {});
+  assert.ok(toasts.some((message) => message.includes('⌘K')), 'without a panel the button points at the ⌘K bar');
+});
+
+// Voce d525f4aa48b2: nessun «non disponibile:» né «verifiche non complete»
+// nella scheda, in ogni combinazione che li stampava (stato, arricchiti,
+// riepilogo, chiamate).
+test('d525f4aa48b2: the scheda never prints «non disponibile:» or «verifiche non complete»', async () => {
+  const variants = {
+    'bare card': stubClient(),
+    'unreadable enrichment': stubClient({ enriched: null }),
+    'recorded calls': stubClient({ calls: CALLS }),
+  };
+  for (const [label, client] of Object.entries(variants)) {
+    const mount = await renderCard(client);
+    const text = mount.textContent;
+    assert.ok(!text.includes('non disponibile:'), `${label}: no «non disponibile:» on screen`);
+    assert.ok(!text.includes('verifiche non complete'), `${label}: no «verifiche non complete» on screen`);
+  }
+});
+
+// Voce d525f4aa48b2: la frase ✦ delle identità compare una volta sola, anche
+// con motivi diversi per ogni scheda unita.
+test('d525f4aa48b2: distinct union reasons join into a single ✦ note', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      canonicalIdentity: {
+        ...PROFILE.canonicalIdentity,
+        members: [
+          { ...PROFILE.canonicalIdentity.members[0], reason: 'stesso numero su WhatsApp' },
+          { ...PROFILE.canonicalIdentity.members[1], reason: 'stessa email sul form' },
+        ],
+      },
+    },
+  }));
+  const notes = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'bo-scheda-union-note');
+  assert.equal(notes.length, 1, 'exactly one union note');
+  assert.equal(notes[0].textContent, '✦ stesso numero su WhatsApp · stessa email sul form');
+});
+
+// Voce d525f4aa48b2: le quattro tessere condividono un'unica altezza di riga
+// (bo:shots del supervisore a 1440 e 390); a 390px la colonna è una sola e
+// l'ordine torna quello del DOM — Azioni rapide sopra Tutti i contatti.
+test('d525f4aa48b2: tiles share one row height and the phone column stacks actions first', async () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const actionsRules = [...css.matchAll(/\.bo-scheda-actions\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(actionsRules.length > 0, 'the actions grid rule exists in styles.css');
+  const actionsRule = actionsRules[actionsRules.length - 1];
+  assert.ok(/grid-auto-rows\s*:\s*1fr/.test(actionsRule),
+    'every grid row — both rows of the 2x2 — shares the same height');
+  const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  assert.ok(/\.bo-scheda-grid\s*>\s*\.bo-scheda-col:nth-child\(2\)\s*\{[^}]*order:\s*0[^}]*\}/.test(phone),
+    'at phone width the timeline-first rule stops: Azioni rapide read above Tutti i contatti');
 });
