@@ -1018,23 +1018,34 @@ test('an unreadable quotes section reads unavailable in Italian, never a confirm
     'an empty opportunities read never proves there are no quotes');
 });
 
-// Voce 59def6cb805d (C10): Identità collegate conta i canali osservati e
-// mostra una riga per canale con sigla e recapito, mai chiavi grezze o UUID.
+// Voce 59def6cb805d (C10), unita a 826e377c: Identità collegate conta i
+// canali osservati e mostra una riga per canale con sigla e recapito, mai
+// chiavi grezze o UUID. Le righe detenute e quelle osservate sui messaggi si
+// fondono: lo stesso recapito in due forme non fa due righe.
 test('59def6cb805d: the identities section counts channels with one row each (C10)', async () => {
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
-  assert.ok(text.includes('2 canali'), 'the header counts the observed channels');
+  // Held WhatsApp +39 333 1234567 meets the same number observed on the
+  // timeline, held Instagram meets the same observed handle: both dedupe to
+  // one row each, while the phone call on the same number is its own system.
+  assert.ok(text.includes('3 canali'), 'the header counts the merged channels');
   const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
     && node.getAttribute('class') === 'bo-scheda-identity');
-  assert.equal(rows.length, 2, 'one row per observed channel');
+  assert.equal(rows.length, 3, 'one row per merged identity');
   assert.ok(text.includes('+39 333 1234567'), 'the WhatsApp handle reads as value');
   assert.ok(text.includes('guido.presti'), 'the Instagram handle reads as value');
 });
 
 // Voce 59def6cb805d (C10): i sistemi senza etichetta italiana e gli UUID non
-// vanno mai su schermo.
+// vanno mai su schermo — né detenuti né osservati sui messaggi.
 test('59def6cb805d: unlabelled systems and UUID handles never reach the screen (C10)', async () => {
+  const emptyTimeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: { available: true, count: 0, truncated: false, items: [] },
+  };
   const mount = await renderCard(stubClient({
+    timeline: emptyTimeline,
     profile: {
       ...PROFILE,
       externalIdentities: [
@@ -1064,13 +1075,168 @@ test('59def6cb805d: the union note carries the recorded motivation (C11)', async
 
 // Voce 59def6cb805d (C11): scheda non unita o senza motivazione, nessuna nota.
 test('59def6cb805d: no union note is invented without a linked union (C11)', async () => {
-  const mount = await renderCard(stubClient({ profile: PROFILE_BARE }));
+  const silentTimeline = {
+    ...TIMELINE_BARE,
+    entries: { available: true, count: 0, truncated: false, items: [] },
+  };
+  const mount = await renderCard(stubClient({ profile: PROFILE_BARE, timeline: silentTimeline }));
   assert.deepEqual(
     mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-union-note'),
     [],
     'an unlinked record shows no union note',
   );
   assert.ok(mount.textContent.includes('nessun canale osservato'), 'and no channel is claimed');
+});
+
+// Voce 826e377c: Ada Rossi ha messaggi WhatsApp (+39 000 000 001) e
+// Instagram (@ada-rossi.esempio) nella cronologia ma nessuna identità
+// detenuta: Identità collegate elenca il numero e l'handle osservati, con il
+// canale, invece di «nessun canale osservato».
+test('826e377c: observed WhatsApp number and Instagram handle list with no held identities', async () => {
+  const adaTimeline = {
+    ...TIMELINE,
+    conversations: {
+      available: true, count: 2, truncated: false, unthreadedMessages: 0, unthreadedCalls: 0,
+      items: [
+        { channel: 'whatsapp', peer: '+39 000 000 001' },
+        { channel: 'instagram', peer: '@ada-rossi.esempio' },
+      ],
+    },
+    entries: {
+      available: true, count: 2, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno, vorrei una prova', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+        {
+          entry: 'message', id: 'm-ig', conversationId: 't-ig', channel: 'instagram', direction: 'inbound',
+          sync: 'received', body: 'Quanto costa il pacchetto?', teamAuthorId: null,
+          remoteHandle: '@ada-rossi.esempio', errorCode: null, occurredAt: '2026-10-20T11:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline: adaTimeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('nessun canale osservato'), 'messages name their channels, never an empty claim');
+  assert.ok(text.includes('2 canali'), 'the header counts the two observed channels');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed identity');
+  assert.equal(rows[0].getAttribute('data-channel'), 'whatsapp');
+  assert.equal(rows[0].getAttribute('data-source'), 'observed');
+  assert.equal(rows[1].getAttribute('data-channel'), 'instagram');
+  assert.equal(rows[1].getAttribute('data-source'), 'observed');
+  assert.ok(text.includes('+39 000 000 001'), 'the WhatsApp number reads as value');
+  assert.ok(text.includes('@ada-rossi.esempio'), 'the Instagram handle reads as value');
+  const held = rows.filter((node) => node.getAttribute('data-source') === 'held');
+  assert.deepEqual(held, [], 'no held row is invented from messages alone');
+});
+
+// Voce 826e377c: una riga osservata offre Collega, una detenuta Scollega —
+// sempre dietro Conferma/Annulla, mai con un click solo. La conferma scrive
+// sulla rotta giusta e rilegge la scheda; Annulla non scrive nulla.
+test('826e377c: observed rows link and held rows unlink behind a confirm step', async () => {
+  const requests = [];
+  const profile = { ...PROFILE_BARE, externalIdentities: [] };
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: {
+      available: true, count: 1, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const client = {
+    async request(path, options = {}) {
+      requests.push({ path, method: options.method ?? 'GET', body: options.body ?? null });
+      if (path === '/api/customer-data/identities/link') {
+        profile.externalIdentities = [
+          { system: 'whatsapp', externalId: '+39 000 000 001', subject: { resource: 'contact', id: UUID_A } },
+        ];
+        return { outcome: 'linked' };
+      }
+      if (path === '/api/customer-data/identities/unlink') {
+        profile.externalIdentities = [];
+        return { outcome: 'unlinked' };
+      }
+      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD_BARE : timeline;
+      if (path.startsWith('/api/customer-data/profile/')) return profile;
+      if (path.startsWith('/api/customer-data/enriched/')) {
+        throw Object.assign(new Error('Not Found'), { status: 404 });
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const flush = async () => {
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', UUID_A);
+
+  const identityRows = () => mount.findAll('p')
+    .filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+      && node.getAttribute('class') === 'bo-scheda-identity');
+
+  // The observed row offers Collega: Annulla writes nothing.
+  let linkButton = mount.findAll('button').find((node) => node.textContent === 'Collega');
+  assert.ok(linkButton, 'an observed identity offers Collega');
+  linkButton.dispatch('click');
+  let confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(confirm, 'Collega asks for Conferma first, never links on one click');
+  const postsBefore = requests.filter((call) => call.method === 'POST').length;
+  mount.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
+  await flush();
+  assert.equal(
+    requests.filter((call) => call.method === 'POST').length, postsBefore,
+    'Annulla sends no write',
+  );
+
+  // Conferma posts the observed handle on the link route and re-reads the card.
+  linkButton = mount.findAll('button').find((node) => node.textContent === 'Collega');
+  linkButton.dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await flush();
+  const linkPost = requests.find((call) => call.path === '/api/customer-data/identities/link');
+  assert.ok(linkPost, 'Conferma posts the link');
+  assert.deepEqual(
+    linkPost.body,
+    { resource: 'contact', id: UUID_A, system: 'whatsapp', externalId: '+39 000 000 001' },
+    'the link names subject, channel and observed handle',
+  );
+  const linkedRows = identityRows();
+  assert.equal(linkedRows.length, 1, 'the re-read card still shows one row');
+  assert.equal(linkedRows[0].getAttribute('data-source'), 'held', 'after the link the row reads held');
+  const unlinkButton = mount.findAll('button').find((node) => node.textContent === 'Scollega');
+  assert.ok(unlinkButton, 'a held identity offers Scollega');
+
+  // Scollega confirms on the unlink route and the row returns to observed.
+  unlinkButton.dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await flush();
+  const unlinkPost = requests.find((call) => call.path === '/api/customer-data/identities/unlink');
+  assert.ok(unlinkPost, 'Conferma posts the unlink');
+  assert.deepEqual(
+    unlinkPost.body,
+    { resource: 'contact', id: UUID_A, system: 'whatsapp', externalId: '+39 000 000 001' },
+    'the unlink names subject, channel and held handle',
+  );
+  const backToObserved = identityRows();
+  assert.equal(backToObserved.length, 1, 'the re-read card still shows the channel');
+  assert.equal(backToObserved[0].getAttribute('data-source'), 'observed', 'after the unlink the row reads observed again');
 });
 
 test('a customer with no linked offer reads none registered, never another customer offer', async () => {

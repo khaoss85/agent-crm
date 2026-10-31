@@ -11,12 +11,13 @@ import { boot, project } from './helpers/customer-data-project.js';
  * held `external-identity` (link), or retires a held one to `superseded`
  * without deleting the observation (unlink).
  *
- * What it must prove: link records with the operator actor and replays on a
- * repeat; unlink hides the identity from the profile, the card and the list
- * while keeping the row; a handle held by another customer refuses with
- * IDENTITY_HELD_ELSEWHERE and is never touched; unknown or foreign handles
- * unlink as NOT_FOUND; malformed requests and ghost subjects refuse
- * fail-closed before anything is read or written.
+ * What it must prove: link records an observed handle as a held identity
+ * with manual-link provenance (the operator's write, not a sender or import
+ * run) and replays on a repeat; unlink hides the identity from the profile,
+ * the card and the list while keeping the row; a handle held by another
+ * customer refuses with IDENTITY_HELD_ELSEWHERE and is never touched;
+ * unknown or foreign handles unlink as NOT_FOUND; malformed requests and
+ * ghost subjects refuse fail-closed before anything is read or written.
  */
 
 const ACTOR = { type: 'user', id: 'operator' };
@@ -57,6 +58,10 @@ test('link records an observed WhatsApp number and an Instagram handle, then rep
   // manual link of an observed handle meets the automatic row.
   assert.equal(wa.sourceKey, 'whatsapp:+39000000001');
   assert.equal(wa.externalId, '+39000000001');
+  const waRow = (await activeIdentities(app, ada.id))
+    .find((row) => row.sourceKey === 'whatsapp:+39000000001');
+  assert.equal(waRow.firstObservedRunId, 'manual-link', 'the link carries manual provenance, not a sender run');
+  assert.equal(waRow.lastObservedRunId, 'manual-link', 'the link carries manual provenance, not an import run');
 
   const ig = await app.linkCustomerIdentity({
     resource: 'contact', id: ada.id, system: 'instagram', externalId: '@ada-rossi.esempio', actor: ACTOR,
