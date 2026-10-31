@@ -660,6 +660,97 @@ export function buildRouter(app) {
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
 
+  // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
+  // holds one callable number beside the customer, so the scheda can dial
+  // it. Same enumerated-adapter shape as the notes route: the kernel owns
+  // the path, gates records.write, and delegates to the composed operation
+  // — without customer-data composed the honest 404 names the missing
+  // operation; a number on a ghost record refuses with the record's own
+  // NotFoundError, never a dangling identity. E.164, the cross-subject 409
+  // and the human-actor boundary are the operation's, not the route's.
+  router.add('POST', '/api/customer-hub/phone', async ({ body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordSubjectPhone !== 'function') {
+      throw new NotFoundError('Operation', 'subject phone');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject phone needs resource contact or company', { field: 'resource' });
+    }
+    return respond(201, await app.recordSubjectPhone({ ...stripServerControlledKeys(input), actor }));
+  });
+
+  // Scheda cliente "Chiama dal CRM" (voce 105563eea902): the operator calls
+  // the customer through the linked voice connector, and the call enters the
+  // scheda cronologia through the same interaction-call row the adapters
+  // log. Same enumerated-adapter shape as the composer route: the kernel
+  // owns the path, gates records.write, and delegates to the composed
+  // operations. The dialed number is ALWAYS server-derived from the card —
+  // a caller-supplied `to` is ignored, never trusted — and the voice
+  // connection must be active in this space: without one the route answers
+  // 409 VOICE_CONNECTION_NOT_ACTIVE and the card falls back to `tel:` with
+  // its notice, instead of logging a call the CRM never placed. The outcome
+  // is operator-declared (the CRM dials; only the operator knows how the
+  // call ended) and idempotent by `callKey`: one fresh key per call.
+  router.add('POST', '/api/customer-hub/calls', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.logSubjectCall !== 'function') {
+      throw new NotFoundError('Operation', 'subject call');
+    }
+    if (typeof app.readCustomerCard !== 'function') {
+      throw new NotFoundError('Operation', 'customer card');
+    }
+    if (typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync state');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject call needs resource contact or company', { field: 'resource' });
+    }
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    if (spaceId.trim() === '') {
+      throw new ValidationError('a subject call needs its spaceId', { field: 'spaceId' });
+    }
+    const callKey = typeof input.callKey === 'string' ? input.callKey : '';
+    if (callKey === '' || callKey.length > 128 || COMPOSER_CONTROL_RE.test(callKey)) {
+      throw new ValidationError('callKey must be bounded single-line text: one fresh key per call', { field: 'callKey' });
+    }
+    const card = await app.readCustomerCard({ resource: input.resource, id: String(input.id ?? '') });
+    const dialable = card?.phone?.available === true && typeof card.phone.value === 'string'
+      && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
+    if (dialable === null) {
+      throw new AppError('This customer has no callable number: hold one first with Aggiungi telefono', {
+        code: 'CHANNEL_CALL_NO_RECIPIENT', status: 409,
+      });
+    }
+    const sync = await app.readSyncState({ spaceId });
+    const voice = Array.isArray(sync?.connectors) ? sync.connectors.filter((entry) => entry
+      && typeof entry === 'object' && entry.channel === 'voice' && entry.status === 'active'
+      && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') : [];
+    if (voice.length === 0) {
+      throw new AppError('No linked voice connection in this space: call with tel: instead', {
+        code: 'VOICE_CONNECTION_NOT_ACTIVE', status: 409,
+      });
+    }
+    return respond(201, await app.logSubjectCall({
+      ...stripServerControlledKeys(input),
+      resource: input.resource,
+      id: String(input.id ?? ''),
+      callKey,
+      remoteHandle: dialable,
+      actor,
+    }));
+  });
+
   // Scheda cliente composer «Scrivi» (backlog:e9b4fc2f): the quick-action
   // mailto: link is gone — the operator writes inside the /bo, choosing the
   // channel among the customer's own (Email via the linked Gmail, WhatsApp,
