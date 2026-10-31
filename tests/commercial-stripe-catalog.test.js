@@ -7,9 +7,12 @@
  * 1. sync from the fake Stripe adapter lands in `product` with the source
  *    marked (sourceKind provider, provider name, Stripe external ids);
  * 2. with the price source active the price is not modifiable — every manual
- *    mutation of a provider-owned row refuses with PROVIDER_PRICE_READONLY;
+ *    mutation of a Stripe-owned row refuses with PROVIDER_PRICE_READONLY;
  * 3. without Stripe the manual catalog works end to end (create, describe,
- *    reprice, activate, table read with filters).
+ *    reprice, activate, table read with filters);
+ * 4. rows imported from a non-Stripe source are operator-managed: the first
+ *    mutation takes the row over into manual management (takeover), and
+ *    Stripe rows still refuse.
  *
  * The Stripe client is a fake (owner decision: no credentials yet); the
  * mapping is what the real adapter reuses. The oracle for the mapping shape
@@ -17,7 +20,7 @@
  * of its rules.
  */
 
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -81,25 +84,55 @@ async function bootApp(root) {
   return createAccordoApp({ dbPath: ':memory:' });
 }
 
-function stripeProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-catalog-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
+/**
+ * One applied template per file: the tree copy plus the fourteen
+ * `module create --apply` spawns cost seconds per test on a loaded CI
+ * runner and pushed the PR gate past its 270 s budget, so they run once.
+ * Every test still gets its own private copy (own files, own sqlite file,
+ * own :memory: app): isolation is unchanged, only the repeated CLI work
+ * is shared. The template is removed after the last test in this file.
+ */
+let appliedTemplate = null;
+function appliedTemplateRoot() {
+  if (!appliedTemplate) {
+    appliedTemplate = mkdtempSync(join(tmpdir(), 'accordo-commercial-template-'));
+    for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+      cpSync(join(repoRoot, entry), join(appliedTemplate, entry), { recursive: true });
+    }
+    applyManifests(appliedTemplate);
   }
-  applyManifests(root);
+  return appliedTemplate;
+}
+after(() => {
+  if (appliedTemplate) rmSync(appliedTemplate, { recursive: true, force: true });
+  appliedTemplate = null;
+});
+
+function freshRoot(t, prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  cpSync(appliedTemplateRoot(), root, { recursive: true });
+  return root;
+}
+
+function stripeProject(t) {
+  const root = freshRoot(t, 'accordo-stripe-catalog-');
   compose(root, stripeComposition());
   return root;
 }
 
 function manualProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-manual-catalog-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-manual-catalog-');
   compose(root, 'const catalogProviders = [];');
+  return root;
+}
+
+function listinoProject(t) {
+  const root = freshRoot(t, 'accordo-listino-catalog-');
+  compose(root, [
+    "import { createStripeCatalogProvider, createFixtureStripeCatalogClient } from '../../commercial/src/index.js';",
+    'const catalogProviders = [createStripeCatalogProvider({ name: \'presti-listino\', version: 1, stripe: createFixtureStripeCatalogClient() })];',
+  ].join('\n'));
   return root;
 }
 
@@ -214,12 +247,7 @@ test('metered follows real Stripe: usage_type metered is unsupported, licensed q
 });
 
 function flipProject(t, initialPrices) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-flip-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-stripe-flip-');
   writeFileSync(join(root, 'flip-fixture.mjs'), [
     `let prices = ${JSON.stringify(initialPrices)};`,
     'export const stripe = {',
@@ -265,12 +293,7 @@ test('a Stripe price flipped inactive deactivates the offer the earlier sync cre
 });
 
 function archiveProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-stripe-archive-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root);
+  const root = freshRoot(t, 'accordo-stripe-archive-');
   writeFileSync(join(root, 'archive-fixture.mjs'), [
     'let products = [{ id: \'prod_arch\', name: \'Archiviabile\', active: true }];',
     'export const stripe = {',
@@ -704,4 +727,291 @@ test('setManualPrices refuses a stale offer revision instead of forking history'
   );
   const revisions = app.modules.get('offer').service.listWhere({ productId: created.product.id });
   assert.equal(revisions.length, 2, 'the refused write leaves history untouched');
+});
+
+test('acceptance 4: rows imported from a non-Stripe source are operator-managed via takeover', async (t) => {
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+
+  const table = await app.listCatalogProducts({});
+  assert.equal(table.summary.stripeConnected, false, 'a non-Stripe import never reads as Stripe-connected');
+  const yoga = table.products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+  assert.equal(yoga.source, 'presti-listino');
+  assert.equal(yoga.priceReadOnly, true, 'reads still mark the import source until the operator edits');
+
+  // Toggle: the flag flips and the row is taken over into manual management,
+  // keeping the import external id as provenance.
+  const toggled = await app.setManualProductActive({ productId: yoga.productId, active: false }, ACTOR);
+  assert.equal(toggled.product.active, false);
+  const stored = app.modules.get('product').service.listWhere({}).find((row) => row.id === yoga.productId);
+  assert.equal(stored.sourceKind, 'internal', 'the takeover leaves no provider-owned row behind');
+  assert.equal(stored.provider, 'manual');
+  assert.equal(stored.externalId, 'prod_yoga', 'the import external id stays as provenance');
+  const reread = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+  assert.equal(reread.source, 'manual');
+  assert.equal(reread.priceReadOnly, false);
+
+  // Describe: version 2 on the taken-over row, history kept.
+  const updated = await app.updateManualProduct({ productId: yoga.productId, name: 'Corso Yoga serale' }, ACTOR);
+  assert.equal(updated.product.version, 2);
+  assert.equal(updated.unchanged, false);
+
+  // Describe as the FIRST takeover action: a fresh imported row converts on
+  // a real change, while a no-op describe leaves the import source alone.
+  const pilates = table.products.find((row) => row.sku === 'PILATES');
+  assert.ok(pilates, 'a second imported product reads back');
+  const renamed = await app.updateManualProduct({ productId: pilates.productId, name: 'Pilates serale' }, ACTOR);
+  assert.equal(renamed.unchanged, false);
+  const pilatesStored = app.modules.get('product').service.listWhere({}).find((row) => row.id === pilates.productId);
+  assert.equal(pilatesStored.sourceKind, 'internal', 'describe takes the row over too');
+  assert.equal(pilatesStored.provider, 'manual');
+
+  // A no-op describe on a fresh imported row changes nothing, not even
+  // ownership: only a real edit takes a row over.
+  const sala = table.products.find((row) => row.sku === 'SALA');
+  assert.ok(sala, 'a third imported product reads back');
+  const noop = await app.updateManualProduct({ productId: sala.productId }, ACTOR);
+  assert.equal(noop.unchanged, true, 'an empty describe stays a clean no-op');
+  const salaStored = app.modules.get('product').service.listWhere({}).find((row) => row.id === sala.productId);
+  assert.equal(salaStored.sourceKind, 'provider', 'the no-op leaves the import source alone');
+  assert.equal(salaStored.provider, 'presti-listino');
+
+  // Reprice: the imported offer converts to a manual revision on the manual
+  // book, the previous revision deactivates.
+  const offerId = yoga.offers[0].offerId;
+  const repriced = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [offerId],
+    offers: [{ name: 'Corso Yoga', components: [MANUAL_COMPONENT] }],
+  }, ACTOR);
+  assert.equal(repriced.offers[0].unchanged, false);
+  const converted = app.modules.get('offer').service.listWhere({}).filter((row) => row.productId === yoga.productId);
+  assert.ok(converted.some((row) => row.id === repriced.offers[0].offerId && row.provider === 'manual'), 'the new revision is manual');
+  assert.ok(converted.some((row) => row.id === offerId && row.active === false), 'the imported revision deactivates');
+  const books = app.modules.get('price-book').service.listWhere({});
+  const manualBook = books.find((book) => book.sourceKey === 'manual:book:EUR');
+  assert.ok(manualBook, 'the manual book of the currency exists');
+  assert.equal(
+    converted.find((row) => row.id === repriced.offers[0].offerId).priceBookId,
+    manualBook.id,
+    'converted revisions land on the manual book, never the provider book',
+  );
+});
+
+test('a re-sync never rewrites taken-over rows, products or offers', async (t) => {
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  const first = await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  assert.equal(first.ok, true, 'the import syncs');
+
+  const yoga = (await app.listCatalogProducts({})).products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+  // The operator takes the row over: deactivate, rename, reprice.
+  await app.setManualProductActive({ productId: yoga.productId, active: false }, ACTOR);
+  await app.updateManualProduct({ productId: yoga.productId, name: 'Corso Yoga serale' }, ACTOR);
+  const repriced = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [yoga.offers[0].offerId],
+    offers: [{ name: 'Corso Yoga', components: [MANUAL_COMPONENT] }],
+  }, ACTOR);
+  assert.equal(repriced.offers[0].unchanged, false, 'the reprice converts the offer');
+  const before = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+
+  // The unchanged provider catalog re-syncs: taken-over rows are skipped,
+  // never rewritten back to provider values.
+  const second = await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  assert.equal(second.ok, true, 'the re-sync succeeds');
+  assert.ok(second.counts.takeoverSkipped > 0, 'the sync reports the skipped takeover');
+  assert.equal(second.counts.versionsCreated, 0, 'no new product version from the skipped sync');
+  assert.equal(second.counts.offersRevised, 0, 'no provider revision replaces manual prices');
+
+  const after = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+  assert.equal(after.name, 'Corso Yoga serale', 'the sync keeps the operator name');
+  assert.equal(after.active, false, 'the sync keeps the operator active flag');
+  assert.deepEqual(
+    after.offers.map((offer) => offer.offerId),
+    before.offers.map((offer) => offer.offerId),
+    'the offer chain does not move under the re-sync',
+  );
+  assert.equal(
+    after.offers[0].components[0].flatAmountCents,
+    MANUAL_COMPONENT.flatAmountCents,
+    'the operator price survives the re-sync',
+  );
+});
+
+test('manual creation on an explicitly selected non-Stripe provider book refuses', async (t) => {
+  // Main refused any explicit provider book with PROVIDER_PRICE_READONLY;
+  // only setPrices converts provider offers onto the manual book. Creation
+  // on a provider book would mix manual revisions into a provider source.
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  const books = app.modules.get('price-book').service.listWhere({});
+  const providerBook = books.find((book) => book.sourceKind === 'provider');
+  assert.ok(providerBook, 'a non-Stripe provider book exists to prove the booking guard');
+  assert.equal(providerBook.currency, 'EUR', 'the fixture book matches the creation currency');
+  await assert.rejects(
+    () => app.createManualProduct({ sku: 'X', name: 'X', currency: 'EUR', priceBookId: providerBook.id, components: [MANUAL_COMPONENT] }, ACTOR),
+    (error) => error.code === 'PROVIDER_PRICE_READONLY',
+    'manual products never land on a provider book, Stripe or not',
+  );
+});
+
+test('takeover covers legacy provider rows read without a sourceKind', async (t) => {
+  // Databases written before the sourceKind column existed read provider
+  // rows back without it. The guard already treats that shape as
+  // provider-owned; the takeover must agree, or the edit leaves the row
+  // behind and the next sync rewrites it.
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  const yoga = (await app.listCatalogProducts({})).products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+
+  const products = app.modules.get('product').service;
+  const realGet = products.get.bind(products);
+  products.get = async (id) => {
+    const row = await realGet(id);
+    // Only the pre-takeover read is legacy-shaped: later reads in the same
+    // flow (e.g. applyManaged re-reading the row) see the taken-over row
+    // and pass through untouched.
+    if (id === yoga.productId && row.sourceKind === 'provider') {
+      const { sourceKind, ...legacy } = row;
+      assert.equal(sourceKind, 'provider', 'the fixture row starts provider-owned');
+      return legacy;
+    }
+    return row;
+  };
+  t.after(() => { products.get = realGet; });
+  const renamed = await app.updateManualProduct({ productId: yoga.productId, name: 'Corso Yoga serale' }, ACTOR);
+  assert.equal(renamed.unchanged, false, 'the edit on the legacy shape is real');
+  products.get = realGet;
+  const stored = products.listWhere({}).find((row) => row.id === yoga.productId);
+  assert.equal(stored.sourceKind, 'internal', 'the legacy row is taken over into manual management');
+  assert.equal(stored.provider, 'manual');
+
+  const second = await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  assert.equal(second.ok, true, 'the re-sync succeeds');
+  assert.ok(second.counts.takeoverSkipped > 0, 'the re-sync skips the taken-over legacy row');
+  const after = (await app.listCatalogProducts({})).products.find((row) => row.productId === yoga.productId);
+  assert.equal(after.name, 'Corso Yoga serale', 'the sync keeps the operator name on the legacy row');
+});
+
+test('a no-op reprice on a provider-owned row writes nothing, not even the takeover', async (t) => {
+  // P1 manual-catalog.js:677: setPrices took the imported product over
+  // before the per-offer unchanged check, so confirming an unchanged
+  // reprice ("Nessuna modifica: confermare non scrive nulla") still
+  // flipped the row to manual and hid it from future syncs. A no-op
+  // reprice must leave the import source alone, like updateManualProduct.
+  const app = await bootApp(listinoProject(t));
+  t.after(() => app.close());
+  await app.syncCatalog({ provider: 'presti-listino', actor: ACTOR });
+  const yoga = (await app.listCatalogProducts({})).products.find((row) => row.sku === 'YOGA');
+  assert.ok(yoga, 'the imported product reads back');
+
+  // Convert the offers to manual revisions with a real change first, so a
+  // second identical reprice is a true no-op at the fingerprint level.
+  const declaration = { name: 'Corso Yoga', components: [MANUAL_COMPONENT] };
+  const converted = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [yoga.offers[0].offerId],
+    offers: [declaration],
+  }, ACTOR);
+  assert.equal(converted.offers[0].unchanged, false, 'the first reprice converts the offer');
+
+  // Restore the provider-owned row behind manual-shaped offers: the state
+  // a no-op confirm must never write to, whatever the provider sent.
+  const products = app.modules.get('product').service;
+  const offers = app.modules.get('offer').service;
+  const versionBefore = (await products.get(yoga.productId)).currentVersionId;
+  await products.applyManaged(yoga.productId, { sourceKind: 'provider', provider: 'presti-listino' }, { actor: ACTOR });
+  const offerCountBefore = offers.listWhere({}).filter((row) => row.productId === yoga.productId).length;
+
+  const noop = await app.setManualPrices({
+    productId: yoga.productId,
+    offerIds: [converted.offers[0].offerId],
+    offers: [declaration],
+  }, ACTOR);
+  assert.equal(noop.offers[0].unchanged, true, 'the identical reprice is a no-op');
+  const stored = products.listWhere({}).find((row) => row.id === yoga.productId);
+  assert.equal(stored.sourceKind, 'provider', 'the no-op leaves the import source alone');
+  assert.equal(stored.provider, 'presti-listino');
+  assert.equal(stored.currentVersionId, versionBefore, 'the no-op opens no version');
+  assert.equal(
+    offers.listWhere({}).filter((row) => row.productId === yoga.productId).length,
+    offerCountBefore,
+    'the no-op revises no offer',
+  );
+});
+
+function takeoverDeactivateProject(t) {
+  const root = freshRoot(t, 'accordo-takeover-deactivate-');
+  writeFileSync(join(root, 'takeover-fixture.mjs'), [
+    `let prices = ${JSON.stringify([
+      { id: 'price_take_a', product: 'prod_take', active: true, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+      { id: 'price_take_b', product: 'prod_take', active: true, currency: 'eur', unit_amount: 5000, billing_scheme: 'per_unit' },
+    ])};`,
+    'export const stripe = {',
+    "  source: 'takeover-fixture',",
+    "  async listProducts() { return [{ id: 'prod_take', name: 'Take', active: true }]; },",
+    '  async listPrices() { return structuredClone(prices); },',
+    '};',
+    'export function setPrices(next) { prices = next; }',
+    '',
+  ].join('\n'));
+  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+    "import { createCommercialDomain } from '../../commercial/src/index.js';",
+    "import { createStripeCatalogProvider } from '../../commercial/src/index.js';",
+    "import { stripe } from '../../../takeover-fixture.mjs';",
+    'const catalogProviders = [createStripeCatalogProvider({ name: \'presti-takeover\', version: 1, stripe })];',
+    'export const generatedDomains = [',
+    '  createCommercialDomain({ catalogProviders }),',
+    '];',
+    '',
+  ].join('\n'));
+  return root;
+}
+
+test('a re-sync with deactivateMissing never deactivates offers of taken-over products', async (t) => {
+  // P1 catalog-sync.js:548: the missing-offer sweep deactivated offers of
+  // taken-over products, losing quotability against the "sync writes
+  // neither the row nor its offers" promise.
+  const root = takeoverDeactivateProject(t);
+  const app = await bootApp(root);
+  t.after(() => app.close());
+  const first = await app.syncCatalog({ provider: 'presti-takeover', actor: ACTOR });
+  assert.equal(first.ok, true, 'the import syncs');
+
+  const table = await app.listCatalogProducts({});
+  assert.equal(table.products.length, 1, 'one imported product');
+  const imported = table.products[0];
+  assert.equal(imported.offers.length, 2, 'two imported offers');
+  const amountOf = (offer) => offer.components[0]?.unitAmountCents ?? offer.components[0]?.flatAmountCents;
+  const offerB = imported.offers.find((offer) => amountOf(offer) === 5000);
+  assert.ok(offerB, 'the second offer reads back');
+
+  // The operator takes the row over with a rename: the product turns
+  // manual while its offers stay provider-owned and active.
+  const renamed = await app.updateManualProduct({ productId: imported.productId, name: 'Take serale' }, ACTOR);
+  assert.equal(renamed.unchanged, false, 'the rename is real');
+
+  // The provider payload drops the second offer with deactivateMissing on
+  // (the Stripe default).
+  const { setPrices } = await import(pathToFileURL(join(root, 'takeover-fixture.mjs')).href);
+  setPrices([
+    { id: 'price_take_a', product: 'prod_take', active: true, currency: 'eur', unit_amount: 3000, billing_scheme: 'per_unit' },
+  ]);
+  const second = await app.syncCatalog({ provider: 'presti-takeover', actor: ACTOR });
+  assert.equal(second.ok, true, 'the re-sync succeeds');
+  const offers = app.modules.get('offer').service.listWhere({});
+  const storedB = offers.find((row) => row.id === offerB.offerId);
+  assert.ok(storedB, 'the omitted offer row still exists');
+  assert.equal(storedB.active, true, 'the omitted offer of the taken-over product stays active');
+  assert.equal(second.counts.deactivated, 0, 'the sweep deactivates nothing it does not own');
+  assert.ok(second.counts.takeoverSkipped > 0, 'the sweep reports the skipped takeover');
+  const after = (await app.listCatalogProducts({})).products[0];
+  assert.equal(after.name, 'Take serale', 'the sync keeps the operator name');
 });
