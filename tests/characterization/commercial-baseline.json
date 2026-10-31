@@ -4559,7 +4559,7 @@
     "packages/commercial/src/price-rules.js": "56521828c1cbb7f2f386fa6ebf4c546776446d29ba208e945385112024358296",
     "packages/commercial/src/product-import.js": "dcaa502d91f84699481e2d07b450e4c62127f9989a79f2b89ca3b10593524b42",
     "packages/commercial/src/quote-pdf.js": "5ab773cbba36f83413bba80c508f57131f2a561316f38590013799ef31785721",
-    "packages/commercial/src/quote-suggest.js": "276d5eed108a878d591cf0fe4e58cd86fb070dcba3881e1d6140fb0b8b0e3e95",
+    "packages/commercial/src/quote-suggest.js": "fd0ee2b0483276675020f82ff345108096dafec2cae1c3a055cf22ede9df8b5f",
     "packages/commercial/src/registry.js": "2aa814e7e4f207b7b46e36e996fb26f82bf7edba19ddc7512b39a017d633fc05",
     "packages/commercial/src/stripe-catalog.js": "7ff8112e02c23444c4927efa768dd946eee14ebaa30741110a920ecaf8d1852b",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
