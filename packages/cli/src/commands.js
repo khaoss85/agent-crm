@@ -24,6 +24,7 @@ import { validatePackageCommand, inspectPackageCommand } from './package-command
 import { packageTestCommand } from './package-test-command.js';
 import { packageScaffoldCommand } from './package-scaffold.js';
 import { inspectApplicationCommand } from './app-inspect-command.js';
+import { readNativeModuleStatus } from './native-modules-catalog.js';
 import { projectDoctorCommand } from './project-doctor-command.js';
 import { projectVerifyCommand } from './project-verify-command.js';
 import { scenarioRunCommand } from './scenario-run-command.js';
@@ -66,6 +67,16 @@ export async function runCli(argv) {
   // database — so they sit before the APP_COMMANDS gate like module:create.
   if (command === 'bundle' && ['create', 'plan', 'install', 'uninstall', 'list', 'verify'].includes(positional[0])) {
     command = `bundle:${positional[0]}`;
+    positional = positional.slice(1);
+  }
+  // "modules catalog" lists the native modules (name, purpose, backoffice
+  // screen, activation, customization) with their activation state in this
+  // project, plus the project's custom bundles as a separate list
+  // (backlog:329bbbb7). Read-only: the composition files are read as text
+  // and never imported, so it sits before the APP_COMMANDS gate with the
+  // other source-only commands.
+  if (command === 'modules' && positional[0] === 'catalog') {
+    command = 'modules:catalog';
     positional = positional.slice(1);
   }
   // "package validate|inspect <dir>" reads the domain-package contract with the
@@ -285,6 +296,12 @@ export async function runCli(argv) {
   if (command === 'bundle:list') {
     const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
     print({ ok: true, ...listBundles({ rootDir }) });
+    return;
+  }
+
+  if (command === 'modules:catalog') {
+    const rootDir = typeof flags.root === 'string' ? flags.root : process.cwd();
+    print({ ok: true, ...readNativeModuleStatus({ rootDir }) });
     return;
   }
 
@@ -681,6 +698,7 @@ Usage:
   accordo bundle:install <name@version> [--root dir]
   accordo bundle:uninstall <name@version> [--db path] [--root dir]
   accordo bundle:list [--root dir]
+  accordo modules catalog [--root dir]
   accordo package:scaffold <package-name> [--into dir] [--apply|--dry-run] [--json] [--root dir]
   accordo package:validate <package-directory>
   accordo package:inspect <package-directory>
@@ -694,6 +712,10 @@ Usage:
   accordo cloud propose <model> [<recordId>] --values '<json>' [--json]
 
 "module plan", "module create", "module validate" and "module migration" are accepted aliases.
+"modules catalog" is an accepted alias. It prints the native-modules catalog
+(name, purpose, backoffice screen, activation, customization) with each
+module's activation state in this project, plus the project's custom bundles
+as a separate list — start there before writing anything new.
 "bundle create", "bundle plan", "bundle install", "bundle uninstall", "bundle list"
 and "bundle verify" are accepted aliases. bundle:create generates the module
 sources into bundles/<name>/<version>/ (never under packages/) and is a dry-run
