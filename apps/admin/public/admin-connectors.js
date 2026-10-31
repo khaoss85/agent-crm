@@ -161,6 +161,25 @@ export const CONNECTOR_CATALOG = Object.freeze([
 ]);
 
 /**
+ * The channel badge of every list row, like the Google rows above it: a
+ * 2–3 letter tile with a timeline tint (`apps/admin/public/admin-ui.js`
+ * names the same tints for the timeline chips; Telegram has no timeline
+ * tile yet, so it shares the data tint family — see `.ui-chip-tg`).
+ * @typedef {{ tile: string, tint: string }} ConnectorBadge
+ */
+export const CONNECTOR_BADGES = Object.freeze({
+  whatsapp: Object.freeze({ tile: 'WA', tint: 'ui-chip-wa' }),
+  instagram: Object.freeze({ tile: 'IG', tint: 'ui-chip-ig' }),
+  telegram: Object.freeze({ tile: 'TG', tint: 'ui-chip-tg' }),
+  facebook: Object.freeze({ tile: 'FB', tint: 'ui-chip-fb' }),
+  tiktok: Object.freeze({ tile: 'TT', tint: 'ui-chip-tt' }),
+  sms: Object.freeze({ tile: 'S', tint: 'ui-chip-s' }),
+  email: Object.freeze({ tile: '@', tint: 'ui-chip-at' }),
+  voice: Object.freeze({ tile: 'TEL', tint: 'ui-chip-tel' }),
+  'site-form': Object.freeze({ tile: 'WEB', tint: 'ui-chip-web' }),
+});
+
+/**
  * Adapters of the live schema serving one channel.
  * @param {string} channel
  * @param {unknown} adapters
@@ -575,45 +594,46 @@ export function createConnectorsView(deps) {
     const adapters = matchAdapters(catalog.channel, state.adapters);
     const connections = matchConnections(catalog.channel, state.entries);
     const mapped = connectorStatus({ entry: catalog, adapters, connections });
-    const row = el(doc, 'div', 'bo-connector-row');
-    const head = el(doc, 'p', undefined);
-    head.appendChild(el(doc, 'strong', undefined, catalog.label));
-    const badge = mapped.status === 'collegato' ? 'Collegato'
-      : mapped.status === 'da-completare' ? 'Da completare'
-        : mapped.status === 'non-disponibile' ? 'Non disponibile qui' : 'Da collegare';
-    head.appendChild(el(doc, 'span', 'bo-connector-badge', ` · ${badge}`));
-    row.appendChild(head);
-    const detail = doc.createElement('a');
-    detail.textContent = `Dettaglio ${catalog.label}`;
-    detail.setAttribute('href', `#/connettori/${catalog.channel}`);
-    detail.addEventListener('click', (event) => {
+    // One row like the Google rows above it (apps/admin/public/admin-profilo.js):
+    // badge tile, bold name, one description line, status pill and Collega.
+    // No underlined link and no bullet list: the row itself opens the detail.
+    const row = el(doc, 'div', 'bo-profilo-conn bo-conn-row');
+    row.setAttribute('data-channel', catalog.channel);
+    const badge = Object.hasOwn(CONNECTOR_BADGES, catalog.channel)
+      ? /** @type {Record<string, ConnectorBadge>} */ (CONNECTOR_BADGES)[catalog.channel]
+      : { tile: '?', tint: 'ui-chip-plain' };
+    row.appendChild(el(doc, 'span', `ui-chip ${badge.tint} bo-profilo-tile`, badge.tile));
+    // The row opener is a link wearing the row's words — the same idiom as
+    // the Oggi agenda rows (`.bo-oggi-agenda-row > a`): ink color, no
+    // underline, never the old blue `Dettaglio …` link.
+    const open = doc.createElement('a');
+    open.setAttribute('class', 'bo-conn-open');
+    open.setAttribute('href', `#/connettori/${catalog.channel}`);
+    open.setAttribute('data-action', `open-${catalog.channel}`);
+    open.appendChild(el(doc, 'span', 'bo-profilo-conn-name', catalog.label));
+    const active = mapped.connections.find((item) => item !== null && typeof item === 'object'
+      && /** @type {{ status?: unknown }} */ (item).status === 'active') ?? null;
+    const account = active !== null && typeof /** @type {{ account?: unknown }} */ (active).account === 'string'
+      && /** @type {{ account?: string }} */ (active).account.trim() !== ''
+      ? /** @type {{ account?: string }} */ (active).account.trim() : null;
+    open.appendChild(el(doc, 'span', 'bo-profilo-conn-line',
+      account !== null ? `Collegato come ${account}` : String(catalog.syncLines[0] ?? catalog.accountLabel)));
+    open.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       navigate(`#/connettori/${catalog.channel}`);
     });
-    row.appendChild(detail);
-    for (const connection of mapped.connections) {
-      const line = el(doc, 'p', 'bo-muted', `${String(connection.connectionKey)} · ${String(connection.status)}`);
-      row.appendChild(line);
-      if (connection.status === 'active' && connection.sync !== null && connection.sync !== undefined) {
-        const sync = connection.sync;
-        row.appendChild(el(doc, 'p', 'bo-muted',
-          `Sincronizzazione: ${String(sync.status)} · eventi ${String(sync.importedEvents ?? 0)} · contatti creati ${String(sync.createdContacts ?? 0)} · da decidere ${String(sync.unresolvedContacts ?? 0)}`));
-      }
-    }
-    if (mapped.status === 'da-collegare' || mapped.status === 'non-disponibile') {
-      // "Cosa succede quando colleghi": shown while the connector is not
-      // connected — the acceptance's own words, one bullet per effect.
-      const preview = el(doc, 'div', 'bo-connect-preview');
-      preview.appendChild(el(doc, 'p', undefined, 'Cosa succede quando colleghi:'));
-      const list = el(doc, 'ul', undefined);
-      for (const line of catalog.whatHappens) {
-        list.appendChild(el(doc, 'li', undefined, line));
-      }
-      preview.appendChild(list);
-      row.appendChild(preview);
-    }
+    row.appendChild(open);
+    const side = el(doc, 'div', 'bo-profilo-conn-side');
+    const pill = mapped.status === 'collegato'
+      ? { text: 'Collegato', tone: 'ok' }
+      : mapped.status === 'da-completare'
+        ? { text: 'Da completare', tone: 'warn' }
+        : mapped.status === 'non-disponibile'
+          ? { text: 'Non disponibile qui', tone: 'muted' }
+          : { text: 'Da collegare', tone: 'muted' };
+    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${pill.tone}`, pill.text));
     if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
-      const go = el(doc, 'button', undefined, mapped.status === 'da-collegare' ? 'Collega in 3 passi' : 'Completa il collegamento');
+      const go = el(doc, 'button', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
       go.setAttribute('data-action', 'connect-open');
       state.busyControls.push(go);
       go.addEventListener('click', async () => {
@@ -640,7 +660,7 @@ export function createConnectorsView(deps) {
           render();
           return;
         }
-        // "Completa il collegamento" never finishes a non-active connection
+        // Collega on a da-completare row never finishes a non-active connection
         // directly: an active row can continue to the sync choice, but a
         // pending or suspended row goes through the authorize endpoint first
         // (which activates it and refuses a revoked row clearly), landing on
@@ -681,8 +701,9 @@ export function createConnectorsView(deps) {
           render();
         }
       });
-      row.appendChild(go);
+      side.appendChild(go);
     }
+    row.appendChild(side);
     renderFlow(row, catalog);
     box.appendChild(row);
   }
@@ -699,30 +720,9 @@ export function createConnectorsView(deps) {
     // whether or not the channels are composed.
     if (state.google !== null) mount.appendChild(state.google.node);
 
-    const spaceRow = el(doc, 'p', 'bo-field');
-    spaceRow.appendChild(el(doc, 'span', undefined, 'Spazio: '));
-    const spaceInput = doc.createElement('input');
-    spaceInput.setAttribute('class', 'ui-field'); // BO-F6-02: system field class.
-    spaceInput.setAttribute('name', 'spaceId');
-    spaceInput.setAttribute('placeholder', 'lo-spazio');
-    spaceInput.value = state.spaceId;
-    spaceRow.appendChild(spaceInput);
-    const reload = el(doc, 'button', undefined, 'Ricarica');
-    reload.setAttribute('data-action', 'connectors-reload');
-    state.busyControls.push(reload);
-    reload.addEventListener('click', async () => {
-      state.spaceId = String(spaceInput.value ?? '');
-      try {
-        if (storage !== null) storage.setItem(ACTIVE_SPACE_KEY, state.spaceId);
-      } catch {
-        // Private mode: shell state simply does not persist.
-      }
-      await load();
-      render();
-    });
-    spaceRow.appendChild(reload);
-    mount.appendChild(spaceRow);
-
+    // No Spazio field and no Ricarica button here: the shell space picker
+    // owns the active space through ACTIVE_SPACE_KEY, and every load and
+    // every mutation re-reads it (see refreshSpace above).
     if (state.loadError !== null) {
       mount.appendChild(el(doc, 'p', 'field-error', state.loadError));
       return;
@@ -735,11 +735,17 @@ export function createConnectorsView(deps) {
       mount.appendChild(el(doc, 'p', 'empty', 'Scegli lo spazio per vedere i suoi collegamenti.'));
       return;
     }
-    const list = el(doc, 'div', 'bo-connectors');
+    const card = el(doc, 'section', 'panel bo-profilo-card bo-canali-card');
+    card.setAttribute('data-section', 'canali');
+    card.appendChild(el(doc, 'h3', 'bo-profilo-card-title', 'Canali'));
+    card.appendChild(el(doc, 'p', 'bo-profilo-card-lede',
+      'Ogni canale si collega in 3 passi: autorizza, scegli cosa sincronizzare, fatto. Tocca la riga per il dettaglio.'));
+    const list = el(doc, 'div', 'bo-profilo-conns');
     for (const catalog of CONNECTOR_CATALOG) {
       renderRow(list, catalog);
     }
-    mount.appendChild(list);
+    card.appendChild(list);
+    mount.appendChild(card);
   }
 
   return {

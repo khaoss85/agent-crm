@@ -203,9 +203,10 @@ test('the component catalog renders no raw control', () => {
 
 test('the connectors view renders no raw control', async () => {
   // BO-F6-02 AC-3 "dopo" for /bo connectors: the existing view paints its
-  // eight channel rows through the single library, so no button, select or
-  // input reaches the DOM without a ui-* system class. The guided-flow
-  // assertion below proves the rows painted instead of an honest empty note.
+  // channel rows through the single library, so no button, select or input
+  // reaches the DOM without a ui-* system class (the row opener is a plain
+  // link wearing the row words, not a control). The Collega count below
+  // proves the rows painted instead of an honest empty note.
   const doc = createFakeDocument();
   const mount = createMount();
   const channels = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form'];
@@ -229,7 +230,7 @@ test('the connectors view renders no raw control', async () => {
   };
   const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => {} };
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage }).render();
-  const flows = mount.textContent.split('Collega in 3 passi').length - 1;
-  assert.equal(flows, 8, 'all eight channel rows offer the guided flow');
+  const flows = mount.findAll('button').filter((node) => node.textContent === 'Collega').length;
+  assert.equal(flows, 8, 'all eight connectable channel rows offer Collega (Telegram has no adapter)');
   assert.deepEqual(rawControls(mount), [], 'every connectors control carries a ui-* class');
 });
