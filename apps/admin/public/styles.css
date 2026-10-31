@@ -1303,24 +1303,40 @@ select.bo-spazi-input { flex: none; }
 .catalog-chip.ui-btn { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 9px; border: none; background: transparent; color: var(--muted); font-size: 14px; font-weight: 600; box-shadow: none; }
 .catalog-chip.ui-btn.active { background: var(--line-soft); color: var(--ink); }
 .catalog-chip-count { font-family: var(--mono); font-size: 11px; opacity: .65; }
-.catalog-filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.catalog-filters input, .catalog-filters select { height: 36px; font-size: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 10px; width: auto; }
+.catalog-filters { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; min-width: 0; }
+.catalog-filters input, .catalog-filters select { height: 36px; font-size: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 10px; width: auto; min-width: 0; }
+.catalog-filters select[name="source"] { flex: 1 1 110px; }
+@media (max-width: 700px) {
+  .catalog-filters { flex-wrap: wrap; }
+}
 .catalog-filters .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
 .catalog-search { flex: 1 1 180px; max-width: 300px; }
 .catalog-no-results { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 16px 20px; }
 .catalog-no-results p { margin: 0; font-size: 13px; color: var(--muted); }
 .catalog-list { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; overflow: hidden; }
-.catalog-thead, .catalog-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.6fr) 110px 70px; gap: 16px; align-items: center; padding: 12px 20px; }
+.catalog-thead, .catalog-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, .8fr) minmax(0, .7fr) minmax(0, .7fr) minmax(0, .9fr) minmax(0, 1.1fr); gap: 12px; align-items: start; padding: 12px 20px; }
 .catalog-thead { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.catalog-thead > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .catalog-row { border-top: 1px solid var(--line-faint); border-radius: 0; background: transparent; }
+.catalog-row > * { min-width: 0; overflow-wrap: anywhere; }
 .catalog-row h3 { margin: 0; font-size: 14px; }
 .catalog-sku { margin: 2px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .catalog-category { margin: 0; font-size: 13px; color: var(--muted); }
+.catalog-unit { margin: 0; font-size: 13px; color: var(--ink); }
+.catalog-max-discount, .catalog-stock { margin: 0; font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+@media (max-width: 700px) {
+  .catalog-thead { display: none; }
+  .catalog-row { grid-template-columns: 1fr 1fr; }
+  .catalog-cell-name, .catalog-cell-price { grid-column: 1 / -1; }
+  .catalog-row > [data-label]::before { display: block; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); content: attr(data-label); }
+}
 .catalog-meta { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .catalog-source { padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--muted); }
 .catalog-source-provider { background: var(--agent-card); color: var(--agent-ink); }
 .catalog-active-state { font-size: 12px; font-weight: 700; color: var(--muted); }
+.catalog-create-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; }
 .catalog-create-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.catalog-ai-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .catalog-create-form { display: grid; gap: 6px; }
 .catalog-create-label { font-size: 12px; color: var(--muted); }
 .catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }

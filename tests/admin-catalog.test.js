@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents } from '../apps/admin/public/admin-catalog.js';
+import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents, buildCreateBody } from '../apps/admin/public/admin-catalog.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -200,8 +200,8 @@ test('provider rows render read-only with tier labels and no invite once Stripe 
   assert.ok(text.includes('49 € / mese'), 'the recurring amount renders with its interval');
   assert.ok(text.includes('fino a 10: 12 €'), 'quantity tier labels render');
   assert.ok(text.includes('oltre: 10 €'), 'the open-ended tier renders');
-  assert.equal(mount.findAll('input').length, 3, 'the only fields are the filters and the search — prices are text, never inputs');
-  assert.equal(mount.findAll('select').length, 1, 'the active filter is a bounded select');
+  assert.equal(mount.findAll('input').length, 1, 'the only field left is the search — prices are text, never inputs');
+  assert.equal(mount.findAll('select').length, 2, 'Fonte and state are bounded menus');
 });
 
 test('provider rows promise no Stripe edit while Stripe is disconnected', async () => {
@@ -237,12 +237,13 @@ test('filters travel as query params and hostile values stay text', async () => 
   assert.equal(query.searchParams.get('category'), hostile, 'category round-trips through the query');
   assert.equal(query.searchParams.get('active'), 'true', 'active travels');
   assert.equal(query.searchParams.get('source'), 'manual', 'source travels');
-  // The hostile category round-trips through the filter input's value, not
-  // through markup: with the fake DOM every value is text by construction,
-  // and no script element is ever created.
+  // The hostile category travels as a query param and never becomes markup:
+  // with the fake DOM every value is text by construction, and no script
+  // element is ever created.
   assert.equal(mount.findAll('script').length, 0, 'no script element is created');
-  const categoryInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'category');
-  assert.equal(categoryInput.value, hostile, 'the hostile value sits in the field value, never in markup');
+  const sourceSelect = mount.findAll('select').find((node) => node.getAttribute('name') === 'source');
+  assert.ok(sourceSelect, 'the Fonte menu renders');
+  assert.equal(sourceSelect.value, 'manual', 'the applied source stays selected in the menu');
 });
 
 const SEARCH_TABLE = {
@@ -804,7 +805,8 @@ test('Aggiungi prodotto stays available once Stripe is connected', async () => {
 test('the rows read the r2 row fields: unit, sconto max, quantità', async () => {
   // Spec catalogo.md C11/C12/C14-C16 (voce figlia c7deb9c21f3b): the table
   // renders the product-version r2 row fields as read-only text on every
-  // row, manual and provider alike. A hostile unit stays text, never markup.
+  // row, manual and provider alike — each in its own column, never repeating
+  // the column name. A hostile unit stays text, never markup.
   const withFields = structuredClone(MANUAL_TABLE.products[0]);
   withFields.unit = 'ingressi';
   withFields.maxDiscountBps = 1000;
@@ -826,12 +828,19 @@ test('the rows read the r2 row fields: unit, sconto max, quantità', async () =>
   await view.renderTable({});
 
   const text = mount.textContent;
-  assert.ok(text.includes('Prezzo del pacchetto: 99 € · per ingressi'), `the unit reads "· per <unità>" (${text})`);
-  assert.ok(text.includes('Sconto max 10%'), 'the discount ceiling reads as a percent');
-  assert.ok(text.includes('Quantità 7'), 'the stock count reads as a number');
-  assert.ok(text.includes('Sconto max —'), 'a missing ceiling reads an honest dash, never blank');
-  assert.ok(text.includes('Quantità —'), 'a service with no stock reads a dash, never blank');
-  assert.ok(text.includes('<img src=x>'), 'a hostile unit stays text');
+  const units = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-unit'))
+    .map((node) => node.textContent);
+  assert.deepEqual(units, ['ingressi', '<img src=x>'], 'the unit reads in its own column');
+  assert.ok(!text.includes('· per'), 'no unit suffix repeats the column in the price cell');
+  const discounts = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-max-discount'))
+    .map((node) => node.textContent);
+  assert.deepEqual(discounts, ['10%', '—'], 'the discount ceiling reads as a bare value with an honest dash');
+  const stocks = mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-stock'))
+    .map((node) => node.textContent);
+  assert.deepEqual(stocks, ['7', '—'], 'the stock count reads as a bare value with a dash for services');
   assert.equal(mount.findAll('img').length, 0, 'no markup from the unit reaches the DOM');
 });
 
@@ -1050,4 +1059,266 @@ test('an uncertain creation reloads with the table filters', async () => {
   assert.equal(reload.searchParams.get('source'), 'manual', 'the reconcile reload keeps the source filter');
   assert.equal(reload.searchParams.get('category'), 'pacchetti', 'the reconcile reload keeps the category filter');
   assert.equal(reload.searchParams.get('limit'), '200', 'the reconcile reload keeps the row limit');
+});
+
+test('the header names the eight columns in order and every row carries eight cells', async () => {
+  // Supervisor review on main after #506: the header wrapped over two lines
+  // and Fonte/Attivo/Togli fell on a second row, because the grid declared
+  // fewer columns than the cells. The header and every row now share the
+  // same eight columns, in the reviewed order.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': SEARCH_TABLE } }) });
+  await view.renderTable({});
+
+  const heads = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-thead'));
+  assert.equal(heads.length, 1, 'one header');
+  const labels = heads[0].childNodes.map((node) => node.textContent);
+  assert.deepEqual(
+    labels,
+    ['Prodotto', 'Categoria', 'Prezzo', 'Unità', 'Sconto max', 'Quantità', 'Fonte', 'Attivo'],
+    'the reviewed column order',
+  );
+  const rows = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-row'));
+  assert.equal(rows.length, 2, 'one row per product');
+  for (const row of rows) {
+    assert.equal(row.childNodes.length, 8, 'every row carries exactly the eight grid cells');
+  }
+});
+
+test('no cell repeats its column name', async () => {
+  // Supervisor acceptance: each value reads bare, never prefixed with the
+  // column label. The review runs on texts, so the check reads texts.
+  const table = structuredClone(MANUAL_TABLE);
+  table.products[0].unit = 'ingressi';
+  table.products[0].maxDiscountBps = 1000;
+  table.products[0].stockQuantity = 7;
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  const valueOf = (cls) => mount.findAll('p')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes(cls))
+    .map((node) => node.textContent);
+  for (const text of valueOf('catalog-max-discount')) {
+    assert.ok(!text.toLowerCase().includes('sconto'), `the discount cell never names its column (${text})`);
+  }
+  for (const text of valueOf('catalog-stock')) {
+    assert.ok(!text.toLowerCase().includes('quantit'), `the stock cell never names its column (${text})`);
+  }
+  for (const text of valueOf('catalog-unit')) {
+    assert.ok(!/unit|ingressi:/i.test(text) || text === 'ingressi', `the unit cell reads the bare unit (${text})`);
+  }
+  assert.equal(valueOf('catalog-unit')[0], 'ingressi', 'the unit reads bare');
+  assert.equal(valueOf('catalog-max-discount')[0], '10%', 'the ceiling reads bare');
+  assert.equal(valueOf('catalog-stock')[0], '7', 'the stock reads bare');
+});
+
+test('the Stripe count and the Fonte chips stay coherent', async () => {
+  // The Stripe block and every Fonte chip read the same derivation: rows
+  // whose source names Stripe, counted by provider.
+  const striped = structuredClone(STRIPE_TABLE.products[0]);
+  const second = structuredClone(striped);
+  second.productId = 'p9';
+  second.name = 'Corso Pilates';
+  const table = {
+    products: [striped, second],
+    summary: { manual: 0, byProvider: { 'stripe-test': 2 }, stripeConnected: true },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('2 prodotti importati da Stripe'), 'the block counts the Stripe rows');
+  const chips = mount.findAll('span')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-source'))
+    .map((node) => node.textContent);
+  assert.deepEqual(chips, ['Stripe', 'Stripe'], 'every Stripe row carries the Fonte chip');
+});
+
+test('the Stripe block falls back to the same by-provider derivation as the chips', async () => {
+  // A summary without the stripeConnected flag (older payloads) still reads
+  // connected when a provider names Stripe — exactly like the row chips do.
+  const table = {
+    products: structuredClone(STRIPE_TABLE.products),
+    summary: { manual: 0, byProvider: { 'stripe-test': 1 } },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.textContent.includes('Collegato a Stripe'), 'the block derives the connection like the chips');
+  assert.ok(mount.textContent.includes('1 prodotto importato da Stripe'), 'the count matches the single Stripe row');
+  assert.ok(!mount.textContent.includes('non collegato'), 'no conflicting invite while a Stripe row is on screen');
+});
+
+test('the search filters the loaded rows while typing and the Fonte menu narrows them live', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const byName = (name) => mount.findAll('select').find((node) => node.getAttribute('name') === name);
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length;
+  const before = reads();
+
+  const search = mount.findAll('input').find((node) => node.getAttribute('name') === 'search');
+  search.value = 'corso';
+  search.dispatch('input');
+  assert.equal(rowCount(mount), 1, 'the search narrows the loaded rows while typing');
+
+  search.value = '';
+  search.dispatch('input');
+  const source = byName('source');
+  assert.ok(source, 'the Fonte menu renders');
+  source.value = 'manual';
+  source.dispatch('change');
+  assert.equal(rowCount(mount), 2, 'the menu matches both manual rows by exact raw value');
+  assert.equal(reads(), before, 'choosing a source never refetches');
+});
+
+test('the Fonte menu lists the read vocabulary with Italian labels', async () => {
+  const stripeRow = {
+    productId: 'p3',
+    sku: 'YOGA-1',
+    name: 'Corso Yoga',
+    description: 'Abbonamento.',
+    category: 'corsi',
+    source: 'stripe-test',
+    priceReadOnly: true,
+    active: true,
+    version: 1,
+    offers: [],
+  };
+  const mixed = { products: [...SEARCH_TABLE.products, stripeRow], summary: { manual: 2, byProvider: { 'stripe-test': 1 }, stripeConnected: true } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': mixed } }) });
+  await view.renderTable({});
+
+  const source = mount.findAll('select').find((node) => node.getAttribute('name') === 'source');
+  assert.ok(source, 'the Fonte menu renders');
+  const options = source.childNodes.filter((node) => node.tagName === 'OPTION');
+  const values = options.map((node) => node.getAttribute('value'));
+  assert.ok(values.includes(''), 'Tutte reads unfiltered');
+  assert.ok(values.includes('manual'), 'the menu carries the raw manual value');
+  assert.ok(values.includes('stripe-test'), 'the menu carries the raw provider value');
+  const labels = Object.fromEntries(options.map((node) => [node.getAttribute('value'), node.textContent]));
+  assert.equal(labels[''], 'Tutte', 'the empty option reads Tutte');
+  assert.equal(labels.manual, 'Manuale', 'the manual value reads Italian');
+  assert.equal(labels['stripe-test'], 'Stripe', 'the provider value reads Stripe');
+});
+
+test('choosing a source then reloading from the server shows the same rows', async () => {
+  // Supervisor arbitration on #516 round 2: the live filter and the server
+  // filter use the same value and the same comparison, so P1 is gone.
+  const stripeRow = {
+    productId: 'p3',
+    sku: 'YOGA-1',
+    name: 'Corso Yoga',
+    description: 'Abbonamento.',
+    category: 'corsi',
+    source: 'stripe-test',
+    priceReadOnly: true,
+    active: true,
+    version: 1,
+    offers: [],
+  };
+  const mixed = { products: [...SEARCH_TABLE.products, stripeRow], summary: { manual: 2, byProvider: { 'stripe-test': 1 }, stripeConnected: true } };
+  const manualOnly = { products: SEARCH_TABLE.products, summary: { manual: 2, byProvider: {}, stripeConnected: false } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': mixed, 'source=manual&limit=200': manualOnly } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const source = mount.findAll('select').find((node) => node.getAttribute('name') === 'source');
+  source.value = 'manual';
+  source.dispatch('change');
+  assert.equal(rowCount(mount), 2, 'the menu narrows the loaded rows live');
+
+  clickButton(mount, 'Filtra');
+  await flush();
+  const reread = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
+  assert.equal(reread.searchParams.get('source'), 'manual', 'Filtra sends the exact raw value');
+  assert.equal(rowCount(mount), 2, 'the reload shows the same rows as the live filter');
+  assert.ok(mount.textContent.includes('Pacchetto 10 lezioni'), 'a manual row stays');
+  assert.ok(mount.textContent.includes('Corso serale'), 'the other manual row stays');
+
+  const state = mount.findAll('select').find((node) => node.getAttribute('name') === 'active');
+  state.value = 'true';
+  state.dispatch('change');
+  await flush();
+  const rereadState = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
+  assert.equal(rereadState.searchParams.get('source'), 'manual', 'the state change keeps the exact raw value');
+});
+
+test('the category chips carry the exact data value, live and on reload', async () => {
+  // The category no longer has a free-text box: chips hold the exact value
+  // the server compares case-sensitively, so live and reload agree.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({ category: 'Pacchetti' });
+
+  assert.equal(rowCount(mount), 0, 'a mixed-case category matches nothing live, like the server');
+  assert.ok(mount.textContent.includes('Nessun risultato per questi filtri'), 'the gentle note covers the exact filter');
+
+  const fresh = createMount();
+  const freshClient = stubClient({ tables: { '': SEARCH_TABLE } });
+  const freshView = createCatalogView({ doc, mount: fresh, client: freshClient });
+  await freshView.renderTable({});
+  const chip = fresh.findAll('button')
+    .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-chip')
+      && node.textContent.startsWith('pacchetti'));
+  assert.ok(chip, 'the pacchetti chip renders');
+  chip.dispatch('click');
+  await flush();
+  const reread = new URL(freshClient.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
+  assert.equal(reread.searchParams.get('category'), 'pacchetti', 'the chip sends the exact data value');
+});
+
+test('buildCreateBody posts the single one-time flat component', () => {
+  const body = buildCreateBody({ sku: 'X-1', name: 'Prova', category: 'c', currency: 'EUR', unit: 'u', cents: 100 });
+  assert.equal(body.sku, 'X-1');
+  assert.equal(body.components.length, 1, 'one price from the fields');
+  assert.equal(body.components[0].pricingModel, 'flat_fee', 'manual creations stay one-time flat');
+  assert.equal(body.components[0].flatAmountCents, 100);
+});
+
+test('\u2726 Aggiungi con l\u2019AI opens the assistant with the catalog context and sends nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const asked = [];
+  const view = createCatalogView({ doc, mount, client, onAskAi: (screen, description) => { asked.push([screen, description]); } });
+  await view.renderTable({});
+
+  clickButton(mount, '\u2726 Aggiungi con l\u2019AI');
+  assert.equal(asked.length, 1, 'the voice opens the assistant');
+  assert.equal(asked[0][0], 'catalogo', 'the catalog screen is the context');
+  assert.ok(String(asked[0][1]).toLowerCase().includes('catalogo'), 'the description names the catalog');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'opening the assistant sends nothing');
+  assert.ok(!mount.textContent.includes('Interpreta'), 'no sentence parser renders anymore');
+});
+
+test('\u2726 Aggiungi con l\u2019AI without an assistant names the keyboard shortcut and sends nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const toasted = [];
+  const view = createCatalogView({ doc, mount, client, toast: (message) => { toasted.push(message); } });
+  await view.renderTable({});
+
+  clickButton(mount, '\u2726 Aggiungi con l\u2019AI');
+  assert.equal(toasted.length, 1, 'the fallback names the way in');
+  assert.ok(toasted[0].includes('\u2318K'), 'the fallback names the AI shortcut');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the fallback sends nothing');
 });
