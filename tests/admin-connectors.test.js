@@ -353,13 +353,17 @@ test('hostile server text stays text', async () => {
   const mount = createMount();
   const client = stubClient({
     schema: hostile,
-    sync: { connectors: [{ connectionKey: '"><img src=x>', channel: 'email', status: 'active', importable: false, sync: null }] },
+    sync: { connectors: [{ connectionKey: 'ck-mail', channel: 'email', status: 'active', account: '"><img src=x>', importable: false, sync: null }] },
   });
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  // Rows show the account, never the connection key: the hostile account
+  // stays text and creates no element.
   assert.ok(mount.textContent.includes('"><img src=x>'));
+  assert.equal(mount.findAll('img').length, 0, 'hostile account creates no element');
   mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   assert.ok(mount.textContent.includes('<script>alert(1)</script>'));
+  assert.equal(mount.findAll('script').length, 0, 'hostile adapter label creates no element');
 });
 
 test('the wizard drives authorize, sync choice and finish', async () => {
@@ -574,8 +578,10 @@ test('Collega refuses a revoked row clearly', async () => {
     'a revoked connection never finishes');
   assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Concludi il collegamento'),
     'no sync choice is offered for a revoked connection');
-  assert.ok(mount.textContent.includes('revoked'),
-    'the refusal names the revoked connection instead of failing with NOT_ACTIVE');
+  assert.ok(mount.textContent.includes('revocato'),
+    'the refusal names the revoked connection in Italian instead of failing with NOT_ACTIVE');
+  assert.ok(mount.textContent.includes('+390200000001'),
+    'the refusal names the revoked account so the operator reconnects it');
 });
 
 test('the fatto step resumes a partial import instead of promising background progress', async () => {

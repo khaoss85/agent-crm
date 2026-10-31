@@ -307,6 +307,22 @@ function errorOf(error) {
 }
 
 /**
+ * A revoked row refuses clearly: re-authorizing it answers
+ * CHANNEL_CONNECTION_REVOKED, and the generic read failure would hide which
+ * connection died. Name the revoked account in Italian so the operator
+ * reconnects that account instead of retrying blindly.
+ */
+function revokedRefusal(error, connection) {
+  const code = error !== null && typeof error === 'object' ? error.code : null;
+  if (code !== 'CHANNEL_CONNECTION_REVOKED') return errorOf(error);
+  const account = typeof connection?.account === 'string' && connection.account.trim() !== ''
+    ? connection.account.trim() : null;
+  return account !== null
+    ? `Questo collegamento (${account}) è stato revocato: registra un account nuovo per ricollegarlo.`
+    : 'Questo collegamento è stato revocato: registra un account nuovo per ricollegarlo.';
+}
+
+/**
  * A view controller for the Connettori screen. Injecting `doc`, `mount`,
  * `client`, `storage` and `navigate` keeps it testable without a browser.
  */
@@ -513,6 +529,13 @@ export function createConnectorsView(deps) {
   function renderDone(box, catalog, flow) {
     const finish = flow.finish;
     box.appendChild(el(doc, 'p', undefined, `${catalog.label} è collegato. Fatto.`));
+    // The duplicates promise lives here now that the list rows no longer
+    // carry the "Cosa succede quando colleghi" preview: like the Google rows
+    // above, each row shows one description line, and the promise is confirmed
+    // where the connection just finished. Reused from the catalog so the
+    // sentence cannot drift between the two places.
+    const duplicatesPromise = catalog.whatHappens.find((line) => String(line).includes('mai uniti da soli')) ?? null;
+    if (duplicatesPromise !== null) box.appendChild(el(doc, 'p', 'bo-muted', duplicatesPromise));
     // One finish request pulls at most a few history pages, so a large past
     // reports its real progress with a button to continue — never a
     // background promise nothing keeps, and never an unconditional done.
@@ -695,7 +718,7 @@ export function createConnectorsView(deps) {
           state.flow = flowAuthorized(state.flow, answer?.connection ?? null);
           await load();
         } catch (error) {
-          state.flow = flowFail(state.flow, errorOf(error));
+          state.flow = flowFail(state.flow, revokedRefusal(error, next));
         } finally {
           setBusy(false);
           render();
