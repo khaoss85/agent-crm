@@ -1588,3 +1588,22 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 .bo-user-link { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; color: inherit; text-decoration: none; border-radius: 10px; padding: 4px; margin: -4px; }
 .bo-user-link:hover { background: var(--surface-soft); }
+
+/* backlog:5b164ab5 — the Clienti import tool reads like the rest of the /bo:
+   breadcrumb, ghost back link (shared with the scheda), kicker and title,
+   then the three steps (file, columns, check). The preview table scrolls
+   inside its own frame on a phone, never the page. */
+.bo-import-crumb { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.bo-import-crumb-sep { color: var(--dim); }
+.bo-import-crumb-link { color: var(--accent); font-weight: 600; }
+.bo-import-crumb-current { color: var(--ink); font-weight: 600; }
+.bo-import-title { margin: 10px 0 0; }
+.bo-import-drop { margin: 12px 0 0; border: 1.5px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center; background: var(--surface-soft); }
+.bo-import-drop-over { border-color: var(--accent); background: var(--accent-soft); }
+.bo-import-drop-text { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.bo-import-file { margin: 10px 0 0; font-size: 14px; }
+.bo-import-info, .bo-import-counts, .bo-import-applied { margin: 10px 0 0; font-size: 14px; }
+.bo-import-applied { color: var(--accent); font-weight: 600; }
+.bo-import-table-wrap { margin: 12px 0 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+.bo-import-table { margin: 0; }
+.customer-data-mapping-row, .customer-data-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

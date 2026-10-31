@@ -581,18 +581,19 @@ const customerFormView = createCustomerFormView({
   notify: (message) => toast(message),
 });
 
-// Customer Data import and governance tool (ADR-037, backlog:80b25fb0):
-// the JSON import, duplicate candidates and the data quality queue. It lives
-// on its own screen (#/import-clienti), reached from the list's
-// "Aggiungi cliente → Compila manualmente" entry. Renders only while the
-// server publishes the customer-data package; the read-only profile below
-// renders on the scheda route.
+// Clienti import tool (ADR-037, backlog:80b25fb0, restyle backlog:5b164ab5):
+// the file import, duplicate candidates and the data quality queue. It lives
+// on its own screen (#/import-clienti), reached from the list's entries.
+// Renders only while the server publishes the customer-data package; the
+// read-only profile below renders on the scheda route. The workspace name
+// feeds the page breadcrumb («<spazio> / Clienti / Importa»).
 const customerDataView = createCustomerDataView({
   doc: document,
   mount: moduleView,
   client: moduleClient,
   submissions,
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  spaceName: () => currentSpaceName(),
 });
 
 // Connectors (BO-F1-02).
@@ -842,7 +843,7 @@ function shellScreenFor(target) {
     case 'customer-data':
     case 'customer-profile':
     case 'customer-card': return { id: 'clienti', label: 'Clienti' };
-    case 'customer-import': return { id: 'clienti', label: 'Importazione clienti' };
+    case 'customer-import': return { id: 'clienti', label: 'Importa clienti' };
     case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
