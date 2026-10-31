@@ -258,6 +258,18 @@ does not exist, whatever a record name, a label or a comment suggests.
 \`npm run crm -- project doctor --json\` is the fast read-only check for what is
 already inconsistent, and it is cheap enough to run before every change.
 
+## Start from the native modules, do not rewrite them
+
+\`\`\`bash
+npm run crm -- modules catalog
+\`\`\`
+
+The framework ships native modules (Clienti, Pipeline, Calendario, Sequenze,
+Catalogo, Canali, Stato sync, Spazi e accessi) with their backoffice screens:
+your job is to activate, configure and personalize them, never to rewrite
+one. Custom work is a separate bundle (\`crm bundle:create\`), never a file
+under \`packages/\`.
+
 ## Non-negotiable rules
 
 - All CRM mutations go through module services or named workflows. Never mutate
