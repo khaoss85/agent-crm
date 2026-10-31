@@ -637,6 +637,16 @@ test('826e377c: the operation reads observed channels from the scanned messages 
   assert.deepEqual(messaged.channels, ['instagram', 'whatsapp'], 'messages with no held identity still name their channels');
   const silent = (await run({})).items.find((item) => item.name === 'Guido Presti');
   assert.deepEqual(silent.channels, [], 'no messages and no identities reads empty, never invented');
+  const smsOnly = (await run({
+    messages: [{
+      id: 'm9', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-10-20T09:00:00.000Z', channel: 'sms', body: 'Ciao',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.deepEqual(
+    smsOnly.channels, [],
+    'an observed channel outside the filter vocabulary stays out of CANALI, like the canale filter refuses it',
+  );
   const filtered = await listCustomerRecords(
     { modules: fakeModules({ contacts, companies, identities: [], messages: [{ id: 'm1', subjectResource: 'contact', subjectId: 'c1', occurredAt: '2026-10-20T09:00:00.000Z', channel: 'whatsapp', body: 'Ciao' }] }), core: {}, names: { identity: 'external-identity' } },
     { vista: 'tutti', canale: 'whatsapp' },

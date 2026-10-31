@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createCustomerCardView,
+  LINKABLE_SYSTEMS,
+  mergeLinkedIdentities,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
 } from '../apps/admin/public/admin-customer-card.js';
+import { CHANNEL_SYSTEMS } from '../packages/customer-data/src/sender.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -1142,6 +1145,62 @@ test('826e377c: observed WhatsApp number and Instagram handle list with no held 
   assert.ok(text.includes('@ada-rossi.esempio'), 'the Instagram handle reads as value');
   const held = rows.filter((node) => node.getAttribute('data-source') === 'held');
   assert.deepEqual(held, [], 'no held row is invented from messages alone');
+});
+
+test('826e377c: the card links exactly the sender vocabulary', () => {
+  assert.deepEqual(
+    [...LINKABLE_SYSTEMS].sort(), [...CHANNEL_SYSTEMS].sort(),
+    'Collega is offered exactly where the link route can succeed, never into a 400',
+  );
+  const merged = mergeLinkedIdentities({ externalIdentities: [] }, {
+    conversations: { items: [] },
+    entries: {
+      items: [
+        { channel: 'whatsapp', remoteHandle: '+39 000 000 001' },
+        { channel: 'sms', remoteHandle: '+39 000 000 002' },
+        { channel: 'gmail', remoteHandle: 'ada.rossi@example.it' },
+      ],
+    },
+  });
+  const byChannel = Object.fromEntries(merged.rows.map((row) => [row.system, row]));
+  assert.equal(byChannel.whatsapp.linkable, true, 'a linkable observed row offers Collega');
+  assert.equal(byChannel.whatsapp.linked, false);
+  assert.equal(byChannel.sms.linkable, false, 'sms lists display-only: the link route would 400');
+  assert.equal(byChannel.gmail.linkable, false, 'gmail lists display-only: the link route would 400');
+});
+
+test('826e377c: observed rows outside the link vocabulary render without Collega', async () => {
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: {
+      available: true, count: 2, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+        {
+          entry: 'message', id: 'm-sms', conversationId: 't-sms', channel: 'sms', direction: 'inbound',
+          sync: 'received', body: 'Ci vediamo domani', teamAuthorId: null,
+          remoteHandle: '+39 000 000 002', errorCode: null, occurredAt: '2026-10-20T10:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('+39 000 000 002'), 'the sms channel still lists, display-only');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed identity');
+  const buttons = mount.findAll('button').filter((node) => node.textContent === 'Collega');
+  assert.equal(buttons.length, 1, 'only the linkable whatsapp row offers Collega');
+  assert.equal(buttons[0].getAttribute('data-identity-channel'), 'whatsapp');
 });
 
 // Voce 826e377c: una riga osservata offre Collega, una detenuta Scollega —

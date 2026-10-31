@@ -5,8 +5,9 @@ import { createBulkRunner } from './bulk.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
-  CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
-  CUSTOMER_VIEWS, applyCustomerListQuery, filterCustomerRows, parseCustomerListQuery, shapeCustomerRow,
+  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, filterCustomerRows, parseCustomerListQuery,
+  shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -399,9 +400,12 @@ export function createCustomerDataOperations({ database, modules, events, config
      * `external-identity`, with their own actor on the write. The stored
      * form is `normalizeChannelHandle`, the same normalization the sender
      * resolution records — so a manual link of an observed handle replays
-     * the automatic row instead of doubling it. A handle already held by
+     * the automatic row instead of doubling it. A handle actively held by
      * another customer refuses with IDENTITY_HELD_ELSEWHERE, never by
-     * touching the other customer's row.
+     * touching the other customer's row. A superseded row names nobody
+     * (the unlink contract), so linking re-points and reactivates that row
+     * for the linking subject — even a different customer reclaiming a
+     * released handle — instead of refusing forever.
      * @param {any} request
      */
     async linkCustomerIdentity(request) {
@@ -427,16 +431,21 @@ export function createCustomerDataOperations({ database, modules, events, config
         return shape('already-linked', { replayed: true });
       }
       const write = async () => {
+        if (existing && existing.status === 'active' && !heldHere(existing)) {
+          throw new AppError(`that ${system} handle is already linked to another customer`, {
+            code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
+          });
+        }
         if (existing) {
-          if (!heldHere(existing)) {
-            throw new AppError(`that ${system} handle is already linked to another customer`, {
-              code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
-            });
-          }
-          // A manually unlinked identity linked again: reactivate the same
-          // row (the sourceKey is unique) instead of a second row.
+          // A superseded row names nobody, so linking re-points it at the
+          // linking subject and reactivates it — the same subject healing an
+          // unlink, or a new customer reclaiming a released handle. The
+          // sourceKey stays unique, so no second row is ever written.
           await identities.applyManaged(existing.id, {
-            status: 'active', lastObservedRunId: MANUAL_LINK_RUN_ID, lastObservedAt: now,
+            ...subjectFields(subject),
+            status: 'active',
+            firstObservedRunId: MANUAL_LINK_RUN_ID, lastObservedRunId: MANUAL_LINK_RUN_ID,
+            firstObservedAt: now, lastObservedAt: now,
           }, { actor });
           return shape('linked', { reactivated: true });
         }
@@ -768,10 +777,12 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, and the
-    // CANALI column shares the scheda's union of held plus observed.
+    // CANALI column shares the scheda's union of held plus observed — but
+    // only on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
+    // enforces, so the column never names a channel its own filter refuses.
     const observedChannels = [...new Set(myMessages
       .map((row) => String(row?.channel ?? '').toLowerCase())
-      .filter((channel) => channel !== ''))].sort();
+      .filter((channel) => CUSTOMER_CHANNELS.includes(channel)))].sort();
     let lastContactAt = null;
     let lastContactChannel = null;
     // The preview is the latest message body read above — calls name no

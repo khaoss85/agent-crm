@@ -137,6 +137,40 @@ test('a handle held by another customer refuses and is never touched', async (t)
   assert.equal((await activeIdentities(app, bianca.contact.id)).length, 1, 'nothing was recorded for Bianca');
 });
 
+test('a released handle re-links to the customer that claims it', async (t) => {
+  const { app } = await scene(t, 'identity-link-reclaim');
+  const ada = await adaByEmail(app);
+  const bianca = await app.resolveChannelSender({
+    channel: 'email', handle: 'bianca@example.it',
+    firstName: 'Bianca', lastName: 'Verdi', actor: ACTOR,
+  });
+  await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+  await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+
+  // Ada released the recycled number: Bianca, its real owner, claims it and
+  // the same superseded row re-points at her instead of refusing forever.
+  const reclaimed = await app.linkCustomerIdentity({
+    resource: 'contact', id: bianca.contact.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+  assert.equal(reclaimed.outcome, 'linked');
+  assert.equal(reclaimed.reactivated, true, 'the released row is reused, never doubled');
+  const rows = await app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'whatsapp:+39000000001' });
+  assert.equal(rows.length, 1, 'no second row was written');
+  assert.equal(rows[0].status, 'active');
+  assert.equal(rows[0].subjectId, bianca.contact.id, 'the row now names the claiming customer');
+  assert.equal((await activeIdentities(app, ada.id)).length, 1, 'Ada keeps only her email identity');
+  const profile = await app.readCustomerProfile({ resource: 'contact', id: bianca.contact.id });
+  assert.ok(
+    profile.externalIdentities.some((identity) => identity.system === 'whatsapp'),
+    "Bianca's card lists the reclaimed number",
+  );
+});
+
 test('unlink of an unknown or foreign handle answers not-found', async (t) => {
   const { app } = await scene(t, 'identity-unlink-missing');
   const ada = await adaByEmail(app);

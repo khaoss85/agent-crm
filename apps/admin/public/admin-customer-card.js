@@ -262,6 +262,15 @@ const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', face
 const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', 'tel', 'mobile']);
 
 /**
+ * Systems the Collega button can link: the sender vocabulary, mirrored.
+ * Authority stays `CHANNEL_SYSTEMS` in packages/customer-data/src/sender.js
+ * (the link route refuses anything else with 400), so the card never offers
+ * Collega on an observed row the backend cannot link — those rows still list
+ * the observed channel, display-only. A parity test pins the two lists equal.
+ */
+export const LINKABLE_SYSTEMS = Object.freeze(['whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone']);
+
+/**
  * Merge the held channel identities with the channels observed on the
  * customer's own messages (voce 826e377c): one row per (system, handle).
  * Held rows (`linked: true`) come from `profile.externalIdentities` with
@@ -273,7 +282,10 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
  * stripped on phone-like systems, lowercased email) so one number in two
  * display forms never reads as two identities. Email appears when held as
  * an email-system identity or observed on the email channel — the contact
- * record email stays in Dettagli, not here.
+ * record email stays in Dettagli, not here. Rows carry `linkable`: held
+ * rows always link (Scollega), observed rows only on LINKABLE_SYSTEMS —
+ * an sms/voice/gmail row the backend cannot link lists display-only, so
+ * Collega never ends in a 400.
  * @param {any} profile the read-customer-profile answer
  * @param {any} timeline the read-customer-timeline answer
  */
@@ -290,7 +302,13 @@ export function mergeLinkedIdentities(profile, timeline) {
     const key = dedupeKey(system, externalId);
     if (seen.has(key)) return;
     seen.add(key);
-    rows.push(Object.freeze({ system, externalId: String(externalId), source, linked: source === 'held' }));
+    rows.push(Object.freeze({
+      system,
+      externalId: String(externalId),
+      source,
+      linked: source === 'held',
+      linkable: source === 'held' || LINKABLE_SYSTEMS.includes(system),
+    }));
   };
   const rawIdentities = Array.isArray(profile?.externalIdentities) ? profile.externalIdentities : [];
   for (const row of rawIdentities) {
@@ -557,7 +575,9 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? system : 'other'}`, known ? CARD_CHANNEL_MARKS[system] : '·'));
       line.appendChild(el('span', undefined, ` ${channelLabel(system)} · ${row.externalId}`));
       let confirmBox = null;
-      if (subject) {
+      // Observed rows the backend cannot link (sms, voice, gmail, …) list
+      // display-only: offering Collega there would always fail with 400.
+      if (subject && (row.linked || row.linkable)) {
         const action = row.linked ? 'unlink' : 'link';
         const button = el('button', `bo-scheda-identity-${action}`, row.linked ? 'Scollega' : 'Collega');
         button.setAttribute('data-identity-channel', system);

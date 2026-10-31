@@ -294,10 +294,11 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
  *   observed channels name the message channels read for this customer in
- *   the same scan (backlog:826e377c): the CANALI column reads the same
- *   union the scheda's Identità collegate reads — held identities plus
- *   channels observed on the customer's messages — so a customer with
- *   messages but no held identity still shows its channels.
+ *   the same scan (backlog:826e377c), already filtered to CUSTOMER_CHANNELS:
+ *   the CANALI column reads the same union the scheda's Identità collegate
+ *   reads — held identities plus channels observed on the customer's
+ *   messages — so a customer with messages but no held identity still shows
+ *   its channels, and never one the canale filter refuses.
  */
 export function shapeCustomerRow(subject, reads = {}) {
   const contact = subject?.contact ?? null;
