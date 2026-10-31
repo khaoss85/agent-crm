@@ -564,7 +564,7 @@ export const SCREENS = Object.freeze([
   { name: 'stato-sync', module: 'admin-sync.js', ready: 'stato-sync-ready', expect: ['Tutto sincronizzato', 'WhatsApp'] },
   { name: 'profilo', module: 'admin-profilo.js', ready: 'profilo-ready', expect: ['I tuoi collegamenti', 'Google Calendar'] },
   { name: 'spazi-accessi', module: 'admin-spazi-accessi.js', ready: 'spazi-accessi-ready', expect: ['Negozio via Roma', 'Palestra centro'] },
-  { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Cosa succede quando colleghi:', 'Collega in 3 passi'] },
+  { name: 'connettori', module: 'admin-connectors.js', ready: 'connettori-ready', expect: ['Canali', 'Da collegare', 'Tocca la riga per il dettaglio'] },
   { name: 'componenti', module: 'admin-ui-catalog.js', ready: 'componenti-ready', expect: ['Catalogo dei componenti', 'Primario scuro'] },
 ]);
 
@@ -1107,10 +1107,11 @@ const storage = { getItem: () => 'locale', setItem: () => {}, removeItem: () => 
 const view = createConnectorsView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, storage });
 await view.render();
 document.getElementById('probe').textContent = JSON.stringify({
-  rows: document.querySelectorAll('#view-module .bo-connector-row').length,
-  previews: document.querySelectorAll('#view-module .bo-connect-preview').length,
+  rows: document.querySelectorAll('#view-module .bo-conn-row').length,
+  badges: document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-tile').length,
+  openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
-  unavailable: [...document.querySelectorAll('#view-module .bo-connector-badge')]
+  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
     .filter((node) => node.textContent.includes('Non disponibile')).length,
 });
 document.title = 'connettori-ready';`;
@@ -1361,8 +1362,8 @@ export function readProbe(stdout, name) {
  * steps, the catalog holds the product table with its Stripe state and
  * price-rule bands, spazi-accessi holds both spaces plus the dashed new-space
  * box with both members,
- * connettori holds every catalog channel row with their connect previews and
- * guided-flow buttons, the login page its magic-link form with the installed
+ * connettori holds every catalog channel row with its badge tile, row opener
+ * and Collega button, the login page its magic-link form with the installed
  * enhancement. The
  * per-screen counts for oggi/clienti/pipeline/reporting prove the demo
  * fixtures painted instead of an empty shell. Throws on the first mismatch.
@@ -1505,19 +1506,22 @@ export function assertProbe(name, probe) {
     case 'connettori': {
       // One row per CONNECTOR_CATALOG entry (read from the catalog, not a
       // number: #513 added Telegram and the hard-coded 8 broke the shots):
-      // every connectable channel paints its row, its what-happens preview
-      // and its guided-flow button.
+      // every channel paints its Canali card row with its badge tile, its
+      // row opener and its status pill.
       const n = CONNECTOR_CATALOG.length;
       if (probe.rows !== n) throw new Error(`connettori: the probe lists ${String(probe.rows)} channel rows, expected ${n}`);
-      if (probe.previews !== n) {
-        throw new Error(`connettori: the probe lists ${String(probe.previews)} connect previews, expected ${n}`);
+      if (probe.badges !== n) {
+        throw new Error(`connettori: the probe lists ${String(probe.badges)} badge tiles, expected ${n}`);
+      }
+      if (probe.openers !== n) {
+        throw new Error(`connettori: the probe lists ${String(probe.openers)} row openers, expected ${n}`);
       }
       // A channel with no adapter in the composition reads «Non disponibile
-      // qui»: it keeps its preview but offers no guided flow (Telegram in
-      // the demo data). Every other row offers one.
+      // qui» and offers no Collega (Telegram in the demo data). Every other
+      // row offers one.
       const connectable = n - (typeof probe.unavailable === 'number' ? probe.unavailable : 0);
       if (probe.flows !== connectable) {
-        throw new Error(`connettori: the probe lists ${String(probe.flows)} guided flows, expected ${connectable}`);
+        throw new Error(`connettori: the probe lists ${String(probe.flows)} Collega buttons, expected ${connectable}`);
       }
       return;
     }

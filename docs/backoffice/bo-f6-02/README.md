@@ -44,8 +44,9 @@ Prima (`connettori-desktop.png`, tab Connettori in Personalizzazione): hero
 scuro Kit social, due sezioni di card canale con chip + stato, CTA verde
 Aggiungi, ricerca.
 Dopo (`connettori-1440x1800.png`, `connettori-390x1600.png`): schermata
-dedicata con selettore spazio, Ricarica, card per canale con link dettaglio
-e pulsante secondario "Collega in 3 passi" — tutto con le classi del sistema
+dedicata con card Canali (una riga per canale come i Collegamenti Google:
+badge, nome, descrizione, chip di stato, Collega; la riga apre il dettaglio),
+senza campo Spazio né Ricarica — tutto con le classi del sistema
 (test `the connectors view renders no raw control` verde).
 Differenze motivate:
 1. Schermata dedicata sotto Impostazioni invece di tab: IA della shell

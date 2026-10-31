@@ -596,18 +596,26 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 }
 
 /*
- * Connectors (BO-F1-02): the connector list with the "cosa succede" preview
- * and the 3-step wizard. Same tokens and radii as the settings rows above —
- * no new visual identity, one column already, so nothing special under
- * 700px beyond what the rows already do.
+ * Connectors (BO-F1-02): the Canali card lists one row per channel like the
+ * Google rows above it — badge tile, bold name, one muted line, status pill
+ * and Collega — plus the 3-step wizard under the row being connected. The
+ * rows reuse the Profilo row idiom, so they wrap the same way on a phone
+ * with no sideways scrolling. (.bo-connector-row stays: the detail screen
+ * draws its sections with it.)
  */
 .bo-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; }
-.bo-connectors { display: grid; gap: 10px; margin-top: 14px; }
 .bo-connector-row { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 12px 14px; }
 .bo-connector-row p { margin: 6px 0; font-size: 13px; }
-.bo-connector-badge { font-size: 12px; color: var(--muted); }
-.bo-connect-preview { margin: 8px 0; }
-.bo-connect-preview ul { margin: 4px 0 4px 18px; font-size: 13px; }
+.bo-conn-row { cursor: pointer; }
+.bo-conn-row:hover { background: var(--surface-soft); }
+/* The row opener is a link wearing the row's words: bold name plus one
+ * muted line, ink color with no underline — never a blue link. */
+.bo-conn-open {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  align-items: flex-start; text-align: left; text-decoration: none;
+  font: inherit; color: inherit; cursor: pointer; overflow-wrap: anywhere;
+}
+.bo-conn-open:hover { text-decoration: none; color: inherit; }
 .bo-connect-flow { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .bo-connect-flow h4 { margin: 4px 0; font-size: 14px; }
 .bo-connect-steps { display: flex; gap: 8px; list-style: none; margin: 6px 0; padding: 0; font-size: 12px; color: var(--muted); }
@@ -1437,6 +1445,7 @@ textarea.ui-field { min-height: 88px; resize: vertical; }
 .ui-chip-wa { background: var(--accent-soft); color: var(--accent); }
 .ui-chip-fb { background: var(--data-soft); color: var(--data-ink); }
 .ui-chip-tt { background: var(--surface-soft); color: var(--ink); }
+.ui-chip-tg { background: var(--data-soft); color: var(--data-ink); }
 .ui-chip-tel { background: var(--pending-soft); color: var(--pending-ink); }
 .ui-chip-at { background: var(--surface-soft); color: var(--muted); }
 .ui-chip-cal { background: var(--data-soft); color: var(--data-ink); }

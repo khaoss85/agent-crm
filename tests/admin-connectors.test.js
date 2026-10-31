@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  CONNECTOR_BADGES,
   CONNECTOR_CATALOG,
   CONNECT_STEPS,
   connectorStatus,
@@ -26,12 +27,15 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  * Backoffice BO-F1-02 — collegare un connettore in 3 passi.
  *
  * What it must prove: the catalog covers every connectable channel with an
- * Italian label and a "cosa succede quando colleghi" preview; the status
- * mapping is honest (no adapter → non-disponibile, no row → da-collegare);
- * the flow advances only autorizza → sincronizza → fatto; the screen renders
- * the preview for unconnected connectors and drives the three server calls;
- * hostile server text stays text. A channels package the server does not
- * compose renders an honest note, never a blank page.
+ * Italian label and a badge; every channel is one Canali card row like the
+ * Google rows above it (badge, bold name, one muted line, status pill,
+ * Collega), with no underlined link and no bullet list in the list; the row
+ * itself opens the detail; there is no Spazio field and no Ricarica button;
+ * the status mapping is honest (no adapter → non-disponibile, no row →
+ * da-collegare); the flow advances only autorizza → sincronizza → fatto;
+ * the screen drives the three server calls; hostile server text stays text.
+ * A channels package the server does not compose renders an honest note,
+ * never a blank page.
  */
 
 const flush = async (rounds = 6) => {
@@ -202,17 +206,109 @@ const storageWith = (spaceId) => ({
   removeItem: () => {},
 });
 
-test('unconnected connectors show the what-happens preview', async () => {
+test('every channel is one Canali card row: badge, name, line, pill, Collega', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const full = {
+    domains: { channels: { metadata: { channelsContract: 1,
+      adapters: CONNECTOR_CATALOG.map((entry) => ({ name: `${entry.channel}-fake`, version: 1, channel: entry.channel })) } } },
+  };
+  const client = stubClient({ schema: full, sync: { connectors: [] } });
+  await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'canali');
+  assert.ok(card, 'channels render inside the Canali card');
+  assert.ok(card.textContent.includes('Canali'));
+  for (const entry of CONNECTOR_CATALOG) {
+    const badge = CONNECTOR_BADGES[entry.channel];
+    assert.ok(badge && badge.tile !== '', `${entry.channel} has a badge tile`);
+    assert.ok(badge && badge.tint.startsWith('ui-chip-'), `${entry.channel} reuses a timeline tint`);
+    const row = card.querySelector(`div[data-channel="${entry.channel}"]`);
+    assert.ok(row, `${entry.channel} renders one row`);
+    const tile = row.findAll('span').find((node) => node.textContent === badge.tile);
+    assert.ok(tile && (tile.getAttribute('class') ?? '').split(/\s+/).includes(badge.tint),
+      `${entry.channel} shows its tile with its tint`);
+    const name = row.findAll('span').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-profilo-conn-name'));
+    assert.equal(name?.textContent, entry.label, `${entry.channel} names itself in bold`);
+    const line = row.findAll('span').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-profilo-conn-line'));
+    assert.ok(line && line.textContent !== '', `${entry.channel} shows one description line`);
+    assert.ok(row.textContent.includes('Da collegare'), `${entry.channel} shows its pill`);
+    const go = row.findAll('button').find((node) => node.textContent === 'Collega');
+    assert.ok(go, `${entry.channel} offers Collega`);
+  }
+  assert.ok(!card.textContent.includes('Dettaglio '), 'no Dettaglio affordance text in the channel list');
+  for (const link of card.findAll('a')) {
+    assert.ok((link.getAttribute('class') ?? '').split(/\s+/).includes('bo-conn-open'),
+      'every link in the list is a row opener wearing the row words, never a blue link');
+  }
+  assert.equal(card.findAll('ul').length, 0, 'no bullet list in the channel list');
+  assert.equal(card.findAll('li').length, 0, 'no bullet item in the channel list');
+});
+
+test('the channels screen has no Spazio field and no Ricarica button', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
-  const text = mount.textContent;
-  assert.ok(text.includes('Connettori'));
-  assert.ok(text.includes('Cosa succede quando colleghi:'));
-  assert.ok(text.includes('mai uniti da soli'));
-  const open = mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi');
-  assert.ok(open, 'an unconnected connector offers the guided flow');
+  assert.equal(mount.findAll('input').filter((node) => node.getAttribute('name') === 'spaceId').length, 0,
+    'no Spazio field: the shell picker owns the space');
+  assert.equal(mount.findAll('button').filter((node) => node.textContent === 'Ricarica').length, 0,
+    'no Ricarica button');
+});
+
+test('the row opens the channel detail', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
+  const navigated = [];
+  await createConnectorsView({
+    doc, mount, client, navigate: (hash) => navigated.push(hash), storage: storageWith('presti'),
+  }).render();
+  const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'canali');
+  assert.ok(card, 'channels render inside the Canali card');
+  card.querySelector('div[data-channel="whatsapp"]')?.querySelector('.bo-conn-open')?.dispatch('click');
+  assert.deepEqual(navigated, ['#/connettori/whatsapp'], 'the whatsapp row opens its detail');
+});
+
+test('a connected row shows Collegato with its account and no Collega', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const full = {
+    domains: { channels: { metadata: { channelsContract: 1,
+      adapters: [
+        { name: 'wa-fake', version: 1, channel: 'whatsapp' },
+        { name: 'mail-fake', version: 1, channel: 'email' },
+      ] } } },
+  };
+  const client = stubClient({
+    schema: full,
+    sync: { connectors: [
+      { channel: 'whatsapp', connectionKey: 'ck-wa', status: 'active', account: '+390200000001', importable: true, sync: null },
+      { channel: 'email', connectionKey: 'ck-mail', status: 'pending', account: 'info@presti.it', importable: true, sync: null },
+    ] },
+  });
+  await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'canali');
+  const connected = card.querySelector('div[data-channel="whatsapp"]');
+  assert.ok(connected.textContent.includes('Collegato'), 'the active row pills Collegato');
+  assert.ok(connected.textContent.includes('Collegato come +390200000001'), 'the active row names its account');
+  assert.equal(connected.findAll('button').filter((node) => node.textContent === 'Collega').length, 0,
+    'a connected row offers no second Collega');
+  const completing = card.querySelector('div[data-channel="email"]');
+  assert.ok(completing.textContent.includes('Da completare'), 'the pending row pills Da completare');
+  assert.ok(completing.findAll('button').some((node) => node.textContent === 'Collega'),
+    'a pending row still offers Collega');
+});
+
+test('a channel with no composed adapter pills Non disponibile qui with no Collega', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
+  await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'canali');
+  const row = card.querySelector('div[data-channel="instagram"]');
+  assert.ok(row.textContent.includes('Non disponibile qui'), 'no adapter reads as non-disponibile');
+  assert.equal(row.findAll('button').filter((node) => node.textContent === 'Collega').length, 0,
+    'nothing to connect with offers no Collega');
 });
 
 test('no composed channels renders an honest note', async () => {
@@ -257,13 +353,17 @@ test('hostile server text stays text', async () => {
   const mount = createMount();
   const client = stubClient({
     schema: hostile,
-    sync: { connectors: [{ connectionKey: '"><img src=x>', channel: 'email', status: 'active', importable: false, sync: null }] },
+    sync: { connectors: [{ connectionKey: 'ck-mail', channel: 'email', status: 'active', account: '"><img src=x>', importable: false, sync: null }] },
   });
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+  // Rows show the account, never the connection key: the hostile account
+  // stays text and creates no element.
   assert.ok(mount.textContent.includes('"><img src=x>'));
-  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  assert.equal(mount.findAll('img').length, 0, 'hostile account creates no element');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   assert.ok(mount.textContent.includes('<script>alert(1)</script>'));
+  assert.equal(mount.findAll('script').length, 0, 'hostile adapter label creates no element');
 });
 
 test('the wizard drives authorize, sync choice and finish', async () => {
@@ -275,7 +375,7 @@ test('the wizard drives authorize, sync choice and finish', async () => {
     doc, mount, client, navigate: (hash) => navigated.push(hash), storage: storageWith('presti'),
   }).render();
 
-  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   assert.ok(mount.textContent.includes('1 · Autorizza'));
 
@@ -321,7 +421,7 @@ test('mutations go through the submission controller, never raw', async () => {
     doc, mount, client: enforcing, navigate: () => {}, storage: storageWith('presti'),
   }).render();
 
-  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
   input.value = '+390200000001';
@@ -359,7 +459,7 @@ test('the fatto step reports the import the server actually ran', async () => {
     doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
   }).render();
 
-  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
   input.value = '+390200000001';
@@ -392,7 +492,7 @@ test('the view re-reads the active space on every load', async () => {
   assert.ok(loads[1].path.includes('altro-spazio'),
     `the second load reads the switched space, got ${loads[1].path}`);
 
-  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
   input.value = '+390200000001';
@@ -403,7 +503,7 @@ test('the view re-reads the active space on every load', async () => {
     'authorize writes to the switched space, not the construction-time one');
 });
 
-test('Completa il collegamento reactivates a pending row before the sync choice', async () => {
+test('Collega reactivates a pending row before the sync choice', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const pending = {
@@ -429,7 +529,7 @@ test('Completa il collegamento reactivates a pending row before the sync choice'
   }).render();
   assert.ok(mount.textContent.includes('Da completare'));
 
-  mount.findAll('button').find((node) => node.textContent === 'Completa il collegamento').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush(10);
   const authorized = client.calls.find((call) => call.path === '/api/connectors/authorize');
   assert.deepEqual(authorized.body, {
@@ -445,7 +545,7 @@ test('Completa il collegamento reactivates a pending row before the sync choice'
     'reactivation lands on the sync choice, not on fatto');
 });
 
-test('Completa il collegamento refuses a revoked row clearly', async () => {
+test('Collega refuses a revoked row clearly', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const revoked = {
@@ -471,15 +571,17 @@ test('Completa il collegamento refuses a revoked row clearly', async () => {
     doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
   }).render();
 
-  mount.findAll('button').find((node) => node.textContent === 'Completa il collegamento').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush(10);
   assert.ok(client.calls.some((call) => call.path === '/api/connectors/authorize'));
   assert.ok(!client.calls.some((call) => call.path === '/api/connectors/finish'),
     'a revoked connection never finishes');
   assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Concludi il collegamento'),
     'no sync choice is offered for a revoked connection');
-  assert.ok(mount.textContent.includes('revoked'),
-    'the refusal names the revoked connection instead of failing with NOT_ACTIVE');
+  assert.ok(mount.textContent.includes('revocato'),
+    'the refusal names the revoked connection in Italian instead of failing with NOT_ACTIVE');
+  assert.ok(mount.textContent.includes('+390200000001'),
+    'the refusal names the revoked account so the operator reconnects it');
 });
 
 test('the fatto step resumes a partial import instead of promising background progress', async () => {
@@ -506,7 +608,7 @@ test('the fatto step resumes a partial import instead of promising background pr
     doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
   }).render();
 
-  mount.findAll('button').find((node) => node.textContent === 'Collega in 3 passi').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush();
   const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'account');
   input.value = '+390200000001';
@@ -524,7 +626,7 @@ test('the fatto step resumes a partial import instead of promising background pr
   assert.ok(mount.textContent.includes('Cronologia completata: 7 eventi importati, 2 contatti creati, 1 da decidere.'));
 });
 
-test('Completa il collegamento re-authorizes with the row adapter, not adapters[0]', async () => {
+test('Collega re-authorizes with the row adapter, not adapters[0]', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const multi = {
@@ -562,7 +664,7 @@ test('Completa il collegamento re-authorizes with the row adapter, not adapters[
     doc, mount, client, navigate: () => {}, storage: storageWith('presti'),
   }).render();
 
-  mount.findAll('button').find((node) => node.textContent === 'Completa il collegamento').dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Collega').dispatch('click');
   await flush(10);
   const authorized = client.calls.find((call) => call.path === '/api/connectors/authorize');
   assert.equal(authorized.body.adapter, 'wa-b',

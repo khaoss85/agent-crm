@@ -233,13 +233,14 @@ test('calendario expects are dynamic-only: static chrome alone must fail them', 
 
 test('connettori expects are dynamic-only: static chrome alone must fail them', () => {
   // Same rule as calendario above: the empty connectors screen still
-  // serves the shell chrome and the space picker, so expects built from
-  // those substrings pass on an unpainted grid.
+  // serves the shell chrome, so expects built from those substrings pass
+  // on an unpainted grid.
   // Every connettori expect must be a string only the painted rows contain.
   const screen = SCREENS.find((entry) => entry.name === 'connettori');
   assert.ok(screen, 'the connettori screen exists');
-  assert.ok(screen.expect.includes('Collega in 3 passi'), 'a painted guided-flow button is expected');
-  assert.ok(screen.expect.includes('Cosa succede quando colleghi:'), 'a painted connect preview is expected');
+  assert.ok(screen.expect.includes('Canali'), 'the painted Canali card is expected');
+  assert.ok(screen.expect.includes('Da collegare'), 'a painted status pill is expected');
+  assert.ok(screen.expect.includes('Tocca la riga per il dettaglio'), 'the painted card lede is expected');
   const shell = readFileSync(join(publicDir, 'admin-shell.js'), 'utf8');
   for (const expected of screen.expect) {
     assert.ok(!shell.includes(expected), `the static shell chrome must not contain ${JSON.stringify(expected)}`);
@@ -256,7 +257,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
     ['spazi-accessi', ['spaces:', 'members:', 'switches:', 'stats:', 'apri:']],
-    ['connettori', ['rows:', 'previews:', 'flows:']],
+    ['connettori', ['rows:', 'badges:', 'openers:', 'flows:']],
   ]);
   for (const [name, fields] of probes) {
     const page = harnessHtml(name, publicDir);
@@ -324,10 +325,16 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     table: '…Pacchetto 10 lezioni…', stripe: 'Collegato a Stripe', rules: 'auto 10%',
   }));
   const channels = CONNECTOR_CATALOG.length;
-  assert.doesNotThrow(() => assertProbe('connettori', { rows: channels, previews: channels, flows: channels, unavailable: 0 }));
-  // A channel with no adapter keeps its preview and offers no guided flow.
-  assert.doesNotThrow(() => assertProbe('connettori', { rows: channels, previews: channels, flows: channels - 1, unavailable: 1 }));
-  assert.throws(() => assertProbe('connettori', { rows: channels, previews: channels, flows: channels - 1, unavailable: 0 }), /guided flows/);
+  assert.doesNotThrow(() => assertProbe('connettori', {
+    rows: channels, badges: channels, openers: channels, flows: channels, unavailable: 0,
+  }));
+  // A channel with no adapter pills «Non disponibile qui» and offers no Collega.
+  assert.doesNotThrow(() => assertProbe('connettori', {
+    rows: channels, badges: channels, openers: channels, flows: channels - 1, unavailable: 1,
+  }));
+  assert.throws(() => assertProbe('connettori', {
+    rows: channels, badges: channels, openers: channels, flows: channels - 1, unavailable: 0,
+  }), /Collega buttons/);
   assert.doesNotThrow(() => assertProbe('stato-sync', { ok: true }));
   assert.doesNotThrow(() => assertProbe('spazi-accessi', {
     spaces: 3,
@@ -383,7 +390,7 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
     /Stripe state/,
   );
   assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 5 }), /members/);
-  assert.throws(() => assertProbe('connettori', { rows: 0, previews: 0, flows: 0 }), /channel rows/);
+  assert.throws(() => assertProbe('connettori', { rows: 0, badges: 0, openers: 0, flows: 0 }), /channel rows/);
 });
 
 test('without a runnable Chromium the command skips cleanly with exit 0', () => {
