@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { boot, project } from './helpers/customer-data-project.js';
-import { decideIdentityLinkStep } from '../packages/customer-data/src/operations.js';
+import { decideIdentityLinkStep, decideIdentityUnlinkStep } from '../packages/customer-data/src/operations.js';
 
 /**
  * **Manual channel identity link/unlink (backlog:826e377c).**
@@ -408,6 +408,125 @@ test('a reclaim that commits mid-link loses with 409 instead of overwriting the 
   assert.equal(rows[0].status, 'active');
   const winnerId = yOutcome.won ? carlo.id : bianca.id;
   assert.equal(rows[0].subjectId, winnerId, 'the row still names the winner');
+});
+
+/**
+ * Seed a held row shaped like an import wrote it: any lowercase system,
+ * including systems the sender vocabulary (and the link route) never
+ * accept.
+ */
+async function seedHeldLegacy(app, subject, system, externalId) {
+  const now = new Date().toISOString();
+  await app.modules.get('external-identity').service.createManaged({
+    sourceKey: `${system}:${externalId}`,
+    system,
+    externalId,
+    subjectResource: subject.resource,
+    subjectId: subject.id,
+    subjectOwner: 'host',
+    subjectOwnerPackage: null,
+    subjectLabel: null,
+    status: 'active',
+    firstObservedRunId: 'import-run',
+    lastObservedRunId: 'import-run',
+    firstObservedAt: now,
+    lastObservedAt: now,
+  }, { actor: ACTOR });
+}
+
+test('unlink retires a held identity outside the sender vocabulary', async (t) => {
+  // P1 on head 4a022038: a held sms row (seeded by an import, which the
+  // link route never accepted) still shows Scollega on the scheda, so the
+  // unlink route must retire it instead of answering 400 from the shared
+  // link-only gate. The link route keeps refusing the same system.
+  const { app } = await scene(t, 'identity-unlink-legacy');
+  const ada = await adaByEmail(app);
+  await seedHeldLegacy(app, { resource: 'contact', id: ada.id }, 'sms', '+39000000002');
+
+  const unlinked = await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'sms', externalId: '+39000000002', actor: ACTOR,
+  });
+  assert.equal(unlinked.outcome, 'unlinked');
+  assert.equal(unlinked.sourceKey, 'sms:+39000000002');
+  const rows = await app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'sms:+39000000002' });
+  assert.equal(rows.length, 1, 'the observation is kept, not deleted');
+  assert.equal(rows[0].status, 'superseded');
+
+  await assert.rejects(
+    app.linkCustomerIdentity({
+      resource: 'contact', id: ada.id, system: 'sms', externalId: '+39000000002', actor: ACTOR,
+    }),
+    (error) => error.status === 400,
+    'Collega on the same system still refuses: only the unlink vocabulary widened',
+  );
+});
+
+test('a late unlink confirm after a reclaim refuses and keeps the winner', async (t) => {
+  // P1 on head 4a022038: the unlink authorization used to read outside the
+  // committing transaction, so a confirm authorized before a concurrent
+  // reclaim committed superseded the winner's freshly linked row. Now the
+  // decision re-reads inside the transaction: the late confirm finds the
+  // row held elsewhere and refuses NOT_FOUND, and the winner keeps it.
+  const { app } = await scene(t, 'identity-unlink-late-confirm');
+  const ada = await adaByEmail(app);
+  const bianca = (await app.resolveChannelSender({
+    channel: 'email', handle: 'bianca@example.it',
+    firstName: 'Bianca', lastName: 'Verdi', actor: ACTOR,
+  })).contact;
+  await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+
+  // The reclaim commits while Ada's confirm is still on its way.
+  await app.unlinkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+  await app.linkCustomerIdentity({
+    resource: 'contact', id: bianca.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+
+  await assert.rejects(
+    app.unlinkCustomerIdentity({
+      resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+    }),
+    (error) => error.code === 'NOT_FOUND' && error.status === 404,
+    'the late confirm refuses instead of superseding the reclaim winner',
+  );
+  const rows = await app.modules.get('external-identity').service
+    .listWhere({ sourceKey: 'whatsapp:+39000000001' });
+  assert.equal(rows.length, 1, 'no second row was written');
+  assert.equal(rows[0].status, 'active');
+  assert.equal(rows[0].subjectId, bianca.id, 'the winner keeps the handle');
+});
+
+test('decideIdentityUnlinkStep: the unlink table the late confirm shares', () => {
+  // NOT_GENERAL (backlog:826e377c): link and unlink decide on the row as
+  // stored when the write commits, inside the committing transaction. This
+  // table pins the unlink half: only the active row held by this subject
+  // unlinks; a row reclaimed, released, missing or held elsewhere refuses
+  // without touching anything.
+  const ada = { resource: 'contact', id: 'ada' };
+  const row = (overrides) => ({
+    subjectResource: 'contact', subjectId: 'ada', status: 'active', ...overrides,
+  });
+  assert.equal(decideIdentityUnlinkStep(row({}), ada), 'unlink');
+  assert.equal(decideIdentityUnlinkStep(null, ada), 'missing', 'a missing row unlinks as not-found');
+  assert.equal(
+    decideIdentityUnlinkStep(row({ status: 'superseded' }), ada),
+    'missing',
+    'an already unlinked row unlinks as not-found, never twice',
+  );
+  assert.equal(
+    decideIdentityUnlinkStep(row({ subjectId: 'bianca' }), ada),
+    'missing',
+    "another customer's row answers not-found, never their state",
+  );
+  assert.equal(
+    decideIdentityUnlinkStep(row({ subjectResource: 'company' }), ada),
+    'missing',
+    'the same id on another resource is still someone else',
+  );
 });
 
 test('malformed requests and ghost subjects refuse before anything is read or written', async (t) => {

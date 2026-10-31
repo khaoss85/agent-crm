@@ -14,8 +14,8 @@ import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './impo
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
 import {
-  CHANNEL_SYSTEMS, createPolicyReader, createSubjectForRow, isWinnerConflict, normalizeChannelHandle,
-  recordCandidatePairs, recordExternalIdentityRow,
+  CHANNEL_SYSTEMS, UNLINKABLE_SYSTEMS, createPolicyReader, createSubjectForRow, isWinnerConflict,
+  normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
 import { requireSystem, safeString } from './normalize.js';
 import {
@@ -54,11 +54,19 @@ const MANUAL_UNLINK_RUN_ID = 'manual-unlink';
 
 /**
  * Validate a manual identity link/unlink request. Throws fail-closed before
- * anything is read or written: a missing or empty subject, an unknown
- * channel, or an unshapable handle refuses with ValidationError.
+ * anything is read or written: a missing or empty subject, a system outside
+ * the allowed vocabulary, or an unshapable handle refuses with
+ * ValidationError.
+ *
+ * Link and unlink share this one gate and differ only in vocabulary: link
+ * keeps the sender whitelist (CHANNEL_SYSTEMS) while unlink accepts every
+ * system a held row can carry (UNLINKABLE_SYSTEMS) — a held sms or gmail
+ * row the card offers Scollega on must not end in a 400 from a shared
+ * link-only check (backlog:826e377c).
  * @param {any} request
+ * @param {ReadonlyArray<string>} allowedSystems
  */
-function requireIdentityLink(request) {
+function requireIdentityRequest(request, allowedSystems) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new ValidationError('an identity link needs a request object');
   }
@@ -68,13 +76,30 @@ function requireIdentityLink(request) {
   }
   const id = safeString(request.id, 'id', { required: true });
   const system = requireSystem(String(request.system ?? '').toLowerCase());
-  if (!CHANNEL_SYSTEMS.includes(/** @type {any} */ (system))) {
-    throw new ValidationError(`system must be one of ${CHANNEL_SYSTEMS.join(', ')}`, { field: 'system' });
+  if (!allowedSystems.includes(/** @type {any} */ (system))) {
+    throw new ValidationError(`system must be one of ${allowedSystems.join(', ')}`, { field: 'system' });
   }
   // The stored form is the sender's own normalization, so a manual link of
   // an observed handle meets the automatic row instead of doubling it.
   const externalId = normalizeChannelHandle(system, request.externalId);
   return { subject: { resource, id }, system, externalId };
+}
+
+/**
+ * Validate a manual identity link request: sender vocabulary only.
+ * @param {any} request
+ */
+function requireIdentityLink(request) {
+  return requireIdentityRequest(request, CHANNEL_SYSTEMS);
+}
+
+/**
+ * Validate a manual identity unlink request: every system a held row can
+ * carry, so no offered Scollega ends in a 400.
+ * @param {any} request
+ */
+function requireIdentityUnlink(request) {
+  return requireIdentityRequest(request, UNLINKABLE_SYSTEMS);
 }
 
 /**
@@ -120,6 +145,25 @@ export function decideIdentityLinkStep(fresh, subject, system) {
     return 'already-linked';
   }
   return fresh ? 'reactivate' : 'create';
+}
+
+/**
+ * The one source of truth for a manual identity unlink (backlog:826e377c).
+ *
+ * The mirror of decideIdentityLinkStep: the decision runs on the row as
+ * stored when the unlink commits, inside the committing transaction — never
+ * on an authorization read taken before it. A late confirm after a
+ * concurrent reclaim committed finds the row superseded, gone, or held
+ * elsewhere and refuses with NOT_FOUND instead of superseding the winner's
+ * freshly linked row. Anything but the active row held by this subject
+ * answers NOT_FOUND, never another customer's state.
+ * @param {{status?: unknown, subjectResource?: unknown, subjectId?: unknown} | null} fresh
+ * @param {{resource: string, id: string}} subject
+ */
+export function decideIdentityUnlinkStep(fresh, subject) {
+  if (!fresh || fresh.status !== 'active') return 'missing';
+  const heldHere = fresh.subjectResource === subject.resource && fresh.subjectId === subject.id;
+  return heldHere ? 'unlink' : 'missing';
 }
 
 export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
@@ -503,20 +547,24 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async unlinkCustomerIdentity(request) {
-      const { subject, system, externalId } = requireIdentityLink(request);
+      const { subject, system, externalId } = requireIdentityUnlink(request);
       const actor = normalizeActor(request?.actor);
       await requireLinkSubject({ modules }, subject);
       const identities = trusted(modules, names.identity);
       const sourceKey = `${system}:${externalId}`;
-      const existing = (await deciding(identities, { sourceKey }))[0] ?? null;
-      if (!existing || existing.status !== 'active'
-        || existing.subjectResource !== subject.resource || existing.subjectId !== subject.id) {
-        throw new NotFoundError('external-identity', sourceKey);
-      }
       const now = new Date().toISOString();
-      await database.transactionAsync(() => identities.applyManaged(existing.id, {
-        status: 'superseded', lastObservedRunId: MANUAL_UNLINK_RUN_ID, lastObservedAt: now,
-      }, { actor }));
+      // The authorization reads the row inside the committing transaction:
+      // a confirm authorized before a concurrent reclaim committed re-reads
+      // and refuses NOT_FOUND instead of superseding the winner's row.
+      await database.transactionAsync(async () => {
+        const fresh = (await deciding(identities, { sourceKey }))[0] ?? null;
+        if (decideIdentityUnlinkStep(fresh, subject) !== 'unlink') {
+          throw new NotFoundError('external-identity', sourceKey);
+        }
+        await identities.applyManaged(fresh.id, {
+          status: 'superseded', lastObservedRunId: MANUAL_UNLINK_RUN_ID, lastObservedAt: now,
+        }, { actor });
+      });
       return Object.freeze({
         outcome: 'unlinked',
         subject: Object.freeze({ ...subject }),

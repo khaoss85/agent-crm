@@ -271,6 +271,18 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
 export const LINKABLE_SYSTEMS = Object.freeze(['whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone']);
 
 /**
+ * Systems the Scollega button can retire: every system a held row can carry,
+ * mirrored. Authority stays `UNLINKABLE_SYSTEMS` in
+ * packages/customer-data/src/sender.js (the unlink route refuses anything
+ * else with 400), so the card never offers Scollega on a held row the
+ * backend cannot retire. A parity test pins the two lists equal.
+ */
+export const UNLINKABLE_SYSTEMS = Object.freeze([
+  'whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone',
+  'sms', 'voice', 'tel', 'mobile', 'gmail', 'outlook', 'messenger', 'calendar', 'web', 'form',
+]);
+
+/**
  * Merge the held channel identities with the channels observed on the
  * customer's own messages (voce 826e377c): one row per (system, handle).
  * Held rows (`linked: true`) come from `profile.externalIdentities` with
@@ -283,9 +295,10 @@ export const LINKABLE_SYSTEMS = Object.freeze(['whatsapp', 'instagram', 'faceboo
  * display forms never reads as two identities. Email appears when held as
  * an email-system identity or observed on the email channel — the contact
  * record email stays in Dettagli, not here. Rows carry `linkable`: held
- * rows always link (Scollega), observed rows only on LINKABLE_SYSTEMS —
- * an sms/voice/gmail row the backend cannot link lists display-only, so
- * Collega never ends in a 400.
+ * rows on UNLINKABLE_SYSTEMS (Scollega), observed rows only on
+ * LINKABLE_SYSTEMS (Collega) — an sms/voice/gmail row the link route
+ * cannot link lists display-only for Collega, while a held row of the same
+ * system still offers Scollega, so neither button ends in a 400.
  * @param {any} profile the read-customer-profile answer
  * @param {any} timeline the read-customer-timeline answer
  */
@@ -307,7 +320,7 @@ export function mergeLinkedIdentities(profile, timeline) {
       externalId: String(externalId),
       source,
       linked: source === 'held',
-      linkable: source === 'held' || LINKABLE_SYSTEMS.includes(system),
+      linkable: source === 'held' ? UNLINKABLE_SYSTEMS.includes(system) : LINKABLE_SYSTEMS.includes(system),
     }));
   };
   const rawIdentities = Array.isArray(profile?.externalIdentities) ? profile.externalIdentities : [];

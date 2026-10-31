@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import {
   createCustomerCardView,
   LINKABLE_SYSTEMS,
+  UNLINKABLE_SYSTEMS as CARD_UNLINKABLE_SYSTEMS,
   mergeLinkedIdentities,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
 } from '../apps/admin/public/admin-customer-card.js';
-import { CHANNEL_SYSTEMS } from '../packages/customer-data/src/sender.js';
+import { CHANNEL_SYSTEMS, UNLINKABLE_SYSTEMS } from '../packages/customer-data/src/sender.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -1152,6 +1153,10 @@ test('826e377c: the card links exactly the sender vocabulary', () => {
     [...LINKABLE_SYSTEMS].sort(), [...CHANNEL_SYSTEMS].sort(),
     'Collega is offered exactly where the link route can succeed, never into a 400',
   );
+  assert.deepEqual(
+    [...CARD_UNLINKABLE_SYSTEMS].sort(), [...UNLINKABLE_SYSTEMS].sort(),
+    'Scollega is offered exactly where the unlink route can succeed, never into a 400',
+  );
   const merged = mergeLinkedIdentities({ externalIdentities: [] }, {
     conversations: { items: [] },
     entries: {
@@ -1167,6 +1172,23 @@ test('826e377c: the card links exactly the sender vocabulary', () => {
   assert.equal(byChannel.whatsapp.linked, false);
   assert.equal(byChannel.sms.linkable, false, 'sms lists display-only: the link route would 400');
   assert.equal(byChannel.gmail.linkable, false, 'gmail lists display-only: the link route would 400');
+});
+
+test('826e377c: a held row outside the sender vocabulary still offers Scollega', () => {
+  // Mirror of the unlink P1 on head 4a022038: a held sms row can never
+  // Collega (link keeps the sender vocabulary) but must Scollega (unlink
+  // accepts every held system), so linkable stays true on held rows.
+  const merged = mergeLinkedIdentities({
+    externalIdentities: [
+      { system: 'sms', externalId: '+39000000002' },
+      { system: 'gmail', externalId: 'ada.rossi@example.it' },
+    ],
+  }, { conversations: { items: [] }, entries: { items: [] } });
+  assert.equal(merged.rows.length, 2, 'one row per held identity');
+  for (const row of merged.rows) {
+    assert.equal(row.linked, true);
+    assert.equal(row.linkable, true, `${row.system} offers Scollega where the unlink route succeeds`);
+  }
 });
 
 test('826e377c: observed rows outside the link vocabulary render without Collega', async () => {

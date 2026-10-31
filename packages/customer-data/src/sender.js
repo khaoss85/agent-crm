@@ -47,6 +47,22 @@ export const CHANNEL_SYSTEMS = Object.freeze([
   'whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone',
 ]);
 
+/**
+ * Systems a held identity row may carry that the operator can still retire
+ * from the scheda (backlog:826e377c). The sender vocabulary above is what
+ * automatic resolution and a manual Collega can link; imports accept any
+ * lowercase system identifier, so legacy rows (sms, gmail, outlook, voice,
+ * tel, mobile, messenger, calendar, web, form) exist and are held. Scollega
+ * must accept every one of them — a held row the card renders with Scollega
+ * that the unlink route refuses with 400 is a promised action the backend
+ * can never perform. Anything outside this list (a made-up system) still
+ * refuses fail-closed, exactly like the link route.
+ */
+export const UNLINKABLE_SYSTEMS = Object.freeze([
+  ...CHANNEL_SYSTEMS,
+  'sms', 'voice', 'tel', 'mobile', 'gmail', 'outlook', 'messenger', 'calendar', 'web', 'form',
+]);
+
 /** Provenance for identities and candidates this resolution writes: it runs outside any import run. */
 export const SENDER_RUN_ID = 'channel-sender';
 
