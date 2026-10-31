@@ -90,6 +90,38 @@ export function createQuoteView(deps) {
     return { rows, truncated: (result.items ?? []).length >= LIST_LIMIT };
   }
 
+  /**
+   * Voce cf340b571e98: «← <name>» back to the scheda the offer tile links
+   * from. Resolved quote → opportunity → contact (else company), reading the
+   * same contact/company name the scheda header shows. Best-effort: any
+   * missing or unreadable step yields null, never a failed detail — righe,
+   * totale, stato and storia render with or without the way back.
+   * @param {any} quote
+   */
+  async function resolveCardBackLink(quote) {
+    const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
+    if (opportunityId === null) return null;
+    let opportunity;
+    try {
+      opportunity = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}`);
+    } catch {
+      return null;
+    }
+    const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
+    const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
+    const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
+    const subjectId = contactId ?? companyId;
+    if (resource === null || subjectId === null) return null;
+    const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
+    const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : null;
+    if (name === null) return null;
+    const back = el('a', 'quote-back');
+    back.setAttribute('href', `#/customer-card/${resource}/${encodeURIComponent(subjectId)}`);
+    // Text only: a hostile customer name stays inert text inside the link.
+    back.textContent = `← ${name}`;
+    return back;
+  }
+
   async function renderQuoteList() {
     const token = ++renderToken;
     clear();
@@ -200,6 +232,20 @@ export function createQuoteView(deps) {
     }
     if (token !== renderToken) return;
     status.textContent = '';
+
+    // Voce cf340b571e98: the way back to the scheda paints above the heading.
+    // Heading and status already paint as the loading indicator, so they move
+    // below the link with remove-then-append (a move in both the real DOM
+    // and the test double, never a copy).
+    const back = await resolveCardBackLink(quote);
+    if (token !== renderToken) return;
+    if (back !== null) {
+      mount.removeChild(heading);
+      mount.removeChild(status);
+      mount.appendChild(back);
+      mount.appendChild(heading);
+      mount.appendChild(status);
+    }
 
     const summary = el('div', 'quote-summary');
     summary.setAttribute('data-status', quote.status);

@@ -1154,6 +1154,65 @@ test('the offer panel names the quote after its opportunity, with the state in I
   assert.ok(!text.includes('approved'), 'the raw English state is never shown');
 });
 
+test('cf340b571e98: the quote offer line links to the quote detail', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', name: 'Pacchetto 10 ingressi' }],
+      },
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q9', status: 'approved', name: null,
+          opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+        }],
+      },
+    },
+  }));
+  const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
+  assert.ok(link, 'the quote offer line is a link');
+  assert.equal(link.getAttribute('href'), '#/quotes/q9', 'the link opens the quote detail');
+  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · approvata'),
+    'the link keeps the opportunity name and the Italian state');
+});
+
+test('cf340b571e98: a hostile quote id stays inside the detail href', async () => {
+  const hostile = 'q1" onmouseover="alert(1)';
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: hostile, status: 'sent', name: 'Preventivo 10 ingressi' }],
+      },
+    },
+  }));
+  const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
+  assert.ok(link, 'the quote offer line is a link');
+  assert.equal(link.getAttribute('href'), `#/quotes/${encodeURIComponent(hostile)}`,
+    'the id is encoded, never breaking out of the href');
+});
+
+test('cf340b571e98: the opportunity-fallback offer line stays plain text', async () => {
+  // No quote, one staged opportunity: there is no opportunity detail screen,
+  // so the fallback line must not pretend to open one.
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'proposal', name: 'Pacchetto sede' }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  assert.ok(mount.textContent.includes('Pacchetto sede · proposta'), 'the fallback offer line still reads');
+  assert.equal(mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link').length, 0,
+    'no offer link without a quote');
+});
+
 test('the opportunity-fallback offer line reads the name with its Italian stage, never the bare name', async () => {
   // Voce cc525cd6a3c5 (review head 02e64495, P2): no quotes, one staged
   // opportunity. The item shape below is exactly what profile.js emits for a

@@ -60,7 +60,7 @@ function quote(overrides = {}) {
   };
 }
 
-function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction } = {}) {
+function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -70,6 +70,10 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
       if (options.method === 'POST') {
         if (failAction) throw Object.assign(new Error(failAction.message), failAction);
         return { ok: true, result: { quote: quoteRecord } };
+      }
+      if (path.startsWith('/api/modules/opportunity/records/')) {
+        if (failOpportunity || opportunityRecord === undefined) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return opportunityRecord;
       }
       if (path.startsWith('/api/modules/quote/records/')) return quoteRecord;
       if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
@@ -250,6 +254,84 @@ test('hostile catalog and quote values render as inert text', async () => {
   const lineRow = mount.findAll('div').find((node) => node.getAttribute('data-line') === 'l1');
   assert.ok(lineRow.textContent.includes(hostile), 'hostile value present as text');
   assert.equal(lineRow.findAll('img').length, 0, 'no element parsed out of the hostile value');
+});
+
+test('cf340b571e98: the detail links back to the customer scheda', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [],
+    opportunityRecord: {
+      id: 'o1', companyId: 'co1', companyName: 'Palestra Esempio',
+      contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT', stage: 'proposal',
+    },
+  });
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  const back = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  assert.ok(back, 'a back link to the scheda is shown');
+  assert.equal(back.getAttribute('href'), '#/customer-card/contact/c1', 'the link returns to the customer card');
+  assert.equal(back.textContent, '← Ada Rossi', 'the link names the customer');
+  assert.equal(mount.childNodes[0], back, 'the back link paints above the detail');
+  const text = mount.textContent;
+  assert.ok(text.includes('Lines (1)'), 'the detail still shows the lines');
+  assert.ok(text.includes('EUR 5,000.00'), 'the detail still shows the total');
+  assert.ok(text.includes('Status'), 'the detail still shows the state');
+  assert.ok(text.includes('Versions (0)'), 'the detail still shows the history');
+});
+
+test('cf340b571e98: a quote without a resolvable customer still renders without the way back', async () => {
+  const variants = [
+    { name: 'no opportunity id', client: stubClient({ quoteRecord: quote({ opportunityId: null }) }) },
+    { name: 'unreadable opportunity', client: stubClient({ quoteRecord: quote({ opportunityId: 'o-missing' }), failOpportunity: true }) },
+    {
+      name: 'nameless subject',
+      client: stubClient({
+        quoteRecord: quote({ opportunityId: 'o1' }),
+        opportunityRecord: { id: 'o1', companyId: 'co1', companyName: '', contactId: null, contactName: null },
+      }),
+    },
+  ];
+  for (const variant of variants) {
+    const mount = createMount();
+    await createQuoteView({ doc: createFakeDocument(), mount, client: variant.client }).renderQuoteDetail('q1');
+    assert.equal(mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-back').length, 0,
+      `${variant.name}: no back link`);
+    assert.ok(mount.textContent.includes('Quote q1'), `${variant.name}: the detail still renders`);
+    assert.ok(mount.textContent.includes('Totals by commercial period'), `${variant.name}: the totals still render`);
+  }
+});
+
+test('cf340b571e98: a company-only quote links back to the company card', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    opportunityRecord: {
+      id: 'o1', companyId: 'co1', companyName: 'Palestra Esempio',
+      contactId: null, contactName: null,
+    },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const back = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  assert.ok(back, 'a back link is shown');
+  assert.equal(back.getAttribute('href'), '#/customer-card/company/co1', 'the link returns to the company card');
+  assert.equal(back.textContent, '← Palestra Esempio', 'the link names the company');
+});
+
+test('cf340b571e98: a hostile customer name stays inert text inside the back link', async () => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    opportunityRecord: { id: 'o1', companyId: null, companyName: null, contactId: 'c1', contactName: hostile },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const back = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'quote-back');
+  assert.ok(back, 'a back link is shown');
+  assert.ok(back.textContent.includes(hostile), 'the hostile name is present as text');
+  assert.equal(back.findAll('img').length, 0, 'no element parsed out of the hostile name');
 });
 
 test('quote routes parse canonically; hostile routes are invalid', () => {

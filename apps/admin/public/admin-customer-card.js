@@ -1583,7 +1583,18 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', 'bo-scheda-sep', ' · '));
       line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
     }
-    box.appendChild(line);
+    // Voce cf340b571e98: a quote row opens its detail (righe, totale, stato,
+    // storia) — the line is a link to #/quotes/<id>. An opportunity without
+    // a quote has no detail screen, so its fallback line stays plain text.
+    const quoteId = fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    if (quoteId === null) {
+      box.appendChild(line);
+    } else {
+      const link = el('a', 'bo-scheda-offer-link');
+      link.setAttribute('href', `#/quotes/${encodeURIComponent(quoteId)}`);
+      link.appendChild(line);
+      box.appendChild(link);
+    }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
     // menu. The menu moves the shown opportunity through the governed
     // `request-opportunity-stage-change` workflow (POST
