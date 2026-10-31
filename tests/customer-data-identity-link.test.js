@@ -568,3 +568,72 @@ test('malformed requests and ghost subjects refuse before anything is read or wr
   );
   assert.equal((await activeIdentities(app, ada.id)).length, before, 'every refusal wrote nothing');
 });
+
+test('a storage outage behind the subject read surfaces, never a ghost record', async (t) => {
+  // Review giro-5 on head 23aac0b6 (P2 operations.js:110): requireLinkSubject
+  // mapped every service.get throw to a null record, so an outage read as
+  // NOT_FOUND and the operator retried a link that could never succeed.
+  const { app } = await scene(t, 'identity-link-storage-outage');
+  const ada = await adaByEmail(app);
+  const service = app.modules.get('contact').service;
+  const originalGet = service.get;
+  const outage = new Error('storage down');
+  outage.code = 'STORAGE_UNAVAILABLE';
+  outage.status = 503;
+  service.get = async () => { throw outage; };
+  try {
+    await assert.rejects(
+      app.linkCustomerIdentity({
+        resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+      }),
+      (error) => error === outage,
+      'a link during an outage rejects with the outage itself, not NOT_FOUND',
+    );
+    await assert.rejects(
+      app.unlinkCustomerIdentity({
+        resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+      }),
+      (error) => error === outage,
+      'an unlink during an outage rejects with the outage itself, not NOT_FOUND',
+    );
+  } finally {
+    service.get = originalGet;
+  }
+  assert.equal((await activeIdentities(app, ada.id)).length, 1, 'the outage wrote nothing');
+});
+
+test('a relink after unlink keeps the original first sighting', async (t) => {
+  // Review giro-5 on head 23aac0b6 (P2 operations.js:507): the reactivate
+  // branch overwrote firstObservedRunId/At with the manual write, destroying
+  // the sender's first sighting. A relink moves only the latest sighting.
+  const { app } = await scene(t, 'identity-relink-provenance');
+  const ada = await adaByEmail(app);
+  const identities = app.modules.get('external-identity').service;
+  const firstSeen = '2026-01-15T10:00:00.000Z';
+  await identities.createManaged({
+    sourceKey: 'whatsapp:+39000000001',
+    system: 'whatsapp',
+    externalId: '+39000000001',
+    subjectResource: 'contact',
+    subjectId: ada.id,
+    subjectOwner: 'host',
+    subjectOwnerPackage: null,
+    subjectLabel: null,
+    status: 'superseded',
+    firstObservedRunId: 'channel-sender',
+    lastObservedRunId: 'channel-sender',
+    firstObservedAt: firstSeen,
+    lastObservedAt: firstSeen,
+  }, { actor: ACTOR });
+  const relinked = await app.linkCustomerIdentity({
+    resource: 'contact', id: ada.id, system: 'whatsapp', externalId: '+39 000 000 001', actor: ACTOR,
+  });
+  assert.equal(relinked.outcome, 'linked');
+  assert.equal(relinked.reactivated, true, 'the superseded row is reused, not doubled');
+  const rows = await identities.listWhere({ sourceKey: 'whatsapp:+39000000001' });
+  assert.equal(rows.length, 1, 'no second row was written');
+  assert.equal(rows[0].status, 'active');
+  assert.equal(rows[0].firstObservedRunId, 'channel-sender', 'the relink keeps the sender first sighting');
+  assert.equal(rows[0].firstObservedAt, firstSeen, 'the relink keeps the original first sighting instant');
+  assert.equal(rows[0].lastObservedRunId, 'manual-link', 'only the latest sighting moves to the manual write');
+});

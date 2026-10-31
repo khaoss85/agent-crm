@@ -298,7 +298,13 @@ export const UNLINKABLE_SYSTEMS = Object.freeze([
  * rows on UNLINKABLE_SYSTEMS (Scollega), observed rows only on
  * LINKABLE_SYSTEMS (Collega) — an sms/voice/gmail row the link route
  * cannot link lists display-only for Collega, while a held row of the same
- * system still offers Scollega, so neither button ends in a 400.
+ * system still offers Scollega, so neither button ends in a 400. The union
+ * is authoritative with the Clienti CANALI column: both read the same
+ * evidence (the held identities plus the customer's own messages and calls),
+ * so a channel the list names the scheda names too. Evidence that names no
+ * handle (a call from an unknown number, a thread with no peer) still counts
+ * as an observed channel — a display-only row with no handle, never an
+ * invented one — instead of a silent under-count.
  * @param {any} profile the read-customer-profile answer
  * @param {any} timeline the read-customer-timeline answer
  */
@@ -333,9 +339,15 @@ export function mergeLinkedIdentities(profile, timeline) {
   }
   const threads = Array.isArray(timeline?.conversations?.items) ? timeline.conversations.items : [];
   const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  // Every labeled channel the timeline names, with or without a handle: the
+  // list CANALI column counts channels from these same rows, so a channel
+  // observed without a handle still belongs to the union (as a handle-less
+  // row below), never to a silent under-count.
+  const seenChannels = new Set();
   for (const thread of threads) {
     const system = String(thread?.channel ?? '').toLowerCase();
     if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
+    seenChannels.add(system);
     if (typeof thread?.peer !== 'string' || thread.peer.trim() === '') continue;
     if (isUuid(thread.peer)) continue;
     push(system, thread.peer, 'observed');
@@ -343,9 +355,19 @@ export function mergeLinkedIdentities(profile, timeline) {
   for (const entry of entries) {
     const system = String(entry?.channel ?? '').toLowerCase();
     if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
+    seenChannels.add(system);
     if (typeof entry?.remoteHandle !== 'string' || entry.remoteHandle.trim() === '') continue;
     if (isUuid(entry.remoteHandle)) continue;
     push(system, entry.remoteHandle, 'observed');
+  }
+  // Channels observed without any handle (a call from an unknown number, a
+  // thread with no peer): one display-only row per channel, with no handle
+  // to link, so the scheda names every channel the list CANALI column names.
+  for (const system of [...seenChannels].sort()) {
+    if (rows.some((row) => row.system === system)) continue;
+    rows.push(Object.freeze({
+      system, externalId: null, source: 'observed', linked: false, linkable: false,
+    }));
   }
   return Object.freeze({
     rows: Object.freeze(rows),
@@ -628,7 +650,9 @@ export function createCustomerCardView(deps) {
       line.setAttribute('data-source', row.source);
       const known = Object.hasOwn(CARD_CHANNEL_MARKS, system);
       line.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? system : 'other'}`, known ? CARD_CHANNEL_MARKS[system] : '·'));
-      line.appendChild(el('span', undefined, ` ${channelLabel(system)} · ${row.externalId}`));
+      line.appendChild(el('span', undefined, row.externalId == null
+        ? ` ${channelLabel(system)} · senza identificativo`
+        : ` ${channelLabel(system)} · ${row.externalId}`));
       let confirmBox = null;
       // Observed rows the backend cannot link (sms, voice, gmail, …) list
       // display-only: offering Collega there would always fail with 400.

@@ -113,8 +113,16 @@ async function requireLinkSubject({ modules }, subject) {
   if (service && typeof service.get === 'function') {
     try {
       record = await service.get(subject.id);
-    } catch {
-      record = null;
+    } catch (error) {
+      // A missing record reads as a ghost subject (NOT_FOUND below); any
+      // other read failure (a storage outage behind `get`) must surface as
+      // itself — mapping it to NOT_FOUND would mask the outage as a ghost
+      // record and the operator would retry a link that can never succeed.
+      if (error instanceof NotFoundError || error?.code === 'NOT_FOUND' || error?.status === 404) {
+        record = null;
+      } else {
+        throw error;
+      }
     }
   }
   if (!record) throw new NotFoundError(subject.resource === 'contact' ? 'Contact' : 'Company', subject.id);
@@ -503,12 +511,16 @@ export function createCustomerDataOperations({ database, modules, events, config
           // A superseded row names nobody, so linking re-points it at the
           // linking subject and reactivates it — the same subject healing an
           // unlink, or a new customer reclaiming a released handle. The
-          // sourceKey stays unique, so no second row is ever written.
+          // sourceKey stays unique, so no second row is ever written. The
+          // first sighting stays the row's own: the sender refresh path
+          // preserves firstObserved and only touches lastObserved, and a
+          // manual relink must not rewrite when the handle was first seen —
+          // otherwise a later audit cannot tell the original sighting from
+          // the relink. Only the latest sighting moves to this write.
           await identities.applyManaged(fresh.id, {
             ...subjectFields(subject),
             status: 'active',
-            firstObservedRunId: MANUAL_LINK_RUN_ID, lastObservedRunId: MANUAL_LINK_RUN_ID,
-            firstObservedAt: now, lastObservedAt: now,
+            lastObservedRunId: MANUAL_LINK_RUN_ID, lastObservedAt: now,
           }, { actor });
           return shape('linked', { reactivated: true });
         }

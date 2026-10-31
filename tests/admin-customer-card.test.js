@@ -1262,6 +1262,59 @@ test('826e377c: observed WhatsApp number and Instagram handle list with no held 
   assert.deepEqual(held, [], 'no held row is invented from messages alone');
 });
 
+test('826e377c review giro-5: a call with no handle still names its channel', () => {
+  // Review on head 23aac0b6 (P2 card.js:305): the list CANALI column counts
+  // calls, but the merge only kept timeline evidence with a handle — a
+  // calls-only customer read phone in the list and «nessun canale osservato»
+  // on the scheda. The union is authoritative: a handle-less channel lists
+  // as a display-only observed row, never an invented handle.
+  const merged = mergeLinkedIdentities({ externalIdentities: [] }, {
+    conversations: { items: [{ channel: 'phone', peer: null }] },
+    entries: {
+      items: [
+        { entry: 'call', channel: 'phone', remoteHandle: null, occurredAt: '2026-10-21T10:00:00.000Z' },
+      ],
+    },
+  });
+  assert.equal(merged.rows.length, 1, 'one row for the handle-less phone channel');
+  assert.equal(merged.rows[0].system, 'phone');
+  assert.equal(merged.rows[0].externalId, null, 'no handle is invented');
+  assert.equal(merged.rows[0].source, 'observed');
+  assert.equal(merged.rows[0].linked, false);
+  assert.equal(merged.rows[0].linkable, false, 'nothing to link, so no Collega');
+  assert.equal(merged.channelCount, 1);
+});
+
+test('826e377c review giro-5: the handle-less channel renders without Collega', async () => {
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 1 },
+    entries: {
+      available: true, count: 1, truncated: false,
+      items: [
+        {
+          entry: 'call', id: 'k-1', conversationId: null, channel: 'phone', direction: 'inbound',
+          sync: 'completed', durationSec: 120, teamAuthorId: null,
+          remoteHandle: null, errorCode: null, occurredAt: '2026-10-21T10:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('nessun canale osservato'), 'a calls-only customer names its channel');
+  assert.ok(text.includes('senza identificativo'), 'the handle-less channel reads honestly');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 1, 'one row for the handle-less phone channel');
+  assert.equal(rows[0].getAttribute('data-channel'), 'phone');
+  const buttons = mount.findAll('button').filter((node) => node.textContent === 'Collega');
+  assert.deepEqual(buttons, [], 'no Collega without a handle to link');
+});
+
 test('826e377c: the card links exactly the sender vocabulary', () => {
   assert.deepEqual(
     [...LINKABLE_SYSTEMS].sort(), [...CHANNEL_SYSTEMS].sort(),
