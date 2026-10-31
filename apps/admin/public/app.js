@@ -546,6 +546,13 @@ const customerCardView = createCustomerCardView({
   // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
   // customer here; without the shell storage the buttons only navigate.
   storage: shellStorage,
+  // Voce d525f4aa48b2: «✦ Chiedi all'AI» in Dettagli opens the BO-F0-04
+  // panel with the shown customer already in the context (same seam as
+  // the Clienti onAskAi above, plus the customer identity).
+  onAskAi: (screenId, draft, customer) => {
+    if (assistantPanel) void assistantPanel.open(screenId, draft, customer);
+    else toast('Apri la barra AI (⌘K) e descrivi cosa vuoi fare per questo cliente.');
+  },
 });
 
 // Clienti list (BO-F1-05, backlog:80b25fb0): the table alone, no import tool.

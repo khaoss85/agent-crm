@@ -952,3 +952,144 @@ test('pannello: traccia ispezionabile e cronologia conservata', async () => {
   assert.equal(client.calls.length, readsBefore);
   assert.equal(panel.getState().historyCount, 2);
 });
+
+// Voce d525f4aa48b2: le proposte della scheda leggono la scheda viva con il
+// cliente nel contesto, e ogni azione collegata chiede conferma prima di
+// toccare il cliente.
+
+const SCHEDA_CARD = {
+  customerCardContract: 1,
+  subject: { resource: 'contact', id: 'c1' },
+  name: 'Guido Presti',
+  phone: { available: true, value: '+39 333 1234567' },
+  // Production shape: the card never serves notes (packages/customer-hub/src/card.js).
+  notes: { available: false, items: null },
+};
+
+const SCHEDA_TIMELINE = {
+  customerTimelineContract: 1,
+  subject: { resource: 'contact', id: 'c1' },
+  entries: {
+    available: true,
+    count: 3,
+    truncated: false,
+    items: [
+      { entry: 'note', id: 'n1', body: 'Prima nota' },
+      { entry: 'message', id: 'm1' },
+      { entry: 'note', id: 'n2', body: 'Seconda nota' },
+    ],
+  },
+};
+
+const schedaClient = (card = SCHEDA_CARD, timeline = SCHEDA_TIMELINE) => stubClient({
+  '/api/customer-hub/card/contact/c1': card,
+  '/api/customer-hub/timeline/contact/c1': timeline,
+});
+
+test('scheda-cliente: le due proposte leggono la scheda viva e citano la scheda', async () => {
+  assert.deepEqual(
+    suggestionsFor('scheda-cliente').map((suggestion) => suggestion.id),
+    ['bo04:scheda:cambia-telefono', 'bo04:scheda:aggiungi-nota']);
+  const phone = await runSuggestion(schedaClient(), 'bo04:scheda:cambia-telefono', { resource: 'contact', id: 'c1' });
+  assert.ok(phone.lines.join('\n').includes('+39 333 1234567'), 'the live number is named');
+  assert.deepEqual(phone.sources.map((source) => source.href), ['#/customer-card/contact/c1']);
+  assert.equal(phone.trace.reads.length, 1);
+  assert.equal(phone.trace.reads[0].status, 'ok');
+  const note = await runSuggestion(schedaClient(), 'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
+  // Only timeline entries with entry==='note' count: the message stays out.
+  assert.ok(note.lines.join('\n').includes('Note registrate per Guido Presti: 2.'));
+  assert.equal(note.unavailable.length, 0);
+  assert.deepEqual(note.trace.reads.map((read) => read.target), ['customer-hub/card', 'customer-hub/timeline']);
+});
+
+test('scheda-cliente: la cronologia troncata dichiara il minimo, non il totale', async () => {
+  const truncated = {
+    ...SCHEDA_TIMELINE,
+    entries: { ...SCHEDA_TIMELINE.entries, truncated: true },
+  };
+  const note = await runSuggestion(
+    schedaClient(SCHEDA_CARD, truncated),
+    'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
+  assert.ok(note.lines.join('\n').includes('Note registrate per Guido Presti: almeno 2 (cronologia troncata).'));
+});
+
+test('scheda-cliente: senza cliente nel contesto nessuna lettura, nessuna azione', async () => {
+  for (const customer of [null, undefined, {}, { resource: 'contact' }, { resource: '../../x', id: 'c1' }]) {
+    const client = schedaClient();
+    const answer = await runSuggestion(client, 'bo04:scheda:cambia-telefono', customer);
+    assert.ok(answer.unavailable.join('\n').includes('Nessun cliente nel contesto'));
+    assert.deepEqual(answer.actions, []);
+    assert.equal(client.calls.length, 0, 'a hostile or missing context never reaches a route');
+  }
+});
+
+test('scheda-cliente: scheda illeggibile nominata, mai inventata', async () => {
+  const missing = stubClient({});
+  const phone = await runSuggestion(missing, 'bo04:scheda:cambia-telefono', { resource: 'contact', id: 'c1' });
+  assert.ok(phone.unavailable.join('\n').includes('Scheda non leggibile'));
+  assert.deepEqual(phone.actions, []);
+  assert.deepEqual(phone.sources, []);
+  const noPhone = await runSuggestion(
+    schedaClient({ ...SCHEDA_CARD, phone: { available: false, value: null } }),
+    'bo04:scheda:cambia-telefono', { resource: 'contact', id: 'c1' });
+  assert.ok(noPhone.lines.join('\n').includes('non ha un telefono collegato'));
+  // The timeline route is not served here, so the note count has no honest
+  // source even though the card itself reads fine.
+  const noTimeline = stubClient({ '/api/customer-hub/card/contact/c1': SCHEDA_CARD });
+  const noNotes = await runSuggestion(
+    noTimeline, 'bo04:scheda:aggiungi-nota', { resource: 'contact', id: 'c1' });
+  assert.ok(noNotes.lines.join('\n').includes('non sono leggibili in questo spazio'));
+});
+
+test('scheda-cliente: ogni azione collegata chiede conferma prima di toccare il cliente', async () => {
+  for (const suggestionId of ['bo04:scheda:cambia-telefono', 'bo04:scheda:aggiungi-nota']) {
+    const client = schedaClient();
+    const answer = await runSuggestion(client, suggestionId, { resource: 'contact', id: 'c1' });
+    assert.ok(answer.actions.length > 0, `${suggestionId} links an action`);
+    for (const action of answer.actions) {
+      assert.equal(action.customerFacing, true, `${action.id} is customer-facing`);
+      const seen = [];
+      const gated = await runAssistantAction(client, action, { navigate: (href) => seen.push(href) });
+      assert.equal(gated.ok, false);
+      assert.equal(gated.needsConfirmation, true);
+      assert.ok(gated.confirmLabel.includes('Guido Presti'));
+      assert.deepEqual(seen, [], 'nothing navigates without confirmation');
+    }
+    // The phone proposal reads the card only; the note proposal also reads
+    // the live timeline for the count, and nothing else.
+    const expectedCalls = suggestionId === 'bo04:scheda:aggiungi-nota' ? 2 : 1;
+    assert.equal(client.calls.length, expectedCalls, 'only the card and timeline reads run');
+    const confirmed = await runAssistantAction(client, answer.actions[0], {
+      navigate: () => {},
+      confirmedActionId: answer.actions[0].id,
+    });
+    assert.equal(confirmed.ok, true, 'the confirmed action runs');
+  }
+});
+
+test('scheda-cliente: il pannello tiene il cliente della scheda e lo dimentica alla schermata dopo', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const panel = createAssistantPanel({ doc, mount, client: schedaClient(), navigate: () => {}, notify: () => {} });
+  await panel.open('scheda-cliente', 'Cliente Guido Presti (contact/c1)', { resource: 'contact', id: 'c1' });
+  assert.deepEqual(panel.getState().customerCtx, { resource: 'contact', id: 'c1' });
+  assert.ok(mount.textContent.includes('Cambia il telefono in …'));
+  assert.ok(mount.textContent.includes('Aggiungi una nota: …'));
+  await panel.open('clienti');
+  assert.equal(panel.getState().customerCtx, null, 'no stale customer on the next screen');
+});
+
+test('scheda-cliente: un nome ostile resta testo e non entra negli href', async () => {
+  const nasty = '<img src=x onerror=alert(1)>';
+  const answer = await runSuggestion(
+    schedaClient({ ...SCHEDA_CARD, name: nasty }),
+    'bo04:scheda:cambia-telefono', { resource: 'contact', id: 'c1' });
+  assert.ok(answer.lines.join('\n').includes(nasty), 'the name is named, not dropped');
+  for (const source of answer.sources) {
+    assert.equal(source.href, '#/customer-card/contact/c1');
+    assert.ok(!source.href.includes(nasty));
+  }
+  for (const action of answer.actions) {
+    assert.ok(!action.href.includes(nasty));
+  }
+});
