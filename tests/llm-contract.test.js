@@ -33,7 +33,7 @@ const adapter = (overrides = {}) => ({
 
 const input = (overrides = {}) => ({
   messages: [{ role: 'user', content: 'hello' }],
-  model: 'gpt-5.6-luna',
+  model: 'gpt-6-luna',
   maxTokens: 64,
   ...overrides,
 });
@@ -79,26 +79,26 @@ test('generate input validates fail-closed', () => {
 });
 
 test('completions name their model and bound their counts', () => {
-  const completion = { text: 'answer', model: 'gpt-5.6-luna', inputTokens: 10, outputTokens: 4 };
-  assert.doesNotThrow(() => assertCompletion(completion, 'gpt-5.6-luna'));
-  assert.throws(() => assertCompletion({ ...completion, model: 'other' }, 'gpt-5.6-luna'), /names the model/);
-  assert.throws(() => assertCompletion({ ...completion, text: '' }, 'gpt-5.6-luna'), /bounded non-empty text/);
-  assert.throws(() => assertCompletion({ ...completion, inputTokens: -1 }, 'gpt-5.6-luna'), /non-negative integer/);
+  const completion = { text: 'answer', model: 'gpt-6-luna', inputTokens: 10, outputTokens: 4 };
+  assert.doesNotThrow(() => assertCompletion(completion, 'gpt-6-luna'));
+  assert.throws(() => assertCompletion({ ...completion, model: 'other' }, 'gpt-6-luna'), /names the model/);
+  assert.throws(() => assertCompletion({ ...completion, text: '' }, 'gpt-6-luna'), /bounded non-empty text/);
+  assert.throws(() => assertCompletion({ ...completion, inputTokens: -1 }, 'gpt-6-luna'), /non-negative integer/);
 });
 
 test('completion text stays within the request token ceiling', () => {
-  const completion = (text) => ({ text, model: 'gpt-5.6-luna', inputTokens: 10, outputTokens: 4 });
+  const completion = (text) => ({ text, model: 'gpt-6-luna', inputTokens: 10, outputTokens: 4 });
   // 100000 chars at ~3.1 chars/token: valid inside a 32000-token ceiling,
   // refused under the nameless absolute bound — a long paid response is
   // never rejected for length when it fits its own ceiling.
-  assert.doesNotThrow(() => assertCompletion(completion('x'.repeat(100000)), 'gpt-5.6-luna', { maxTokens: 32000 }));
-  assert.throws(() => assertCompletion(completion('x'.repeat(100000)), 'gpt-5.6-luna'), /at most 32000 characters/);
+  assert.doesNotThrow(() => assertCompletion(completion('x'.repeat(100000)), 'gpt-6-luna', { maxTokens: 32000 }));
+  assert.throws(() => assertCompletion(completion('x'.repeat(100000)), 'gpt-6-luna'), /at most 32000 characters/);
   // 513 chars cannot come from 64 tokens: fail-closed against absurd output.
-  assert.doesNotThrow(() => assertCompletion(completion('x'.repeat(512)), 'gpt-5.6-luna', { maxTokens: 64 }));
-  assert.throws(() => assertCompletion(completion('x'.repeat(513)), 'gpt-5.6-luna', { maxTokens: 64 }),
+  assert.doesNotThrow(() => assertCompletion(completion('x'.repeat(512)), 'gpt-6-luna', { maxTokens: 64 }));
+  assert.throws(() => assertCompletion(completion('x'.repeat(513)), 'gpt-6-luna', { maxTokens: 64 }),
     /at most 512 characters/);
-  assert.throws(() => assertCompletion(completion('ok'), 'gpt-5.6-luna', { maxTokens: 0 }), /maxTokens/);
-  assert.throws(() => assertCompletion(completion('ok'), 'gpt-5.6-luna', { maxTokens: 32001 }), /maxTokens/);
+  assert.throws(() => assertCompletion(completion('ok'), 'gpt-6-luna', { maxTokens: 0 }), /maxTokens/);
+  assert.throws(() => assertCompletion(completion('ok'), 'gpt-6-luna', { maxTokens: 32001 }), /maxTokens/);
 });
 
 test('the model name is written in exactly one place', () => {

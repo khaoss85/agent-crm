@@ -102,6 +102,15 @@ function normalizeOffers(offers) {
  * and the price rules judge it at `quote.submit` exactly like an
  * operator-entered discount (BO-F2-04: the rules block the AI too).
  */
+/**
+ * GPT-6 prompting (backlog:999f6c0be818): the official prompting guide's
+ * initiative-and-follow-through section asks the model to decide from
+ * context instead of stopping for clarifying questions
+ * (https://developers.openai.com/api/docs/guides/latest-model#prompting-best-practices).
+ * This call is headless — a question would break the JSON-only contract and
+ * fail the whole call — so the system prompt says it explicitly: decide
+ * from the given excerpts, never ask.
+ */
 export function buildSuggestMessages({ excerpts, offers }) {
   const offerLines = offers.map((offer) => `- ${offer.offerId}${offer.name ? ` — ${offer.name}` : ''}`).join('\n');
   const excerptLines = excerpts.map((excerpt) => `[${excerpt.id}] ${excerpt.text}`).join('\n');
@@ -111,7 +120,8 @@ export function buildSuggestMessages({ excerpts, offers }) {
       content: 'Sei il suggeritore di voci di preventivo del backoffice. Rispondi SOLO con un array JSON, senza testo fuori dall\u2019array. '
         + 'Ogni elemento: {"offerId": string, "quantity": integer >= 1, "motive": string, "sourceExcerptId": string, "discountBps": integer 0-10000 opzionale}. '
         + 'offerId deve essere uno di quelli elencati, quantity un intero positivo, motive una frase in italiano che spiega il perch\u00e9 citando la conversazione, '
-        + 'sourceExcerptId l\u2019id dell\u2019estratto da cui nasce il suggerimento. Non inventare mai offerte, quantit\u00e0 o motivi: se la conversazione non chiede nulla, rispondi [].',
+        + 'sourceExcerptId l\u2019id dell\u2019estratto da cui nasce il suggerimento. Non inventare mai offerte, quantit\u00e0 o motivi: se la conversazione non chiede nulla, rispondi []. '
+        + 'Decidi dal contesto senza chiedere chiarimenti: non fare mai domande, completa il compito con gli estratti dati.',
     },
     {
       role: 'user',
