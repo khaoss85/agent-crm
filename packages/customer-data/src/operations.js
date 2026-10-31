@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, NotFoundError, ValidationError, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
@@ -13,11 +13,7 @@ import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
-import {
-  CHANNEL_SYSTEMS, UNLINKABLE_SYSTEMS, createPolicyReader, createSubjectForRow, isWinnerConflict,
-  normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow,
-} from './sender.js';
-import { requireSystem, safeString } from './normalize.js';
+import { createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -48,131 +44,10 @@ import { ENRICHABLE_FIELDS } from './enrichment.js';
  */
 
 /** @param {any} runtime @param {any} registries */
-/** Provenance for manually linked/unlinked identities: the scheda operator, not an import or sender run. */
-const MANUAL_LINK_RUN_ID = 'manual-link';
-const MANUAL_UNLINK_RUN_ID = 'manual-unlink';
-
 /**
- * Validate a manual identity link/unlink request. Throws fail-closed before
- * anything is read or written: a missing or empty subject, a system outside
- * the allowed vocabulary, or an unshapable handle refuses with
- * ValidationError.
- *
- * Link and unlink share this one gate and differ only in vocabulary: link
- * keeps the sender whitelist (CHANNEL_SYSTEMS) while unlink accepts every
- * system a held row can carry (UNLINKABLE_SYSTEMS) — a held sms or gmail
- * row the card offers Scollega on must not end in a 400 from a shared
- * link-only check (backlog:826e377c).
- * @param {any} request
- * @param {ReadonlyArray<string>} allowedSystems
+ * Manual identity link/unlink (backlog:826e377c) was split into a follow-up
+ * voce by the owner: this PR keeps only the read of observed identities.
  */
-function requireIdentityRequest(request, allowedSystems) {
-  if (!request || typeof request !== 'object' || Array.isArray(request)) {
-    throw new ValidationError('an identity link needs a request object');
-  }
-  const resource = safeString(request.resource, 'resource', { max: 64, required: true });
-  if (resource !== 'contact' && resource !== 'company') {
-    throw new ValidationError('an identity link names a contact or a company subject', { field: 'resource' });
-  }
-  const id = safeString(request.id, 'id', { required: true });
-  const system = requireSystem(String(request.system ?? '').toLowerCase());
-  if (!allowedSystems.includes(/** @type {any} */ (system))) {
-    throw new ValidationError(`system must be one of ${allowedSystems.join(', ')}`, { field: 'system' });
-  }
-  // The stored form is the sender's own normalization, so a manual link of
-  // an observed handle meets the automatic row instead of doubling it.
-  const externalId = normalizeChannelHandle(system, request.externalId);
-  return { subject: { resource, id }, system, externalId };
-}
-
-/**
- * Validate a manual identity link request: sender vocabulary only.
- * @param {any} request
- */
-function requireIdentityLink(request) {
-  return requireIdentityRequest(request, CHANNEL_SYSTEMS);
-}
-
-/**
- * Validate a manual identity unlink request: every system a held row can
- * carry, so no offered Scollega ends in a 400.
- * @param {any} request
- */
-function requireIdentityUnlink(request) {
-  return requireIdentityRequest(request, UNLINKABLE_SYSTEMS);
-}
-
-/**
- * The named customer must exist: like the card, a link for a ghost record
- * answers NOT_FOUND, never a held identity pointing at nobody.
- * @param {{modules: any}} runtime @param {{resource: string, id: string}} subject
- */
-async function requireLinkSubject({ modules }, subject) {
-  const service = optional(modules, subject.resource);
-  let record = null;
-  if (service && typeof service.get === 'function') {
-    try {
-      record = await service.get(subject.id);
-    } catch (error) {
-      // A missing record reads as a ghost subject (NOT_FOUND below); any
-      // other read failure (a storage outage behind `get`) must surface as
-      // itself — mapping it to NOT_FOUND would mask the outage as a ghost
-      // record and the operator would retry a link that can never succeed.
-      if (error instanceof NotFoundError || error?.code === 'NOT_FOUND' || error?.status === 404) {
-        record = null;
-      } else {
-        throw error;
-      }
-    }
-  }
-  if (!record) throw new NotFoundError(subject.resource === 'contact' ? 'Contact' : 'Company', subject.id);
-}
-
-/**
- * The one source of truth for a manual identity link (backlog:826e377c).
- *
- * Round 1 let a released (superseded) handle be reclaimed by re-pointing
- * the row; round 2 showed the decision must run on the row as stored when
- * the link commits — a snapshot captured before a concurrent reclaim
- * committed is not an input here, so a late link can only lose with
- * IDENTITY_HELD_ELSEWHERE, never overwrite the winner. The caller reads
- * the fresh row inside its committing transaction and hands it in; there
- * is no other parameter for "what the row looked like earlier".
- * @param {{status?: unknown, subjectResource?: unknown, subjectId?: unknown} | null} fresh
- * @param {{resource: string, id: string}} subject
- * @param {string} system
- */
-export function decideIdentityLinkStep(fresh, subject, system) {
-  if (fresh && fresh.status === 'active') {
-    const heldHere = fresh.subjectResource === subject.resource && fresh.subjectId === subject.id;
-    if (!heldHere) {
-      throw new AppError(`that ${system} handle is already linked to another customer`, {
-        code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
-      });
-    }
-    return 'already-linked';
-  }
-  return fresh ? 'reactivate' : 'create';
-}
-
-/**
- * The one source of truth for a manual identity unlink (backlog:826e377c).
- *
- * The mirror of decideIdentityLinkStep: the decision runs on the row as
- * stored when the unlink commits, inside the committing transaction — never
- * on an authorization read taken before it. A late confirm after a
- * concurrent reclaim committed finds the row superseded, gone, or held
- * elsewhere and refuses with NOT_FOUND instead of superseding the winner's
- * freshly linked row. Anything but the active row held by this subject
- * answers NOT_FOUND, never another customer's state.
- * @param {{status?: unknown, subjectResource?: unknown, subjectId?: unknown} | null} fresh
- * @param {{resource: string, id: string}} subject
- */
-export function decideIdentityUnlinkStep(fresh, subject) {
-  if (!fresh || fresh.status !== 'active') return 'missing';
-  const heldHere = fresh.subjectResource === subject.resource && fresh.subjectId === subject.id;
-  return heldHere ? 'unlink' : 'missing';
-}
 
 export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
   if (!database || !modules || !events) {
@@ -472,117 +347,6 @@ export function createCustomerDataOperations({ database, modules, events, config
       return Object.freeze({ origins, undated });
     },
 
-    /**
-     * Manually link one channel identity to the customer named on the
-     * scheda (backlog:826e377c): the operator saw the number, handle or
-     * address in the customer's messages and records it as a held
-     * `external-identity`, with their own actor on the write. The stored
-     * form is `normalizeChannelHandle`, the same normalization the sender
-     * resolution records — so a manual link of an observed handle replays
-     * the automatic row instead of doubling it. A handle actively held by
-     * another customer refuses with IDENTITY_HELD_ELSEWHERE, never by
-     * touching the other customer's row. A superseded row names nobody
-     * (the unlink contract), so linking re-points and reactivates that row
-     * for the linking subject — even a different customer reclaiming a
-     * released handle — instead of refusing forever.
-     * @param {any} request
-     */
-    async linkCustomerIdentity(request) {
-      const { subject, system, externalId } = requireIdentityLink(request);
-      const actor = normalizeActor(request?.actor);
-      await requireLinkSubject({ modules }, subject);
-      const identities = trusted(modules, names.identity);
-      const sourceKey = `${system}:${externalId}`;
-      const now = new Date().toISOString();
-      const heldHere = (row) => row?.subjectResource === subject.resource && row?.subjectId === subject.id;
-      const shape = (outcome, extra = {}) => Object.freeze({
-        outcome, replayed: false, reactivated: false,
-        subject: Object.freeze({ ...subject }),
-        system, externalId, sourceKey, ...extra,
-      });
-      const write = async () => {
-        // The decision reads the row inside the committing transaction:
-        // nothing captured before it (in particular a superseded snapshot
-        // taken before a concurrent reclaim committed) reaches decide().
-        const fresh = (await deciding(identities, { sourceKey }))[0] ?? null;
-        const step = decideIdentityLinkStep(fresh, subject, system);
-        if (step === 'already-linked') return shape('already-linked', { replayed: true });
-        if (step === 'reactivate') {
-          // A superseded row names nobody, so linking re-points it at the
-          // linking subject and reactivates it — the same subject healing an
-          // unlink, or a new customer reclaiming a released handle. The
-          // sourceKey stays unique, so no second row is ever written. The
-          // first sighting stays the row's own: the sender refresh path
-          // preserves firstObserved and only touches lastObserved, and a
-          // manual relink must not rewrite when the handle was first seen —
-          // otherwise a later audit cannot tell the original sighting from
-          // the relink. Only the latest sighting moves to this write.
-          await identities.applyManaged(fresh.id, {
-            ...subjectFields(subject),
-            status: 'active',
-            lastObservedRunId: MANUAL_LINK_RUN_ID, lastObservedAt: now,
-          }, { actor });
-          return shape('linked', { reactivated: true });
-        }
-        await identities.createManaged({
-          sourceKey, system, externalId,
-          ...subjectFields(subject),
-          status: 'active',
-          firstObservedRunId: MANUAL_LINK_RUN_ID, lastObservedRunId: MANUAL_LINK_RUN_ID,
-          firstObservedAt: now, lastObservedAt: now,
-        }, { actor });
-        return shape('linked');
-      };
-      try {
-        return await database.transactionAsync(write);
-      } catch (error) {
-        if (!isWinnerConflict(error)) throw error;
-        // A concurrent link won: replay the winner, never a second row.
-        const winner = (await deciding(identities, { sourceKey }))[0] ?? null;
-        if (winner && winner.status === 'active' && heldHere(winner)) {
-          return shape('already-linked', { replayed: true });
-        }
-        throw new AppError(`that ${system} handle is already linked to another customer`, {
-          code: 'IDENTITY_HELD_ELSEWHERE', status: 409, details: { system },
-        });
-      }
-    },
-
-    /**
-     * Manually unlink one channel identity from the customer named on the
-     * scheda (backlog:826e377c): the held row moves `active` → `superseded`
-     * with the operator's actor on the write — a superseded identity names
-     * nobody anymore, so the profile, the card and the list stop reading it
-     * without deleting the observation. Only the row held by this subject
-     * unlinks; anything else (unknown handle, another customer's handle,
-     * already unlinked) answers NOT_FOUND, never another customer's state.
-     * @param {any} request
-     */
-    async unlinkCustomerIdentity(request) {
-      const { subject, system, externalId } = requireIdentityUnlink(request);
-      const actor = normalizeActor(request?.actor);
-      await requireLinkSubject({ modules }, subject);
-      const identities = trusted(modules, names.identity);
-      const sourceKey = `${system}:${externalId}`;
-      const now = new Date().toISOString();
-      // The authorization reads the row inside the committing transaction:
-      // a confirm authorized before a concurrent reclaim committed re-reads
-      // and refuses NOT_FOUND instead of superseding the winner's row.
-      await database.transactionAsync(async () => {
-        const fresh = (await deciding(identities, { sourceKey }))[0] ?? null;
-        if (decideIdentityUnlinkStep(fresh, subject) !== 'unlink') {
-          throw new NotFoundError('external-identity', sourceKey);
-        }
-        await identities.applyManaged(fresh.id, {
-          status: 'superseded', lastObservedRunId: MANUAL_UNLINK_RUN_ID, lastObservedAt: now,
-        }, { actor });
-      });
-      return Object.freeze({
-        outcome: 'unlinked',
-        subject: Object.freeze({ ...subject }),
-        system, externalId, sourceKey,
-      });
-    },
   };
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */

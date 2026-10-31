@@ -2,13 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   createCustomerCardView,
-  LINKABLE_SYSTEMS,
-  UNLINKABLE_SYSTEMS as CARD_UNLINKABLE_SYSTEMS,
   mergeLinkedIdentities,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
 } from '../apps/admin/public/admin-customer-card.js';
-import { CHANNEL_SYSTEMS, UNLINKABLE_SYSTEMS } from '../packages/customer-data/src/sender.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -521,20 +518,21 @@ test('voce 908f2eb9bbfb: with the timeline in error the scheda keeps the card an
   assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
 });
 
-test('826e377c review giro-4: with the timeline in error the identities name the observed half as unavailable', async () => {
+test('826e377c review giro-4: with the timeline in error the identities name the failure, never zero channels', async () => {
   // The review on head 32e7338a: linkedIdentities ignored timelineError, so
-  // a timeline read failure silently narrowed the held+observed union to
-  // held-only, reading as an under-count with no signal.
+  // a timeline read failure silently narrowed the union, reading as an
+  // under-count with no signal. Since the owner split the section reads only
+  // observed identities: no observed row is listed and the failure is named.
   const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
   const mount = await renderCard(stubClient({ timelineError: failure }));
   const text = mount.textContent;
   assert.ok(text.includes('Identità collegate'), 'the identities section stays');
   assert.ok(
     text.includes('I canali osservati non si sono potuti leggere. Riprova più tardi.'),
-    'the observed half names the failure instead of merging held-only in silence',
+    'the observed read names the failure instead of merging in silence',
   );
-  assert.ok(text.includes('+39 333 1234567'), 'the held identity still reads');
-  assert.ok(!text.includes('nessun canale osservato'), 'held rows never read as no observed channel');
+  assert.ok(text.includes('nessun canale osservato'), 'no observed channel is invented on a failed read');
+  assert.ok(!text.includes('+39 333 1234567'), 'no held identity leaks into the read-only section');
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 
@@ -1149,9 +1147,9 @@ test('an unreadable quotes section reads unavailable in Italian, never a confirm
 test('59def6cb805d: the identities section counts channels with one row each (C10)', async () => {
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
-  // Held WhatsApp +39 333 1234567 meets the same number observed on the
-  // timeline, held Instagram meets the same observed handle: both dedupe to
-  // one row each, while the phone call on the same number is its own system.
+  // Observed WhatsApp +39 333 1234567 and Instagram guido.presti read one
+  // row each, while the phone call on the same number is its own system.
+  // Held identities are not listed here (owner split: read-only section).
   assert.ok(text.includes('3 canali'), 'the header counts the merged channels');
   const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
     && node.getAttribute('class') === 'bo-scheda-identity');
@@ -1161,7 +1159,8 @@ test('59def6cb805d: the identities section counts channels with one row each (C1
 });
 
 // Voce 59def6cb805d (C10): i sistemi senza etichetta italiana e gli UUID non
-// vanno mai su schermo — né detenuti né osservati sui messaggi.
+// vanno mai su schermo — gli osservati sui messaggi; i detenuti non si
+// leggono in questa sezione (owner split: solo osservate).
 test('59def6cb805d: unlabelled systems and UUID handles never reach the screen (C10)', async () => {
   const emptyTimeline = {
     ...TIMELINE,
@@ -1268,7 +1267,7 @@ test('826e377c review giro-5: a call with no handle still names its channel', ()
   // calls-only customer read phone in the list and «nessun canale osservato»
   // on the scheda. The union is authoritative: a handle-less channel lists
   // as a display-only observed row, never an invented handle.
-  const merged = mergeLinkedIdentities({ externalIdentities: [] }, {
+  const merged = mergeLinkedIdentities({
     conversations: { items: [{ channel: 'phone', peer: null }] },
     entries: {
       items: [
@@ -1280,8 +1279,6 @@ test('826e377c review giro-5: a call with no handle still names its channel', ()
   assert.equal(merged.rows[0].system, 'phone');
   assert.equal(merged.rows[0].externalId, null, 'no handle is invented');
   assert.equal(merged.rows[0].source, 'observed');
-  assert.equal(merged.rows[0].linked, false);
-  assert.equal(merged.rows[0].linkable, false, 'nothing to link, so no Collega');
   assert.equal(merged.channelCount, 1);
 });
 
@@ -1315,16 +1312,10 @@ test('826e377c review giro-5: the handle-less channel renders without Collega', 
   assert.deepEqual(buttons, [], 'no Collega without a handle to link');
 });
 
-test('826e377c: the card links exactly the sender vocabulary', () => {
-  assert.deepEqual(
-    [...LINKABLE_SYSTEMS].sort(), [...CHANNEL_SYSTEMS].sort(),
-    'Collega is offered exactly where the link route can succeed, never into a 400',
-  );
-  assert.deepEqual(
-    [...CARD_UNLINKABLE_SYSTEMS].sort(), [...UNLINKABLE_SYSTEMS].sort(),
-    'Scollega is offered exactly where the unlink route can succeed, never into a 400',
-  );
-  const merged = mergeLinkedIdentities({ externalIdentities: [] }, {
+test('826e377c: every labeled observed channel lists read-only, with no buttons', () => {
+  // Owner split: manual Collega/Scollega is a follow-up voce, so the section
+  // lists every labeled channel from the messages and offers no action.
+  const merged = mergeLinkedIdentities({
     conversations: { items: [] },
     entries: {
       items: [
@@ -1334,31 +1325,41 @@ test('826e377c: the card links exactly the sender vocabulary', () => {
       ],
     },
   });
+  assert.equal(merged.rows.length, 3, 'one row per observed channel');
   const byChannel = Object.fromEntries(merged.rows.map((row) => [row.system, row]));
-  assert.equal(byChannel.whatsapp.linkable, true, 'a linkable observed row offers Collega');
-  assert.equal(byChannel.whatsapp.linked, false);
-  assert.equal(byChannel.sms.linkable, false, 'sms lists display-only: the link route would 400');
-  assert.equal(byChannel.gmail.linkable, false, 'gmail lists display-only: the link route would 400');
-});
-
-test('826e377c: a held row outside the sender vocabulary still offers Scollega', () => {
-  // Mirror of the unlink P1 on head 4a022038: a held sms row can never
-  // Collega (link keeps the sender vocabulary) but must Scollega (unlink
-  // accepts every held system), so linkable stays true on held rows.
-  const merged = mergeLinkedIdentities({
-    externalIdentities: [
-      { system: 'sms', externalId: '+39000000002' },
-      { system: 'gmail', externalId: 'ada.rossi@example.it' },
-    ],
-  }, { conversations: { items: [] }, entries: { items: [] } });
-  assert.equal(merged.rows.length, 2, 'one row per held identity');
-  for (const row of merged.rows) {
-    assert.equal(row.linked, true);
-    assert.equal(row.linkable, true, `${row.system} offers Scollega where the unlink route succeeds`);
+  for (const system of ['whatsapp', 'sms', 'gmail']) {
+    assert.equal(byChannel[system].source, 'observed');
+    assert.ok(!('linked' in byChannel[system]), `${system} carries no linked flag`);
+    assert.ok(!('linkable' in byChannel[system]), `${system} carries no linkable flag`);
   }
 });
 
-test('826e377c: observed rows outside the link vocabulary render without Collega', async () => {
+test('826e377c: held identities are not listed in the read-only section', async () => {
+  // Owner split: the section reads only observed identities. Held rows stay
+  // in the profile and in the Clienti CANALI column, never here.
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE_BARE,
+      externalIdentities: [
+        { system: 'whatsapp', externalId: '+39 000 000 001' },
+        { system: 'sms', externalId: '+39000000002' },
+      ],
+    },
+    timeline: {
+      ...TIMELINE,
+      conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+      entries: { available: true, count: 0, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('nessun canale osservato'), 'held rows alone name no observed channel');
+  assert.ok(!text.includes('+39 000 000 001'), 'no held handle leaks into the section');
+  const buttons = mount.findAll('button')
+    .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
+  assert.deepEqual(buttons, [], 'no link buttons without the follow-up voce');
+});
+
+test('826e377c: observed rows on any labeled channel render with no buttons', async () => {
   const timeline = {
     ...TIMELINE,
     conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
@@ -1387,110 +1388,9 @@ test('826e377c: observed rows outside the link vocabulary render without Collega
   const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
     && node.getAttribute('class') === 'bo-scheda-identity');
   assert.equal(rows.length, 2, 'one row per observed identity');
-  const buttons = mount.findAll('button').filter((node) => node.textContent === 'Collega');
-  assert.equal(buttons.length, 1, 'only the linkable whatsapp row offers Collega');
-  assert.equal(buttons[0].getAttribute('data-identity-channel'), 'whatsapp');
-});
-
-// Voce 826e377c: una riga osservata offre Collega, una detenuta Scollega —
-// sempre dietro Conferma/Annulla, mai con un click solo. La conferma scrive
-// sulla rotta giusta e rilegge la scheda; Annulla non scrive nulla.
-test('826e377c: observed rows link and held rows unlink behind a confirm step', async () => {
-  const requests = [];
-  const profile = { ...PROFILE_BARE, externalIdentities: [] };
-  const timeline = {
-    ...TIMELINE,
-    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
-    entries: {
-      available: true, count: 1, truncated: false,
-      items: [
-        {
-          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
-          sync: 'received', body: 'Buongiorno', teamAuthorId: null,
-          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
-        },
-      ],
-    },
-  };
-  const client = {
-    async request(path, options = {}) {
-      requests.push({ path, method: options.method ?? 'GET', body: options.body ?? null });
-      if (path === '/api/customer-data/identities/link') {
-        profile.externalIdentities = [
-          { system: 'whatsapp', externalId: '+39 000 000 001', subject: { resource: 'contact', id: UUID_A } },
-        ];
-        return { outcome: 'linked' };
-      }
-      if (path === '/api/customer-data/identities/unlink') {
-        profile.externalIdentities = [];
-        return { outcome: 'unlinked' };
-      }
-      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD_BARE : timeline;
-      if (path.startsWith('/api/customer-data/profile/')) return profile;
-      if (path.startsWith('/api/customer-data/enriched/')) {
-        throw Object.assign(new Error('Not Found'), { status: 404 });
-      }
-      throw new Error(`unexpected request ${path}`);
-    },
-  };
-  const flush = async () => {
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
-  };
-  const doc = createFakeDocument();
-  const mount = createMount();
-  await createCustomerCardView({ doc, mount, client }).renderCard('contact', UUID_A);
-
-  const identityRows = () => mount.findAll('p')
-    .filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
-      && node.getAttribute('class') === 'bo-scheda-identity');
-
-  // The observed row offers Collega: Annulla writes nothing.
-  let linkButton = mount.findAll('button').find((node) => node.textContent === 'Collega');
-  assert.ok(linkButton, 'an observed identity offers Collega');
-  linkButton.dispatch('click');
-  let confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
-  assert.ok(confirm, 'Collega asks for Conferma first, never links on one click');
-  const postsBefore = requests.filter((call) => call.method === 'POST').length;
-  mount.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
-  await flush();
-  assert.equal(
-    requests.filter((call) => call.method === 'POST').length, postsBefore,
-    'Annulla sends no write',
-  );
-
-  // Conferma posts the observed handle on the link route and re-reads the card.
-  linkButton = mount.findAll('button').find((node) => node.textContent === 'Collega');
-  linkButton.dispatch('click');
-  mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
-  await flush();
-  const linkPost = requests.find((call) => call.path === '/api/customer-data/identities/link');
-  assert.ok(linkPost, 'Conferma posts the link');
-  assert.deepEqual(
-    linkPost.body,
-    { resource: 'contact', id: UUID_A, system: 'whatsapp', externalId: '+39 000 000 001' },
-    'the link names subject, channel and observed handle',
-  );
-  const linkedRows = identityRows();
-  assert.equal(linkedRows.length, 1, 'the re-read card still shows one row');
-  assert.equal(linkedRows[0].getAttribute('data-source'), 'held', 'after the link the row reads held');
-  const unlinkButton = mount.findAll('button').find((node) => node.textContent === 'Scollega');
-  assert.ok(unlinkButton, 'a held identity offers Scollega');
-
-  // Scollega confirms on the unlink route and the row returns to observed.
-  unlinkButton.dispatch('click');
-  mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
-  await flush();
-  const unlinkPost = requests.find((call) => call.path === '/api/customer-data/identities/unlink');
-  assert.ok(unlinkPost, 'Conferma posts the unlink');
-  assert.deepEqual(
-    unlinkPost.body,
-    { resource: 'contact', id: UUID_A, system: 'whatsapp', externalId: '+39 000 000 001' },
-    'the unlink names subject, channel and held handle',
-  );
-  const backToObserved = identityRows();
-  assert.equal(backToObserved.length, 1, 'the re-read card still shows the channel');
-  assert.equal(backToObserved[0].getAttribute('data-source'), 'observed', 'after the unlink the row reads observed again');
+  const buttons = mount.findAll('button')
+    .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
+  assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
 test('a customer with no linked offer reads none registered, never another customer offer', async () => {

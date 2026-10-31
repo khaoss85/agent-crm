@@ -183,54 +183,12 @@ export function createCustomerDataPackage(options = {}) {
           return (request) => senders.resolveChannelSender(request);
         },
       },
-      {
-        operationContract: 1,
-        name: 'link-customer-identity',
-        appMethod: 'linkCustomerIdentity',
-        label: 'Link one channel identity to a customer by hand',
-        description:
-          'Record one WhatsApp number, Instagram, Facebook or TikTok handle, email address or phone number as a held '
-          + 'external-identity of the named contact or company, with the operator actor on the write. A handle already '
-          + 'held by another customer refuses with IDENTITY_HELD_ELSEWHERE; linking what this customer already holds '
-          + 'replays. Powers the Collega button under Identità collegate on the scheda cliente.',
-        input: [
-          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
-          { name: 'id', type: 'string', hint: 'The record id.' },
-          { name: 'system', type: 'string', hint: 'Which channel the handle was observed on: whatsapp, instagram, facebook, email, tiktok or phone.' },
-          { name: 'externalId', type: 'string', hint: 'The observed handle: number, id or address, as shown under Identità collegate.' },
-        ],
-        create(runtime) {
-          const operations = createCustomerDataOperations({
-            database: runtime.database, modules: runtime.modules, events: runtime.events,
-            config: runtime.config, core: runtime.core, policy, names,
-          });
-          return (request) => operations.linkCustomerIdentity(request);
-        },
-      },
-      {
-        operationContract: 1,
-        name: 'unlink-customer-identity',
-        appMethod: 'unlinkCustomerIdentity',
-        label: 'Unlink one channel identity from a customer by hand',
-        description:
-          'Move one held external-identity of the named contact or company from active to superseded, with the '
-          + 'operator actor on the write. A superseded identity names nobody anymore, so the profile, the card and '
-          + 'the list stop reading it without deleting the observation. Only the row held by this subject unlinks. '
-          + 'Powers the Scollega button under Identità collegate on the scheda cliente.',
-        input: [
-          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
-          { name: 'id', type: 'string', hint: 'The record id.' },
-          { name: 'system', type: 'string', hint: 'Which channel holds the handle.' },
-          { name: 'externalId', type: 'string', hint: 'The held handle, as shown under Identità collegate.' },
-        ],
-        create(runtime) {
-          const operations = createCustomerDataOperations({
-            database: runtime.database, modules: runtime.modules, events: runtime.events,
-            config: runtime.config, core: runtime.core, policy, names,
-          });
-          return (request) => operations.unlinkCustomerIdentity(request);
-        },
-      },
+      // Manual link/unlink (backlog:826e377c) was split into a follow-up voce
+      // by the owner: this PR keeps only the read of observed identities.
+      // The follow-up re-adds the link-customer-identity and
+      // unlink-customer-identity capabilities with the open findings
+      // (card dedupe keyed by stored sourceKey, subject re-check inside the
+      // committing transaction) as acceptance criteria.
       {
         operationContract: 1,
         name: 'apply-bulk-customer-action',

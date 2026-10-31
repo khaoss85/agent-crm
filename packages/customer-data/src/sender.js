@@ -48,15 +48,13 @@ export const CHANNEL_SYSTEMS = Object.freeze([
 ]);
 
 /**
- * Systems a held identity row may carry that the operator can still retire
- * from the scheda (backlog:826e377c). The sender vocabulary above is what
- * automatic resolution and a manual Collega can link; imports accept any
- * lowercase system identifier, so legacy rows (sms, gmail, outlook, voice,
- * tel, mobile, messenger, calendar, web, form) exist and are held. Scollega
- * must accept every one of them — a held row the card renders with Scollega
- * that the unlink route refuses with 400 is a promised action the backend
- * can never perform. Anything outside this list (a made-up system) still
- * refuses fail-closed, exactly like the link route.
+ * Systems a held identity row may carry besides the sender vocabulary
+ * above (backlog:826e377c): imports accept any lowercase system identifier,
+ * so legacy rows (sms, gmail, outlook, voice, tel, mobile, messenger,
+ * calendar, web, form) exist and are held. Manual Collega/Scollega was
+ * split into a follow-up voce by the owner (this PR keeps only the read of
+ * observed identities); when it returns, its unlink gate must accept every
+ * system a held row can carry, not just the sender vocabulary.
  */
 export const UNLINKABLE_SYSTEMS = Object.freeze([
   ...CHANNEL_SYSTEMS,

@@ -262,53 +262,31 @@ const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', face
 const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', 'tel', 'mobile']);
 
 /**
- * Systems the Collega button can link: the sender vocabulary, mirrored.
- * Authority stays `CHANNEL_SYSTEMS` in packages/customer-data/src/sender.js
- * (the link route refuses anything else with 400), so the card never offers
- * Collega on an observed row the backend cannot link — those rows still list
- * the observed channel, display-only. A parity test pins the two lists equal.
+ * Manual Collega/Scollega (backlog:826e377c) was split into a follow-up voce
+ * by the owner: this PR keeps only the read of observed identities, so the
+ * card offers no link buttons. When the follow-up returns, its Collega gate
+ * mirrors `CHANNEL_SYSTEMS` and its Scollega gate mirrors
+ * `UNLINKABLE_SYSTEMS` in packages/customer-data/src/sender.js.
  */
-export const LINKABLE_SYSTEMS = Object.freeze(['whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone']);
 
 /**
- * Systems the Scollega button can retire: every system a held row can carry,
- * mirrored. Authority stays `UNLINKABLE_SYSTEMS` in
- * packages/customer-data/src/sender.js (the unlink route refuses anything
- * else with 400), so the card never offers Scollega on a held row the
- * backend cannot retire. A parity test pins the two lists equal.
- */
-export const UNLINKABLE_SYSTEMS = Object.freeze([
-  'whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone',
-  'sms', 'voice', 'tel', 'mobile', 'gmail', 'outlook', 'messenger', 'calendar', 'web', 'form',
-]);
-
-/**
- * Merge the held channel identities with the channels observed on the
- * customer's own messages (voce 826e377c): one row per (system, handle).
- * Held rows (`linked: true`) come from `profile.externalIdentities` with
- * the same honesty filter the section always applied (Italian label only,
- * no UUID handles); observed rows (`linked: false`) come from the
- * timeline the scheda already loads — thread peers and entry remote
- * handles, inbound and outbound alike naming the customer. A held row wins
- * over the same observed handle, compared on the stored form (separators
- * stripped on phone-like systems, lowercased email) so one number in two
- * display forms never reads as two identities. Email appears when held as
- * an email-system identity or observed on the email channel — the contact
- * record email stays in Dettagli, not here. Rows carry `linkable`: held
- * rows on UNLINKABLE_SYSTEMS (Scollega), observed rows only on
- * LINKABLE_SYSTEMS (Collega) — an sms/voice/gmail row the link route
- * cannot link lists display-only for Collega, while a held row of the same
- * system still offers Scollega, so neither button ends in a 400. The union
- * is authoritative with the Clienti CANALI column: both read the same
- * evidence (the held identities plus the customer's own messages and calls),
- * so a channel the list names the scheda names too. Evidence that names no
- * handle (a call from an unknown number, a thread with no peer) still counts
- * as an observed channel — a display-only row with no handle, never an
- * invented one — instead of a silent under-count.
- * @param {any} profile the read-customer-profile answer
+ * List the channels observed on the customer's own messages (voce 826e377c,
+ * read-only since the owner split manual Collega/Scollega into a follow-up
+ * voce): one row per (system, handle). Rows come from the timeline the
+ * scheda already loads — thread peers and entry remote handles, inbound and
+ * outbound alike naming the customer — with the same honesty filter the
+ * section always applied (Italian label only, no UUID handles). One number
+ * in two display forms reads as one row (separators stripped on phone-like
+ * systems, lowercased email), since no action depends on the key anymore.
+ * Email appears when observed on the email channel — the contact record
+ * email stays in Dettagli, not here. Held identities stay in the profile
+ * and in the Clienti CANALI column, not in this section. Evidence that
+ * names no handle (a call from an unknown number, a thread with no peer)
+ * still counts as an observed channel — a display-only row with no handle,
+ * never an invented one — instead of a silent under-count.
  * @param {any} timeline the read-customer-timeline answer
  */
-export function mergeLinkedIdentities(profile, timeline) {
+export function mergeLinkedIdentities(timeline) {
   const rows = [];
   const seen = new Set();
   const dedupeKey = (system, externalId) => {
@@ -317,26 +295,12 @@ export function mergeLinkedIdentities(profile, timeline) {
     if (system === 'email' || system === 'gmail' || system === 'outlook') return `${system}|${value.toLowerCase()}`;
     return `${system}|${value}`;
   };
-  const push = (system, externalId, source) => {
+  const push = (system, externalId) => {
     const key = dedupeKey(system, externalId);
     if (seen.has(key)) return;
     seen.add(key);
-    rows.push(Object.freeze({
-      system,
-      externalId: String(externalId),
-      source,
-      linked: source === 'held',
-      linkable: source === 'held' ? UNLINKABLE_SYSTEMS.includes(system) : LINKABLE_SYSTEMS.includes(system),
-    }));
+    rows.push(Object.freeze({ system, externalId: String(externalId), source: 'observed' }));
   };
-  const rawIdentities = Array.isArray(profile?.externalIdentities) ? profile.externalIdentities : [];
-  for (const row of rawIdentities) {
-    const system = String(row?.system ?? '').toLowerCase();
-    if (ownLabel(CHANNEL_LABELS, system) === undefined) continue;
-    if (typeof row?.externalId !== 'string' || row.externalId.trim() === '') continue;
-    if (isUuid(row.externalId)) continue;
-    push(system, row.externalId, 'held');
-  }
   const threads = Array.isArray(timeline?.conversations?.items) ? timeline.conversations.items : [];
   const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
   // Every labeled channel the timeline names, with or without a handle: the
@@ -350,7 +314,7 @@ export function mergeLinkedIdentities(profile, timeline) {
     seenChannels.add(system);
     if (typeof thread?.peer !== 'string' || thread.peer.trim() === '') continue;
     if (isUuid(thread.peer)) continue;
-    push(system, thread.peer, 'observed');
+    push(system, thread.peer);
   }
   for (const entry of entries) {
     const system = String(entry?.channel ?? '').toLowerCase();
@@ -358,16 +322,14 @@ export function mergeLinkedIdentities(profile, timeline) {
     seenChannels.add(system);
     if (typeof entry?.remoteHandle !== 'string' || entry.remoteHandle.trim() === '') continue;
     if (isUuid(entry.remoteHandle)) continue;
-    push(system, entry.remoteHandle, 'observed');
+    push(system, entry.remoteHandle);
   }
   // Channels observed without any handle (a call from an unknown number, a
   // thread with no peer): one display-only row per channel, with no handle
   // to link, so the scheda names every channel the list CANALI column names.
   for (const system of [...seenChannels].sort()) {
     if (rows.some((row) => row.system === system)) continue;
-    rows.push(Object.freeze({
-      system, externalId: null, source: 'observed', linked: false, linkable: false,
-    }));
+    rows.push(Object.freeze({ system, externalId: null, source: 'observed' }));
   }
   return Object.freeze({
     rows: Object.freeze(rows),
@@ -596,7 +558,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(row);
   }
 
-  function linkedIdentities(box, profile, timeline, ctx = {}, profileError = null, timelineError = null) {
+  function linkedIdentities(box, profile, timeline, profileError = null, timelineError = null) {
     // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
     // label and a role label, never a bare id or UUID. The English cluster
     // note stays in the API response, never on screen.
@@ -607,12 +569,10 @@ export function createCustomerCardView(deps) {
     // (`↔ sincronizzato` / `← in entrata`) is NOT printed here because the
     // profile carries no connector direction — that needs the
     // channel-connection exposure of arch fetta 3, noted in the PR.
-    // Voce 826e377c: the rows merge the held identities with the channels
-    // observed on the customer's own messages (the timeline the scheda
-    // already loads), so messages without a held identity still list their
-    // number, handle or address. An observed row offers Collega, a held row
-    // Scollega — both behind an inline Conferma/Annulla like the catalog
-    // sync, and both re-read the card after the write.
+    // Voce 826e377c, read-only since the owner split manual Collega/Scollega
+    // into a follow-up voce: the rows list only the channels observed on the
+    // customer's own messages (the timeline the scheda already loads), so
+    // messages list their number, handle or address with no buttons.
     box.appendChild(el('h4', undefined, 'Identità collegate'));
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too — hiding it would read as "no identities", which is a
@@ -626,11 +586,11 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
       return;
     }
-    // Voce 826e377c review giro-4: a timeline read failure must not
-    // silently narrow the held+observed union to held-only. The held rows
-    // stay (their read succeeded) and the observed half names its failure,
-    // like every other failed section — never an under-count with no signal.
-    const merged = mergeLinkedIdentities(profile, timelineError ? null : timeline);
+    // Voce 826e377c review giro-4: a timeline read failure names the
+    // observed half as failed instead of listing zero channels — an
+    // under-count with no signal is a different claim from "the read
+    // failed".
+    const merged = mergeLinkedIdentities(timelineError ? null : timeline);
     if (timelineError) {
       readError(box, timelineError, 'I canali osservati non si sono potuti leggere. Riprova più tardi.');
     }
@@ -639,10 +599,6 @@ export function createCustomerCardView(deps) {
       merged.rows.length === 0
         ? 'nessun canale osservato'
         : `${count} ${count === 1 ? 'canale' : 'canali'}`));
-    const subject = (typeof ctx.resource === 'string' && ctx.resource !== ''
-      && typeof ctx.id === 'string' && ctx.id !== '')
-      ? { resource: ctx.resource, id: ctx.id }
-      : null;
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -653,55 +609,7 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', undefined, row.externalId == null
         ? ` ${channelLabel(system)} · senza identificativo`
         : ` ${channelLabel(system)} · ${row.externalId}`));
-      let confirmBox = null;
-      // Observed rows the backend cannot link (sms, voice, gmail, …) list
-      // display-only: offering Collega there would always fail with 400.
-      if (subject && (row.linked || row.linkable)) {
-        const action = row.linked ? 'unlink' : 'link';
-        const button = el('button', `bo-scheda-identity-${action}`, row.linked ? 'Scollega' : 'Collega');
-        button.setAttribute('data-identity-channel', system);
-        button.setAttribute('data-identity-handle', row.externalId);
-        button.setAttribute('title', row.linked
-          ? `Scollega ${row.externalId} da questa scheda`
-          : `Collega ${row.externalId} a questa scheda`);
-        confirmBox = el('div', 'bo-scheda-confirm');
-        const confirmError = el('p', 'field-error', '');
-        button.addEventListener('click', () => {
-          while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
-          confirmBox.appendChild(el('p', undefined, row.linked
-            ? `Scollegare ${row.externalId} (${channelLabel(system)}) da questa scheda? Non riceverà più i messaggi di questo canale.`
-            : `Collegare ${row.externalId} (${channelLabel(system)}) a questa scheda? I messaggi di questo canale arriveranno qui.`));
-          const yes = el('button', undefined, 'Conferma');
-          const no = el('button', undefined, 'Annulla');
-          no.addEventListener('click', () => {
-            while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
-          });
-          yes.addEventListener('click', async () => {
-            yes.disabled = true;
-            try {
-              await client.request(`/api/customer-data/identities/${action}`, {
-                method: 'POST',
-                body: { resource: subject.resource, id: subject.id, system, externalId: row.externalId },
-              });
-              await renderCard(subject.resource, subject.id);
-            } catch (error) {
-              confirmError.textContent = humanReadError(error, {
-                failed: row.linked
-                  ? 'Scollegamento non riuscito: riprova più tardi.'
-                  : 'Collegamento non riuscito: riprova più tardi.',
-              });
-              yes.disabled = false;
-            }
-          });
-          confirmBox.appendChild(yes);
-          confirmBox.appendChild(no);
-          confirmBox.appendChild(confirmError);
-        });
-        line.appendChild(el('span', undefined, ' '));
-        line.appendChild(button);
-      }
       box.appendChild(line);
-      if (confirmBox) box.appendChild(confirmBox);
     }
     const members = Array.isArray(cluster.members) ? cluster.members : [];
     box.appendChild(el('p', 'bo-muted',
@@ -1466,7 +1374,7 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     section(left, '', quickActions, card, { resource, id });
-    section(left, '', linkedIdentities, profile, timeline, { resource, id }, profileError, timelineError);
+    section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
     if (timelineError) {

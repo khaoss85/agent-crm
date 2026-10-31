@@ -561,28 +561,9 @@ export function buildRouter(app) {
     return await app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
-  // Manual channel identity link/unlink (backlog:826e377c): the Collega and
-  // Scollega buttons under Identità collegate on the scheda cliente. The
-  // same enumerated-adapter shape as the import route above: the kernel owns
-  // the path, gates the write boundary, strips server-controlled keys so the
-  // caller cannot forge the actor, and delegates to the composed application
-  // operation; without the package composed each answers an honest 404.
-  router.add('POST', '/api/customer-data/identities/link', async ({ body, actor, identity, organizationId }) => {
-    await gate(app, identity, organizationId, 'records.write');
-    if (typeof app.linkCustomerIdentity !== 'function') {
-      throw new NotFoundError('Operation', 'customer identity link');
-    }
-    return await app.linkCustomerIdentity({ ...stripServerControlledKeys(body), actor });
-  });
-
-  router.add('POST', '/api/customer-data/identities/unlink', async ({ body, actor, identity, organizationId }) => {
-    await gate(app, identity, organizationId, 'records.write');
-    if (typeof app.unlinkCustomerIdentity !== 'function') {
-      throw new NotFoundError('Operation', 'customer identity unlink');
-    }
-    return await app.unlinkCustomerIdentity({ ...stripServerControlledKeys(body), actor });
-  });
-
+  // Manual channel identity link/unlink (backlog:826e377c) was split into a
+  // follow-up voce by the owner: this PR keeps only the read of observed
+  // identities, so the link and unlink routes return with that voce.
   router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerProfile !== 'function') {
