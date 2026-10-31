@@ -861,3 +861,107 @@ test('a national-shape free phone is stored, and its identical AI twin proposes 
   });
   assert.deepEqual(answer.counts, { proposed: 0, replayed: 0, alreadyActive: 1, skippedDismissed: 0 });
 });
+
+test('an AI answer with more than MAX_PROPOSED_FIELDS fields is refused and stores nothing', async (t) => {
+  const { app } = await scene(t, 'extraction-too-many-fields');
+  const subject = await seedContact(app);
+  const { MAX_PROPOSED_FIELDS } = await import('../packages/customer-data/src/extraction.js');
+
+  const fields = Array.from({ length: MAX_PROPOSED_FIELDS + 1 }, (_, index) => ({
+    field: 'role', value: `Istruttore ${index}`, source: 'email-signature',
+  }));
+  await assert.rejects(
+    app.extractCustomerEnrichment({
+      actor: ACTOR,
+      ...subject,
+      sources: SOURCES,
+      adapter: fakeAdapter(fields),
+    }),
+    (error) => error?.code === 'ENRICHMENT_EXTRACTION_INVALID',
+    'a run over the cap refuses with nothing stored');
+  assert.equal(proposedRows(app, subject).length, 0,
+    'no proposal of an over-cap run is stored');
+
+  // Exactly at the cap still proposes.
+  const atCap = Array.from({ length: MAX_PROPOSED_FIELDS }, (_, index) => ({
+    field: 'role', value: `Istruttore ${index}`, source: 'email-signature',
+  }));
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter(atCap),
+  });
+  assert.equal(answer.proposals.length, MAX_PROPOSED_FIELDS,
+    'a run at the cap still proposes every field');
+});
+
+test('a phone proposal for a company is refused at extraction and at acceptance', async (t) => {
+  const { app } = await scene(t, 'extraction-company-phone');
+  const company = await app.services.companies.create(
+    { name: 'Presti Group', domain: 'prestigroup.example' }, { actor: ACTOR });
+  const companySubject = { resource: 'company', id: company.id };
+  const companySources = [
+    ...SOURCES,
+    { kind: 'company-website', text: 'Presti Group, palestra a Milano. Tel +393331234567', detail: 'prestigroup.example' },
+  ];
+
+  await assert.rejects(
+    app.extractCustomerEnrichment({
+      actor: ACTOR,
+      ...companySubject,
+      sources: companySources,
+      adapter: fakeAdapter([
+        { field: 'phone', value: '+393331234567', source: 'company-website' },
+      ]),
+    }),
+    (error) => error?.code === 'ENRICHMENT_EXTRACTION_INVALID',
+    'a company phone proposal is refused at extraction');
+  assert.equal(proposedRows(app, companySubject).length, 0,
+    'a refused company phone stores no proposal');
+
+  // A non-phone company proposal still extracts: only phones are refused.
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...companySubject,
+    sources: companySources,
+    adapter: fakeAdapter([
+      { field: 'role', value: 'Istruttore', source: 'company-website' },
+    ]),
+  });
+  assert.equal(answer.proposals.length, 1);
+
+  // A phone row stored for a company (before the refusal) cannot be
+  // accepted: the accept refuses and flips nothing, linking no identity.
+  const enriched = app.modules.get('enriched-field').service;
+  const legacy = await enriched.createManaged({
+    sourceKey: `test:company-phone:${company.id}`,
+    subjectResource: 'company',
+    subjectId: company.id,
+    subjectOwner: 'host',
+    subjectOwnerPackage: null,
+    subjectLabel: null,
+    field: 'phone',
+    value: '+393331234567',
+    source: 'company-website',
+    sourceDetail: null,
+    observedAt: new Date().toISOString(),
+    observedByRunId: 'test:company-phone',
+    status: 'proposed',
+    purgedAt: null,
+    purgeReason: null,
+    decisionReason: null,
+  }, { actor: ACTOR });
+  await assert.rejects(
+    app.decideEnrichmentProposal({
+      actor: ACTOR, id: legacy.id, decision: 'accepted', reason: 'confermato',
+    }),
+    (error) => error?.code === 'ENRICHMENT_EXTRACTION_INVALID',
+    'accepting a company phone refuses');
+  assert.equal(enriched.get(legacy.id).status, 'proposed',
+    'the refused accept flips nothing');
+  assert.equal(
+    app.modules.get('external-identity').service
+      .listWhere({ system: 'phone', externalId: '+393331234567' }).length,
+    0, 'no phone identity ever links to a company');
+});

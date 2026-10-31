@@ -40,6 +40,13 @@ export const EXTRACTION_SOURCE_KINDS = Object.freeze(['email-signature', 'channe
 const MAX_SOURCES = 10;
 const MAX_SOURCE_TEXT = 8000;
 const MAX_DETAIL_LENGTH = 256;
+/**
+ * One AI run proposes at most this many fields: beyond the cap the run is
+ * refused with ENRICHMENT_EXTRACTION_INVALID and nothing is stored, like
+ * the all-or-nothing discipline for a single bad field. Without a cap one
+ * model answer could land thousands of rows in a single transaction.
+ */
+export const MAX_PROPOSED_FIELDS = 30;
 
 function refusal(code, status, message) {
   return new AppError(message, { code, status });
@@ -155,10 +162,14 @@ function shapeProposal(row) {
  * set. Sources must name one of the linked sources this run actually
  * read — the adapter cannot invent provenance.
  */
-function requireProposals(answer, kinds) {
+function requireProposals(answer, kinds, resource) {
   if (!answer || typeof answer !== 'object' || !Array.isArray(answer.fields)) {
     throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
       'the AI extraction returned no usable fields: nothing was stored');
+  }
+  if (answer.fields.length > MAX_PROPOSED_FIELDS) {
+    throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
+      `the AI extraction proposed more than ${MAX_PROPOSED_FIELDS} fields: nothing was stored`);
   }
   return answer.fields.map((item, index) => {
     const at = `fields[${index}]`;
@@ -169,6 +180,14 @@ function requireProposals(answer, kinds) {
     if (typeof item.field !== 'string' || !ENRICHABLE_FIELDS.includes(item.field)) {
       throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
         'the AI extraction named a field enrichment never fills: nothing was stored');
+    }
+    if (item.field === 'phone' && resource !== 'contact') {
+      // Phones name contacts: a phone proposal for a company (or any other
+      // subject) never routes — sender resolution matches senders to
+      // contacts only, like the free-source discipline that always holds
+      // phones on contacts. The whole run is refused, nothing is stored.
+      throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
+        'the AI extraction proposed a phone for a subject that is not a contact: nothing was stored');
     }
     let value;
     try {
@@ -302,7 +321,7 @@ export function createEnrichmentExtraction({ database, modules, events, names })
       throw refusal('ENRICHMENT_EXTRACTION_FAILED', 502,
         'the AI extraction failed before storing anything: retry «Aggiorna» later');
     }
-    const proposals = requireProposals(answer, kinds);
+    const proposals = requireProposals(answer, kinds, resource);
 
     const runId = randomUUID();
     const now = new Date().toISOString();
@@ -467,6 +486,14 @@ export function createEnrichmentExtraction({ database, modules, events, names })
         // The proposal's subject may be gone since the extraction: accepting
         // for a deleted record refuses before the flip and the identity write.
         await requireExistingSubject(current.subjectResource, current.subjectId);
+        if (current.field === 'phone' && current.subjectResource !== 'contact') {
+          // Phones name contacts, never companies: a phone proposal stored
+          // for another subject (for example before the extraction cap) is
+          // refused here too, so no phone identity ever links to a company
+          // and nothing flips.
+          throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
+            'a phone proposal names a contact, never a company: nothing was accepted');
+        }
         // A value the free-source path made a fact while this proposal was
         // pending: the stored fact wins, and no duplicate flips beside it.
         // The loser is settled in the same transaction, so the pending set
