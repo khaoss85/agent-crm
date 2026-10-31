@@ -168,6 +168,10 @@ const client = {
     if (String(options.method ?? 'GET').toUpperCase() !== 'GET') return { pulled: 1 };
     if (path === '/api/schema') return { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
     if (path.startsWith('/api/connectors/activity')) return activity;
+    // Unresolved identity candidates (same stub as scripts/bo-shots.js):
+    // without it the view honestly hides «Niente da sistemare» because the
+    // identity decisions were never read (backlog:3a3e6eaf, #502).
+    if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: [] };
     throw new Error('unexpected ' + path);
   },
 };
