@@ -169,3 +169,24 @@ test('the stato-sync proof pair is a render of the current tree, never the pre-#
     );
   }
 });
+
+// The calendario proof pair (BO-F6-11, backlog:9c540eef) carries the same
+// freshness gate: the committed PNGs must differ from the #413-era blobs
+// (rendered for the #406 restyle, before fetta 7 #418, #424, design pass 7
+// #452, team dal roster #470, fetta 8 #474 and fetta 9 #481), so a view
+// restyle without a fresh `npm run bo:shots -- --screen calendario`
+// render fails here first.
+const STALE_CALENDARIO_BLOBS = Object.freeze({
+  'calendario-1440x1800.png': '84a927438b7f60553bb4b8656530fe71520411637e711bfba41784450224562f',
+  'calendario-390x1600.png': 'fb94d574bb45dcd27db14021f29d97e123a03f388a3581c7a40582dd016cd160',
+});
+
+test('the calendario proof pair is a render of the current tree, never the pre-#418 pair', () => {
+  for (const [file, stale] of Object.entries(STALE_CALENDARIO_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale pre-#418 render: re-run \`npm run bo:shots -- --screen calendario\`, copy the pair here`,
+    );
+  }
+});
