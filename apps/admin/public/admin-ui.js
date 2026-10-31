@@ -202,6 +202,7 @@ const ICON_PATHS = Object.freeze({
   check: '<path d="M20 6L9 17l-5-5"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  colonne: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   matita: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
 });
 

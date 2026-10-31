@@ -973,6 +973,11 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-menubutton.ui-btn, .bo-clienti-ai.ui-btn { height: 36px; padding: 0 10px; border-radius: 9px; border: none; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; box-shadow: none; }
 .bo-clienti-menubutton.ui-btn:hover, .bo-clienti-ai.ui-btn:hover { background: var(--surface-soft); color: var(--ink); transform: none; }
 .bo-clienti-ai.ui-btn { color: var(--agent-ink); }
+.bo-clienti-tool { display: inline-flex; align-items: center; gap: 6px; }
+.bo-clienti-tool .ui-icon { width: 18px; height: 18px; }
+.bo-clienti-toolcount { font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.bo-clienti-toolbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; display: inline-grid; place-items: center; background: var(--accent); color: var(--paper); font-size: 11px; font-weight: 700; }
+.bo-clienti-menubutton.ui-btn:has(.bo-clienti-tool) { min-width: 40px; justify-content: center; }
 .bo-clienti-menu { position: absolute; right: 0; z-index: 15; margin-top: 8px; width: 290px; max-width: min(78vw, 320px); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 6px; box-shadow: var(--shadow); }
 .bo-clienti-menu.hidden { display: none; }
 .bo-clienti-group { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); }

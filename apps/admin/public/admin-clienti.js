@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
 // BO-F1-05 — Elenco Clienti: viste rapide, ricerca, filtri raggruppati con
@@ -261,9 +261,28 @@ export function createCustomerListView(deps) {
     }
   }
 
+  /**
+   * The prototype's toolbar toggle: a stroke icon, an optional count and an
+   * optional badge, never words. The accessible name always says what the
+   * icon means, so the icon-only toggle stays usable without sight.
+   */
+  function toolLabel(icon, { text = null, badge = null } = {}) {
+    const node = el('span', 'bo-clienti-tool');
+    node.appendChild(uiIcon(doc, icon));
+    if (text !== null) node.appendChild(el('span', 'bo-clienti-toolcount', text));
+    if (badge !== null && badge > 0) node.appendChild(el('span', 'bo-clienti-toolbadge', String(badge)));
+    return node;
+  }
+
+  // Note: a live NodeList has no .find, so copy it first — the fake DOM
+  // used by the unit tests backs childNodes with a plain array.
+  const toggleOf = (wrap) => Array.from(wrap?.childNodes ?? [])
+    .find((node) => String(node.tagName ?? '').toLowerCase() === 'button') ?? null;
+
   function menuBox(label, build, title, buttonClass = 'bo-clienti-menubutton') {
     const wrap = el('div', 'bo-clienti-menuwrap');
-    const button = el('button', buttonClass, label);
+    const button = el('button', buttonClass, typeof label === 'string' ? label : '');
+    if (label !== null && typeof label === 'object') button.appendChild(label);
     button.setAttribute('aria-haspopup', 'true');
     button.setAttribute('aria-expanded', 'false');
     button.setAttribute('title', title ?? label);
@@ -412,7 +431,24 @@ export function createCustomerListView(deps) {
     bar.appendChild(viewsRow);
     bar.appendChild(toolbar);
 
-    toolbar.appendChild(menuBox('Filtri', (menu) => {
+    // The prototype toolbar carries exactly three icons (filters, sort,
+    // columns with its visible/total), so the assistant entry joins the
+    // Filtri menu instead of a fourth word beside it: same question, same
+    // fallback, same action, one tap away.
+    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.q !== '' ? 1 : 0);
+    const filtersBox = menuBox(toolLabel('filtri', { badge: activeFilters }), (menu, closeMenu) => {
+      const aiItem = el('button', 'bo-clienti-item', '✦ Crea un filtro con l\u2019AI');
+      aiItem.setAttribute('data-action', 'ai-filter');
+      aiItem.setAttribute('title', 'Descrivi chi vuoi vedere: senza chiave LLM il pannello resta utilizzabile e la domanda libera è spenta');
+      aiItem.addEventListener('click', () => {
+        closeMenu();
+        if (typeof onAskAi === 'function') {
+          onAskAi('Crea un filtro per i clienti: chi devo vedere?');
+        } else {
+          notify('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
+        }
+      });
+      menu.appendChild(aiItem);
       menu.appendChild(el('p', 'bo-clienti-group', 'Canale'));
       for (const value of ['all', 'whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone']) {
         const item = el('button', 'bo-clienti-item' + (state.canale === value ? ' active' : ''),
@@ -436,21 +472,12 @@ export function createCustomerListView(deps) {
         menu.appendChild(item);
       }
       menu.appendChild(el('p', 'bo-muted', 'Es. «clienti di Milano con offerta sopra 10.000 €»'));
-    }));
+    }, 'Filtri');
+    toggleOf(filtersBox)?.setAttribute('aria-label', activeFilters > 0 ? `Filtri: ${activeFilters} attivi` : 'Filtri');
+    toolbar.appendChild(filtersBox);
 
-    const aiButton = el('button', 'bo-clienti-ai', '✦ Crea un filtro con l\u2019AI');
-    aiButton.setAttribute('data-action', 'ai-filter');
-    aiButton.setAttribute('title', 'Descrivi chi vuoi vedere: senza chiave LLM il pannello resta utilizzabile e la domanda libera è spenta');
-    aiButton.addEventListener('click', () => {
-      if (typeof onAskAi === 'function') {
-        onAskAi('Crea un filtro per i clienti: chi devo vedere?');
-      } else {
-        notify('Apri la barra AI (⌘K) e descrivi chi vuoi vedere.');
-      }
-    });
-    toolbar.appendChild(aiButton);
-
-    toolbar.appendChild(menuBox('Ordina', (menu) => {
+    const currentSort = sorts.find((sort) => sort.id === state.sort) ?? null;
+    const sortBox = menuBox(toolLabel('ordina'), (menu) => {
       menu.appendChild(el('p', 'bo-clienti-group', 'Ordina per'));
       for (const sort of sorts) {
         const item = el('button', 'bo-clienti-item' + (state.sort === sort.id ? ' active' : ''), sort.label);
@@ -461,11 +488,15 @@ export function createCustomerListView(deps) {
         });
         menu.appendChild(item);
       }
-    }));
+    }, `Ordina: ${currentSort?.label ?? ''}`);
+    toggleOf(sortBox)?.setAttribute('aria-label', `Ordina: ${currentSort?.label ?? ''}`);
+    toolbar.appendChild(sortBox);
 
     const configurable = columnsMeta.filter((column) => !column.always);
     const visibleCount = configurable.filter((column) => state.columns[column.id] === true).length;
-    toolbar.appendChild(menuBox(`Colonne ${visibleCount}/${configurable.length}`, (menu) => {
+    // Prototype "04 Clienti": the columns toggle is an icon with its
+    // visible/total count, like the toolbar's other two icons.
+    const columnsBox = menuBox(toolLabel('colonne', { text: `${visibleCount}/${configurable.length}` }), (menu) => {
       menu.appendChild(el('p', 'bo-clienti-group', 'Colonne visibili'));
       for (const column of columnsMeta) {
         if (!column.always) continue;
@@ -494,7 +525,9 @@ export function createCustomerListView(deps) {
         drawShell();
       });
       menu.appendChild(reset);
-    }, 'Colonne'));
+    }, 'Colonne');
+    toggleOf(columnsBox)?.setAttribute('aria-label', `Colonne: ${visibleCount} di ${configurable.length} visibili`);
+    toolbar.appendChild(columnsBox);
     panel.appendChild(bar);
 
     // ── active filter chips with × ────────────────────────────────────────
