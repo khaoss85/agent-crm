@@ -754,3 +754,41 @@ test('a hostile role renders as text, never markup', () => {
   assert.ok(!sidebar.textContent.includes('Titolare'));
   assert.equal(sidebar.findAll('script').length, 0);
 });
+
+// Voce 19c2e22a64a1 (1): the Stato sync badge counts the current space live
+// through the same loader the Impostazioni tabs use — two spaces with
+// different attention rows read different counts, never each other's.
+test('loadFixCount counts each space live — never another space count', async () => {
+  const client = {
+    async request(path) {
+      if (path.includes('data-quality-issue')) return { items: [] };
+      if (path.includes('duplicate-candidate')) return { items: [] };
+      if (path.includes('spaceId=spazio-a')) return { needsFix: 2 };
+      if (path.includes('spaceId=spazio-b')) return { needsFix: 0 };
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  assert.equal(await loadFixCount(client, { spaceId: 'spazio-a' }), 2);
+  assert.equal(await loadFixCount(client, { spaceId: 'spazio-b' }), 0);
+  assert.equal(await loadFixCount(client, { spaceId: '' }), 0);
+});
+
+// Voce 19c2e22a64a1 (1): the badge lights on all four Impostazioni tabs with
+// the explicitly passed current-space count, and stays dark when unknown.
+test('the Stato sync badge renders on all four Impostazioni tabs', () => {
+  const doc = createFakeDocument();
+  for (const activeId of ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi']) {
+    const bar = settingsTabs(doc, { activeId, fixCount: 3, navigate: () => {} });
+    const badges = bar.findAll('span')
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge'));
+    assert.equal(badges.length, 1, `${activeId} shows exactly one badge`);
+    assert.equal(badges[0].textContent, '3', `${activeId} badge carries the current space count`);
+    assert.equal(badges[0].getAttribute('aria-label'), '3 da sistemare', `${activeId} badge names the count`);
+  }
+  for (const activeId of ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi']) {
+    const bar = settingsTabs(doc, { activeId, fixCount: null, navigate: () => {} });
+    assert.equal(bar.findAll('span')
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge')).length,
+    0, `${activeId} lights no badge on an unknown count`);
+  }
+});

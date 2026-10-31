@@ -42,7 +42,7 @@
 
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { settingsTabs } from './admin-shell.js';
+import { loadFixCount, settingsTabs } from './admin-shell.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -304,6 +304,10 @@ export function createSpaziAccessiView(deps) {
     busy: false,
     /** @type {string|null} last server refusal, shown next to the form */
     refusal: null,
+    // Voce 19c2e22a64a1 (1): the current space's own live fix count for the
+    // Stato sync badge on the tab row — explicit, never another space's.
+    /** @type {number | null} */ fixCount: null,
+    /** @type {string | null} */ fixSpace: null,
   };
 
   function clear() {
@@ -828,7 +832,7 @@ export function createSpaziAccessiView(deps) {
   function render() {
     clear();
     const space = activeSpace();
-    mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', navigate: typeof navigate === 'function' ? navigate : () => {} }));
+    mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', fixCount: state.fixCount, navigate: typeof navigate === 'function' ? navigate : () => {} }));
     renderHeader(mount);
     renderSpaces(mount);
     if (space === null) {
@@ -850,8 +854,23 @@ export function createSpaziAccessiView(deps) {
   async function refresh() {
     const mine = (generation += 1);
     const before = childrenOf();
+    const space = readActiveSpace().trim();
+    // A space change drops the previous space's count before anything
+    // paints: the tabs never wear another space's badge, not even briefly.
+    if (state.fixSpace !== space) {
+      state.fixSpace = space;
+      state.fixCount = null;
+    }
     await load();
     if (mine !== generation) return;
+    if (space !== '') {
+      // Voce 19c2e22a64a1 (1): the badge counts this space live. A space
+      // move mid-read keeps the unknown state instead of painting another
+      // space's late count.
+      const count = await loadFixCount(client, { spaceId: space });
+      if (mine !== generation) return;
+      if (readActiveSpace().trim() === space) state.fixCount = count;
+    }
     const now = childrenOf();
     if (now.length !== before.length || now.some((node, index) => node !== before[index])) return;
     render();

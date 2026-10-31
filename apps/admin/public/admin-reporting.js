@@ -533,6 +533,7 @@ export function createReportingView(deps) {
       }));
     }
     section.appendChild(panel);
+    return panel;
   }
 
   /**
@@ -564,6 +565,7 @@ export function createReportingView(deps) {
       panel.appendChild(line);
     }
     section.appendChild(panel);
+    return panel;
   }
 
   function forecastPanel(section, model) {
@@ -631,6 +633,7 @@ export function createReportingView(deps) {
     panel.appendChild(el(doc, 'p', { class: 'lede', text: `✦ ${forecast.label}: ${forecast.method}` }));
     panel.appendChild(el(doc, 'p', { class: 'lede', text: forecast.note }));
     section.appendChild(panel);
+    return panel;
   }
 
   function teamTable(section, model) {
@@ -639,7 +642,7 @@ export function createReportingView(deps) {
     if ((model.team ?? []).length === 0) {
       panel.appendChild(el(doc, 'div', { class: 'empty', text: 'Nessun preventivo in questa vista.' }));
       section.appendChild(panel);
-      return;
+      return panel;
     }
     const wrap = el(doc, 'div', { class: 'table-wrap' });
     const table = el(doc, 'table');
@@ -664,6 +667,7 @@ export function createReportingView(deps) {
     wrap.appendChild(table);
     panel.appendChild(wrap);
     section.appendChild(panel);
+    return panel;
   }
 
   function insightsPanel(section, model) {
@@ -696,6 +700,7 @@ export function createReportingView(deps) {
     });
     panel.appendChild(propose);
     section.appendChild(panel);
+    return panel;
   }
 
   /**
@@ -741,6 +746,7 @@ export function createReportingView(deps) {
     actions.appendChild(csv);
     panel.appendChild(actions);
     section.appendChild(panel);
+    return panel;
   }
 
   async function renderDashboard(host) {
@@ -783,25 +789,28 @@ export function createReportingView(deps) {
     // never as raw minor units.
     const grid = el(doc, 'div', { class: 'bo-rep-grid' });
     host.appendChild(grid);
-    const tag = (cls) => { if (grid.lastChild && grid.lastChild.classList) grid.lastChild.classList.add(cls); };
+    // Voce 19c2e22a64a1 (4): the layout class lands on the panel just
+    // built, by direct reference — never via lastChild, so the grid classes
+    // stay assertable under the view doubles.
+    const tag = (panel, cls) => { if (panel && panel.classList) panel.classList.add(cls); };
     const eur = (minor) => formatMoney(minor, model.currency);
-    channelsCard(grid, model); tag('bo-rep-wide');
-    barChart(grid, 'Preventivi', 'dall\u2019invio al pagamento', model.funnel.map((entry) => ({
+    tag(channelsCard(grid, model), 'bo-rep-wide');
+    tag(barChart(grid, 'Preventivi', 'dall\u2019invio al pagamento', model.funnel.map((entry) => ({
       label: entry.label, minor: entry.count, text: `${entry.count} · ${eur(entry.minor)}`,
-    }))); tag('bo-rep-narrow');
-    barChart(grid, 'Valore per fase', 'valore aperto per fase', model.valueByStage.map((entry) => ({
+    }))), 'bo-rep-narrow');
+    tag(barChart(grid, 'Valore per fase', 'valore aperto per fase', model.valueByStage.map((entry) => ({
       label: entry.label, minor: entry.minor, text: eur(entry.minor),
-    }))); tag('bo-rep-third');
-    barChart(grid, 'Chiusure attese per mese', 'preventivi aperti per mese', model.monthly.map((entry) => ({
+    }))), 'bo-rep-third');
+    tag(barChart(grid, 'Chiusure attese per mese', 'preventivi aperti per mese', model.monthly.map((entry) => ({
       label: entry.label, minor: entry.expectedMinor, text: `${entry.openCount} · ${eur(entry.expectedMinor)}`,
-    }))); tag('bo-rep-third');
-    barChart(grid, 'Vendite per persona', 'valore aperto per persona', model.team.map((entry) => ({
+    }))), 'bo-rep-third');
+    tag(barChart(grid, 'Vendite per persona', 'valore aperto per persona', model.team.map((entry) => ({
       label: entry.owner, minor: entry.openMinor, text: `${entry.openCount} · ${eur(entry.openMinor)}`,
-    }))); tag('bo-rep-third');
-    forecastPanel(grid, model); tag('bo-rep-full');
-    teamTable(grid, model); tag('bo-rep-wide');
-    insightsPanel(grid, model); tag('bo-rep-narrow');
-    codePanel(grid, model); tag('bo-rep-narrow');
+    }))), 'bo-rep-third');
+    tag(forecastPanel(grid, model), 'bo-rep-full');
+    tag(teamTable(grid, model), 'bo-rep-wide');
+    tag(insightsPanel(grid, model), 'bo-rep-narrow');
+    tag(codePanel(grid, model), 'bo-rep-narrow');
   }
 
   async function renderReporting() {

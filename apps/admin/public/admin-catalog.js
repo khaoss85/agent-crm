@@ -3,7 +3,7 @@
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
-import { settingsTabs } from './admin-shell.js';
+import { loadFixCount, settingsTabs } from './admin-shell.js';
 
 /**
  * Product catalog Admin (BO-F2-05 "11 Catalogo prodotti", BO-F2-04 rules):
@@ -126,6 +126,24 @@ export function createCatalogView(deps) {
   });
   let renderToken = 0;
 
+  // Voce 19c2e22a64a1 (1): the Stato sync badge on this tab row reads the
+  // current space's own live count (loadFixCount, the same loader the
+  // sidebar pill uses), never a cached value from another space. Memoized
+  // per space for the view lifetime so filter keystrokes do not refetch;
+  // a space change refetches live, and a mid-read space move keeps the
+  // previous space's count instead of painting the new one's late answer.
+  const readSpaceId = () => {
+    try {
+      const raw = deps.spaceId;
+      const id = typeof raw === 'function' ? raw() : raw;
+      return typeof id === 'string' ? id.trim() : '';
+    } catch {
+      return '';
+    }
+  };
+  let tabFixSpace = null;
+  let tabFixCount = null;
+
   const el = elFor(doc); // BO-F6-02: shared element builder.
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -227,15 +245,28 @@ export function createCatalogView(deps) {
     text.appendChild(el('p', 'catalog-stripe-ok', `${imported}prezzi di fonte in sola lettura: si cambiano su Stripe e si sincronizzano.`));
     const actions = el('div', 'catalog-stripe-actions');
     box.appendChild(actions);
+    // Voce 19c2e22a64a1 (3): with several Stripe providers the buttons must
+    // read differently — the short account suffix names the account on the
+    // button and in the confirm, while the POST body keeps the full key.
+    // A single provider keeps the plain «Sincronizza» (no noise).
+    const crowded = connected.length > 1;
+    const shortId = (provider) => {
+      const tail = String(provider ?? '').replace(/^stripe[-_]?/i, '');
+      const clean = tail.trim() === '' ? String(provider ?? '').trim() : tail.trim();
+      return clean.length <= 8 ? clean : `…${clean.slice(-4)}`;
+    };
     for (const provider of connected) {
-      const syncButton = el('button', 'catalog-sync', 'Sincronizza');
+      const label = crowded ? `Sincronizza (${shortId(provider)})` : 'Sincronizza';
+      const syncButton = el('button', 'catalog-sync', label);
       syncButton.setAttribute('data-provider', provider);
       syncButton.setAttribute('title', `Sincronizza i prodotti da Stripe (${provider})`);
       const confirmBox = el('div', 'catalog-confirm');
       const confirmError = el('p', 'field-error', '');
       syncButton.addEventListener('click', () => {
         while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
-        confirmBox.appendChild(el('p', undefined, 'Sincronizzare i prodotti da Stripe? Le offerte di fonte si aggiornano, quelle manuali restano.'));
+        confirmBox.appendChild(el('p', undefined, crowded
+          ? `Sincronizzare i prodotti da Stripe (${shortId(provider)})? Le offerte di fonte si aggiornano, quelle manuali restano.`
+          : 'Sincronizzare i prodotti da Stripe? Le offerte di fonte si aggiornano, quelle manuali restano.'));
         const yes = el('button', undefined, 'Conferma');
         const no = el('button', undefined, 'Annulla');
         no.addEventListener('click', () => {
@@ -820,8 +851,26 @@ export function createCatalogView(deps) {
    */
   async function renderTable({ category = '', active = '', source = '', search = '' } = {}) {
     const token = ++renderToken;
+    const space = readSpaceId();
+    if (space === '') {
+      tabFixSpace = '';
+      tabFixCount = null;
+    } else if (tabFixSpace !== space) {
+      const count = await loadFixCount(client, { spaceId: space });
+      if (token !== renderToken) return;
+      // A space move mid-read keeps the previous space's count (or none):
+      // this late answer is never painted for another space.
+      if (readSpaceId() === space) {
+        tabFixSpace = space;
+        tabFixCount = count;
+      }
+    }
     clear();
-    mount.appendChild(settingsTabs(doc, { activeId: 'catalogo', navigate: go }));
+    mount.appendChild(settingsTabs(doc, {
+      activeId: 'catalogo',
+      fixCount: tabFixSpace === space ? tabFixCount : null,
+      navigate: go,
+    }));
     const page = el('div', 'catalog-page');
     mount.appendChild(page);
     const top = el('div', 'catalog-top');

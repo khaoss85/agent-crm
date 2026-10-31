@@ -134,7 +134,7 @@ const STRIPE_TABLE = {
   summary: { manual: 0, byProvider: { 'stripe-test': 1 }, stripeConnected: true },
 };
 
-function stubClient({ schema = SCHEMA, tables = { '': MANUAL_TABLE }, fail = null } = {}) {
+function stubClient({ schema = SCHEMA, tables = { '': MANUAL_TABLE }, fail = null, fixNeedsBySpace = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -149,6 +149,14 @@ function stubClient({ schema = SCHEMA, tables = { '': MANUAL_TABLE }, fail = nul
         throw Object.assign(new Error(fail.message), fail);
       }
       if (path === '/api/schema') return schema;
+      if (path.includes('/api/modules/data-quality-issue/records')) return { items: [] };
+      if (path.includes('/api/modules/duplicate-candidate/records')) return { items: [] };
+      if (path.includes('/api/connectors/activity')) {
+        const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? '';
+        const needsFix = fixNeedsBySpace !== null && Object.hasOwn(fixNeedsBySpace, spaceId)
+          ? fixNeedsBySpace[spaceId] : 0;
+        return { needsFix };
+      }
       if (path.startsWith('/api/catalog/products')) {
         if (method !== 'GET') return { ok: true };
         const query = path.includes('?') ? path.slice(path.indexOf('?') + 1) : '';
@@ -428,6 +436,63 @@ test('a connected Stripe source names its provider with a confirm-gated sync', a
   assert.ok(sync, 'confirmation sends the sync');
   assert.equal(sync.method, 'POST');
   assert.deepEqual(sync.body, { provider: 'stripe-test' });
+});
+
+// Voce 19c2e22a64a1 (1): the Catalogo tab badge counts the view's own space
+// live — a space with attention rows lights the badge, a quiet space does
+// not wear the other space's count.
+test('the tab badge counts the view space live — never another space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ fixNeedsBySpace: { 'spazio-a': 2, 'spazio-b': 0 } });
+  let space = 'spazio-a';
+  const view = createCatalogView({ doc, mount, client, spaceId: () => space });
+  await view.renderTable({});
+
+  const badge = () => mount.findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge'));
+  assert.ok(client.calls.some((call) => call.path.includes('/api/connectors/activity')
+    && call.path.includes('spaceId=spazio-a')), 'the badge read names its own space');
+  assert.ok(badge(), 'spazio-a lights the badge');
+  assert.equal(badge().textContent, '2', 'the badge carries spazio-a count');
+
+  space = 'spazio-b';
+  await view.renderTable({});
+  assert.ok(client.calls.some((call) => call.path.includes('/api/connectors/activity')
+    && call.path.includes('spaceId=spazio-b')), 'the moved space refetches live');
+  assert.equal(badge(), undefined, 'spazio-b wears no badge — never spazio-a count');
+});
+
+// Voce 19c2e22a64a1 (3): with two Stripe providers the two sync buttons read
+// differently, each confirm names its own account, the POST keeps the key.
+test('two Stripe providers render distinguishable sync buttons', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const table = {
+    products: STRIPE_TABLE.products,
+    summary: { manual: 0, byProvider: { 'stripe-aaa': 2, 'stripe-bbb': 3 }, stripeConnected: true },
+  };
+  const client = stubClient({ tables: { '': table } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const syncs = mount.findAll('button')
+    .filter((node) => node.getAttribute('data-provider') !== null);
+  assert.equal(syncs.length, 2, 'one sync button per provider');
+  assert.notEqual(syncs[0].textContent, syncs[1].textContent, 'the two buttons read differently');
+  for (const sync of syncs) assert.ok(sync.textContent.includes('Sincronizza'), 'both stay a sync action');
+
+  syncs[0].dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Sincronizzare i prodotti da Stripe (aaa)?'),
+    'the confirm names its own account');
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(confirm, 'the confirm dialog renders');
+  confirm.dispatch('click');
+  await flush();
+  const sync = client.calls.find((call) => call.path === '/api/catalog/sync');
+  assert.ok(sync, 'confirmation sends the sync');
+  assert.deepEqual(sync.body, { provider: 'stripe-aaa' }, 'the POST keeps the full provider key');
 });
 
 test('the price rules section reads the live bands from the schema', async () => {

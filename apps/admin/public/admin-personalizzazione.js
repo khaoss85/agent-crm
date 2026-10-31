@@ -30,7 +30,7 @@
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
-import { settingsTabs } from './admin-shell.js';
+import { loadFixCount, settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);
@@ -462,6 +462,12 @@ export function createPersonalizzazioneView(deps) {
     /** @type {string | null} */ previewFor: null,
     /** @type {any} */ preview: null,
     busy: false,
+    // Voce 19c2e22a64a1 (1): the current space's own live fix count for the
+    // Stato sync badge on the tab row — explicit, never another space's.
+    // Read once per renderView (the route entry); in-page tab switches reuse
+    // it because the space cannot change without a route change.
+    /** @type {number | null} */ fixCount: null,
+    /** @type {string | null} */ fixSpace: null,
   };
 
   function clear() {
@@ -1236,7 +1242,7 @@ export function createPersonalizzazioneView(deps) {
     openToolbarMenu = null;
     // Supervisor design pass: the prototype's IMPOSTAZIONI tab row above the
     // page (vestito del supervisore, #406): kept as-is, functional code below.
-    mount.appendChild(settingsTabs(doc, { activeId: 'personalizzazione', navigate: go }));
+    mount.appendChild(settingsTabs(doc, { activeId: 'personalizzazione', fixCount: state.fixCount, navigate: go }));
     const box = el(doc, 'div', { cls: 'panel personalizzazione' });
     renderHeader(box);
     if (readSpace().trim() === '') {
@@ -1264,9 +1270,21 @@ export function createPersonalizzazioneView(deps) {
   }
 
   async function renderView() {
+    const space = readSpace().trim();
+    // A space change drops the previous space's count before the first
+    // paint: the tabs never wear another space's badge, not even briefly.
+    if (state.fixSpace !== space) {
+      state.fixSpace = space;
+      state.fixCount = null;
+    }
     render();
-    if (readSpace().trim() === '') return;
+    if (space === '') return;
     await load();
+    // Voce 19c2e22a64a1 (1): the badge counts this space live. A space move
+    // mid-read keeps the unknown state instead of painting another space's
+    // late count.
+    const count = await loadFixCount(client, { spaceId: space });
+    if (readSpace().trim() === space) state.fixCount = count;
     if (state.tab === 'connettori') await loadConnectors();
     render();
   }

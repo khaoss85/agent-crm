@@ -40,7 +40,7 @@ const flush = async (rounds = 12) => {
 
 const SPACE = 'spazio-1';
 
-function stubClient({ context = null, members = [], overrides = [], calls = null, fail = {}, connectorsBySpace = null, customersBySpace = null } = {}) {
+function stubClient({ context = null, members = [], overrides = [], calls = null, fail = {}, connectorsBySpace = null, customersBySpace = null, needsBySpace = null } = {}) {
   return {
     async request(path, options = {}) {
       const rawBody = options?.body ?? null;
@@ -78,6 +78,12 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
         else overrides.push({ spaceId: body.spaceId, permission: body.permission, enabled: body.enabled === 'on' });
         return { spaceId: body.spaceId, permission: body.permission, enabled: body.enabled === 'on' };
       }
+      if (path.startsWith('/api/connectors/activity')) {
+        const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? SPACE;
+        const needsFix = needsBySpace !== null && Object.hasOwn(needsBySpace, spaceId)
+          ? needsBySpace[spaceId] : 0;
+        return { spaceId, needsFix };
+      }
       if (path.startsWith('/api/connectors')) {
         if (fail.connectors) throw fail.connectors;
         const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? SPACE;
@@ -86,6 +92,8 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
           : [];
         return { spaceId, connectors };
       }
+      if (path.includes('/api/modules/data-quality-issue/records')) return { items: [] };
+      if (path.includes('/api/modules/duplicate-candidate/records')) return { items: [] };
       if (path.startsWith('/api/customer-data/customers')) {
         if (fail.customers) throw fail.customers;
         const spaceId = new URL(path, 'http://stub.test').searchParams.get('spaceId') ?? SPACE;
@@ -117,6 +125,28 @@ function view({ client, spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }
 }
 
 const text = (mount) => mount.textContent;
+
+// Voce 19c2e22a64a1 (1): the tab badge counts the active space live — a
+// space with attention rows lights the badge, a quiet space never wears
+// the other space's count.
+test('the tab badge counts the active space live — never another space', async () => {
+  const spaces = [
+    { id: 'spazio-a', name: 'Negozio A', initials: 'NA' },
+    { id: 'spazio-b', name: 'Negozio B', initials: 'NB' },
+  ];
+  const client = stubClient({ needsBySpace: { 'spazio-a': 5, 'spazio-b': 0 } });
+  const badgeOf = (mount) => mount.findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge'));
+  const first = view({ client, spaces, active: 'spazio-a' });
+  await first.view.render();
+  await flush();
+  assert.ok(badgeOf(first.mount), 'spazio-a lights the badge');
+  assert.equal(badgeOf(first.mount).textContent, '5', 'the badge carries spazio-a count');
+  const second = view({ client, spaces, active: 'spazio-b' });
+  await second.view.render();
+  await flush();
+  assert.equal(badgeOf(second.mount), undefined, 'spazio-b wears no badge — never spazio-a count');
+});
 
 test('the spazi-accessi route parses, deeper paths stay invalid', () => {
   assert.equal(parseModuleRoute('#/spazi-accessi').view, 'spazi-accessi');
