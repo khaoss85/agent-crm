@@ -305,10 +305,11 @@ export function mergeLinkedIdentities(timeline) {
   };
   const threads = Array.isArray(timeline?.conversations?.items) ? timeline.conversations.items : [];
   const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
-  // Every labeled channel the timeline names, with or without a handle: the
-  // list CANALI column counts channels from these same rows, so a channel
-  // observed without a handle still belongs to the union (as a handle-less
-  // row below), never to a silent under-count.
+  // Every labeled channel the timeline names, with or without a handle: a
+  // channel observed without a handle still reads here (as a handle-less
+  // row below), never as a silent under-count. The list CANALI column shares
+  // the in-filter observed channels with these rows and adds every held
+  // identity system — the two surfaces overlap, they are not one union.
   const seenChannels = new Set();
   for (const thread of threads) {
     const system = String(thread?.channel ?? '').toLowerCase();
@@ -328,7 +329,8 @@ export function mergeLinkedIdentities(timeline) {
   }
   // Channels observed without any handle (a call from an unknown number, a
   // thread with no peer): one display-only row per channel, with no handle
-  // to link, so the scheda names every channel the list CANALI column names.
+  // to link. The display vocabulary is wider than the list filter's, so an
+  // observed legacy channel reads here while CANALI skips it.
   for (const system of [...seenChannels].sort()) {
     if (rows.some((row) => row.system === system)) continue;
     rows.push(Object.freeze({ system, externalId: null, source: 'observed' }));
@@ -588,14 +590,16 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
       return;
     }
-    // Voce 826e377c review giro-4: a timeline read failure names the
-    // observed half as failed instead of listing zero channels — an
-    // under-count with no signal is a different claim from "the read
-    // failed".
-    const merged = mergeLinkedIdentities(timelineError ? null : timeline);
+    // Voce 826e377c review giro-6 (P1 head f1ed030c): a timeline read
+    // failure must not claim knowledge of zero channels — merging null
+    // yields zero rows and the zero-row branch would print 'nessun canale
+    // osservato' beside the failure notice. The section names the failure
+    // and stops: no count, no empty claim, no rows.
     if (timelineError) {
       readError(box, timelineError, 'I canali osservati non si sono potuti leggere. Riprova più tardi.');
+      return;
     }
+    const merged = mergeLinkedIdentities(timeline);
     const count = merged.channelCount;
     box.appendChild(el('p', 'bo-muted',
       merged.rows.length === 0

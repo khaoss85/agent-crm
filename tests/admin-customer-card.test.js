@@ -518,11 +518,12 @@ test('voce 908f2eb9bbfb: with the timeline in error the scheda keeps the card an
   assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
 });
 
-test('826e377c review giro-4: with the timeline in error the identities name the failure, never zero channels', async () => {
-  // The review on head 32e7338a: linkedIdentities ignored timelineError, so
-  // a timeline read failure silently narrowed the union, reading as an
-  // under-count with no signal. Since the owner split the section reads only
-  // observed identities: no observed row is listed and the failure is named.
+test('826e377c review giro-6: with the timeline in error the identities name the failure, never zero channels', async () => {
+  // The review on head f1ed030c (P1): linkedIdentities merged null on a
+  // timeline failure (zero rows), so the zero-row branch printed
+  // 'nessun canale osservato' beside the failure notice — a failed read
+  // claiming knowledge of zero channels. The section now names the failure
+  // and stops: no count, no empty claim, no rows.
   const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
   const mount = await renderCard(stubClient({ timelineError: failure }));
   const text = mount.textContent;
@@ -531,14 +532,14 @@ test('826e377c review giro-4: with the timeline in error the identities name the
     text.includes('I canali osservati non si sono potuti leggere. Riprova più tardi.'),
     'the observed read names the failure instead of merging in silence',
   );
-  assert.ok(text.includes('nessun canale osservato'), 'no observed channel is invented on a failed read');
   // The number still reads in Contatti (the card's own phone field), so the
-  // no-leak check scopes to the Identità collegate section: a held
-  // external-identity from the profile must not render there.
+  // absence checks scope to the Identità collegate section.
   const sectionHead = mount.findByText('h4', 'Identità collegate');
   assert.ok(sectionHead, 'the identities section stays');
   const sectionText = sectionHead.parentNode?.textContent ?? '';
-  assert.ok(!sectionText.includes('+39 333 1234567'), 'no held identity leaks into the read-only section');
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'a failed observed read claims no zero channels');
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no observed row renders on a failed read');
+  assert.ok(!sectionText.includes('guido.presti'), 'no observed handle renders on a failed read');
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 

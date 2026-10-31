@@ -619,10 +619,13 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
     // The channels observed on this customer's own messages and calls, read
-    // from the rows already in hand (backlog:826e377c): no new query, and the
-    // CANALI column shares the scheda's union of held plus observed — but
-    // only on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
-    // enforces, so the column never names a channel its own filter refuses.
+    // from the rows already in hand (backlog:826e377c): no new query, only
+    // on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
+    // enforces, so the observed half never names a channel its own filter
+    // refuses. The held half stays unfiltered (every system main listed,
+    // including legacy sms/gmail/voice): the CANALI union is held plus
+    // in-filter observed, not the scheda section's observed-only display
+    // vocabulary — see shapeCustomerRow.
     const observedChannels = [...new Set(myMessages
       .map((row) => String(row?.channel ?? '').toLowerCase())
       .filter((channel) => CUSTOMER_CHANNELS.includes(channel)))].sort();

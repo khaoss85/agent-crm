@@ -598,8 +598,9 @@ test('the operation previews the latest message body, never a call', async () =>
 });
 
 test('826e377c: the CANALI column unions held identities with observed message channels', () => {
-  // The scheda's Identità collegate reads held plus observed; the list reads
-  // the same union, so a customer with messages but no held identity still
+  // CANALI unions every held identity system with the observed channels in
+  // the filter vocabulary (not the scheda section's wider display
+  // vocabulary), so a customer with messages but no held identity still
   // shows its channels.
   const heldOnly = rowOf({}, baseReads());
   assert.deepEqual(heldOnly.channels, ['whatsapp']);
@@ -654,10 +655,11 @@ test('826e377c: the operation reads observed channels from the scanned messages 
   assert.equal(filtered.total, 1, 'the channel filter follows the same union');
 });
 
-test('826e377c review giro-4: a held identity outside the filter vocabulary stays out of CANALI', () => {
-  // The review on head 32e7338a: the union filtered observed channels to
-  // CUSTOMER_CHANNELS but left held identities unfiltered, so a held legacy
-  // sms/gmail row surfaced a channel the canale filter refuses with 400.
+test('826e377c review giro-6: a held identity outside the filter vocabulary stays in CANALI', () => {
+  // The review on head f1ed030c (P1): filtering the held side to
+  // CUSTOMER_CHANNELS hid held legacy sms/gmail rows that main listed in
+  // CANALI. The held side keeps every system; only the observed side uses
+  // the filter vocabulary. canale=sms still refuses with 400 on purpose.
   const legacy = rowOf({}, {
     ...baseReads(),
     identitiesBySubject: new Map([['contact:c1', [
@@ -666,13 +668,13 @@ test('826e377c review giro-4: a held identity outside the filter vocabulary stay
     ]]]),
   });
   assert.deepEqual(
-    legacy.channels, [],
-    'a held row outside the filter vocabulary names no channel, like the canale filter refuses it',
+    legacy.channels, ['gmail', 'sms'],
+    'a held legacy row names its channel again, like main did',
   );
   assert.throws(
     () => parseCustomerListQuery({ canale: 'sms' }),
     /customer list query/,
-    'the canale filter still refuses what CANALI no longer names',
+    'the canale filter vocabulary is unchanged: it still refuses sms',
   );
 });
 

@@ -294,12 +294,17 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
  *   observed channels name the message channels read for this customer in
- *   the same scan (backlog:826e377c); both sides are filtered to
- *   CUSTOMER_CHANNELS here:
- *   the CANALI column reads the same union the scheda's Identità collegate
- *   reads — held identities plus channels observed on the customer's
- *   messages — so a customer with messages but no held identity still shows
- *   its channels, and never one the canale filter refuses.
+ *   the same scan (backlog:826e377c), already on the canale-filter
+ *   vocabulary (CUSTOMER_CHANNELS, see operations.js).
+ *   The CANALI column unions every held identity system (imports accept any
+ *   lowercase system, so legacy sms/gmail/voice rows exist and are held —
+ *   main listed them) with those observed channels, so a customer with
+ *   messages but no held identity still shows its channels. It is NOT the
+ *   same union the scheda's Identità collegate reads: that section lists
+ *   only the observed timeline channels in the wider display vocabulary
+ *   (CHANNEL_LABELS), while held identities stay in the profile and in this
+ *   column. A held sms row names its channel here even though canale=sms
+ *   still refuses with 400 — the filter vocabulary is unchanged on purpose.
  */
 export function shapeCustomerRow(subject, reads = {}) {
   const contact = subject?.contact ?? null;
@@ -313,14 +318,19 @@ export function shapeCustomerRow(subject, reads = {}) {
     : company?.name ?? null;
   const identities = reads.identitiesBySubject?.get(key) ?? [];
   const observed = reads.observedChannelsBySubject?.get(key) ?? [];
-  // Review giro-4 on 826e377c: both sides of the union keep the same
-  // vocabulary the canale filter enforces, so the column never names a
-  // channel the filter refuses with 400 — a held legacy sms/gmail row is
-  // still listed as a held identity, never as a channel chip.
-  const channels = [...new Set([
-    ...identities.map((row) => String(row?.system ?? '').toLowerCase()),
-    ...observed.map((channel) => String(channel ?? '').toLowerCase()),
-  ].filter((system) => system !== '' && CUSTOMER_CHANNELS.includes(/** @type {any} */ (system))))].sort();
+  // Review giro-6 on 826e377c (P1 head f1ed030c): the held side keeps
+  // every system main showed — filtering it to CUSTOMER_CHANNELS hid held
+  // legacy sms/gmail/voice rows that main listed in CANALI. Only the
+  // observed side keeps the filter vocabulary (operations.js already feeds
+  // it on CUSTOMER_CHANNELS; the filter below keeps direct callers honest),
+  // so the column never invents an observed channel its own filter refuses.
+  const heldChannels = identities
+    .map((row) => String(row?.system ?? '').toLowerCase())
+    .filter((system) => system !== '');
+  const observedChannels = observed
+    .map((channel) => String(channel ?? '').toLowerCase())
+    .filter((channel) => channel !== '' && CUSTOMER_CHANNELS.includes(/** @type {any} */ (channel)));
+  const channels = [...new Set([...heldChannels, ...observedChannels])].sort();
   const phoneIdentity = identities.find((row) => PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) ?? null;
   const status = reads.statusBySubject?.get(key)
     ?? { value: 'contatto', reason: 'no signed-business evidence was read for this customer in the list scan' };
