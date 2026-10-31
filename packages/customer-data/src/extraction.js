@@ -4,8 +4,10 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { CONTROL_RE, MAX_FIELD_LENGTH, safeString } from './normalize.js';
-import { ENRICHABLE_FIELDS } from './enrichment.js';
-import { deciding, subjectFields, trusted } from './store.js';
+import { ENRICHABLE_FIELDS, canonicalPhone } from './enrichment.js';
+import { canonicalClusterFor } from './profile.js';
+import { recordExternalIdentityRow } from './sender.js';
+import { deciding, subjectFields, subjectKey, trusted } from './store.js';
 
 /**
  * AI-assisted enrichment extraction (backlog:7837a4b1b3a9).
@@ -175,6 +177,17 @@ function requireProposals(answer, kinds) {
       throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
         'the AI extraction returned no usable fields: nothing was stored');
     }
+    if (item.field === 'phone') {
+      // The free-source discipline: a phone-bearing identity IS a phone
+      // number only when it dials. An undialable AI guess is refused with
+      // the whole run, never stored as a proposal a human could accept.
+      const dialable = canonicalPhone(value);
+      if (!dialable) {
+        throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
+          'the AI extraction returned no usable fields: nothing was stored');
+      }
+      value = dialable;
+    }
     if (typeof item.source !== 'string' || !kinds.includes(item.source)) {
       throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
         'the AI extraction cited a source this run never read: nothing was stored');
@@ -208,6 +221,22 @@ export function createEnrichmentExtraction({ database, modules, events, names })
   }
 
   /**
+   * The opt-out check for a named subject covers its whole canonical
+   * cluster: enriched facts already read cluster-wide, so a member
+   * contact's refusal must block an extraction (or an accept) named for
+   * the company too — and a company subject carries no opt-out row of its
+   * own. Only contact members can hold a refusal.
+   */
+  async function optedOutAnywhere(resource, id) {
+    const cluster = await canonicalClusterFor({ modules, names, subject: { resource, id } });
+    for (const member of cluster.members) {
+      if (member.resource !== 'contact') continue;
+      if (await optOutRow(member.resource, member.id)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Run one AI extraction over the customer's linked sources. The adapter
    * call happens outside any transaction; the validated proposals land
    * together inside one, so a crash stores all of them or none.
@@ -218,7 +247,7 @@ export function createEnrichmentExtraction({ database, modules, events, names })
     const sources = requireSources(request?.sources);
     const adapter = requireAdapter(request?.adapter);
 
-    if (await optOutRow(resource, id)) {
+    if (await optedOutAnywhere(resource, id)) {
       throw refusal('ENRICHMENT_OPTED_OUT', 409,
         'this subject opted out of enrichment: no extraction runs and nothing is stored');
     }
@@ -240,10 +269,10 @@ export function createEnrichmentExtraction({ database, modules, events, names })
     const now = new Date().toISOString();
     const enriched = trusted(modules, enrichedName);
     const stored = await database.transactionAsync(async () => {
-      // The opt-out is re-checked inside the write transaction: an
-      // opt-out that committed while the adapter was thinking refuses
+      // The opt-out is re-checked inside the write transaction, cluster-wide:
+      // an opt-out that committed while the adapter was thinking refuses
       // here, so no fresh proposal lands after a purge.
-      if (await optOutRow(resource, id)) {
+      if (await optedOutAnywhere(resource, id)) {
         throw refusal('ENRICHMENT_OPTED_OUT', 409,
           'this subject opted out of enrichment: no extraction runs and nothing is stored');
       }
@@ -313,16 +342,32 @@ export function createEnrichmentExtraction({ database, modules, events, names })
   /**
    * The pending proposals of one subject — what «Aggiorna» shows beside
    * the facts. Proposed rows only: facts keep reading through
-   * `readCustomerEnrichment`, never from here.
+   * `readCustomerEnrichment`, never from here. Cluster-wide like the
+   * facts read: a proposal extracted for a member contact shows on the
+   * company scheda too.
    */
   async function readCustomerEnrichmentProposals(request) {
     const { resource, id } = requireSubject(request);
-    const rows = await deciding(trusted(modules, enrichedName), {
-      subjectResource: resource, subjectId: id, status: 'proposed',
-    });
+    const cluster = await canonicalClusterFor({ modules, names, subject: { resource, id } });
+    const memberIndex = new Map(cluster.members.map((member, index) => [subjectKey(member), index]));
+    const fieldOrder = new Map(ENRICHABLE_FIELDS.map((field, index) => [field, index]));
+    const enriched = trusted(modules, enrichedName);
+    const collected = [];
+    for (const member of cluster.members) {
+      const rows = await deciding(enriched, {
+        subjectResource: member.resource, subjectId: member.id, status: 'proposed',
+      });
+      for (const row of rows) collected.push(row);
+    }
+    collected.sort((a, b) => (
+      (memberIndex.get(subjectKey({ resource: a.subjectResource, id: a.subjectId })) ?? 0)
+        - (memberIndex.get(subjectKey({ resource: b.subjectResource, id: b.subjectId })) ?? 0)
+      || (fieldOrder.get(a.field) ?? ENRICHABLE_FIELDS.length) - (fieldOrder.get(b.field) ?? ENRICHABLE_FIELDS.length)
+      || String(a.source).localeCompare(String(b.source))
+    ));
     return Object.freeze({
       subject: Object.freeze({ resource, id }),
-      proposals: Object.freeze(rows.map(shapeProposal)),
+      proposals: Object.freeze(collected.map(shapeProposal)),
     });
   }
 
@@ -349,13 +394,32 @@ export function createEnrichmentExtraction({ database, modules, events, names })
       return Object.freeze({ outcome: 'already-decided', proposal: shapeProposal(current) });
     }
     if (decision === 'accepted') {
-      if (await optOutRow(current.subjectResource, current.subjectId)) {
+      if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
         throw refusal('ENRICHMENT_OPTED_OUT', 409,
           'this subject opted out of enrichment: no proposal is accepted after the purge');
       }
-      const row = await enriched.applyManaged(id, {
-        status: 'active', decisionReason: reason,
-      }, { actor });
+      const row = await database.transactionAsync(async () => {
+        const decided = await enriched.applyManaged(id, {
+          status: 'active', decisionReason: reason,
+        }, { actor });
+        if (decided.field === 'phone' && decided.value) {
+          // The free-source discipline: an accepted phone becomes a
+          // phone-bearing external identity, so sender resolution and the
+          // facts read see it exactly like a free-source phone.
+          await recordExternalIdentityRow({
+            modules, names, system: 'phone', externalId: decided.value,
+            subject: {
+              resource: decided.subjectResource, id: decided.subjectId,
+              owner: decided.subjectOwner ?? 'host',
+              ownerPackage: decided.subjectOwnerPackage ?? null,
+              label: decided.subjectLabel ?? null,
+            },
+            runId: decided.observedByRunId ?? 'enrichment:decide',
+            actor,
+          });
+        }
+        return decided;
+      });
       return Object.freeze({ outcome: 'accepted', proposal: shapeProposal(row) });
     }
     const row = await enriched.applyManaged(id, {

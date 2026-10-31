@@ -69,7 +69,7 @@ function requireEmail(value) {
   return shaped.value;
 }
 
-function canonicalPhone(raw) {
+export function canonicalPhone(raw) {
   // Twin of the signature parser's rule: separators stripped, leading `+`
   // kept. A phone-bearing identity IS a phone number only when it dials.
   const digits = String(raw).replaceAll(/[ .\-()/]/g, '');
@@ -713,8 +713,9 @@ export function createContactEnrichment({
 
     /**
      * Opt one contact out of enrichment: records the refusal and purges
-     * the subject's active enriched fields (status `purged`, value
-     * cleared). Channel identities are not enrichment and stay.
+     * every non-purged enriched field of the subject — active facts,
+     * pending AI proposals and recorded dismissals alike (status `purged`,
+     * value cleared). Channel identities are not enrichment and stay.
      * @param {any} request
      */
     async optOutContactEnrichment(request) {
@@ -749,15 +750,22 @@ export function createContactEnrichment({
             if (!isUniqueConflict(error)) throw error;
           }
         }
-        const active = await deciding(rows, {
-          subjectResource: 'contact', subjectId: contact.id, status: 'active',
+        // Every non-purged row goes: active facts, pending AI proposals and
+        // recorded dismissals alike. A proposal the subject refused must not
+        // survive the opt-out with its value intact and readable.
+        const stored = await deciding(rows, {
+          subjectResource: 'contact', subjectId: contact.id,
         });
-        for (const row of active) {
+        let purged = 0;
+        for (const row of stored) {
+          if (row.status === 'purged') continue;
           await rows.applyManaged(row.id, {
-            status: 'purged', value: null, purgedAt: now, purgeReason: reason ?? 'opt-out',
+            status: 'purged', value: null, sourceDetail: null, decisionReason: null,
+            purgedAt: now, purgeReason: reason ?? 'opt-out',
           }, { actor });
+          purged += 1;
         }
-        return active.length;
+        return purged;
       });
       events.emit?.('customer-data.enrichment.opted-out', { purged });
       return Object.freeze({
