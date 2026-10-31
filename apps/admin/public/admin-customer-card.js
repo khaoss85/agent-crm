@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError } from './admin-core.js';
+import { humanReadError, isNotComposedFailure } from './admin-core.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 
 /**
@@ -377,36 +377,64 @@ export function createCustomerCardView(deps) {
 
   let channelFilter = 'all';
 
+  // Voce 908f2eb9bbfb: one slow or failing read must never fail the whole
+  // scheda. Every read settles on its own: the card stays the identity
+  // source (without it there is no name to show), while every other read
+  // feeds only its own section and carries its own failure there. A 404
+  // keeps meaning "not composed here" (null, section hidden or empty as
+  // before); any other failure is kept beside the value so the section
+  // can name it instead of failing the card.
+  // Voce 908f2eb9bbfb, review round 2: the work arrives as a thunk, so a
+  // synchronously-throwing read settles like a rejection instead of escaping
+  // while the Promise.all array is still being built.
+  const settle = (thunk) => Promise.resolve().then(
+    typeof thunk === 'function' ? thunk : () => thunk,
+  ).then(
+    (value) => ({ value, error: null }),
+    (error) => ({ value: null, error }),
+  );
+  const nullOn404 = (settled) => (settled.error && isNotComposedFailure(settled.error)
+    ? { value: null, error: null }
+    : settled);
+
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
-    const [card, timeline, profile, enrichment, calls] = await Promise.all([
-      client.request(`/api/customer-hub/card/${encoded}`),
-      client.request(`/api/customer-hub/timeline/${encoded}`),
-      client.request(`/api/customer-data/profile/${encoded}`),
+    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw] = await Promise.all([
+      settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
+      settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
+      settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
       // yet answers 404, and the scheda must stay honest about the section
-      // instead of failing the whole card. Every other failure still
-      // rejects, so the card shows its error.
-      client.request(`/api/customer-data/enriched/${encoded}`)
-        .catch((error) => {
-          if (error && error.status === 404) return null;
-          throw error;
-        }),
+      // instead of failing the whole card.
+      settle(() => client.request(`/api/customer-data/enriched/${encoded}`)),
       // Without intelligence composed (honest 404) or without a space the
-      // calls read stays unavailable — never a failed card. Every other
-      // failure (expired session, network, HTTP 5xx) still rejects, so the
-      // card shows its error instead of a misleading "no calls".
+      // calls read stays unavailable — never a failed card.
       spaceId === null
-        ? Promise.resolve(null)
-        : client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)
-          .catch((error) => {
-            if (error && error.status === 404) return null;
-            throw error;
-          }),
+        ? { value: null, error: null }
+        : settle(() => client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)),
     ]);
-    return { card, timeline, profile, enrichment, calls };
+    // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
+    // retry — the package is not composed for this reader, so the read stays
+    // null and the section keeps its honest not-composed state. Only a
+    // non-404 failure names the retry error on the section.
+    const timeline = nullOn404(timelineRaw);
+    const profile = nullOn404(profileRaw);
+    const enrichment = nullOn404(enrichmentRaw);
+    const calls = nullOn404(callsRaw);
+    return {
+      card: card.value,
+      cardError: card.error,
+      timeline: timeline.value,
+      timelineError: timeline.error,
+      profile: profile.value,
+      profileError: profile.error,
+      enrichment: enrichment.value,
+      enrichmentError: enrichment.error,
+      calls: calls.value,
+      callsError: calls.error,
+    };
   }
 
   /** First Unicode letter of a word, or '?' when the word holds none. */
@@ -546,7 +574,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(row);
   }
 
-  function linkedIdentities(box, profile, timeline, ctx = {}) {
+  function linkedIdentities(box, profile, timeline, ctx = {}, profileError = null) {
     // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
     // label and a role label, never a bare id or UUID. The English cluster
     // note stays in the API response, never on screen.
@@ -564,6 +592,13 @@ export function createCustomerCardView(deps) {
     // Scollega — both behind an inline Conferma/Annulla like the catalog
     // sync, and both re-read the card after the write.
     box.appendChild(el('h4', undefined, 'Identità collegate'));
+    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
+    // section too — hiding it would read as "no identities", which is a
+    // different claim from "the read failed".
+    if (profileError) {
+      readError(box, profileError, 'Le identità non si sono potute leggere. Riprova più tardi.');
+      return;
+    }
     const cluster = profile?.canonicalIdentity;
     if (!cluster) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
@@ -683,8 +718,16 @@ export function createCustomerCardView(deps) {
    * (remaining). Salva PATCHes the contact and re-reads the card; Annulla
    * drops the edits by re-reading too, so nothing stale stays on screen.
    */
-  function details(box, card, profile, editCtx) {
+  function details(box, card, profile, editCtx, profileError = null) {
     box.appendChild(el('h4', undefined, 'Dettagli'));
+    // Voce 908f2eb9bbfb: the profile failing must not fail the scheda. The
+    // facts below join the card with the profile, so without the profile
+    // they cannot be shown — but the name (header, from the card) and the
+    // timeline stay, and only Dettagli names the failure.
+    if (profileError) {
+      readError(box, profileError, 'I dettagli non si sono potuti leggere. Riprova più tardi.');
+      return;
+    }
     const fact = (label, value) => {
       const row = el('p', 'bo-scheda-fact');
       row.appendChild(el('span', 'bo-scheda-fact-label', label));
@@ -806,7 +849,7 @@ export function createCustomerCardView(deps) {
     'google-contacts': 'Contatti Google', 'email-signature': 'firma email',
   });
 
-  function enriched(box, enrichment, reload) {
+  function enriched(box, enrichment, reload, enrichmentError = null) {
     // BO-F4-03, ref "05 Scheda cliente": every enriched datum cites the free
     // source that filled it and its observation date; an opted-out customer
     // reads as opted out, never as empty; no row without a recorded source
@@ -817,6 +860,12 @@ export function createCustomerCardView(deps) {
     // the section, `Nessun dato nuovo` when it did not. A failed re-read is
     // the Italian retry sentence, and the section keeps its previous rows.
     box.appendChild(el('h4', undefined, "Arricchito dall'AI"));
+    // Voce 908f2eb9bbfb: a failed enrichment read fails only this section,
+    // never the scheda.
+    if (enrichmentError) {
+      readError(box, enrichmentError, "I dati arricchiti non si sono potuti leggere. Riprova più tardi.");
+      return;
+    }
     if (typeof reload === 'function') {
       const refresh = el('button', 'bo-scheda-refresh', 'Aggiorna');
       refresh.setAttribute('type', 'button');
@@ -1037,7 +1086,14 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function nextSteps(box, profile) {
+  function nextSteps(box, profile, profileError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
+    // section too, instead of vanishing as "no next steps".
+    if (profileError) {
+      box.appendChild(el('h4', undefined, 'Prossimi passi'));
+      readError(box, profileError, 'I prossimi passi non si sono potuti leggere. Riprova più tardi.');
+      return true;
+    }
     // Voce 1a066ddfe42a: an uncomposed work package hides the whole block
     // instead of printing its English reason.
     if (profile?.workTasks?.available !== true) return false;
@@ -1055,7 +1111,14 @@ export function createCustomerCardView(deps) {
     return true;
   }
 
-  function offer(box, profile, offerCtx) {
+  function offer(box, profile, offerCtx, profileError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
+    // section too, instead of vanishing as "no offer".
+    if (profileError) {
+      box.appendChild(el('h4', undefined, 'Offerta'));
+      readError(box, profileError, "L'offerta non si è potuta leggere. Riprova più tardi.");
+      return true;
+    }
     // Voce cc525cd6a3c5: the offer panel shows one commercial line for THIS
     // customer only — the profile behind it is already scoped to the customer
     // (contact-scoped records never leak onto a company-mate's card), so the
@@ -1186,8 +1249,14 @@ export function createCustomerCardView(deps) {
   // file, so it names the set instead of importing it).
   const TERMINAL_APPOINTMENT = Object.freeze(['done', 'no-show', 'cancelled']);
 
-  function nextAppointment(box, timeline) {
+  function nextAppointment(box, timeline, timelineError = null) {
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // section too, instead of vanishing as "no appointment booked".
+    if (timelineError) {
+      readError(box, timelineError, 'Il prossimo appuntamento non si è potuto leggere. Riprova più tardi.');
+      return;
+    }
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     // readSchedule lists every booking soonest-first, past and terminal rows
     // included: the next appointment is the soonest booking that can still
@@ -1312,22 +1381,38 @@ export function createCustomerCardView(deps) {
     }
   }
 
+  // Voce 908f2eb9bbfb: a section that fails shows its own error and leaves
+  // the rest of the scheda. Only the card read failing fails the whole
+  // scheda — it carries the name, and without a name there is no card.
+  const readError = (box, error, failed) => {
+    box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
+  };
+
   async function renderCard(resource, id) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     channelFilter = 'all';
+    // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
+    // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
+    // id) used to blank the scheda with neither the card nor the error panel.
     let loaded;
     try {
       loaded = await load(resource, id);
     } catch (error) {
+      loaded = { card: null, cardError: error };
+    }
+    if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
-      panel.appendChild(el('p', 'bo-muted', humanReadError(error, {
+      panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
       mount.appendChild(panel);
       return;
     }
-    const { card, timeline, profile, enrichment, calls } = loaded;
+    const {
+      card, timeline, timelineError, profile, profileError,
+      enrichment, enrichmentError, calls, callsError,
+    } = loaded;
     // C13: the re-read behind `Aggiorna` — the same enriched route the load
     // uses, with the same honest 404. Anything else still rejects, so the
     // button toasts the Italian retry instead of inventing rows.
@@ -1350,15 +1435,33 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     section(left, '', quickActions, card, { resource, id });
-    section(left, '', linkedIdentities, profile, timeline, { resource, id });
-    section(left, '', details, card, profile, { resource, id });
-    section(left, '', enriched, enrichment, reloadEnrichment);
-    section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
-    section(right, 'bo-scheda-ai', aiSummary, calls);
-    section(right, '', callsBox, calls);
-    section(right, '', nextSteps, profile);
-    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id });
-    section(right, 'bo-scheda-card-appt', nextAppointment, timeline);
+    section(left, '', linkedIdentities, profile, timeline, { resource, id }, profileError);
+    section(left, '', details, card, profile, { resource, id }, profileError);
+    section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
+    if (timelineError) {
+      section(center, 'bo-scheda-card-timeline', (box) => {
+        box.appendChild(el('h4', undefined, 'Tutti i contatti'));
+        readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
+      });
+    } else {
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
+    }
+    if (callsError) {
+      section(right, 'bo-scheda-ai', (box) => {
+        box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
+        readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
+      });
+      section(right, '', (box) => {
+        box.appendChild(el('h4', undefined, 'Chiamate'));
+        readError(box, callsError, 'Le chiamate non si sono potute leggere. Riprova più tardi.');
+      });
+    } else {
+      section(right, 'bo-scheda-ai', aiSummary, calls);
+      section(right, '', callsBox, calls);
+    }
+    section(right, '', nextSteps, profile, profileError);
+    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError);
+    section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);

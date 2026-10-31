@@ -102,18 +102,37 @@ export async function canonicalClusterFor({ modules, names, subject }) {
 export async function profileFor({ modules, core, names, subject }) {
   const cluster = await canonicalClusterFor({ modules, names, subject });
 
-  // Identity: the host records themselves, read through their own services.
-  const identity = await readIdentity({ modules, subject, cluster });
-
-  // External identities for every member of the cluster. Asked per member as a
-  // complete query rather than filtered out of one page of the whole table.
+  // Voce 908f2eb9bbfb: the reads below are independent of each other, so
+  // they run together. Sequentially they were dozens of round-trips per
+  // profile, and the scheda computes three profiles per open (card,
+  // timeline, profile) — the wait stacked past ten seconds and held pool
+  // connections long enough to surface as intermittent STORAGE_UNAVAILABLE
+  // (503). The results are joined exactly as before: same queries, same
+  // order-independent shaping, same errors (a storage failure still fails
+  // the profile rather than inventing a partial one).
   const identityService = trusted(modules, names.identity);
-  const identityRows = [];
-  for (const member of cluster.members) {
-    identityRows.push(...await deciding(identityService, {
+  const issueService = trusted(modules, names.issue);
+  const candidateService = trusted(modules, names.candidate);
+  const [identity, identityRowsNested, issueRowsNested, candidateRowsNested] = await Promise.all([
+    // Identity: the host records themselves, read through their own services.
+    readIdentity({ modules, subject, cluster }),
+    // External identities for every member of the cluster. Asked per member
+    // as a complete query rather than filtered out of one page of the whole
+    // table.
+    Promise.all(cluster.members.map((member) => deciding(identityService, {
       subjectResource: member.resource, subjectId: member.id, status: 'active',
-    }));
-  }
+    }))),
+    Promise.all(cluster.members.map((member) => deciding(issueService, {
+      subjectResource: member.resource, subjectId: member.id, status: 'open',
+    }))),
+    // A candidate names two records, so each member is asked for on both
+    // sides and the answers are unioned by id rather than double-counted.
+    Promise.all(cluster.members.flatMap((member) => [
+      { leftResource: member.resource, leftId: member.id },
+      { rightResource: member.resource, rightId: member.id },
+    ].map((side) => deciding(candidateService, { ...side, status: 'unresolved' })))),
+  ]);
+  const identityRows = identityRowsNested.flat();
   const identities = newestFirst(identityRows)
     .map((row) => Object.freeze({
       system: row.system, externalId: row.externalId, subject: subjectOf(row),
@@ -147,87 +166,25 @@ export async function profileFor({ modules, core, names, subject }) {
   const opportunityNames = new Map((opportunityRead?.rows ?? []).map((row) => [row.id, row.name ?? null]));
   const references = { companyIds, contactIds, opportunityIds };
 
+  // Voce 908f2eb9bbfb: sections are independent of each other (quotes
+  // reuses the opportunity read above), so they run together. Each section
+  // keeps its own failure: an unreadable section answers available: false,
+  // never a partial profile.
   const sections = {};
-  for (const section of SECTIONS) {
-    const service = optional(modules, section.module);
-    if (!service || typeof service.list !== 'function') {
-      sections[section.key] = NOT_AVAILABLE(section.label, section.owner);
-      continue;
-    }
-    let read;
-    try {
-      read = section.key === 'opportunities' && opportunityRead
-        ? opportunityRead
-        : await readSectionRows(service, references);
-    } catch {
-      sections[section.key] = Object.freeze({
-        available: false, reason: `${section.label} could not be read from this application`, items: null, count: null,
-      });
-      continue;
-    }
-    if (!read.readable) {
-      // The package IS composed — but it declares no reference this projection
-      // knows how to follow, so the honest answer is that it cannot be read
-      // from here. Reporting `0` would say the customer has none, which is a
-      // different and probably untrue statement.
-      sections[section.key] = Object.freeze({
-        available: false,
-        reason: `the ${section.owner} package is composed, but its ${section.label} record declares no company, contact or `
-          + 'opportunity reference this profile can follow, so they cannot be read from here — this is not a claim that there are none',
-        items: null,
-        count: null,
-      });
-      continue;
-    }
-    const rows = read.rows;
-    sections[section.key] = Object.freeze({
-      available: true,
-      count: rows.length,
-      // A count is a claim. When the owning service offers no exact query at
-      // all — a handwritten core module — the only read available is a bounded
-      // display page, and a number taken from a page is not a count of a table.
-      countIsComplete: read.complete,
-      ...(read.complete ? {} : {
-        countNote: `${section.label} were read from a bounded page of the owning module, so this count is at least this many, not exactly this many`,
-      }),
-      items: Object.freeze(rows.slice(0, 50).map((row) => Object.freeze({
-        // Voce cc525cd6a3c5: stage-only records (opportunities expose stage,
-        // never status) still carry a renderable state for the scheda offer
-        // line — the card labels it in Italian, never raw English.
-        id: row.id, status: row.status ?? row.stage ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
-        // Quotes only: the explicit hop this profile followed, kept on the
-        // item so the scheda can name the quote after its opportunity and a
-        // reader can see which opportunity each quote belongs to. Other
-        // sections keep exactly the shape they always had.
-        ...(section.key === 'quotes' ? {
-          opportunityId: row.opportunityId ?? null,
-          opportunityName: row.opportunityId != null
-            ? (opportunityNames.get(row.opportunityId) ?? null)
-            : null,
-        } : {}),
-      }))),
-      truncated: rows.length > 50,
+  await Promise.all(SECTIONS.map(async (section) => {
+    sections[section.key] = await readOneSection(section, {
+      modules, references, subject, opportunityRead, opportunityNames,
     });
-  }
+  }));
 
-  const issueService = trusted(modules, names.issue);
-  const issueRows = [];
-  for (const member of cluster.members) {
-    issueRows.push(...await deciding(issueService, {
-      subjectResource: member.resource, subjectId: member.id, status: 'open',
-    }));
-  }
-  const issues = newestFirst(issueRows)
+  const issues = newestFirst(issueRowsNested.flat())
     .map((row) => Object.freeze({ kind: row.kind, evidence: row.evidence, detectedAt: row.detectedAt, subject: subjectOf(row) }));
 
-  // A candidate names two records, so each member is asked for on both sides
-  // and the two answers are unioned by id rather than double-counted.
-  const candidateService = trusted(modules, names.candidate);
+  // A candidate names two records: the answers were asked for per member on
+  // both sides above, and are unioned by id rather than double-counted.
   const candidateRows = new Map();
-  for (const member of cluster.members) {
-    for (const side of [{ leftResource: member.resource, leftId: member.id }, { rightResource: member.resource, rightId: member.id }]) {
-      for (const row of await deciding(candidateService, { ...side, status: 'unresolved' })) candidateRows.set(row.id, row);
-    }
+  for (const rows of candidateRowsNested) {
+    for (const row of rows) candidateRows.set(row.id, row);
   }
   const candidates = newestFirst([...candidateRows.values()])
     .map((row) => Object.freeze({
@@ -259,6 +216,73 @@ export async function profileFor({ modules, core, names, subject }) {
       'Canonical identity is a logical link: every listed record still exists and was never rewritten or deleted.',
       'No RBAC exists; the Production Spine is absent, so this is local-development posture.',
     ]),
+  });
+}
+
+/**
+ * One profile section for one composed package: the exact read the profile
+ * loop always did, so a section keeps its own failure (available: false
+ * with a reason) instead of failing the profile.
+ *
+ * @param {{key: string, module: string, owner: string, label: string}} section
+ * @param {{modules: any, references: any, subject: any, opportunityRead: any, opportunityNames: Map<string, string|null>}} input
+ */
+async function readOneSection(section, { modules, references, subject, opportunityRead, opportunityNames }) {
+  const service = optional(modules, section.module);
+  if (!service || typeof service.list !== 'function') {
+    return NOT_AVAILABLE(section.label, section.owner);
+  }
+  let read;
+  try {
+    read = section.key === 'opportunities' && opportunityRead
+      ? opportunityRead
+      : await readSectionRows(service, references);
+  } catch {
+    return Object.freeze({
+      available: false, reason: `${section.label} could not be read from this application`, items: null, count: null,
+    });
+  }
+  if (!read.readable) {
+    // The package IS composed — but it declares no reference this projection
+    // knows how to follow, so the honest answer is that it cannot be read
+    // from here. Reporting `0` would say the customer has none, which is a
+    // different and probably untrue statement.
+    return Object.freeze({
+      available: false,
+      reason: `the ${section.owner} package is composed, but its ${section.label} record declares no company, contact or `
+        + 'opportunity reference this profile can follow, so they cannot be read from here — this is not a claim that there are none',
+      items: null,
+      count: null,
+    });
+  }
+  const rows = read.rows;
+  return Object.freeze({
+    available: true,
+    count: rows.length,
+    // A count is a claim. When the owning service offers no exact query at
+    // all — a handwritten core module — the only read available is a bounded
+    // display page, and a number taken from a page is not a count of a table.
+    countIsComplete: read.complete,
+    ...(read.complete ? {} : {
+      countNote: `${section.label} were read from a bounded page of the owning module, so this count is at least this many, not exactly this many`,
+    }),
+    items: Object.freeze(rows.slice(0, 50).map((row) => Object.freeze({
+      // Voce cc525cd6a3c5: stage-only records (opportunities expose stage,
+      // never status) still carry a renderable state for the scheda offer
+      // line — the card labels it in Italian, never raw English.
+      id: row.id, status: row.status ?? row.stage ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
+      // Quotes only: the explicit hop this profile followed, kept on the
+      // item so the scheda can name the quote after its opportunity and a
+      // reader can see which opportunity each quote belongs to. Other
+      // sections keep exactly the shape they always had.
+      ...(section.key === 'quotes' ? {
+        opportunityId: row.opportunityId ?? null,
+        opportunityName: row.opportunityId != null
+          ? (opportunityNames.get(row.opportunityId) ?? null)
+          : null,
+      } : {}),
+    }))),
+    truncated: rows.length > 50,
   });
 }
 
@@ -308,16 +332,28 @@ async function readSectionRows(service, references, subject = null) {
     { subjectResource: 'contact', subjectId: [...references.contactIds] },
   ];
   if (typeof service.listWhere === 'function') {
+    // Voce 908f2eb9bbfb: the shapes are independent queries, so they run
+    // together. A shape that rejects is a shape the module does not declare
+    // — skipped exactly as the sequential loop skipped it.
+    const active = shapes.filter((filters) =>
+      Object.values(filters).some((value) => Array.isArray(value) && value.length > 0));
+    const settled = await Promise.all(active.map((filters) => Promise.resolve()
+      .then(() => service.listWhere(filters))
+      .then(
+        // Voce 908f2eb9bbfb, review round 2: the contract is an array of
+        // rows. A shape answering anything else (undefined, an object, a
+        // scalar from a handwritten service) is a shape the module does not
+        // declare — skipped exactly like a rejecting shape, so one malformed
+        // shape never poisons the shapes that did answer.
+        (rows) => (Array.isArray(rows) ? { ok: true, rows } : { ok: false, rows: [] }),
+        () => ({ ok: false, rows: [] }),
+      )));
     const byId = new Map();
     let queryable = false;
-    for (const filters of shapes) {
-      if (!Object.values(filters).some((value) => Array.isArray(value) && value.length > 0)) continue;
-      try {
-        for (const row of await service.listWhere(filters)) byId.set(row.id, row);
-        queryable = true;
-      } catch {
-        // The module does not declare this reference shape. Try the next one.
-      }
+    for (const result of settled) {
+      if (!result.ok) continue;
+      queryable = true;
+      for (const row of result.rows) byId.set(row.id, row);
     }
     return queryable
       ? { readable: true, rows: newestFirst([...byId.values()]), complete: true }
