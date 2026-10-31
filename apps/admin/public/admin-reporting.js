@@ -453,6 +453,7 @@ export function createReportingView(deps) {
         renderReporting();
       });
       sigla.setAttribute('title', String(owner));
+      sigla.setAttribute('aria-label', String(owner));
       sigla.setAttribute('data-owner', String(owner));
       filters.appendChild(sigla);
     }

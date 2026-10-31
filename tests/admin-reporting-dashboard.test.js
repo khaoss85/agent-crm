@@ -200,6 +200,7 @@ test('periodo/persona filters refetch the registry (ricalcolo)', async () => {
   assert.ok(bob, 'the persona filter renders from the model owners');
   assert.equal(bob.textContent, 'B', 'the persona filter shows the owner sigla, not the name');
   assert.equal(bob.getAttribute('title'), 'bob', 'the full name stays on the title');
+  assert.equal(bob.getAttribute('aria-label'), 'bob', 'the accessible name is the full owner, not the sigla');
   bob.dispatch('click', {});
   await tick();
   const second = requests.filter((path) => path.includes('/api/reporting/dashboard'));
@@ -212,6 +213,17 @@ test('periodo/persona filters refetch the registry (ricalcolo)', async () => {
   const third = requests.filter((path) => path.includes('/api/reporting/dashboard'));
   assert.equal(third.length, 3);
   assert.match(third[2], new RegExp(`period=${periodOptions()[0].value}`));
+});
+
+test('same-sigla owners keep distinct accessible names', async () => {
+  const { mount, view } = harness({
+    dashboard: { ...MODEL, owners: ['Maria Rossi', 'Marco Rossi'] },
+  });
+  await view.renderReporting();
+  const buttons = mount.findAll('button').filter((node) => node.textContent === 'MR');
+  assert.equal(buttons.length, 2, 'both owners render as MR sigle');
+  const labels = buttons.map((node) => node.getAttribute('aria-label')).sort();
+  assert.deepEqual(labels, ['Marco Rossi', 'Maria Rossi'], 'screen readers hear two distinct owners');
 });
 
 test('the proposal reveals with zero requests: it proposes, never reassigns', async () => {
