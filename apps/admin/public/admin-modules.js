@@ -13,6 +13,7 @@ import {
   buildUpdatePayload,
   apiErrorToFormErrors,
   displayTitle,
+  formatAmount,
   humanizeLabel,
   hasCapability,
   humanReadError,
@@ -52,6 +53,63 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  *
  * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate: (hash: string) => void, toast?: (message: string, error?: boolean) => void}} deps
  */
+/**
+ * Voce 96e7b579: catalog pricing rules for Nuova offerta. Only active
+ * offers in one currency, with plain flat/per-unit components and no
+ * tiers, are tickable — tiered or exotic offers paint as text and stay
+ * manual. Amounts are integer cents, quantities positive integers.
+ * @param {any} offer
+ */
+function isPricedOffer(offer) {
+  if (offer === null || typeof offer !== 'object') return false;
+  if (offer.active !== true) return false;
+  if (typeof offer.currency !== 'string' || offer.currency === '') return false;
+  if (!Array.isArray(offer.components) || offer.components.length === 0) return false;
+  return offer.components.every((component) => {
+    if (component === null || typeof component !== 'object') return false;
+    if (Array.isArray(component.tiers) && component.tiers.length > 0) return false;
+    if (component.pricingModel === 'flat_fee') return Number.isSafeInteger(component.flatAmountCents);
+    if (component.pricingModel === 'per_unit') return Number.isSafeInteger(component.unitAmountCents);
+    return false;
+  });
+}
+
+/** @param {any} component @param {string} currency */
+function componentPriceText(component, currency) {
+  if (component.pricingModel === 'flat_fee') return formatAmount(component.flatAmountCents, currency);
+  return `${formatAmount(component.unitAmountCents, currency)} cad.`;
+}
+
+/** @param {{components: Array<any>, currency: string}} offer */
+function offerPriceText(offer) {
+  return offer.components.map((component) => componentPriceText(component, offer.currency)).join(' + ');
+}
+
+/**
+ * Total the ticked offers: flat fees count once, per-unit prices
+ * multiply by the row quantity. Null when nothing is ticked; a named
+ * error when the selection cannot total honestly.
+ * @param {Array<Record<string, any>>} picks
+ */
+function selectedProductTotal(picks) {
+  const chosen = picks.filter((pickRow) => pickRow.checkbox?.checked === true);
+  if (chosen.length === 0) return null;
+  const currencies = new Set(chosen.map((pickRow) => String(pickRow.offer.currency ?? '').toUpperCase()));
+  if (currencies.size > 1) return { error: 'mixed' };
+  let total = 0;
+  for (const pickRow of chosen) {
+    const rawQty = pickRow.qtyInput === null ? '1' : String(pickRow.qtyInput.value ?? '1').trim();
+    const qty = /^\d+$/.test(rawQty) ? Number(rawQty) : NaN;
+    if (!Number.isSafeInteger(qty) || qty < 1 || qty > 1000000) return { error: 'qty' };
+    for (const component of pickRow.offer.components) {
+      if (component.pricingModel === 'flat_fee') total += component.flatAmountCents;
+      else total += component.unitAmountCents * qty;
+    }
+    if (!Number.isSafeInteger(total)) return { error: 'qty' };
+  }
+  return { total, currency: [...currencies][0] };
+}
+
 export function createModuleAdmin(deps) {
   const { doc, mount, client, navigate } = deps;
   const toast = deps.toast ?? (() => {});
@@ -186,26 +244,29 @@ export function createModuleAdmin(deps) {
   // ---- Create form ------------------------------------------------------
 
   /**
-   * Voce 714433c2: the «Nuova offerta» creation screen. The opportunity
-   * module is not an exposable generated module (no generic create form
-   * exists for it), so this view renders the governed create directly: the
-   * customer stashed by the scheda («Nuova offerta») is taken once here —
-   * read and cleared — and filed as companyId/contactId, while the operator
-   * types titolo, valore, scadenza and referente. Ids never reach the
-   * screen; the server stays authoritative and refuses a stale pick (unknown
-   * company or a contact outside its company). On success the board lists
-   * the new offer (`#/pipelines/accordo-sales`, packages/pipelines/
-   * accordo-sales.js). Without a pick the screen says how to start — from
-   * the customer scheda — instead of inventing a customer.
+   * Voce 714433c2 + 96e7b579: the «Nuova offerta» creation screen. The
+   * opportunity module is not an exposable generated module (no generic
+   * create form exists for it), so this view renders the governed create
+   * directly: the customer stashed by the scheda («Nuova offerta») is
+   * taken once here — read and cleared — and filed as
+   * companyId/contactId, while the operator types titolo, valore,
+   * scadenza and referente. Without a stash the operator chooses the
+   * cliente here, from the company and contact lists — never a typed id,
+   * never an invented customer. Either way the operator may tick
+   * prodotti dal catalogo: the ticked offers total into the Valore field.
+   * Ids never reach the screen; the server stays authoritative and refuses
+   * a stale pick (unknown company or a contact outside its company). On
+   * success the board lists the new offer (`#/pipelines/accordo-sales`,
+   * packages/pipelines/accordo-sales.js).
    */
   async function renderOpportunityNew() {
     const store = deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage);
     const pick = takePendingCustomerPick(store, 'offer');
     clear();
-    const companyId = pick !== null && pick.resource === 'company'
+    const fixedCompanyId = pick !== null && pick.resource === 'company'
       ? pick.id
       : (pick?.company?.id ?? null);
-    const contactId = pick !== null && pick.resource === 'contact' ? pick.id : null;
+    const fixedContactId = pick !== null && pick.resource === 'contact' ? pick.id : null;
     const companyName = pick !== null && pick.resource === 'company'
       ? pick.name
       : (pick?.company?.name ?? null);
@@ -221,20 +282,55 @@ export function createModuleAdmin(deps) {
     heading.appendChild(back);
     panel.appendChild(heading);
 
-    if (companyId === null) {
+    // Without a stash the customer is chosen here, from the server lists.
+    // A failed company read retries instead of offering an empty choice;
+    // with no companies at all the screen says so instead of inventing one.
+    /** @type {Array<Record<string, any>> | null} */
+    let companies = null;
+    if (fixedCompanyId === null) {
+      try {
+        companies = (await client.request('/api/companies?limit=100')).items ?? [];
+      } catch (error) {
+        panel.appendChild(el(doc, 'p', {
+          class: 'empty',
+          text: 'I clienti non si sono caricati. Riprova più tardi.',
+        }));
+        const retry = el(doc, 'button', { class: 'small secondary', text: 'Riprova' });
+        retry.addEventListener('click', () => renderOpportunityNew());
+        panel.appendChild(retry);
+        mount.appendChild(panel);
+        return panel;
+      }
+      if (companies.length === 0) {
+        panel.appendChild(el(doc, 'p', {
+          class: 'empty',
+          text: 'Non c\u2019è ancora nessun cliente: crealo prima dalla sezione Clienti.',
+        }));
+        mount.appendChild(panel);
+        return panel;
+      }
+    } else {
       panel.appendChild(el(doc, 'p', {
-        class: 'empty',
-        text: 'Scegli il cliente dalla sua scheda: la nuova offerta parte dal cliente, con «Nuova offerta».',
+        class: 'lede',
+        text: companyName !== null && fixedContactId !== null && pick !== null && pick.name !== companyName
+          ? `Cliente: ${pick.name} · Azienda: ${companyName}`
+          : `Azienda: ${companyName ?? pick?.name ?? ''}`,
       }));
-      mount.appendChild(panel);
-      return panel;
     }
-    panel.appendChild(el(doc, 'p', {
-      class: 'lede',
-      text: companyName !== null && contactId !== null && pick !== null && pick.name !== companyName
-        ? `Cliente: ${pick.name} · Azienda: ${companyName}`
-        : `Azienda: ${companyName ?? pick?.name ?? ''}`,
-    }));
+
+    // Prodotti dal catalogo: a failed read degrades to the manual value,
+    // never to a blocked screen. A 404 (no commercial package composed)
+    // is the ordinary no-catalog space, stated once as a hint.
+    /** @type {any} */
+    let catalog = null;
+    let catalogNote = null;
+    try {
+      catalog = await client.request('/api/catalog/products?active=true');
+    } catch (error) {
+      catalogNote = error?.status === 404
+        ? 'Nessun catalogo in questo spazio: scrivi il valore a mano.'
+        : 'Il catalogo non si è caricato: scrivi il valore a mano.';
+    }
 
     const form = el(doc, 'form', { class: 'record-form' });
     form.setAttribute('novalidate', 'novalidate');
@@ -265,6 +361,160 @@ export function createModuleAdmin(deps) {
     addField('value', 'Valore EUR', { placeholder: 'es. 250.00', required: true });
     addField('expiry', 'Scadenza', { type: 'date' });
     addField('owner', 'Referente', { placeholder: 'Chi la segue', required: true });
+
+    // Voce 96e7b579: the cliente pickers, only without a scheda stash.
+    // Companies and contacts come from the server lists; the contact list
+    // follows the chosen company, and the server re-checks the pair.
+    /** @type {any} */
+    let companySelect = null;
+    /** @type {any} */
+    let contactSelect = null;
+    /** @type {any} */
+    let contactHint = null;
+    if (fixedCompanyId === null) {
+      const customerRow = el(doc, 'div', { class: 'field-row' });
+      const companyId = 'field-opportunity-company';
+      customerRow.appendChild(el(doc, 'label', { text: 'Cliente (azienda)', attrs: { for: companyId } }));
+      companySelect = el(doc, 'select', { attrs: { id: companyId, name: 'company' } });
+      for (const company of companies) {
+        if (company?.id === undefined || company?.id === null) continue;
+        companySelect.appendChild(el(doc, 'option', {
+          text: typeof company.name === 'string' && company.name !== '' ? company.name : String(company.id),
+          attrs: { value: String(company.id) },
+        }));
+      }
+      customerRow.appendChild(companySelect);
+      const contactRow = el(doc, 'div', { class: 'field-row' });
+      const contactId = 'field-opportunity-contact';
+      contactRow.appendChild(el(doc, 'label', { text: 'Referente (facoltativo)', attrs: { for: contactId } }));
+      contactSelect = el(doc, 'select', { attrs: { id: contactId, name: 'contact' } });
+      contactSelect.appendChild(el(doc, 'option', { text: 'Nessun referente specifico', attrs: { value: '' } }));
+      contactRow.appendChild(contactSelect);
+      contactHint = el(doc, 'small', { class: 'field-error hidden' });
+      contactRow.appendChild(contactHint);
+      form.appendChild(customerRow);
+      form.appendChild(contactRow);
+      inputs.company = companySelect;
+      inputs.contact = contactSelect;
+
+      const reloadContacts = async () => {
+        const chosen = String(companySelect.value ?? '');
+        contactHint.textContent = '';
+        contactHint.setAttribute('class', 'field-error hidden');
+        while (contactSelect.firstChild) contactSelect.removeChild(contactSelect.firstChild);
+        contactSelect.appendChild(el(doc, 'option', { text: 'Nessun referente specifico', attrs: { value: '' } }));
+        if (chosen === '') return;
+        let contacts = null;
+        try {
+          contacts = (await client.request(`/api/contacts?companyId=${encodeURIComponent(chosen)}&limit=100`)).items ?? [];
+        } catch {
+          contactHint.textContent = 'I referenti non si sono caricati: prosegui senza referente o riprova.';
+          contactHint.setAttribute('class', 'field-error');
+          return;
+        }
+        for (const contact of contacts) {
+          if (contact?.id === undefined || contact?.id === null) continue;
+          const label = [contact.firstName, contact.lastName].filter((part) => typeof part === 'string' && part !== '').join(' ')
+            || contact.email || String(contact.id);
+          contactSelect.appendChild(el(doc, 'option', { text: label, attrs: { value: String(contact.id) } }));
+        }
+      };
+      companySelect.addEventListener('change', reloadContacts);
+      await reloadContacts();
+    }
+
+    // Voce 96e7b579: prodotti dal catalogo. A ticked offer prices the
+    // Valore field through «Usa il totale»: flat fees count once, per-unit
+    // prices multiply by the row quantity. Only active offers in one
+    // currency with plain flat/per-unit components are tickable; tiered or
+    // multi-component offers paint their price as text — the operator
+    // types the value by hand for those. The choice totals into Valore;
+    // nothing is written until Crea offerta.
+    /** @type {Array<Record<string, any>>} */
+    const productPicks = [];
+    /** @type {any} */
+    let totalLine = null;
+    if (catalog !== null) {
+      const products = Array.isArray(catalog.products) ? catalog.products : [];
+      const section = el(doc, 'div', { class: 'catalog-picks' });
+      section.appendChild(el(doc, 'h3', { text: 'Prodotti dal catalogo (facoltativo)' }));
+      let tickable = 0;
+      for (const product of products) {
+        const offers = Array.isArray(product?.offers) ? product.offers : [];
+        for (const offer of offers) {
+          if (!isPricedOffer(offer)) {
+            if (offer?.active === true) {
+              section.appendChild(el(doc, 'p', {
+                class: 'hint',
+                text: `${product?.name ?? 'Prodotto'} · ${offer?.name ?? 'offerta'}: prezzo a scaglioni — scrivi il valore a mano.`,
+              }));
+            }
+            continue;
+          }
+          tickable += 1;
+          const row = el(doc, 'div', { class: 'catalog-pick' });
+          const checkbox = el(doc, 'input', { attrs: { type: 'checkbox', name: `product-${offer.offerId}` } });
+          checkbox.setAttribute('aria-label', `Aggiungi ${offer.name}`);
+          row.appendChild(checkbox);
+          const needsQty = offer.components.some((component) => component.pricingModel === 'per_unit');
+          /** @type {any} */
+          let qtyInput = null;
+          if (needsQty) {
+            qtyInput = el(doc, 'input', { attrs: { type: 'number', name: `qty-${offer.offerId}`, value: '1' } });
+            qtyInput.setAttribute('aria-label', `Quantità per ${offer.name}`);
+          }
+          row.appendChild(el(doc, 'span', {
+            text: `${product?.name ?? 'Prodotto'} · ${offer.name} — ${offerPriceText(offer)}${needsQty ? ' × ' : ''}`,
+          }));
+          if (qtyInput !== null) row.appendChild(qtyInput);
+          section.appendChild(row);
+          productPicks.push({ offer, checkbox, qtyInput });
+        }
+      }
+      if (tickable === 0) {
+        section.appendChild(el(doc, 'p', {
+          class: 'hint',
+          text: 'Nessun prezzo semplice nel catalogo: scrivi il valore a mano.',
+        }));
+      } else {
+        totalLine = el(doc, 'p', { class: 'catalog-total', text: 'Totale prodotti: nessun prodotto scelto.' });
+        section.appendChild(totalLine);
+        const useTotal = el(doc, 'button', {
+          class: 'small secondary', text: 'Usa il totale', attrs: { type: 'button', 'data-action': 'use-product-total' },
+        });
+        const refreshTotal = () => {
+          const total = selectedProductTotal(productPicks);
+          if (total === null) {
+            totalLine.textContent = 'Totale prodotti: nessun prodotto scelto.';
+          } else if (total.error === 'mixed') {
+            totalLine.textContent = 'I prodotti scelti hanno valute diverse: scegline in un\u2019unica valuta.';
+          } else if (total.error === 'qty') {
+            totalLine.textContent = 'Una quantit\u00e0 non \u00e8 valida: scrivi un intero da 1 in su.';
+          } else {
+            totalLine.textContent = `Totale prodotti: ${formatAmount(total.total, total.currency)}`;
+          }
+        };
+        for (const pickRow of productPicks) {
+          pickRow.checkbox.addEventListener('change', refreshTotal);
+          if (pickRow.qtyInput !== null) pickRow.qtyInput.addEventListener('input', refreshTotal);
+        }
+        useTotal.addEventListener('click', () => {
+          const total = selectedProductTotal(productPicks);
+          if (total === null || total.error !== undefined) {
+            refreshTotal();
+            return;
+          }
+          inputs.value.value = (total.total / 100).toFixed(2);
+          refreshTotal();
+        });
+        section.appendChild(useTotal);
+        form.__useTotal = () => useTotal.dispatch('click');
+      }
+      form.appendChild(section);
+      form.__productPicks = productPicks;
+    } else if (catalogNote !== null) {
+      form.appendChild(el(doc, 'p', { class: 'hint', text: catalogNote }));
+    }
 
     const submit = el(doc, 'button', { class: 'primary', text: 'Crea offerta', attrs: { type: 'submit' } });
     form.appendChild(submit);
@@ -312,6 +562,22 @@ export function createModuleAdmin(deps) {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       if (inFlight) return;
       clearErrors();
+      const companyId = fixedCompanyId ?? String(companySelect?.value ?? '');
+      if (companyId === '') {
+        showErrors({}, 'Scegli il cliente: senza azienda l\u2019offerta non si pu\u00f2 creare.');
+        return;
+      }
+      const contactId = fixedContactId
+        ?? (contactSelect !== null && String(contactSelect.value ?? '') !== '' ? String(contactSelect.value) : null);
+      // The products price the value but never dictate it silently: the
+      // currency follows a single-currency selection, a mixed selection
+      // refuses, and a hand-typed value keeps EUR unless products say so.
+      const chosenOffers = productPicks.filter((pickRow) => pickRow.checkbox.checked);
+      const chosenCurrencies = new Set(chosenOffers.map((pickRow) => String(pickRow.offer.currency ?? '').toUpperCase()));
+      if (chosenCurrencies.size > 1) {
+        showErrors({}, 'I prodotti scelti hanno valute diverse: scegline in un\u2019unica valuta.');
+        return;
+      }
       const title = String(inputs.title.value ?? '').trim();
       const owner = String(inputs.owner.value ?? '').trim();
       const cents = parseEuroToCents(inputs.value.value);
@@ -335,7 +601,7 @@ export function createModuleAdmin(deps) {
             ...(contactId !== null ? { contactId } : {}),
             name: title,
             valueCents: cents,
-            currency: 'EUR',
+            currency: chosenCurrencies.size === 1 ? [...chosenCurrencies][0] : 'EUR',
             ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
             owner,
           }),
