@@ -7,7 +7,7 @@ import { CONTROL_RE, MAX_FIELD_LENGTH, safeString } from './normalize.js';
 import { ENRICHABLE_FIELDS, canonicalPhone } from './enrichment.js';
 import { canonicalClusterFor } from './profile.js';
 import { isWinnerConflict, recordExternalIdentityRow } from './sender.js';
-import { deciding, subjectFields, subjectKey, trusted } from './store.js';
+import { deciding, optional, subjectFields, subjectKey, trusted } from './store.js';
 
 /**
  * AI-assisted enrichment extraction (backlog:7837a4b1b3a9).
@@ -237,6 +237,41 @@ export function createEnrichmentExtraction({ database, modules, events, names })
   }
 
   /**
+   * The host records themselves, read through their own services — the same
+   * read profile.js uses. An extraction or an accept naming a contact or a
+   * company that is not there refuses 404 SUBJECT_NOT_FOUND before any aiex
+   * row or phone identity is stored. Anything that is not a contact or a
+   * company refuses the same way: there is no other subject to extract for.
+   */
+  async function requireExistingSubject(resource, id) {
+    if (resource !== 'contact' && resource !== 'company') {
+      throw refusal('SUBJECT_NOT_FOUND', 404,
+        'an enrichment extraction names a contact or a company that exists: nothing was stored');
+    }
+    const service = optional(modules, resource);
+    let record = null;
+    if (service && typeof service.get === 'function') {
+      try {
+        record = await service.get(id);
+      } catch (error) {
+        // Only a genuine absence 404s: a storage fault keeps its own
+        // error, like the reference-resolver discipline — a busy backend
+        // must never read as a deleted subject.
+        if (error && (error.code === 'NOT_FOUND' || error.status === 404)) {
+          record = null;
+        } else {
+          throw error;
+        }
+      }
+    }
+    if (!record) {
+      throw refusal('SUBJECT_NOT_FOUND', 404,
+        'an enrichment extraction names a contact or a company that exists: nothing was stored');
+    }
+    return record;
+  }
+
+  /**
    * Run one AI extraction over the customer's linked sources. The adapter
    * call happens outside any transaction; the validated proposals land
    * together inside one, so a crash stores all of them or none.
@@ -246,6 +281,10 @@ export function createEnrichmentExtraction({ database, modules, events, names })
     const { resource, id } = requireSubject(request);
     const sources = requireSources(request?.sources);
     const adapter = requireAdapter(request?.adapter);
+
+    // Before the adapter runs, let alone stores: nobody's data is extracted
+    // for a subject that is not there.
+    await requireExistingSubject(resource, id);
 
     if (await optedOutAnywhere(resource, id)) {
       throw refusal('ENRICHMENT_OPTED_OUT', 409,
@@ -269,15 +308,28 @@ export function createEnrichmentExtraction({ database, modules, events, names })
     const now = new Date().toISOString();
     const enriched = trusted(modules, enrichedName);
     const stored = await database.transactionAsync(async () => {
-      // The opt-out is re-checked inside the write transaction, cluster-wide:
-      // an opt-out that committed while the adapter was thinking refuses
-      // here, so no fresh proposal lands after a purge.
+      // The subject is re-checked inside the write transaction: a record
+      // deleted while the adapter was thinking refuses here, so no proposal
+      // lands for a subject that is gone. The opt-out is re-checked the same
+      // way, cluster-wide: an opt-out that committed while the adapter was
+      // thinking refuses here, so no fresh proposal lands after a purge.
+      await requireExistingSubject(resource, id);
       if (await optedOutAnywhere(resource, id)) {
         throw refusal('ENRICHMENT_OPTED_OUT', 409,
           'this subject opted out of enrichment: no extraction runs and nothing is stored');
       }
+      // Facts the free-source path already stored: a value that is already
+      // an active fact for this subject is never proposed again — accepting
+      // it later must not flip a duplicate beside the free-source row.
+      const activeFacts = await deciding(enriched, {
+        subjectResource: resource, subjectId: id, status: 'active',
+      });
       const landed = [];
       for (const proposal of proposals) {
+        if (activeFacts.some((fact) => fact.field === proposal.field && fact.value === proposal.value)) {
+          landed.push({ row: null, replayed: false, alreadyActive: true });
+          continue;
+        }
         const sourceKey = proposalKey({
           resource, id, field: proposal.field, source: proposal.source,
           value: proposal.value, detail: proposal.sourceDetail,
@@ -323,12 +375,13 @@ export function createEnrichmentExtraction({ database, modules, events, names })
 
     // Only undecided rows are proposals: an already-active row is a fact
     // the facts read shows, and a dismissed row stays recorded but unlisted.
-    const listed = stored.filter(({ row }) => row.status === 'proposed').map(({ row }) => shapeProposal(row));
+    // A value the free-source path already made a fact stores no row at all.
+    const listed = stored.filter(({ row }) => row && row.status === 'proposed').map(({ row }) => shapeProposal(row));
     const counts = {
-      proposed: stored.filter(({ row, replayed }) => !replayed && row.status === 'proposed').length,
+      proposed: stored.filter(({ row, replayed }) => !replayed && row && row.status === 'proposed').length,
       replayed: stored.filter(({ replayed }) => replayed).length,
-      alreadyActive: stored.filter(({ row, replayed }) => !replayed && row.status === 'active').length,
-      skippedDismissed: stored.filter(({ row, replayed }) => !replayed && row.status === 'dismissed').length,
+      alreadyActive: stored.filter(({ row, replayed, alreadyActive }) => alreadyActive || (!replayed && row && row.status === 'active')).length,
+      skippedDismissed: stored.filter(({ row, replayed }) => !replayed && row && row.status === 'dismissed').length,
     };
     return Object.freeze({
       status: 'done',
@@ -411,6 +464,23 @@ export function createEnrichmentExtraction({ database, modules, events, names })
         if (current.status !== 'proposed') {
           return { outcome: 'already-decided', proposal: shapeProposal(current) };
         }
+        // The proposal's subject may be gone since the extraction: accepting
+        // for a deleted record refuses before the flip and the identity write.
+        await requireExistingSubject(current.subjectResource, current.subjectId);
+        // A value the free-source path made a fact while this proposal was
+        // pending: the stored fact wins, and no duplicate flips beside it.
+        // The loser is settled in the same transaction, so the pending set
+        // drains instead of listing a row that always answers already-decided.
+        const fact = (await deciding(enriched, {
+          subjectResource: current.subjectResource, subjectId: current.subjectId, status: 'active',
+        })).find((row) => row.field === current.field && row.value === current.value);
+        if (fact) {
+          await enriched.applyManaged(current.id, {
+            status: 'dismissed',
+            decisionReason: `superseded by the active ${fact.source} fact for the same value`,
+          }, { actor });
+          return { outcome: 'already-decided', proposal: shapeProposal(fact) };
+        }
         if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
           throw refusal('ENRICHMENT_OPTED_OUT', 409,
             'this subject opted out of enrichment: no proposal is accepted after the purge');
@@ -472,6 +542,15 @@ export function createEnrichmentExtraction({ database, modules, events, names })
       const current = await enriched.get(id);
       if (current.status !== 'proposed') {
         return { outcome: 'already-decided', proposal: shapeProposal(current) };
+      }
+      // A dismissal names a subject that exists, like an accept: deciding
+      // for a ghost refuses before the flip, with nothing stored.
+      await requireExistingSubject(current.subjectResource, current.subjectId);
+      // The same cluster-wide opt-out «Accetta» checks: a refusal that landed
+      // after the proposals refuses the dismissal too, with nothing flipped.
+      if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
+        throw refusal('ENRICHMENT_OPTED_OUT', 409,
+          'this subject opted out of enrichment: no proposal is dismissed after the purge');
       }
       const row = await enriched.applyManaged(id, {
         status: 'dismissed', decisionReason: reason,

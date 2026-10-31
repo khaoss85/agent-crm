@@ -544,6 +544,175 @@ test('accepting a dismissed proposal answers already-decided and keeps the dismi
     'deciding after a dismissal stores no new fact');
 });
 
+test('extraction and accept on a subject that is not there refuse 404 with nothing stored', async (t) => {
+  const { app } = await scene(t, 'extraction-missing-subject');
+  let calls = 0;
+  const adapter = {
+    async extractFields() {
+      calls += 1;
+      return { fields: [] };
+    },
+  };
+  const ghost = { resource: 'contact', id: '00000000-0000-0000-0000-000000000000' };
+
+  await assert.rejects(
+    app.extractCustomerEnrichment({ actor: ACTOR, ...ghost, sources: SOURCES, adapter }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404);
+  assert.equal(calls, 0, 'the adapter never runs for a subject that is not there');
+  assert.equal(proposedRows(app, ghost).length, 0, 'no proposal row is stored for a ghost');
+
+  await assert.rejects(
+    app.extractCustomerEnrichment({
+      actor: ACTOR, resource: 'company', id: '00000000-0000-0000-0000-000000000000',
+      sources: SOURCES, adapter,
+    }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404);
+  await assert.rejects(
+    app.extractCustomerEnrichment({
+      actor: ACTOR, resource: 'opportunity', id: 'whatever', sources: SOURCES, adapter,
+    }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404,
+    'there is no other subject to extract for');
+
+  // Accepting a proposal whose subject is gone refuses before the flip and
+  // the phone identity write: the row stays proposed, no fact lands.
+  const enriched = app.modules.get('enriched-field').service;
+  const row = await enriched.createManaged({
+    sourceKey: 'aiex:contact:00000000-0000-0000-0000-000000000000:role:email-signature:test',
+    subjectResource: ghost.resource, subjectId: ghost.id,
+    subjectOwner: 'host', subjectOwnerPackage: null, subjectLabel: null,
+    field: 'role', value: 'Istruttore', source: 'email-signature', sourceDetail: null,
+    observedAt: new Date().toISOString(), observedByRunId: 'test:ghost',
+    status: 'proposed', purgedAt: null, purgeReason: null, decisionReason: null,
+  }, { actor: ACTOR });
+  await assert.rejects(
+    app.decideEnrichmentProposal({ actor: ACTOR, id: row.id, decision: 'accepted' }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404);
+  assert.equal(enriched.get(row.id).status, 'proposed', 'the refused accept flips nothing');
+  assert.deepEqual((await app.readCustomerEnrichment(ghost)).items, [], 'no fact lands for a ghost');
+  assert.equal(
+    app.modules.get('external-identity').service.listWhere({ system: 'phone' }).length,
+    0, 'no phone identity was stored for a ghost');
+});
+
+test('dismissing a proposal after the cluster opted out refuses 409 with nothing flipped', async (t) => {
+  const { app } = await scene(t, 'extraction-dismiss-after-optout');
+  const subject = await seedContact(app);
+  const company = await app.services.companies.create(
+    { name: 'Presti Group', domain: 'prestigroup.example' }, { actor: ACTOR });
+
+  const links = app.modules.get('canonical-link').service;
+  for (const [member, role] of [
+    [{ resource: 'contact', id: subject.id }, 'canonical'],
+    [{ resource: 'company', id: company.id }, 'alias'],
+  ]) {
+    await links.createManaged({
+      sourceKey: `test:extraction-dismiss-optout:${member.id}`,
+      clusterKey: 'cluster-dismiss-optout-1',
+      subjectResource: member.resource,
+      subjectId: member.id,
+      subjectOwner: 'host',
+      subjectOwnerPackage: null,
+      subjectLabel: null,
+      role,
+      decisionId: 'decision-dismiss-optout-1',
+      reason: 'stesso cliente su email e sito',
+      decidedByType: 'user',
+      decidedById: 'elena',
+      decidedAt: '2026-10-20T10:00:00.000Z',
+      status: 'active',
+      withdrawnReason: null,
+      withdrawnAt: null,
+    }, { actor: ACTOR });
+  }
+
+  const companySources = [
+    ...SOURCES,
+    { kind: 'company-website', text: 'Presti Group, palestra a Milano.', detail: 'prestigroup.example' },
+  ];
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    resource: 'company', id: company.id,
+    sources: companySources,
+    adapter: fakeAdapter([
+      { field: 'role', value: 'Istruttore', source: 'company-website' },
+    ]),
+  });
+  assert.equal(answer.proposals.length, 1);
+
+  // The member contact opts out: only its own rows are purged, the company
+  // proposal stays proposed — but deciding it refuses like «Accetta» does.
+  const left = await app.optOutContactEnrichment({
+    actor: ACTOR, email: 'luca@prestigroup.example', reason: 'non mi interessa',
+  });
+  assert.equal(left.outcome, 'opted-out');
+
+  await assert.rejects(
+    app.decideEnrichmentProposal({
+      actor: ACTOR, id: answer.proposals[0].id, decision: 'dismissed', reason: 'non serve',
+    }),
+    (error) => error?.code === 'ENRICHMENT_OPTED_OUT' && error?.status === 409,
+    '«Scarta» checks the same group opt-out «Accetta» checks');
+  const stored = app.modules.get('enriched-field').service.get(answer.proposals[0].id);
+  assert.equal(stored.status, 'proposed', 'the refused dismissal flips nothing');
+});
+
+test('accepting a value the free source already made a fact stores no duplicate', async (t) => {
+  const { app } = await scene(t, 'extraction-free-source-duplicate');
+  const subject = await seedContact(app);
+
+  const free = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'luca@prestigroup.example',
+    fields: { phone: '+393331234567' }, source: 'email-signature', sourceDetail: 'firma email',
+  });
+  assert.equal(free.outcome, 'enriched');
+
+  // The same value proposed by the AI is never stored again.
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '+393331234567', source: 'email-signature' },
+    ]),
+  });
+  assert.deepEqual(answer.counts, { proposed: 0, replayed: 0, alreadyActive: 1, skippedDismissed: 0 });
+  assert.deepEqual(answer.proposals, []);
+  assert.equal(proposedRows(app, subject).length, 0, 'no duplicate proposal row is stored');
+
+  // The race the other way round: the proposal is pending when the free
+  // source lands the same value — accepting replays the fact, no second row.
+  const pending = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'role', value: 'Istruttore', source: 'channel-message' },
+    ]),
+  });
+  assert.equal(pending.proposals.length, 1);
+  const landed = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'luca@prestigroup.example',
+    fields: { role: 'Istruttore' }, source: 'email-signature', sourceDetail: 'firma email',
+  });
+  assert.equal(landed.outcome, 'enriched');
+
+  const decided = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: pending.proposals[0].id, decision: 'accepted', reason: 'confermato',
+  });
+  assert.equal(decided.outcome, 'already-decided', 'the stored fact wins over the late accept');
+  const actives = app.modules.get('enriched-field').service
+    .listWhere({ subjectResource: subject.resource, subjectId: subject.id, status: 'active' })
+    .filter((row) => row.field === 'role' && row.value === 'Istruttore');
+  assert.equal(actives.length, 1, 'accepting beside a free-source fact flips no duplicate');
+  const loser = app.modules.get('enriched-field').service.get(pending.proposals[0].id);
+  assert.equal(loser.status, 'dismissed', 'the losing proposal is settled in the same transaction');
+  assert.match(loser.decisionReason ?? '', /superseded by the active .* fact for the same value/,
+    'the loser names the winning fact');
+  const stillPending = await app.readCustomerEnrichmentProposals(subject);
+  assert.equal(stillPending.proposals.length, 0, 'the pending set drains after the late accept');
+});
+
 test('accepting a still-proposed row refuses when the cluster opted out after the read', async (t) => {
   const { app } = await scene(t, 'extraction-accept-after-optout-row');
   const subject = await seedContact(app);
@@ -582,4 +751,113 @@ test('accepting a still-proposed row refuses when the cluster opted out after th
   assert.equal(stored[0].status, 'proposed', 'the refused accept flips nothing');
   assert.deepEqual((await app.readCustomerEnrichment(subject)).items, [],
     'no fact lands after the cluster opted out');
+});
+
+test('an AI phone is dialable like on main: separators normalize, a national number proposes', async (t) => {
+  const { app } = await scene(t, 'extraction-phone-national');
+  const subject = await seedContact(app);
+
+  // A national-shape guess is dialable, like the free-source path stores
+  // it: it proposes, it is not refused with the run.
+  const national = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '3331234567', source: 'email-signature' },
+    ]),
+  });
+  assert.equal(national.proposals.length, 1, 'a national-shape phone proposes like on main');
+  assert.equal(national.proposals[0].value, '3331234567');
+
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '+39 333 123 4567', source: 'email-signature' },
+    ]),
+  });
+  assert.equal(answer.proposals.length, 1);
+  assert.equal(answer.proposals[0].value, '+393331234567', 'separators normalize');
+
+  const decided = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: answer.proposals[0].id, decision: 'accepted', reason: 'confermato dal cliente',
+  });
+  assert.equal(decided.outcome, 'accepted');
+  const phones = app.modules.get('external-identity').service
+    .listWhere({ system: 'phone', externalId: '+393331234567' });
+  assert.equal(phones.length, 1, 'the accepted AI phone links its identity like a free-source phone');
+  assert.equal(phones[0].subjectId, subject.id);
+});
+
+test('dismissing a proposal whose subject is gone refuses 404 with nothing flipped', async (t) => {
+  const { app } = await scene(t, 'extraction-dismiss-ghost');
+  const ghost = { resource: 'contact', id: '00000000-0000-0000-0000-000000000000' };
+  const enriched = app.modules.get('enriched-field').service;
+  const row = await enriched.createManaged({
+    sourceKey: 'aiex:contact:00000000-0000-0000-0000-000000000000:role:email-signature:test-dismiss',
+    subjectResource: ghost.resource, subjectId: ghost.id,
+    subjectOwner: 'host', subjectOwnerPackage: null, subjectLabel: null,
+    field: 'role', value: 'Istruttore', source: 'email-signature', sourceDetail: null,
+    observedAt: new Date().toISOString(), observedByRunId: 'test:ghost-dismiss',
+    status: 'proposed', purgedAt: null, purgeReason: null, decisionReason: null,
+  }, { actor: ACTOR });
+  await assert.rejects(
+    app.decideEnrichmentProposal({ actor: ACTOR, id: row.id, decision: 'dismissed', reason: 'non serve' }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404,
+    'a ghost dismissal refuses like a ghost accept');
+  assert.equal(enriched.get(row.id).status, 'proposed', 'the refused dismissal flips nothing');
+});
+
+test('a storage fault while checking the subject keeps its own error, never 404', async (t) => {
+  const { app } = await scene(t, 'extraction-subject-fault');
+  const subject = await seedContact(app);
+  const service = app.modules.get('contact').service;
+  const originalGet = service.get;
+  service.get = async () => {
+    throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY', status: 503 });
+  };
+  try {
+    await assert.rejects(
+      app.extractCustomerEnrichment({ actor: ACTOR, ...subject, sources: SOURCES, adapter: fakeAdapter([]) }),
+      (error) => error?.code === 'SQLITE_BUSY' && error?.status === 503,
+      'a backend fault is never reported as a deleted subject');
+  } finally {
+    service.get = originalGet;
+  }
+});
+
+test('a national-shape free phone is stored, and its identical AI twin proposes no duplicate', async (t) => {
+  const { app } = await scene(t, 'extraction-free-phone-national');
+  const subject = await seedContact(app);
+
+  // Like on main, a dialable national number is a stored fact, never a
+  // refused field: the parser output '02123456' lands the same way.
+  const free = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'luca@prestigroup.example',
+    fields: { firstName: 'Luca', phone: '3331234567' }, source: 'email-signature', sourceDetail: 'firma email',
+  });
+  assert.equal(free.outcome, 'enriched');
+  const enriched = app.modules.get('enriched-field').service;
+  assert.equal(
+    enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id, status: 'active' })
+      .filter((row) => row.field === 'phone' && row.value === '3331234567').length,
+    1, 'the national-shape phone is stored like on main');
+  assert.equal(
+    app.modules.get('external-identity').service
+      .listWhere({ system: 'phone', externalId: '3331234567' }).length,
+    1, 'the national-shape phone links its identity');
+
+  // The identical value via AI is already an active fact: no new proposal,
+  // and accepting beside it would flip no duplicate.
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '3331234567', source: 'email-signature' },
+    ]),
+  });
+  assert.deepEqual(answer.counts, { proposed: 0, replayed: 0, alreadyActive: 1, skippedDismissed: 0 });
 });
