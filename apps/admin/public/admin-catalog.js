@@ -166,7 +166,7 @@ export function createCatalogView(deps) {
     return `fino a ${tier.upTo}: ${amount}`;
   }
 
-  function priceLine(component, currency) {
+  function priceLine(component, currency, bare = false) {
     const base = component.pricingModel === 'flat_fee'
       ? money(component.flatAmountCents, currency)
       : money(component.unitAmountCents, currency);
@@ -181,6 +181,9 @@ export function createCatalogView(deps) {
       : '';
     // The product's own unit reads in the Unità column, never here, so no
     // cell repeats what the grid already says.
+    // One component reads as the bare price: «Prezzo del pacchetto: 99 €»
+    // repeated the column name. Several components keep their own labels.
+    if (bare) return `${base}${per}${every}${schedule}`;
     return `${component.label ?? 'Prezzo'}: ${base}${per}${every}${schedule}`;
   }
 
@@ -1065,7 +1068,7 @@ export function createCatalogView(deps) {
         }
         const components = Array.isArray(offer.components) ? offer.components : [];
         for (const component of components) {
-          offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined)));
+          offerBox.appendChild(el('p', 'catalog-price', priceLine(component, offer.currency ?? undefined, components.length === 1)));
         }
         priceCell.appendChild(offerBox);
       }
