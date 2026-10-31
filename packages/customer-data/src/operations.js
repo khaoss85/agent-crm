@@ -13,7 +13,7 @@ import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
-import { createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
+import { createPolicyReader, createSubjectForRow, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -42,6 +42,9 @@ import { ENRICHABLE_FIELDS } from './enrichment.js';
  *   composed reads `available: false` with a reason rather than an empty list
  *   that would read as "this customer has none".
  */
+
+/** Provenance for identities an operator holds by hand: outside any import run. */
+const SUBJECT_PHONE_RUN_ID = 'subject-phone';
 
 /** @param {any} runtime @param {any} registries */
 /**
@@ -345,6 +348,94 @@ export function createCustomerDataOperations({ database, modules, events, config
       const rows = await deciding(trusted(modules, names.identity), { status: 'active' });
       const { origins, undated } = aggregateChannelOrigins(rows);
       return Object.freeze({ origins, undated });
+    },
+
+    /**
+     * Record one operator-held phone number beside a contact or company
+     * (voce 105563eea902: the scheda cliente's "Aggiungi telefono").
+     *
+     * One identifier names one record, once — the same promise the sender
+     * resolution keeps: a number already held beside the same subject
+     * refreshes its sighting, while a number held beside another subject
+     * refuses 409 PHONE_ALREADY_HELD instead of being re-linked. The check
+     * and the write run inside one transaction and the uniqueness loser
+     * replays the winner, so two operators adding the same number race
+     * safely. E.164 only: «Chiama» dials the stored value, so a number the
+     * card cannot dial is refused here instead of stored as a dead button.
+     * @param {any} request
+     */
+    async recordSubjectPhone(request) {
+      const actor = normalizeActor(request?.actor);
+      if (actor.type !== 'user') {
+        // The same human-actor boundary as the scheda's "Aggiungi nota":
+        // inlined, not imported — a domain package reaches another only
+        // through requires + capability, never through a source import
+        // (docs/PACKAGE_AUTHORING.md), and core owns no human-actor helper.
+        throw new AppError('Recording a subject phone is a human decision', {
+          code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+        });
+      }
+      const resource = request?.resource;
+      if (resource !== 'contact' && resource !== 'company') {
+        throw new AppError('a subject phone needs a contact or company subject', {
+          code: 'CUSTOMER_DATA_PHONE_SUBJECT_INVALID', status: 400,
+        });
+      }
+      const id = request?.id;
+      if (typeof id !== 'string' || id.trim() === '') {
+        throw new ValidationError('a subject phone needs the subject id', { field: 'id' });
+      }
+      const externalId = normalizeChannelHandle('phone', request?.phone);
+      if (!/^\+[1-9]\d{6,14}$/.test(externalId)) {
+        // The card dials exactly this shape (toDialablePhone in
+        // packages/customer-hub/src/card.js, mirrored here rather than
+        // imported: neither package may source-import the other). A stored
+        // number that cannot dial would render a dead «Chiama».
+        throw new ValidationError(
+          'the phone number must be callable E.164 (+ followed by 7-15 digits): the scheda dials exactly this',
+          { field: 'phone' },
+        );
+      }
+      const subject = {
+        resource, id: id.trim(), owner: 'host', ownerPackage: null, label: null,
+      };
+      const sourceKey = `phone:${externalId}`;
+      const heldBy = (row) => row !== null && typeof row === 'object'
+        ? { resource: row.subjectResource, id: row.subjectId } : null;
+      return database.transactionAsync(async () => {
+        const identities = trusted(modules, names.identity);
+        const seen = (await deciding(identities, { sourceKey }))[0] ?? null;
+        if (seen !== null) {
+          const holder = heldBy(seen);
+          if (holder === null || holder.resource !== resource || holder.id !== subject.id) {
+            throw new AppError('This phone number is already held beside another customer', {
+              code: 'PHONE_ALREADY_HELD', status: 409,
+            });
+          }
+        }
+        let outcome;
+        try {
+          outcome = await recordExternalIdentityRow({
+            modules, names, system: 'phone', externalId, subject,
+            runId: SUBJECT_PHONE_RUN_ID, actor,
+          });
+        } catch (error) {
+          if (!isWinnerConflict(error)) throw error;
+          const winner = (await deciding(trusted(modules, names.identity), { sourceKey }))[0] ?? null;
+          const holder = heldBy(winner);
+          if (holder !== null && holder.resource === resource && holder.id === subject.id) {
+            outcome = 'refreshed';
+          } else {
+            throw new AppError('This phone number is already held beside another customer', {
+              code: 'PHONE_ALREADY_HELD', status: 409,
+            });
+          }
+        }
+        return Object.freeze({
+          outcome, system: 'phone', externalId,
+          subject: Object.freeze({ resource, id: subject.id }),
+        });
+      });
     },
 
   };
