@@ -101,6 +101,7 @@ asserts instead of a delivery.
 | --- | --- | --- | --- | --- |
 | WhatsApp | `whatsapp` | `whatsapp-cloud@1` (`src/whatsapp.js`) | in + out (24-hour window, templates outside it) | `runChannelAdapterKit`, `tests/channels-whatsapp.test.js` |
 | Instagram | `instagram` | `instagram-graph@1` (`src/instagram.js`) | in + out (24-hour window, 7 days with `HUMAN_AGENT`) | `runChannelAdapterKit`, `tests/channels-instagram.test.js` |
+| Telegram | `telegram` | `telegram-bot@1` (`src/telegram.js`) | in + out (no service window) | `runChannelAdapterKit`, `tests/channels-telegram.test.js` |
 | Facebook (Messenger) | `facebook` | `messenger-graph@1` (`src/messenger.js`) | in + out (24-hour window, 7 days with `HUMAN_AGENT`) | `runChannelAdapterKit`, `tests/channels-messenger.test.js` |
 | TikTok | `tiktok` | `tiktok-inbox@1` (`src/tiktok.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-tiktok.test.js` |
 | Email | `email` | `gmail-api@1` (`src/gmail.js`) | in + out (no service window; 90-day history import) | `runChannelAdapterKit`, `tests/channels-gmail.test.js` |
@@ -139,8 +140,9 @@ asserts instead of a delivery.
   (`tests/channels-tiktok.test.js`), voice
   (`tests/channels-voice.test.js`), site-form
   (`tests/channels-site-form.test.js`), calendar
-  (`tests/channels-calendar.test.js`) and Stripe
-  (`tests/channels-stripe.test.js`) adapters pass it; for adapters
+  (`tests/channels-calendar.test.js`), Stripe
+  (`tests/channels-stripe.test.js`) and Telegram
+  (`tests/channels-telegram.test.js`) adapters pass it; for adapters
   behind a service window the kit seeds one windowed inbound before
   its send check, so the send proves the seeded window rather than an
   absent one; for inbound-only adapters the send check proves the

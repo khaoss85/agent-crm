@@ -575,6 +575,27 @@ test('a card click opens its detail and + opens the collegamento (spec C19)', as
   assert.ok(navigated.filter((hash) => hash === '#/connettori/instagram').length >= 2, 'Enter on the card opens its detail');
 });
 
+test('Personalizzazione › Connettori shows Telegram in Canali di conversazione (backlog:2a5651e1933d)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId });
+  await view.render();
+  await flush();
+  const text = mount.findAll('article').map((node) => node.textContent).join('\n');
+  assert.ok(text.includes('Canali di conversazione'), 'the conversation section renders');
+  const telegram = mount.findAll('article').find((node) => node.textContent.includes('Telegram'));
+  assert.ok(telegram, 'the Telegram card renders');
+  assert.ok(telegram.textContent.includes('TG'), 'the card carries the TG sigla');
+  assert.ok(telegram.textContent.includes('Messaggi da chat e bot Telegram.'), 'the card carries the Telegram line');
+  assert.ok(telegram.textContent.includes('di Telegram · ↔ bidirezionale'), 'the card carries the Telegram provider line');
+  telegram.dispatch('click', {});
+  assert.ok(navigated.includes('#/connettori/telegram'), 'clicking the card opens the Telegram detail');
+  const plus = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Collega Telegram');
+  assert.ok(plus, 'the Telegram card has its collegamento action');
+});
+
 test('a refused card answers like its + action and never leaves the readable page', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

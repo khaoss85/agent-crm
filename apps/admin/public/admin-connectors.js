@@ -73,6 +73,18 @@ export const CONNECTOR_CATALOG = Object.freeze([
     ]),
   },
   {
+    channel: 'telegram',
+    label: 'Telegram',
+    accountLabel: 'Bot collegato',
+    accountPlaceholder: '@nome_del_bot',
+    syncLines: Object.freeze(['Nuovi messaggi di chat e bot in arrivo e in uscita']),
+    whatHappens: Object.freeze([
+      'Colleghi il bot: i nuovi messaggi entrano da soli nelle conversazioni.',
+      'Le chat Telegram non hanno una cronologia da importare: parte tutto da qui.',
+      'I contatti che sembrano doppioni diventano proposte da decidere in Stato sync, mai uniti da soli.',
+    ]),
+  },
+  {
     channel: 'facebook',
     label: 'Facebook',
     accountLabel: 'Pagina aziendale collegata',

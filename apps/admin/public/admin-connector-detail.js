@@ -55,13 +55,14 @@ export function catalogFor(channel) {
 }
 
 // Direction from the channel matrix of packages/channels/README.md (BO-F1-01):
-// the four channels that send through the outbox, and the three catalog
+// the five channels that send through the outbox, and the three catalog
 // channels that are inbound-only by contract (CHANNEL_SEND_UNSUPPORTED).
 // `sms` has no dedicated adapter in packages/channels, so its direction is
 // undeclared here — the detail says so instead of guessing.
 export const DIRECTION_BY_CHANNEL = Object.freeze({
   whatsapp: 'in-out',
   instagram: 'in-out',
+  telegram: 'in-out',
   facebook: 'in-out',
   email: 'in-out',
   tiktok: 'in-only',
@@ -188,6 +189,18 @@ const CONSUMERS_BY_CHANNEL = {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
       via: 'Riconciliazione dei mittenti con le schede quando l\u2019adattatore esiste.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
+    },
+  ],
+  telegram: [
+    {
+      unit: 'channels', kind: 'package', edge: 'propose-channel-reply',
+      via: 'Risposta multicanale con approvazione (BO-F1-07): proposta umana, invio approvato.',
+      evidence: { file: 'packages/channels/README.md', needle: 'propose-channel-reply' },
+    },
+    {
+      unit: 'skill:build-custom-domain-package', kind: 'skill', edge: 'channels outbox',
+      via: 'Regola «Invii verso canali esterni»: ogni invio accodato nell\u2019outbox esistente.',
+      evidence: { file: 'skills/build-custom-domain-package/SKILL.md', needle: 'channels outbox' },
     },
   ],
   tiktok: [
