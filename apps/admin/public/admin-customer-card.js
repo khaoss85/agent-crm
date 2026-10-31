@@ -1209,7 +1209,7 @@ export function createCustomerCardView(deps) {
   // the rest of the scheda. Only the card read failing fails the whole
   // scheda — it carries the name, and without a name there is no card.
   const readError = (box, error, failed) => {
-    box.appendChild(el('p', 'bo-scheda-unavailable', humanReadError(error, { failed })));
+    box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
   async function renderCard(resource, id) {
