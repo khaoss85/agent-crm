@@ -150,9 +150,9 @@ test('builders emit system classes with text-only content', () => {
   assert.deepEqual(rawControls(secret), []);
 });
 
-test('channel chips cover the nine prototype channels', () => {
+test('channel chips cover the ten prototype channels', () => {
   const doc = createFakeDocument();
-  assert.deepEqual([...UI_CHANNELS].sort(), ['@', 'CAL', 'FB', 'IG', 'S', 'TEL', 'TT', 'WA', 'WEB']);
+  assert.deepEqual([...UI_CHANNELS].sort(), ['@', 'CAL', 'FB', 'IG', 'S', 'TEL', 'TG', 'TT', 'WA', 'WEB']);
   const expectedTint = {
     IG: 'ui-chip-ig',
     WA: 'ui-chip-wa',
@@ -163,6 +163,7 @@ test('channel chips cover the nine prototype channels', () => {
     FB: 'ui-chip-fb',
     TT: 'ui-chip-tt',
     WEB: 'ui-chip-web',
+    TG: 'ui-chip-tg',
   };
   for (const channel of UI_CHANNELS) {
     const chip = uiChannelChip(doc, channel);

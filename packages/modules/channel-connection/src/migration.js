@@ -35,6 +35,34 @@ export const channelConnectionMigrations = [
       "CREATE INDEX IF NOT EXISTS channel_connections_account ON channel_connections(account);" + '\n' +
       "CREATE INDEX IF NOT EXISTS channel_connections_status ON channel_connections(status);",
   },
+  {
+    name: "evolve_channel_connections_r4",
+    sql:
+      "CREATE TABLE channel_connections__evolve__r4 (" + '\n' +
+      "  id TEXT PRIMARY KEY," + '\n' +
+      "  source_key TEXT UNIQUE," + '\n' +
+      "  space_id TEXT," + '\n' +
+      "  channel TEXT CHECK(channel IN ('whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form', 'calendar', 'stripe', 'telegram'))," + '\n' +
+      "  account TEXT," + '\n' +
+      "  adapter TEXT," + '\n' +
+      "  adapter_version INTEGER," + '\n' +
+      "  adapter_fingerprint TEXT," + '\n' +
+      "  status TEXT CHECK(status IN ('pending', 'active', 'suspended', 'revoked'))," + '\n' +
+      "  status_reason TEXT," + '\n' +
+      "  secret_ref TEXT," + '\n' +
+      "  secret_rotated_at TEXT," + '\n' +
+      "  grant_expires_at TEXT," + '\n' +
+      "  created_by TEXT," + '\n' +
+      "  created_at TEXT NOT NULL," + '\n' +
+      "  updated_at TEXT NOT NULL" + '\n' +
+      ") STRICT;" + '\n' +
+      "INSERT INTO channel_connections__evolve__r4 (id, source_key, space_id, channel, account, adapter, adapter_version, adapter_fingerprint, status, status_reason, secret_ref, secret_rotated_at, grant_expires_at, created_by, created_at, updated_at) SELECT id, source_key, space_id, channel, account, adapter, adapter_version, adapter_fingerprint, status, status_reason, secret_ref, secret_rotated_at, grant_expires_at, created_by, created_at, updated_at FROM channel_connections;" + '\n' +
+      "DROP TABLE channel_connections;" + '\n' +
+      "ALTER TABLE channel_connections__evolve__r4 RENAME TO channel_connections;" + '\n' +
+      "CREATE INDEX IF NOT EXISTS channel_connections_space_id ON channel_connections(space_id);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS channel_connections_account ON channel_connections(account);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS channel_connections_status ON channel_connections(status);",
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */

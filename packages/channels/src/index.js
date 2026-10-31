@@ -736,3 +736,14 @@ export {
   createVoiceChannelAdapter,
   voiceEventBody,
 } from './voice.js';
+export {
+  TELEGRAM_ADAPTER_NAME,
+  TELEGRAM_ADAPTER_VERSION,
+  TELEGRAM_SECRET_HEADER,
+  buildTelegramSendRequest,
+  canonicalTelegramChatId,
+  createTelegramChannelAdapter,
+  redactTelegramSendRequest,
+  telegramEventBody,
+  verifyTelegramWebhookToken,
+} from './telegram.js';

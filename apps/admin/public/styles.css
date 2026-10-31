@@ -1415,6 +1415,7 @@ textarea.ui-field { min-height: 88px; resize: vertical; }
 .ui-chip-cal { background: var(--data-soft); color: var(--data-ink); }
 .ui-chip-s { background: var(--agent-soft); color: var(--agent-ink); }
 .ui-chip-web { background: var(--data-soft); color: var(--data-ink); }
+.ui-chip-tg { background: var(--data-soft); color: var(--data-ink); }
 .ui-chip-plain { background: var(--surface-soft); color: var(--ink); border-color: var(--line); }
 button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-badge { font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 6px 10px; border-radius: 6px; display: inline-block; text-transform: none; }

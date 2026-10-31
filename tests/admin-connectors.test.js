@@ -40,7 +40,7 @@ const flush = async (rounds = 6) => {
 
 test('catalog covers every channel with a what-happens preview', () => {
   const channels = CONNECTOR_CATALOG.map((entry) => entry.channel).sort();
-  assert.deepEqual(channels, ['email', 'facebook', 'instagram', 'site-form', 'sms', 'tiktok', 'voice', 'whatsapp']);
+  assert.deepEqual(channels, ['email', 'facebook', 'instagram', 'site-form', 'sms', 'telegram', 'tiktok', 'voice', 'whatsapp']);
   for (const entry of CONNECTOR_CATALOG) {
     assert.ok(entry.label !== '', `${entry.channel} has an Italian label`);
     assert.ok(entry.whatHappens.length >= 2, `${entry.channel} previews what connecting does`);
