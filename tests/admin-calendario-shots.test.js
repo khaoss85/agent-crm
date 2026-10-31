@@ -6,7 +6,8 @@
  * phone viewport. The harness loads a week for two named members through
  * the view's own "Mostra settimana" button, searches free slots through
  * "Trova slot liberi" from a phrase, so the PNG shows the week, the proposal
- * rows with their ghosts and the prefilled manual form. Each run writes a PNG of the
+ * rows with their ghost, the out-of-hours note (fetta 8) and the prefilled
+ * manual form. Each run writes a PNG of the
  * painted week and reports its byte size and pixel dimensions; the phone
  * run additionally asserts, from inside the page, that nothing scrolls
  * sideways under 700px.
@@ -159,7 +160,9 @@ const client = {
     throw new Error('unexpected ' + path);
   },
 };
-const byName = (name) => document.querySelector('input[name="' + name + '"]');
+// Fetta 9 renders teamMemberId as a <select> when the team is known, so the
+// lookup spans every named field, never only <input>.
+const byName = (name) => document.querySelector('[name="' + name + '"]');
 const click = (label) => [...document.querySelectorAll('button')].find((b) => b.textContent.includes(label)).click();
 const view = createCalendarioView({
   doc: document,
@@ -190,6 +193,9 @@ const probe = {
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
   proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
   ghosts: [...document.querySelectorAll('button')].filter((b) => b.textContent.startsWith('✦ Proposta')).length,
+  // Fetta 8 names out-of-grid proposals under the grid instead of ghosting
+  // them: the 19:00 demo slot paints this note, never a second ghost.
+  outside: [...document.querySelectorAll('p.empty')].filter((n) => n.textContent.startsWith('✦ Proposta')).length,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
 };
@@ -319,7 +325,8 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.events.includes('taglio'), 'the desktop render lists the week events');
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
-  assert.equal(probe.ghosts, 2, 'two dashed ghosts on the Thursday column');
+  assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');
+  assert.equal(probe.outside, 1, 'the out-of-hours slot is named under the grid (fetta 8)');
   console.log(`calendario desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 

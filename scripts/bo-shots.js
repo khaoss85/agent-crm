@@ -844,7 +844,9 @@ const client = {
     throw new Error('unexpected ' + path);
   },
 };
-const byName = (inputName) => document.querySelector('input[name="' + inputName + '"]');
+// Fetta 9 renders teamMemberId as a <select> when the team is known, so the
+// lookup spans every named field, never only <input>.
+const byName = (inputName) => document.querySelector('[name="' + inputName + '"]');
 const click = (label) => [...document.querySelectorAll('button')].find((b) => b.textContent.includes(label)).click();
 const view = createCalendarioView({
   doc: document,
@@ -873,6 +875,9 @@ document.getElementById('probe').textContent = JSON.stringify({
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
   proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
   ghosts: [...document.querySelectorAll('button')].filter((b) => b.textContent.startsWith('✦ Proposta')).length,
+  // Fetta 8 names out-of-grid proposals under the grid instead of ghosting
+  // them: the 19:00 demo slot paints this note, never a second ghost.
+  outside: [...document.querySelectorAll('p.empty')].filter((n) => n.textContent.startsWith('✦ Proposta')).length,
 });
 document.title = 'calendario-ready';`;
     case 'sequenze': return `
@@ -1410,8 +1415,11 @@ export function assertProbe(name, probe) {
       if (probe.proposals !== 2) {
         throw new Error(`calendario: the probe lists ${String(probe.proposals)} proposal rows, expected 2`);
       }
-      if (probe.ghosts !== 2) {
-        throw new Error(`calendario: the probe paints ${String(probe.ghosts)} ghosts, expected 2`);
+      if (probe.ghosts !== 1) {
+        throw new Error(`calendario: the probe paints ${String(probe.ghosts)} ghosts, expected 1`);
+      }
+      if (probe.outside !== 1) {
+        throw new Error(`calendario: the probe names ${String(probe.outside)} out-of-hours proposals, expected 1`);
       }
       return;
     }
