@@ -63,10 +63,15 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
     owner: subject?.owner ?? 'host',
     ownerPackage: subject?.ownerPackage ?? null,
   });
+  // Voce 908f2eb9bbfb: the profile stays first (the shaping below joins on
+  // it), but the three provider reads are independent of each other, so
+  // they run together instead of stacking three waits.
   const profile = await readProfile({ core, subject: { resource, id } });
-  const threads = await readConversations(envelope);
-  const history = await readTimeline(envelope);
-  const schedule = await readSchedule(envelope);
+  const [threads, history, schedule] = await Promise.all([
+    readConversations(envelope),
+    readTimeline(envelope),
+    readSchedule(envelope),
+  ]);
   return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id } });
 }
 

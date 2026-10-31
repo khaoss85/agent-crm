@@ -173,7 +173,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, calls = null, failCalls = false, callsError = null, enrichedError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null } = {}) {
   const requested = [];
   return {
     calls: requested,
@@ -181,10 +181,15 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       requested.push(path);
       if (path.startsWith('/api/customer-hub/')) {
         if (failHub) throw Object.assign(new Error('Not Found'), { status: 404 });
-        if (path.includes('/card/')) return card;
+        if (path.includes('/card/')) {
+          if (cardError) throw cardError;
+          return card;
+        }
+        if (timelineError) throw timelineError;
         return timeline;
       }
       if (path.startsWith('/api/customer-data/profile/')) {
+        if (profileError) throw profileError;
         if (!profile) throw Object.assign(new Error('no profile'), { status: 404 });
         return profile;
       }
@@ -440,6 +445,41 @@ test('a hub the server does not compose renders an honest error, never blank', a
   assert.ok(mount.textContent.includes('Scheda non disponibile'));
 });
 
+test('voce 908f2eb9bbfb: with the profile in error the scheda keeps name, timeline and other sections, with the error only on Dettagli', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ profileError: failure }));
+  const text = mount.textContent;
+  // No whole-card failure: the name, the timeline and the other sections stay.
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+  assert.ok(text.includes('vorrei prenotare una prova'), 'the cronologia still shows');
+  assert.ok(text.includes('Tutti i contatti'), 'the timeline section stays');
+  // The error reads only on Dettagli, in plain Italian, never a raw status.
+  assert.ok(text.includes('Dettagli'), 'the Dettagli section stays');
+  assert.ok(text.includes('I dettagli non si sono potuti leggere. Riprova più tardi.'), 'Dettagli names the failure');
+  assert.ok(!text.includes('503'), 'no raw status on screen');
+});
+
+test('voce 908f2eb9bbfb: with the timeline in error the scheda keeps the card and names the failure on the cronologia', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ timelineError: failure }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+  assert.ok(text.includes('Tutti i contatti'), 'the timeline section stays');
+  assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
+});
+
+test('voce 908f2eb9bbfb: with enrichment or calls in error only that section names the failure', async () => {
+  const failure = Object.assign(new Error('boom'), { status: 500 });
+  const mount = await renderCard(stubClient({ enrichedError: failure, callsError: failure }), 'call-x');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+  assert.ok(text.includes("I dati arricchiti non si sono potuti leggere. Riprova più tardi."), 'the enriched section names the failure');
+  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the AI summary names the failure');
+});
+
 test('hostile server text renders as text, never as markup', async () => {
   const nasty = '<img src=x onerror=alert(1)>';
   const mount = await renderCard(stubClient({
@@ -544,10 +584,15 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
 });
 
 test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', async () => {
+  // Voce 908f2eb9bbfb narrows this promise: the failure names itself on its
+  // own section instead of failing the whole scheda — still never a quiet
+  // "no calls".
   const mount = await renderCard(
     stubClient({ callsError: Object.assign(new Error('boom'), { status: 500 }) }), 'call-a',
   );
-  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
+  assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'the card stays');
+  assert.ok(mount.textContent.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'),
+    'the AI summary names the failure');
   assert.ok(!mount.textContent.includes('nessuna chiamata registrata'),
     'a 500 never reads as no calls');
 });
@@ -617,10 +662,15 @@ test('BO-F4-03: a hostile enriched value renders as text, never as markup', asyn
 });
 
 test('BO-F4-03: a failing enrichment read is an error, never a quiet "no data"', async () => {
+  // Voce 908f2eb9bbfb narrows this promise: the failure names itself on its
+  // own section instead of failing the whole scheda — still never a quiet
+  // "no data".
   const mount = await renderCard(
     stubClient({ enrichedError: Object.assign(new Error('boom'), { status: 500 }) }),
   );
-  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
+  assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'the card stays');
+  assert.ok(mount.textContent.includes("I dati arricchiti non si sono potuti leggere. Riprova più tardi."),
+    'the enriched section names the failure');
   assert.ok(!mount.textContent.includes('nessun dato arricchito registrato'),
     'a 500 never reads as no enriched data');
 });
