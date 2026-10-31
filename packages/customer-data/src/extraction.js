@@ -389,25 +389,28 @@ export function createEnrichmentExtraction({ database, modules, events, names })
       : safeString(request.reason, 'reason', { max: MAX_DETAIL_LENGTH });
 
     const enriched = trusted(modules, enrichedName);
-    const current = await enriched.get(id);
-    if (current.status !== 'proposed') {
-      return Object.freeze({ outcome: 'already-decided', proposal: shapeProposal(current) });
-    }
     if (decision === 'accepted') {
-      if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
-        throw refusal('ENRICHMENT_OPTED_OUT', 409,
-          'this subject opted out of enrichment: no proposal is accepted after the purge');
-      }
       const identityName = names?.identity ?? 'external-identity';
       const holderOf = (row) => row !== null && typeof row === 'object'
         ? { resource: row.subjectResource, id: row.subjectId } : null;
-      const refuseHeldPhone = (holder) => {
-        if (holder === null || holder.resource !== current.subjectResource || holder.id !== current.subjectId) {
-          throw refusal('PHONE_ALREADY_HELD', 409,
-            'this phone number is already held beside another customer: it stays on the first card');
+      const outcome = await database.transactionAsync(async () => {
+        // The row is re-read inside the write transaction: a concurrent
+        // purge or dismissal that committed after the operator opened the
+        // scheda always wins — only a still-proposed row flips to active.
+        const current = await enriched.get(id);
+        if (current.status !== 'proposed') {
+          return { outcome: 'already-decided', proposal: shapeProposal(current) };
         }
-      };
-      const row = await database.transactionAsync(async () => {
+        if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
+          throw refusal('ENRICHMENT_OPTED_OUT', 409,
+            'this subject opted out of enrichment: no proposal is accepted after the purge');
+        }
+        const refuseHeldPhone = (holder) => {
+          if (holder === null || holder.resource !== current.subjectResource || holder.id !== current.subjectId) {
+            throw refusal('PHONE_ALREADY_HELD', 409,
+              'this phone number is already held beside another customer: it stays on the first card');
+          }
+        };
         if (current.field === 'phone' && current.value) {
           // The recordSubjectPhone discipline: one number names one record,
           // once. The shared identity helper refreshes any sighting, so the
@@ -448,14 +451,24 @@ export function createEnrichmentExtraction({ database, modules, events, names })
           const linked = (await deciding(trusted(modules, identityName), { sourceKey }))[0] ?? null;
           refuseHeldPhone(holderOf(linked));
         }
-        return decided;
+        return { outcome: 'accepted', proposal: shapeProposal(decided) };
       });
-      return Object.freeze({ outcome: 'accepted', proposal: shapeProposal(row) });
+      return Object.freeze(outcome);
     }
-    const row = await enriched.applyManaged(id, {
-      status: 'dismissed', decisionReason: reason,
-    }, { actor });
-    return Object.freeze({ outcome: 'dismissed', proposal: shapeProposal(row) });
+    const outcome = await database.transactionAsync(async () => {
+      // A dismissal is final: a concurrent accept or purge that committed
+      // first wins, and this call answers the stored decision instead of
+      // moving the row again.
+      const current = await enriched.get(id);
+      if (current.status !== 'proposed') {
+        return { outcome: 'already-decided', proposal: shapeProposal(current) };
+      }
+      const row = await enriched.applyManaged(id, {
+        status: 'dismissed', decisionReason: reason,
+      }, { actor });
+      return { outcome: 'dismissed', proposal: shapeProposal(row) };
+    });
+    return Object.freeze(outcome);
   }
 
   return {

@@ -331,9 +331,10 @@ test('proposals and opt-outs follow the canonical cluster, not just the named re
     'the company scheda lists the member contact proposal beside its facts');
   assert.equal(fromCompany.proposals[0].field, 'companyName');
 
-  // A proposal stored under the company id survives the member purge
-  // (the purge is contact-scoped), so it exercises the decide-side check.
-  await app.extractCustomerEnrichment({
+  // A proposal stored under the company id is purged by the member
+  // opt-out too: the purge covers the whole canonical cluster, like the
+  // facts and proposals reads.
+  const companyAnswer = await app.extractCustomerEnrichment({
     actor: ACTOR,
     resource: 'company', id: company.id,
     sources: companySources,
@@ -341,11 +342,19 @@ test('proposals and opt-outs follow the canonical cluster, not just the named re
       { field: 'role', value: 'Istruttore', source: 'company-website' },
     ]),
   });
+  assert.equal(companyAnswer.proposals.length, 1);
 
   // The member contact opts out: an extraction named for the company must refuse too.
-  await app.optOutContactEnrichment({
+  const left = await app.optOutContactEnrichment({
     actor: ACTOR, email: 'luca@prestigroup.example', reason: 'non mi interessa',
   });
+  assert.equal(left.outcome, 'opted-out');
+  assert.deepEqual((await app.readCustomerEnrichmentProposals({ resource: 'company', id: company.id })).proposals, [],
+    'a company proposal is no longer readable after a member opt-out');
+  assert.deepEqual((await app.readCustomerEnrichmentProposals(subject)).proposals, [],
+    'no member proposal survives its own opt-out on the scheda');
+  assert.deepEqual((await app.readCustomerEnrichment({ resource: 'company', id: company.id })).items, [],
+    'no company fact survives a member opt-out on the scheda');
   await assert.rejects(
     app.extractCustomerEnrichment({
       actor: ACTOR,
@@ -356,14 +365,15 @@ test('proposals and opt-outs follow the canonical cluster, not just the named re
       ]),
     }),
     (error) => error.code === 'ENRICHMENT_OPTED_OUT');
-  await assert.rejects(
-    app.decideEnrichmentProposal({
-      actor: ACTOR,
-      id: (await app.readCustomerEnrichmentProposals({ resource: 'company', id: company.id })).proposals[0].id,
-      decision: 'accepted', reason: 'ripensamento',
-    }),
-    (error) => error.code === 'ENRICHMENT_OPTED_OUT',
-    'a member opt-out blocks accepting from the company side too');
+
+  // The purge already decided the company row: accepting it afterwards
+  // answers the stored decision and stores no new fact.
+  const afterPurge = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: companyAnswer.proposals[0].id, decision: 'accepted', reason: 'ripensamento',
+  });
+  assert.equal(afterPurge.outcome, 'already-decided', 'a purged company row is never resurrected by deciding');
+  assert.deepEqual((await app.readCustomerEnrichment({ resource: 'company', id: company.id })).items, [],
+    'deciding after the member purge stores no new fact');
 });
 
 test('an undialable AI phone is refused with the run, and an accepted phone links its identity', async (t) => {
@@ -479,4 +489,78 @@ test('only a human decides a proposal; a read that fails and an empty source lis
       adapter: fakeAdapter([]),
     }),
     (error) => error.name === 'ValidationError');
+});
+
+test('accepting a dismissed proposal answers already-decided and keeps the dismissal', async (t) => {
+  const { app } = await scene(t, 'extraction-accept-after-dismiss');
+  const subject = await seedContact(app);
+
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'role', value: 'Istruttore', source: 'channel-message', sourceDetail: 'whatsapp:wamid.1' },
+    ]),
+  });
+  assert.equal(answer.proposals.length, 1);
+
+  const dismissed = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: answer.proposals[0].id, decision: 'dismissed', reason: 'ruolo non richiesto',
+  });
+  assert.equal(dismissed.outcome, 'dismissed');
+
+  // A concurrent accept that committed after the dismissal must not
+  // resurrect the row: the decide re-reads the status inside the write
+  // transaction and the dismissal wins.
+  const late = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: answer.proposals[0].id, decision: 'accepted', reason: 'ripensamento',
+  });
+  assert.equal(late.outcome, 'already-decided', 'a dismissed row is never resurrected by accepting');
+  const stored = app.modules.get('enriched-field').service
+    .listWhere({ subjectResource: subject.resource, subjectId: subject.id });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].status, 'dismissed', 'the recorded dismissal stays put');
+  assert.deepEqual((await app.readCustomerEnrichment(subject)).items, [],
+    'deciding after a dismissal stores no new fact');
+});
+
+test('accepting a still-proposed row refuses when the cluster opted out after the read', async (t) => {
+  const { app } = await scene(t, 'extraction-accept-after-optout-row');
+  const subject = await seedContact(app);
+
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'role', value: 'Istruttore', source: 'channel-message', sourceDetail: 'whatsapp:wamid.1' },
+    ]),
+  });
+  assert.equal(answer.proposals.length, 1);
+
+  // The refusal lands after the operator opened the scheda, without the
+  // purge running: the decide re-checks the cluster opt-out inside the
+  // write transaction on the fresh read, so the flip rolls back.
+  await app.modules.get('enrichment-opt-out').service.createManaged({
+    sourceKey: `optout:contact:${subject.id}`,
+    subjectResource: subject.resource, subjectId: subject.id,
+    subjectOwner: 'host', subjectOwnerPackage: null, subjectLabel: null,
+    reason: 'non mi interessa',
+    optedOutAt: new Date().toISOString(),
+    optedOutByRunId: 'enrichment:opt-out',
+  }, { actor: ACTOR });
+
+  await assert.rejects(
+    app.decideEnrichmentProposal({
+      actor: ACTOR, id: answer.proposals[0].id, decision: 'accepted', reason: 'ripensamento',
+    }),
+    (error) => error.code === 'ENRICHMENT_OPTED_OUT',
+    'a refusal that lands after the read still blocks the accept');
+  const stored = app.modules.get('enriched-field').service
+    .listWhere({ subjectResource: subject.resource, subjectId: subject.id });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].status, 'proposed', 'the refused accept flips nothing');
+  assert.deepEqual((await app.readCustomerEnrichment(subject)).items, [],
+    'no fact lands after the cluster opted out');
 });

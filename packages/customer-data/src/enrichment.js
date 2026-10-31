@@ -7,6 +7,7 @@ import { emailShape, requireExternalId, safeString } from './normalize.js';
 import {
   createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
 } from './sender.js';
+import { canonicalClusterFor } from './profile.js';
 import {
   deciding, orderedPair, subjectFields, trusted,
 } from './store.js';
@@ -713,9 +714,10 @@ export function createContactEnrichment({
 
     /**
      * Opt one contact out of enrichment: records the refusal and purges
-     * every non-purged enriched field of the subject — active facts,
-     * pending AI proposals and recorded dismissals alike (status `purged`,
-     * value cleared). Channel identities are not enrichment and stay.
+     * every non-purged enriched field of the whole canonical cluster —
+     * active facts, pending AI proposals and recorded dismissals alike
+     * (status `purged`, value cleared). Channel identities are not
+     * enrichment and stay.
      * @param {any} request
      */
     async optOutContactEnrichment(request) {
@@ -750,20 +752,27 @@ export function createContactEnrichment({
             if (!isUniqueConflict(error)) throw error;
           }
         }
-        // Every non-purged row goes: active facts, pending AI proposals and
-        // recorded dismissals alike. A proposal the subject refused must not
-        // survive the opt-out with its value intact and readable.
-        const stored = await deciding(rows, {
-          subjectResource: 'contact', subjectId: contact.id,
+        // Every non-purged row of the whole canonical cluster goes: active
+        // facts, pending AI proposals and recorded dismissals alike. Facts
+        // and proposals read cluster-wide, so a contact-scoped purge would
+        // leave company rows readable on the opted-out scheda. A proposal
+        // the subject refused must not survive with its value intact.
+        const cluster = await canonicalClusterFor({
+          modules, names, subject: { resource: 'contact', id: contact.id },
         });
         let purged = 0;
-        for (const row of stored) {
-          if (row.status === 'purged') continue;
-          await rows.applyManaged(row.id, {
-            status: 'purged', value: null, sourceDetail: null, decisionReason: null,
-            purgedAt: now, purgeReason: reason ?? 'opt-out',
-          }, { actor });
-          purged += 1;
+        for (const member of cluster.members) {
+          const stored = await deciding(rows, {
+            subjectResource: member.resource, subjectId: member.id,
+          });
+          for (const row of stored) {
+            if (row.status === 'purged') continue;
+            await rows.applyManaged(row.id, {
+              status: 'purged', value: null, sourceDetail: null, decisionReason: null,
+              purgedAt: now, purgeReason: reason ?? 'opt-out',
+            }, { actor });
+            purged += 1;
+          }
         }
         return purged;
       });
