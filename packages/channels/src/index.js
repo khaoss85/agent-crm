@@ -645,7 +645,8 @@ export {
   inboundOnlyOutbound,
   validateChannelAdapter,
 } from './adapter.js';
-export { createChannelOperations } from './operations.js';
+export { createChannelOperations, resolveSentConversationId } from './operations.js';
+export { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from './composer-text.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
 export { createFixtureChannelAdapter, fixtureEnvelopeEvent, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
 export {
@@ -701,6 +702,7 @@ export {
   gmailPushBody,
   gmailThreadIdForSubject,
   gmailThreadSubject,
+  isGmailThreadId,
 } from './gmail.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
 export {

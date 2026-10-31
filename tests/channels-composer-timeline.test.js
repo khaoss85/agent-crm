@@ -159,3 +159,69 @@ test('e9b4fc2f: a send without a host subject sends with no timeline row', async
   assert.equal(api.state.sentByKey.size, 1);
   assert.equal(logged.length, 0, 'no subject, no row — the send behaves exactly as before');
 });
+
+test('e9b4fc2f: exactly 2000 chars queue, send and log one row', async (t) => {
+  const { harness, api, logged } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: { to: CUSTOMER, text: `Salve, ${'x'.repeat(1993)}` },
+    messageKey: 'composer-gmail-2000',
+    timeline: TIMELINE,
+  });
+  assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
+  assert.equal(api.state.sentByKey.size, 1, 'the boundary text still sends');
+  assert.equal(logged.length, 1, 'and still logs its row');
+});
+
+test('e9b4fc2f: 2001 chars refuse the queue before any send', async (t) => {
+  const { harness, api } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  await assert.rejects(
+    harness.queue(SPACE, {
+      connectionKey: key,
+      message: { to: CUSTOMER, text: `Salve, ${'x'.repeat(1994)}` },
+      messageKey: 'composer-gmail-2001',
+      timeline: TIMELINE,
+    }),
+    (error) => error?.code === 'CHANNEL_MESSAGE_MALFORMED',
+    'one char past the row bound refuses, like the 2500-char case before it',
+  );
+  assert.equal(api.state.sentByKey.size, 0, 'the provider never sent');
+});
+
+test('e9b4fc2f: a thread-less send logs the provider thread id, never the message id', async (t) => {
+  const { harness, api, logged } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: { to: CUSTOMER, subject: 'Primo contatto', text: 'Buongiorno, sono Marco.' },
+    messageKey: 'composer-gmail-first',
+    timeline: TIMELINE,
+  });
+  assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
+  assert.equal(logged.length, 1);
+  const [row] = logged;
+  assert.match(row.conversationId, /^email:gmailthread\.fake-\d+$/, 'the row names the opened thread');
+  assert.notEqual(row.conversationId, `email:gmailmsg.fake-1`, 'never the message id in the thread namespace');
+  const sent = api.state.sentByKey.get(queued.idempotencyKey);
+  assert.equal(row.conversationId, `email:${sent.providerThreadId}`, 'the row names the provider thread receipt');
+});
+
+test('e9b4fc2f: a reply reuses the customer thread on the row', async (t) => {
+  const { harness, logged } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const queued = await harness.queue(SPACE, {
+    connectionKey: key,
+    message: { to: CUSTOMER, text: 'Certo, domani alle 18.', threadId: 'thread-AAA' },
+    messageKey: 'composer-gmail-reply',
+    timeline: { ...TIMELINE, conversationId: 'email:thread-AAA' },
+  });
+  assert.equal((await harness.pump(queued.jobId)).state, 'succeeded');
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].conversationId, 'email:thread-AAA', 'the explicit customer thread wins');
+});

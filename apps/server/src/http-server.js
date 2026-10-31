@@ -17,6 +17,8 @@ import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
+import { composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
+import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
@@ -700,8 +702,15 @@ export function buildRouter(app) {
       throw new ValidationError(`channel must be one of ${COMPOSER_CHANNELS.join(', ')}`, { field: 'channel' });
     }
     const text = typeof input.text === 'string' ? input.text : '';
-    if (text.trim() === '' || text.length > 30000) {
-      throw new ValidationError('a composed message needs non-empty text (at most 30000 chars)', { field: 'text' });
+    // The composer always attaches the customer's timeline row, and the row
+    // holds at most 2000 characters without tabs or control characters
+    // (line breaks allowed) — so the route refuses anything the row would
+    // refuse, naming the composer limit, instead of passing route
+    // validation and failing at the queue after the check above. A refusal
+    // here is 400 VALIDATION_ERROR on field `text`.
+    const textRefusal = composerTimelineRefusal(text);
+    if (textRefusal !== null) {
+      throw new ValidationError(`a composed message must fit its cronologia row: ${textRefusal}`, { field: 'text' });
     }
     let subject;
     if (input.subject !== undefined && input.subject !== null) {
@@ -755,7 +764,8 @@ export function buildRouter(app) {
     // Email stays in the customer's thread: the latest email passage names
     // it, so the reply the worker sends lands in the same Gmail thread and
     // the logged row groups with it. Without one the provider opens a new
-    // thread and the row names the assigned message instead.
+    // thread and the row names the thread receipt the provider returned —
+    // never the message id, so the next composer reuses a real thread id.
     let conversationId;
     let threadId;
     if (channel === 'email' && typeof app.readCustomerTimeline === 'function') {
@@ -1838,19 +1848,22 @@ function composerRecipient(card, channel) {
  * The customer's latest email thread, newest passage first
  * (backlog:e9b4fc2f): the composer reply stays in the same Gmail thread
  * instead of opening one per send. Null when the customer has no email
- * passage yet — the provider then opens a new thread.
+ * passage yet — the provider then opens a new thread. Thread parsing goes
+ * through `gmailThreadIdForSubject`, the same single source the inbox and
+ * the send worker share: a message id or any other non-thread text logged
+ * under `email:` is never reused as a thread id.
  */
 async function latestEmailThread(app, subject) {
   const timeline = await app.readCustomerTimeline({ resource: subject.resource, id: subject.id });
   const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
   const mails = items
     .filter((row) => row?.entry === 'message' && row?.channel === 'email'
-      && typeof row.conversationId === 'string' && row.conversationId.startsWith('email:'))
+      && gmailThreadIdForSubject(row.conversationId) !== null)
     .sort((left, right) => String(right.occurredAt ?? '').localeCompare(String(left.occurredAt ?? '')));
   const newest = mails[0] ?? null;
   if (newest === null) return null;
-  const threadId = newest.conversationId.slice('email:'.length);
-  if (threadId === '' || threadId.length > 128 || /\s/.test(threadId)) return null;
+  const threadId = gmailThreadIdForSubject(newest.conversationId);
+  if (threadId === null) return null;
   return { conversationId: newest.conversationId, threadId };
 }
 
