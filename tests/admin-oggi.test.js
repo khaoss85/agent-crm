@@ -20,6 +20,7 @@ import {
   isTodayInRome,
   loadOggiData,
   countConnectedNine,
+  googleNineChannels,
   missingLeadChannels,
   nextAppointment,
   oggiDateLine,
@@ -727,6 +728,112 @@ test('connected count reads actual connections against the nine', () => {
     3,
     'distinct active nine-channels only: sms is not one of the nine, suspended and blank stay out',
   );
+});
+
+test('Google connections from GET /api/profile vote Email and Calendar', () => {
+  const both = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+        { connector: 'calendar', status: 'connected', account: 'op@palestra.it' },
+      ],
+    },
+  };
+  assert.deepEqual(googleNineChannels(both), ['email', 'calendar']);
+  assert.equal(countConnectedNine([], both), 2, 'Gmail and Calendar alone read «2 di 9»');
+  // A Gmail vote never doubles an Email row: one vote per channel.
+  assert.equal(
+    countConnectedNine([{ channel: 'email', status: 'active' }], both),
+    2,
+    'email row plus gmail still counts Email once',
+  );
+  // Only `connected` counts: revoked, error and missing stay out.
+  assert.equal(countConnectedNine([], {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'revoked' },
+        { connector: 'calendar', status: 'error' },
+      ],
+    },
+  }), 0);
+  // Unreadable or unavailable profiles contribute nothing, never a guess.
+  assert.equal(countConnectedNine([], null), 0);
+  assert.equal(countConnectedNine([], undefined), 0);
+  assert.equal(countConnectedNine([], { connections: { available: false, items: [] } }), 0);
+  assert.equal(countConnectedNine([], { connections: { available: true, items: 'nope' } }), 0);
+  assert.deepEqual(googleNineChannels({ connections: { available: true, items: [{ connector: 'toString', status: 'connected' }] } }), []);
+  // A connected Gmail removes Email from the lead invite, like an Email row.
+  const missing = missingLeadChannels([], both);
+  assert.ok(!missing.some((entry) => entry.channel === 'email'), 'Gmail-connected Email stays out of the invite');
+  assert.ok(missing.some((entry) => entry.channel === 'whatsapp'), 'other lead channels stay in');
+});
+
+test('Oggi strip with Gmail and Calendar connected counts them and links Connettori', () => {
+  const profile = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+        { connector: 'calendar', status: 'connected', account: 'op@palestra.it' },
+      ],
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: missingLeadChannels([], profile),
+      connections: [],
+      profile,
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(mount.textContent.includes('2 di 9 collegati'), 'Gmail plus Calendar read as two connected');
+  assert.ok(!mount.textContent.includes('Collega Email'), 'Email is not invited once Gmail is connected');
+  const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
+  assert.ok(strip, 'the strip renders');
+  assert.equal(strip.getAttribute('href'), '#/connettori', 'the strip lands on Connettori');
+  // Connettori heads with the Collegamenti Google card, so the Collega
+  // links are one click from the strip (covered by admin-connectors.test.js
+  // 'Google Calendar and Gmail offer Collega even without composed channels').
+});
+
+test('loadOggiData reads the Google links from GET /api/profile, fail-soft', async () => {
+  const profile = {
+    connections: {
+      available: true,
+      items: [{ connector: 'gmail', status: 'connected', account: 'op@palestra.it' }],
+    },
+  };
+  const seen = [];
+  const data = await loadOggiData({
+    request: async (path) => {
+      seen.push(path);
+      if (path === '/api/schema') return { domains: {} };
+      if (path === '/api/profile') return profile;
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW);
+  assert.equal(data.profile, profile, 'the profile travels with the load');
+  assert.ok(seen.includes('/api/profile'), 'the load reads the Google links');
+  assert.equal(countConnectedNine(data.connections, data.profile), 1, 'Gmail counts Email as connected');
+
+  const refused = await loadOggiData({
+    request: async (path) => {
+      if (path === '/api/schema') return { domains: {} };
+      throw new Error('no profile here');
+    },
+  }, OGGI_NOW);
+  assert.equal(refused.profile, null, 'an unreadable profile stays null, never a guess');
+  assert.equal(countConnectedNine(refused.connections, refused.profile), 0);
 });
 
 test('channel invite counts connected of nine, and hides when all nine connect', () => {

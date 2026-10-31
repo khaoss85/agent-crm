@@ -733,12 +733,54 @@ export const OGGI_NINE_CHANNELS = Object.freeze([
 ]);
 
 /**
+ * Google connectors of GET /api/profile mapped onto the nine counted
+ * channels: Gmail carries the Email vote, Calendar its own. Reuses the
+ * Profilo screen's connector ids (admin-profilo.js), never a new list.
+ */
+export const GOOGLE_CONNECTOR_TO_NINE = Object.freeze({
+  gmail: 'email',
+  calendar: 'calendar',
+});
+
+/**
+ * Nine-channel ids contributed by a GET /api/profile answer. Only status
+ * `connected` counts — revoked, error or missing read as not connected, and
+ * an unreadable answer contributes nothing (fail-soft, like the Calendario
+ * week panel). Own keys only: a prototype name reads as unknown.
+ * @param {unknown} profile the /api/profile payload, null when unreadable
+ */
+export function googleNineChannels(profile) {
+  const connections = profile !== null && typeof profile === 'object'
+    ? /** @type {any} */ (profile).connections
+    : null;
+  const rawItems = connections !== null && typeof connections === 'object'
+    && /** @type {any} */ (connections).available === true
+    && Array.isArray(/** @type {any} */ (connections).items)
+    ? /** @type {any} */ (connections).items
+    : null;
+  if (!Array.isArray(rawItems)) return [];
+  const items = rawItems;
+  const votes = [];
+  for (const item of items) {
+    if (item == null || item.status !== 'connected') continue;
+    if (typeof item.connector !== 'string' || item.connector === '') continue;
+    if (!Object.hasOwn(GOOGLE_CONNECTOR_TO_NINE, item.connector)) continue;
+    const channel = GOOGLE_CONNECTOR_TO_NINE[item.connector];
+    if (!votes.includes(channel)) votes.push(channel);
+  }
+  return Object.freeze(votes);
+}
+
+/**
  * Distinct connected channels among the nine: active rows only, one vote
  * per channel, capped at the nine. A channel outside the nine never moves
- * this count.
+ * this count. Google connections from GET /api/profile vote too (Gmail for
+ * Email, Calendar for Calendar): without them Oggi reads «0 di 9 collegati»
+ * while Gmail and Calendar are connected.
  * @param {Array<Record<string, any>>} [connections]
+ * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
-export function countConnectedNine(connections = []) {
+export function countConnectedNine(connections = [], profile = null) {
   const active = new Set();
   for (const row of Array.isArray(connections) ? connections : []) {
     if (row == null || row.status !== 'active') continue;
@@ -746,21 +788,25 @@ export function countConnectedNine(connections = []) {
     if (!OGGI_NINE_CHANNELS.includes(row.channel)) continue;
     active.add(row.channel);
   }
+  for (const channel of googleNineChannels(profile)) active.add(channel);
   return Math.min(active.size, OGGI_TOTAL_CHANNELS);
 }
 
 /**
  * Lead channels with no active connection, in catalog order with catalog
  * labels. `calendar` and `stripe` are not lead channels and stay out of the
- * invite: connecting them loses no lead.
+ * invite: connecting them loses no lead. A connected Gmail removes Email
+ * from the invite, like an active Email row does.
  * @param {Array<Record<string, any>>} [connections]
+ * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
-export function missingLeadChannels(connections = []) {
+export function missingLeadChannels(connections = [], profile = null) {
   const active = new Set(
     (Array.isArray(connections) ? connections : [])
       .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string')
       .map((row) => row.channel),
   );
+  for (const channel of googleNineChannels(profile)) active.add(channel);
   return CONNECTOR_CATALOG
     .filter((entry) => entry != null && !active.has(entry.channel))
     .map((entry) => Object.freeze({ channel: entry.channel, label: entry.label }));
@@ -818,6 +864,7 @@ export async function loadOggiData(client, now = new Date()) {
     tasks: [],
     appointments: [],
     connections: [],
+    profile: null,
     briefMessages: [],
     briefCalls: [],
     next: null,
@@ -856,6 +903,17 @@ export async function loadOggiData(client, now = new Date()) {
       noteReadFailure('channel-connection', error);
       outcome.connections = [];
     }
+  }
+  // Google Calendar and Gmail connect per person through the pilot's Google
+  // consent, not through channel-connection rows: the same GET /api/profile
+  // answer the Profilo screen reads. Unreadable stays null and contributes
+  // no vote — an unknown state never poses as connected or missing.
+  try {
+    const answer = await client.request('/api/profile');
+    outcome.profile = answer && typeof answer === 'object' ? answer : null;
+  } catch (error) {
+    noteReadFailure('profile', error);
+    outcome.profile = null;
   }
   outcome.next = nextAppointment(outcome.appointments, now);
   if (outcome.next != null && domains.interactions != null) {
@@ -998,6 +1056,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
+ *     profile?: unknown,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
  *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void },
@@ -1192,11 +1251,14 @@ export function renderOggi({
     const invite = el(doc, 'section', 'bo-oggi-section');
     const names = missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
     // The prototype's headline count: connected of the 9 backoffice
-    // channels, read from the actual connections. Hand-built homes without
-    // connections (tests) fall back to nine minus the missing lead list;
-    // the live view always carries connections, so production never guesses.
+    // channels, read from the actual connections plus the GET /api/profile
+    // Google links (Gmail votes Email, Calendar votes Calendar). Hand-built
+    // homes without connections (tests) fall back to nine minus the missing
+    // lead list; the live view always carries connections, so production
+    // never guesses. The strip lands on #/connettori, whose head is the
+    // Collegamenti Google card with the Collega links.
     const connected = Array.isArray(home.connections)
-      ? countConnectedNine(home.connections)
+      ? countConnectedNine(home.connections, home.profile ?? null)
       : OGGI_TOTAL_CHANNELS - missing.length;
     const anchor = el(doc, 'a', 'bo-oggi-invite', '');
     anchor.appendChild(el(doc, 'strong', undefined, `${connected} di ${OGGI_TOTAL_CHANNELS} collegati`));
@@ -1280,7 +1342,7 @@ export function createOggiView(deps) {
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls })
       : null;
-    const missing = missingLeadChannels(last.connections);
+    const missing = missingLeadChannels(last.connections, last.profile ?? null);
     renderOggi({
       doc,
       mount,
@@ -1298,6 +1360,7 @@ export function createOggiView(deps) {
         brief,
         missing,
         connections: last.connections,
+        profile: last.profile ?? null,
         availability: {
           work: last.workAvailable,
           appointments: last.appointmentsAvailable,
@@ -1429,6 +1492,7 @@ export function createOggiView(deps) {
         last = {
           workAvailable: false, appointmentsAvailable: false, channelsAvailable: false,
           interactionsAvailable: false, tasks: [], appointments: [], connections: [],
+          profile: null,
           briefMessages: [], briefCalls: [], next: null,
         };
       }
