@@ -26,7 +26,7 @@ export class EnrichedFieldService {
     this.manifest = Object.freeze({
       name: "enriched-field",
       table: "enriched_fields",
-      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"subjectResource","column":"subject_resource","type":"string"},{"name":"subjectId","column":"subject_id","type":"string"},{"name":"subjectOwner","column":"subject_owner","type":"enum"},{"name":"subjectOwnerPackage","column":"subject_owner_package","type":"string"},{"name":"subjectLabel","column":"subject_label","type":"string"},{"name":"field","column":"field","type":"string"},{"name":"value","column":"value","type":"string"},{"name":"source","column":"source","type":"string"},{"name":"sourceDetail","column":"source_detail","type":"string"},{"name":"observedAt","column":"observed_at","type":"timestamp"},{"name":"observedByRunId","column":"observed_by_run_id","type":"string"},{"name":"status","column":"status","type":"enum"},{"name":"purgedAt","column":"purged_at","type":"timestamp"},{"name":"purgeReason","column":"purge_reason","type":"string"}]),
+      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"subjectResource","column":"subject_resource","type":"string"},{"name":"subjectId","column":"subject_id","type":"string"},{"name":"subjectOwner","column":"subject_owner","type":"enum"},{"name":"subjectOwnerPackage","column":"subject_owner_package","type":"string"},{"name":"subjectLabel","column":"subject_label","type":"string"},{"name":"field","column":"field","type":"string"},{"name":"value","column":"value","type":"string"},{"name":"source","column":"source","type":"string"},{"name":"sourceDetail","column":"source_detail","type":"string"},{"name":"observedAt","column":"observed_at","type":"timestamp"},{"name":"observedByRunId","column":"observed_by_run_id","type":"string"},{"name":"status","column":"status","type":"enum"},{"name":"purgedAt","column":"purged_at","type":"timestamp"},{"name":"purgeReason","column":"purge_reason","type":"string"},{"name":"decisionReason","column":"decision_reason","type":"string"}]),
     });
   }
 
@@ -83,6 +83,7 @@ export class EnrichedFieldService {
       status: null,
       purgedAt: null,
       purgeReason: null,
+      decisionReason: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -123,13 +124,16 @@ export class EnrichedFieldService {
       enrichedField.observedByRunId = patch.observedByRunId === null ? null : requiredString(patch.observedByRunId, 'observedByRunId');
     }
     if (Object.hasOwn(patch, 'status')) {
-      enrichedField.status = patch.status === null ? null : enumValue(patch.status, ["active", "purged"], 'status');
+      enrichedField.status = patch.status === null ? null : enumValue(patch.status, ["active", "proposed", "dismissed", "purged"], 'status');
     }
     if (Object.hasOwn(patch, 'purgedAt')) {
       enrichedField.purgedAt = patch.purgedAt === null ? null : requiredIsoDate(patch.purgedAt, 'purgedAt');
     }
     if (Object.hasOwn(patch, 'purgeReason')) {
       enrichedField.purgeReason = patch.purgeReason === null ? null : requiredString(patch.purgeReason, 'purgeReason');
+    }
+    if (Object.hasOwn(patch, 'decisionReason')) {
+      enrichedField.decisionReason = patch.decisionReason === null ? null : requiredString(patch.decisionReason, 'decisionReason');
     }
 
     this.#mutation(() => {
@@ -151,6 +155,7 @@ export class EnrichedFieldService {
           { column: 'status', value: enrichedField.status },
           { column: 'purged_at', value: enrichedField.purgedAt },
           { column: 'purge_reason', value: enrichedField.purgeReason },
+          { column: 'decision_reason', value: enrichedField.decisionReason },
           { column: 'created_at', value: enrichedField.createdAt },
           { column: 'updated_at', value: enrichedField.updatedAt }
         ],
@@ -218,7 +223,7 @@ export class EnrichedFieldService {
 
   /** @param {Record<string, unknown>} filters */
   #where(filters) {
-    const columns = {"id":"id","sourceKey":"source_key","subjectResource":"subject_resource","subjectId":"subject_id","subjectOwner":"subject_owner","subjectOwnerPackage":"subject_owner_package","subjectLabel":"subject_label","field":"field","value":"value","source":"source","sourceDetail":"source_detail","observedAt":"observed_at","observedByRunId":"observed_by_run_id","status":"status","purgedAt":"purged_at","purgeReason":"purge_reason"};
+    const columns = {"id":"id","sourceKey":"source_key","subjectResource":"subject_resource","subjectId":"subject_id","subjectOwner":"subject_owner","subjectOwnerPackage":"subject_owner_package","subjectLabel":"subject_label","field":"field","value":"value","source":"source","sourceDetail":"source_detail","observedAt":"observed_at","observedByRunId":"observed_by_run_id","status":"status","purgedAt":"purged_at","purgeReason":"purge_reason","decisionReason":"decision_reason"};
     /** @type {string[]} */
     const predicates = [];
     for (const [field, value] of Object.entries(filters ?? {})) {
@@ -308,7 +313,7 @@ export class EnrichedFieldService {
         changes.observedByRunId = value;
       }
       if (Object.hasOwn(patch, 'status')) {
-        const value = patch.status === null ? null : enumValue(patch.status, ["active", "purged"], 'status');
+        const value = patch.status === null ? null : enumValue(patch.status, ["active", "proposed", "dismissed", "purged"], 'status');
         assignments.push({ column: 'status', value: value });
         changes.status = value;
       }
@@ -321,6 +326,11 @@ export class EnrichedFieldService {
         const value = patch.purgeReason === null ? null : requiredString(patch.purgeReason, 'purgeReason');
         assignments.push({ column: 'purge_reason', value: value });
         changes.purgeReason = value;
+      }
+      if (Object.hasOwn(patch, 'decisionReason')) {
+        const value = patch.decisionReason === null ? null : requiredString(patch.decisionReason, 'decisionReason');
+        assignments.push({ column: 'decision_reason', value: value });
+        changes.decisionReason = value;
       }
 
     if (!assignments.length) return this.get(id);
@@ -365,6 +375,7 @@ function mapEnrichedFieldRow(row) {
     status: row.status,
     purgedAt: row.purged_at,
     purgeReason: row.purge_reason,
+    decisionReason: row.decision_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

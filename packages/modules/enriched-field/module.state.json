@@ -1,13 +1,13 @@
 {
   "stateVersion": 2,
   "module": "enriched-field",
-  "revision": 1,
-  "fingerprint": "9e172ff3bcbe0cfcc92a1b57a66ce249ce62866677a56ab426bdda9730bf7b34",
+  "revision": 2,
+  "fingerprint": "159977811f93bb13cafcb8dc62c62079f6a0e6d4f3a4b667322a82201cb1cda3",
   "manifest": {
     "manifestVersion": 1,
-    "revision": 1,
+    "revision": 2,
     "name": "enriched-field",
-    "description": "One contact attribute filled from a free enrichment source (Google Contacts, an email signature), held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
+    "description": "One contact attribute filled from a free enrichment source (Google Contacts, an email signature) or proposed by an AI extraction over the customer's linked sources, held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
     "table": "enriched_fields",
     "fields": [
       {
@@ -124,6 +124,8 @@
         "writable": "managed",
         "values": [
           "active",
+          "proposed",
+          "dismissed",
           "purged"
         ]
       },
@@ -142,6 +144,14 @@
         "unique": false,
         "column": "purge_reason",
         "writable": "managed"
+      },
+      {
+        "name": "decisionReason",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "decision_reason",
+        "writable": "managed"
       }
     ]
   },
@@ -150,6 +160,11 @@
       "name": "create_enriched_fields",
       "checksum": "763e9afa35f299980ca88986afa0906717d0b0e6f2d35816bf4c70ad22995239",
       "sql": "CREATE TABLE IF NOT EXISTS enriched_fields (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  subject_resource TEXT,\n  subject_id TEXT,\n  subject_owner TEXT CHECK(subject_owner IN ('host', 'package')),\n  subject_owner_package TEXT,\n  subject_label TEXT,\n  field TEXT,\n  value TEXT,\n  source TEXT,\n  source_detail TEXT,\n  observed_at TEXT,\n  observed_by_run_id TEXT,\n  status TEXT CHECK(status IN ('active', 'purged')),\n  purged_at TEXT,\n  purge_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS enriched_fields_subject_resource ON enriched_fields(subject_resource);\nCREATE INDEX IF NOT EXISTS enriched_fields_subject_id ON enriched_fields(subject_id);\nCREATE INDEX IF NOT EXISTS enriched_fields_field ON enriched_fields(field);\nCREATE INDEX IF NOT EXISTS enriched_fields_source ON enriched_fields(source);\nCREATE INDEX IF NOT EXISTS enriched_fields_status ON enriched_fields(status);\n"
+    },
+    {
+      "name": "evolve_enriched_fields_r2",
+      "checksum": "5521ba6955c38ccaf7989771db5e27cb78cc10d71fbfab88e890a46905132166",
+      "sql": "CREATE TABLE enriched_fields__evolve__r2 (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  subject_resource TEXT,\n  subject_id TEXT,\n  subject_owner TEXT CHECK(subject_owner IN ('host', 'package')),\n  subject_owner_package TEXT,\n  subject_label TEXT,\n  field TEXT,\n  value TEXT,\n  source TEXT,\n  source_detail TEXT,\n  observed_at TEXT,\n  observed_by_run_id TEXT,\n  status TEXT CHECK(status IN ('active', 'proposed', 'dismissed', 'purged')),\n  purged_at TEXT,\n  purge_reason TEXT,\n  decision_reason TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nINSERT INTO enriched_fields__evolve__r2 (id, source_key, subject_resource, subject_id, subject_owner, subject_owner_package, subject_label, field, value, source, source_detail, observed_at, observed_by_run_id, status, purged_at, purge_reason, created_at, updated_at) SELECT id, source_key, subject_resource, subject_id, subject_owner, subject_owner_package, subject_label, field, value, source, source_detail, observed_at, observed_by_run_id, status, purged_at, purge_reason, created_at, updated_at FROM enriched_fields;\nDROP TABLE enriched_fields;\nALTER TABLE enriched_fields__evolve__r2 RENAME TO enriched_fields;\nCREATE INDEX IF NOT EXISTS enriched_fields_subject_resource ON enriched_fields(subject_resource);\nCREATE INDEX IF NOT EXISTS enriched_fields_subject_id ON enriched_fields(subject_id);\nCREATE INDEX IF NOT EXISTS enriched_fields_field ON enriched_fields(field);\nCREATE INDEX IF NOT EXISTS enriched_fields_source ON enriched_fields(source);\nCREATE INDEX IF NOT EXISTS enriched_fields_status ON enriched_fields(status);\n"
     }
   ],
   "postgres": {
@@ -162,6 +177,12 @@
         "fingerprint": "9e172ff3bcbe0cfcc92a1b57a66ce249ce62866677a56ab426bdda9730bf7b34"
       }
     },
-    "evolutions": []
+    "evolutions": [
+      {
+        "name": "pg_evolve_enriched_fields_r2",
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nALTER TABLE \"accordo\".\"enriched_fields\" ADD COLUMN \"decision_reason\" TEXT;\n\nALTER TABLE \"accordo\".\"enriched_fields\" DROP CONSTRAINT IF EXISTS \"enriched_fields_status_check\";\nALTER TABLE \"accordo\".\"enriched_fields\" ADD CONSTRAINT \"enriched_fields_status_check\" CHECK (\"status\" IN ('active', 'proposed', 'dismissed', 'purged'));\n",
+        "checksum": "15601532323159362f93f6d463d59f621d51daada7bf1d9689fa66e2cdec624b"
+      }
+    ]
   }
 }

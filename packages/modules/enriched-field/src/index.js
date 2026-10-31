@@ -8,7 +8,7 @@ import { EnrichedFieldService } from './enriched-field-service.js';
 export const enrichedFieldModuleDefinition = Object.freeze({
   name: 'enriched-field',
   version: '0.1.0',
-  description: "One contact attribute filled from a free enrichment source (Google Contacts, an email signature), held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
+  description: "One contact attribute filled from a free enrichment source (Google Contacts, an email signature) or proposed by an AI extraction over the customer's linked sources, held beside the contact record rather than inside it. The contact record is never written by enrichment, so a manually entered value always wins by construction. Every row carries its source and observation date; an opt-out purges the active rows of its subject.",
   // The static contract that exposes this module through the generic
   // /api/modules surface and client.module('enriched-field') (ADR-008).
   kind: 'generated',
@@ -34,16 +34,17 @@ export const enrichedFieldModuleDefinition = Object.freeze({
     {"name":"sourceDetail","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"observedAt","type":"timestamp","required":false,"unique":false,"writable":"managed"},
     {"name":"observedByRunId","type":"string","required":false,"unique":false,"writable":"managed"},
-    {"name":"status","type":"enum","required":false,"unique":false,"writable":"managed","values":["active","purged"]},
+    {"name":"status","type":"enum","required":false,"unique":false,"writable":"managed","values":["active","proposed","dismissed","purged"]},
     {"name":"purgedAt","type":"timestamp","required":false,"unique":false,"writable":"managed"},
     {"name":"purgeReason","type":"string","required":false,"unique":false,"writable":"managed"},
+    {"name":"decisionReason","type":"string","required":false,"unique":false,"writable":"managed"},
   ]),
   references: Object.freeze([]),
   immutableFields: Object.freeze(['id', 'createdAt', 'updatedAt']),
   entities: [
     {
       name: 'enriched-field',
-      fields: ['id', 'sourceKey', 'subjectResource', 'subjectId', 'subjectOwner', 'subjectOwnerPackage', 'subjectLabel', 'field', 'value', 'source', 'sourceDetail', 'observedAt', 'observedByRunId', 'status', 'purgedAt', 'purgeReason', 'createdAt', 'updatedAt'],
+      fields: ['id', 'sourceKey', 'subjectResource', 'subjectId', 'subjectOwner', 'subjectOwnerPackage', 'subjectLabel', 'field', 'value', 'source', 'sourceDetail', 'observedAt', 'observedByRunId', 'status', 'purgedAt', 'purgeReason', 'decisionReason', 'createdAt', 'updatedAt'],
     },
   ],
 });
