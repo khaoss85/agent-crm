@@ -2,6 +2,7 @@
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError, isNotComposedFailure } from './admin-core.js';
+import { matchConnections } from './admin-connectors.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 
 /**
@@ -26,8 +27,10 @@ import { writePendingCustomerPick } from './admin-prefill.js';
  * themselves — never an empty value that could be mistaken for "none",
  * never an English system reason, id or ISO date on screen (those live on
  * in the API responses and the logs). The
- * reply composer (BO-F1-07) is deliberately not here: it is its own story
- * with its own gate (approval). The call summary with signals and
+ * message composer «Scrivi» (BO-F1-07, backlog:e9b4fc2f) IS here: the
+ * operator writes inside the scheda, choosing the channel among the
+ * customer's own, and Invia queues through the outbox — the human click is
+ * the approval, the worker sends. The call summary with signals and
  * transcript (BO-F1-08) IS here, read from the call-intelligence
  * operations: a call exists only under a recorded start-of-call notice,
  * and a transcript erased by retention reads as erased, never as missing.
@@ -57,6 +60,9 @@ const CHANNEL_LABELS = Object.freeze({
   web: 'Sito',
   form: 'Form sito',
 });
+
+/** The composer channel order (backlog:e9b4fc2f): Email first, like the prototype's quick actions. */
+const COMPOSER_CHANNEL_ORDER = Object.freeze(['email', 'whatsapp', 'instagram', 'facebook', 'sms']);
 
 /** Delivery/sync state, inbound or outbound, in the operator's words. */
 const SYNC_LABELS = Object.freeze({
@@ -532,7 +538,58 @@ export function createCustomerCardView(deps) {
     return { resource, id, name, company };
   }
 
-  function quickActions(box, card, navCtx) {
+  /**
+   * The channels the «Scrivi» composer offers (backlog:e9b4fc2f): Email
+   * through the linked Gmail, WhatsApp, Instagram, Messenger, SMS — the
+   * same five the server route accepts, so the screen can never offer one
+   * the send refuses. `facebook` is the Messenger connection channel, like
+   * the scheda labels it; every row is text, never a raw channel key.
+   * @param {any} card the frozen card from `read-customer-card`
+   * @param {unknown} connections the sync-state entries (`GET /api/connectors`), or null before they load
+   */
+  function composerChannelsFor(card, connections) {
+    const list = Array.isArray(connections) ? connections : [];
+    const socials = Array.isArray(card?.socials) ? card.socials : [];
+    const handleFor = (system) => {
+      const found = socials.find((row) => String(row?.system ?? '').toLowerCase() === system
+        && typeof row?.handle === 'string' && row.handle.trim() !== '');
+      return found ? found.handle.trim() : null;
+    };
+    const phone = card?.phone?.available === true
+      && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
+    const recipientFor = (channel) => {
+      if (channel === 'email') {
+        return typeof card?.email === 'string' && card.email.trim() !== '' ? card.email.trim() : null;
+      }
+      if (channel === 'whatsapp' || channel === 'sms') return phone;
+      return handleFor(channel === 'instagram' ? 'instagram' : 'facebook');
+    };
+    return COMPOSER_CHANNEL_ORDER.map((channel) => {
+      const recipient = recipientFor(channel);
+      const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      return Object.freeze({
+        channel,
+        label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
+        recipient,
+        connected: live !== null,
+        connectionKey: live?.connectionKey ?? null,
+      });
+    });
+  }
+
+  /** One fresh idempotency key per send: retries reuse it, two sends never share it. */
+  function freshMessageKey() {
+    try {
+      const uuid = globalThis.crypto?.randomUUID?.();
+      if (typeof uuid === 'string' && uuid !== '') return uuid;
+    } catch {
+      // No secure randomness here: the dated fallback below stays unique.
+    }
+    return `composer-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffffff).toString(36)}`;
+  }
+
+  function quickActions(box, card, navCtx, extra = {}) {
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
     if (card?.phone?.available === true && card.phone.value) {
@@ -545,14 +602,158 @@ export function createCustomerCardView(deps) {
       // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
     }
-    if (typeof card?.email === 'string' && card.email !== '') {
-      const mail = link(`mailto:${card.email}`, 'Email', 'mail-customer');
-      mail.setAttribute('class', 'bo-scheda-tile');
-      mail.setAttribute('title', `Scrivi a ${card.email}`);
-      row.appendChild(mail);
+    // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
+    // inside the scheda, and Invia sends through the outbox worker.
+    const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
+    if (writable.length === 0) {
+      row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
     } else {
-      row.appendChild(el('span', 'bo-scheda-disabled', 'email non disponibile'));
+      const write = el('button', 'bo-scheda-tile', 'Scrivi');
+      write.setAttribute('type', 'button');
+      write.setAttribute('data-action', 'compose-message');
+      write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
+      write.addEventListener('click', () => {
+        openComposer(box, card, navCtx);
+      });
+      row.appendChild(write);
     }
+  /**
+   * The «Scrivi» composer panel (backlog:e9b4fc2f): channel choice among
+   * the customer's own channels, preselected recipient, text, Invia.
+   * A channel without a connection reads switched off with its link to
+   * Connettori; a channel without any address names that instead. Invia
+   * queues through `POST /api/customer-hub/messages` — the recipient
+   * stays server-derived, the panel only shows it.
+   */
+  function openComposer(box, card, navCtx) {
+    const old = box.querySelector('div[data-composer="open"]');
+    if (old) {
+      while (old.firstChild) old.removeChild(old.firstChild);
+    }
+    const panel = old ?? el('div', 'bo-scheda-composer');
+    panel.setAttribute('data-composer', 'open');
+    if (!old) box.appendChild(panel);
+    panel.appendChild(el('h4', undefined, 'Scrivi al cliente'));
+    const spaceId = activeSpaceId();
+    if (spaceId === null) {
+      panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per collegare i canali e inviare.'));
+      return;
+    }
+    const wait = el('p', 'bo-muted', 'Leggo i canali collegati…');
+    panel.appendChild(wait);
+    client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
+      (sync) => {
+        panel.removeChild(wait);
+        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : []);
+      },
+      (error) => {
+        panel.removeChild(wait);
+        if (isNotComposedFailure(error)) {
+          buildComposerForm(panel, card, navCtx, spaceId, []);
+          return;
+        }
+        panel.appendChild(el('p', 'field-error', humanReadError(error, {
+          failed: 'I canali non si sono potuti leggere. Riprova più tardi.',
+        })));
+      },
+    );
+  }
+
+  function buildComposerForm(panel, card, navCtx, spaceId, connections) {
+    const channels = composerChannelsFor(card, connections);
+    const list = el('div', 'bo-scheda-composer-channels');
+    const toLine = el('p', 'bo-muted', '');
+    const subjectHolder = el('div', undefined, '');
+    const text = el('textarea', 'bo-scheda-composer-text');
+    text.setAttribute('rows', '4');
+    text.setAttribute('placeholder', 'Scrivi il messaggio…');
+    const err = el('p', 'field-error', '');
+    const send = el('button', undefined, 'Invia');
+    send.setAttribute('type', 'button');
+    send.setAttribute('data-action', 'composer-send');
+    let selected = null;
+    let subjectInput = null;
+    const radios = [];
+    const select = (entry) => {
+      selected = entry;
+      for (const row of radios) row.radio.checked = row.entry === entry;
+      toLine.textContent = `A: ${entry.recipient}`;
+      if (subjectInput !== null) {
+        subjectHolder.removeChild(subjectInput);
+        subjectInput = null;
+      }
+      if (entry.channel === 'email') {
+        subjectInput = el('input', 'bo-scheda-composer-subject');
+        subjectInput.setAttribute('type', 'text');
+        subjectInput.setAttribute('placeholder', 'Oggetto (facoltativo)');
+        subjectInput.setAttribute('maxlength', '256');
+        subjectHolder.appendChild(subjectInput);
+      }
+    };
+    for (const entry of channels) {
+      const row = el('label', 'bo-scheda-composer-channel');
+      const radio = el('input', undefined, '');
+      radio.setAttribute('type', 'radio');
+      radio.setAttribute('name', 'composer-channel');
+      radio.setAttribute('value', entry.channel);
+      row.appendChild(radio);
+      row.appendChild(el('span', undefined, entry.label));
+      const usable = entry.recipient !== null && entry.connected;
+      if (entry.recipient === null) {
+        radio.setAttribute('disabled', 'disabled');
+        row.appendChild(el('span', 'bo-muted', ' — nessun indirizzo su questo canale'));
+      } else if (!entry.connected) {
+        radio.setAttribute('disabled', 'disabled');
+        row.appendChild(el('span', 'bo-muted', ` — ${entry.recipient}, non collegato `));
+        row.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      } else {
+        row.appendChild(el('span', 'bo-muted', ` — a ${entry.recipient} (collegato)`));
+        radio.addEventListener('click', () => select(entry));
+        if (selected === null) selected = entry;
+      }
+      list.appendChild(row);
+      radios.push({ entry, radio });
+    }
+    panel.appendChild(list);
+    panel.appendChild(toLine);
+    panel.appendChild(subjectHolder);
+    panel.appendChild(text);
+    panel.appendChild(send);
+    panel.appendChild(err);
+    if (selected !== null) select(selected);
+    else send.setAttribute('disabled', 'disabled');
+    let busy = false;
+    send.addEventListener('click', async () => {
+      if (busy || selected === null) return;
+      if (text.value.trim() === '') {
+        err.textContent = 'Scrivi il messaggio prima di inviarlo.';
+        return;
+      }
+      busy = true;
+      err.textContent = '';
+      try {
+        const payload = {
+          spaceId,
+          resource: navCtx.resource,
+          id: navCtx.id,
+          channel: selected.channel,
+          text: text.value,
+          messageKey: freshMessageKey(),
+        };
+        if (selected.connectionKey !== null) payload.connectionKey = selected.connectionKey;
+        if (selected.channel === 'email' && subjectInput !== null && subjectInput.value.trim() !== '') {
+          payload.subject = subjectInput.value.trim();
+        }
+        await client.request('/api/customer-hub/messages', { method: 'POST', body: JSON.stringify(payload) });
+        toast('Messaggio in consegna');
+        await renderCard(navCtx.resource, navCtx.id);
+      } catch (error) {
+        err.textContent = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
+      } finally {
+        busy = false;
+      }
+    });
+  }
     // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
     // creation flows with this customer already chosen. The pick travels
     // as a one-time handoff the target screen takes on render (the router

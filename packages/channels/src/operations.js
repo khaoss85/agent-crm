@@ -1,5 +1,6 @@
 // @ts-check
 
+import { createHash } from 'node:crypto';
 import {
   AppError,
   SENSITIVE_KEY,
@@ -314,6 +315,7 @@ const SYSTEM = () => trustedSystemActor('channel package internal write');
  *   resolveSecret: (reference: string, context: {spaceId: string, purpose: string}) => Promise<string>,
  *   tenantId: string,
  *   config?: Record<string, any>,
+ *   interactionLog?: { logMessage: (request: any) => Promise<any> } | null,
  * }} deps `resolveSecret` is the deployment's custody edge (platform
  * runtime-vault in production, a fixture map in tests): the reference is
  * stored, the value is resolved at call time and never persisted.
@@ -378,6 +380,18 @@ export function createChannelOperations(deps) {
   if (llm !== null && (typeof llm !== 'object' || typeof llm.complete !== 'function')) {
     throw new ValidationError('channel llm must open the composed llm-complete@1 capability (complete)', {
       field: 'llm',
+    });
+  }
+  // The opened `interaction-log@1` handle (backlog:e9b4fc2f): the scheda
+  // cliente composer. Optional: without it a queued send still sends, but
+  // the worker logs no timeline row — the host keeps logging sends itself,
+  // exactly as before. Opened by the composition with the channels package
+  // as consumer and a system writer actor, so the logged row carries the
+  // worker as writer and the sending human as team author.
+  const interactionLog = deps.interactionLog ?? null;
+  if (interactionLog !== null && (typeof interactionLog !== 'object' || typeof interactionLog.logMessage !== 'function')) {
+    throw new ValidationError('channel interactionLog must open the composed interaction-log@1 capability (logMessage)', {
+      field: 'interactionLog',
     });
   }
   const sendTimeoutMs = Number.isSafeInteger(deps.config?.sendTimeoutMs) ? deps.config.sendTimeoutMs : CHANNEL_SEND_TIMEOUT_MS;
@@ -1802,6 +1816,52 @@ export function createChannelOperations(deps) {
    * carries routing and content only — the handler resolves the secret at
    * execution time, so no secret material ever rests in the jobs table.
    */
+  /**
+   * The host subject one queued send belongs to (backlog:e9b4fc2f): the
+   * scheda cliente composer names the customer record the message is sent
+   * to, so the worker can log the proven send as that subject's outbound
+   * timeline row. Validated here, fail-fast: a subject the timeline would
+   * refuse must refuse the queue, never a dead letter after the send.
+   * Absent means no host row — the send still sends, exactly as before.
+   */
+  function assertTimelineRequest(value) {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) {
+      throw new ValidationError('timeline must be an object naming the host subject', { field: 'timeline' });
+    }
+    const subject = /** @type {any} */ (value).subject;
+    if (!subject || typeof subject !== 'object' || Array.isArray(subject)) {
+      throw new ValidationError('timeline.subject is required', { field: 'timeline.subject' });
+    }
+    const resource = typeof subject.resource === 'string' ? subject.resource.trim() : '';
+    const id = typeof subject.id === 'string' ? subject.id.trim() : '';
+    if (resource === '' || resource.length > 64 || id === '' || id.length > 128) {
+      throw new ValidationError('timeline.subject needs a bounded resource and id', { field: 'timeline.subject' });
+    }
+    const owner = subject.owner === undefined ? 'host' : subject.owner;
+    if (owner !== 'host' && owner !== 'package') {
+      throw new ValidationError('timeline.subject.owner must be "host" or "package"', { field: 'timeline.subject' });
+    }
+    const ownerPackage = owner === 'package'
+      ? (typeof subject.ownerPackage === 'string' ? subject.ownerPackage.trim() : '')
+      : null;
+    if (owner === 'package' && ownerPackage === '') {
+      throw new ValidationError('timeline.subject.ownerPackage is required when owner is "package"', { field: 'timeline.subject' });
+    }
+    const conversationId = /** @type {any} */ (value).conversationId;
+    if (conversationId !== undefined && conversationId !== null
+      && (typeof conversationId !== 'string' || conversationId.trim() === '' || conversationId.length > 128)) {
+      throw new ValidationError('timeline.conversationId must be bounded text when present', { field: 'timeline.conversationId' });
+    }
+    return {
+      subject: {
+        resource, id, owner,
+        ...(ownerPackage === null ? {} : { ownerPackage }),
+      },
+      ...(conversationId === undefined || conversationId === null ? {} : { conversationId: conversationId.trim() }),
+    };
+  }
+
   async function queueChannelSend(params) {
     const actor = requireUser(params?.actor);
     const spaceId = assertSpaceId(params?.spaceId);
@@ -1809,6 +1869,7 @@ export function createChannelOperations(deps) {
     const connection = requireActiveConnection(spaceId, connectionKey);
     const { definition: adapter } = registries.getAdapter(connection.adapter, connection.adapterVersion);
     const message = normalizeOutboundMessage(adapter, spaceId, connection, params?.message);
+    const timeline = assertTimelineRequest(params?.timeline);
     const messageKey = typeof params?.messageKey === 'string' && params.messageKey !== ''
       ? params.messageKey : null;
     const keyInput = messageKey ?? fingerprintPayload(JSON.stringify(message));
@@ -1818,7 +1879,15 @@ export function createChannelOperations(deps) {
       job = await jobs().enqueue({
         kind: CHANNEL_SEND_KIND,
         handler: { name: CHANNEL_SEND_HANDLER, contract: CHANNEL_SEND_CONTRACT, version: CHANNEL_SEND_VERSION },
-        payload: { spaceId, connectionKey: connection.sourceKey, idempotencyKey, message },
+        payload: {
+          spaceId,
+          connectionKey: connection.sourceKey,
+          idempotencyKey,
+          message,
+          ...(timeline === null ? {} : {
+            timeline: { ...timeline, teamAuthorId: actorId(actor) },
+          }),
+        },
         idempotencyRoot: idempotencyKey,
         outcomeReference: idempotencyKey,
         recoveryPolicy: 'reconcilable_at_least_once',
@@ -2323,6 +2392,56 @@ export function createChannelOperations(deps) {
    * attempts remain. Anything else is terminal: the real code lands in the
    * dead-letter row first, then the job settles terminal.
    */
+  /**
+   * The provenance the worker stamps on the rows it logs (backlog:e9b4fc2f):
+   * the composition opens `interaction-log@1` with the channels package as
+   * consumer, so the request must name it — any other package is refused by
+   * the capability binding, never quietly stored.
+   */
+  const CHANNEL_TIMELINE_SOURCE_PACKAGE = 'channels';
+  const CHANNEL_TIMELINE_SOURCE_ACTION = 'channel-send';
+
+  /**
+   * Log one proven provider send as its subject's outbound timeline row.
+   * Text-only: template sends carry no loggable text, so the provider
+   * receipt stays their only record and no row is faked for them. The row
+   * key derives from the send idempotency key, so a worker retry replays
+   * the same row instead of writing a second one. Throws on any refusal —
+   * the caller settles terminal, never a retry past a completed send.
+   */
+  async function logSentTimeline({ timeline, connection, adapter, message, providerMessageId, idempotencyKey }) {
+    const text = typeof message?.text === 'string' ? message.text : '';
+    if (text === '') return;
+    const keyHash = createHash('sha256').update(idempotencyKey, 'utf8').digest('hex');
+    const explicit = typeof timeline.conversationId === 'string' ? timeline.conversationId : null;
+    const threadId = message && typeof message.threadId === 'string' ? message.threadId : null;
+    let conversationId = explicit;
+    if (conversationId === null) {
+      if (threadId !== null) {
+        conversationId = `email:${threadId}`;
+      } else {
+        const peer = typeof message?.to === 'string' ? message.to : null;
+        const subjectForRecipient = adapter?.outboundWindow?.subjectForRecipient;
+        conversationId = (peer !== null && typeof subjectForRecipient === 'function')
+          ? subjectForRecipient(peer)
+          : `${connection.channel}:${providerMessageId}`;
+      }
+    }
+    await interactionLog.logMessage({
+      sourceKey: `${CHANNEL_TIMELINE_SOURCE_PACKAGE}-send:${keyHash}`,
+      conversationId,
+      direction: 'outbound',
+      channel: connection.channel,
+      body: text,
+      attachment: null,
+      teamAuthorId: timeline.teamAuthorId,
+      remoteHandle: typeof message?.to === 'string' ? message.to : null,
+      subject: timeline.subject,
+      occurredAt: nowIso(),
+      source: { package: CHANNEL_TIMELINE_SOURCE_PACKAGE, action: CHANNEL_TIMELINE_SOURCE_ACTION },
+    });
+  }
+
   function registerChannelSendHandlers(registry) {
     registry.register({
       kind: CHANNEL_SEND_KIND,
@@ -2409,6 +2528,22 @@ export function createChannelOperations(deps) {
           const providerMessageId = sent && typeof sent.providerMessageId === 'string' ? sent.providerMessageId : '';
           if (providerMessageId === '' || providerMessageId.length > 256) {
             return failTerminal('CHANNEL_SEND_UNPROVEN');
+          }
+          // The scheda cliente composer (backlog:e9b4fc2f): a proven send
+          // with a host subject becomes that subject's outbound timeline
+          // row, so the message the operator just sent reads back in the
+          // scheda cronologia. The row is idempotent on the send key — a
+          // worker retry replays it, never a second row. A refused row is
+          // terminal, never a retry: the provider already sent, so retrying
+          // would send twice.
+          const timeline = body.timeline && typeof body.timeline === 'object' && !Array.isArray(body.timeline)
+            ? body.timeline : null;
+          if (timeline !== null && interactionLog !== null) {
+            try {
+              await logSentTimeline({ timeline, connection, adapter, message, providerMessageId, idempotencyKey });
+            } catch (error) {
+              return failTerminal('CHANNEL_TIMELINE_UNLOGGED');
+            }
           }
           return { outcomeReference: idempotencyKey };
         } catch (error) {

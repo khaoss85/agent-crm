@@ -658,6 +658,135 @@ export function buildRouter(app) {
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
 
+  // Scheda cliente composer «Scrivi» (backlog:e9b4fc2f): the quick-action
+  // mailto: link is gone — the operator writes inside the /bo, choosing the
+  // channel among the customer's own (Email via the linked Gmail, WhatsApp,
+  // Instagram, Messenger, SMS), with the recipient preselected, and the
+  // message goes through the durable-jobs outbox (the worker sends, then
+  // logs the proven send as the subject's outbound timeline row, so it
+  // reads back in the scheda cronologia). Same enumerated-adapter shape as
+  // the routes above: the kernel owns the path, gates records.write, and
+  // delegates to the composed operations — without channels or the hub
+  // composed each answers an honest 404. The recipient is ALWAYS
+  // server-derived from the card: a caller-supplied `to` is ignored, never
+  // trusted, so the composer cannot be turned into an arbitrary send tool.
+  // No attachment in v1: no outbound adapter carries one, so an attachment
+  // field would either lie or silently drop — it rides a follow-up voce.
+  router.add('POST', '/api/customer-hub/messages', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.queueChannelSend !== 'function') {
+      throw new NotFoundError('Operation', 'channel send');
+    }
+    if (typeof app.readCustomerCard !== 'function') {
+      throw new NotFoundError('Operation', 'customer card');
+    }
+    if (typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync state');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a composed message needs resource contact or company', { field: 'resource' });
+    }
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    if (spaceId.trim() === '') {
+      throw new ValidationError('a composed message needs its spaceId', { field: 'spaceId' });
+    }
+    const channel = typeof input.channel === 'string' ? input.channel.trim().toLowerCase() : '';
+    if (!COMPOSER_CHANNELS.includes(channel)) {
+      throw new ValidationError(`channel must be one of ${COMPOSER_CHANNELS.join(', ')}`, { field: 'channel' });
+    }
+    const text = typeof input.text === 'string' ? input.text : '';
+    if (text.trim() === '' || text.length > 30000) {
+      throw new ValidationError('a composed message needs non-empty text (at most 30000 chars)', { field: 'text' });
+    }
+    let subject;
+    if (input.subject !== undefined && input.subject !== null) {
+      if (channel !== 'email') {
+        throw new ValidationError('only email carries a subject line', { field: 'subject' });
+      }
+      if (typeof input.subject !== 'string' || input.subject.trim() === ''
+        || input.subject.length > 256 || /[\r\n]/.test(input.subject)) {
+        throw new ValidationError('subject must be bounded single-line text when present', { field: 'subject' });
+      }
+      subject = input.subject.trim();
+    }
+    const messageKey = typeof input.messageKey === 'string' ? input.messageKey : '';
+    if (messageKey === '' || messageKey.length > 128 || COMPOSER_CONTROL_RE.test(messageKey)) {
+      throw new ValidationError('messageKey must be bounded single-line text: one fresh key per send', { field: 'messageKey' });
+    }
+    const wantedKey = typeof input.connectionKey === 'string' && input.connectionKey !== ''
+      ? input.connectionKey : null;
+
+    const card = await app.readCustomerCard({ resource: input.resource, id: String(input.id ?? '') });
+    const to = composerRecipient(card, channel);
+    if (to === null) {
+      throw new AppError(`This customer has no address on ${channel}: link it before writing`, {
+        code: 'CHANNEL_COMPOSER_NO_RECIPIENT', status: 409,
+      });
+    }
+    const sync = await app.readSyncState({ spaceId });
+    const candidates = Array.isArray(sync?.connectors) ? sync.connectors.filter((entry) => entry
+      && typeof entry === 'object' && entry.channel === channel && entry.status === 'active'
+      && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') : [];
+    let connection = null;
+    if (wantedKey !== null) {
+      connection = candidates.find((entry) => entry.connectionKey === wantedKey) ?? null;
+      if (connection === null) {
+        throw new AppError('Unknown channel connection for this space and channel', {
+          code: 'CHANNEL_CONNECTION_UNKNOWN', status: 404,
+        });
+      }
+    } else if (candidates.length === 1) {
+      connection = candidates[0];
+    } else if (candidates.length === 0) {
+      throw new AppError(`No linked ${channel} connection in this space: open Connettori first`, {
+        code: 'CHANNEL_CONNECTION_NOT_ACTIVE', status: 409,
+      });
+    } else {
+      throw new AppError(`Several linked ${channel} connections: name its connectionKey`, {
+        code: 'CHANNEL_CONNECTION_AMBIGUOUS', status: 409,
+      });
+    }
+
+    // Email stays in the customer's thread: the latest email passage names
+    // it, so the reply the worker sends lands in the same Gmail thread and
+    // the logged row groups with it. Without one the provider opens a new
+    // thread and the row names the assigned message instead.
+    let conversationId;
+    let threadId;
+    if (channel === 'email' && typeof app.readCustomerTimeline === 'function') {
+      const found = await latestEmailThread(app, { resource: input.resource, id: String(input.id ?? '') });
+      conversationId = found?.conversationId;
+      threadId = found?.threadId;
+    }
+    const message = { to, text };
+    if (subject !== undefined) message.subject = subject;
+    if (threadId !== undefined) message.threadId = threadId;
+    const queued = await app.queueChannelSend({
+      actor,
+      spaceId,
+      connectionKey: connection.connectionKey,
+      message,
+      messageKey,
+      timeline: {
+        subject: { resource: input.resource, id: String(input.id ?? ''), owner: 'host' },
+        ...(conversationId === undefined ? {} : { conversationId }),
+      },
+    });
+    return respond(201, {
+      channel,
+      to,
+      connectionKey: connection.connectionKey,
+      jobId: queued.jobId,
+      idempotencyKey: queued.idempotencyKey,
+      state: queued.state,
+    });
+  });
+
   // Call intelligence (BO-F1-08): the notice, the transcript, its summary
   // and the customer calls read for the scheda cliente. The same
   // enumerated-adapter shape as the hub routes above: the kernel owns the
@@ -1668,6 +1797,61 @@ function recordInput(body) {
     throw new ValidationError('Request body must be a JSON object');
   }
   return body;
+}
+
+// eslint-disable-next-line no-control-regex
+const COMPOSER_CONTROL_RE = /[\u0000-\u001f\u007f]/;
+
+/**
+ * The channels the scheda composer «Scrivi» offers (backlog:e9b4fc2f): Email
+ * sends through the linked Gmail connection, the others through their own
+ * connection. `facebook` is the Messenger connection channel, like the
+ * scheda labels it; `sms` has no adapter yet, so it always reads
+ * unconnected until one exists.
+ */
+const COMPOSER_CHANNELS = Object.freeze(['email', 'whatsapp', 'instagram', 'facebook', 'sms']);
+
+/**
+ * The customer's own recipient for one composer channel, read from the
+ * card — never from the request body. Null when the customer holds no
+ * address there: the route refuses instead of inventing one.
+ * @param {any} card the frozen card from `read-customer-card`
+ * @param {string} channel one of COMPOSER_CHANNELS
+ * @returns {string|null} the preselected recipient, or null when missing
+ */
+function composerRecipient(card, channel) {
+  if (channel === 'email') {
+    return typeof card?.email === 'string' && card.email.trim() !== '' ? card.email.trim() : null;
+  }
+  if (channel === 'whatsapp' || channel === 'sms') {
+    return card?.phone?.available === true && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
+  }
+  const system = channel === 'instagram' ? 'instagram' : 'facebook';
+  const socials = Array.isArray(card?.socials) ? card.socials : [];
+  const found = socials.find((row) => String(row?.system ?? '').toLowerCase() === system
+    && typeof row?.handle === 'string' && row.handle.trim() !== '');
+  return found ? found.handle.trim() : null;
+}
+
+/**
+ * The customer's latest email thread, newest passage first
+ * (backlog:e9b4fc2f): the composer reply stays in the same Gmail thread
+ * instead of opening one per send. Null when the customer has no email
+ * passage yet — the provider then opens a new thread.
+ */
+async function latestEmailThread(app, subject) {
+  const timeline = await app.readCustomerTimeline({ resource: subject.resource, id: subject.id });
+  const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  const mails = items
+    .filter((row) => row?.entry === 'message' && row?.channel === 'email'
+      && typeof row.conversationId === 'string' && row.conversationId.startsWith('email:'))
+    .sort((left, right) => String(right.occurredAt ?? '').localeCompare(String(left.occurredAt ?? '')));
+  const newest = mails[0] ?? null;
+  if (newest === null) return null;
+  const threadId = newest.conversationId.slice('email:'.length);
+  if (threadId === '' || threadId.length > 128 || /\s/.test(threadId)) return null;
+  return { conversationId: newest.conversationId, threadId };
 }
 
 /**
