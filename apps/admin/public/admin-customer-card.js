@@ -710,6 +710,17 @@ export function createCustomerCardView(deps) {
    * The dialed number is shown, never sent: the server re-derives it from
    * the card.
    */
+  // Voce 105563eea902 (giri 1-2): one source of truth for the device
+  // dialer. Dialing needs no space and no connectors read, so every
+  // branch that cannot offer the CRM-logged form still offers the same
+  // tel: fallback — no space, no linked voice, or a connectors read that
+  // failed (404 not composed or any other error).
+  const appendDeviceDialFallback = (into, dialPhone) => {
+    const dialable = dialPhone.replaceAll(/[^\d+]/g, '');
+    into.appendChild(link(
+      `tel:${dialable === '' ? dialPhone : dialable}`,
+      `Chiama ${dialPhone} (tel:)`, 'call-fallback'));
+  };
   function openCallPanel(box, card, navCtx, phone) {
     const old = box.querySelector('div[data-call="open"]');
     if (old) {
@@ -722,6 +733,7 @@ export function createCustomerCardView(deps) {
     const spaceId = activeSpaceId();
     if (spaceId === null) {
       panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
+      appendDeviceDialFallback(panel, phone);
       return;
     }
     const wait = el('p', 'bo-muted', 'Controllo il connettore voce…');
@@ -741,19 +753,19 @@ export function createCustomerCardView(deps) {
         if (voice === null) {
           panel.appendChild(el('p', 'bo-muted',
             'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
-          const dialable = phone.replaceAll(/[^\d+]/g, '');
-          panel.appendChild(link(
-            `tel:${dialable === '' ? phone : dialable}`,
-            `Chiama ${phone} (tel:)`, 'call-fallback'));
+          appendDeviceDialFallback(panel, phone);
           return;
         }
         buildCallForm(panel, navCtx, spaceId, phone);
       },
       (error) => {
         panel.removeChild(wait);
+        panel.appendChild(el('p', 'bo-muted',
+          'La chiamata dal CRM non è disponibile qui: chiama dal telefono.'));
         panel.appendChild(el('p', 'field-error', humanReadError(error, {
           failed: 'Il connettore voce non si è potuto leggere. Riprova più tardi.',
         })));
+        appendDeviceDialFallback(panel, phone);
       },
     );
   }

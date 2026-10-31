@@ -34,7 +34,7 @@ const CARD_WITH_PHONE = {
 
 const VOICE = { channel: 'voice', status: 'active', connectionKey: 'voice:presti:1' };
 
-function stubClient({ card = CARD_NO_PHONE, connectors = [], onPost = null } = {}) {
+function stubClient({ card = CARD_NO_PHONE, connectors = [], connectorsError = null, onPost = null } = {}) {
   const state = { card, connectors };
   const posts = [];
   return {
@@ -57,7 +57,10 @@ function stubClient({ card = CARD_NO_PHONE, connectors = [], onPost = null } = {
         if (typeof onPost?.call === 'function') return onPost.call(body);
         return { id: 'call-1', replayed: false, ...body };
       }
-      if (path.startsWith('/api/connectors')) return { connectors: state.connectors };
+      if (path.startsWith('/api/connectors')) {
+        if (connectorsError) throw connectorsError;
+        return { connectors: state.connectors };
+      }
       if (path.startsWith('/api/customer-hub/card/')) return state.card;
       throw Object.assign(new Error('Not Found'), { status: 404 });
     },
@@ -177,6 +180,52 @@ test('105563eea902: a voice entry without a connectionKey is not callable: tel: 
   assert.equal(button(mount, 'log-call'), null, 'no outcome form is offered when the route would refuse it');
   assert.ok(mount.findAll('a').some((node) => node.getAttribute('data-action') === 'call-fallback'),
     'the device dialer is offered instead');
+  assert.ok(!client.posts.some((post) => post.path === '/api/customer-hub/calls'),
+    'no call the CRM never placed is logged');
+});
+
+test('105563eea902: when the connectors read fails (404 not composed) Chiama still offers tel: with an honest notice', async () => {
+  const notComposed = Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' });
+  const client = stubClient({ card: CARD_WITH_PHONE, connectorsError: notComposed });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('La chiamata dal CRM non è disponibile qui: chiama dal telefono.'),
+    'the panel names the honest fallback instead of only a retry error');
+  const fallback = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'call-fallback');
+  assert.ok(fallback, 'the device dialer is offered even when the connectors read fails');
+  assert.ok(String(fallback.getAttribute('href')).startsWith('tel:+393331234567'));
+  assert.equal(button(mount, 'log-call'), null, 'no CRM-logged form is offered when the connectors cannot be read');
+  assert.ok(!client.posts.some((post) => post.path === '/api/customer-hub/calls'),
+    'no call the CRM never placed is logged');
+});
+
+test('105563eea902: with any other connectors-read failure Chiama still offers tel:', async () => {
+  const client = stubClient({
+    card: CARD_WITH_PHONE,
+    connectorsError: Object.assign(new Error('boom'), { status: 500 }),
+  });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(mount.findAll('a').some((node) => node.getAttribute('data-action') === 'call-fallback'),
+    'the device dialer is offered on any read failure, not only 404');
+  assert.equal(button(mount, 'log-call'), null, 'no CRM-logged form without a voice check');
+});
+
+test('105563eea902: without an active space Chiama still offers tel: next to the choose-a-space notice', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [VOICE] });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: null }).renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('Scegli uno spazio per chiamare dal CRM.'),
+    'the space notice stays');
+  const fallback = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'call-fallback');
+  assert.ok(fallback, 'dialing needs no space: the tel: link is offered anyway');
+  assert.ok(String(fallback.getAttribute('href')).startsWith('tel:+393331234567'));
+  assert.equal(button(mount, 'log-call'), null, 'only the CRM-logged form is gated on a space');
   assert.ok(!client.posts.some((post) => post.path === '/api/customer-hub/calls'),
     'no call the CRM never placed is logged');
 });
