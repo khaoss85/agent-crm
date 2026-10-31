@@ -705,6 +705,12 @@ test('accepting a value the free source already made a fact stores no duplicate'
     .listWhere({ subjectResource: subject.resource, subjectId: subject.id, status: 'active' })
     .filter((row) => row.field === 'role' && row.value === 'Istruttore');
   assert.equal(actives.length, 1, 'accepting beside a free-source fact flips no duplicate');
+  const loser = app.modules.get('enriched-field').service.get(pending.proposals[0].id);
+  assert.equal(loser.status, 'dismissed', 'the losing proposal is settled in the same transaction');
+  assert.match(loser.decisionReason ?? '', /superseded by the active .* fact for the same value/,
+    'the loser names the winning fact');
+  const stillPending = await app.readCustomerEnrichmentProposals(subject);
+  assert.equal(stillPending.proposals.length, 0, 'the pending set drains after the late accept');
 });
 
 test('accepting a still-proposed row refuses when the cluster opted out after the read', async (t) => {
@@ -783,4 +789,86 @@ test('an AI phone is callable E.164: separators normalize, a bare national numbe
     .listWhere({ system: 'phone', externalId: '+393331234567' });
   assert.equal(phones.length, 1, 'the accepted AI phone links in E.164 like a free-source phone');
   assert.equal(phones[0].subjectId, subject.id);
+});
+
+test('dismissing a proposal whose subject is gone refuses 404 with nothing flipped', async (t) => {
+  const { app } = await scene(t, 'extraction-dismiss-ghost');
+  const ghost = { resource: 'contact', id: '00000000-0000-0000-0000-000000000000' };
+  const enriched = app.modules.get('enriched-field').service;
+  const row = await enriched.createManaged({
+    sourceKey: 'aiex:contact:00000000-0000-0000-0000-000000000000:role:email-signature:test-dismiss',
+    subjectResource: ghost.resource, subjectId: ghost.id,
+    subjectOwner: 'host', subjectOwnerPackage: null, subjectLabel: null,
+    field: 'role', value: 'Istruttore', source: 'email-signature', sourceDetail: null,
+    observedAt: new Date().toISOString(), observedByRunId: 'test:ghost-dismiss',
+    status: 'proposed', purgedAt: null, purgeReason: null, decisionReason: null,
+  }, { actor: ACTOR });
+  await assert.rejects(
+    app.decideEnrichmentProposal({ actor: ACTOR, id: row.id, decision: 'dismissed', reason: 'non serve' }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404,
+    'a ghost dismissal refuses like a ghost accept');
+  assert.equal(enriched.get(row.id).status, 'proposed', 'the refused dismissal flips nothing');
+});
+
+test('a storage fault while checking the subject keeps its own error, never 404', async (t) => {
+  const { app } = await scene(t, 'extraction-subject-fault');
+  const subject = await seedContact(app);
+  const service = app.modules.get('contact').service;
+  const originalGet = service.get;
+  service.get = async () => {
+    throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY', status: 503 });
+  };
+  try {
+    await assert.rejects(
+      app.extractCustomerEnrichment({ actor: ACTOR, ...subject, sources: SOURCES, adapter: fakeAdapter([]) }),
+      (error) => error?.code === 'SQLITE_BUSY' && error?.status === 503,
+      'a backend fault is never reported as a deleted subject');
+  } finally {
+    service.get = originalGet;
+  }
+});
+
+test('a national-shape free phone is refused; its E.164 AI twin proposes once', async (t) => {
+  const { app } = await scene(t, 'extraction-free-phone-gate');
+  const subject = await seedContact(app);
+
+  const free = await app.applyContactEnrichment({
+    actor: ACTOR, email: 'luca@prestigroup.example',
+    fields: { firstName: 'Luca', phone: '3331234567' }, source: 'email-signature', sourceDetail: 'firma email',
+  });
+  assert.equal(free.outcome, 'enriched');
+  assert.ok(
+    free.applied.some((row) => row.field === 'phone' && row.disposition === 'skipped-malformed'),
+    'the national-shape phone is a refused field, not a stored one');
+  const enriched = app.modules.get('enriched-field').service;
+  assert.equal(
+    enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id })
+      .filter((row) => row.field === 'phone').length,
+    0, 'no national-shape phone fact is stored');
+  assert.equal(
+    app.modules.get('external-identity').service.listWhere({ system: 'phone' }).length,
+    0, 'no national-shape phone identity is stored');
+
+  // The same logical number in E.164 is new to the subject: it proposes,
+  // and accepting it leaves exactly one active fact and one identity.
+  const answer = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '+393331234567', source: 'email-signature' },
+    ]),
+  });
+  assert.deepEqual(answer.counts, { proposed: 1, replayed: 0, alreadyActive: 0, skippedDismissed: 0 });
+  const decided = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: answer.proposals[0].id, decision: 'accepted', reason: 'confermato',
+  });
+  assert.equal(decided.outcome, 'accepted');
+  assert.equal(
+    enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id, status: 'active' })
+      .filter((row) => row.field === 'phone').length,
+    1, 'one logical number, one active phone fact');
+  assert.equal(
+    app.modules.get('external-identity').service.listWhere({ system: 'phone' }).length,
+    1, 'one logical number, one phone identity');
 });

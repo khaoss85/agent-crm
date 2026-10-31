@@ -264,8 +264,15 @@ export function createEnrichmentExtraction({ database, modules, events, names })
     if (service && typeof service.get === 'function') {
       try {
         record = await service.get(id);
-      } catch {
-        record = null;
+      } catch (error) {
+        // Only a genuine absence 404s: a storage fault keeps its own
+        // error, like the reference-resolver discipline — a busy backend
+        // must never read as a deleted subject.
+        if (error && (error.code === 'NOT_FOUND' || error.status === 404)) {
+          record = null;
+        } else {
+          throw error;
+        }
       }
     }
     if (!record) {
@@ -480,10 +487,16 @@ export function createEnrichmentExtraction({ database, modules, events, names })
         }
         // A value the free-source path made a fact while this proposal was
         // pending: the stored fact wins, and no duplicate flips beside it.
+        // The loser is settled in the same transaction, so the pending set
+        // drains instead of listing a row that always answers already-decided.
         const fact = (await deciding(enriched, {
           subjectResource: current.subjectResource, subjectId: current.subjectId, status: 'active',
         })).find((row) => row.field === current.field && row.value === current.value);
         if (fact) {
+          await enriched.applyManaged(current.id, {
+            status: 'dismissed',
+            decisionReason: `superseded by the active ${fact.source} fact for the same value`,
+          }, { actor });
           return { outcome: 'already-decided', proposal: shapeProposal(fact) };
         }
         if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
@@ -548,6 +561,9 @@ export function createEnrichmentExtraction({ database, modules, events, names })
       if (current.status !== 'proposed') {
         return { outcome: 'already-decided', proposal: shapeProposal(current) };
       }
+      // A dismissal names a subject that exists, like an accept: deciding
+      // for a ghost refuses before the flip, with nothing stored.
+      await requireExistingSubject(current.subjectResource, current.subjectId);
       // The same cluster-wide opt-out «Accetta» checks: a refusal that landed
       // after the proposals refuses the dismissal too, with nothing flipped.
       if (await optedOutAnywhere(current.subjectResource, current.subjectId)) {
