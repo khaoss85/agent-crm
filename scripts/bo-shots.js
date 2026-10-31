@@ -188,6 +188,7 @@ const DEMO_CLIENTS = [
     phone: { value: '+393331234567', system: 'whatsapp' }, channels: ['whatsapp'],
     status: { value: 'cliente', reason: 'signed business on record: orders' },
     lastContactAt: '2026-10-20T09:00:00.000Z', lastContactChannel: 'whatsapp',
+    lastContactText: 'Ciao, posso passare giovedi per una prova?',
     offerValueCents: 120000, offerCurrency: 'EUR',
     nextStep: { title: 'Prova gratuita', dueAt: '2026-10-22', overdue: false },
     budget: { available: true, value: '200/mese', source: { resource: 'contact', id: 'c1' }, reason: null },
