@@ -552,9 +552,12 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-card-appt .bo-scheda-appt { border-top: none; padding: 0; font-size: 15px; font-weight: 700; }
 /* Voce c2793930850a: the four quick actions are a 2x2 grid of equal tiles —
  * same columns, same floor height (the grid stretches each row), one icon
- * over the label on every tile, long labels wrap inside, never outside. */
+ * over the label on every tile, long labels wrap inside, never outside.
+ * break-word (not anywhere) so «Nuovo appuntamento» wraps at the space,
+ * never cut mid-word: anywhere would shrink the tile below its longest
+ * word. */
 .bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 3px 10px; font-size: 12px; overflow-wrap: anywhere; }
+.bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 3px 10px; font-size: 12px; overflow-wrap: break-word; }
 .bo-scheda-tile[data-action="call-customer"]::before { content: "☎"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="add-phone"]::before { content: "✚"; font-size: 17px; line-height: 1; }
 .bo-scheda-tile[data-action="compose-message"]::before { content: "✉"; font-size: 17px; line-height: 1; }
@@ -566,7 +569,7 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
  * field and button stay inside, the help sentence below them too. */
 .bo-scheda-note-form { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 14px 20px 20px; }
 .bo-scheda-note-form input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
-.bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: anywhere; }
+.bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
