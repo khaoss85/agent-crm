@@ -25,6 +25,7 @@ import {
   forecastStatus,
   formatMoney,
   isDashboardPayload,
+  ownerSigla,
   periodOptions,
 } from '../apps/admin/public/admin-reporting.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -178,14 +179,28 @@ test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', as
   assert.ok(mount.findAll('td').map((node) => node.textContent).includes('alice'));
 });
 
+test('ownerSigla renders person initials, never a guess', () => {
+  assert.equal(ownerSigla('bob'), 'B');
+  assert.equal(ownerSigla('Maria Rossi'), 'MR');
+  assert.equal(ownerSigla('marco de lucchi'), 'MD', 'only the first two words');
+  assert.equal(ownerSigla('  sara  '), 'S', 'surrounding spaces are not initials');
+  assert.equal(ownerSigla(''), '·', 'no name: neutral dot');
+  assert.equal(ownerSigla('   '), '·', 'blank: neutral dot');
+  assert.equal(ownerSigla(null), '·', 'non-string: neutral dot');
+  assert.equal(ownerSigla(42), '·', 'non-string: neutral dot');
+});
+
 test('periodo/persona filters refetch the registry (ricalcolo)', async () => {
   const { mount, view, requests } = harness();
   await view.renderReporting();
   const first = requests.filter((path) => path.includes('/api/reporting/dashboard'));
   assert.equal(first.length, 1);
   assert.match(first[0], /period=/);
-  const bob = mount.findAll('button').find((node) => node.textContent === 'bob');
-  assert.ok(bob, 'the persona pill renders from the model owners');
+  const bob = mount.findAll('button').find((node) => node.getAttribute('data-owner') === 'bob');
+  assert.ok(bob, 'the persona filter renders from the model owners');
+  assert.equal(bob.textContent, 'B', 'the persona filter shows the owner sigla, not the name');
+  assert.equal(bob.getAttribute('title'), 'bob', 'the full name stays on the title');
+  assert.equal(bob.getAttribute('aria-label'), 'bob', 'the accessible name is the full owner, not the sigla');
   bob.dispatch('click', {});
   await tick();
   const second = requests.filter((path) => path.includes('/api/reporting/dashboard'));
@@ -198,6 +213,17 @@ test('periodo/persona filters refetch the registry (ricalcolo)', async () => {
   const third = requests.filter((path) => path.includes('/api/reporting/dashboard'));
   assert.equal(third.length, 3);
   assert.match(third[2], new RegExp(`period=${periodOptions()[0].value}`));
+});
+
+test('same-sigla owners keep distinct accessible names', async () => {
+  const { mount, view } = harness({
+    dashboard: { ...MODEL, owners: ['Maria Rossi', 'Marco Rossi'] },
+  });
+  await view.renderReporting();
+  const buttons = mount.findAll('button').filter((node) => node.textContent === 'MR');
+  assert.equal(buttons.length, 2, 'both owners render as MR sigle');
+  const labels = buttons.map((node) => node.getAttribute('aria-label')).sort();
+  assert.deepEqual(labels, ['Marco Rossi', 'Maria Rossi'], 'screen readers hear two distinct owners');
 });
 
 test('the proposal reveals with zero requests: it proposes, never reassigns', async () => {
@@ -339,8 +365,14 @@ test('hostile owner keys render as text, never markup', async () => {
   await view.renderReporting();
   const cells = mount.findAll('td').map((node) => node.textContent);
   assert.ok(cells.includes(hostile), 'the hostile key is visible as text');
-  const buttons = mount.findAll('button').map((node) => node.textContent);
-  assert.ok(buttons.includes(hostile), 'the hostile pill is visible as text');
+  const buttons = mount.findAll('button');
+  assert.ok(buttons.every((node) => node.textContent !== hostile), 'no button renders the hostile key as its label');
+  const hostileButton = buttons.find((node) => node.getAttribute('data-owner') === hostile);
+  assert.ok(hostileButton, 'the hostile owner still gets its sigla filter');
+  assert.equal(hostileButton.textContent, '<S', 'the sigla is two inert characters from the first two words');
+  assert.equal(hostileButton.getAttribute('title'), hostile, 'the full key stays in the title attribute, never markup');
+  const images = mount.findAll('img');
+  assert.equal(images.length, 0, 'the hostile key creates no element');
 });
 
 test('a failed dashboard read is an error state with a log line, bundle still renders', async () => {
