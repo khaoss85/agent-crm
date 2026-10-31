@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage, selectPackageGraph } from '../../core/index.js';
+import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
 import {
   ASSIGNMENT_MODULE,
   ATTACHMENT_KINDS,
@@ -127,6 +127,88 @@ export {
   validateSubject,
 };
 
+/**
+ * `log-subject-call` — the scheda cliente's «Chiama dal CRM» (voce 105563eea902).
+ *
+ * The one operation that logs a call the operator placed from the card.
+ * It reuses the same `interaction-call` row, the same outcome vocabulary and
+ * the same human-actor boundary as the adapter `logCall` path — only the
+ * channel is fixed to `phone` (the company phones of the first use case) and
+ * the direction to `outbound`, because the card places calls, never receives
+ * them here. The outcome is operator-declared (completed, missed, no-answer,
+ * failed with its code) and idempotent by `callKey`: the same key with the
+ * same payload replays the stored row, a divergent payload behind the same
+ * key is refused 409, never adopted. The dialed number is a display snapshot
+ * taken by the caller (the route derives it from the card), never an
+ * identifier: identity lives in customer-data.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildLogSubjectCallOperation(moduleNames) {
+  const capability = createInteractionLogCapability(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'log-subject-call',
+    appMethod: 'logSubjectCall',
+    label: 'Log an operator-placed customer call',
+    description:
+      'Log one outbound phone call an operator placed from the customer card, with the outcome they declare. '
+      + 'Same interaction-call row and idempotency as the adapter path; same key with a divergent payload refuses 409. '
+      + 'A human decision: the actor must be a user.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'callKey', type: 'string', hint: 'One fresh idempotency key per call; retries reuse it, two calls never share it.' },
+      { name: 'outcome', type: 'string', hint: 'The operator-declared outcome: completed, missed, no-answer or failed.' },
+      { name: 'durationSec', type: 'integer', hint: 'Whole seconds, 0 to 86400; 0 unless completed.' },
+      { name: 'teamAuthorId', type: 'string', hint: 'The operator who placed the call.' },
+      { name: 'remoteHandle', type: 'string', hint: 'The dialed number as shown on the card (display snapshot).' },
+      { name: 'errorCode', type: 'string', hint: 'Required when the outcome is failed; recorded only then.' },
+      { name: 'occurredAt', type: 'string', hint: 'When the call happened (ISO). Absent means now.' },
+    ],
+    create(runtime) {
+      return async (request) => {
+        const actor = request?.actor;
+        if (!actor || typeof actor !== 'object' || actor.type !== 'user'
+          || typeof actor.id !== 'string' || actor.id.trim() === '') {
+          throw new AppError('Logging a subject call is a human decision', {
+            code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+          });
+        }
+        const resource = request?.resource;
+        if (resource !== 'contact' && resource !== 'company') {
+          throw new AppError('a subject call needs a contact or company subject', {
+            code: 'INTERACTIONS_CALL_SUBJECT_INVALID', status: 400,
+          });
+        }
+        const callKey = request?.callKey;
+        if (typeof callKey !== 'string' || callKey.trim() === '' || callKey.length > 128
+          || /[\u0000-\u001f\u007f]/.test(callKey)) {
+          throw new AppError('a subject call needs one fresh bounded single-line callKey per call', {
+            code: 'INTERACTIONS_CALL_KEY_INVALID', status: 400,
+          });
+        }
+        const log = capability.create({ modules: runtime.modules, actor, consumer: 'host' });
+        return log.logCall({
+          sourceKey: callKey.trim(),
+          direction: 'outbound',
+          channel: 'phone',
+          outcome: request?.outcome,
+          durationSec: request?.durationSec,
+          teamAuthorId: request?.teamAuthorId,
+          remoteHandle: request?.remoteHandle ?? null,
+          errorCode: request?.errorCode ?? null,
+          subject: { resource, id: request?.id, owner: 'host' },
+          occurredAt: typeof request?.occurredAt === 'string' && request.occurredAt.trim() !== ''
+            ? request.occurredAt
+            : new Date().toISOString(),
+          source: { package: 'host', action: 'log-subject-call' },
+        });
+      };
+    },
+  };
+}
+
 /** @param {{config?: Record<string, string>}} [options] */
 export function createInteractionsPackage(options = {}) {
   const config = options.config;
@@ -152,6 +234,7 @@ export function createInteractionsPackage(options = {}) {
     capabilities: [createInteractionLogCapability(config), createInteractionTimelineCapability(config)],
     actions: [buildAdvanceMessageAction(config), buildCloseConversationAction(config), buildOpenOpportunityAction(config),
       buildAssignConversationAction(config), buildMarkReadConversationAction(config)],
+    operations: [buildLogSubjectCallOperation(options.modules)],
 
     // None. A versioned policy earns its fingerprint when two consumers share
     // a rule; the channel vocabulary and the transition tables are published
