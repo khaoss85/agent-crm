@@ -72,7 +72,7 @@ function nonEmptyText(value) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiAddOption, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian label for a sequence state; unknown states say so, never blank.
@@ -560,18 +560,21 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
       headActions.appendChild(button);
     }
   }
-  // The prototype's 3 KPI cards under the detail: each a label + a value.
-  // `Call fissate` has no appointments read behind it, so it stays a dash.
-  const kpi = el(doc, 'div', 'bo-seq-kpi');
+  // The prototype's 3 KPI cards under the detail, dressed like Reporting
+  // (owner 31/10): the same `metrics`/`metric` classes, the big number and a
+  // line below. `Call fissate` has no appointments read behind it, so it
+  // stays a dash with the reason said out loud — never invented.
+  const kpi = el(doc, 'div', 'metrics');
   const kpiCards = [
-    ['In corso', detail.metrics.kpi.inCorso],
-    ['Risposte', detail.metrics.kpi.risposte],
-    ['Call fissate', detail.metrics.kpi.callFissate],
+    ['In corso', detail.metrics.kpi.inCorso, 'persone dentro adesso'],
+    ['Risposte', detail.metrics.kpi.risposte, 'ferme alla prima risposta'],
+    ['Call fissate', detail.metrics.kpi.callFissate, 'non lette in questa vista'],
   ];
-  for (const [label, value] of kpiCards) {
-    const card = el(doc, 'div', 'bo-seq-kpi-card');
-    card.appendChild(el(doc, 'p', 'bo-seq-kpi-label', label));
-    card.appendChild(el(doc, 'p', 'bo-seq-kpi-value', value === null || value === undefined ? '—' : String(value)));
+  for (const [label, value, sub] of kpiCards) {
+    const card = el(doc, 'div', 'metric');
+    card.appendChild(el(doc, 'span', undefined, label));
+    card.appendChild(el(doc, 'strong', undefined, value === null || value === undefined ? '—' : String(value)));
+    card.appendChild(el(doc, 'span', undefined, sub));
     kpi.appendChild(card);
   }
   box.appendChild(kpi);
@@ -650,64 +653,14 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     error: '',
     loaded: false,
     space: null,
-    menuOpen: false,
-    menuHint: '',
+    hint: '',
   };
 
-  // One open menu at a time, Escape or an outside click closes it — the same
-  // contract as the clienti add menu, scoped to this view's menu wrap.
-  const isInsideMenuWrap = (node) => {
-    let current = node ?? null;
-    while (current) {
-      const classes = typeof current.getAttribute === 'function'
-        ? String(current.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
-        : [];
-      if (classes.includes('bo-seq-menuwrap')) return true;
-      current = current.parentNode ?? null;
-    }
-    return false;
-  };
-  // Toggling the menu repaints the whole view, so the node that had keyboard
-  // focus is gone after paint(): opening moves focus to the first menu entry,
-  // closing returns it to the opener, and Tab continues from there. Only an
-  // outside pointer click leaves focus where the user put it.
-  function refocusMenu(intoMenu) {
-    if (!mount || typeof mount.querySelector !== 'function') return;
-    const target = mount.querySelector(
-      intoMenu ? 'button[data-action="new-ai"]' : 'button[data-menu="nuova-sequenza"]',
-    );
-    if (target && typeof target.focus === 'function') target.focus();
-  }
-  if (documentNode && typeof documentNode.addEventListener === 'function') {
-    documentNode.addEventListener('click', (event) => {
-      if (state.menuOpen && !isInsideMenuWrap(event?.target ?? null)) {
-        state.menuOpen = false;
-        paint();
-      }
-    });
-    // Fallback for focus that left the view (screen reader, devtools): the
-    // button and menu listeners above stay reachable because refocusMenu
-    // keeps focus on the opener or the first entry across repaints.
-    documentNode.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' && state.menuOpen) {
-        state.menuOpen = false;
-        paint();
-        refocusMenu(false);
-      }
-    });
-  }
-
-  /**
-   * The prototype's `Nuova sequenza` menu: two entries, closed by default,
-   * Escape or an outside click closes it. Creation itself belongs to the
-   * pilot (manual → the package operations, AI → the assistant seam), so a
-   * pick only names the next step in plain Italian — never a fake record.
-   */
-  // The shell's AI bar is the real creation entry for the AI pick: its
-  // sequenze placeholder already says what to write, so picking the entry
+  // The shell's AI bar is the real creation entry for the AI button: its
+  // sequenze placeholder already says what to write, so pressing the button
   // moves keyboard focus to it instead of painting a help sentence the
-  // prototype has not. Without the bar (a standalone mount) the menu
-  // just closes: no invented text, no dead control.
+  // prototype has not. Without the bar (a standalone mount) the button
+  // just keeps focus: no invented text, no dead control.
   function focusAiBar() {
     if (!documentNode || typeof documentNode.querySelector !== 'function') return false;
     const bar = documentNode.querySelector('.bo-ai-input');
@@ -715,78 +668,52 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     bar.focus();
     return true;
   }
-  function renderNewMenu() {
-    const wrap = el(documentNode, 'div', 'bo-seq-menuwrap');
+  // Repainting the view swaps the button node that had keyboard focus, so a
+  // press re-focuses its own button after paint() — Tab continues from there.
+  function refocusButton(action) {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const again = mount.querySelector(`button[data-action="${action}"]`);
+    if (again && typeof again.focus === 'function') again.focus();
+  }
+  /**
+   * The prototype's header voices, top-right (owner 31/10): «Nuova sequenza»
+   * is the primary CTA and «✦ Crea con l'AI» sits beside it in the
+   * assistant's colours. Creation itself belongs to the pilot (manual → the
+   * package operations, AI → the assistant seam), so a press only names the
+   * next step in plain Italian — never a fake record.
+   */
+  function renderNewActions() {
+    const wrap = el(documentNode, 'div', 'bo-seq-actions');
     // Green CTA like the prototype and like Calendario's «Nuovo appuntamento»:
     // only uiButton({ variant: 'cta' }) paints green.
-    const button = uiButton(documentNode, {
+    const manual = uiButton(documentNode, {
       variant: 'cta',
-      label: 'Nuova sequenza ⌄',
+      label: 'Nuova sequenza',
       attrs: {
-        'data-menu': 'nuova-sequenza',
-        'aria-haspopup': 'true',
-        'aria-expanded': state.menuOpen ? 'true' : 'false',
+        'data-action': 'new-manual',
+        'aria-expanded': state.hint !== '' ? 'true' : 'false',
       },
     });
-    button.addEventListener('click', (event) => {
-      event?.stopPropagation?.();
-      state.menuOpen = !state.menuOpen;
-      state.menuHint = '';
+    manual.addEventListener('click', () => {
+      state.hint = state.hint !== ''
+        ? ''
+        : 'La nuova sequenza si crea dallo spazio con un nome, un trigger e i passi: la vedi qui appena è pronta.';
       paint();
-      refocusMenu(state.menuOpen);
+      refocusButton('new-manual');
     });
-    button.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' && state.menuOpen) {
-        state.menuOpen = false;
-        paint();
-        refocusMenu(false);
-      }
+    wrap.appendChild(manual);
+    // Assistant colours (agent-card/agent-line/agent-ink, like the scheda
+    // «Chiedi all'AI» voice); el() adds the ui-btn system classes.
+    const ai = el(documentNode, 'button', 'bo-seq-ai', '✦ Crea con l\u2019AI');
+    ai.setAttribute('data-action', 'new-ai');
+    ai.addEventListener('click', () => {
+      state.hint = '';
+      paint();
+      if (!focusAiBar()) refocusButton('new-ai');
     });
-    wrap.appendChild(button);
-    const menu = el(documentNode, 'div', state.menuOpen ? 'bo-seq-menu ui-add-menu' : 'bo-seq-menu ui-add-menu hidden');
-    menu.setAttribute('role', 'menu');
-    const addItem = (action, label, hint, pick, focusAi = false) => {
-      const item = uiAddOption(documentNode, { kind: action === 'new-ai' ? 'ai' : 'manual', title: label, line: hint,
-        attrs: { 'data-action': action } });
-      item.addEventListener('click', () => {
-        state.menuOpen = false;
-        state.menuHint = pick;
-        paint();
-        if (focusAi === true) {
-          if (!focusAiBar()) refocusMenu(false);
-        } else {
-          refocusMenu(false);
-        }
-      });
-      menu.appendChild(item);
-    };
-    menu.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape') {
-        state.menuOpen = false;
-        state.menuHint = '';
-        paint();
-        refocusMenu(false);
-      }
-    });
-    menu.addEventListener('click', (event) => {
-      event?.stopPropagation?.();
-    });
-    addItem(
-      'new-ai',
-      "Crea con l'AI",
-      'Es. «lead dal sito: WhatsApp subito, email dopo 2 giorni»',
-      '',
-      true,
-    );
-    addItem(
-      'new-manual',
-      'Compila manualmente',
-      'Quando parte, passi e canali',
-      'La nuova sequenza si crea dallo spazio con un nome, un trigger e i passi: la vedi qui appena è pronta.',
-    );
-    wrap.appendChild(menu);
-    if (state.menuHint !== '') {
-      wrap.appendChild(el(documentNode, 'p', 'bo-seq-hint', state.menuHint));
+    wrap.appendChild(ai);
+    if (state.hint !== '') {
+      wrap.appendChild(el(documentNode, 'p', 'bo-seq-hint', state.hint));
     }
     return wrap;
   }
@@ -803,7 +730,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     top.appendChild(el(documentNode, 'h2', 'bo-seq-title', 'Sequenze'));
     top.appendChild(el(documentNode, 'p', 'lede',
       'Follow-up che partono da soli quando succede qualcosa, sul canale giusto. Si fermano appena il cliente risponde.'));
-    top.appendChild(renderNewMenu());
+    top.appendChild(renderNewActions());
     page.appendChild(top);
     if (!state.loaded) {
       page.appendChild(el(documentNode, 'p', 'bo-muted', 'Leggo le sequenze…'));
