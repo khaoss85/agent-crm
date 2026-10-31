@@ -5,7 +5,8 @@
  *
  * One self-contained HTML document: no external stylesheet, script, font or
  * image, so it opens on a phone straight from the device with no network
- * beyond the host serving it. Big tap targets, `tel:` and `mailto:` links,
+ * beyond the host serving it. Big tap targets, a `tel:` link, the email as
+ * plain text (replies go through the /bo «Scrivi» composer, backlog:e9b4fc2f),
  * and every unavailable field rendered as its reason — the page never shows
  * a blank line where a fact is missing.
  *
@@ -99,7 +100,7 @@ h2{font-size:1rem;text-transform:uppercase;letter-spacing:.05em;color:#555;margi
 ${company ? `<p class="line">${escapeHtml(company)}</p>` : ''}
 <p class="badge">stato: ${statusValue}</p>
 <section><h2>Telefono</h2>${phoneBlock}</section>
-<section><h2>Email</h2>${email ? `<p class="line big"><a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a></p>` : '<p class="line missing">email non disponibile</p>'}</section>
+<section><h2>Email</h2>${email ? `<p class="line big">${escapeHtml(email)}</p><p class="reason">per rispondere usa Scrivi nella scheda cliente</p>` : '<p class="line missing">email non disponibile</p>'}</section>
 <section><h2>Profili social</h2>${socialBlock}</section>
 <section><h2>Pacchetto attivo</h2>${packageBlock}</section>
 <section><h2>Note</h2>${notesBlock}</section>
