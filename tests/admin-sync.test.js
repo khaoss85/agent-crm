@@ -84,7 +84,7 @@ const activityOf = (over = {}) => ({
 
 const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
-function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [] } = {}) {
+function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -105,7 +105,10 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
         return activity;
       }
       if (path.startsWith('/api/modules/data-quality-issue/records')) return { items: qualityIssues };
-      if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: candidates };
+      if (path.startsWith('/api/modules/duplicate-candidate/records')) {
+        if (failCandidates !== null) throw failCandidates;
+        return { items: candidates };
+      }
       throw new Error(`unexpected GET ${path}`);
     },
   };
@@ -877,4 +880,59 @@ test('the yellow card renews through the connector detail', async () => {
   renew.dispatch('click');
   await flush();
   assert.deepEqual(navigated, ['#/connettori/instagram']);
+});
+
+test('the candidates read narrows to unresolved on the server', async () => {
+  const { mount, client, view } = renderView({
+    client: {
+      candidates: [{ id: 'c-1', status: 'unresolved', leftLabel: 'Paolo Esposito', rightLabel: 'Paolo Esposito' }],
+    },
+  });
+  await view.render();
+  await flush();
+  const reads = client.calls.filter((call) => call.path.startsWith('/api/modules/duplicate-candidate/records'));
+  assert.equal(reads.length, 1);
+  assert.ok(reads[0].path.includes('filter.status=unresolved'), 'a resolved history beyond the page bound cannot hide a decision');
+  assert.ok(mount.textContent.includes('Paolo Esposito potrebbe avere due schede'));
+});
+
+test('a failed candidates read stays honest: no quiet banner, one diagnostic', async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const { mount, view } = renderView({
+      client: { failCandidates: { code: 'UPSTREAM_BOOM', status: 502, message: 'giù' } },
+    });
+    await view.render();
+    await flush();
+    const text = mount.textContent;
+    assert.ok(!text.includes('Niente da sistemare'), 'never claims all fixed while identity decisions are unread');
+    assert.ok(text.includes('non si sono potute leggere'), 'the section names what it could not read');
+    assert.ok(!text.includes('giù') && !text.includes('UPSTREAM_BOOM'), 'no technical detail in the DOM');
+    assert.equal(warnings.length, 1, 'one diagnostic: neither silence nor a screen');
+    const flat = warnings[0].map(String).join(' ');
+    assert.ok(flat.includes('bo-sync'), 'the log is scoped to the sync screen');
+    assert.ok(flat.includes('UPSTREAM_BOOM'), 'the sanitized code travels');
+    assert.ok(flat.includes('prova'), 'the active space travels');
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('an uncomposed candidates module stays silent with zero cards', async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const { mount, view } = renderView({
+      client: { failCandidates: { status: 404, code: 'NOT_FOUND', message: 'no such module' } },
+    });
+    await view.render();
+    await flush();
+    assert.ok(mount.textContent.includes('Niente da sistemare'));
+    assert.equal(warnings.length, 0, 'an expected absence is not a fault');
+  } finally {
+    console.warn = originalWarn;
+  }
 });
