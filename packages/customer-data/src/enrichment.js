@@ -47,11 +47,6 @@ import {
  *   on the control plane, not here.
  */
 
-/** A callable phone: `+` followed by 7-15 digits. The twin of the rule in
- * extraction.js and operations.js — every stored phone meets it, so the AI
- * dedupe and the phone holder check meet every stored phone by exact string. */
-const CALLABLE_E164_RE = /^\+[1-9]\d{6,14}$/;
-
 /** The only sources enrichment accepts. Caller-controlled strings are never provenance. */
 export const ENRICHMENT_SOURCES = Object.freeze(['google-contacts', 'email-signature']);
 /** The only contact attributes enrichment may fill. Anything else refuses. */
@@ -106,12 +101,7 @@ function requireFields(input) {
     ? safeString(input.phone, 'phone')
     : 'refused';
   if (rawPhone !== null && rawPhone !== 'refused') {
-    const dialable = canonicalPhone(rawPhone);
-    // Single canonical form at rest: only a callable E.164 phone is
-    // stored, like the AI path demands. A national-shape number is a
-    // refused field, counted skipped-malformed by the caller — never a
-    // second shape of the same number beside an E.164 fact or identity.
-    fields.phone = dialable !== null && CALLABLE_E164_RE.test(dialable) ? dialable : null;
+    fields.phone = canonicalPhone(rawPhone);
     // Only a dialable phone counts: an undialable string is a refused
     // field, not a provided one.
     if (fields.phone !== null) provided += 1;
@@ -452,9 +442,7 @@ export function createContactEnrichment({
       const raw = providerString(entry?.canonicalForm ?? entry?.value);
       if (!raw) continue;
       const candidate = canonicalPhone(raw);
-      // The Google path keeps the same single form: a provider number
-      // that is not callable E.164 is dropped, like an undialable one.
-      if (candidate && CALLABLE_E164_RE.test(candidate)) {
+      if (candidate) {
         phone = candidate;
         break;
       }

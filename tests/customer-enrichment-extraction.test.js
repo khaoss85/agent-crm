@@ -753,22 +753,22 @@ test('accepting a still-proposed row refuses when the cluster opted out after th
     'no fact lands after the cluster opted out');
 });
 
-test('an AI phone is callable E.164: separators normalize, a bare national number refuses', async (t) => {
-  const { app } = await scene(t, 'extraction-phone-e164');
+test('an AI phone is dialable like on main: separators normalize, a national number proposes', async (t) => {
+  const { app } = await scene(t, 'extraction-phone-national');
   const subject = await seedContact(app);
 
-  await assert.rejects(
-    app.extractCustomerEnrichment({
-      actor: ACTOR,
-      ...subject,
-      sources: SOURCES,
-      adapter: fakeAdapter([
-        { field: 'phone', value: '3331234567', source: 'email-signature' },
-      ]),
-    }),
-    (error) => error.code === 'ENRICHMENT_EXTRACTION_INVALID',
-    'a dialable-but-not-E.164 guess is refused with the run');
-  assert.equal(proposedRows(app, subject).length, 0, 'a national-shape phone is never stored as a proposal');
+  // A national-shape guess is dialable, like the free-source path stores
+  // it: it proposes, it is not refused with the run.
+  const national = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subject,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '3331234567', source: 'email-signature' },
+    ]),
+  });
+  assert.equal(national.proposals.length, 1, 'a national-shape phone proposes like on main');
+  assert.equal(national.proposals[0].value, '3331234567');
 
   const answer = await app.extractCustomerEnrichment({
     actor: ACTOR,
@@ -779,7 +779,7 @@ test('an AI phone is callable E.164: separators normalize, a bare national numbe
     ]),
   });
   assert.equal(answer.proposals.length, 1);
-  assert.equal(answer.proposals[0].value, '+393331234567', 'separators normalize to callable E.164');
+  assert.equal(answer.proposals[0].value, '+393331234567', 'separators normalize');
 
   const decided = await app.decideEnrichmentProposal({
     actor: ACTOR, id: answer.proposals[0].id, decision: 'accepted', reason: 'confermato dal cliente',
@@ -787,7 +787,7 @@ test('an AI phone is callable E.164: separators normalize, a bare national numbe
   assert.equal(decided.outcome, 'accepted');
   const phones = app.modules.get('external-identity').service
     .listWhere({ system: 'phone', externalId: '+393331234567' });
-  assert.equal(phones.length, 1, 'the accepted AI phone links in E.164 like a free-source phone');
+  assert.equal(phones.length, 1, 'the accepted AI phone links its identity like a free-source phone');
   assert.equal(phones[0].subjectId, subject.id);
 });
 
@@ -828,47 +828,36 @@ test('a storage fault while checking the subject keeps its own error, never 404'
   }
 });
 
-test('a national-shape free phone is refused; its E.164 AI twin proposes once', async (t) => {
-  const { app } = await scene(t, 'extraction-free-phone-gate');
+test('a national-shape free phone is stored, and its identical AI twin proposes no duplicate', async (t) => {
+  const { app } = await scene(t, 'extraction-free-phone-national');
   const subject = await seedContact(app);
 
+  // Like on main, a dialable national number is a stored fact, never a
+  // refused field: the parser output '02123456' lands the same way.
   const free = await app.applyContactEnrichment({
     actor: ACTOR, email: 'luca@prestigroup.example',
     fields: { firstName: 'Luca', phone: '3331234567' }, source: 'email-signature', sourceDetail: 'firma email',
   });
   assert.equal(free.outcome, 'enriched');
-  assert.ok(
-    free.applied.some((row) => row.field === 'phone' && row.disposition === 'skipped-malformed'),
-    'the national-shape phone is a refused field, not a stored one');
   const enriched = app.modules.get('enriched-field').service;
   assert.equal(
-    enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id })
-      .filter((row) => row.field === 'phone').length,
-    0, 'no national-shape phone fact is stored');
+    enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id, status: 'active' })
+      .filter((row) => row.field === 'phone' && row.value === '3331234567').length,
+    1, 'the national-shape phone is stored like on main');
   assert.equal(
-    app.modules.get('external-identity').service.listWhere({ system: 'phone' }).length,
-    0, 'no national-shape phone identity is stored');
+    app.modules.get('external-identity').service
+      .listWhere({ system: 'phone', externalId: '3331234567' }).length,
+    1, 'the national-shape phone links its identity');
 
-  // The same logical number in E.164 is new to the subject: it proposes,
-  // and accepting it leaves exactly one active fact and one identity.
+  // The identical value via AI is already an active fact: no new proposal,
+  // and accepting beside it would flip no duplicate.
   const answer = await app.extractCustomerEnrichment({
     actor: ACTOR,
     ...subject,
     sources: SOURCES,
     adapter: fakeAdapter([
-      { field: 'phone', value: '+393331234567', source: 'email-signature' },
+      { field: 'phone', value: '3331234567', source: 'email-signature' },
     ]),
   });
-  assert.deepEqual(answer.counts, { proposed: 1, replayed: 0, alreadyActive: 0, skippedDismissed: 0 });
-  const decided = await app.decideEnrichmentProposal({
-    actor: ACTOR, id: answer.proposals[0].id, decision: 'accepted', reason: 'confermato',
-  });
-  assert.equal(decided.outcome, 'accepted');
-  assert.equal(
-    enriched.listWhere({ subjectResource: subject.resource, subjectId: subject.id, status: 'active' })
-      .filter((row) => row.field === 'phone').length,
-    1, 'one logical number, one active phone fact');
-  assert.equal(
-    app.modules.get('external-identity').service.listWhere({ system: 'phone' }).length,
-    1, 'one logical number, one phone identity');
+  assert.deepEqual(answer.counts, { proposed: 0, replayed: 0, alreadyActive: 1, skippedDismissed: 0 });
 });

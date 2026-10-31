@@ -41,15 +41,6 @@ const MAX_SOURCES = 10;
 const MAX_SOURCE_TEXT = 8000;
 const MAX_DETAIL_LENGTH = 256;
 
-/**
- * The scheda dials exactly this shape (toDialablePhone in
- * packages/customer-hub/src/card.js, mirrored by recordSubjectPhone in
- * packages/customer-data/src/operations.js): `+` followed by 7-15 digits.
- * An AI phone that cannot dial is refused with the whole run — the human is
- * never offered a proposal «Chiama» cannot place.
- */
-const CALLABLE_E164_RE = /^\+[1-9]\d{6,14}$/;
-
 function refusal(code, status, message) {
   return new AppError(message, { code, status });
 }
@@ -189,11 +180,9 @@ function requireProposals(answer, kinds) {
     if (item.field === 'phone') {
       // The free-source discipline: a phone-bearing identity IS a phone
       // number only when it dials. An undialable AI guess is refused with
-      // the whole run, never stored as a proposal a human could accept —
-      // and a dialable-but-not-E.164 guess is refused the same way, so every
-      // phone the scheda can accept is callable E.164 like a free-source one.
+      // the whole run, never stored as a proposal a human could accept.
       const dialable = canonicalPhone(value);
-      if (!dialable || !CALLABLE_E164_RE.test(dialable)) {
+      if (!dialable) {
         throw refusal('ENRICHMENT_EXTRACTION_INVALID', 502,
           'the AI extraction returned no usable fields: nothing was stored');
       }
@@ -478,13 +467,6 @@ export function createEnrichmentExtraction({ database, modules, events, names })
         // The proposal's subject may be gone since the extraction: accepting
         // for a deleted record refuses before the flip and the identity write.
         await requireExistingSubject(current.subjectResource, current.subjectId);
-        if (current.field === 'phone' && current.value
-          && !CALLABLE_E164_RE.test(canonicalPhone(current.value) ?? '')) {
-          // Rows proposed before the E.164 discipline can never become
-          // callable facts: refuse instead of storing a number «Chiama»
-          // cannot place.
-          throw new ValidationError('an accepted phone must be callable E.164 (+ followed by 7-15 digits)', { field: 'phone' });
-        }
         // A value the free-source path made a fact while this proposal was
         // pending: the stored fact wins, and no duplicate flips beside it.
         // The loser is settled in the same transaction, so the pending set
