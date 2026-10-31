@@ -654,6 +654,28 @@ test('826e377c: the operation reads observed channels from the scanned messages 
   assert.equal(filtered.total, 1, 'the channel filter follows the same union');
 });
 
+test('826e377c review giro-4: a held identity outside the filter vocabulary stays out of CANALI', () => {
+  // The review on head 32e7338a: the union filtered observed channels to
+  // CUSTOMER_CHANNELS but left held identities unfiltered, so a held legacy
+  // sms/gmail row surfaced a channel the canale filter refuses with 400.
+  const legacy = rowOf({}, {
+    ...baseReads(),
+    identitiesBySubject: new Map([['contact:c1', [
+      IDENTITY({ id: 'e9', system: 'sms', externalId: '+39 000 000 001' }),
+      IDENTITY({ id: 'e10', system: 'gmail', externalId: 'ada@esempio.it' }),
+    ]]]),
+  });
+  assert.deepEqual(
+    legacy.channels, [],
+    'a held row outside the filter vocabulary names no channel, like the canale filter refuses it',
+  );
+  assert.throws(
+    () => parseCustomerListQuery({ canale: 'sms' }),
+    /customer list query/,
+    'the canale filter still refuses what CANALI no longer names',
+  );
+});
+
 test('a truncated subject scan names no per-view counts', async () => {
   const companies = [{ id: 'co1', name: 'Azienda' }];
   const contacts = Array.from({ length: CUSTOMER_SCAN_LIMIT }, (_, index) => ({

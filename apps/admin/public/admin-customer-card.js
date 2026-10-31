@@ -574,7 +574,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(row);
   }
 
-  function linkedIdentities(box, profile, timeline, ctx = {}, profileError = null) {
+  function linkedIdentities(box, profile, timeline, ctx = {}, profileError = null, timelineError = null) {
     // Voce 1a066ddfe42a: every identity reads as plain Italian — a resource
     // label and a role label, never a bare id or UUID. The English cluster
     // note stays in the API response, never on screen.
@@ -604,7 +604,14 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'identità non leggibili: il profilo non è disponibile'));
       return;
     }
-    const merged = mergeLinkedIdentities(profile, timeline);
+    // Voce 826e377c review giro-4: a timeline read failure must not
+    // silently narrow the held+observed union to held-only. The held rows
+    // stay (their read succeeded) and the observed half names its failure,
+    // like every other failed section — never an under-count with no signal.
+    const merged = mergeLinkedIdentities(profile, timelineError ? null : timeline);
+    if (timelineError) {
+      readError(box, timelineError, 'I canali osservati non si sono potuti leggere. Riprova più tardi.');
+    }
     const count = merged.channelCount;
     box.appendChild(el('p', 'bo-muted',
       merged.rows.length === 0
@@ -1435,7 +1442,7 @@ export function createCustomerCardView(deps) {
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
     section(left, '', quickActions, card, { resource, id });
-    section(left, '', linkedIdentities, profile, timeline, { resource, id }, profileError);
+    section(left, '', linkedIdentities, profile, timeline, { resource, id }, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
     if (timelineError) {

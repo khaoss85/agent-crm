@@ -521,6 +521,23 @@ test('voce 908f2eb9bbfb: with the timeline in error the scheda keeps the card an
   assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
 });
 
+test('826e377c review giro-4: with the timeline in error the identities name the observed half as unavailable', async () => {
+  // The review on head 32e7338a: linkedIdentities ignored timelineError, so
+  // a timeline read failure silently narrowed the held+observed union to
+  // held-only, reading as an under-count with no signal.
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ timelineError: failure }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Identità collegate'), 'the identities section stays');
+  assert.ok(
+    text.includes('I canali osservati non si sono potuti leggere. Riprova più tardi.'),
+    'the observed half names the failure instead of merging held-only in silence',
+  );
+  assert.ok(text.includes('+39 333 1234567'), 'the held identity still reads');
+  assert.ok(!text.includes('nessun canale osservato'), 'held rows never read as no observed channel');
+  assert.ok(!text.includes('503'), 'no raw status on screen');
+});
+
 test('voce 908f2eb9bbfb: with enrichment or calls in error only that section names the failure', async () => {
   const failure = Object.assign(new Error('boom'), { status: 500 });
   const mount = await renderCard(stubClient({ enrichedError: failure, callsError: failure }), 'call-x');

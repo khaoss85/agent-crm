@@ -294,7 +294,8 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
  *   observed channels name the message channels read for this customer in
- *   the same scan (backlog:826e377c), already filtered to CUSTOMER_CHANNELS:
+ *   the same scan (backlog:826e377c); both sides are filtered to
+ *   CUSTOMER_CHANNELS here:
  *   the CANALI column reads the same union the scheda's Identità collegate
  *   reads — held identities plus channels observed on the customer's
  *   messages — so a customer with messages but no held identity still shows
@@ -312,10 +313,14 @@ export function shapeCustomerRow(subject, reads = {}) {
     : company?.name ?? null;
   const identities = reads.identitiesBySubject?.get(key) ?? [];
   const observed = reads.observedChannelsBySubject?.get(key) ?? [];
+  // Review giro-4 on 826e377c: both sides of the union keep the same
+  // vocabulary the canale filter enforces, so the column never names a
+  // channel the filter refuses with 400 — a held legacy sms/gmail row is
+  // still listed as a held identity, never as a channel chip.
   const channels = [...new Set([
     ...identities.map((row) => String(row?.system ?? '').toLowerCase()),
     ...observed.map((channel) => String(channel ?? '').toLowerCase()),
-  ].filter((system) => system !== ''))].sort();
+  ].filter((system) => system !== '' && CUSTOMER_CHANNELS.includes(/** @type {any} */ (system))))].sort();
   const phoneIdentity = identities.find((row) => PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) ?? null;
   const status = reads.statusBySubject?.get(key)
     ?? { value: 'contatto', reason: 'no signed-business evidence was read for this customer in the list scan' };
