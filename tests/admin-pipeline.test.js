@@ -40,13 +40,13 @@ function record(id, stage, extra = {}) {
   };
 }
 
-function stubClient(records, { failMove } = {}) {
+function stubClient(records, { failMove, pipelines } = {}) {
   const calls = [];
   return {
     calls,
     async request(path, options = {}) {
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
-      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE] };
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: pipelines ?? [PIPELINE] };
       if (options.method === 'POST') {
         if (failMove) throw Object.assign(new Error(failMove.message), failMove);
         return { ok: true };
@@ -185,12 +185,21 @@ test('move toasts name the stage label and failures stay friendly (C25)', async 
 
   // Missing reason for a lost move: motivo line, no field name.
   {
-    const { mount } = await rendering({ message: 'reason is required when moving to the lost stage', status: 400, code: 'VALIDATION', details: { field: 'reason' } });
+    const { mount, client } = await rendering({ message: 'reason is required when moving to the lost stage', status: 400, code: 'VALIDATION', details: { field: 'reason' } });
     const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
     card.__select.value = 'persa';
     await card.__move();
+    const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+    assert.equal(postsBefore, 0, 'Sposta to persa posts nothing before Conferma');
+    const question = card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question');
+    assert.ok(question.textContent.includes('motivo della perdita'), `the confirm asks for the reason (${question.textContent})`);
+    await card.__confirm();
     const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
-    assert.ok(error.textContent.includes('motivo'), `motivo line (${error.textContent})`);
+    assert.ok(error.textContent.includes('motivo'), `empty Conferma refuses without a reason (${error.textContent})`);
+    card.__reason.value = 'Budget congelato';
+    await card.__confirm();
+    const post = client.calls.filter((call) => call.method === 'POST').at(-1);
+    assert.deepEqual(JSON.parse(post.body), { toStage: 'persa', fromStage: 'richiesta', reason: 'Budget congelato' });
     assert.ok(!error.textContent.includes('reason is required'), 'no raw message in the DOM');
   }
 
@@ -237,7 +246,7 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
   await board.renderBoard('b2b-sales');
   assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
-  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline (non mostrata)."), 'exclusion disclosed in correct Italian');
+  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'exclusion disclosed in correct Italian');
   const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/another-pipeline');
   assert.ok(link, 'the other pipeline links to its own board');
   assert.equal(link.textContent, 'Vedi another-pipeline');
@@ -253,10 +262,86 @@ test('the off-pipeline disclosure uses the Italian plural for several records', 
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('2 offerte di altre pipeline (non mostrate).'), 'plural exclusion disclosed in correct Italian');
+  assert.ok(mount.textContent.includes('2 offerte di altre pipeline.'), 'plural exclusion disclosed in correct Italian');
   const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/other');
   assert.ok(link, 'the other pipeline links to its own board');
   assert.equal(link.textContent, 'Vedi other');
+});
+
+test('with several composed pipelines the board shows a selector instead of the note', async () => {
+  const SECOND = {
+    pipelineContract: 1,
+    name: 'upsell',
+    label: 'Upsell',
+    module: 'opportunity',
+    defaultStage: 'idea',
+    stages: [
+      { key: 'idea', label: 'Idea', order: 10, type: 'open', probability: 10 },
+      { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
+    ],
+  };
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'idea'), pipelineKey: 'upsell' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient(records, { pipelines: [PIPELINE, SECOND] }),
+    navigate: (hash) => navigated.push(hash),
+  });
+  await board.renderBoard('b2b-sales');
+  assert.ok(!mount.textContent.includes('non mostrata'), 'no "non mostrata" line with a selector');
+  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'the count still names the other-board offer');
+  const selects = mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch');
+  assert.equal(selects.length, 1, 'one pipeline selector');
+  const labels = selects[0].childNodes.map((option) => option.textContent);
+  assert.deepEqual(labels, ['B2B Sales', 'Upsell'], 'one choice per composed pipeline, labeled');
+  assert.equal(selects[0].value, 'b2b-sales', 'the current pipeline is selected');
+  selects[0].value = 'upsell';
+  selects[0].dispatch('change');
+  assert.deepEqual(navigated, ['#/pipelines/upsell'], 'choosing a pipeline navigates to its board');
+});
+
+test('the selector lists every composed pipeline even when nothing is off-board', async () => {
+  const SECOND = { ...PIPELINE, name: 'upsell', label: 'Upsell' };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery')], { pipelines: [PIPELINE, SECOND] }),
+  });
+  await board.renderBoard('b2b-sales');
+  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 1, 'the selector is there with no off-board offer');
+  assert.ok(!mount.textContent.includes('offerta di'), 'no exclusion count when everything is on board');
+});
+
+test('a hostile pipeline label renders as inert text in the selector', async () => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const EVIL = { ...PIPELINE, name: 'evil', label: hostile };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery')], { pipelines: [PIPELINE, EVIL] }),
+  });
+  await board.renderBoard('b2b-sales');
+  const options = mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch')[0].childNodes;
+  assert.equal(options[1].textContent, hostile, 'the hostile label is text, never markup');
+  assert.equal(options[1].childNodes.length, 0, 'no element smuggled through the label');
+});
+
+test('with a single composed pipeline there is no selector, only the disclosure', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  await board.renderBoard('b2b-sales');
+  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 0, 'no selector for a single pipeline');
 });
 
 test('the summary counts the shown cards, never the off-pipeline offers', async () => {
@@ -560,7 +645,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
   assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), 'success is toasted with the stage label');
 });
 
-test('same-stage drops post nothing; drops onto lost ask for a reason first', async () => {
+test('same-stage drops post nothing; drops onto lost ask for confirmation first', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient(boardRecords());
@@ -574,10 +659,57 @@ test('same-stage drops post nothing; drops onto lost ask for a reason first', as
 
   const lostColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'lost');
   await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
-  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without Conferma');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
   assert.equal(card.__reason.getAttribute('class'), '', 'the reason input is revealed');
-  assert.match(card.findAll('small')[0].textContent, /motivo della perdita/i);
+  assert.match(
+    card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question').textContent,
+    /motivo della perdita/i,
+  );
+});
+
+test('drops onto won reveal the Conferma panel and post nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(boardRecords());
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+  const wonColumn = mount.findAll('div').find((node) => node.getAttribute('data-stage') === 'won');
+  await wonColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'discovery' }));
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'no move posted without Conferma');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  const question = card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question');
+  assert.ok(question.textContent.includes('come Won?'), `the confirm names the won label (${question.textContent})`);
+  assert.ok(question.textContent.includes('Deal a'), 'the confirm names the offer');
+  assert.equal(card.__reason.getAttribute('class'), 'hidden', 'no reason input for a won move');
+});
+
+test('Vinta asks Conferma from Sposta, then posts; Annulla posts nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(boardRecords());
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  card.__select.value = 'won';
+  await card.__move();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore, 'Sposta to won posts nothing before Conferma');
+  await card.__confirm();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, postsBefore + 1, 'Conferma posts once');
+  assert.equal(posts.at(-1).path, '/api/modules/opportunity/records/a/actions/move-stage');
+  assert.deepEqual(JSON.parse(posts.at(-1).body), { toStage: 'won', fromStage: 'discovery' }, 'no reason rides a won move');
+
+  // Annulla drops the pending move: nothing posts.
+  const fresh = mount.findAll('div').find((node) => node.getAttribute('data-record') === 'a');
+  fresh.__select.value = 'lost';
+  await fresh.__move();
+  fresh.__cancelConfirm();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore + 1, 'Annulla posts nothing');
 });
 
 test('hostile owner names render as inert option text', async () => {
@@ -845,7 +977,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Nessuna offerta da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
-    "1 offerta di un'altra pipeline (non mostrata).",
+    "1 offerta di un'altra pipeline.",
     'Vedi altra',
     'Fuori definizione (1)',
     'fase registrata: svincolata',
@@ -867,7 +999,9 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   await lostColumn.__drop(JSON.stringify({ id: 'a', fromStage: 'richiesta' }));
   const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   assert.equal(fresh.__reason.getAttribute('class'), '', 'the reason input is revealed');
-  assert.match(fresh.findAll('small')[0].textContent, /motivo della perdita/, 'the reason prompt is Italian');
+  const confirmQuestion = fresh.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'confirm-question');
+  assert.match(confirmQuestion.textContent, /Segnare «Offerta A» come Persa\?/, 'the confirm names the offer and the label');
+  assert.match(confirmQuestion.textContent, /motivo della perdita/, 'the reason prompt is Italian');
   assertNoEnglish('after lost reveal');
 
   // Lista: headers and the empty-filter message.
@@ -1077,7 +1211,7 @@ function newOfferVoices(menu) {
   return menu.findAll('button').filter((node) => node.getAttribute('data-voice') !== null);
 }
 
-test('Nuova offerta button sits under the description with the two prototype voices (C3)', async () => {
+test('Nuova offerta button sits top-right on the title row with the two prototype voices (C3, backlog 339ca222)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
@@ -1085,6 +1219,23 @@ test('Nuova offerta button sits under the description with the two prototype voi
 
   const menu = newOfferMenu(mount);
   assert.ok(menu, 'a Nuova offerta menu exists');
+  // Backlog 339ca222: the menu rides the title-row actions — second child
+  // of the panel heading, after the title box — like Clienti and Calendario.
+  const actions = menu.parentNode;
+  assert.equal(actions?.getAttribute('data-pipeline-actions'), 'title', 'the menu rides the title-row actions');
+  const heading = actions?.parentNode;
+  assert.ok((heading?.getAttribute('class') ?? '').split(/\s+/).includes('panel-heading'), 'the actions live in the panel heading');
+  const headKids = heading.childNodes.filter((node) => typeof node.tagName === 'string');
+  assert.equal(headKids.length, 2, 'the title row holds the title box and exactly one action group');
+  assert.ok(headKids[0].findAll('h2').some((node) => node.textContent === 'Offerte'), 'the title comes first');
+  assert.equal(headKids[1], actions, 'the action group is second — top-right');
+  // The violet forecast left the title row for its own row below, unchanged.
+  const forecast = mount.findAll('div').find((node) => node.getAttribute('data-forecast') === 'estimate');
+  assert.ok(forecast, 'the forecast still renders with the same hook');
+  assert.ok(!heading.contains(forecast), 'the forecast is no longer in the title row');
+  assert.equal(forecast.parentNode, heading.parentNode, 'the forecast is a panel row below the heading');
+  const panelKids = heading.parentNode.childNodes.filter((node) => typeof node.tagName === 'string');
+  assert.ok(panelKids.indexOf(heading) < panelKids.indexOf(forecast), 'the forecast follows the heading');
   const button = newOfferButton(menu);
   assert.ok(button.textContent.includes('Nuova offerta'), 'the green button is labelled');
   assert.ok((button.getAttribute('class') ?? '').includes('ui-btn-cta'), 'the button uses the green cta variant');
@@ -1166,4 +1317,164 @@ test('Nuova offerta voices stay honest without shell seams (C3)', async () => {
   newOfferButton(menu).dispatch('click');
   newOfferVoices(menu).find((voice) => voice.getAttribute('data-voice') === 'manual').dispatch('click');
   assert.ok(toasts.some((message) => message.includes('manuale')), 'manual voice says it cannot create instead of writing');
+});
+
+test('kanban rides a scroll wrap hiding the end cue at the end (backlog 339ca222)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  await board.renderBoard('b2b-sales');
+
+  const wrap = mount.findAll('div').find((node) => node.getAttribute('data-board') === 'scroll');
+  assert.ok(wrap, 'a scroll wrap exists around the kanban');
+  const scrolled = wrap.findAll('div')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('pipeline-board'));
+  assert.ok(scrolled, 'the board lives inside the wrap');
+  assert.equal(wrap.getAttribute('data-ateend'), 'false', 'cue on when scroll metrics are unreadable (fail closed)');
+
+  scrolled.scrollWidth = 1200;
+  scrolled.clientWidth = 300;
+  scrolled.scrollLeft = 0;
+  scrolled.dispatch('scroll');
+  assert.equal(wrap.getAttribute('data-ateend'), 'false', 'cue stays while columns sit off-screen');
+  scrolled.scrollLeft = 900;
+  scrolled.dispatch('scroll');
+  assert.equal(wrap.getAttribute('data-ateend'), 'true', 'cue hides once the board reaches its end');
+});
+
+/**
+ * Voce 96e7b579: a card opens and edits importo, data di chiusura and
+ * referente. Apri reads the rendered record (Valore, Chiusura,
+ * Referente); Modifica swaps it for the three inputs prefilled from the
+ * record; Salva PATCHes the offer; Annulla drops the edits. The board
+ * re-renders from the server after a save, so the card shows the saved
+ * values, never an optimistic copy.
+ */
+function editableClient(records, { failPatch } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path === '/api/schema') {
+        return {
+          pipelineContract: 1,
+          pipelines: [{
+            pipelineContract: 1,
+            name: 'b2b-sales',
+            label: 'B2B Sales',
+            module: 'opportunity',
+            defaultStage: 'discovery',
+            stages: [
+              { key: 'discovery', label: 'Discovery', order: 10, type: 'open', probability: 10 },
+              { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
+            ],
+          }],
+        };
+      }
+      if (path.startsWith('/api/opportunities/')) {
+        if (options.method === 'PATCH') {
+          if (failPatch) throw Object.assign(new Error(failPatch.message), failPatch);
+          const record = records.find((candidate) => `/api/opportunities/${candidate.id}` === path);
+          Object.assign(record, JSON.parse(options.body));
+          return { ...record };
+        }
+        return { ...records.find((candidate) => `/api/opportunities/${candidate.id}` === path) };
+      }
+      return { items: records };
+    },
+  };
+}
+
+function openCard(mount, id) {
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === id);
+  card.__open();
+  return mount.findAll('div').find((n) => n.getAttribute('data-record') === id);
+}
+
+test('Apri reads the card facts; Modifica edits them through PATCH', async () => {
+  const records = [record('a', 'discovery', {
+    name: 'Cucina per Giulia', valueCents: 2750000, currency: 'EUR',
+    expectedCloseDate: '2026-11-20T00:00:00.000Z', owner: 'maria',
+  })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const client = editableClient(records);
+  const board = createPipelineBoard({ doc, mount, client, toast: (message) => toasts.push(String(message)) });
+  await board.renderBoard('b2b-sales');
+
+  // Closed until opened: no detail on the painted card.
+  assert.ok(!mount.textContent.includes('Referente:'), 'the detail stays shut until Apri');
+  const opened = openCard(mount, 'a');
+  assert.ok(opened.textContent.includes('Valore:'), 'Apri reads the valore');
+  assert.ok(opened.textContent.includes('2026-11-20'), 'Apri reads the chiusura');
+  assert.ok(opened.textContent.includes('maria'), 'Apri reads the referente');
+
+  // Modifica prefills from the record; Salva PATCHes the three fields.
+  opened.__edit();
+  const editing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.equal(editing.__editInputs.value.value, '27500.00', 'the valore prefills in euro');
+  assert.equal(editing.__editInputs.expiry.value, '2026-11-20', 'the chiusura prefills as a day');
+  assert.equal(editing.__editInputs.owner.value, 'maria', 'the referente prefills');
+  editing.__editInputs.value.value = '300.50';
+  editing.__editInputs.expiry.value = '2026-12-01';
+  editing.__editInputs.owner.value = 'guido';
+  await editing.__save({ preventDefault() {} });
+
+  const patches = client.calls.filter((call) => call.method === 'PATCH');
+  assert.equal(patches.length, 1, 'one PATCH on Salva');
+  assert.equal(patches[0].path, '/api/opportunities/a');
+  assert.deepEqual(
+    JSON.parse(patches[0].body),
+    { valueCents: 30050, expectedCloseDate: '2026-12-01', owner: 'guido' },
+    'euro text becomes integer cents; the date and referente travel verbatim',
+  );
+  assert.ok(toasts.some((message) => message.includes('Offerta aggiornata.')), 'the save toasts in Italian');
+  assert.ok(mount.textContent.includes('guido'), 'the re-rendered card shows the saved referente');
+});
+
+test('the card edit validates before writing and keeps the form on a refused save', async () => {
+  const records = [record('a', 'discovery', { valueCents: 100000, owner: 'maria' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = editableClient(records, { failPatch: { message: 'boom', status: 500 } });
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const opened = openCard(mount, 'a');
+  opened.__edit();
+  const editing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  editing.__editInputs.value.value = 'not-a-number';
+  editing.__editInputs.owner.value = '';
+  await editing.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH on invalid input');
+  assert.ok(editing.__editError.textContent.includes('euro'), 'the euro rule is explained');
+
+  // A refused save keeps the form with a friendly line, never a blank card.
+  editing.__editInputs.value.value = '200.00';
+  editing.__editInputs.owner.value = 'guido';
+  await editing.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 1, 'the valid retry PATCHes');
+  const stillEditing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.ok(stillEditing.__editInputs, 'the form stays open after a refused save');
+  assert.ok(stillEditing.__editError.textContent.includes('Riprova più tardi'), 'the failure stays friendly');
+});
+
+test('Annulla drops the edits without writing', async () => {
+  const records = [record('a', 'discovery', { valueCents: 100000, owner: 'maria' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = editableClient(records);
+  const board = createPipelineBoard({ doc, mount, client });
+  await board.renderBoard('b2b-sales');
+
+  const opened = openCard(mount, 'a');
+  opened.__edit();
+  const editing = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  editing.__editInputs.owner.value = 'guido';
+  editing.__cancelEdit();
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'Annulla writes nothing');
+  assert.ok(mount.textContent.includes('maria'), 'the card still shows the stored referente');
+  assert.ok(!mount.textContent.includes('guido'), 'the dropped edit never paints');
 });

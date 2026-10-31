@@ -95,9 +95,12 @@ test('every limit renders as content, in the ordinary state', async () => {
   for (const sentence of CUSTOMER_DATA_DISCLAIMERS) {
     assert.ok(text.includes(sentence), `missing verbatim limit: ${sentence.slice(0, 50)}…`);
   }
-  // The deferred track has one home, and it is named.
-  assert.ok(text.includes('Customer Data Operations v2'));
-  assert.ok(text.includes('global search'));
+  // The deferred track has one home, and it reads in Italian: the import is
+  // an operator tool, not a developer surface (backlog:273de560).
+  assert.ok(text.includes('Altri strumenti in arrivo: ricerca globale, viste salvate, unione delle schede.'));
+  assert.ok(text.includes('ricerca globale'));
+  assert.ok(!text.includes('Customer Data Operations v2'), 'no English program name on the surface');
+  assert.ok(!text.includes('global search'), 'no English roadmap item on the surface');
   // The server still describes the import in English (META.import): the
   // view renders its own Italian copy and never the raw server text.
   assert.ok(!text.includes(META.import.preview), 'the raw server preview text never renders');
@@ -108,69 +111,12 @@ test('every limit renders as content, in the ordinary state', async () => {
   assert.doesNotMatch(text, /customer data platform/i);
 });
 
-test('a preview states plainly that it wrote nothing, and shows every receipt', async () => {
-  const client = stubClient();
-  const doc = createFakeDocument();
-  const mount = createMount();
-  const view = createCustomerDataView({ doc, mount, client });
-  await view.render();
-
-  const rowsInput = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'rows');
-  const systemInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'system');
-  systemInput.value = 'crm-export';
-  rowsInput.value = JSON.stringify([{ email: 'a@b.example' }, { email: 'bad' }]);
-
-  const preview = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'preview-customer-import');
-  preview.dispatch('click');
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  const text = mount.textContent;
-  assert.ok(text.includes('L\u2019anteprima non ha scritto nulla.'), text.slice(0, 200));
-  assert.ok(text.includes('riga 0'), 'each receipt is rendered');
-  assert.ok(text.includes('INVALID_EMAIL'), 'including the rejected one');
-  assert.ok(text.includes('rejected'), 'and its outcome');
-
-  const posted = client.calls.filter((call) => call.method === 'POST');
-  assert.equal(posted.length, 1);
-  assert.equal(posted[0].path, '/api/customer-data/import/preview');
-  assert.deepEqual(JSON.parse(posted[0].body).rows.length, 2);
-});
-
-test('applying after a preview reuses the rows the operator typed once', async () => {
-  // The primary flow is *preview, read the receipts, then apply the same rows*.
-  // A preview re-renders the panel; if the draft did not survive that render the
-  // operator's own import would come back as "paste the rows to import".
-  const client = stubClient();
-  const doc = createFakeDocument();
-  const mount = createMount();
-  await createCustomerDataView({ doc, mount, client }).render();
-
-  const control = (tag, name) => mount.findAll(tag).find((node) => node.getAttribute('name') === name);
-  const button = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
-  const ROWS_JSON = JSON.stringify([{ email: 'a@b.example' }, { email: 'bad' }]);
-
-  control('input', 'system').value = 'crm-export';
-  control('textarea', 'rows').value = ROWS_JSON;
-  control('select', 'acceptance').value = 'all_or_nothing';
-
-  button('preview-customer-import').dispatch('click');
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  // The re-rendered form still carries the draft, visibly.
-  assert.equal(control('input', 'system').value, 'crm-export');
-  assert.equal(control('textarea', 'rows').value, ROWS_JSON);
-  assert.equal(control('select', 'acceptance').value, 'all_or_nothing');
-
-  // And Apply — on the freshly rendered button — sends exactly those rows.
-  button('apply-customer-import').dispatch('click');
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  const applied = client.calls.filter((call) => call.path === '/api/customer-data/import/apply').at(-1);
-  assert.ok(applied, 'the apply was actually sent');
-  const body = JSON.parse(applied.body);
-  assert.equal(body.system, 'crm-export');
-  assert.equal(body.acceptance, 'all_or_nothing');
-  assert.deepEqual(body.rows, JSON.parse(ROWS_JSON), 'apply carries the same rows the preview did');
+test('the import tool flow lives in its own suite now', async () => {
+  // backlog:5b164ab5: the JSON textarea is gone — loading, mapping and the
+  // table preview are covered by tests/admin-import-clienti.test.js.
+  const mount = await render(stubClient());
+  assert.equal(mount.findAll('textarea').length, 0, 'no JSON textarea on the import screen');
+  assert.ok(mount.findAll('input').some((node) => node.getAttribute('name') === 'file'), 'the file control renders');
 });
 
 test('a list that could not be read says so, and never renders as zero', async () => {
@@ -250,7 +196,8 @@ test('a duplicate candidate offers a human decision, never an automatic one', as
 test('the data-quality queue records a decision and says the finding is kept', async () => {
   const client = stubClient();
   const mount = await render(client);
-  assert.ok(mount.textContent.includes('invalid_email'));
+  assert.ok(mount.textContent.includes('email non valida'), 'the kind reads in Italian');
+  assert.ok(!mount.textContent.includes('invalid_email'), 'no raw kind code on the surface');
   assert.ok(mount.textContent.includes('La segnalazione e le sue prove restano.'));
 
   const govern = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'govern-data-quality-issue');
@@ -316,14 +263,14 @@ test('hostile server text renders as text, never as markup', async () => {
 
 test('the import tool renders alone, without the customer list', async () => {
   // backlog:80b25fb0: the tool left the Clienti screen for #/import-clienti,
-  // so it renders its rows field without fetching or embedding the list.
+  // so it renders its file field without fetching or embedding the list.
   const client = stubClient();
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerDataView({ doc, mount, client }).render();
   for (let i = 0; i < 12; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
-  const rowsBox = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'rows');
-  assert.ok(rowsBox, 'the import rows field renders');
+  const fileBox = mount.findAll('input').find((node) => node.getAttribute('name') === 'file');
+  assert.ok(fileBox, 'the import file field renders');
   assert.ok(!client.calls.some((call) => String(call.path).includes('/api/customer-data/customers')),
     'the tool never fetches the customer list');
   assert.deepEqual(mount.findAll('article').filter((node) =>

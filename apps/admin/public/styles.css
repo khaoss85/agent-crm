@@ -235,7 +235,7 @@ button[aria-busy="true"] { opacity: .6; }
 .action-row .hint { color: var(--dim); font-size: 12px; }
 .action-form { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface-soft); border-radius: 9px; }
 .pipeline-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
-.pipeline-column { min-width: 220px; flex: 1 0 220px; background: var(--surface-soft); border-radius: 9px; padding: 12px; }
+.pipeline-column { min-width: 200px; flex: 1 1 200px; background: var(--surface-soft); border-radius: 9px; padding: 12px; }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
 .pipeline-column-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -271,12 +271,37 @@ button[aria-busy="true"] { opacity: .6; }
 @media (max-width: 700px) {
   .pipeline-board-panel > .panel-heading { flex-direction: column; align-items: stretch; }
   .pipeline-board-panel .pipeline-forecast { flex: none; width: 100%; }
+  /* Backlog 339ca222: on the phone the action row stretches under the
+     title and the kanban keeps phone-wide columns that scroll sideways —
+     never a squeezed five-across. */
+  .pipeline-board-panel .pipeline-actions { margin-left: 0; align-self: stretch; }
+  .pipeline-board-panel .pipeline-actions .ui-conn-addwrap { flex: 1 1 auto; display: flex; }
+  .pipeline-board-panel .pipeline-actions .ui-conn-addwrap > .ui-btn { flex: 1 1 auto; justify-content: center; }
+  .pipeline-board { scroll-snap-type: x proximity; }
+  .pipeline-board-panel .pipeline-column { flex: 0 0 248px; min-width: 248px; scroll-snap-align: start; }
+  /* Backlog 339ca222: the visible "continues" sign — a fade over the right
+     scroll edge while more columns sit off-screen. It fades out once the
+     board reports data-ateend="true" (scroll listener in admin-pipeline.js). */
+  .pipeline-board-wrap::after {
+    content: ""; position: absolute; top: 0; right: 0; bottom: 8px; width: 32px;
+    pointer-events: none; border-radius: 0 16px 16px 0;
+    background: linear-gradient(to right, transparent, var(--paper));
+    opacity: 1; transition: opacity .2s ease;
+  }
+  .pipeline-board-wrap[data-ateend="true"]::after { opacity: 0; }
 }
 .pipeline-board-panel .kicker { text-transform: uppercase; margin-bottom: 10px; }
 .pipeline-board-panel .panel-heading h2 { margin: 0; font-size: clamp(34px, 4.4vw, 50px); line-height: 1; letter-spacing: -.03em; }
 .pipeline-board-panel .panel-heading .lede { margin: 12px 0 0; font-size: 16px; max-width: 560px; }
 .pipeline-board-panel .panel-heading .hint { margin: 8px 0 0; font-size: 12px; color: var(--dim); }
-.pipeline-board-panel .pipeline-forecast { flex: 0 1 380px; margin: 0; padding: 18px 20px; border-radius: 16px; background: var(--agent-card); border: 1px solid var(--agent-line); }
+.pipeline-board-panel .pipeline-forecast { margin: 0 0 18px; padding: 18px 20px; border-radius: 16px; background: var(--agent-card); border: 1px solid var(--agent-line); }
+/* Backlog 339ca222: the primary action rides the title row top-right, like
+   Clienti `Aggiungi cliente` and Calendario `Nuovo appuntamento`. The menu
+   opens right-aligned through the shared ui-conn-addmenu pair — no new CSS. */
+.pipeline-board-panel .pipeline-actions { margin-left: auto; align-self: flex-start; display: flex; flex: none; }
+/* Backlog 339ca222: the wrap positions the phone fade cue over the scroll
+   edge without scrolling away with the columns. */
+.pipeline-board-wrap { position: relative; min-width: 0; }
 .pipeline-forecast h3 { margin: 0 0 6px; font-size: 13px; color: var(--agent-ink); }
 .pipeline-forecast .forecast-total { margin: 0; font-size: 28px; letter-spacing: -.02em; }
 .pipeline-forecast .hint { margin: 6px 0 0; font-size: 12.5px; color: var(--agent-ink); }
@@ -286,7 +311,7 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-toolbar .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
 .pipeline-toolbar .pipeline-summary { margin: 0 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
 .pipeline-board { gap: 14px; }
-.pipeline-column { min-width: 236px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
+.pipeline-column { min-width: 200px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
 .pipeline-column-header h3 { font-size: 14px; display: flex; align-items: center; gap: 8px; }
@@ -372,6 +397,9 @@ button[aria-busy="true"] { opacity: .6; }
 }
 a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-nav-item.active { background: var(--ink); color: var(--paper); }
+/* The hover wash must never win over the active pair: paper on soft is
+ * unreadable, and the grey pills would be all that is left of the row. */
+a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-nav-item.disabled { color: var(--muted); background: transparent; cursor: default; }
 .bo-nav-label { flex: 1; }
 .bo-nav-icon { width: 18px; height: 18px; flex: none; }
@@ -525,7 +553,7 @@ a.bo-nav-item:hover { background: var(--surface-soft); }
 .bo-scheda-actions { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .bo-scheda-tile { flex-direction: column; gap: 6px; min-height: 0; padding: 12px 4px 10px; font-size: 12px; }
 .bo-scheda-tile[data-action="call-customer"]::before { content: "☎"; font-size: 17px; line-height: 1; }
-.bo-scheda-tile[data-action="mail-customer"]::before { content: "✉"; font-size: 17px; line-height: 1; }
+.bo-scheda-tile[data-action="compose-message"]::before { content: "✉"; font-size: 17px; line-height: 1; }
 .bo-scheda-disabled { min-height: 0; padding: 12px 6px 10px; font-size: 11.5px; }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
@@ -1257,7 +1285,11 @@ select.bo-spazi-input { flex: none; }
 .catalog-meta { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .catalog-source { padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--muted); }
 .catalog-source-provider { background: var(--agent-card); color: var(--agent-ink); }
-.catalog-inactive { font-size: 11px; color: var(--dim); }
+.catalog-active-state { font-size: 12px; font-weight: 700; color: var(--muted); }
+.catalog-create-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.catalog-create-form { display: grid; gap: 6px; }
+.catalog-create-label { font-size: 12px; color: var(--muted); }
+.catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
 .catalog-readonly { margin: 4px 0 0; font-size: 11.5px; color: var(--data-ink); }
 .catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
 .catalog-offer { padding: 0; margin: 0; }
@@ -1293,6 +1325,7 @@ select.bo-spazi-input { flex: none; }
   .catalog-filters { flex-direction: column; align-items: stretch; }
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-row { overflow-wrap: anywhere; }
 }
 
@@ -1580,3 +1613,22 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 .bo-user-link { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; color: inherit; text-decoration: none; border-radius: 10px; padding: 4px; margin: -4px; }
 .bo-user-link:hover { background: var(--surface-soft); }
+
+/* backlog:5b164ab5 — the Clienti import tool reads like the rest of the /bo:
+   breadcrumb, ghost back link (shared with the scheda), kicker and title,
+   then the three steps (file, columns, check). The preview table scrolls
+   inside its own frame on a phone, never the page. */
+.bo-import-crumb { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.bo-import-crumb-sep { color: var(--dim); }
+.bo-import-crumb-link { color: var(--accent); font-weight: 600; }
+.bo-import-crumb-current { color: var(--ink); font-weight: 600; }
+.bo-import-title { margin: 10px 0 0; }
+.bo-import-drop { margin: 12px 0 0; border: 1.5px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center; background: var(--surface-soft); }
+.bo-import-drop-over { border-color: var(--accent); background: var(--accent-soft); }
+.bo-import-drop-text { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.bo-import-file { margin: 10px 0 0; font-size: 14px; }
+.bo-import-info, .bo-import-counts, .bo-import-applied { margin: 10px 0 0; font-size: 14px; }
+.bo-import-applied { color: var(--accent); font-weight: 600; }
+.bo-import-table-wrap { margin: 12px 0 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+.bo-import-table { margin: 0; }
+.customer-data-mapping-row, .customer-data-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

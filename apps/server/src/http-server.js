@@ -18,6 +18,8 @@ import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js'
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
 import { getAdminBundle } from './admin-bundle.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
+import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
+import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
@@ -562,6 +564,9 @@ export function buildRouter(app) {
     return await app.applyCustomerImport({ ...stripServerControlledKeys(body), actor });
   });
 
+  // Manual channel identity link/unlink (backlog:826e377c) was split into a
+  // follow-up voce by the owner: this PR keeps only the read of observed
+  // identities, so the link and unlink routes return with that voce.
   router.add('GET', '/api/customer-data/profile/:resource/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerProfile !== 'function') {
@@ -631,6 +636,265 @@ export function buildRouter(app) {
       throw new NotFoundError('Operation', 'customer timeline');
     }
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
+  });
+
+  // Voce 714433c2: the scheda cliente's "Aggiungi nota". The note is a
+  // work-activity row of kind `note` on the customer subject (same row, kind
+  // and human-actor boundary as the task `add-note` action, without the
+  // task), so it reads back on the scheda cronologia through the timeline
+  // the hub already shapes. Without the work package composed the honest
+  // 404 names the missing operation; a note on a ghost record refuses with
+  // the record's own NotFoundError, never a dangling row.
+  router.add('POST', '/api/customer-hub/notes', async ({ body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordSubjectNote !== 'function') {
+      throw new NotFoundError('Operation', 'subject note');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject note needs resource contact or company', { field: 'resource' });
+    }
+    return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
+  });
+
+  // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
+  // holds one callable number beside the customer, so the scheda can dial
+  // it. Same enumerated-adapter shape as the notes route: the kernel owns
+  // the path, gates records.write, and delegates to the composed operation
+  // — without customer-data composed the honest 404 names the missing
+  // operation; a number on a ghost record refuses with the record's own
+  // NotFoundError, never a dangling identity. E.164, the cross-subject 409
+  // and the human-actor boundary are the operation's, not the route's.
+  router.add('POST', '/api/customer-hub/phone', async ({ body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordSubjectPhone !== 'function') {
+      throw new NotFoundError('Operation', 'subject phone');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject phone needs resource contact or company', { field: 'resource' });
+    }
+    return respond(201, await app.recordSubjectPhone({ ...stripServerControlledKeys(input), actor }));
+  });
+
+  // Scheda cliente "Chiama dal CRM" (voce 105563eea902): the operator calls
+  // the customer through the linked voice connector, and the call enters the
+  // scheda cronologia through the same interaction-call row the adapters
+  // log. Same enumerated-adapter shape as the composer route: the kernel
+  // owns the path, gates records.write, and delegates to the composed
+  // operations. The dialed number is ALWAYS server-derived from the card —
+  // a caller-supplied `to` is ignored, never trusted — and the voice
+  // connection must be active in this space: without one the route answers
+  // 409 VOICE_CONNECTION_NOT_ACTIVE and the card falls back to `tel:` with
+  // its notice, instead of logging a call the CRM never placed. The outcome
+  // is operator-declared (the CRM dials; only the operator knows how the
+  // call ended) and idempotent by `callKey`: one fresh key per call.
+  router.add('POST', '/api/customer-hub/calls', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.logSubjectCall !== 'function') {
+      throw new NotFoundError('Operation', 'subject call');
+    }
+    if (typeof app.readCustomerCard !== 'function') {
+      throw new NotFoundError('Operation', 'customer card');
+    }
+    if (typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync state');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject call needs resource contact or company', { field: 'resource' });
+    }
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    if (spaceId.trim() === '') {
+      throw new ValidationError('a subject call needs its spaceId', { field: 'spaceId' });
+    }
+    const callKey = typeof input.callKey === 'string' ? input.callKey : '';
+    if (callKey === '' || callKey.length > 128 || COMPOSER_CONTROL_RE.test(callKey)) {
+      throw new ValidationError('callKey must be bounded single-line text: one fresh key per call', { field: 'callKey' });
+    }
+    const card = await app.readCustomerCard({ resource: input.resource, id: String(input.id ?? '') });
+    const dialable = card?.phone?.available === true && typeof card.phone.value === 'string'
+      && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
+    if (dialable === null) {
+      throw new AppError('This customer has no callable number: hold one first with Aggiungi telefono', {
+        code: 'CHANNEL_CALL_NO_RECIPIENT', status: 409,
+      });
+    }
+    const sync = await app.readSyncState({ spaceId });
+    const voice = Array.isArray(sync?.connectors) ? sync.connectors.filter((entry) => entry
+      && typeof entry === 'object' && entry.channel === 'voice' && entry.status === 'active'
+      && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') : [];
+    if (voice.length === 0) {
+      throw new AppError('No linked voice connection in this space: call with tel: instead', {
+        code: 'VOICE_CONNECTION_NOT_ACTIVE', status: 409,
+      });
+    }
+    // The author is the signed-in operator, never a caller claim: like the
+    // dialed `to`, a caller-supplied `teamAuthorId` is ignored, so a call
+    // can never be attributed to another operator.
+    const authorId = typeof actor?.id === 'string' && actor.id.trim() !== '' ? actor.id.trim() : null;
+    if (authorId === null) {
+      throw new ValidationError('a subject call needs its signed-in operator', { field: 'teamAuthorId' });
+    }
+    return respond(201, await app.logSubjectCall({
+      ...stripServerControlledKeys(input),
+      resource: input.resource,
+      id: String(input.id ?? ''),
+      callKey,
+      teamAuthorId: authorId,
+      remoteHandle: dialable,
+      actor,
+    }));
+  });
+
+  // Scheda cliente composer «Scrivi» (backlog:e9b4fc2f): the quick-action
+  // mailto: link is gone — the operator writes inside the /bo, choosing the
+  // channel among the customer's own (Email via the linked Gmail, WhatsApp,
+  // Instagram, Messenger, SMS), with the recipient preselected, and the
+  // message goes through the durable-jobs outbox (the worker sends, then
+  // logs the proven send as the subject's outbound timeline row, so it
+  // reads back in the scheda cronologia). Same enumerated-adapter shape as
+  // the routes above: the kernel owns the path, gates records.write, and
+  // delegates to the composed operations — without channels or the hub
+  // composed each answers an honest 404. The recipient is ALWAYS
+  // server-derived from the card: a caller-supplied `to` is ignored, never
+  // trusted, so the composer cannot be turned into an arbitrary send tool.
+  // No attachment in v1: no outbound adapter carries one, so an attachment
+  // field would either lie or silently drop — it rides a follow-up voce.
+  router.add('POST', '/api/customer-hub/messages', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.queueChannelSend !== 'function') {
+      throw new NotFoundError('Operation', 'channel send');
+    }
+    if (typeof app.readCustomerCard !== 'function') {
+      throw new NotFoundError('Operation', 'customer card');
+    }
+    if (typeof app.readSyncState !== 'function') {
+      throw new NotFoundError('Operation', 'connector sync state');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a composed message needs resource contact or company', { field: 'resource' });
+    }
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId : '';
+    if (spaceId.trim() === '') {
+      throw new ValidationError('a composed message needs its spaceId', { field: 'spaceId' });
+    }
+    const channel = typeof input.channel === 'string' ? input.channel.trim().toLowerCase() : '';
+    if (!COMPOSER_CHANNELS.includes(channel)) {
+      throw new ValidationError(`channel must be one of ${COMPOSER_CHANNELS.join(', ')}`, { field: 'channel' });
+    }
+    const text = typeof input.text === 'string' ? input.text : '';
+    // The composer always attaches the customer's timeline row, and the row
+    // holds at most 2000 characters without tabs or control characters
+    // (line breaks allowed) — so the route refuses anything the row would
+    // refuse, naming the composer limit, instead of passing route
+    // validation and failing at the queue after the check above. A refusal
+    // here is 400 VALIDATION_ERROR on field `text`.
+    const textRefusal = composerTimelineRefusal(text);
+    if (textRefusal !== null) {
+      throw new ValidationError(`Il messaggio non entra nella cronologia (limite: ${COMPOSER_TIMELINE_BODY_MAX} caratteri): ${textRefusal}`, { field: 'text' });
+    }
+    let subject;
+    if (input.subject !== undefined && input.subject !== null) {
+      if (channel !== 'email') {
+        throw new ValidationError('only email carries a subject line', { field: 'subject' });
+      }
+      if (typeof input.subject !== 'string' || input.subject.trim() === ''
+        || input.subject.length > 256 || /[\r\n]/.test(input.subject)) {
+        throw new ValidationError('subject must be bounded single-line text when present', { field: 'subject' });
+      }
+      subject = input.subject.trim();
+    }
+    const messageKey = typeof input.messageKey === 'string' ? input.messageKey : '';
+    if (messageKey === '' || messageKey.length > 128 || COMPOSER_CONTROL_RE.test(messageKey)) {
+      throw new ValidationError('messageKey must be bounded single-line text: one fresh key per send', { field: 'messageKey' });
+    }
+    const wantedKey = typeof input.connectionKey === 'string' && input.connectionKey !== ''
+      ? input.connectionKey : null;
+
+    const card = await app.readCustomerCard({ resource: input.resource, id: String(input.id ?? '') });
+    const to = composerRecipient(card, channel);
+    if (to === null) {
+      throw new AppError(`This customer has no address on ${channel}: link it before writing`, {
+        code: 'CHANNEL_COMPOSER_NO_RECIPIENT', status: 409,
+      });
+    }
+    const sync = await app.readSyncState({ spaceId });
+    const candidates = Array.isArray(sync?.connectors) ? sync.connectors.filter((entry) => entry
+      && typeof entry === 'object' && entry.channel === channel && entry.status === 'active'
+      && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') : [];
+    let connection = null;
+    if (wantedKey !== null) {
+      connection = candidates.find((entry) => entry.connectionKey === wantedKey) ?? null;
+      if (connection === null) {
+        throw new AppError('Unknown channel connection for this space and channel', {
+          code: 'CHANNEL_CONNECTION_UNKNOWN', status: 404,
+        });
+      }
+    } else if (candidates.length === 1) {
+      connection = candidates[0];
+    } else if (candidates.length === 0) {
+      throw new AppError(`No linked ${channel} connection in this space: open Connettori first`, {
+        code: 'CHANNEL_CONNECTION_NOT_ACTIVE', status: 409,
+      });
+    } else {
+      throw new AppError(`Several linked ${channel} connections: name its connectionKey`, {
+        code: 'CHANNEL_CONNECTION_AMBIGUOUS', status: 409,
+      });
+    }
+
+    // Email stays in the customer's thread: the latest email passage names
+    // it, so the reply the worker sends lands in the same Gmail thread and
+    // the logged row groups with it. Without one the provider opens a new
+    // thread and the row names the thread receipt the provider returned —
+    // never the message id, so the next composer reuses a real thread id.
+    let conversationId;
+    let threadId;
+    if (channel === 'email' && typeof app.readCustomerTimeline === 'function') {
+      const found = await latestEmailThread(app, { resource: input.resource, id: String(input.id ?? '') });
+      conversationId = found?.conversationId;
+      threadId = found?.threadId;
+    }
+    const message = { to, text };
+    if (subject !== undefined) message.subject = subject;
+    if (threadId !== undefined) message.threadId = threadId;
+    const queued = await app.queueChannelSend({
+      actor,
+      spaceId,
+      connectionKey: connection.connectionKey,
+      message,
+      messageKey,
+      timeline: {
+        subject: { resource: input.resource, id: String(input.id ?? ''), owner: 'host' },
+        ...(conversationId === undefined ? {} : { conversationId }),
+      },
+    });
+    return respond(201, {
+      channel,
+      to,
+      connectionKey: connection.connectionKey,
+      jobId: queued.jobId,
+      idempotencyKey: queued.idempotencyKey,
+      state: queued.state,
+    });
   });
 
   // Call intelligence (BO-F1-08): the notice, the transcript, its summary
@@ -1035,6 +1299,23 @@ export function buildRouter(app) {
     await gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.services.contacts.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
   });
+  // Voce 714433c2: the scheda cliente edits Dettagli in place. Only the four
+  // editable keys reach the service — anything else (companyId included) is
+  // refused rather than silently dropped, so a caller cannot move a contact
+  // between companies through this route.
+  router.add('PATCH', '/api/contacts/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    const patch = {};
+    for (const key of ['firstName', 'lastName', 'email', 'role']) {
+      if (input[key] !== undefined) patch[key] = input[key];
+    }
+    const unknown = Object.keys(input).filter((key) => !['firstName', 'lastName', 'email', 'role'].includes(key));
+    if (unknown.length > 0) {
+      throw new ValidationError(`Contact update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
+    }
+    return await app.services.contacts.update(params.id, patch, writeContext(app, { actor, identity, organizationId, headers }));
+  });
 
   router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
@@ -1054,6 +1335,24 @@ export function buildRouter(app) {
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     return await app.services.opportunities.get(params.id);
+  });
+  // Voce 96e7b579: the pipeline card edits importo, data di chiusura and
+  // referente in place. Only the three editable keys reach the service —
+  // anything else (companyId, stage, pipeline-managed keys included) is
+  // refused rather than silently dropped, so an edit can never move the
+  // customer, the lifecycle stage or the pipeline position of an offer.
+  router.add('PATCH', '/api/opportunities/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    const patch = {};
+    for (const key of ['valueCents', 'expectedCloseDate', 'owner']) {
+      if (input[key] !== undefined) patch[key] = input[key];
+    }
+    const unknown = Object.keys(input).filter((key) => !['valueCents', 'expectedCloseDate', 'owner'].includes(key));
+    if (unknown.length > 0) {
+      throw new ValidationError(`Opportunity update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
+    }
+    return await app.services.opportunities.update(params.id, patch, writeContext(app, { actor, identity, organizationId, headers }));
   });
   router.add('POST', '/api/opportunities/:id/stage', async ({ params, body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
@@ -1654,6 +1953,64 @@ function recordInput(body) {
     throw new ValidationError('Request body must be a JSON object');
   }
   return body;
+}
+
+// eslint-disable-next-line no-control-regex
+const COMPOSER_CONTROL_RE = /[\u0000-\u001f\u007f]/;
+
+/**
+ * The channels the scheda composer «Scrivi» offers (backlog:e9b4fc2f): Email
+ * sends through the linked Gmail connection, the others through their own
+ * connection. `facebook` is the Messenger connection channel, like the
+ * scheda labels it; `sms` has no adapter yet, so it always reads
+ * unconnected until one exists.
+ */
+const COMPOSER_CHANNELS = Object.freeze(['email', 'whatsapp', 'instagram', 'facebook', 'sms']);
+
+/**
+ * The customer's own recipient for one composer channel, read from the
+ * card — never from the request body. Null when the customer holds no
+ * address there: the route refuses instead of inventing one.
+ * @param {any} card the frozen card from `read-customer-card`
+ * @param {string} channel one of COMPOSER_CHANNELS
+ * @returns {string|null} the preselected recipient, or null when missing
+ */
+function composerRecipient(card, channel) {
+  if (channel === 'email') {
+    return typeof card?.email === 'string' && card.email.trim() !== '' ? card.email.trim() : null;
+  }
+  if (channel === 'whatsapp' || channel === 'sms') {
+    return card?.phone?.available === true && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
+  }
+  const system = channel === 'instagram' ? 'instagram' : 'facebook';
+  const socials = Array.isArray(card?.socials) ? card.socials : [];
+  const found = socials.find((row) => String(row?.system ?? '').toLowerCase() === system
+    && typeof row?.handle === 'string' && row.handle.trim() !== '');
+  return found ? found.handle.trim() : null;
+}
+
+/**
+ * The customer's latest email thread, newest passage first
+ * (backlog:e9b4fc2f): the composer reply stays in the same Gmail thread
+ * instead of opening one per send. Null when the customer has no email
+ * passage yet — the provider then opens a new thread. Thread parsing goes
+ * through `gmailThreadIdForSubject`, the same single source the inbox and
+ * the send worker share: a message id or any other non-thread text logged
+ * under `email:` is never reused as a thread id.
+ */
+async function latestEmailThread(app, subject) {
+  const timeline = await app.readCustomerTimeline({ resource: subject.resource, id: subject.id });
+  const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  const mails = items
+    .filter((row) => row?.entry === 'message' && row?.channel === 'email'
+      && gmailThreadIdForSubject(row.conversationId) !== null)
+    .sort((left, right) => String(right.occurredAt ?? '').localeCompare(String(left.occurredAt ?? '')));
+  const newest = mails[0] ?? null;
+  if (newest === null) return null;
+  const threadId = gmailThreadIdForSubject(newest.conversationId);
+  if (threadId === null) return null;
+  return { conversationId: newest.conversationId, threadId };
 }
 
 /**

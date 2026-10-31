@@ -24,6 +24,11 @@ const ALLOWED_TRANSITIONS = Object.freeze({
   lost: ['discovery'],
 });
 
+// Voce 714433c2: the governed transition table, readable by clients that
+// must offer only legal moves (the /bo «Cambia stato» menu). The static
+// Admin view mirrors it and a test pins the mirror to this table.
+export { ALLOWED_TRANSITIONS as OPPORTUNITY_ALLOWED_TRANSITIONS };
+
 // Test probe (mirrors injectPostgresqlCommitFault in core
 // postgresql-storage): armed only by tests that must force two stage claims
 // to overlap. The workflow pins its intent at load-opportunity, before
@@ -231,6 +236,86 @@ export class OpportunityService {
     }
     await this.events.emit('opportunity.created', opportunity);
     return opportunity;
+  }
+
+  /**
+   * Voce 96e7b579: the pipeline card edits importo, data di chiusura and
+   * referente in place. A partial patch — only the keys present are
+   * touched, and at least one editable key must be present. Anything else
+   * (companyId, contactId, stage, pipeline-managed keys included) is
+   * refused rather than silently dropped, so an edit can never move the
+   * customer, the lifecycle stage or the pipeline position of an offer.
+   *
+   * @param {string} id
+   * @param {{valueCents?: unknown, expectedCloseDate?: unknown, owner?: unknown}} patch
+   * @param {{actor?: unknown}} [context]
+   */
+  async update(id, patch, context = {}) {
+    const current = await this.get(id);
+    if (!patch || typeof patch !== 'object') {
+      throw new ValidationError('an opportunity update needs at least one field', { field: 'patch' });
+    }
+    const editable = ['valueCents', 'expectedCloseDate', 'owner'];
+    const unknown = Object.keys(patch).filter((key) => !editable.includes(key));
+    if (unknown.length > 0) {
+      throw new ValidationError(`Opportunity update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
+    }
+    // The write names only the columns the patch supplies (plus updatedAt):
+    // two concurrent partial updates touch disjoint columns instead of
+    // replaying each other's stale snapshot (lost update). The merged copy
+    // feeds the audit payload only, never the write.
+    const values = [];
+    const next = { ...current };
+    if (patch.valueCents !== undefined) {
+      next.valueCents = nonNegativeInteger(patch.valueCents, 'valueCents');
+      values.push({ column: 'value_cents', value: next.valueCents });
+    }
+    if (patch.expectedCloseDate !== undefined) {
+      next.expectedCloseDate = optionalIsoDate(patch.expectedCloseDate, 'expectedCloseDate');
+      values.push({ column: 'expected_close_date', value: next.expectedCloseDate });
+    }
+    if (patch.owner !== undefined) {
+      next.owner = requiredString(patch.owner, 'owner');
+      values.push({ column: 'owner', value: next.owner });
+    }
+    if (values.length === 0) {
+      throw new ValidationError('an opportunity update needs at least one of valueCents, expectedCloseDate, owner', { field: 'patch' });
+    }
+    next.updatedAt = nowIso();
+    values.push({ column: 'updated_at', value: next.updatedAt });
+    const write = {
+      kind: 'update', table: 'opportunities',
+      values,
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const entry = {
+      actor: context.actor,
+      action: 'opportunity.updated',
+      entityType: 'opportunity',
+      entityId: id,
+      data: next,
+    };
+    // The update and its audit row commit together. On sync storage the
+    // callback stays fully synchronous inside the savepoint (a sync
+    // savepoint releases as soon as an async callback returns, so no await
+    // may sit between the two writes); on async storage the same unit runs
+    // as one transaction. A refused audit rolls the update back instead of
+    // leaving an unaudited write behind.
+    if (isSyncStorage(this.database)) {
+      const sync = this.database.storage.sync;
+      sync.savepoint('opportunity_update', () => {
+        sync.execute(write);
+        this.audit.record(entry, sync);
+      });
+    } else {
+      await storageMutate(this.database, 'opportunity_update', async (tx) => {
+        await tx.execute(write);
+        await this.audit.record(entry, tx);
+      });
+    }
+    const reread = await this.get(id);
+    await this.events.emit('opportunity.updated', reread);
+    return reread;
   }
 
   /** @param {string} id */

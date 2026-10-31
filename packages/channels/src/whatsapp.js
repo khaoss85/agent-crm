@@ -13,6 +13,7 @@ import {
   checkMetaServiceWindow,
   isMetaSelfEcho,
   iterateMetaBatchItems,
+  normalizeCloudMessageContent,
   parseMetaWebhookBody,
 } from './meta-webhook.js';
 
@@ -46,7 +47,9 @@ import {
  *   suppress each other), so the conversation timeline is the ordered
  *   rows. A delivery off our own line (a self echo or a status to the
  *   bound business number) normalizes to an empty subject and is
- *   quarantined as evidence, never mapped to a ghost customer.
+ *   quarantined as evidence, never mapped to a ghost customer. Text and the
+ *   single attachment (photo, video, audio, document; sticker as photo) ride
+ *   on the message event — the inbox keeps the envelope only.
  * - outbound: free text sends only inside the 24-hour window measured
  *   from the last inbound the inbox observed — resolved server-side by
  *   operations from the conversation rows, never from caller time. A
@@ -167,11 +170,18 @@ function normalizeMetaItem(meta, config) {
     }
     const parts = unixToParts(item.timestamp);
     if (!parts) malformedEvent('message needs a valid timestamp');
+    // Text and the single attachment ride on the event (backlog:32820692):
+    // the inbox keeps the envelope only, and the host logs the message
+    // (with this reference) through `interaction-log@1`. Unknown types
+    // carry no content — the envelope is still stored, as before.
+    const content = normalizeCloudMessageContent(item, 'WhatsApp');
     return {
       providerEventId: item.id,
       subject: conversationSubject(peer),
       sequence: parts.sequence,
       occurredAt: parts.occurredAt,
+      text: content.text,
+      attachment: content.attachment,
     };
   }
   const { item } = meta;

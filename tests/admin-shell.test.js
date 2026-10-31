@@ -619,6 +619,104 @@ test('shell stylesheet matches the prototype chrome (BO-F6-01)', () => {
   assert.ok(!shell.includes('SHELL_ICONS'), 'no duplicated icon set in the shell');
 });
 
+test('sidebar voices stay readable in hover, active included (backlog:46270e08)', () => {
+  // Root cause: `a.bo-nav-item:hover` (0,2,1) beat `.bo-nav-item.active`
+  // (0,2,0), so the active voice hovered into paper text on the soft wash —
+  // the label and the currentColor icon vanished and only the grey pills
+  // stayed. This test replays the cascade for both hover states and proves
+  // every winning foreground/background pair passes WCAG AA (4.5:1).
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens = new Map();
+  const root = bare.match(/:root\s*\{([^}]*)\}/);
+  assert.ok(root, ':root tokens exist');
+  for (const [, name, value] of root[1].matchAll(/--([\w-]+)\s*:\s*(#[0-9a-fA-F]{6})/g)) {
+    tokens.set(name, value);
+  }
+  const rules = [];
+  for (const m of bare.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
+    for (const selector of m[1].split(',')) {
+      const text = selector.trim();
+      if (text === '' || /[\s>+~]/.test(text)) continue;
+      const classes = new Set([...text.matchAll(/\.([\w-]+)/g)].map((c) => c[1]));
+      const pseudos = new Set([...text.matchAll(/:([\w-]+)/g)].map((c) => c[1]));
+      const element = (/^([a-zA-Z][\w-]*)/.exec(text) ?? [])[1] ?? null;
+      const ids = (text.match(/#/g) ?? []).length;
+      const decls = new Map();
+      for (const d of m[2].split(';')) {
+        const i = d.indexOf(':');
+        if (i === -1) continue;
+        decls.set(d.slice(0, i).trim(), d.slice(i + 1).trim());
+      }
+      rules.push({ text, element, classes, pseudos, ids, decls, order: rules.length });
+    }
+  }
+  const lum = (hex) => {
+    const f = (c) => {
+      const v = parseInt(hex.slice(c, c + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * f(1) + 0.7152 * f(3) + 0.0722 * f(5);
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = lum(a) > lum(b) ? [lum(a), lum(b)] : [lum(b), lum(a)];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const resolve = (value) => {
+    const v = /^var\(--([\w-]+)\)/.exec(value ?? '') ?? [];
+    return v[1] !== undefined && tokens.has(v[1]) ? tokens.get(v[1]) : null;
+  };
+  // Winning pair for a link state: later rules win ties, higher
+  // [classes+pseudos, elements] wins outright; unset background is the
+  // sidebar paper, unset color inherits the non-hover voice color.
+  const pairFor = (active) => {
+    const state = { element: 'a', classes: new Set(['bo-nav-item', ...(active ? ['active'] : [])]), pseudos: new Set(['hover']) };
+    let bg = null;
+    let fg = null;
+    let bgRank = null;
+    let fgRank = null;
+    for (const rule of rules) {
+      if (rule.element !== null && rule.element !== state.element) continue;
+      if (![...rule.classes].every((c) => state.classes.has(c))) continue;
+      if (![...rule.pseudos].every((p) => state.pseudos.has(p))) continue;
+      const rank = [rule.classes.size + rule.pseudos.size + rule.ids * 100, rule.element === null ? 0 : 1, rule.order];
+      const beats = (prev) => prev === null
+        || rank[0] > prev[0] || (rank[0] === prev[0] && (rank[1] > prev[1] || (rank[1] === prev[1] && rank[2] > prev[2])));
+      // A non-hover base rule still paints the resting half of the state.
+      const isBase = rule.pseudos.size === 0;
+      if (!isBase || active || !rule.classes.has('active')) {
+        if (rule.decls.has('background') || rule.decls.has('background-color')) {
+          const raw = rule.decls.get('background') ?? rule.decls.get('background-color');
+          if (beats(bgRank)) {
+            bg = raw === 'transparent' ? tokens.get('paper') : (resolve(raw) ?? (isBase ? bg : bg));
+            bgRank = rank;
+          }
+        }
+        if (rule.decls.has('color') && beats(fgRank)) {
+          fg = resolve(rule.decls.get('color'));
+          fgRank = rank;
+        }
+      }
+    }
+    return { bg: bg ?? tokens.get('paper'), fg: fg ?? tokens.get('ink') };
+  };
+  for (const active of [false, true]) {
+    const { bg, fg } = pairFor(active);
+    assert.ok(bg !== null && fg !== null, `${active ? 'active' : 'plain'} hover resolves to tokens`);
+    assert.ok(
+      contrast(bg, fg) >= 4.5,
+      `${active ? 'active' : 'plain'} hover readable: ${fg} on ${bg} (${contrast(bg, fg).toFixed(2)}:1)`,
+    );
+  }
+  const activeHover = pairFor(true);
+  assert.equal(activeHover.bg, tokens.get('ink'), 'active hover keeps the ink wash');
+  assert.equal(activeHover.fg, tokens.get('paper'), 'active hover keeps the paper voice');
+  // The pills that survive a wash — Clienti count, Impostazioni badge —
+  // carry their own pairs and must pass too.
+  assert.ok(contrast(tokens.get('surface-soft'), tokens.get('muted')) >= 4.5, 'count pill readable');
+  assert.ok(contrast(tokens.get('pending'), tokens.get('pending-ink')) >= 4.5, 'settings badge readable');
+});
+
 test('a real session shows the space, the role, the name and the email (BO-F6-03)', () => {
   const { sidebar, topbar } = renderShell({
     spaces: [{ id: 'presti-group', name: 'Presti Group', initials: 'PR' }],

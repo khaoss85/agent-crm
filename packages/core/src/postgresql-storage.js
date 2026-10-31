@@ -140,10 +140,15 @@ function connectionLost(error) {
  * @param {unknown} error
  */
 function isPgDriverError(error) {
+  // A dropped handshake (pg emits a plain `Error('Connection terminated
+  // unexpectedly')` with no code) is still a driver failure: map it to a
+  // bounded STORAGE_UNAVAILABLE instead of leaking the raw driver error to
+  // callers (backlog:732c0a9a5dd3). Errors whose message names no
+  // connection loss still pass through untouched.
+  if (connectionLost(error)) return true;
   const code = error && typeof error === 'object' ? /** @type {any} */ (error).code : undefined;
   if (typeof code !== 'string' || code.length === 0) return false;
-  if (/^[0-9A-Z]{5}$/.test(code)) return true;
-  return connectionLost(error);
+  return /^[0-9A-Z]{5}$/.test(code);
 }
 
 function sanitizePgError(error) {

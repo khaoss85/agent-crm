@@ -593,3 +593,413 @@ test('Stripe pricing models and intervals read in Italian, unknown models stay o
   assert.ok(text.includes('Strano: 5 €'), 'an unknown model and interval are left out, the amount stays');
   assert.ok(!/mystery|fortnight|graduated/.test(text), 'no machine word reaches the screen');
 });
+
+function fillCreateField(mount, label, value) {
+  const input = mount.findAll('input').find((node) => node.getAttribute('aria-label') === label);
+  assert.ok(input, `the ${label} field renders`);
+  input.value = value;
+}
+
+test('Aggiungi prodotto creates a manual product after review and confirmation', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Categoria', 'pacchetti');
+  fillCreateField(mount, 'Prezzo', '120,50');
+  fillCreateField(mount, 'Unità', 'ingressi');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('Creare Pacchetto 5 lezioni (PACCHETTO-5)'), 'the review names the product');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'review sends nothing');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const created = client.calls.find((call) => call.path === '/api/catalog/products' && call.method === 'POST');
+  assert.ok(created, 'confirmation sends the creation');
+  assert.equal(created.body.sku, 'PACCHETTO-5');
+  assert.equal(created.body.name, 'Pacchetto 5 lezioni');
+  assert.equal(created.body.category, 'pacchetti');
+  assert.equal(created.body.currency, 'EUR');
+  assert.equal(created.body.unit, 'ingressi');
+  assert.equal(created.body.components.length, 1, 'one price from the form');
+  assert.equal(created.body.components[0].flatAmountCents, 12050, 'the comma decimal becomes cents');
+  assert.equal(created.body.components[0].pricingModel, 'flat_fee');
+  assert.equal(created.body.components[0].chargeType, 'one_time');
+});
+
+test('the create form refuses garbage without sending', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Prezzo', '99.00');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('obbligatori'), 'an empty name and code refuse with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
+
+  fillCreateField(mount, 'Nome', 'Prova');
+  fillCreateField(mount, 'Codice', 'PROVA-1');
+  fillCreateField(mount, 'Prezzo', '12.345');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('non negativo'), 'three decimals refuse with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the hostile amount is never sent');
+
+  fillCreateField(mount, 'Prezzo', '10.00');
+  fillCreateField(mount, 'Valuta', 'eur');
+  clickButton(mount, 'Rivedi');
+  assert.ok(mount.textContent.includes('maiuscole'), 'a lowercase currency refuses with a reason');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
+});
+
+test('every row states its active flag, every non-Stripe row offers its actions', async () => {
+  const inactiveManual = structuredClone(MANUAL_TABLE.products[0]);
+  inactiveManual.productId = 'p3';
+  inactiveManual.name = 'Pacchetto archiviato';
+  inactiveManual.active = false;
+  const importedOffer = structuredClone(MANUAL_TABLE.products[0].offers[0]);
+  importedOffer.offerId = 'o4';
+  const imported = {
+    productId: 'p4',
+    sku: 'PRESTI-1',
+    name: 'Ingresso singolo',
+    description: 'Listino importato.',
+    category: 'ingressi',
+    source: 'presti-listino',
+    priceReadOnly: true,
+    active: false,
+    version: 1,
+    offers: [importedOffer],
+  };
+  const table = {
+    products: [MANUAL_TABLE.products[0], inactiveManual, imported],
+    summary: { manual: 2, byProvider: { 'presti-listino': 1 }, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  const states = mount.findAll('span')
+    .filter((node) => node.getAttribute('class') === 'catalog-active-state')
+    .map((node) => node.textContent);
+  assert.deepEqual(states, ['Attivo', 'Non attivo', 'Non attivo'], 'every row states its flag, imported rows too');
+  const labels = mount.findAll('button').map((node) => node.textContent);
+  assert.ok(labels.includes('Disattiva'), 'the active manual row offers its toggle');
+  assert.ok(labels.includes('Attiva'), 'the inactive manual row offers its toggle');
+  const importedRows = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-row'))
+    .map((row) => row.textContent.includes('Ingresso singolo') ? row.textContent : null)
+    .filter(Boolean);
+  assert.equal(importedRows.length, 1, 'the imported row renders');
+  assert.ok(importedRows[0].includes('Modifica prezzi'), 'the imported non-Stripe row offers its price edit');
+  assert.ok(importedRows[0].includes('Attiva'), 'the imported non-Stripe row offers its toggle');
+  assert.ok(importedRows[0].includes('Togli'), 'the imported non-Stripe row offers its removal');
+  const togliCount = mount.findAll('button').filter((node) => node.textContent === 'Togli').length;
+  assert.equal(togliCount, 3, 'every non-Stripe row offers Togli');
+  assert.ok(
+    mount.textContent.includes('Prezzi importati: alla prima modifica la riga passa alla gestione manuale.'),
+    'the imported price edit names the takeover before anything is sent',
+  );
+  for (const button of mount.findAll('button').filter((node) => node.textContent === 'Attiva')) {
+    button.dispatch('click');
+  }
+  const takeoverConfirms = mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'catalog-takeover-note'
+      && node.textContent.includes('La riga importata passa alla gestione manuale'));
+  assert.equal(takeoverConfirms.length, 1, 'only the imported toggle confirm names the takeover');
+});
+
+test('Stripe rows offer no action and stay read-only', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': STRIPE_TABLE } }) });
+  await view.renderTable({});
+
+  const labels = mount.findAll('button').map((node) => node.textContent);
+  assert.ok(!labels.includes('Modifica prezzi'), 'no price edit on a Stripe row');
+  assert.ok(!labels.includes('Attiva') && !labels.includes('Disattiva'), 'no toggle on a Stripe row');
+  assert.ok(!labels.includes('Togli'), 'no removal on a Stripe row');
+  assert.ok(!mount.textContent.includes('gestione manuale'), 'no takeover note on a Stripe row');
+  const states = mount.findAll('span')
+    .filter((node) => node.getAttribute('class') === 'catalog-active-state')
+    .map((node) => node.textContent);
+  assert.ok(states.length > 0 && states.every((state) => state === 'Attivo' || state === 'Non attivo'), 'Stripe rows still state their flag');
+});
+
+test('Togli archives a non-Stripe row through the active route, never a delete', async () => {
+  // Products are stable identity and quoted evidence is never rewritten, so
+  // removal archives: the row deactivates and its offers close via the
+  // existing active route. No DELETE request exists anywhere in the stack.
+  const importedOffer = structuredClone(MANUAL_TABLE.products[0].offers[0]);
+  importedOffer.offerId = 'o4';
+  const table = {
+    products: [
+      MANUAL_TABLE.products[0],
+      {
+        productId: 'p4',
+        sku: 'PRESTI-1',
+        name: 'Ingresso singolo',
+        description: 'Listino importato.',
+        category: 'ingressi',
+        source: 'presti-listino',
+        priceReadOnly: true,
+        active: true,
+        version: 1,
+        offers: [importedOffer],
+      },
+    ],
+    summary: { manual: 1, byProvider: { 'presti-listino': 1 }, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': table } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const rows = mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-row'));
+  assert.equal(rows.length, 2, 'both rows render');
+  const importedRow = rows.find((row) => row.textContent.includes('Ingresso singolo'));
+  assert.ok(importedRow, 'the imported row renders');
+  const togli = importedRow.findAll('button').find((node) => node.textContent === 'Togli');
+  assert.ok(togli, 'the imported row offers Togli');
+  togli.dispatch('click');
+  assert.ok(
+    mount.textContent.includes('resta in archivio e non è più quotabile'),
+    'the confirm names archiving instead of promising destruction',
+  );
+  assert.ok(
+    mount.textContent.includes('La riga importata passa alla gestione manuale'),
+    'the imported removal names the takeover before anything is sent',
+  );
+  clickButton(mount, 'Conferma');
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'a single write, never a blind retry');
+  assert.equal(posts[0].path, '/api/catalog/products/p4/active', 'removal archives through the active route');
+  assert.deepEqual(posts[0].body, { active: false }, 'the archive deactivates');
+  assert.ok(
+    !client.calls.some((call) => call.method === 'DELETE'),
+    'no hard delete anywhere in the stack',
+  );
+});
+
+test('Aggiungi prodotto stays available once Stripe is connected', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': STRIPE_TABLE } }) });
+  await view.renderTable({});
+
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Aggiungi prodotto'), 'manual products coexist with Stripe');
+  assert.ok(mount.textContent.includes('sola lettura'), 'Stripe rows stay read-only and the page says so');
+});
+
+test('an uncertain creation reconciles the created row instead of retrying blindly', async () => {
+  // The create route has no replay protection, so a second Conferma after a
+  // lost response would create a duplicate product. On COMMIT_OUTCOME_UNKNOWN
+  // the view re-reads the catalog: a NEW row (not on screen before) carrying
+  // every submitted field reconciles, so it renders as created with a single
+  // attempt.
+  const created = { ...MANUAL_TABLE.products[0], productId: 'p9', sku: 'PACCHETTO-5', name: 'Pacchetto 5 lezioni' };
+  const reconciled = { products: [...MANUAL_TABLE.products, created], summary: MANUAL_TABLE.summary };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // The initial load shows the table without the new row; only the reload
+  // after the uncertain outcome carries it, so it reads as new.
+  const base = stubClient({ tables: { '': MANUAL_TABLE } });
+  let loads = 0;
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
+        loads += 1;
+        if (loads > 1) return reconciled;
+      }
+      return base.request(path, options);
+    },
+  };
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Categoria', 'pacchetti');
+  fillCreateField(mount, 'Prezzo', '99.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(!mount.textContent.includes('Esito incerto'), 'no uncertain warning when the row reconciles');
+  assert.ok(mount.textContent.includes('Pacchetto 5 lezioni'), 'the created row renders as created');
+});
+
+test('an uncertain creation with only the code matching stays locked', async () => {
+  // SKUs may repeat, so a pre-existing row with the submitted code but
+  // different details never reconciles an uncertain outcome: the form stays
+  // locked instead of closing on a row this submission did not create.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': MANUAL_TABLE } });
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Lezioni serali');
+  fillCreateField(mount, 'Codice', 'YOGA-10');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(mount.textContent.includes('Esito incerto'), 'a code-only match never reconciles');
+  const yes = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(yes, 'the confirm button is still there');
+  assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
+});
+
+test('an uncertain creation without the row stays locked instead of duplicating', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': MANUAL_TABLE } });
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(mount.textContent.includes('Esito incerto'), 'the operator is told to reload and check first');
+  const yes = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(yes, 'the confirm button is still there');
+  assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
+});
+
+test('an uncertain creation never reconciles a matching imported row', async () => {
+  // This form only creates manual rows: a reloaded row that matches every
+  // submitted field but is still owned by its import source is a
+  // pre-existing import, not this creation. Reconciling it would hide the
+  // uncertainty and the operator would never reload and check.
+  const imported = {
+    ...structuredClone(MANUAL_TABLE.products[0]),
+    productId: 'p9',
+    sku: 'PACCHETTO-5',
+    name: 'Pacchetto 5 lezioni',
+    source: 'presti-listino',
+    priceReadOnly: true,
+  };
+  const reloaded = { products: [...MANUAL_TABLE.products, imported], summary: MANUAL_TABLE.summary };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ tables: { '': MANUAL_TABLE } });
+  let loads = 0;
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
+        loads += 1;
+        if (loads > 1) return reloaded;
+      }
+      return base.request(path, options);
+    },
+  };
+  let attempts = 0;
+  const submissions = {
+    async submit() {
+      attempts += 1;
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({});
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Categoria', 'pacchetti');
+  fillCreateField(mount, 'Prezzo', '99.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(attempts, 1, 'a single creation attempt, never a blind retry');
+  assert.ok(mount.textContent.includes('Esito incerto'), 'a matching imported row never reconciles');
+  const yes = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(yes, 'the confirm button is still there');
+  assert.equal(yes.disabled, true, 'retry stays locked until the operator reloads');
+});
+
+test('an uncertain creation reloads with the table filters', async () => {
+  // knownProductIds only covers the filtered page the operator saw: the
+  // reconcile reloads with the same filters, so a filtered-out pre-existing
+  // row never reads as new.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ tables: { '': MANUAL_TABLE } });
+  const loads = [];
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
+        loads.push(path);
+      }
+      return base.request(path, options);
+    },
+  };
+  const submissions = {
+    async submit() {
+      throw Object.assign(new Error('commit outcome unknown'), { code: 'COMMIT_OUTCOME_UNKNOWN' });
+    },
+  };
+  const view = createCatalogView({ doc, mount, client, submissions });
+  await view.renderTable({ source: 'manual', category: 'pacchetti' });
+
+  clickButton(mount, 'Aggiungi prodotto');
+  fillCreateField(mount, 'Nome', 'Pacchetto 5 lezioni');
+  fillCreateField(mount, 'Codice', 'PACCHETTO-5');
+  fillCreateField(mount, 'Prezzo', '10.00');
+  clickButton(mount, 'Rivedi');
+  clickButton(mount, 'Conferma');
+  await flush();
+
+  assert.equal(loads.length, 2, 'the initial load plus one reconcile reload');
+  const reload = new URL(loads[1], 'http://admin.test');
+  assert.equal(reload.searchParams.get('source'), 'manual', 'the reconcile reload keeps the source filter');
+  assert.equal(reload.searchParams.get('category'), 'pacchetti', 'the reconcile reload keeps the category filter');
+  assert.equal(reload.searchParams.get('limit'), '200', 'the reconcile reload keeps the row limit');
+});

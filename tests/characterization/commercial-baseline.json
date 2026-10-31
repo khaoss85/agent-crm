@@ -8,7 +8,7 @@
     "pre_extraction_evidence": 8
   },
   "domain": "commercial-operations",
-  "fingerprint": "edd0f38c728ceadcd716509076d49b7030c8e0b03b65f6f779e998a8c65b4ce0",
+  "fingerprint": "12592285d1cbf5c492e02f619914df9b1f1375aa0107141080670f042d92719f",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -1306,6 +1306,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 1,
           "productsCreated": 2,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 0,
           "versionsCreated": 2
@@ -1320,6 +1321,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 0,
           "productsCreated": 0,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 2,
           "versionsCreated": 0
@@ -2122,6 +2124,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 2,
           "productsCreated": 1,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 0,
           "versionsCreated": 1
@@ -2144,6 +2147,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 1,
           "productsCreated": 7,
+          "takeoverSkipped": 0,
           "tiersCreated": 9,
           "unchanged": 0,
           "versionsCreated": 7
@@ -2170,6 +2174,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 0,
           "productsCreated": 0,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 16,
           "versionsCreated": 0
@@ -2294,6 +2299,7 @@
           "offersRevised": 3,
           "priceBooksCreated": 0,
           "productsCreated": 0,
+          "takeoverSkipped": 0,
           "tiersCreated": 6,
           "unchanged": 13,
           "versionsCreated": 0
@@ -2611,6 +2617,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 1,
           "productsCreated": 1,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 0,
           "versionsCreated": 1
@@ -3748,6 +3755,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 0,
           "productsCreated": 0,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 521,
           "versionsCreated": 0
@@ -3769,6 +3777,7 @@
           "offersRevised": 0,
           "priceBooksCreated": 1,
           "productsCreated": 520,
+          "takeoverSkipped": 0,
           "tiersCreated": 0,
           "unchanged": 0,
           "versionsCreated": 520
@@ -4517,7 +4526,7 @@
   ],
   "source": {
     "apps/admin/public/admin-quotes.js": "3e3181b92bee7c413ea2593fc66d33a6a06df73d19a4de240fa6d43c49545484",
-    "apps/server/src/http-server.js": "023f08d8780935ad706921a21f2e75ca88441f9b2a756d14607caf0d1782c7b8",
+    "apps/server/src/http-server.js": "9f57348d67c214b6a1f9e83018f5885b96e69ff9e8544aea5ae164849c3b4b94",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "packages/app/src/create-app.js": "bf7d8b8b9f4d7acea14cafd90cf1c6de73e044c9a5fc36675fb0958a7430dbb8",
     "packages/commercial/modules/catalog-sync-run.module.json": "509281aedba609303861b1097d4b9c7239fd85dcfb9b2d8c54e9c570aee0fc29",
@@ -4541,16 +4550,16 @@
     "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
     "packages/commercial/src/actions.js": "7da2bdf9e719ad1703e64858e9b981fdc7ed7c84a07d65439d939609ffd0f160",
     "packages/commercial/src/capability.js": "f1b35c2dbd53d906fdfb8ecb9ffa34d79c24f35f5706810b7933341ab6184763",
-    "packages/commercial/src/catalog-sync.js": "09a8f4c3995db9aed552c85e23ab5754d718b7c4e42c5c5e3e2f240734468cf5",
-    "packages/commercial/src/index.js": "ba5ca824ed6c2e967252f5088a46dcf390d7206b7e868e540c8842b020555784",
-    "packages/commercial/src/manual-catalog.js": "cbd6cbda6c50556034a214e5f9282b27e8dc6dff2bc3696dec1ce9c384026b55",
+    "packages/commercial/src/catalog-sync.js": "db9e03169726b7a8f2134cff4323fca5a284d4f018df84bdda4590bb557c6664",
+    "packages/commercial/src/index.js": "3c702cc0a3eeffd3bd8ceb9c2f0f0090e1af3fa53cb3d0152590aa3b47c5b4fd",
+    "packages/commercial/src/manual-catalog.js": "5606488e604fc3f160e6fbc2114432adaceb041f79e1c0bece6ed7df3d047fdb",
     "packages/commercial/src/money.js": "84c569c6e3d9270e25a9fb440675c01063d61f6a4d12a71734309b1f20bb5496",
     "packages/commercial/src/package-credits.js": "bc85f69d3e81fb651fa45b63e125d9ee29115d1a778947c215b3d8c50138cc0c",
     "packages/commercial/src/price-list.js": "9d6b286059661e13ec81393d55986d178cc2e354767690c6f04c7693f6d75353",
     "packages/commercial/src/price-rules.js": "56521828c1cbb7f2f386fa6ebf4c546776446d29ba208e945385112024358296",
     "packages/commercial/src/product-import.js": "dcaa502d91f84699481e2d07b450e4c62127f9989a79f2b89ca3b10593524b42",
     "packages/commercial/src/quote-pdf.js": "5ab773cbba36f83413bba80c508f57131f2a561316f38590013799ef31785721",
-    "packages/commercial/src/quote-suggest.js": "276d5eed108a878d591cf0fe4e58cd86fb070dcba3881e1d6140fb0b8b0e3e95",
+    "packages/commercial/src/quote-suggest.js": "fd0ee2b0483276675020f82ff345108096dafec2cae1c3a055cf22ede9df8b5f",
     "packages/commercial/src/registry.js": "2aa814e7e4f207b7b46e36e996fb26f82bf7edba19ddc7512b39a017d633fc05",
     "packages/commercial/src/stripe-catalog.js": "7ff8112e02c23444c4927efa768dd946eee14ebaa30741110a920ecaf8d1852b",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",

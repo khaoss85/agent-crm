@@ -183,6 +183,34 @@ export function createCustomerDataPackage(options = {}) {
           return (request) => senders.resolveChannelSender(request);
         },
       },
+      // Manual link/unlink (backlog:826e377c) was split into a follow-up voce
+      // by the owner: this PR keeps only the read of observed identities.
+      // The follow-up re-adds the link-customer-identity and
+      // unlink-customer-identity capabilities with the open findings
+      // (card dedupe keyed by stored sourceKey, subject re-check inside the
+      // committing transaction) as acceptance criteria.
+      {
+        operationContract: 1,
+        name: 'record-subject-phone',
+        appMethod: 'recordSubjectPhone',
+        label: 'Record an operator-held phone number on a customer',
+        description:
+          'Hold one callable E.164 phone number beside a contact or company, so the scheda cliente can dial it. '
+          + 'A human decision: the actor must be a user. The same number beside the same subject refreshes its '
+          + 'sighting; beside another subject it refuses 409 PHONE_ALREADY_HELD.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'phone', type: 'string', hint: 'The callable number in E.164, e.g. "+393331234567".' },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.recordSubjectPhone(request);
+        },
+      },
       {
         operationContract: 1,
         name: 'apply-bulk-customer-action',

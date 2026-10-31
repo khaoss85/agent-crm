@@ -5,16 +5,15 @@ import { createBulkRunner } from './bulk.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
-  CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SORTS,
-  CUSTOMER_VIEWS, applyCustomerListQuery, filterCustomerRows, parseCustomerListQuery, shapeCustomerRow,
+  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, channelWordsIn, filterCustomerRows,
+  parseCustomerListQuery, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
-import {
-  createPolicyReader, createSubjectForRow, recordCandidatePairs, recordExternalIdentityRow,
-} from './sender.js';
+import { createPolicyReader, createSubjectForRow, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -44,7 +43,15 @@ import { ENRICHABLE_FIELDS } from './enrichment.js';
  *   that would read as "this customer has none".
  */
 
+/** Provenance for identities an operator holds by hand: outside any import run. */
+const SUBJECT_PHONE_RUN_ID = 'subject-phone';
+
 /** @param {any} runtime @param {any} registries */
+/**
+ * Manual identity link/unlink (backlog:826e377c) was split into a follow-up
+ * voce by the owner: this PR keeps only the read of observed identities.
+ */
+
 export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
@@ -60,8 +67,16 @@ export function createCustomerDataOperations({ database, modules, events, config
    */
   const readerFor = () => createPolicyReader({ modules, names, core });
 
-  /** Shared summary shape for both preview and apply. */
-  const summarize = (resolution, mode, runId = null) => ({
+  /**
+   * Shared summary shape for both preview and apply.
+   *
+   * A preview resolves read-only, so a row that would create a record
+   * carries `subject: null` with `willCreate: true` — nothing exists yet.
+   * An apply creates those records inside its transaction, so it fills the
+   * same receipts with the created subjects (backlog:273de560): a caller
+   * that navigates to the new scheda needs the id, not a second lookup.
+   */
+  const summarize = (resolution, mode, runId = null, subjectsBy = null) => ({
     mode,
     runId,
     system: resolution.system,
@@ -76,7 +91,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       reasonCode: receipt.reasonCode,
       reason: receipt.reason,
       matchRule: receipt.rule,
-      subject: receipt.subject ?? null,
+      subject: subjectsBy?.get(receipt.index) ?? receipt.subject ?? null,
       candidates: receipt.candidates ?? [],
       willCreate: Boolean(receipt.created),
     })),
@@ -121,9 +136,12 @@ export function createCustomerDataOperations({ database, modules, events, config
       const existing = (await runs.listWhere({ idempotencyKey: resolution.idempotencyKey }))[0];
       if (existing) {
         // Same payload → same run. A *different* payload cannot reach here:
-        // the key is derived from the payload itself.
+        // the key is derived from the payload itself. The stored rows carry
+        // the subjects the first apply created, so a replay answers the same
+        // shape as the original — never accepted with a missing subject.
+        const stored = await trusted(modules, names.row).listWhere({ runId: existing.id });
         return Object.freeze({
-          ...summarize(resolution, 'apply', existing.id),
+          ...summarize(resolution, 'apply', existing.id, subjectsByIndex(stored)),
           replayed: true,
           writes: 'nothing new — this exact import was already applied, and its run is returned unchanged',
         });
@@ -155,6 +173,7 @@ export function createCustomerDataOperations({ database, modules, events, config
 
         let candidateCount = 0;
         let issueCount = 0;
+        const createdSubjects = new Map();
 
         for (const receipt of resolution.receipts) {
           let subject = receipt.subject ?? null;
@@ -162,6 +181,7 @@ export function createCustomerDataOperations({ database, modules, events, config
           // Create the record the row names, when nothing matched it.
           if (receipt.outcome === 'accepted' && receipt.created) {
             subject = await createSubjectFor(receipt.row, actor);
+            createdSubjects.set(receipt.index, subject);
           }
 
           await trusted(modules, names.row).createManaged({
@@ -192,7 +212,7 @@ export function createCustomerDataOperations({ database, modules, events, config
         issueCount = await recordIssues({ resolution, runId: run.id, actor });
 
         await runs.applyManaged(run.id, { candidateCount, issueCount }, { actor });
-        return { run, candidateCount, issueCount };
+        return { run, candidateCount, issueCount, createdSubjects };
       });
 
       events.emit?.('customer-data.import.applied', {
@@ -200,7 +220,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       });
 
       return Object.freeze({
-        ...summarize(resolution, 'apply', applied.run.id),
+        ...summarize(resolution, 'apply', applied.run.id, applied.createdSubjects),
         replayed: false,
         candidateCount: applied.candidateCount,
         issueCount: applied.issueCount,
@@ -329,6 +349,111 @@ export function createCustomerDataOperations({ database, modules, events, config
       const { origins, undated } = aggregateChannelOrigins(rows);
       return Object.freeze({ origins, undated });
     },
+
+    /**
+     * Record one operator-held phone number beside a contact or company
+     * (voce 105563eea902: the scheda cliente's "Aggiungi telefono").
+     *
+     * One identifier names one record, once — the same promise the sender
+     * resolution keeps: a number already held beside the same subject
+     * refreshes its sighting, while a number held beside another subject
+     * refuses 409 PHONE_ALREADY_HELD instead of being re-linked. The check
+     * and the write run inside one transaction and the uniqueness loser
+     * replays the winner, so two operators adding the same number race
+     * safely. E.164 only: «Chiama» dials the stored value, so a number the
+     * card cannot dial is refused here instead of stored as a dead button.
+     * @param {any} request
+     */
+    async recordSubjectPhone(request) {
+      const actor = normalizeActor(request?.actor);
+      if (actor.type !== 'user') {
+        // The same human-actor boundary as the scheda's "Aggiungi nota":
+        // inlined, not imported — a domain package reaches another only
+        // through requires + capability, never through a source import
+        // (docs/PACKAGE_AUTHORING.md), and core owns no human-actor helper.
+        throw new AppError('Recording a subject phone is a human decision', {
+          code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+        });
+      }
+      const resource = request?.resource;
+      if (resource !== 'contact' && resource !== 'company') {
+        throw new AppError('a subject phone needs a contact or company subject', {
+          code: 'CUSTOMER_DATA_PHONE_SUBJECT_INVALID', status: 400,
+        });
+      }
+      const id = request?.id;
+      if (typeof id !== 'string' || id.trim() === '') {
+        throw new ValidationError('a subject phone needs the subject id', { field: 'id' });
+      }
+      const externalId = normalizeChannelHandle('phone', request?.phone);
+      if (!/^\+[1-9]\d{6,14}$/.test(externalId)) {
+        // The card dials exactly this shape (toDialablePhone in
+        // packages/customer-hub/src/card.js, mirrored here rather than
+        // imported: neither package may source-import the other). A stored
+        // number that cannot dial would render a dead «Chiama».
+        throw new ValidationError(
+          'the phone number must be callable E.164 (+ followed by 7-15 digits): the scheda dials exactly this',
+          { field: 'phone' },
+        );
+      }
+      const subject = {
+        resource, id: id.trim(), owner: 'host', ownerPackage: null, label: null,
+      };
+      const sourceKey = `phone:${externalId}`;
+      const heldBy = (row) => row !== null && typeof row === 'object'
+        ? { resource: row.subjectResource, id: row.subjectId } : null;
+      return database.transactionAsync(async () => {
+        const identities = trusted(modules, names.identity);
+        const seen = (await deciding(identities, { sourceKey }))[0] ?? null;
+        if (seen !== null) {
+          const holder = heldBy(seen);
+          if (holder === null || holder.resource !== resource || holder.id !== subject.id) {
+            throw new AppError('This phone number is already held beside another customer', {
+              code: 'PHONE_ALREADY_HELD', status: 409,
+            });
+          }
+        }
+        let outcome;
+        try {
+          outcome = await recordExternalIdentityRow({
+            modules, names, system: 'phone', externalId, subject,
+            runId: SUBJECT_PHONE_RUN_ID, actor,
+          });
+        } catch (error) {
+          if (!isWinnerConflict(error)) throw error;
+          const winner = (await deciding(trusted(modules, names.identity), { sourceKey }))[0] ?? null;
+          const holder = heldBy(winner);
+          if (holder !== null && holder.resource === resource && holder.id === subject.id) {
+            outcome = 'refreshed';
+          } else {
+            throw new AppError('This phone number is already held beside another customer', {
+              code: 'PHONE_ALREADY_HELD', status: 409,
+            });
+          }
+        }
+        if (outcome === 'refreshed') {
+          // A concurrent hold beside another customer may have committed
+          // between the pre-check above and the write: the shared row
+          // helper refreshes any sighting, so the holder is re-read inside
+          // the same transaction and a foreign row refuses 409 instead of
+          // reporting success for it. The throw rolls the foreign refresh
+          // back with the transaction — no sighting is bumped, and the
+          // number never lands on the wrong card.
+          const current = (await deciding(trusted(modules, names.identity), { sourceKey }))[0] ?? null;
+          const holder = heldBy(current);
+          if (holder === null || holder.resource !== resource || holder.id !== subject.id) {
+            throw new AppError('This phone number is already held beside another customer', {
+              code: 'PHONE_ALREADY_HELD', status: 409,
+            });
+          }
+        }
+        return Object.freeze({
+          outcome, system: 'phone', externalId,
+          subject: Object.freeze({ resource, id: subject.id }),
+        });
+      });
+    },
+
   };
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
@@ -381,6 +506,27 @@ export function createCustomerDataOperations({ database, modules, events, config
     }
     return written;
   }
+}
+
+/**
+ * Rebuild the subject envelope for each stored row of an already-applied
+ * run, so a replayed apply answers the same receipts as the original —
+ * including the subjects the first apply created (backlog:273de560).
+ * @param {Array<any>} storedRows
+ */
+function subjectsByIndex(storedRows) {
+  const byIndex = new Map();
+  for (const row of storedRows ?? []) {
+    if (!row || row.subjectResource === 'none' || row.subjectResource == null || row.subjectId == null) continue;
+    byIndex.set(row.rowIndex, Object.freeze({
+      resource: row.subjectResource,
+      id: row.subjectId,
+      owner: row.subjectOwner ?? 'host',
+      ownerPackage: row.subjectOwnerPackage ?? null,
+      label: row.subjectLabel ?? null,
+    }));
+  }
+  return byIndex;
 }
 
 /**
@@ -515,6 +661,20 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     }
   }
 
+  // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
+  // is only exact when both the message and the call scans are readable and
+  // complete. A partial or unreadable scan must not feed an exact-looking
+  // channel filter: a canale-filtered query refuses, and shaped rows carry
+  // the shortfall in channelsComplete instead of an exact union.
+  const observedComplete = messages.readable === true && messages.complete !== false
+    && calls.readable === true && calls.complete !== false;
+  const channelFiltered = query.canale !== 'all' || channelWordsIn(query.q ?? '').length > 0;
+  if (channelFiltered && observedComplete !== true) {
+    const missing = messages.readable !== true || messages.complete === false
+      ? 'interaction-message' : 'interaction-call';
+    throw new AppError(`the canale filter needs the ${missing} records, which are not readable here`, { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+
   // A derived view over an unreadable dependency refuses with its reason,
   // never with an exact-looking empty page: the two derived views need the
   // work and subscription packages, and without them "no renewals" would be
@@ -579,6 +739,20 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    // The channels observed on this customer's own messages and calls, read
+    // from the rows already in hand (backlog:826e377c): no new query, only
+    // on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
+    // enforces, so the observed half never names a channel its own filter
+    // refuses. The held half stays unfiltered (every system main listed,
+    // including legacy sms/gmail/voice): the CANALI union is held plus
+    // in-filter observed, not the scheda section's observed-only display
+    // vocabulary — see shapeCustomerRow. When either scan behind the
+    // observed half is partial or unreadable, the union is best effort and
+    // the row says so in channelsComplete (canale-filtered queries already
+    // refused above).
+    const observedChannels = [...new Set(myMessages
+      .map((row) => String(row?.channel ?? '').toLowerCase())
+      .filter((channel) => CUSTOMER_CHANNELS.includes(channel)))].sort();
     let lastContactAt = null;
     let lastContactChannel = null;
     // The preview is the latest message body read above — calls name no
@@ -601,6 +775,8 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const budgetSignal = mySignals[0] ?? null;
     return shapeCustomerRow({ contact, company }, {
       identitiesBySubject,
+      observedChannelsBySubject: new Map(observedChannels.length === 0 ? [] : [[key, observedChannels]]),
+      observedComplete,
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {

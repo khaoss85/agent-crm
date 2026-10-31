@@ -63,10 +63,15 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
     owner: subject?.owner ?? 'host',
     ownerPackage: subject?.ownerPackage ?? null,
   });
+  // Voce 908f2eb9bbfb: the profile stays first (the shaping below joins on
+  // it), but the three provider reads are independent of each other, so
+  // they run together instead of stacking three waits.
   const profile = await readProfile({ core, subject: { resource, id } });
-  const threads = await readConversations(envelope);
-  const history = await readTimeline(envelope);
-  const schedule = await readSchedule(envelope);
+  const [threads, history, schedule] = await Promise.all([
+    readConversations(envelope),
+    readTimeline(envelope),
+    readSchedule(envelope),
+  ]);
   return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id } });
 }
 
@@ -158,6 +163,7 @@ function shapeConversations(threads, entries) {
         direction: last.direction ?? null,
         channel: last.channel ?? null,
         body: last.entry === 'call' ? null : (last.body ?? null),
+        attachment: last.entry === 'call' ? null : (last.attachment ?? null),
         outcome: last.entry === 'call' ? (last.outcome ?? null) : null,
         occurredAt: last.occurredAt ?? null,
       }),
@@ -179,9 +185,12 @@ function shapeConversations(threads, entries) {
  * scheda cliente filters per channel. Each row names its channel, its
  * direction and its sync state — the message delivery lifecycle
  * (`received`, `sent`, `delivered`, `read`, `failed`) or, for a call that
- * already happened, its immutable outcome. Work notes riding the same
- * timeline read are excluded on purpose: they belong to the work views, and
- * counting them here would invent conversations that never happened.
+ * already happened, its immutable outcome. Operator notes riding the same
+ * timeline read (voce 714433c2, `work-note` rows from the `note` kind) are
+ * listed too, as channel-less `note` rows: a note is a statement about the
+ * customer, not a passage on a channel, so it never counts as channel
+ * evidence — but the scheda cronologia is where the operator who wrote it
+ * reads it back.
  */
 function shapeEntries(entries) {
   const shaped = [];
@@ -195,6 +204,7 @@ function shapeEntries(entries) {
         direction: row.direction ?? null,
         sync: row.status ?? null,
         body: row.body ?? null,
+        attachment: row.attachment ?? null,
         teamAuthorId: row.teamAuthorId ?? null,
         remoteHandle: row.remoteHandle ?? null,
         errorCode: row.errorCode ?? null,
@@ -212,6 +222,24 @@ function shapeEntries(entries) {
         teamAuthorId: row.teamAuthorId ?? null,
         remoteHandle: row.remoteHandle ?? null,
         errorCode: row.errorCode ?? null,
+        occurredAt: row.occurredAt ?? null,
+      }));
+    } else if (row?.entry === 'work-note' && String(row?.kind ?? 'note') === 'note') {
+      // Voce 714433c2: the operator note. Channel-less on purpose — it is
+      // not channel evidence — with the writer when the row names one.
+      // Only the `note` kind reads here: task lifecycle rows
+      // (task_created/completed/cancelled) stay in the work views.
+      shaped.push(Object.freeze({
+        entry: 'note',
+        id: row.id,
+        conversationId: null,
+        channel: null,
+        direction: null,
+        sync: null,
+        body: typeof row.body === 'string' ? row.body : null,
+        teamAuthorId: typeof row.actorId === 'string' ? row.actorId : null,
+        remoteHandle: null,
+        errorCode: null,
         occurredAt: row.occurredAt ?? null,
       }));
     }

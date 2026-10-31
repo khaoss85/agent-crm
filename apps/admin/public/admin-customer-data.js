@@ -2,29 +2,50 @@
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 
-import { humanReadError } from './admin-core.js';
+import {
+  customerDataDeferredLine,
+  customerImportOutcomeLabel,
+  customerImportReasonLabel,
+  customerIssueKindLabel,
+  customerResourceLabel,
+  humanReadError,
+} from './admin-core.js';
+import {
+  buildImportRows,
+  fieldLabel,
+  guessMapping,
+  IMPORT_FIELDS,
+  isWorkbookName,
+  parseCsvText,
+  splitPhoneRows,
+  WORKBOOK_REFUSAL,
+} from './admin-import-file.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /**
- * **The Customer Data import and governance tool (ADR-037).**
+ * **The Clienti import tool (ADR-037).**
  *
  * Since backlog:80b25fb0 this is its own screen (`#/import-clienti`), not a
  * section below the Clienti table: the prototype's Clienti screen carries no
- * JSON import, so the list (`admin-clienti.js`, route `#/customer-data`)
- * renders alone and its "Compila manualmente" entry navigates here. The tool
- * reaches this screen only through that entry — there is no sidebar voice
- * for it, like the prototype.
+ * import, so the list (`admin-clienti.js`, route `#/customer-data`) renders
+ * alone. Since backlog:5b164ab5 the tool reads like the rest of the /bo —
+ * kicker, title, back link and breadcrumb — and walks the operator through
+ * three steps: load a CSV file, match its columns to the customer fields,
+ * check the table preview (which writes nothing and says so) and apply.
+ * The tool reaches this screen only through the list's entries — there is no
+ * sidebar voice for it, like the prototype.
  *
  * It renders only while `/api/schema` publishes `domains['customer-data']`;
  * an absent package names itself in the view (like every other uncomposed
  * section) because a reachable route that renders nothing reads as broken
  * navigation.
  *
- * Everything the operator can do here is one of three things: preview an
- * import (which writes nothing and says so), apply one, or decide something a
- * human must decide. The limits are rendered **as content, in every state** —
- * not in a tooltip, not in a footnote — because the honest thing about this
- * surface is mostly what it does not do.
+ * The governance half below the tool (runs, duplicate candidates, data
+ * quality) is unchanged: everything the operator can do there is preview an
+ * import, apply one, or decide something a human must decide. The limits are
+ * rendered **as content, in every state** — not in a tooltip, not in a
+ * footnote — because the honest thing about this surface is mostly what it
+ * does not do.
  *
  * The section is package-scoped but lives in the Admin app: the framework has
  * no seam for a package to contribute an Admin extension, which AX1 publishes
@@ -61,9 +82,10 @@ function block(el, panel, meta) {
     limits.appendChild(el('p', 'muted customer-data-limit', sentence));
   }
   const deferred = meta?.deferred;
-  if (deferred?.items?.length) {
-    limits.appendChild(el('p', 'muted customer-data-deferred',
-      `Rimandato a ${deferred.track}: ${deferred.items.join(', ')}.`));
+  if (deferred && (deferred.track || (deferred.items ?? []).length > 0)) {
+    // backlog:273de560: the deferred track reads in Italian — the import
+    // screen is an operator tool, not a developer surface.
+    limits.appendChild(el('p', 'muted customer-data-deferred', customerDataDeferredLine(deferred)));
   }
   panel.appendChild(limits);
 }
@@ -88,14 +110,25 @@ export function createCustomerDataView(deps) {
 
   let busy = [];
   /**
-   * What the operator typed, kept across re-renders.
+   * The loaded file and its mapping, kept across re-renders.
    *
-   * The whole point of this surface is *preview, read the receipts, then
-   * apply the same rows*. A preview re-renders the panel, so without this the
-   * form would come back empty and Apply would refuse the operator's own
-   * import as "paste the rows" — the primary flow would be unusable.
+   * The whole point of this surface is *load, match the columns, preview the
+   * table, then apply the same rows*. A preview re-renders the panel, so
+   * without this the mapping would come back blank and Apply would refuse
+   * the operator's own file — the primary flow would be unusable.
    */
-  const draft = { system: '', rows: '', acceptance: '' };
+  const fileState = { file: null, preview: null, applied: '' };
+
+  /**
+   * The workspace name for the breadcrumb, when the host provides it; an
+   * unknown workspace leaves the crumb at «Clienti / Importa» rather than a
+   * blank segment.
+   */
+  function resolveSpaceName() {
+    const raw = deps.spaceName;
+    const value = typeof raw === 'function' ? raw() : raw;
+    return typeof value === 'string' ? value : '';
+  }
   const withBusy = async (work) => {
     for (const control of busy) control.disabled = true;
     try {
@@ -133,112 +166,307 @@ export function createCustomerDataView(deps) {
 
     const panel = el('div', 'customer-data-section');
     panel.setAttribute('data-contract', String(meta.customerDataContract ?? ''));
-    panel.appendChild(el('h3', undefined, 'Dati dei clienti'));
-    panel.appendChild(el('p', 'muted', 'L\u2019anteprima non scrive nulla: né schede né importazioni.'));
+    const maxRows = meta.import?.maxRows ?? 500;
+
+    // ── header: kicker, title, back link and breadcrumb, like the scheda ──
+    const crumb = el('nav', 'bo-import-crumb');
+    crumb.setAttribute('aria-label', 'Percorso');
+    const spaceName = resolveSpaceName();
+    if (spaceName !== '') {
+      crumb.appendChild(el('span', 'bo-import-crumb-space', spaceName));
+      crumb.appendChild(el('span', 'bo-import-crumb-sep', ' / '));
+    }
+    const clientiLink = el('a', 'bo-import-crumb-link', 'Clienti');
+    clientiLink.setAttribute('href', '#/customer-data');
+    crumb.appendChild(clientiLink);
+    crumb.appendChild(el('span', 'bo-import-crumb-sep', ' / '));
+    const current = el('span', 'bo-import-crumb-current', 'Importa');
+    current.setAttribute('aria-current', 'page');
+    crumb.appendChild(current);
+    panel.appendChild(crumb);
+
+    const back = el('button', 'bo-scheda-back', '← Clienti');
+    back.setAttribute('type', 'button');
+    back.setAttribute('data-action', 'back-to-clienti');
+    back.addEventListener('click', () => navigate('#/customer-data'));
+    panel.appendChild(back);
+
+    panel.appendChild(el('p', 'bo-kicker', 'Clienti'));
+    panel.appendChild(el('h1', 'bo-import-title', 'Importa clienti'));
+    panel.appendChild(el('p', 'muted',
+      'Dal file alla scheda: carichi, abbini le colonne, controlli e importi.'));
 
     const error = el('small', 'field-error customer-data-error', '');
     panel.appendChild(error);
 
-    // ── import ────────────────────────────────────────────────────────────
+    /** Read the chosen file and keep its columns and guessed mapping. */
+    const loadChosenFile = async (file) => {
+      const name = String(file?.name ?? '');
+      // No zip/XML reader lives in the Admin app: a hand-rolled workbook
+      // parser would guess dates and mangle them into customer records, so
+      // workbooks are refused with an honest line (backlog:5b164ab5).
+      if (isWorkbookName(name)) throw new Error(WORKBOOK_REFUSAL);
+      if (typeof file?.arrayBuffer !== 'function') {
+        throw new Error('Questo file non si apre: usa un CSV.');
+      }
+      const bytes = await file.arrayBuffer();
+      const text = new TextDecoder('utf-8').decode(bytes);
+      const parsed = parseCsvText(text);
+      if (parsed.columns.length === 0) throw new Error('Il file non contiene righe da importare.');
+      if (parsed.rows.length > maxRows) {
+        throw new Error(`Il file ha ${parsed.rows.length} righe: il massimo è ${maxRows} per volta. Dividilo in più file.`);
+      }
+      fileState.file = {
+        name,
+        columns: parsed.columns,
+        rows: parsed.rows,
+        mapping: guessMapping(parsed.columns),
+        system: slugFromFileName(name),
+        acceptance: 'partial',
+      };
+      fileState.preview = null;
+      fileState.applied = '';
+    };
+
+    // ── passo 1: carica il file ──────────────────────────────────────────
     const importBox = el('div', 'customer-data-import');
-    importBox.appendChild(el('h4', undefined, 'Importazione'));
-    const mappingName = meta.import?.mapping?.name ?? 'customer-rows';
-    const mappingVersion = meta.import?.mapping?.version ?? 1;
-    const maxRows = meta.import?.maxRows ?? 500;
-    importBox.appendChild(el('p', 'muted', `Origine ${mappingName} versione ${mappingVersion}: al massimo ${maxRows} righe per volta.`));
-
-    const systemInput = el('input');
-    systemInput.setAttribute('name', 'system');
-    systemInput.setAttribute('placeholder', 'sistema di origine, es. export-crm');
-    const rowsInput = el('textarea');
-    rowsInput.setAttribute('name', 'rows');
-    rowsInput.setAttribute('placeholder', '[{"externalId":"CRM-1","email":"ada@example.com","companyName":"Acme","domain":"acme.example"}]');
-    const acceptance = el('select');
-    acceptance.setAttribute('name', 'acceptance');
-    for (const mode of meta.import?.acceptance ?? ['partial', 'all_or_nothing']) {
-      const option = el('option', undefined, mode === 'partial' ? 'Parziale: tiene le righe buone e segnala le altre' : 'Tutto o niente: una riga sbagliata ferma tutto');
-      option.setAttribute('value', mode);
-      acceptance.appendChild(option);
-    }
-    // Set explicitly: a control whose value depends on the browser's implicit
-    // first-option selection is a control that sends '' somewhere else.
-    acceptance.value = draft.acceptance || (meta.import?.acceptance ?? ['partial'])[0];
-    systemInput.value = draft.system;
-    rowsInput.value = draft.rows;
-    for (const [key, control] of [['system', systemInput], ['rows', rowsInput], ['acceptance', acceptance]]) {
-      control.addEventListener('input', () => { draft[key] = String(control.value ?? ''); });
-      control.addEventListener('change', () => { draft[key] = String(control.value ?? ''); });
-    }
-    for (const [label, control] of [['Sistema di origine', systemInput], ['Righe (JSON)', rowsInput], ['Come importare', acceptance]]) {
-      const row = el('p', 'customer-data-field');
-      row.appendChild(el('strong', undefined, `${label}: `));
-      row.appendChild(control);
-      importBox.appendChild(row);
-    }
-
-    /** Snapshot the live controls, so the draft survives the re-render that follows. */
-    const capture = () => {
-      draft.system = String(systemInput.value ?? '');
-      draft.rows = String(rowsInput.value ?? '');
-      draft.acceptance = String(acceptance.value ?? '');
-    };
-
-    const parseRows = () => {
-      capture();
-      const raw = String(rowsInput.value ?? '').trim();
-      if (raw === '') throw new Error('Incolla le righe da importare come array JSON.');
-      let parsed;
-      try { parsed = JSON.parse(raw); } catch { throw new Error('Le righe devono essere JSON valido.'); }
-      if (!Array.isArray(parsed)) throw new Error('Le righe devono essere un array JSON.');
-      return parsed;
-    };
-
-    const previewButton = el('button', undefined, 'Anteprima (non scrive nulla)');
-    previewButton.setAttribute('data-action', 'preview-customer-import');
-    busy.push(previewButton);
-    previewButton.addEventListener('click', () => withBusy(async () => {
-      const rows = parseRows();
-      const result = await client.request('/api/customer-data/import/preview', {
-        method: 'POST',
-        body: JSON.stringify({ system: String(systemInput.value ?? ''), rows, acceptance: String(acceptance.value ?? 'partial') }),
-      });
-      lastPreview = result;
+    importBox.appendChild(el('h2', undefined, '1. Carica il file'));
+    importBox.appendChild(el('p', 'muted',
+      `Un file CSV, al massimo ${maxRows} righe per volta. I fogli Excel si salvano come CSV prima di caricarli.`));
+    const drop = el('div', 'bo-import-drop');
+    drop.setAttribute('data-drop', 'customer-import');
+    drop.appendChild(el('p', 'bo-import-drop-text', 'Trascina qui il file oppure'));
+    const fileInput = el('input');
+    fileInput.setAttribute('type', 'file');
+    fileInput.setAttribute('name', 'file');
+    fileInput.setAttribute('accept', '.csv,text/csv');
+    fileInput.setAttribute('aria-label', 'Scegli il file CSV');
+    fileInput.addEventListener('change', () => withBusy(async () => {
+      const chosen = fileInput.files?.[0];
+      if (!chosen) return;
+      await loadChosenFile(chosen);
     }));
-
-    const applyButton = el('button', undefined, 'Applica importazione');
-    applyButton.setAttribute('data-action', 'apply-customer-import');
-    busy.push(applyButton);
-    applyButton.addEventListener('click', () => withBusy(async () => {
-      const rows = parseRows();
-      await client.request('/api/customer-data/import/apply', {
-        method: 'POST',
-        body: JSON.stringify({ system: String(systemInput.value ?? ''), rows, acceptance: String(acceptance.value ?? 'partial') }),
-      });
-      lastPreview = null;
-    }));
-
-    importBox.appendChild(previewButton);
-    importBox.appendChild(applyButton);
+    drop.appendChild(fileInput);
+    drop.addEventListener('dragover', (event) => {
+      event?.preventDefault?.();
+      drop.classList.add('bo-import-drop-over');
+    });
+    drop.addEventListener('dragleave', () => drop.classList.remove('bo-import-drop-over'));
+    drop.addEventListener('drop', (event) => {
+      event?.preventDefault?.();
+      drop.classList.remove('bo-import-drop-over');
+      const chosen = event?.dataTransfer?.files?.[0];
+      if (!chosen) return;
+      void withBusy(async () => { await loadChosenFile(chosen); });
+    });
+    importBox.appendChild(drop);
+    if (fileState.file) {
+      importBox.appendChild(el('p', 'bo-import-file',
+        `File «${fileState.file.name}»: ${fileState.file.rows.length} righe, ${fileState.file.columns.length} colonne.`));
+    }
     panel.appendChild(importBox);
 
-    // ── the last preview's receipts, when there is one ────────────────────
-    if (lastPreview) {
-      const previewBox = el('div', 'customer-data-preview');
-      previewBox.appendChild(el('h4', undefined, 'Risultato anteprima'));
-      previewBox.appendChild(el('p', 'muted customer-data-preview-writes', 'L\u2019anteprima non ha scritto nulla.'));
-      previewBox.appendChild(fact('Righe', lastPreview.counts?.rows));
-      previewBox.appendChild(fact('Accettate', lastPreview.counts?.accepted));
-      previewBox.appendChild(fact('Scartate', lastPreview.counts?.rejected));
-      previewBox.appendChild(fact('Da decidere', lastPreview.counts?.skipped));
-      for (const receipt of (lastPreview.receipts ?? []).slice(0, MAX_PREVIEW_ROWS)) {
-        const row = el('p', 'customer-data-receipt');
-        row.setAttribute('data-outcome', String(receipt.outcome));
-        row.appendChild(el('span', 'customer-data-receipt-index', `riga ${receipt.index}`));
-        row.appendChild(el('span', 'customer-data-receipt-outcome', ` ${receipt.outcome} · ${receipt.reasonCode}`));
-        row.appendChild(el('span', 'customer-data-receipt-reason', ` — ${receipt.reason}`));
-        previewBox.appendChild(row);
+    // ── passo 2: abbina le colonne ───────────────────────────────────────
+    if (fileState.file) {
+      const file = fileState.file;
+      const mapBox = el('div', 'customer-data-mapping');
+      mapBox.appendChild(el('h2', undefined, '2. Abbina le colonne'));
+      mapBox.appendChild(el('p', 'muted', 'Ogni colonna del file va al campo giusto. Quelle su «Ignora» non si importano.'));
+      file.columns.forEach((column, index) => {
+        const row = el('p', 'customer-data-mapping-row');
+        row.appendChild(el('strong', undefined, `${column === '' ? `Colonna ${index + 1}` : column}: `));
+        const select = el('select');
+        select.setAttribute('name', `mapping-${index}`);
+        for (const field of IMPORT_FIELDS) {
+          const option = el('option', undefined, field.label);
+          option.setAttribute('value', field.value);
+          select.appendChild(option);
+        }
+        // Set explicitly: a control whose value depends on the browser's
+        // implicit first-option selection sends '' somewhere else.
+        select.value = file.mapping[index] ?? 'ignore';
+        select.addEventListener('change', () => withBusy(async () => {
+          file.mapping[index] = String(select.value ?? 'ignore');
+          // The preview belongs to a mapping: a changed column clears it.
+          fileState.preview = null;
+          fileState.applied = '';
+        }));
+        row.appendChild(select);
+        mapBox.appendChild(row);
+      });
+      const systemRow = el('p', 'customer-data-field');
+      systemRow.appendChild(el('strong', undefined, 'Sistema di origine: '));
+      const systemInput = el('input');
+      systemInput.setAttribute('name', 'system');
+      systemInput.value = file.system;
+      systemInput.addEventListener('input', () => { file.system = String(systemInput.value ?? ''); });
+      systemInput.addEventListener('change', () => { file.system = String(systemInput.value ?? ''); });
+      systemRow.appendChild(systemInput);
+      systemRow.appendChild(el('small', 'muted', ' Un nome breve: da dove vengono questi clienti.'));
+      mapBox.appendChild(systemRow);
+      const acceptanceRow = el('p', 'customer-data-field');
+      acceptanceRow.appendChild(el('strong', undefined, 'Come importare: '));
+      const acceptance = el('select');
+      acceptance.setAttribute('name', 'acceptance');
+      for (const mode of meta.import?.acceptance ?? ['partial', 'all_or_nothing']) {
+        const option = el('option', undefined, mode === 'partial' ? 'Parziale: tiene le righe buone e segnala le altre' : 'Tutto o niente: una riga sbagliata ferma tutto');
+        option.setAttribute('value', mode);
+        acceptance.appendChild(option);
       }
-      panel.appendChild(previewBox);
+      // Set explicitly: a control whose value depends on the browser's
+      // implicit first-option selection sends '' somewhere else.
+      acceptance.value = file.acceptance;
+      acceptance.addEventListener('change', () => { file.acceptance = String(acceptance.value ?? 'partial'); });
+      acceptanceRow.appendChild(acceptance);
+      mapBox.appendChild(acceptanceRow);
+      panel.appendChild(mapBox);
+
+      // ── passo 3: controlla e importa ──────────────────────────────────
+      const { rows: built, skippedEmpty } = buildImportRows(file.columns, file.rows, file.mapping);
+      const { phones, unlinkedPhones } = splitPhoneRows(file.rows, file.mapping);
+      const checkBox = el('div', 'customer-data-check');
+      checkBox.appendChild(el('h2', undefined, '3. Controlla e importa'));
+      const infoBits = [`${built.length} righe da importare`];
+      if (skippedEmpty > 0) infoBits.push(`${skippedEmpty} righe vuote saltate`);
+      if (phones.length > 0) infoBits.push(`${phones.length} telefoni da collegare`);
+      if (unlinkedPhones > 0) infoBits.push(`${unlinkedPhones} telefoni senza email non si collegano`);
+      checkBox.appendChild(el('p', 'muted bo-import-info', `${infoBits.join(' · ')}.`));
+      checkBox.appendChild(el('p', 'muted customer-data-preview-writes', 'L\u2019anteprima non scrive nulla: né schede né importazioni.'));
+
+      const shownColumns = file.mapping
+        .map((target, index) => ({ target, index }))
+        .filter((cell) => cell.target !== 'ignore');
+      if (shownColumns.length > 0) {
+        const table = el('table', 'bo-import-table');
+        const head = el('tr', undefined);
+        for (const cell of shownColumns) head.appendChild(el('th', undefined, fieldLabel(cell.target)));
+        head.appendChild(el('th', undefined, 'Esito'));
+        table.appendChild(head);
+        const receiptByFileIndex = new Map();
+        for (const receipt of fileState.preview?.receipts ?? []) {
+          const sent = built[receipt.index];
+          if (sent) receiptByFileIndex.set(sent.fileIndex, receipt);
+        }
+        for (const [fileIndex, cells] of file.rows.slice(0, MAX_PREVIEW_ROWS).entries()) {
+          const tr = el('tr', undefined);
+          for (const cell of shownColumns) {
+            const value = String(cells[cell.index] ?? '').trim();
+            tr.appendChild(el('td', undefined, value === '' ? '—' : value));
+          }
+          const receipt = receiptByFileIndex.get(fileIndex);
+          tr.appendChild(el('td', 'bo-import-esito', receipt
+            ? `${customerImportOutcomeLabel(receipt.outcome)} · ${customerImportReasonLabel(receipt.reasonCode)}`
+            : '—'));
+          table.appendChild(tr);
+        }
+        // Wide on a phone: the table scrolls inside its own frame, never the page.
+        const tableWrap = el('div', 'bo-import-table-wrap');
+        tableWrap.appendChild(table);
+        checkBox.appendChild(tableWrap);
+      }
+
+      if (fileState.preview) {
+        const counts = fileState.preview.counts ?? {};
+        checkBox.appendChild(el('p', 'bo-import-counts',
+          `Anteprima: ${counts.rows ?? 0} righe, ${counts.accepted ?? 0} accettate, ${counts.rejected ?? 0} scartate, ${counts.skipped ?? 0} da decidere.`));
+      }
+      if (fileState.applied !== '') {
+        checkBox.appendChild(el('p', 'bo-import-applied', fileState.applied));
+      }
+
+      const previewButton = el('button', undefined, 'Anteprima (non scrive nulla)');
+      previewButton.setAttribute('data-action', 'preview-customer-import');
+      busy.push(previewButton);
+      previewButton.addEventListener('click', () => withBusy(async () => {
+        if (built.length === 0) throw new Error('Nessuna riga da importare: abbina almeno una colonna.');
+        const result = await client.request('/api/customer-data/import/preview', {
+          method: 'POST',
+          body: JSON.stringify({
+            system: file.system === '' ? slugFromFileName(file.name) : file.system,
+            rows: built.map((entry) => entry.values),
+            acceptance: file.acceptance,
+          }),
+        });
+        fileState.preview = result;
+        fileState.applied = '';
+      }));
+
+      const applyButton = el('button', undefined, 'Applica importazione');
+      applyButton.setAttribute('data-action', 'apply-customer-import');
+      busy.push(applyButton);
+      applyButton.addEventListener('click', () => withBusy(async () => {
+        if (built.length === 0) throw new Error('Nessuna riga da importare: abbina almeno una colonna.');
+        const system = file.system === '' ? slugFromFileName(file.name) : file.system;
+        const applied = await client.request('/api/customer-data/import/apply', {
+          method: 'POST',
+          body: JSON.stringify({ system, rows: built.map((entry) => entry.values), acceptance: file.acceptance }),
+        });
+        const counts = applied?.counts ?? countReceipts(applied?.receipts ?? []);
+        let summary = `Importazione registrata: ${counts.accepted ?? 0} accettate, ${counts.rejected ?? 0} scartate, ${counts.skipped ?? 0} da decidere.`;
+        // Phones ride a second apply apart (the server row contract has no
+        // phone field): only rows the main apply accepted can receive one. A
+        // rejected or skipped row never lends its email to the phone batch,
+        // so a phone is never created for a record that was never made.
+        const ownerByEmail = new Map();
+        for (const receipt of applied?.receipts ?? []) {
+          if (receipt?.outcome !== 'accepted') continue;
+          const sent = built[receipt?.index];
+          const email = String(sent?.values?.email ?? '').trim().toLowerCase();
+          if (email !== '' && receipt?.subject?.id != null) {
+            ownerByEmail.set(email, { resource: receipt.subject.resource ?? null, id: receipt.subject.id });
+          }
+        }
+        const phoneOwnerKey = (row) => String(row?.email ?? '').trim().toLowerCase();
+        const phonesForAccepted = phones.filter((row) => ownerByEmail.has(phoneOwnerKey(row)));
+        const phonesSkipped = phones.length - phonesForAccepted.length;
+        if (phonesForAccepted.length > 0) {
+          try {
+            const linked = await client.request('/api/customer-data/import/apply', {
+              method: 'POST',
+              body: JSON.stringify({ system: 'phone', rows: phonesForAccepted, acceptance: file.acceptance }),
+            });
+            // A phone receipt counts as linked only when it names the
+            // intended customer, like the manual form checks
+            // (admin-cliente-nuovo.js linkPhone): the external-identity rule
+            // may accept the phone under its first owner instead.
+            let linkedCount = 0;
+            let elsewhereCount = 0;
+            let failedCount = 0;
+            for (const receipt of linked?.receipts ?? []) {
+              const sent = phonesForAccepted[receipt?.index];
+              const owner = sent ? ownerByEmail.get(phoneOwnerKey(sent)) : undefined;
+              const namesOwner = owner !== undefined
+                && receipt?.subject?.id === owner.id
+                && (receipt?.subject?.resource == null || owner.resource == null
+                  || receipt.subject.resource === owner.resource);
+              if (receipt?.outcome === 'accepted' && namesOwner) linkedCount += 1;
+              else if (receipt?.outcome === 'accepted') elsewhereCount += 1;
+              else failedCount += 1;
+            }
+            summary += ` Telefoni: ${linkedCount} collegati su ${phonesForAccepted.length}.`;
+            if (elsewhereCount > 0) {
+              summary += ` ${elsewhereCount} telefoni risultano già collegati a un'altra scheda e non sono stati spostati.`;
+            }
+            if (failedCount > 0) {
+              summary += ` ${failedCount} telefoni non si sono collegati: tocca reimportare solo quella colonna, oppure aggiungerli dalla scheda.`;
+            }
+            if (phonesSkipped > 0) {
+              summary += ` ${phonesSkipped} telefoni scartati insieme alla loro riga.`;
+            }
+          } catch {
+            summary += ' I telefoni non si sono collegati: tocca reimportare solo quella colonna, oppure aggiungerli dalla scheda.';
+          }
+        } else if (phones.length > 0) {
+          summary += ' Nessun telefono collegato: le righe con telefono sono state scartate.';
+        }
+        if (unlinkedPhones > 0) summary += ` ${unlinkedPhones} telefoni senza email non si collegano.`;
+        fileState.preview = null;
+        fileState.applied = summary;
+      }));
+
+      checkBox.appendChild(previewButton);
+      checkBox.appendChild(applyButton);
+      panel.appendChild(checkBox);
     }
 
     // ── runs, candidates, issues ──────────────────────────────────────────
@@ -268,7 +496,7 @@ export function createCustomerDataView(deps) {
       const row = el('div', 'customer-data-candidate');
       row.setAttribute('data-candidate', String(candidate.id));
       row.appendChild(el('p', 'customer-data-candidate-pair',
-        `${candidate.leftResource} ${candidate.leftLabel ?? candidate.leftId} ↔ ${candidate.rightResource} ${candidate.rightLabel ?? candidate.rightId}`));
+        `${customerResourceLabel(candidate.leftResource)} ${candidate.leftLabel ?? candidate.leftId} ↔ ${customerResourceLabel(candidate.rightResource)} ${candidate.rightLabel ?? candidate.rightId}`));
       row.appendChild(el('p', 'muted customer-data-candidate-evidence', `${candidate.rule}: ${candidate.evidence}`));
 
       const reason = el('input');
@@ -318,7 +546,7 @@ export function createCustomerDataView(deps) {
       const row = el('div', 'customer-data-issue');
       row.setAttribute('data-issue', String(issue.id));
       row.setAttribute('data-kind', String(issue.kind));
-      row.appendChild(el('p', 'customer-data-issue-kind', issue.kind));
+      row.appendChild(el('p', 'customer-data-issue-kind', customerIssueKindLabel(issue.kind)));
       row.appendChild(el('p', 'muted customer-data-issue-evidence', issue.evidence));
       const reason = el('input');
       reason.setAttribute('name', `issue-reason-${issue.id}`);
@@ -350,7 +578,30 @@ export function createCustomerDataView(deps) {
     mount.appendChild(panel);
   }
 
-  let lastPreview = null;
+  /**
+   * A short slug for the import origin, from the file name: «Clienti
+   * Ottobre.csv» becomes «clienti-ottobre». The operator can change it.
+   * @param {string} name
+   */
+  function slugFromFileName(name) {
+    const base = String(name ?? '').replace(/\.[^.]*$/, '');
+    const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    return slug === '' ? 'file-importato' : slug;
+  }
+
+  /**
+   * Count outcomes when the server answers with receipts but no counts.
+   * @param {any[]} receipts
+   */
+  function countReceipts(receipts) {
+    const counts = { accepted: 0, rejected: 0, skipped: 0 };
+    for (const receipt of receipts ?? []) {
+      if (receipt?.outcome === 'accepted') counts.accepted += 1;
+      else if (receipt?.outcome === 'rejected') counts.rejected += 1;
+      else counts.skipped += 1;
+    }
+    return counts;
+  }
 
   /**
    * Read one owned record list.
@@ -471,7 +722,7 @@ export function createCustomerDataView(deps) {
     const issueBox = el('div', 'customer-profile-issues');
     issueBox.appendChild(el('h4', undefined, `Segnalazioni aperte (${(profile.dataQualityIssues ?? []).length})`));
     for (const issue of profile.dataQualityIssues ?? []) {
-      issueBox.appendChild(el('p', 'customer-profile-issue', `${issue.kind}: ${issue.evidence}`));
+      issueBox.appendChild(el('p', 'customer-profile-issue', `${customerIssueKindLabel(issue.kind)}: ${issue.evidence}`));
     }
     panel.appendChild(issueBox);
 

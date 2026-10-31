@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
+import { writePendingCustomerPick, takePendingCustomerPick } from '../apps/admin/public/admin-prefill.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { NotFoundError, ValidationError, ConflictError } from '../packages/core/src/errors.js';
 
@@ -508,4 +509,279 @@ test('a transient list failure still offers a retry', async (t) => {
   await admin.renderList('partner');
   assert.ok(mount.textContent.includes('The list could not be loaded. Try again later.'));
   assert.ok(mount.findAll('button').some((node) => node.textContent === 'Retry'), 'a transient failure offers a way back');
+});
+
+function memoryStorage() {
+  const map = new Map();
+  return {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+  };
+}
+
+const ACTOR = { type: 'user', id: 'admin-ui' };
+
+// Voce 714433c2: «Nuova offerta» from the scheda cliente takes the one-time
+// pick on render — the form starts with the customer chosen — and files the
+// opportunity under the right company through POST /api/opportunities. The
+// server stays authoritative: unknown ids refuse, never invent.
+test('714433c2: renderNew(opportunity) starts with the picked customer and creates', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it',
+  }, { actor: ACTOR });
+
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'contact', id: contact.id, name: 'Guido Presti',
+    company: { id: company.id, name: 'Palestra Esempio' },
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navs = [];
+  const toasts = [];
+  const admin = createModuleAdmin({
+    doc, mount, client: clientFor(baseUrl), navigate: (h) => navs.push(h),
+    toast: (message) => toasts.push(message), storage,
+  });
+
+  const form = await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('Nuova offerta'), 'the offer screen paints');
+  assert.ok(mount.textContent.includes('Cliente: Guido Presti'), 'the picked customer is named');
+  assert.ok(mount.textContent.includes('Palestra Esempio'), 'the filing company is named');
+  assert.ok(!mount.textContent.includes(contact.id), 'no raw id reaches the screen');
+  assert.equal(takePendingCustomerPick(storage, 'offer'), null, 'the pick is read once, never kept');
+
+  form.__inputs.title.value = 'Pacchetto 10 ingressi';
+  form.__inputs.value.value = '250.00';
+  form.__inputs.expiry.value = '2026-12-31';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+
+  const rows = app.services.opportunities.list({ companyId: company.id });
+  assert.equal(rows.length, 1, 'one opportunity filed');
+  assert.equal(rows[0].contactId, contact.id, 'filed under the picked contact');
+  assert.equal(rows[0].name, 'Pacchetto 10 ingressi');
+  assert.equal(rows[0].valueCents, 25000, 'euro text becomes integer cents');
+  assert.deepEqual(toasts, ['Offerta creata'], 'the creation toasts in Italian');
+  assert.deepEqual(navs, ['#/pipelines/accordo-sales'], 'success lands on the offers board');
+});
+
+test('714433c2: renderNew(opportunity) validates before writing', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'company', id: company.id, name: 'Palestra Esempio',
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({ doc, mount, client: clientFor(baseUrl), navigate: () => {} , storage});
+
+  const form = await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('Azienda: Palestra Esempio'), 'a company pick files under itself');
+  await form.__submit({ preventDefault() {} });
+  assert.ok(mount.textContent.includes('Il titolo è obbligatorio.'), 'an empty title is refused');
+  assert.ok(mount.textContent.includes('Il valore è obbligatorio'), 'an empty value is refused');
+  assert.ok(mount.textContent.includes('Il referente è obbligatorio.'), 'an empty owner is refused');
+  assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write on invalid input');
+
+  form.__inputs.title.value = 'Prova';
+  form.__inputs.value.value = 'not-a-number';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  assert.ok(mount.textContent.includes('Il valore è obbligatorio'), 'a hostile value is refused');
+  assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write on a bad value');
+});
+
+// Voce 96e7b579: without a scheda pick the operator chooses the cliente in
+// the form, from the server company and contact lists — never a typed id,
+// never an invented customer. The server re-checks the pair on write.
+function catalogClient(baseUrl, catalog) {
+  const base = clientFor(baseUrl);
+  return {
+    request(path, options) {
+      if (String(path).startsWith('/api/catalog/products')) return catalog;
+      return base.request(path, options);
+    },
+  };
+}
+
+const CATALOG_FLAT = {
+  products: [{
+    productId: 'p1', sku: 'YOGA-10', name: 'Pacchetto 10 lezioni',
+    offers: [{
+      offerId: 'o-flat', name: 'Pacchetto 10 lezioni', active: true,
+      currency: 'EUR',
+      components: [{ pricingModel: 'flat_fee', flatAmountCents: 9900, tiers: [] }],
+    }, {
+      offerId: 'o-unit', name: 'Ingresso singolo', active: true,
+      currency: 'EUR',
+      components: [{ pricingModel: 'per_unit', unitAmountCents: 2500, tiers: [] }],
+    }, {
+      offerId: 'o-tiered', name: 'Abbonamento a scaglioni', active: true,
+      currency: 'EUR',
+      components: [{ pricingModel: 'per_unit', unitAmountCents: 1000, tiers: [{ upTo: 10, unitAmountCents: 1000 }] }],
+    }],
+  }],
+};
+
+async function flushContactOptions(contactSelect, rounds = 50) {
+  for (let i = 0; i < rounds && contactSelect.findAll('option').length < 2; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+test('96e7b579: renderNew(opportunity) without a pick chooses the cliente from the server lists', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it',
+  }, { actor: ACTOR });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navs = [];
+  const toasts = [];
+  const admin = createModuleAdmin({
+    doc, mount, client: catalogClient(baseUrl, { products: [] }),
+    navigate: (h) => navs.push(h), toast: (message) => toasts.push(message), storage: memoryStorage(),
+  });
+  const form = await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('Nuova offerta'), 'the offer screen paints');
+  assert.equal(mount.findAll('form').length, 1, 'the cliente is chosen in a form, not invented');
+  const companyOptions = form.__inputs.company.findAll('option').map((o) => o.textContent);
+  assert.ok(companyOptions.includes('Palestra Esempio'), 'companies come from the server list');
+  assert.ok(!mount.textContent.includes(company.id), 'no raw id reaches the screen');
+
+  form.__inputs.company.value = company.id;
+  form.__inputs.company.dispatch('change');
+  await flushContactOptions(form.__inputs.contact);
+  const contactOptions = form.__inputs.contact.findAll('option').map((o) => o.textContent);
+  assert.ok(contactOptions.includes('Guido Presti'), 'contacts follow the chosen company');
+  form.__inputs.contact.value = contact.id;
+
+  form.__inputs.title.value = 'Pacchetto 10 ingressi';
+  form.__inputs.value.value = '250.00';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  const rows = app.services.opportunities.list({ companyId: company.id });
+  assert.equal(rows.length, 1, 'one opportunity filed under the chosen company');
+  assert.equal(rows[0].contactId, contact.id, 'filed under the chosen contact');
+  assert.deepEqual(toasts, ['Offerta creata'], 'the creation toasts in Italian');
+  assert.deepEqual(navs, ['#/pipelines/accordo-sales'], 'success lands on the offers board');
+});
+
+test('96e7b579: renderNew(opportunity) without companies says so, never invents', async (t) => {
+  const { baseUrl } = await startServer(t, () => {});
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({ doc, mount, client: clientFor(baseUrl), navigate: () => {}, storage: memoryStorage() });
+  await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('Nuova offerta'), 'the offer screen paints');
+  assert.ok(mount.textContent.includes('Non c'), 'without companies the screen says so');
+  assert.equal(mount.findAll('form').length, 0, 'no form invents a customer');
+});
+
+test('96e7b579: ticked catalog products total into Valore and file the offer', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({
+    doc, mount, client: catalogClient(baseUrl, CATALOG_FLAT),
+    navigate: () => {}, storage: memoryStorage(),
+  });
+  const form = await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('scaglioni'), 'a tiered offer paints as text and stays manual');
+  assert.equal(form.__productPicks.length, 2, 'only plain flat/per-unit offers are tickable');
+
+  const [flat, unit] = form.__productPicks;
+  flat.checkbox.checked = true;
+  unit.checkbox.checked = true;
+  unit.qtyInput.value = '2';
+  form.__useTotal();
+  assert.equal(form.__inputs.value.value, '149.00', 'flat once plus per-unit times quantity');
+  form.__inputs.company.value = company.id;
+  form.__inputs.title.value = 'Pacchetto 10 ingressi';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  const rows = app.services.opportunities.list({ companyId: company.id });
+  assert.equal(rows.length, 1, 'one opportunity filed');
+  assert.equal(rows[0].valueCents, 14900, 'the catalog total files as integer cents');
+  assert.equal(rows[0].currency, 'EUR', 'a single-currency selection sets the currency');
+});
+
+test('96e7b579: a failed cliente read offers a retry, never an empty choice', async (t) => {
+  const { baseUrl } = await startServer(t, () => {});
+  const base = clientFor(baseUrl);
+  const failing = { request(path, options) {
+    if (String(path).startsWith('/api/companies')) throw new Error('boom');
+    return base.request(path, options);
+  } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({ doc, mount, client: failing, navigate: () => {}, storage: memoryStorage() });
+  await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('non si sono caricati'), 'a failed read says so honestly');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Riprova'), 'a failed read offers a way back');
+  assert.equal(mount.findAll('form').length, 0, 'no form chooses from a read that failed');
+});
+
+test('96e7b579: without a catalog the offer still files with a hand-typed value', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const base = clientFor(baseUrl);
+  const noCatalog = { request(path, options) {
+    if (String(path).startsWith('/api/catalog/products')) {
+      const error = new Error('manual catalog not composed');
+      Object.assign(error, { status: 404 });
+      throw error;
+    }
+    return base.request(path, options);
+  } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({ doc, mount, client: noCatalog, navigate: () => {}, storage: memoryStorage() });
+  const form = await admin.renderNew('opportunity');
+  assert.ok(mount.textContent.includes('Nessun catalogo'), 'a missing catalog is stated once as a hint');
+  form.__inputs.company.value = company.id;
+  form.__inputs.title.value = 'Pacchetto 10 ingressi';
+  form.__inputs.value.value = '250.00';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  const rows = app.services.opportunities.list({ companyId: company.id });
+  assert.equal(rows.length, 1, 'the manual value files without a catalog');
+  assert.equal(rows[0].currency, 'EUR', 'a hand-typed value keeps EUR');
+});
+
+test('96e7b579: mixed-currency products refuse instead of filing', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const catalog = {
+    products: [{
+      productId: 'p1', name: 'Corso',
+      offers: [
+        { offerId: 'o-eur', name: 'Corso EUR', active: true, currency: 'EUR', components: [{ pricingModel: 'flat_fee', flatAmountCents: 1000, tiers: [] }] },
+        { offerId: 'o-usd', name: 'Corso USD', active: true, currency: 'USD', components: [{ pricingModel: 'flat_fee', flatAmountCents: 1000, tiers: [] }] },
+      ],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({
+    doc, mount, client: catalogClient(baseUrl, catalog),
+    navigate: () => {}, storage: memoryStorage(),
+  });
+  const form = await admin.renderNew('opportunity');
+  for (const pick of form.__productPicks) pick.checkbox.checked = true;
+  form.__inputs.company.value = company.id;
+  form.__inputs.title.value = 'Prova';
+  form.__inputs.value.value = '10.00';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  assert.ok(mount.textContent.includes('valute diverse'), 'a mixed selection refuses honestly');
+  assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write on a mixed selection');
 });

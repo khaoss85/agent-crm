@@ -123,3 +123,10 @@ test('suggest: dry-run answers stay marked and prompts stay bounded', async () =
   assert.equal(QUOTE_SUGGEST_PURPOSE, 'suggest', 'suggestions spend under the audited suggest purpose');
   assert.ok(Array.isArray(buildSuggestMessages({ excerpts: EXCERPTS, offers: OFFERS })), 'the prompt builder is importable for the future action wiring');
 });
+
+test('suggest: the system prompt is headless JSON-only and follows through (backlog:999f6c0be818)', () => {
+  const messages = buildSuggestMessages({ excerpts: EXCERPTS, offers: OFFERS });
+  const system = messages.find((message) => message.role === 'system').content;
+  assert.ok(system.includes('SOLO con un array JSON'), 'the call stays a headless JSON contract');
+  assert.ok(system.includes('non fare mai domande'), 'GPT-6 initiative: decide from context, never ask');
+});

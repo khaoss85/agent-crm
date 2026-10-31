@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import {
+  createCustomerCardView,
+  mergeLinkedIdentities,
+  offerStageTargets,
+  OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
+} from '../apps/admin/public/admin-customer-card.js';
+import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
+import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -167,7 +174,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, calls = null, failCalls = false, callsError = null, enrichedError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null } = {}) {
   const requested = [];
   return {
     calls: requested,
@@ -175,10 +182,15 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       requested.push(path);
       if (path.startsWith('/api/customer-hub/')) {
         if (failHub) throw Object.assign(new Error('Not Found'), { status: 404 });
-        if (path.includes('/card/')) return card;
+        if (path.includes('/card/')) {
+          if (cardError) throw cardError;
+          return card;
+        }
+        if (timelineError) throw timelineError;
         return timeline;
       }
       if (path.startsWith('/api/customer-data/profile/')) {
+        if (profileError) throw profileError;
         if (!profile) throw Object.assign(new Error('no profile'), { status: 404 });
         return profile;
       }
@@ -208,13 +220,21 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
 
-  // Left: quick actions are real links, identities carry their motivation.
+  // Left: quick actions are a voice-aware Chiama button (the tel: fallback
+  // appears only after the voice check names no connector, voce 105563eea902)
+  // and the Scrivi composer button — no mailto: anywhere (backlog:e9b4fc2f).
+  // Identities carry their motivation.
   const links = mount.findAll('a');
-  const call = links.find((node) => node.getAttribute('data-action') === 'call-customer');
+  const call = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer');
   assert.ok(call, 'a Chiama action exists');
-  assert.equal(call.getAttribute('href'), 'tel:+393331234567');
-  const mail = links.find((node) => node.getAttribute('data-action') === 'mail-customer');
-  assert.equal(mail.getAttribute('href'), 'mailto:guido@palestra-esempio.it');
+  assert.equal(call.textContent, 'Chiama');
+  assert.ok(!links.some((node) => String(node.getAttribute('href') ?? '').startsWith('tel:')),
+    'no device-dial link before the voice check');
+  assert.ok(links.every((node) => !String(node.getAttribute('href') ?? '').startsWith('mailto:')),
+    'no mailto: link in the quick actions');
+  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
+  assert.ok(write, 'a Scrivi action opens the composer');
+  assert.equal(write.textContent, 'Scrivi');
 
   assert.ok(text.includes('stesso numero su WhatsApp e Instagram'), 'the link motivation is shown');
   assert.ok(text.includes('elena'), 'the decider is shown');
@@ -434,6 +454,146 @@ test('a hub the server does not compose renders an honest error, never blank', a
   assert.ok(mount.textContent.includes('Scheda non disponibile'));
 });
 
+test('voce 908f2eb9bbfb: with the profile in error the scheda keeps name, timeline and other sections, with the error on every profile section', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ profileError: failure }));
+  const text = mount.textContent;
+  // No whole-card failure: the name, the timeline and the other sections stay.
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+  assert.ok(text.includes('vorrei prenotare una prova'), 'the cronologia still shows');
+  assert.ok(text.includes('Tutti i contatti'), 'the timeline section stays');
+  // Every profile-fed section names the failure in plain Italian, never a raw
+  // status: a failed read must never hide as "no offer / no next steps".
+  assert.ok(text.includes('Dettagli'), 'the Dettagli section stays');
+  assert.ok(text.includes('I dettagli non si sono potuti leggere. Riprova più tardi.'), 'Dettagli names the failure');
+  assert.ok(text.includes('Identità collegate'), 'the identities section stays');
+  assert.ok(text.includes('Le identità non si sono potute leggere. Riprova più tardi.'), 'the identities name the failure');
+  assert.ok(text.includes('Offerta'), 'the offer section stays');
+  assert.ok(text.includes("L'offerta non si è potuta leggere. Riprova più tardi."), 'the offer names the failure instead of hiding as none');
+  assert.ok(text.includes('Prossimi passi'), 'the next-steps section stays');
+  assert.ok(text.includes('I prossimi passi non si sono potuti leggere. Riprova più tardi.'), 'the next steps name the failure instead of hiding as none');
+  assert.ok(!text.includes('503'), 'no raw status on screen');
+});
+
+test('voce 908f2eb9bbfb, review round 2: with the timeline in error the next appointment names the failure too', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ timelineError: failure }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
+  assert.ok(text.includes('Prossimo appuntamento'), 'the next-appointment section stays');
+  assert.ok(text.includes('Il prossimo appuntamento non si è potuto leggere. Riprova più tardi.'), 'the next appointment names the failure instead of hiding as none');
+  assert.ok(!text.includes('503'), 'no raw status on screen');
+});
+
+test('voce 908f2eb9bbfb, review round 2: with the calls in error the Chiamate card names the failure too', async () => {
+  const failure = Object.assign(new Error('boom'), { status: 500 });
+  const mount = await renderCard(stubClient({ callsError: failure }), 'call-x');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the AI summary names the failure');
+  assert.ok(text.includes('Chiamate'), 'the calls section stays');
+  assert.ok(text.includes('Le chiamate non si sono potute leggere. Riprova più tardi.'), 'the calls name the failure instead of dropping the card');
+});
+
+test('voce 908f2eb9bbfb, review round 2: a 404 timeline or profile is not-composed, never a retry error', async () => {
+  const notFound = Object.assign(new Error('Not Found'), { status: 404 });
+  const mount = await renderCard(stubClient({ timelineError: notFound, profileError: notFound }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(!text.includes('Riprova più tardi'), 'a 404 never invites a retry that cannot succeed');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+});
+
+test('voce 908f2eb9bbfb, review round 2: a synchronously-throwing read fails the card, never blanks it', async () => {
+  const syncThrow = {
+    request() { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); },
+  };
+  const mount = await renderCard(syncThrow);
+  const text = mount.textContent;
+  assert.ok(text.includes('Scheda non disponibile'), 'the whole-card error panel shows');
+  assert.ok(text.includes('La scheda non si è potuta leggere. Riprova più tardi.'), 'the panel names the failure in Italian');
+});
+
+test('voce 908f2eb9bbfb: with the timeline in error the scheda keeps the card and names the failure on the cronologia', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ timelineError: failure }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+  assert.ok(text.includes('Tutti i contatti'), 'the timeline section stays');
+  assert.ok(text.includes('La cronologia non si è potuta leggere. Riprova più tardi.'), 'the cronologia names the failure');
+});
+
+test('826e377c review giro-6: with the timeline in error the identities name the failure, never zero channels', async () => {
+  // The review on head f1ed030c (P1): linkedIdentities merged null on a
+  // timeline failure (zero rows), so the zero-row branch printed
+  // 'nessun canale osservato' beside the failure notice — a failed read
+  // claiming knowledge of zero channels. The section now names the failure
+  // and stops: no count, no empty claim, no rows.
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const mount = await renderCard(stubClient({ timelineError: failure }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Identità collegate'), 'the identities section stays');
+  assert.ok(
+    text.includes('I canali osservati non si sono potuti leggere. Riprova più tardi.'),
+    'the observed read names the failure instead of merging in silence',
+  );
+  // The number still reads in Contatti (the card's own phone field), so the
+  // absence checks scope to the Identità collegate section.
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'a failed observed read claims no zero channels');
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no observed row renders on a failed read');
+  assert.ok(!sectionText.includes('guido.presti'), 'no observed handle renders on a failed read');
+  assert.ok(!text.includes('503'), 'no raw status on screen');
+});
+
+test('826e377c review giro-7: a truncated timeline names a partial list, never an exact count', async () => {
+  // The review on head 3c77ca1 (P2): mergeLinkedIdentities ignored the
+  // timeline truncation flags, so a customer with a channel beyond the page
+  // read an exact «N canali». The section now renders the page it read and
+  // names it partial.
+  const mount = await renderCard(stubClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, truncated: true, count: 9 } },
+  }));
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(sectionText.includes('3 canali (elenco parziale)'), 'the partial page names itself partial, not exact');
+  assert.ok(sectionText.includes('+39 333 1234567'), 'the read rows still render');
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'a partial read never claims zero channels');
+});
+
+test('826e377c review giro-7: a null timeline names unavailability, never zero channels', async () => {
+  // A 404 timeline (the package is not composed for this reader) loads as
+  // null with no error: the section used to merge null to zero rows and
+  // print «nessun canale osservato» — a false zero for a read that never
+  // happened. It now names its state and stops.
+  const mount = await renderCard(stubClient({ timeline: null }));
+  const sectionHead = mount.findByText('h4', 'Identità collegate');
+  assert.ok(sectionHead, 'the identities section stays');
+  const sectionText = sectionHead.parentNode?.textContent ?? '';
+  assert.ok(
+    sectionText.includes('I canali osservati non sono disponibili.'),
+    'an unavailable observed read names its state',
+  );
+  assert.ok(!sectionText.includes('nessun canale osservato'), 'an unavailable read claims no zero channels');
+  assert.ok(!sectionText.includes('+39 333 1234567'), 'no observed row renders without a timeline');
+});
+
+test('voce 908f2eb9bbfb: with enrichment or calls in error only that section names the failure', async () => {
+  const failure = Object.assign(new Error('boom'), { status: 500 });
+  const mount = await renderCard(stubClient({ enrichedError: failure, callsError: failure }), 'call-x');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
+  assert.ok(text.includes("I dati arricchiti non si sono potuti leggere. Riprova più tardi."), 'the enriched section names the failure');
+  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the AI summary names the failure');
+});
+
 test('hostile server text renders as text, never as markup', async () => {
   const nasty = '<img src=x onerror=alert(1)>';
   const mount = await renderCard(stubClient({
@@ -538,10 +698,15 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
 });
 
 test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', async () => {
+  // Voce 908f2eb9bbfb narrows this promise: the failure names itself on its
+  // own section instead of failing the whole scheda — still never a quiet
+  // "no calls".
   const mount = await renderCard(
     stubClient({ callsError: Object.assign(new Error('boom'), { status: 500 }) }), 'call-a',
   );
-  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
+  assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'the card stays');
+  assert.ok(mount.textContent.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'),
+    'the AI summary names the failure');
   assert.ok(!mount.textContent.includes('nessuna chiamata registrata'),
     'a 500 never reads as no calls');
 });
@@ -611,10 +776,15 @@ test('BO-F4-03: a hostile enriched value renders as text, never as markup', asyn
 });
 
 test('BO-F4-03: a failing enrichment read is an error, never a quiet "no data"', async () => {
+  // Voce 908f2eb9bbfb narrows this promise: the failure names itself on its
+  // own section instead of failing the whole scheda — still never a quiet
+  // "no data".
   const mount = await renderCard(
     stubClient({ enrichedError: Object.assign(new Error('boom'), { status: 500 }) }),
   );
-  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the card shows its error UI');
+  assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'the card stays');
+  assert.ok(mount.textContent.includes("I dati arricchiti non si sono potuti leggere. Riprova più tardi."),
+    'the enriched section names the failure');
   assert.ok(!mount.textContent.includes('nessun dato arricchito registrato'),
     'a 500 never reads as no enriched data');
 });
@@ -1018,23 +1188,35 @@ test('an unreadable quotes section reads unavailable in Italian, never a confirm
     'an empty opportunities read never proves there are no quotes');
 });
 
-// Voce 59def6cb805d (C10): Identità collegate conta i canali osservati e
-// mostra una riga per canale con sigla e recapito, mai chiavi grezze o UUID.
+// Voce 59def6cb805d (C10), unita a 826e377c: Identità collegate conta i
+// canali osservati e mostra una riga per canale con sigla e recapito, mai
+// chiavi grezze o UUID. Le righe detenute e quelle osservate sui messaggi si
+// fondono: lo stesso recapito in due forme non fa due righe.
 test('59def6cb805d: the identities section counts channels with one row each (C10)', async () => {
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
-  assert.ok(text.includes('2 canali'), 'the header counts the observed channels');
+  // Observed WhatsApp +39 333 1234567 and Instagram guido.presti read one
+  // row each, while the phone call on the same number is its own system.
+  // Held identities are not listed here (owner split: read-only section).
+  assert.ok(text.includes('3 canali'), 'the header counts the merged channels');
   const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
     && node.getAttribute('class') === 'bo-scheda-identity');
-  assert.equal(rows.length, 2, 'one row per observed channel');
+  assert.equal(rows.length, 3, 'one row per merged identity');
   assert.ok(text.includes('+39 333 1234567'), 'the WhatsApp handle reads as value');
   assert.ok(text.includes('guido.presti'), 'the Instagram handle reads as value');
 });
 
 // Voce 59def6cb805d (C10): i sistemi senza etichetta italiana e gli UUID non
-// vanno mai su schermo.
+// vanno mai su schermo — gli osservati sui messaggi; i detenuti non si
+// leggono in questa sezione (owner split: solo osservate).
 test('59def6cb805d: unlabelled systems and UUID handles never reach the screen (C10)', async () => {
+  const emptyTimeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: { available: true, count: 0, truncated: false, items: [] },
+  };
   const mount = await renderCard(stubClient({
+    timeline: emptyTimeline,
     profile: {
       ...PROFILE,
       externalIdentities: [
@@ -1064,13 +1246,199 @@ test('59def6cb805d: the union note carries the recorded motivation (C11)', async
 
 // Voce 59def6cb805d (C11): scheda non unita o senza motivazione, nessuna nota.
 test('59def6cb805d: no union note is invented without a linked union (C11)', async () => {
-  const mount = await renderCard(stubClient({ profile: PROFILE_BARE }));
+  const silentTimeline = {
+    ...TIMELINE_BARE,
+    entries: { available: true, count: 0, truncated: false, items: [] },
+  };
+  const mount = await renderCard(stubClient({ profile: PROFILE_BARE, timeline: silentTimeline }));
   assert.deepEqual(
     mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-union-note'),
     [],
     'an unlinked record shows no union note',
   );
   assert.ok(mount.textContent.includes('nessun canale osservato'), 'and no channel is claimed');
+});
+
+// Voce 826e377c: Ada Rossi ha messaggi WhatsApp (+39 000 000 001) e
+// Instagram (@ada-rossi.esempio) nella cronologia ma nessuna identità
+// detenuta: Identità collegate elenca il numero e l'handle osservati, con il
+// canale, invece di «nessun canale osservato».
+test('826e377c: observed WhatsApp number and Instagram handle list with no held identities', async () => {
+  const adaTimeline = {
+    ...TIMELINE,
+    conversations: {
+      available: true, count: 2, truncated: false, unthreadedMessages: 0, unthreadedCalls: 0,
+      items: [
+        { channel: 'whatsapp', peer: '+39 000 000 001' },
+        { channel: 'instagram', peer: '@ada-rossi.esempio' },
+      ],
+    },
+    entries: {
+      available: true, count: 2, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno, vorrei una prova', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+        {
+          entry: 'message', id: 'm-ig', conversationId: 't-ig', channel: 'instagram', direction: 'inbound',
+          sync: 'received', body: 'Quanto costa il pacchetto?', teamAuthorId: null,
+          remoteHandle: '@ada-rossi.esempio', errorCode: null, occurredAt: '2026-10-20T11:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline: adaTimeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('nessun canale osservato'), 'messages name their channels, never an empty claim');
+  assert.ok(text.includes('2 canali'), 'the header counts the two observed channels');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed identity');
+  assert.equal(rows[0].getAttribute('data-channel'), 'whatsapp');
+  assert.equal(rows[0].getAttribute('data-source'), 'observed');
+  assert.equal(rows[1].getAttribute('data-channel'), 'instagram');
+  assert.equal(rows[1].getAttribute('data-source'), 'observed');
+  assert.ok(text.includes('+39 000 000 001'), 'the WhatsApp number reads as value');
+  assert.ok(text.includes('@ada-rossi.esempio'), 'the Instagram handle reads as value');
+  const held = rows.filter((node) => node.getAttribute('data-source') === 'held');
+  assert.deepEqual(held, [], 'no held row is invented from messages alone');
+});
+
+test('826e377c review giro-5: a call with no handle still names its channel', () => {
+  // Review on head 23aac0b6 (P2 card.js:305): the list CANALI column counts
+  // calls, but the merge only kept timeline evidence with a handle — a
+  // calls-only customer read phone in the list and «nessun canale osservato»
+  // on the scheda. The union is authoritative: a handle-less channel lists
+  // as a display-only observed row, never an invented handle.
+  const merged = mergeLinkedIdentities({
+    conversations: { items: [{ channel: 'phone', peer: null }] },
+    entries: {
+      items: [
+        { entry: 'call', channel: 'phone', remoteHandle: null, occurredAt: '2026-10-21T10:00:00.000Z' },
+      ],
+    },
+  });
+  assert.equal(merged.rows.length, 1, 'one row for the handle-less phone channel');
+  assert.equal(merged.rows[0].system, 'phone');
+  assert.equal(merged.rows[0].externalId, null, 'no handle is invented');
+  assert.equal(merged.rows[0].source, 'observed');
+  assert.equal(merged.channelCount, 1);
+});
+
+test('826e377c review giro-5: the handle-less channel renders without Collega', async () => {
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 1 },
+    entries: {
+      available: true, count: 1, truncated: false,
+      items: [
+        {
+          entry: 'call', id: 'k-1', conversationId: null, channel: 'phone', direction: 'inbound',
+          sync: 'completed', durationSec: 120, teamAuthorId: null,
+          remoteHandle: null, errorCode: null, occurredAt: '2026-10-21T10:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(!text.includes('nessun canale osservato'), 'a calls-only customer names its channel');
+  assert.ok(text.includes('senza identificativo'), 'the handle-less channel reads honestly');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 1, 'one row for the handle-less phone channel');
+  assert.equal(rows[0].getAttribute('data-channel'), 'phone');
+  const buttons = mount.findAll('button').filter((node) => node.textContent === 'Collega');
+  assert.deepEqual(buttons, [], 'no Collega without a handle to link');
+});
+
+test('826e377c: every labeled observed channel lists read-only, with no buttons', () => {
+  // Owner split: manual Collega/Scollega is a follow-up voce, so the section
+  // lists every labeled channel from the messages and offers no action.
+  const merged = mergeLinkedIdentities({
+    conversations: { items: [] },
+    entries: {
+      items: [
+        { channel: 'whatsapp', remoteHandle: '+39 000 000 001' },
+        { channel: 'sms', remoteHandle: '+39 000 000 002' },
+        { channel: 'gmail', remoteHandle: 'ada.rossi@example.it' },
+      ],
+    },
+  });
+  assert.equal(merged.rows.length, 3, 'one row per observed channel');
+  const byChannel = Object.fromEntries(merged.rows.map((row) => [row.system, row]));
+  for (const system of ['whatsapp', 'sms', 'gmail']) {
+    assert.equal(byChannel[system].source, 'observed');
+    assert.ok(!('linked' in byChannel[system]), `${system} carries no linked flag`);
+    assert.ok(!('linkable' in byChannel[system]), `${system} carries no linkable flag`);
+  }
+});
+
+test('826e377c: held identities are not listed in the read-only section', async () => {
+  // Owner split: the section reads only observed identities. Held rows stay
+  // in the profile and in the Clienti CANALI column, never here.
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE_BARE,
+      externalIdentities: [
+        { system: 'whatsapp', externalId: '+39 000 000 001' },
+        { system: 'sms', externalId: '+39000000002' },
+      ],
+    },
+    timeline: {
+      ...TIMELINE,
+      conversations: { available: true, count: 0, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+      entries: { available: true, count: 0, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('nessun canale osservato'), 'held rows alone name no observed channel');
+  assert.ok(!text.includes('+39 000 000 001'), 'no held handle leaks into the section');
+  const buttons = mount.findAll('button')
+    .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
+  assert.deepEqual(buttons, [], 'no link buttons without the follow-up voce');
+});
+
+test('826e377c: observed rows on any labeled channel render with no buttons', async () => {
+  const timeline = {
+    ...TIMELINE,
+    conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+    entries: {
+      available: true, count: 2, truncated: false,
+      items: [
+        {
+          entry: 'message', id: 'm-wa', conversationId: 't-wa', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: 'Buongiorno', teamAuthorId: null,
+          remoteHandle: '+39 000 000 001', errorCode: null, occurredAt: '2026-10-20T09:00:00.000Z',
+        },
+        {
+          entry: 'message', id: 'm-sms', conversationId: 't-sms', channel: 'sms', direction: 'inbound',
+          sync: 'received', body: 'Ci vediamo domani', teamAuthorId: null,
+          remoteHandle: '+39 000 000 002', errorCode: null, occurredAt: '2026-10-20T10:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({
+    profile: { ...PROFILE_BARE, externalIdentities: [] },
+    timeline,
+  }));
+  const text = mount.textContent;
+  assert.ok(text.includes('+39 000 000 002'), 'the sms channel still lists, display-only');
+  const rows = mount.findAll('p').filter((node) => (node.getAttribute('data-channel') ?? '') !== ''
+    && node.getAttribute('class') === 'bo-scheda-identity');
+  assert.equal(rows.length, 2, 'one row per observed identity');
+  const buttons = mount.findAll('button')
+    .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
+  assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
 test('a customer with no linked offer reads none registered, never another customer offer', async () => {
@@ -1084,4 +1452,398 @@ test('a customer with no linked offer reads none registered, never another custo
   const text = mount.textContent;
   assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
+});
+
+test('backlog:32820692: attachments render on the card: thumbnail, player, icon with name', async () => {
+  const photo = {
+    entry: 'message', id: 'm-photo', conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+    sync: 'received', body: null, teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null,
+    occurredAt: '2026-10-20T09:00:00.000Z',
+    attachment: { kind: 'photo', name: null, size: 1234, ref: 'media-photo-1', preview: null },
+  };
+  const voice = {
+    entry: 'message', id: 'm-voice', conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+    sync: 'received', body: null, teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null,
+    occurredAt: '2026-10-20T09:01:00.000Z',
+    attachment: { kind: 'audio', name: null, size: null, ref: 'media-voice-1', preview: null },
+  };
+  const hostile = {
+    entry: 'message', id: 'm-doc', conversationId: 't1', channel: 'instagram', direction: 'inbound',
+    sync: 'received', body: null, teamAuthorId: null, remoteHandle: 'guido.presti', errorCode: null,
+    occurredAt: '2026-10-20T09:02:00.000Z',
+    attachment: { kind: 'document', name: '<script>alert(1)</script>.pdf', size: 42, ref: 'media-doc-1', preview: null },
+  };
+  const timeline = {
+    ...TIMELINE,
+    entries: { available: true, count: 3, truncated: false, items: [photo, voice, hostile] },
+  };
+  const mount = await renderCard(stubClient({ timeline }));
+  const imgs = mount.findAll('img');
+  assert.equal(imgs.length, 1, 'the photo shows one thumbnail');
+  assert.equal(imgs[0].getAttribute('src'), 'media-photo-1');
+  const players = mount.findAll('audio');
+  assert.equal(players.length, 1, 'the voice note shows one player');
+  assert.equal(players[0].getAttribute('src'), 'media-voice-1');
+  assert.equal(players[0].getAttribute('controls'), '');
+  assert.ok(mount.textContent.includes('<script>alert(1)</script>.pdf'), 'the document name reads as text');
+  assert.deepEqual(mount.findAll('script'), [], 'a hostile filename never becomes markup');
+});
+
+// Voce 714433c2: Dettagli has Modifica with Salva and Annulla. Salva PATCHes
+// the contact and re-reads the card; Annulla re-reads without writing.
+const OPPORTUNITY_ONLY_PROFILE = {
+  ...PROFILE,
+  opportunities: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{ id: 'o1', status: 'qualification', name: 'Pacchetto 10 ingressi' }],
+  },
+  quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+};
+
+/** A client stub that records writes (method + parsed body) and serves reads from the base stub. */
+const recordingClient = (base, onWrite = null) => {
+  const writes = [];
+  return {
+    writes,
+    async request(path, opts = {}) {
+      const method = opts?.method ?? 'GET';
+      if (method === 'GET') return base.request(path);
+      const body = opts?.body === undefined ? undefined : JSON.parse(String(opts.body));
+      writes.push({ path, method, body });
+      if (typeof onWrite === 'function') return onWrite({ path, method, body });
+      return { ok: true };
+    },
+  };
+};
+
+const flushClicks = async (times = 3) => {
+  for (let i = 0; i < times; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+};
+
+test('714433c2: Modifica opens the edit form and Salva PATCHes the contact, then re-reads', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  const edit = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details');
+  assert.ok(edit, 'the Dettagli Modifica button exists');
+  edit.dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  const cancel = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details');
+  assert.ok(save, 'Salva is in the form');
+  assert.ok(cancel, 'Annulla is in the form');
+
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('firstName').value = 'Guido';
+  byName('lastName').value = 'Presti';
+  byName('email').value = 'guido@palestra-esempio.it';
+  save.dispatch('click');
+  await flushClicks();
+
+  assert.equal(client.writes.length, 1, 'one write for the save');
+  assert.equal(client.writes[0].path, '/api/contacts/c1', 'Salva PATCHes the contact');
+  assert.equal(client.writes[0].method, 'PATCH', 'the save is a PATCH');
+  assert.deepEqual(client.writes[0].body,
+    { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' },
+    'only the editable keys travel, exactly as typed');
+  assert.deepEqual(seen, [{ message: 'Dati salvati', error: false }], 'the save toasts in Italian');
+  assert.ok(mount.textContent.includes('Dettagli'), 'the re-read card shows Dettagli again');
+});
+
+test('714433c2: Annulla drops the edits with no write and re-reads the card', async () => {
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('firstName').value = 'Inventato';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details').dispatch('click');
+  await flushClicks();
+
+  assert.deepEqual(client.writes, [], 'Annulla writes nothing');
+  assert.ok(!mount.textContent.includes('Inventato'), 'the dropped edit is not on screen');
+  assert.ok(mount.textContent.includes('Dettagli'), 'the card re-read after Annulla');
+});
+
+test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  const noteInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  assert.ok(noteInput, 'the note field names its purpose for assistive tech');
+  noteInput.value = 'Richiamare giovedì';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+  await flushClicks();
+
+  assert.equal(client.writes.length, 1, 'one write for the note');
+  assert.equal(client.writes[0].path, '/api/customer-hub/notes', 'the note goes to the hub notes route');
+  assert.equal(client.writes[0].method, 'POST', 'the note is a POST');
+  assert.deepEqual(client.writes[0].body,
+    { resource: 'contact', id: 'c1', body: 'Richiamare giovedì' },
+    'the note carries its subject and plain-text body');
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }], 'the note toasts in Italian');
+});
+
+// Voce 714433c2: lo stato si cambia da un menu. The menu moves the shown
+// opportunity through the governed stage workflow, offering only the legal
+// moves: the transitions the workflow allows from the shown stage, never the
+// current stage again, never the governed system state approval_pending (it
+// is entered only through the approval gate). Every voice reads Italian.
+test('714433c2: Cambia stato lists the legal moves in Italian and moves the opportunity', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => ({ output: { outcome: 'stage_changed' } }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  assert.ok(mount.textContent.includes('Pacchetto 10 ingressi · qualificazione'),
+    'the offer line shows the opportunity with its Italian stage');
+  const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
+  assert.ok(change, 'the Cambia stato menu button exists');
+  assert.equal(change.getAttribute('aria-haspopup'), 'menu', 'the button announces its menu');
+  change.dispatch('click');
+  const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
+  const labels = voices.map((node) => node.textContent);
+  // qualification allows proposal/approval_pending/lost; approval_pending is
+  // a system state, so only proposta and persa are offered.
+  assert.deepEqual(labels, ['proposta', 'persa'], 'from qualificazione only proposta and persa are offered');
+  assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'qualification'),
+    'the current stage key is not a voice');
+  assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'approval_pending'),
+    'the governed system state is never a voice');
+  assert.ok(!labels.some((label) => label === 'discovery' || label === 'proposal' || label === 'negotiation'),
+    'no raw stage key reaches the screen');
+
+  voices.find((node) => node.getAttribute('data-stage') === 'proposal').dispatch('click');
+  await flushClicks();
+
+  assert.equal(client.writes.length, 1, 'one write for the stage move');
+  assert.equal(client.writes[0].path, '/api/opportunities/o1/stage', 'the move goes through the governed stage route');
+  assert.equal(client.writes[0].method, 'POST', 'the move is a POST');
+  assert.deepEqual(client.writes[0].body, { targetStage: 'proposal' }, 'the move names its target stage');
+  assert.deepEqual(seen, [{ message: 'Stato aggiornato', error: false }], 'the move toasts in Italian');
+});
+
+// Voce 714433c2: the menu mirror is pinned to the governed transition table
+// of the opportunity service — not to a stubbed client. Every stage offers
+// exactly its legal moves minus the governed system state, and nothing else.
+test('714433c2: the menu targets match the real transition table on every stage', () => {
+  assert.deepEqual(CARD_TRANSITIONS, SERVICE_TRANSITIONS,
+    'the card mirror is the governed table, not a copy that can drift');
+  for (const stage of OPPORTUNITY_STAGES) {
+    const targets = offerStageTargets(stage);
+    const legal = (SERVICE_TRANSITIONS[stage] ?? []).filter((key) => key !== 'approval_pending');
+    assert.deepEqual(targets, legal, `from ${stage} the menu offers exactly the legal non-system moves`);
+    assert.ok(!targets.includes('approval_pending'), `from ${stage} the system state is never offered`);
+    assert.ok(!targets.includes(stage), `from ${stage} the current stage is never offered`);
+  }
+});
+
+test('714433c2: an approval-gated move toasts the approval, and a quote line carries no menu', async () => {
+  const seen = [];
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => ({ output: { outcome: 'approval_required' } }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'proposal').dispatch('click');
+  await flushClicks();
+  assert.deepEqual(seen, [{ message: 'Stato aggiornato: serve un\u2019approvazione', error: false }],
+    'an approval-gated move says so honestly');
+
+  // The default fixture reads a quote line (fromQuote): quotes have no
+  // governed stage transition, so no menu is offered there.
+  const quoteMount = await renderCard(stubClient());
+  assert.ok(quoteMount.textContent.includes('Preventivo 10 ingressi'), 'the fixture reads a quote line');
+  assert.equal(
+    quoteMount.findAll('button').filter((node) => node.getAttribute('data-action') === 'change-offer-stage').length,
+    0,
+    'a quote line carries no stage menu',
+  );
+});
+
+// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
+// customer as a one-time pick — with the linked company the offer form needs
+// — and navigate to the creation screens. The destinations take the pick.
+test('714433c2: quick actions stash the picked customer and navigate to the creation screens', async () => {
+  const map = new Map();
+  const storage = {
+    getItem: (key) => (map.has(key) ? map.get(key) : null),
+    setItem: (key, value) => { map.set(key, String(value)); },
+    removeItem: (key) => { map.delete(key); },
+  };
+  const navs = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client: stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }), storage,
+    navigate: (hash) => navs.push(hash),
+  }).renderCard('contact', 'c1');
+
+  const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+  byAction('new-offer').dispatch('click');
+  assert.deepEqual(navs, ['#/modules/opportunity/new'], 'Nuova offerta opens the offer creation screen');
+  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.offer')), {
+    resource: 'contact', id: 'c1', name: 'Guido Presti',
+    company: { id: 'co1', name: 'Palestra Esempio' },
+  }, 'the offer pick names the record and its company');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
+    'no appointment pick leaks from the offer voice');
+
+  byAction('new-appointment').dispatch('click');
+  assert.deepEqual(navs, ['#/modules/opportunity/new', '#/calendario'],
+    'Nuovo appuntamento opens the calendar manual booking');
+  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
+    resource: 'contact', id: 'c1', name: 'Guido Presti',
+    company: { id: 'co1', name: 'Palestra Esempio' },
+  }, 'the appointment pick names the same record');
+});
+
+// Backlog e9b4fc2f: «Scrivi» opens the composer inside the scheda with the
+// customer's own channels. Email is linked (Gmail), WhatsApp has the number
+// but no linked connection — it reads switched off with its Connettori link.
+// A channel without any address (Messenger) names that instead. Invia posts
+// the preselected recipient, never a caller-supplied address.
+const COMPOSER_CONNECTORS = {
+  connectors: [
+    { channel: 'email', status: 'active', connectionKey: 'gmail-1' },
+    { channel: 'instagram', status: 'active', connectionKey: 'ig-1' },
+  ],
+};
+
+function composerClient({ connectors = COMPOSER_CONNECTORS } = {}) {
+  const base = stubClient();
+  const posts = [];
+  return {
+    posts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return connectors;
+      if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') {
+        posts.push(JSON.parse(options.body));
+        return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+      }
+      return base.request(path, options);
+    },
+  };
+}
+
+const flushComposer = async (rounds = 6) => {
+  for (let round = 0; round < rounds; round += 1) {
+    await new Promise((resolve) => { setImmediate(resolve); });
+  }
+};
+
+async function openComposerMount({ client = composerClient(), spaceId = 'presti', toast = undefined } = {}) {
+  const toasts = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, spaceId, toast: toast ?? ((message) => toasts.push(message)),
+  }).renderCard('contact', 'c1');
+  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
+  assert.ok(write, 'a Scrivi action exists');
+  write.dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(panel, 'the composer panel opens inside the scheda');
+  return { mount, panel, toasts, client };
+}
+
+test('e9b4fc2f: Scrivi opens the composer with the customer channels', async () => {
+  const { panel } = await openComposerMount();
+  const text = panel.textContent;
+  assert.ok(text.includes('Scrivi al cliente'), 'the panel names its purpose');
+  for (const label of ['Email', 'WhatsApp', 'Instagram']) {
+    assert.ok(text.includes(label), `the ${label} channel is offered`);
+  }
+  assert.ok(text.includes('guido@palestra-esempio.it'), 'the email recipient is preselected');
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  assert.ok(byValue('email'), 'the email channel row exists');
+  assert.equal(byValue('email').getAttribute('disabled'), null, 'the linked email channel is selectable');
+  assert.equal(byValue('whatsapp').getAttribute('disabled'), 'disabled', 'WhatsApp without a connection is switched off');
+  assert.ok(text.includes('non collegato'), 'the off channel says it is not linked');
+  const connectors = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(connectors, 'the off channel links to Connettori');
+  assert.equal(connectors.getAttribute('href'), '#/connettori');
+  assert.ok(!panel.textContent.includes('mailto:'), 'no mailto: in the composer either');
+});
+
+test('e9b4fc2f: Invia posts the preselected recipient through the outbox route', async () => {
+  const { panel, toasts, client } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  assert.ok(area, 'the composer has its text field');
+  area.value = 'Certo, domani alle 18.';
+  const subject = panel.findAll('input').find((node) => String(node.getAttribute('class') ?? '').includes('composer-subject'));
+  if (subject) subject.value = 'Re: Preventivo';
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send').dispatch('click');
+  await flushComposer();
+  assert.equal(client.posts.length, 1, 'exactly one send is queued');
+  const [post] = client.posts;
+  assert.equal(post.channel, 'email');
+  assert.equal(post.text, 'Certo, domani alle 18.');
+  assert.equal(post.resource, 'contact');
+  assert.equal(post.id, 'c1');
+  assert.ok(!('to' in post), 'the recipient stays server-derived: the panel never sends one');
+  assert.deepEqual(toasts, ['Messaggio in consegna'], 'the operator reads the queued confirmation');
+});
+
+test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] } }),
+  });
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.ok(send, 'the Invia button exists');
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
+});
+
+test('e9b4fc2f: the composer names its honest limit and shows the text refusal', async () => {
+  const refusal = {
+    status: 400,
+    code: 'VALIDATION_ERROR',
+    message: 'Il messaggio non entra nella cronologia (limite: 2000 caratteri): il testo è lungo',
+    details: { field: 'text' },
+  };
+  const base = composerClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') throw refusal;
+      return base.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  assert.ok(panel.textContent.includes('Massimo 2000 caratteri'), 'the composer names its honest limit');
+  const area = panel.findAll('textarea')[0];
+  assert.ok(area, 'the composer has its text field');
+  area.value = `Salve, ${'x'.repeat(1994)}`;
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send').dispatch('click');
+  await flushComposer();
+  const err = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('field-error'));
+  assert.ok(err, 'the composer has its error line');
+  assert.ok(
+    String(err.textContent ?? '').includes('limite: 2000 caratteri'),
+    'the text refusal names the limit instead of a generic failure',
+  );
 });

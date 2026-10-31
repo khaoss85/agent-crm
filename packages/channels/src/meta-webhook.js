@@ -57,6 +57,207 @@ export const META_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
  * @param {unknown} secret the app secret (compared in memory, never stored)
  * @returns {boolean} true only on a valid `sha256=<hex>` HMAC
  */
+/**
+ * The attachment kinds an inbound channel message can carry (backlog:32820692).
+ * One reference per message: the CRM keeps the provider's reference (type,
+ * display name, byte size, fetch handle) so the card can show a thumbnail, a
+ * player or an icon — the bytes themselves never land in a row, a log or a
+ * prompt. A photo, a video, a voice note or a PDF all fit; anything else
+ * (stickers ride as photos) is documented per dialect below.
+ */
+export const CHANNEL_ATTACHMENT_KINDS = Object.freeze(['photo', 'video', 'audio', 'document']);
+
+/** Display-name bound: a provider filename is a label, never a path. */
+const MAX_ATTACHMENT_NAME = 200;
+/** Fetch-handle bound: a media id or a bounded provider URL, never bytes. */
+const MAX_ATTACHMENT_REF = 500;
+/** Sanity cap: provider media limits sit well below this. */
+const MAX_ATTACHMENT_BYTES = 134217728;
+
+function malformedAttachment(providerLabel, reason) {
+  throw new AppError(`${providerLabel} attachment is not well-formed: ${reason}`, {
+    code: 'CHANNEL_EVENT_MALFORMED', status: 422,
+  });
+}
+
+/**
+ * Validate one attachment descriptor both Meta dialects build (backlog:32820692).
+ * Fail-closed, and the refusal never echoes provider bytes: names and fetch
+ * handles are caller-controlled enough to carry secrets, so errors name the
+ * field, never the value. Returns the frozen descriptor the channel event
+ * carries — the inbox keeps the envelope only, and the host logs the message
+ * (with this reference) through `interaction-log@1`.
+ *
+ * @param {unknown} value the descriptor `{kind, name?, size?, ref}`
+ * @param {string} providerLabel the adapter name for the refusal text
+ */
+export function assertChannelAttachment(value, providerLabel) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    malformedAttachment(providerLabel, 'attachment must be a plain object');
+  }
+  const entry = /** @type {Record<string, any>} */ (value);
+  if (!CHANNEL_ATTACHMENT_KINDS.includes(entry.kind)) {
+    malformedAttachment(providerLabel, 'attachment kind must be one of photo, video, audio or document');
+  }
+  let name = null;
+  if (entry.name !== undefined && entry.name !== null && entry.name !== '') {
+    if (typeof entry.name !== 'string') malformedAttachment(providerLabel, 'attachment name must be bounded display text when present');
+    const trimmed = entry.name.trim();
+    if (trimmed === '' || trimmed.length > MAX_ATTACHMENT_NAME || /[\u0000-\u001f\u007f-\u009f]/.test(trimmed)) {
+      malformedAttachment(providerLabel, 'attachment name must be bounded display text when present');
+    }
+    name = trimmed;
+  }
+  let size = null;
+  if (entry.size !== undefined && entry.size !== null) {
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > MAX_ATTACHMENT_BYTES) {
+      malformedAttachment(providerLabel, 'attachment size must be a whole number of bytes within bounds when present');
+    }
+    size = entry.size;
+  }
+  let preview = null;
+  if (entry.preview !== undefined && entry.preview !== null && entry.preview !== '') {
+    if (typeof entry.preview !== 'string' || entry.preview.length > MAX_ATTACHMENT_REF
+      || /[\s\u0000-\u001f\u007f-\u009f]/.test(entry.preview)) {
+      malformedAttachment(providerLabel, 'attachment preview must be a bounded fetch handle without whitespace when present');
+    }
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(entry.preview)) {
+      let parsedPreview = null;
+      try {
+        parsedPreview = new URL(entry.preview);
+      } catch {
+        parsedPreview = null;
+      }
+      if (!parsedPreview || parsedPreview.protocol !== 'https:' || parsedPreview.username !== '' || parsedPreview.password !== '') {
+        malformedAttachment(providerLabel, 'attachment preview must be a clean https URL when URL-shaped');
+      }
+    }
+    preview = entry.preview;
+  }
+  if (typeof entry.ref !== 'string' || entry.ref === '' || entry.ref.length > MAX_ATTACHMENT_REF
+    || /[\s\u0000-\u001f\u007f-\u009f]/.test(entry.ref)) {
+    malformedAttachment(providerLabel, 'attachment ref must be a bounded fetch handle without whitespace');
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(entry.ref)) {
+    // A URL-shaped handle is fetched server-side with the call-time secret,
+    // so it must never smuggle credentials or a session: https only, and no
+    // userinfo — a token in the URL would ride into rows and renders.
+    let parsed = null;
+    try {
+      parsed = new URL(entry.ref);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+      malformedAttachment(providerLabel, 'attachment ref must be a clean https URL when URL-shaped');
+    }
+  }
+  return Object.freeze({ kind: entry.kind, name, size, ref: entry.ref, preview });
+}
+
+/**
+ * The text plus the single attachment of one WhatsApp Cloud API message
+ * item (backlog:32820692). `type: 'text'` reads `text.body`; every media
+ * type reads its caption, so a photo with a caption keeps its words and a
+ * photo without one reads as no text rather than an empty message. The
+ * Cloud API carries one media object per message, so one event carries at
+ * most one attachment: `image` is a photo, `video` and `audio` keep their
+ * kind, `document` keeps its provider filename, and `sticker` rides as a
+ * photo (a webp the card thumbnails like any photo). A media object without
+ * its fetch id, or a type this map does not know (reactions, contacts,
+ * locations, interactive payloads), yields no attachment — the envelope is
+ * still stored, exactly as before, and the gap is documented, not silent.
+ *
+ * @param {Record<string, any>} item one Cloud API `messages[]` item
+ * @param {string} providerLabel the adapter name for the refusal text
+ * @returns {{ text: string, attachment: null | ReturnType<typeof assertChannelAttachment> }}
+ */
+/**
+ * The Cloud API text the card reads (backlog:32820692): WhatsApp markup is
+ * display-only — `*bold*`, `_italic_`, `~strike~`, triple-backtick code —
+ * so paired markers come off and the words stay, on one line at a time
+ * (markers never span a line break) and only on word boundaries, so
+ * `order_123_sent` keeps its underscores. An unmatched marker stays as
+ * written rather than eating its line, and plain-text artefacts like
+ * `2*3=6` keep their asterisk. Graph and Gmail text travel untouched: no
+ * markup dialect there to misread.
+ *
+ * @param {string} text the provider caption or body
+ */
+export function readableCloudText(text) {
+  if (typeof text !== 'string' || text === '') return text;
+  return text.split('\n').map((line) => {
+    let out = line.replace(/```([^`]+?)```/g, '$1');
+    // Markers only read as markup on word boundaries: `order_123_sent` and
+    // `2*3=6` keep their characters, while `*Promo*` and `(_note_)` render
+    // as words. An unmatched marker stays as written.
+    out = out.replace(/(^|[\s(\[{>])([*_~])([^*_~\n]+?)\2(?=[\s)\]}>.,;:!?]|$)/g, '$1$3');
+    return out;
+  }).join('\n');
+}
+
+export function normalizeCloudMessageContent(item, providerLabel) {
+  const checkText = (text) => {
+    if (typeof text !== 'string' || text.length > 4096) {
+      malformedAttachment(providerLabel, 'message text must be text (at most 4096 characters)');
+    }
+    return text;
+  };
+  const mediaKind = { image: 'photo', video: 'video', audio: 'audio', document: 'document', sticker: 'photo' }[item?.type];
+  if (item?.type === 'text') {
+    const body = item?.text && typeof item.text === 'object' ? item.text.body : undefined;
+    return { text: checkText(readableCloudText(typeof body === 'string' ? body : '')), attachment: null };
+  }
+  if (mediaKind === undefined) return { text: '', attachment: null };
+  const media = item?.[item.type];
+  const caption = media && typeof media === 'object' && typeof media.caption === 'string' ? media.caption : '';
+  if (!media || typeof media !== 'object' || typeof media.id !== 'string' || media.id === '') {
+    return { text: checkText(readableCloudText(caption)), attachment: null };
+  }
+  const name = item.type === 'document' && typeof media.filename === 'string' ? media.filename : null;
+  return {
+    text: checkText(readableCloudText(caption)),
+    attachment: assertChannelAttachment({ kind: mediaKind, name, size: null, ref: media.id, preview: null }, providerLabel),
+  };
+}
+
+/** Graph attachment type → the card kind it renders as (backlog:32820692). */
+const GRAPH_ATTACHMENT_KINDS = Object.freeze({ image: 'photo', video: 'video', audio: 'audio', file: 'document' });
+
+/**
+ * The text plus every attachment of one Graph `message` object (backlog:32820692).
+ * Instagram and Messenger share the shape: `message.text` plus
+ * `message.attachments[]` with `{type, payload: {url}}`. Unknown attachment
+ * types are skipped, never refused — one exotic sticker must not 422 the
+ * two photos beside it — and a message whose attachments all skip reads as
+ * text-only. The fetch handle is the provider URL; a URL carrying
+ * credentials is refused by the shared assertion, never stored.
+ *
+ * @param {Record<string, any>} message one Graph `message` object
+ * @param {string} providerLabel the adapter name for the refusal text
+ * @returns {{ text: string, attachments: Array<ReturnType<typeof assertChannelAttachment>> }}
+ */
+export function normalizeGraphMessageContent(message, providerLabel) {
+  const rawText = message?.text;
+  const text = rawText === undefined ? '' : rawText;
+  const raw = Array.isArray(message?.attachments) ? message.attachments : [];
+  const attachments = [];
+  for (const candidate of raw) {
+    const kind = candidate && typeof candidate === 'object' ? GRAPH_ATTACHMENT_KINDS[candidate.type] : undefined;
+    if (kind === undefined) continue;
+    const url = candidate?.payload && typeof candidate.payload === 'object' ? candidate.payload.url : undefined;
+    if (typeof url !== 'string' || url === '') continue;
+    try {
+      attachments.push(assertChannelAttachment({ kind, name: null, size: null, ref: url }, providerLabel));
+    } catch {
+      // A URL the shared rule refuses (credentials in the handle) drops
+      // that attachment only: the message and its siblings still land.
+      continue;
+    }
+  }
+  return { text, attachments };
+}
+
 export function verifyMetaHubSignature(rawBody, signature, secret) {
   if (typeof secret !== 'string' || secret === '') return false;
   if (typeof signature !== 'string' || !signature.startsWith('sha256=')) return false;

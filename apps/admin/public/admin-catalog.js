@@ -10,14 +10,24 @@ import { settingsTabs } from './admin-shell.js';
  * the backoffice product table over `GET /api/catalog/products` — one row
  * per product with its source, active flag and current prices — plus the
  * Stripe connection state for this space, the enforced price rules read
- * from the schema, and confirm-gated edits of manual prices and flags over
- * the existing `POST /api/catalog/...` routes (no new backend surface).
+ * from the schema, a confirm-gated "Aggiungi prodotto" creation over the
+ * existing `POST /api/catalog/products` route, and confirm-gated edits of
+ * prices and flags over the existing `POST /api/catalog/...` routes (no new
+ * backend surface).
  * Rules unchanged from the rest of the Admin: every value renders as text
  * (never HTML), the server is authoritative for every amount,
- * provider-sourced prices render read-only text (no inputs at all — the
- * write path refuses them with PROVIDER_PRICE_READONLY), a render token
- * discards stale responses, and every mutation goes through the shared
- * submission controller (idempotency key per user submission).
+ * Stripe-sourced prices render read-only text (no inputs at all — the write
+ * path refuses them with PROVIDER_PRICE_READONLY), a render token discards
+ * stale responses, and every mutation goes through the shared submission
+ * controller (idempotency key per user submission).
+ * Every row not bound to Stripe — manual or imported — offers Modifica
+ * prezzi, Attiva/Disattiva and Togli: the first operator edit takes an
+ * imported row over into manual management (the confirm says so), so a
+ * later sync never rewrites it; Stripe rows stay read-only and the page
+ * says so. Togli archives through the existing active route (the product
+ * deactivates and its current offers close; quoted evidence is never
+ * rewritten): there is deliberately no hard delete, since products are
+ * stable identity and the storage layer offers no row removal.
  *
  * DECISION (to be confirmed): the discount bands themselves (auto-approve,
  * owner max) stay composition config evaluated by the package — changing
@@ -243,12 +253,15 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Confirm-gated active toggle for one manual product over the existing
-   * `POST /api/catalog/products/:id/active` route.
+   * Confirm-gated active toggle for one operator-managed product over the
+   * existing `POST /api/catalog/products/:id/active` route. On an imported
+   * row the confirm names the takeover, so the operator knows the row
+   * leaves its import source for manual management.
    * @param {any} product
    */
   function renderActiveToggle(product) {
     const target = product.active !== true;
+    const imported = product.source !== 'manual';
     const button = el('button', `catalog-toggle catalog-switch${product.active === true ? ' on' : ''}`, target ? 'Attiva' : 'Disattiva');
     button.setAttribute('role', 'switch');
     button.setAttribute('aria-checked', product.active === true ? 'true' : 'false');
@@ -259,6 +272,9 @@ export function createCatalogView(deps) {
       confirmBox.appendChild(el('p', undefined, target
         ? `Attivare ${product.name ?? product.productId}? Le offerte correnti si riattivano.`
         : `Disattivare ${product.name ?? product.productId}? Le offerte correnti si disattivano.`));
+      if (imported) {
+        confirmBox.appendChild(el('p', 'catalog-takeover-note', 'La riga importata passa alla gestione manuale: non seguirà più la fonte di importazione.'));
+      }
       const yes = el('button', undefined, 'Conferma');
       const no = el('button', undefined, 'Annulla');
       no.addEventListener('click', () => {
@@ -290,6 +306,56 @@ export function createCatalogView(deps) {
   }
 
   /**
+   * Confirm-gated removal for one operator-managed product. There is no
+   * hard delete anywhere in the stack (products are stable identity and
+   * quoted evidence is never rewritten), so Togli archives through the
+   * existing `POST /api/catalog/products/:id/active` route with
+   * `{ active: false }`: the product deactivates, its current offers
+   * close, and it leaves quoting while staying in the archive. The
+   * confirm says exactly that, plus the takeover note on imported rows.
+   * @param {any} product
+   */
+  function renderRemoveAction(product) {
+    const button = el('button', 'catalog-remove', 'Togli');
+    const confirmBox = el('div', 'catalog-confirm');
+    const confirmError = el('p', 'field-error', '');
+    button.addEventListener('click', () => {
+      while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
+      confirmBox.appendChild(el('p', undefined, `Togliere ${product.name ?? product.productId} dal catalogo? Il prodotto si disattiva e le sue offerte si chiudono: resta in archivio e non è più quotabile.`));
+      if (product.source !== 'manual') {
+        confirmBox.appendChild(el('p', 'catalog-takeover-note', 'La riga importata passa alla gestione manuale: non seguirà più la fonte di importazione.'));
+      }
+      const yes = el('button', undefined, 'Conferma');
+      const no = el('button', undefined, 'Annulla');
+      no.addEventListener('click', () => {
+        while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
+      });
+      yes.addEventListener('click', async () => {
+        yes.disabled = true;
+        try {
+          await submissions.submit({
+            path: `/api/catalog/products/${encodeURIComponent(product.productId)}/active`,
+            method: 'POST',
+            body: { active: false },
+          });
+          await renderTable();
+        } catch (error) {
+          confirmError.textContent = error?.message ?? 'Rimozione fallita';
+        } finally {
+          yes.disabled = false;
+        }
+      });
+      confirmBox.appendChild(yes);
+      confirmBox.appendChild(no);
+      confirmBox.appendChild(confirmError);
+    });
+    const wrap = el('div', 'catalog-remove-wrap');
+    wrap.appendChild(button);
+    wrap.appendChild(confirmBox);
+    return wrap;
+  }
+
+  /**
    * Whether a manual product's prices can round-trip through set-prices:
    * every offer needs its row id, every component its declared key.
    * @param {any} product
@@ -309,10 +375,12 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Confirm-gated price edit for one manual product over the existing
-   * `POST /api/catalog/products/:id/prices` route: Modifica -> edit amounts
-   * -> Rivedi (old→new summary) -> Conferma. Tiers keep their schedule with
-   * edited amounts; the server re-validates everything fail-closed.
+   * Confirm-gated price edit for one operator-managed product over the
+   * existing `POST /api/catalog/products/:id/prices` route: Modifica ->
+   * edit amounts -> Rivedi (old→new summary) -> Conferma. Tiers keep their
+   * schedule with edited amounts; the server re-validates everything
+   * fail-closed. On an imported row the first confirmation takes the row
+   * over into manual management (the form says so).
    * @param {any} product
    */
   function renderPriceEditor(product) {
@@ -454,6 +522,194 @@ export function createCatalogView(deps) {
       formBox.appendChild(formError);
     });
     wrap.appendChild(openButton);
+    if (product.source !== 'manual') {
+      wrap.appendChild(el('p', 'catalog-takeover-note', 'Prezzi importati: alla prima modifica la riga passa alla gestione manuale.'));
+    }
+    wrap.appendChild(formBox);
+    return wrap;
+  }
+
+  /**
+   * Confirm-gated product creation over the existing
+   * `POST /api/catalog/products` route: Aggiungi prodotto -> fill the five
+   * backoffice fields (name, code, category, price, unit) plus the currency
+   * the write path requires -> Rivedi -> Conferma. The price becomes the
+   * single one-time flat component of a new manual product; the server
+   * re-validates everything fail-closed. The form stays manual-only in
+   * shape: provider rows are never created here, so Stripe keeps nothing
+   * to read here either.
+   * @param {Set<unknown>} knownProductIds product ids already on screen
+   * before this submission: only a row that is both new and a full match
+   * of the submitted fields can reconcile an uncertain outcome, since the
+   * create route keeps no replay protection and SKUs may repeat.
+   * @param {{category?: string, active?: string, source?: string}} filters
+   * the filters the table was read with: the reconcile reloads with the
+   * same filters, so a filtered-out pre-existing row never reads as new.
+   */
+  /**
+   * Whether a freshly reloaded row can stand in for this creation: a full
+   * match of every submitted field on the single one-time flat component
+   * this form creates, on a row the operator manages. The caller also
+   * requires the row to be new since the table loaded; a matching code
+   * alone never reconciles, and an imported or Stripe-owned row never does
+   * either — this form only creates manual rows, so a matching provider
+   * row is a pre-existing import, not this creation.
+   * @param {any} row @param {{sku: string, name: string, category: string | null, currency: string, unit: string | null, cents: number}} submitted
+   */
+  function reconcilesSubmission(row, submitted) {
+    if (row?.source !== 'manual' || row?.priceReadOnly !== false) return false;
+    if (row.sku !== submitted.sku || row.name !== submitted.name) return false;
+    if ((row.category ?? null) !== submitted.category) return false;
+    if ((row.unit ?? null) !== submitted.unit) return false;
+    const offers = Array.isArray(row.offers) ? row.offers : [];
+    if (offers.length !== 1 || offers[0].currency !== submitted.currency) return false;
+    const components = Array.isArray(offers[0].components) ? offers[0].components : [];
+    return components.length === 1
+      && components[0].pricingModel === 'flat_fee'
+      && components[0].flatAmountCents === submitted.cents;
+  }
+
+  function renderCreateForm(knownProductIds, filters = {}) {
+    const wrap = el('div', 'catalog-create-wrap');
+    const openButton = el('button', 'catalog-create', 'Aggiungi prodotto');
+    const formBox = el('div', 'catalog-create-form');
+    const formError = el('p', 'field-error', '');
+    openButton.addEventListener('click', () => {
+      while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+      /** @type {Record<string, any>} */
+      const fields = {};
+      const addField = (name, label, options = {}) => {
+        formBox.appendChild(el('label', 'catalog-create-label', label));
+        const input = el('input');
+        input.setAttribute('name', name);
+        input.setAttribute('aria-label', label);
+        if (options.placeholder) input.setAttribute('placeholder', options.placeholder);
+        if (options.inputmode) input.setAttribute('inputmode', options.inputmode);
+        input.value = options.value ?? '';
+        formBox.appendChild(input);
+        fields[name] = input;
+      };
+      addField('name', 'Nome', { placeholder: 'Pacchetto 10 lezioni' });
+      addField('sku', 'Codice', { placeholder: 'PACCHETTO-10' });
+      addField('category', 'Categoria', { placeholder: 'pacchetti' });
+      addField('price', 'Prezzo', { placeholder: '99,00', inputmode: 'decimal' });
+      addField('unit', 'Unità', { placeholder: 'ingressi' });
+      addField('currency', 'Valuta', { value: 'EUR' });
+      const reviewButton = el('button', undefined, 'Rivedi');
+      reviewButton.addEventListener('click', () => {
+        formError.textContent = '';
+        const name = fields.name.value.trim();
+        const sku = fields.sku.value.trim();
+        const category = fields.category.value.trim();
+        const cents = parseEuroToCents(fields.price.value);
+        const unit = fields.unit.value.trim();
+        const currency = fields.currency.value.trim();
+        // Declared outside the try so the catch can reconcile against the
+        // same submission (a const inside try is invisible in catch).
+        const submitted = {
+          sku,
+          name,
+          category: category === '' ? null : category,
+          currency,
+          unit: unit === '' ? null : unit,
+          cents,
+        };
+        if (name === '' || sku === '') {
+          formError.textContent = 'Nome e codice sono obbligatori.';
+          return;
+        }
+        if (cents === null) {
+          formError.textContent = 'Il prezzo deve essere un numero non negativo con al massimo due decimali.';
+          return;
+        }
+        if (!/^[A-Z]{3}$/.test(currency)) {
+          formError.textContent = 'La valuta sono tre lettere maiuscole, per esempio EUR.';
+          return;
+        }
+        while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+        const review = el('div', 'catalog-review');
+        review.appendChild(el('p', undefined, `Creare ${name} (${sku}) a ${money(cents, currency)}?`));
+        if (category !== '') review.appendChild(el('p', 'catalog-change', `Categoria: ${category}`));
+        review.appendChild(el('p', 'catalog-change', `Unità: ${unit === '' ? '—' : unit}`));
+        const yes = el('button', undefined, 'Conferma');
+        const no = el('button', undefined, 'Annulla');
+        no.addEventListener('click', async () => { await renderTable(); });
+        yes.addEventListener('click', async () => {
+          yes.disabled = true;
+          try {
+            await submissions.submit({
+              path: '/api/catalog/products',
+              method: 'POST',
+              body: {
+                sku,
+                name,
+                category: submitted.category,
+                currency,
+                unit: submitted.unit,
+                components: [{
+                  key: 'prezzo',
+                  label: 'Prezzo',
+                  chargeType: 'one_time',
+                  pricingModel: 'flat_fee',
+                  unitAmountCents: null,
+                  flatAmountCents: cents,
+                  externalPriceId: null,
+                  tiers: [],
+                }],
+              },
+            });
+            await renderTable();
+          } catch (error) {
+            // An uncertain outcome (the creation POST may have committed
+            // before its response was lost) never offers a blind retry: the
+            // create route has no replay protection, so a second Conferma
+            // would create a duplicate product. Reconcile first — only a row
+            // that is both new since this table loaded and a full match of
+            // the submitted fields (name, code, category, price, unit,
+            // currency) counts as this creation; a matching code alone never
+            // does, since SKUs may repeat. Anything else stays locked until
+            // the operator reloads and checks.
+            if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+              let reconciled = false;
+              try {
+                const reloadParams = new URLSearchParams();
+                if (typeof filters.category === 'string' && filters.category.trim() !== '') reloadParams.set('category', filters.category.trim());
+                if (filters.active === 'true' || filters.active === 'false') reloadParams.set('active', filters.active);
+                if (typeof filters.source === 'string' && filters.source.trim() !== '') reloadParams.set('source', filters.source.trim());
+                reloadParams.set('limit', String(LIST_LIMIT));
+                const reloaded = await client.request(`/api/catalog/products?${reloadParams.toString()}`);
+                const rows = Array.isArray(reloaded?.products) ? reloaded.products : [];
+                reconciled = rows.some((row) => row && typeof row === 'object'
+                  && typeof row.productId === 'string'
+                  && !knownProductIds.has(row.productId)
+                  && reconcilesSubmission(row, submitted));
+              } catch (reloadError) {
+                if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                  console.warn('bo-catalog reconcile unreadable:', reloadError instanceof Error ? reloadError.name : 'unknown');
+                }
+                reconciled = false;
+              }
+              if (reconciled) {
+                await renderTable();
+                return;
+              }
+              formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
+              review.appendChild(formError);
+              return;
+            }
+            formError.textContent = error?.message ?? 'Creazione fallita';
+            review.appendChild(formError);
+            yes.disabled = false;
+          }
+        });
+        review.appendChild(yes);
+        review.appendChild(no);
+        formBox.appendChild(review);
+      });
+      formBox.appendChild(reviewButton);
+      formBox.appendChild(formError);
+    });
+    wrap.appendChild(openButton);
     wrap.appendChild(formBox);
     return wrap;
   }
@@ -518,9 +774,9 @@ export function createCatalogView(deps) {
       return;
     }
     const summary = table.summary ?? {};
-    const stripeConnected = stripeIsConnected(summary);
     page.appendChild(renderStripeBlock(summary));
     const loaded = table.products;
+    page.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
 
     const filters = el('div', 'catalog-filters');
     const categoryInput = el('input');
@@ -605,16 +861,20 @@ export function createCatalogView(deps) {
       row.appendChild(priceCell);
       const meta = el('p', 'catalog-meta');
       meta.appendChild(el('span', `catalog-source catalog-source-${product.source === 'manual' ? 'manual' : 'provider'}`, sourceLabel(product.source)));
-      if (product.active !== true) meta.appendChild(el('span', 'catalog-inactive', 'non attivo'));
       row.appendChild(meta);
       const switchCell = el('div', 'catalog-cell-switch');
+      switchCell.appendChild(el('span', 'catalog-active-state', product.active === true ? 'Attivo' : 'Non attivo'));
       row.appendChild(switchCell);
-      const manual = product.source === 'manual' && product.priceReadOnly !== true;
-      // Provider prices stay read-only text (the write path refuses them
-      // with PROVIDER_PRICE_READONLY), but the "change it on Stripe" note
-      // only makes sense while a Stripe source is actually connected: with
-      // Stripe disconnected no row may promise a Stripe edit.
-      if (product.priceReadOnly === true && stripeConnected) {
+      // Only Stripe-bound rows stay read-only: the write path refuses them
+      // with PROVIDER_PRICE_READONLY. Imported rows from any other source
+      // are operator-managed (the first edit takes them over), so the
+      // "change it on Stripe" note names Stripe rows only — and only while
+      // a Stripe source is actually connected, so no row promises a Stripe
+      // edit that has nowhere to go. Row identity uses the same derivation
+      // the server guard uses, so the two never disagree about a row.
+      const stripeRow = String(product.source ?? '').toLowerCase().includes('stripe');
+      const manageable = !stripeRow && typeof product.productId === 'string' && product.productId !== '';
+      if (stripeRow && stripeIsConnected(summary)) {
         priceCell.appendChild(el('p', 'catalog-readonly', 'Sola lettura: si cambia su Stripe.'));
       }
       const offers = Array.isArray(product.offers) ? product.offers : [];
@@ -634,9 +894,10 @@ export function createCatalogView(deps) {
         }
         priceCell.appendChild(offerBox);
       }
-      if (manual && typeof product.productId === 'string' && product.productId !== '') {
+      if (manageable) {
         priceCell.appendChild(renderPriceEditor(product));
         switchCell.appendChild(renderActiveToggle(product));
+        switchCell.appendChild(renderRemoveAction(product));
       }
       return row;
     };

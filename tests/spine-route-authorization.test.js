@@ -99,6 +99,11 @@ const GUARDED = [
   ['POST', '/api/companies', { name: 'Evil Ltd', domain: 'evil.example' }],
   ['GET', '/api/contacts'],
   ['POST', '/api/contacts', { companyId: 'x', firstName: 'A', lastName: 'B', email: 'a@b.example' }],
+  // Voce 714433c2: the scheda cliente writes — in-place Dettagli edit and
+  // the operator note. Both gate records.write; both must refuse an
+  // unverified caller and a viewer.
+  ['PATCH', '/api/contacts/no-such-id', { firstName: 'A' }],
+  ['POST', '/api/customer-hub/notes', { resource: 'contact', id: 'x', body: 'hi' }],
   ['GET', '/api/opportunities'],
   ['POST', '/api/opportunities', { companyId: 'x', name: 'D', valueCents: 1, currency: 'EUR', owner: 'o' }],
   ['GET', '/api/approvals'],
@@ -136,7 +141,7 @@ test('a verified viewer may read, and may not write', async (t) => {
   assert.equal((await call('GET', '/api/companies', undefined, as('vic'))).status, 200);
   assert.equal((await call('GET', '/api/audit', undefined, as('vic'))).status, 200);
 
-  for (const [method, path, body] of GUARDED.filter(([m]) => m === 'POST')) {
+  for (const [method, path, body] of GUARDED.filter(([m]) => m === 'POST' || m === 'PATCH')) {
     const response = await call(method, path, body, as('vic'));
     assert.equal(response.status, 403,
       `${method} ${path} must refuse a viewer with 403, got ${response.status}`);

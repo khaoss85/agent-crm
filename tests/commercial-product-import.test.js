@@ -26,7 +26,7 @@
  * (`listCatalogProducts`): the test never re-states the write rules.
  */
 
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -172,21 +172,42 @@ test('manual rows validate through the same rule as the AI path', () => {
  * confirmation writes through the manual catalog, the import itself never
  * writes a product.
  */
-function importProject(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-product-import-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
-    cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
-  }
-  applyManifests(root, 'packages/commercial/modules', [...COMMERCIAL_MANIFESTS, ...IMPORT_MANIFESTS]);
-  writeFileSync(join(root, 'packages/actions/generated/index.js'), 'export const generatedActions = [];\n');
-  writeFileSync(join(root, 'packages/domains/generated/index.js'), [
+/**
+ * One applied template per file: the tree copy plus the sixteen
+ * `module create --apply` spawns cost seconds per test on a loaded CI
+ * runner and pushed the PR gate past its 270 s budget, so they run once.
+ * Every test still gets its own private copy (own files, own :memory:
+ * app): isolation is unchanged, only the repeated CLI work is shared.
+ * The template is removed after the last test in this file.
+ */
+let appliedTemplate = null;
+function appliedTemplateRoot() {
+  if (!appliedTemplate) {
+    appliedTemplate = mkdtempSync(join(tmpdir(), 'accordo-product-import-template-'));
+    for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
+      cpSync(join(repoRoot, entry), join(appliedTemplate, entry), { recursive: true });
+    }
+    applyManifests(appliedTemplate, 'packages/commercial/modules', [...COMMERCIAL_MANIFESTS, ...IMPORT_MANIFESTS]);
+    writeFileSync(join(appliedTemplate, 'packages/actions/generated/index.js'), 'export const generatedActions = [];\n');
+  writeFileSync(join(appliedTemplate, 'packages/domains/generated/index.js'), [
     "import { createCommercialDomain } from '../../commercial/src/index.js';",
     'export const generatedDomains = [',
     '  createCommercialDomain({ catalogProviders: [] }),',
     '];',
     '',
   ].join('\n'));
+  }
+  return appliedTemplate;
+}
+after(() => {
+  if (appliedTemplate) rmSync(appliedTemplate, { recursive: true, force: true });
+  appliedTemplate = null;
+});
+
+function importProject(t) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-product-import-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  cpSync(appliedTemplateRoot(), root, { recursive: true });
   return root;
 }
 

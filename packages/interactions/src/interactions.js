@@ -163,6 +163,104 @@ function safeMessageBody(value, field, max) {
 }
 
 /**
+ * The attachment kinds a message can carry (backlog:32820692): one reference
+ * per message — type, display name, byte size, fetch handle, thumbnail
+ * handle — so the card shows a thumbnail, a player or an icon. The bytes
+ * themselves never land in a row, a log or a prompt. The per-package fence
+ * mirrors the channels adapters' shared assertion (each package owns its
+ * boundary validation; a domain package reaches another only through a
+ * declared capability, never a file import): errors name the field, never
+ * the value, because names and handles are caller-controlled enough to
+ * carry secrets.
+ */
+export const ATTACHMENT_KINDS = Object.freeze(['photo', 'video', 'audio', 'document']);
+
+const MAX_ATTACHMENT_NAME = 200;
+const MAX_ATTACHMENT_REF = 500;
+const MAX_ATTACHMENT_BYTES = 134217728;
+
+/** @param {unknown} handle @param {string} field */
+function safeAttachmentHandle(handle, field) {
+  if (typeof handle !== 'string' || handle === '' || handle.length > MAX_ATTACHMENT_REF
+    || /[\s\u0000-\u001f\u007f-\u009f]/.test(handle)) {
+    throw new ValidationError(`${field} must be a bounded fetch handle without whitespace`, { field });
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(handle)) {
+    let parsed = null;
+    try {
+      parsed = new URL(handle);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+      throw new ValidationError(`${field} must be a clean https URL when URL-shaped`, { field });
+    }
+  }
+  return handle;
+}
+
+/** @param {unknown} value */
+function validateAttachment(value) {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ValidationError('attachment must be a plain object when present', { field: 'attachment' });
+  }
+  const entry = /** @type {any} */ (value);
+  const kind = safeText(entry.kind, 'attachment.kind', 16);
+  if (!ATTACHMENT_KINDS.includes(kind)) {
+    throw new ValidationError('attachment.kind must be one of photo, video, audio or document', { field: 'attachment.kind' });
+  }
+  let name = null;
+  if (entry.name !== undefined && entry.name !== null && entry.name !== '') {
+    if (typeof entry.name !== 'string') {
+      throw new ValidationError('attachment.name must be bounded display text when present', { field: 'attachment.name' });
+    }
+    const trimmed = entry.name.trim();
+    if (trimmed === '' || trimmed.length > MAX_ATTACHMENT_NAME || /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(trimmed)) {
+      throw new ValidationError('attachment.name must be bounded display text when present', { field: 'attachment.name' });
+    }
+    name = trimmed;
+  }
+  let size = null;
+  if (entry.size !== undefined && entry.size !== null) {
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > MAX_ATTACHMENT_BYTES) {
+      throw new ValidationError('attachment.size must be a whole number of bytes within bounds when present', { field: 'attachment.size' });
+    }
+    size = entry.size;
+  }
+  if (entry.ref === undefined || entry.ref === null) {
+    throw new ValidationError('attachment.ref is required when an attachment is present', { field: 'attachment.ref' });
+  }
+  const ref = safeAttachmentHandle(entry.ref, 'attachment.ref');
+  let preview = null;
+  if (entry.preview !== undefined && entry.preview !== null && entry.preview !== '') {
+    preview = safeAttachmentHandle(entry.preview, 'attachment.preview');
+  }
+  return Object.freeze({ kind, name, size, ref, preview });
+}
+
+/**
+ * The shape the card reads: the frozen attachment descriptor, or null for
+ * text-only messages. Every reader (timeline, thread, hub) goes through
+ * here, so no path invents its own projection — and no prompt builder gets
+ * one by accident: prompts include attachments only by reading the row
+ * through this shape with an explicit opt-in, never by copying the row.
+ * @param {any} row
+ */
+export function shapeAttachment(row) {
+  if (!row || row.attachmentKind === undefined || row.attachmentKind === null || row.attachmentKind === '') return null;
+  if (!ATTACHMENT_KINDS.includes(row.attachmentKind)) return null;
+  if (typeof row.attachmentRef !== 'string' || row.attachmentRef === '') return null;
+  return Object.freeze({
+    kind: row.attachmentKind,
+    name: row.attachmentName ?? null,
+    size: row.attachmentSize ?? null,
+    ref: row.attachmentRef,
+    preview: row.attachmentPreview ?? null,
+  });
+}
+
+/**
  * The ADR-030 opaque subject envelope, same shape `packages/work` stores.
  * SQLite cannot enforce a foreign key whose target table varies per row; what
  * is checked is the shape, and the existence was proven by the caller — the
@@ -691,12 +789,25 @@ export function validateMessageRequest(request) {
     // message that is both newly sent and already failed.
     throw new ValidationError('errorCode is recorded only when a message advances to failed', { field: 'errorCode' });
   }
+  // A photo with no caption carries no text (backlog:32820692): the body is
+  // required unless an attachment rides along, in which case an empty body
+  // stores as null and the card renders the attachment instead of a blank
+  // bubble. Text-only messages keep the old contract exactly.
+  const attachment = validateAttachment(value.attachment);
+  const bodyAbsent = value.body === undefined || value.body === null
+    || (typeof value.body === 'string' && value.body.replace(/\r\n/g, '\n').trim() === '');
+  // A wrong-typed body is still refused (fail-closed): only an absent or
+  // blank body may ride along with an attachment, stored as null.
+  const body = bodyAbsent && attachment !== null
+    ? null
+    : safeMessageBody(value.body, 'body', MAX_BODY);
   return {
     sourceKey: validateSourceKey(value.sourceKey, 'sourceKey'),
     conversationId: safeText(value.conversationId, 'conversationId', MAX_ID),
     direction,
     channel: validateChannel(value.channel, 'channel'),
-    body: safeMessageBody(value.body, 'body', MAX_BODY),
+    body,
+    attachment,
     teamAuthorId,
     remoteHandle: optionalSafeText(value.remoteHandle, 'remoteHandle', MAX_HANDLE),
     subject: validateSubject(value.subject),
@@ -726,6 +837,11 @@ export async function logMessage(context, request) {
     direction: input.direction,
     channel: input.channel,
     body: input.body,
+    attachmentKind: input.attachment?.kind ?? null,
+    attachmentName: input.attachment?.name ?? null,
+    attachmentSize: input.attachment?.size ?? null,
+    attachmentRef: input.attachment?.ref ?? null,
+    attachmentPreview: input.attachment?.preview ?? null,
     teamAuthorId: input.teamAuthorId,
     remoteHandle: input.remoteHandle,
     subjectResource: input.subject.resource,
@@ -1463,6 +1579,7 @@ export async function readTimeline({ modules, moduleNames }, subject) {
       channel: row.channel,
       status: row.status,
       body: row.body,
+      attachment: shapeAttachment(row),
       teamAuthorId: row.teamAuthorId ?? null,
       remoteHandle: row.remoteHandle ?? null,
       errorCode: row.errorCode ?? null,
@@ -1554,7 +1671,8 @@ export async function readConversationThread({ modules, moduleNames }, conversat
   const entries = sortEntries([
     ...(await messages.listWhere({ conversationId: id })).map((row) => Object.freeze({
       entry: 'message', id: row.id, direction: row.direction, channel: row.channel,
-      status: row.status, body: row.body, teamAuthorId: row.teamAuthorId ?? null,
+      status: row.status, body: row.body, attachment: shapeAttachment(row),
+      teamAuthorId: row.teamAuthorId ?? null,
       remoteHandle: row.remoteHandle ?? null, errorCode: row.errorCode ?? null,
       occurredAt: row.occurredAt, createdAt: row.createdAt ?? null,
     })),

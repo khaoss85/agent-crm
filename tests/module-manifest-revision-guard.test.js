@@ -125,7 +125,7 @@ const RECORDED = Object.freeze({
   "conversation-thread-key": { revision: 1, sqlite: "eb0601f63d90481aec295ad98607803b241a74c5268580403755500507884989", pg: "9ed7e3d9793a5f5f720674b67ce3b01f98b6e3bc6348e45f01c66ce9f4c6f7a6" },
   "conversation": { revision: 1, sqlite: "fef663901e73678f3a0bb11c84decae4f8d8238f94dbc845a549da78ed58961e", pg: "abbcf58ff1c83d683dc548c9c079e53760dd209d8f7d8952062541bd3ca397b1" },
   "interaction-call": { revision: 1, sqlite: "09ab499c89e528076043cedb573622a12eca054ab69463144ab590ebc3430bbe", pg: "bb0e0a13aa8edb432498c42992ddd9e7ca335c6311dd69d42708e24bc1fd4655" },
-  "interaction-message": { revision: 1, sqlite: "123329094a1b91e8f45c8a0d03651ac0ea106ead4e9988b8fe05f9317b59d265", pg: "53bb73a80ee8b861029d139193dcc1c486b612f62828b51cab531895a9af2d4a" },
+  "interaction-message": { revision: 2, sqlite: "2ed486e5eff1731f0fd601f5f2d462ea14ba250acc42c070dab46edd8d651c0e", pg: "78de7b603097331a2dddd3859b111e153ef00c65c79a499106d2261d3dac9435" },
   "llm-call-audit": { revision: 1, sqlite: "55cdc5deace4f5b259e90b1cda84d258ca7e8ce7c9fb3f2943869bb387387e88", pg: "f1ca59b701e7e1e1969f7286e57bd0ebbd9d875cfb012ab12cdc1f4bc1fc14ae" },
   "llm-usage-day": { revision: 1, sqlite: "bbea39776e78ddc32c20f59bdba6f7c6588e5f712a24120857e35aae1a5db0af", pg: "aa51f81c105c995b5dcb00f835cd17852a9d9417c44dad256ef5bb58a20e91e1" },
   "amendment-run": { revision: 1, sqlite: "0cdf88006d152e134e3b4fc187ada471291d6e021a3f0294fd9a0032df07a125", pg: "02d96f8f9568dd57a6ff07aeef18884738980d90deac0bbf8c2e21b06a70fa28" },

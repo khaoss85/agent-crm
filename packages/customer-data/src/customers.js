@@ -290,9 +290,25 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ *   observedComplete is scan-wide (backlog:826e377c): false when the
+ *   message or call scan behind the observed channels was partial or
+ *   unreadable — the row then reads channelsComplete:false instead of an
+ *   exact union. Absent means exact, so hand-built reads stay honest.
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
+ *   observed channels name the message channels read for this customer in
+ *   the same scan (backlog:826e377c), already on the canale-filter
+ *   vocabulary (CUSTOMER_CHANNELS, see operations.js).
+ *   The CANALI column unions every held identity system (imports accept any
+ *   lowercase system, so legacy sms/gmail/voice rows exist and are held —
+ *   main listed them) with those observed channels, so a customer with
+ *   messages but no held identity still shows its channels. It is NOT the
+ *   same union the scheda's Identità collegate reads: that section lists
+ *   only the observed timeline channels in the wider display vocabulary
+ *   (CHANNEL_LABELS), while held identities stay in the profile and in this
+ *   column. A held sms row names its channel here even though canale=sms
+ *   still refuses with 400 — the filter vocabulary is unchanged on purpose.
  */
 export function shapeCustomerRow(subject, reads = {}) {
   const contact = subject?.contact ?? null;
@@ -305,9 +321,26 @@ export function shapeCustomerRow(subject, reads = {}) {
     ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
     : company?.name ?? null;
   const identities = reads.identitiesBySubject?.get(key) ?? [];
-  const channels = [...new Set(identities
+  const observed = reads.observedChannelsBySubject?.get(key) ?? [];
+  // Review giro-6 on 826e377c (P1 head f1ed030c): the held side keeps
+  // every system main showed — filtering it to CUSTOMER_CHANNELS hid held
+  // legacy sms/gmail/voice rows that main listed in CANALI. Only the
+  // observed side keeps the filter vocabulary (operations.js already feeds
+  // it on CUSTOMER_CHANNELS; the filter below keeps direct callers honest),
+  // so the column never invents an observed channel its own filter refuses.
+  const heldChannels = identities
     .map((row) => String(row?.system ?? '').toLowerCase())
-    .filter((system) => system !== ''))].sort();
+    .filter((system) => system !== '');
+  const observedChannels = observed
+    .map((channel) => String(channel ?? '').toLowerCase())
+    .filter((channel) => channel !== '' && CUSTOMER_CHANNELS.includes(/** @type {any} */ (channel)));
+  const channels = [...new Set([...heldChannels, ...observedChannels])].sort();
+  // Review giro-7 on 826e377c (P1 head 3c77ca1): the union is exact only
+  // when the observed half behind it was fully read. A partial or
+  // unreadable message/call scan still shapes its best-effort channels,
+  // but the row marks them partial — canale-filtered queries refuse
+  // upstream instead of filtering over this short union.
+  const channelsComplete = reads.observedComplete !== false;
   const phoneIdentity = identities.find((row) => PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) ?? null;
   const status = reads.statusBySubject?.get(key)
     ?? { value: 'contatto', reason: 'no signed-business evidence was read for this customer in the list scan' };
@@ -324,6 +357,7 @@ export function shapeCustomerRow(subject, reads = {}) {
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),
+    channelsComplete,
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,

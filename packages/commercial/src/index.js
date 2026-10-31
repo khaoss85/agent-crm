@@ -293,7 +293,7 @@ export function createCommercialDomain(options = {}) {
         label: 'Update manual product',
         appMethod: 'updateManualProduct',
         description:
-          'Edit a manually managed product description (sku, name, description, category, unit, maxDiscountBps, stockQuantity): opens version n+1, never rewrites. Provider-owned products refuse.',
+          'Edit a manually managed product description (sku, name, description, category, unit, maxDiscountBps, stockQuantity): opens version n+1, never rewrites. Stripe-owned products refuse; other imported rows are taken over into manual management.',
         input: [
           { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
           { name: 'name', type: 'string', required: false, hint: 'New product name.' },
@@ -312,7 +312,7 @@ export function createCommercialDomain(options = {}) {
         label: 'Set manual prices',
         appMethod: 'setManualPrices',
         description:
-          'Replace a manually managed product prices: one new offer revision per declared offer, previous revisions deactivate. Provider-owned offers refuse.',
+          'Replace a manually managed product prices: one new offer revision per declared offer, previous revisions deactivate. Stripe-owned offers refuse; other imported offers convert to manual revisions on the manual book.',
         input: [
           { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
           { name: 'offerIds', type: 'json', required: true, hint: 'Offer row ids replaced, in the order of the declared offers.' },
@@ -329,7 +329,7 @@ export function createCommercialDomain(options = {}) {
         label: 'Set manual product active',
         appMethod: 'setManualProductActive',
         description:
-          'Activate or deactivate a manually managed product and its current offers. Provider-owned products refuse.',
+          'Activate or deactivate a manually managed product and its current offers. Stripe-owned products refuse; other imported rows are taken over into manual management.',
         input: [
           { name: 'productId', type: 'string', required: true, hint: 'Manual product id.' },
           { name: 'active', type: 'json', required: true, hint: 'Target active flag (JSON boolean).' },
