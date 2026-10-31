@@ -2,6 +2,7 @@
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError } from './admin-core.js';
+import { writePendingCustomerPick } from './admin-prefill.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -200,6 +201,43 @@ const OFFER_STATUS_LABELS = Object.freeze({
 });
 const offerStatusLabel = (status) => ownLabel(OFFER_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
+// Voce 714433c2: the opportunity stages the «Cambia stato» menu offers.
+// Mirrors ALLOWED_TRANSITIONS in
+// packages/modules/opportunity/src/opportunity-service.js (this view ships
+// as a static file, so it names the table instead of importing it, like
+// TERMINAL_APPOINTMENT below). A test pins this mirror to the governed
+// table, so a workflow change that the menu ignores fails loudly. Every key
+// has an Italian voice in OFFER_STATUS_LABELS above, so the menu never
+// prints a raw stage key.
+export const OPPORTUNITY_ALLOWED_TRANSITIONS = Object.freeze({
+  discovery: ['qualification', 'lost'],
+  qualification: ['proposal', 'approval_pending', 'lost'],
+  proposal: ['approval_pending', 'negotiation', 'won', 'lost'],
+  approval_pending: ['proposal', 'qualification', 'lost'],
+  negotiation: ['proposal', 'won', 'lost'],
+  won: [],
+  lost: ['discovery'],
+});
+
+// System states the workflow enters on its own (only approval_pending
+// today): the menu never offers them — they are reached through the approval
+// gate, never hand-picked by the operator.
+const GOVERNED_SYSTEM_STAGES = Object.freeze(['approval_pending']);
+
+/**
+ * The legal «Cambia stato» voices for the shown stage: the workflow's
+ * allowed transitions minus the governed system states. Never the current
+ * stage, never a raw key without an Italian voice upstream.
+ * @param {unknown} current
+ * @returns {Array<string>}
+ */
+export function offerStageTargets(current) {
+  const key = String(current ?? '').toLowerCase();
+  const allowed = OPPORTUNITY_ALLOWED_TRANSITIONS[key];
+  if (!Array.isArray(allowed)) return [];
+  return allowed.filter((stage) => stage !== key && !GOVERNED_SYSTEM_STAGES.includes(stage));
+}
+
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
 const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
@@ -287,6 +325,10 @@ export function mergeLinkedIdentities(profile, timeline) {
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = deps;
+  // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
+  // The shell passes its storage; without one the buttons still navigate
+  // and the creation screens open unpicked.
+  const storage = deps.storage ?? null;
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
@@ -402,7 +444,31 @@ export function createCustomerCardView(deps) {
     panel.appendChild(head);
   }
 
-  function quickActions(box, card) {
+  /**
+   * Voce 714433c2: the customer the creation flows start with. Only a
+   * named contact/company record qualifies — anything else navigates
+   * unpicked instead of inventing a customer.
+   */
+  function customerPickFor(navCtx, card) {
+    const resource = navCtx?.resource;
+    const id = navCtx?.id;
+    const name = typeof card?.name === 'string' ? card.name.trim() : '';
+    if ((resource !== 'contact' && resource !== 'company')) return null;
+    if (typeof id !== 'string' || id === '' || name === '') return null;
+    // The offer form files under a company: a company pick is its own
+    // company, a contact pick rides the linked one (null when the scheda
+    // knows none — the offer form then says so honestly).
+    const companyId = typeof card?.company?.id === 'string' && card.company.id !== '' ? card.company.id : null;
+    const companyName = typeof card?.company?.name === 'string' && card.company.name.trim() !== ''
+      ? card.company.name.trim()
+      : null;
+    const company = resource === 'company'
+      ? { id, name }
+      : (companyId !== null && companyName !== null ? { id: companyId, name: companyName } : null);
+    return { resource, id, name, company };
+  }
+
+  function quickActions(box, card, navCtx) {
     box.appendChild(el('h4', undefined, 'Azioni rapide'));
     const row = el('div', 'bo-scheda-actions');
     if (card?.phone?.available === true && card.phone.value) {
@@ -423,6 +489,29 @@ export function createCustomerCardView(deps) {
     } else {
       row.appendChild(el('span', 'bo-scheda-disabled', 'email non disponibile'));
     }
+    // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
+    // creation flows with this customer already chosen. The pick travels
+    // as a one-time handoff the target screen takes on render (the router
+    // carries path-only hashes, so no query tail); without a named record
+    // or without a storage the buttons still navigate, and the creation
+    // screen opens unpicked instead of inventing a customer.
+    const pick = customerPickFor(navCtx, card);
+    const offer = el('button', undefined, 'Nuova offerta');
+    offer.setAttribute('type', 'button');
+    offer.setAttribute('data-action', 'new-offer');
+    offer.addEventListener('click', () => {
+      if (pick !== null) writePendingCustomerPick(storage, 'offer', pick);
+      navigate('#/modules/opportunity/new');
+    });
+    row.appendChild(offer);
+    const appointment = el('button', undefined, 'Nuovo appuntamento');
+    appointment.setAttribute('type', 'button');
+    appointment.setAttribute('data-action', 'new-appointment');
+    appointment.addEventListener('click', () => {
+      if (pick !== null) writePendingCustomerPick(storage, 'appointment', pick);
+      navigate('#/calendario');
+    });
+    row.appendChild(appointment);
     box.appendChild(row);
   }
 
@@ -554,7 +643,14 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function details(box, card, profile) {
+  /**
+   * Voce 714433c2: in-place edit of Dettagli for contact subjects. The form
+   * edits what the section shows (Nome, Cognome, Email); company records
+   * have no update path yet, so a company scheda keeps no Modifica button
+   * (remaining). Salva PATCHes the contact and re-reads the card; Annulla
+   * drops the edits by re-reading too, so nothing stale stays on screen.
+   */
+  function details(box, card, profile, editCtx) {
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const fact = (label, value) => {
       const row = el('p', 'bo-scheda-fact');
@@ -589,6 +685,85 @@ export function createCustomerCardView(deps) {
       // instead of printing the English reason or a false "none".
       box.appendChild(el('p', 'bo-muted', 'Nessun pacchetto attivo'));
     }
+    // Voce 714433c2: Modifica opens the in-place form below. Company
+    // records have no update path yet, so a company scheda shows no button.
+    const contact = profile?.identity?.contact ?? null;
+    if (editCtx && card?.subject?.resource === 'contact'
+      && contact && typeof contact.id === 'string' && contact.id !== '') {
+      const edit = el('button', undefined, 'Modifica');
+      edit.setAttribute('type', 'button');
+      edit.setAttribute('data-action', 'edit-details');
+      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx));
+      box.appendChild(edit);
+    }
+  }
+
+  /**
+   * Voce 714433c2: the Dettagli edit form. Salva PATCHes the contact and
+   * re-reads the whole card (the same reload the section helpers use), so a
+   * saved value is the server's value, never an optimistic copy. Annulla
+   * drops the edits by re-reading too, so nothing stale stays on screen. A
+   * refused save keeps the form with the server's Italian error, never a
+   * blank card.
+   */
+  function renderDetailsForm(box, card, contact, editCtx) {
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.appendChild(el('h4', undefined, 'Dettagli'));
+    const field = (label, name, value) => {
+      const labelNode = el('label', 'bo-scheda-field-label', label);
+      const input = el('input');
+      input.setAttribute('name', name);
+      input.value = value;
+      input.setAttribute('aria-label', label);
+      box.appendChild(labelNode);
+      box.appendChild(input);
+      return input;
+    };
+    const firstInput = field('Nome', 'firstName',
+      typeof contact.firstName === 'string' ? contact.firstName : '');
+    const lastInput = field('Cognome', 'lastName',
+      typeof contact.lastName === 'string' ? contact.lastName : '');
+    const emailInput = field('Email', 'email',
+      typeof contact.email === 'string' ? contact.email : '');
+    const error = el('small', 'field-error', '');
+    const row = el('div', 'bo-scheda-form-actions');
+    const save = el('button', undefined, 'Salva');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'save-details');
+    const cancel = el('button', undefined, 'Annulla');
+    cancel.setAttribute('type', 'button');
+    cancel.setAttribute('data-action', 'cancel-details');
+    row.appendChild(save);
+    row.appendChild(cancel);
+    box.appendChild(row);
+    box.appendChild(error);
+    let busy = false;
+    save.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      error.textContent = '';
+      try {
+        await client.request(`/api/contacts/${encodeURIComponent(contact.id)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            firstName: firstInput.value,
+            lastName: lastInput.value,
+            email: emailInput.value,
+          }),
+        });
+        toast('Dati salvati');
+        await renderCard(editCtx.resource, editCtx.id);
+      } catch (err) {
+        error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
+        toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
+      } finally {
+        busy = false;
+      }
+    });
+    cancel.addEventListener('click', async () => {
+      await renderCard(editCtx.resource, editCtx.id);
+    });
+    void card;
   }
 
   const ENRICHED_FIELD_LABELS = Object.freeze({
@@ -655,7 +830,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function timelineBox(box, timeline) {
+  function timelineBox(box, timeline, noteCtx) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -709,6 +884,8 @@ export function createCustomerCardView(deps) {
     };
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
+      // Voce 714433c2: operator notes are channel-less, so they read under
+      // `Tutti` only — a channel filter shows that channel's passages alone.
       const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
       if (visible.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
@@ -734,6 +911,22 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        if (item?.entry === 'note') {
+          // Voce 714433c2: the operator note. No channel badge and no sync
+          // line — it is a statement about the customer, not a passage.
+          // The writer reads when the row names a human handle, like the
+          // outbound passages above; markup in the body stays text.
+          const when = timeParts(item?.occurredAt);
+          const author = isHumanHandle(item?.teamAuthorId)
+            ? `da ${String(item.teamAuthorId).trim()}` : 'dal team';
+          row.appendChild(el('p', 'bo-scheda-entry-head',
+            when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
+          if (typeof item?.body === 'string' && item.body !== '') {
+            row.appendChild(el('p', undefined, item.body));
+          }
+          list.appendChild(row);
+          continue;
+        }
         const channelKey = String(item?.channel ?? '').trim().toLowerCase();
         const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
         row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
@@ -768,6 +961,47 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
+    // Voce 714433c2: "Aggiungi nota" — the operator statement that reads
+    // back in the cronologia above. Plain text only, like the work views; it
+    // emails nobody and notifies nobody. A refused save keeps the text with
+    // the server's Italian error, and a saved note re-reads the card so the
+    // row is the server's row, never an optimistic copy.
+    if (noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string') {
+      const noteForm = el('div', 'bo-scheda-note-form');
+      const noteInput = el('input');
+      noteInput.setAttribute('name', 'noteBody');
+      noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
+      noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
+      const noteButton = el('button', undefined, 'Aggiungi nota');
+      noteButton.setAttribute('type', 'button');
+      noteButton.setAttribute('data-action', 'add-note');
+      const noteError = el('small', 'field-error', '');
+      let noteBusy = false;
+      noteButton.addEventListener('click', async () => {
+        if (noteBusy) return;
+        noteBusy = true;
+        noteError.textContent = '';
+        try {
+          await client.request('/api/customer-hub/notes', {
+            method: 'POST',
+            body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
+          });
+          toast('Nota aggiunta');
+          await renderCard(noteCtx.resource, noteCtx.id);
+        } catch (error) {
+          noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
+          toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
+        } finally {
+          noteBusy = false;
+        }
+      });
+      noteForm.appendChild(noteInput);
+      noteForm.appendChild(noteButton);
+      noteForm.appendChild(noteError);
+      noteForm.appendChild(el('p', 'bo-muted',
+        'La nota resta qui, nella cronologia del cliente. Non viene inviata a nessuno.'));
+      box.appendChild(noteForm);
+    }
   }
 
   function nextSteps(box, profile) {
@@ -788,7 +1022,7 @@ export function createCustomerCardView(deps) {
     return true;
   }
 
-  function offer(box, profile) {
+  function offer(box, profile, offerCtx) {
     // Voce cc525cd6a3c5: the offer panel shows one commercial line for THIS
     // customer only — the profile behind it is already scoped to the customer
     // (contact-scoped records never leak onto a company-mate's card), so the
@@ -831,6 +1065,86 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
     }
     box.appendChild(line);
+    // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
+    // menu. The menu moves the shown opportunity through the governed
+    // `request-opportunity-stage-change` workflow (POST
+    // /api/opportunities/:id/stage), never a direct write: a renewal moving
+    // to proposal past the approval threshold lands in «in attesa di
+    // approvazione» with a toast saying so, like the pipeline board. The
+    // menu acts on exactly the stato the line shows: when the line reads a
+    // quote (no governed stage transition exists for quotes), there is no
+    // menu — the quote's state changes from the quotes screen. A refused
+    // move keeps the menu with the server's Italian error, and a completed
+    // move re-reads the card so the line is the server's state, never an
+    // optimistic copy. The header Cliente/Contatto pill stays derived (see
+    // customer-status.js): this menu does not touch it.
+    const shownOpportunity = fromQuote ? null : first;
+    if (shownOpportunity && typeof shownOpportunity.id === 'string' && shownOpportunity.id !== ''
+      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
+      const current = String(shownOpportunity.status ?? '').toLowerCase();
+      const targets = offerStageTargets(current);
+      if (targets.length > 0) {
+        const wrap = el('div', 'bo-scheda-stage-menu');
+        const button = el('button', undefined, 'Cambia stato');
+        button.setAttribute('type', 'button');
+        button.setAttribute('aria-haspopup', 'menu');
+        button.setAttribute('aria-expanded', 'false');
+        button.setAttribute('data-action', 'change-offer-stage');
+        const menu = el('div', 'bo-scheda-stage-voices hidden');
+        menu.setAttribute('role', 'menu');
+        const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+        const syncMenu = () => {
+          button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
+        };
+        const close = () => {
+          if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
+          syncMenu();
+        };
+        button.addEventListener('click', () => {
+          menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
+          syncMenu();
+        });
+        button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+        menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+        const stageError = el('small', 'field-error', '');
+        let stageBusy = false;
+        for (const stage of targets) {
+          const voice = el('button', undefined, offerStatusLabel(stage) ?? stage);
+          voice.setAttribute('type', 'button');
+          voice.setAttribute('role', 'menuitem');
+          voice.setAttribute('data-stage', stage);
+          voice.addEventListener('click', async () => {
+            if (stageBusy) return;
+            stageBusy = true;
+            stageError.textContent = '';
+            try {
+              const result = await client.request(
+                `/api/opportunities/${encodeURIComponent(shownOpportunity.id)}/stage`,
+                { method: 'POST', body: JSON.stringify({ targetStage: stage }) },
+              );
+              close();
+              // The stage route returns the workflow envelope
+              // { runId, status, output }: the approval gate reads in
+              // output.outcome, never in a top-level outcome.
+              toast(result?.output?.outcome === 'approval_required'
+                ? 'Stato aggiornato: serve un\u2019approvazione'
+                : 'Stato aggiornato');
+              await renderCard(offerCtx.resource, offerCtx.id);
+            } catch (error) {
+              stageError.textContent = humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' });
+              toast(humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' }), true);
+            } finally {
+              stageBusy = false;
+            }
+          });
+          menu.appendChild(voice);
+        }
+        wrap.appendChild(button);
+        wrap.appendChild(menu);
+        wrap.appendChild(stageError);
+        box.appendChild(wrap);
+      }
+    }
     return true;
   }
 
@@ -1002,15 +1316,15 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card);
+    section(left, '', quickActions, card, { resource, id });
     section(left, '', linkedIdentities, profile, timeline, { resource, id });
-    section(left, '', details, card, profile);
+    section(left, '', details, card, profile, { resource, id });
     section(left, '', enriched, enrichment, reloadEnrichment);
-    section(center, 'bo-scheda-card-timeline', timelineBox, timeline);
+    section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
     section(right, 'bo-scheda-ai', aiSummary, calls);
     section(right, '', callsBox, calls);
     section(right, '', nextSteps, profile);
-    section(right, 'bo-scheda-card-offer', offer, profile);
+    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id });
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline);
     grid.appendChild(left);
     grid.appendChild(center);

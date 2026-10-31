@@ -370,6 +370,40 @@ test('work notes riding the same timeline read never count as unthreaded message
   assert.equal(timeline.conversations.unthreadedCalls, 0);
 });
 
+test('voce 714433c2: an operator note reads in the entries, never as channel evidence', () => {
+  const timeline = shapeCustomerTimeline({
+    profile: {
+      identity: { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null },
+      externalIdentities: [],
+    },
+    threads: [],
+    history: {
+      entries: [
+        {
+          entry: 'work-note', id: 'w1', kind: 'note', body: 'Preferisce la sera.',
+          taskId: null, actorType: 'user', actorId: 'elena',
+          occurredAt: '2026-10-20T08:00:00.000Z', createdAt: null,
+        },
+        {
+          entry: 'work-note', id: 'w2', kind: 'task_completed', body: 'done',
+          taskId: 't1', actorType: 'user', actorId: 'elena',
+          occurredAt: '2026-10-20T08:01:00.000Z', createdAt: null,
+        },
+      ],
+    },
+    schedule: [],
+    subject: { resource: 'contact', id: 'c1' },
+  });
+  assert.equal(timeline.conversations.count, 0, 'a note opens no conversation');
+  assert.equal(timeline.conversations.unthreadedMessages, 0, 'a note is not an unthreaded message');
+  assert.equal(timeline.entries.count, 1, 'only the note kind reads; task lifecycle stays in the work views');
+  assert.deepEqual(timeline.entries.items, [{
+    entry: 'note', id: 'w1', conversationId: null, channel: null, direction: null, sync: null,
+    body: 'Preferisce la sera.', teamAuthorId: 'elena', remoteHandle: null, errorCode: null,
+    occurredAt: '2026-10-20T08:00:00.000Z',
+  }], 'the note row is channel-less with its writer');
+});
+
 test('the 51st thread marks the conversations truncated with its exact count', () => {
   const threads = Array.from({ length: 51 }, (_, index) => ({
     id: `t${index}`, channel: 'whatsapp', status: 'closed',

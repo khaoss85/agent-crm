@@ -654,6 +654,29 @@ export function buildRouter(app) {
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
   });
 
+  // Voce 714433c2: the scheda cliente's "Aggiungi nota". The note is a
+  // work-activity row of kind `note` on the customer subject (same row, kind
+  // and human-actor boundary as the task `add-note` action, without the
+  // task), so it reads back on the scheda cronologia through the timeline
+  // the hub already shapes. Without the work package composed the honest
+  // 404 names the missing operation; a note on a ghost record refuses with
+  // the record's own NotFoundError, never a dangling row.
+  router.add('POST', '/api/customer-hub/notes', async ({ body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.recordSubjectNote !== 'function') {
+      throw new NotFoundError('Operation', 'subject note');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject note needs resource contact or company', { field: 'resource' });
+    }
+    return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
+  });
+
   // Call intelligence (BO-F1-08): the notice, the transcript, its summary
   // and the customer calls read for the scheda cliente. The same
   // enumerated-adapter shape as the hub routes above: the kernel owns the
@@ -1055,6 +1078,23 @@ export function buildRouter(app) {
   router.add('POST', '/api/contacts', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     return respond(201, await app.services.contacts.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+  });
+  // Voce 714433c2: the scheda cliente edits Dettagli in place. Only the four
+  // editable keys reach the service — anything else (companyId included) is
+  // refused rather than silently dropped, so a caller cannot move a contact
+  // between companies through this route.
+  router.add('PATCH', '/api/contacts/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    const input = recordInput(body);
+    const patch = {};
+    for (const key of ['firstName', 'lastName', 'email', 'role']) {
+      if (input[key] !== undefined) patch[key] = input[key];
+    }
+    const unknown = Object.keys(input).filter((key) => !['firstName', 'lastName', 'email', 'role'].includes(key));
+    if (unknown.length > 0) {
+      throw new ValidationError(`Contact update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
+    }
+    return await app.services.contacts.update(params.id, patch, writeContext(app, { actor, identity, organizationId, headers }));
   });
 
   router.add('GET', '/api/opportunities', async ({ query, identity, organizationId }) => {
