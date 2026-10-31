@@ -86,86 +86,8 @@ export function parseEuroToCents(raw) {
 }
 
 /**
- * Parse one operator sentence into the manual-create fields, deterministically
- * and fail-closed: no backend, no LLM, the review screen stays the gate.
- * Understood shape (Italian, free order): a name, a code (an UPPERCASE token
- * with a digit, dash or underscore, or `codice X`), a price (`a 99 euro`,
- * `99 €`, `prezzo 99,00`), an optional `categoria X` and an optional unit
- * (`unità X` or `per X`). Anything missing reads in `missing` (`nome`,
- * `codice`, `prezzo`) and `ok` is false: the caller shows what is missing
- * instead of guessing.
- * @param {unknown} raw
- */
-export function parseProductSentence(raw) {
-  const text = typeof raw === 'string' ? raw : '';
-  /** @type {{name: string|null, sku: string|null, category: string|null, currency: string, unit: string|null, cents: number|null}} */
-  const fields = { name: null, sku: null, category: null, currency: 'EUR', unit: null, cents: null };
-  /** @type {string[]} */
-  const missing = [];
-  const used = [];
-  const take = (match) => { if (match && typeof match.index === 'number') used.push([match.index, match.index + match[0].length]); };
-
-  const currencyMatch = text.match(/€|\$|£|\beuro?\b|\beur\b|\busd\b|\bdollari?\b|\bgbp\b|\bsterline?\b/i);
-  if (currencyMatch) {
-    const token = currencyMatch[0].toLowerCase();
-    if (token === '$' || token === 'usd' || token.startsWith('dollar')) fields.currency = 'USD';
-    else if (token === '£' || token === 'gbp' || token.startsWith('sterlin')) fields.currency = 'GBP';
-    else fields.currency = 'EUR';
-  }
-  // The first number-like token is not always the price ("10 lezioni" in
-  // "Pacchetto 10 lezioni ... a 99 euro"): scan every candidate and keep the
-  // first one that names a currency or follows a/prezzo/costo. A bare
-  // "a <num>" reads EUR; anything else stays missing, never guessed.
-  for (const candidate of text.matchAll(/(?:^|\s)(?:a|prezzo|costo)?\s*(\d+(?:[.,]\d{1,2})?)\s*(€|euro|eur|\$|usd|gbp|£)?(?=\s|$|[.,;])/gi)) {
-    if (candidate[2] || /(?:^|\s)(?:a|prezzo|costo)\s*\d/i.test(candidate[0])) {
-      fields.cents = parseEuroToCents(candidate[1]);
-      take(candidate);
-      break;
-    }
-  }
-  const codeMatch = text.match(/\bcodice\s+([A-Za-z0-9][A-Za-z0-9_-]{0,29})/i)
-    ?? text.match(/\b([A-Z0-9][A-Z0-9_-]{2,29})\b/);
-  if (codeMatch) {
-    const candidate = codeMatch[1] ?? codeMatch[0];
-    const explicit = /^codice\s/i.test(codeMatch[0]);
-    if (explicit || /[0-9_-]/.test(candidate)) {
-      fields.sku = candidate;
-      take(codeMatch);
-    }
-  }
-  const categoryMatch = text.match(/\bcategoria\s+([^\s,.;]+)/i);
-  if (categoryMatch) {
-    fields.category = categoryMatch[1];
-    take(categoryMatch);
-  }
-  const unitMatch = text.match(/\bunit[àa]\s+([^\s,.;]+)/i) ?? text.match(/\bper\s+([^\s,.;]+)/i);
-  if (unitMatch) {
-    fields.unit = unitMatch[1];
-    take(unitMatch);
-  }
-  used.sort((a, b) => a[0] - b[0]);
-  let name = '';
-  let cursor = 0;
-  for (const [start, end] of used) {
-    if (start > cursor) name += ` ${text.slice(cursor, start)}`;
-    cursor = Math.max(cursor, end);
-  }
-  name += ` ${text.slice(cursor)}`;
-  fields.name = name
-    .replace(/\b(crea|creare|aggiungi|aggiungere|nuovo|nuova|un nuovo|una nuova|prodotto|il prodotto)\b/gi, ' ')
-    .replace(/[«»".,;]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim() || null;
-  if (fields.name === null) missing.push('nome');
-  if (fields.sku === null) missing.push('codice');
-  if (fields.cents === null) missing.push('prezzo');
-  return { ok: missing.length === 0, fields, missing };
-}
-
-/**
  * The single one-time flat component body the manual create form posts.
- * Shared by the field form and the sentence form (MEM_ACC_REUSE): one
- * builder, one route, one review shape.
+ * One builder, one route, one review shape (MEM_ACC_REUSE).
  */
 export function buildCreateBody({ sku, name, category, currency, unit, cents }) {
   return {
@@ -187,10 +109,12 @@ export function buildCreateBody({ sku, name, category, currency, unit, cents }) 
   };
 }
 
-/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, submissions?: any, storage?: any}} deps */
+/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, submissions?: any, storage?: any, toast?: (message: string, error?: boolean) => void, onAskAi?: (screenId: string, description: string) => void}} deps */
 export function createCatalogView(deps) {
   const { doc, mount } = deps;
   const { client } = deps;
+  const toast = deps.toast ?? (() => {});
+  const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
   const submissions = deps.submissions ?? createSubmissionController({
     storage: deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? memoryStorage() : globalThis.localStorage),
     transport: (path, options) => client.request(path, {
@@ -691,7 +615,7 @@ export function createCatalogView(deps) {
    * Re-read the catalog after a COMMIT_OUTCOME_UNKNOWN creation: only a row
    * that is both new since this table loaded and a full match of the
    * submitted fields counts as this creation (the create route has no replay
-   * protection). Shared by the field form and the sentence form.
+   * protection). Used by the manual create form.
    */
   async function reconcileUncertainCreation(knownProductIds, filters, submitted) {
     try {
@@ -825,101 +749,25 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Sentence-first creation ("✦ Aggiungi con l'AI"): the operator writes one
-   * sentence, the deterministic `parseProductSentence` reads the fields, and
-   * the same review -> Conferma gate as the field form posts the same
-   * `buildCreateBody` over the same route. Nothing is ever sent from the
-   * sentence alone: an unreadable sentence names what is missing and stays
-   * editable, never guessed.
-   * @param {Set<unknown>} knownProductIds product ids already on screen
-   * @param {{category?: string, active?: string, source?: string}} filters
+   * "✦ Aggiungi con l'AI": no sentence parser here (supervisor arbitration
+   * on #516 round 2). The voice opens the BO-F0-04 assistant panel with the
+   * product catalog as its context — the same `onAskAi` seam as «Chiedi
+   * all'AI» on the customer card — and the creation passes through the
+   * assistant's confirmation. Nothing is ever sent from this screen: no
+   * input, no POST, so there is no stale snapshot to confirm.
    */
-  function renderAiCreateForm(knownProductIds, filters = {}) {
+  function renderAiCreateForm() {
     const wrap = el('div', 'catalog-ai-wrap');
-    const openButton = el('button', 'catalog-ai-open', '✦ Aggiungi con l\u2019AI');
-    const formBox = el('div', 'catalog-ai-form');
-    const formError = el('p', 'field-error', '');
+    const openButton = el('button', 'catalog-ai-open', '\u2726 Aggiungi con l\u2019AI');
+    openButton.setAttribute('title', 'Chiedi all\u2019assistente di creare un prodotto del catalogo (\u2318K)');
     openButton.addEventListener('click', () => {
-      while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
-      formBox.appendChild(el('label', 'catalog-create-label', 'Descrivi il prodotto in una frase'));
-      const input = el('input', 'catalog-ai-sentence');
-      input.setAttribute('name', 'sentence');
-      input.setAttribute('aria-label', 'Descrivi il prodotto in una frase');
-      input.setAttribute('placeholder', 'Pacchetto 10 lezioni PACCHETTO-10 a 99 euro categoria pacchetti');
-      formBox.appendChild(input);
-      const parseButton = el('button', undefined, 'Interpreta');
-      parseButton.addEventListener('click', () => {
-        formError.textContent = '';
-        const parsed = parseProductSentence(input.value);
-        while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
-        formBox.appendChild(input);
-        if (!parsed.ok) {
-          formError.textContent = `Dalla frase mancano: ${parsed.missing.join(', ')}. Esempio: Pacchetto 10 lezioni PACCHETTO-10 a 99 euro categoria pacchetti.`;
-          formBox.appendChild(parseButton);
-          formBox.appendChild(formError);
-          return;
-        }
-        const submitted = {
-          sku: parsed.fields.sku,
-          name: parsed.fields.name,
-          category: parsed.fields.category,
-          currency: parsed.fields.currency,
-          unit: parsed.fields.unit,
-          cents: parsed.fields.cents,
-        };
-        // The review freezes the interpreted text: the sentence box locks so
-        // a later edit cannot silently confirm a stale snapshot, and Conferma
-        // refuses a text that changed since Interpreta instead of sending it.
-        const interpretedText = input.value;
-        input.disabled = true;
-        const review = el('div', 'catalog-review');
-        review.appendChild(el('p', undefined, `Creare ${submitted.name} (${submitted.sku}) a ${money(submitted.cents, submitted.currency)}?`));
-        if (submitted.category) review.appendChild(el('p', 'catalog-change', `Categoria: ${submitted.category}`));
-        review.appendChild(el('p', 'catalog-change', `Unità: ${submitted.unit ?? '—'}`));
-        const yes = el('button', undefined, 'Conferma');
-        const no = el('button', undefined, 'Annulla');
-        no.addEventListener('click', async () => { await renderTable(); });
-        yes.addEventListener('click', async () => {
-          yes.disabled = true;
-          if (input.value !== interpretedText) {
-            formError.textContent = 'La frase è cambiata dopo Interpreta: premi di nuovo Interpreta prima di confermare.';
-            review.appendChild(formError);
-            input.disabled = false;
-            formBox.appendChild(parseButton);
-            yes.disabled = false;
-            return;
-          }
-          try {
-            await submissions.submit({
-              path: '/api/catalog/products',
-              method: 'POST',
-              body: buildCreateBody(submitted),
-            });
-            await renderTable();
-          } catch (error) {
-            if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
-              if (await reconcileUncertainCreation(knownProductIds, filters, submitted)) {
-                await renderTable();
-                return;
-              }
-              formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
-              review.appendChild(formError);
-              return;
-            }
-            formError.textContent = error?.message ?? 'Creazione fallita';
-            review.appendChild(formError);
-            yes.disabled = false;
-          }
-        });
-        review.appendChild(yes);
-        review.appendChild(no);
-        formBox.appendChild(review);
-      });
-      formBox.appendChild(parseButton);
-      formBox.appendChild(formError);
+      if (onAskAi) {
+        onAskAi('catalogo', 'Catalogo prodotti: voglio creare un prodotto, ti incollo i dettagli.');
+      } else {
+        toast('Apri la barra AI (\u2318K) e descrivi il prodotto che vuoi creare.');
+      }
     });
     wrap.appendChild(openButton);
-    wrap.appendChild(formBox);
     return wrap;
   }
 
@@ -942,27 +790,22 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * Live text filters over the loaded page: the category and source boxes
-   * narrow the rows while typing, like the search field, without a refetch.
-   * The category box uses the server's own semantics (category exact,
-   * case-insensitive), so a partial text that matches nothing live also
-   * matches nothing on reload (Filtra / the state select) instead of
-   * wiping a visible row. The source box matches the raw source and the
-   * visible Fonte label alike, so typing what the column shows never
-   * empties the table by itself.
+   * Live filters over the loaded page: the category chips and the Fonte
+   * menu hold the read's own values (category exact, source exact raw
+   * name — the same values and the same case-sensitive comparison
+   * `listProducts` uses), so a selection that matches live matches on
+   * reload too (Filtra / the state select), never wiping a visible row.
+   * The search field stays the only free text, matched client-side on
+   * name and code.
    * @param {any} product
    * @param {unknown} categoryQuery
    * @param {unknown} sourceQuery
    */
   function matchesLiveFilters(product, categoryQuery, sourceQuery) {
-    const categoryQ = String(categoryQuery ?? '').trim().toLowerCase();
-    if (categoryQ !== '' && String(product?.category ?? '').trim().toLowerCase() !== categoryQ) return false;
-    const sourceQ = String(sourceQuery ?? '').trim().toLowerCase();
-    if (sourceQ !== '') {
-      const raw = String(product?.source ?? '').toLowerCase();
-      const label = String(sourceLabel(product?.source) ?? '').toLowerCase();
-      if (!raw.includes(sourceQ) && !label.includes(sourceQ)) return false;
-    }
+    const categoryQ = String(categoryQuery ?? '');
+    if (categoryQ !== '' && product?.category !== categoryQ) return false;
+    const sourceQ = String(sourceQuery ?? '');
+    if (sourceQ !== '' && product?.source !== sourceQ) return false;
     return true;
   }
 
@@ -1012,15 +855,35 @@ export function createCatalogView(deps) {
     const loaded = table.products;
     const createBar = el('div', 'catalog-create-bar');
     createBar.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
-    createBar.appendChild(renderAiCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
+    createBar.appendChild(renderAiCreateForm());
     page.appendChild(createBar);
 
     const filters = el('div', 'catalog-filters');
-    const categoryInput = el('input');
-    categoryInput.setAttribute('name', 'category');
-    categoryInput.setAttribute('aria-label', 'Filtra per categoria');
-    categoryInput.setAttribute('placeholder', 'Categoria');
-    categoryInput.value = typeof category === 'string' ? category : '';
+    // Fonte is a menu, never free text (supervisor arbitration on #516
+    // round 2): Tutte plus the sources the read vocabulary knows — the
+    // manual source when the summary counts manual rows, plus every
+    // provider name from the summary, which runs over the complete product
+    // set before filters. Option values are the raw names `listProducts`
+    // filters by; labels read Italian through `sourceLabel`. The category
+    // comes from the chips below, with the exact data value.
+    const sourceSelect = el('select');
+    sourceSelect.setAttribute('name', 'source');
+    sourceSelect.setAttribute('aria-label', 'Filtra per fonte');
+    const sourceOptions = [''];
+    if (Number(summary?.manual ?? 0) > 0) sourceOptions.push('manual');
+    const providerNames = summary && typeof summary === 'object'
+      && summary.byProvider && typeof summary.byProvider === 'object'
+      ? Object.keys(summary.byProvider) : [];
+    for (const name of providerNames) {
+      if (!sourceOptions.includes(name)) sourceOptions.push(name);
+    }
+    if (typeof source === 'string' && source !== '' && !sourceOptions.includes(source)) sourceOptions.push(source);
+    for (const value of sourceOptions) {
+      const option = el('option', undefined, value === '' ? 'Tutte' : sourceLabel(value));
+      option.setAttribute('value', value);
+      sourceSelect.appendChild(option);
+    }
+    sourceSelect.value = typeof source === 'string' && sourceOptions.includes(source) ? source : '';
     const activeSelect = el('select');
     activeSelect.setAttribute('name', 'active');
     activeSelect.setAttribute('aria-label', 'Filtra per stato');
@@ -1030,11 +893,6 @@ export function createCatalogView(deps) {
       activeSelect.appendChild(option);
     }
     activeSelect.value = active === 'true' || active === 'false' ? active : '';
-    const sourceInput = el('input');
-    sourceInput.setAttribute('name', 'source');
-    sourceInput.setAttribute('aria-label', 'Filtra per fonte');
-    sourceInput.setAttribute('placeholder', 'Fonte');
-    sourceInput.value = typeof source === 'string' ? source : '';
     const applyButton = el('button', undefined, 'Filtra');
     const filterError = el('small', 'field-error', '');
     // The prototype's search (spec catalogo.md C9): exact placeholder,
@@ -1046,17 +904,17 @@ export function createCatalogView(deps) {
     searchInput.setAttribute('placeholder', 'Cerca prodotto o codice');
     searchInput.value = typeof search === 'string' ? search : '';
     const readSearch = () => searchInput.value ?? '';
-    // Every text box filters the loaded rows while typing (no refetch,
-    // focus stays in the field); the state select re-reads from the server
-    // at once, so no control waits for Filtra.
-    const repaint = () => { paintList(readSearch(), categoryInput.value ?? '', sourceInput.value ?? ''); };
+    // The search field and the Fonte menu filter the loaded rows in place
+    // (no refetch, focus stays in the field) with the server's own values
+    // and comparison; the state select re-reads from the server at once,
+    // so no control waits for Filtra.
+    const repaint = () => { paintList(readSearch(), category, sourceSelect.value ?? ''); };
     searchInput.addEventListener('input', repaint);
     searchInput.addEventListener('search', repaint);
-    categoryInput.addEventListener('input', repaint);
-    sourceInput.addEventListener('input', repaint);
+    sourceSelect.addEventListener('change', repaint);
     activeSelect.addEventListener('change', async () => {
       try {
-        await renderTable({ category: categoryInput.value, active: activeSelect.value, source: sourceInput.value, search: readSearch() });
+        await renderTable({ category, active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
       } catch (error) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
       }
@@ -1064,16 +922,15 @@ export function createCatalogView(deps) {
     applyButton.addEventListener('click', async () => {
       applyButton.disabled = true;
       try {
-        await renderTable({ category: categoryInput.value, active: activeSelect.value, source: sourceInput.value, search: readSearch() });
+        await renderTable({ category, active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
       } catch (error) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
       } finally {
         applyButton.disabled = false;
       }
     });
-    filters.appendChild(categoryInput);
+    filters.appendChild(sourceSelect);
     filters.appendChild(activeSelect);
-    filters.appendChild(sourceInput);
     filters.appendChild(applyButton);
     filters.appendChild(searchInput);
     filters.appendChild(filterError);
@@ -1189,8 +1046,7 @@ export function createCatalogView(deps) {
         const clearSearch = el('button', 'catalog-clear-search', 'Cancella ricerca');
         clearSearch.addEventListener('click', () => {
           searchInput.value = '';
-          categoryInput.value = '';
-          sourceInput.value = '';
+          sourceSelect.value = '';
           paintList('');
         });
         empty.appendChild(clearSearch);

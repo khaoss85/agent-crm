@@ -508,6 +508,12 @@ const catalogView = createCatalogView({
   mount: moduleView,
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
+  // «✦ Aggiungi con l'AI»: same assistant seam as Pipeline and Clienti —
+  // the voice opens the BO-F0-04 panel on the catalog screen.
+  onAskAi: (screenId, description) => {
+    if (assistantPanel) void assistantPanel.open(screenId, description);
+    else toast('Apri la barra AI (⌘K) e descrivi il prodotto che vuoi creare.');
+  },
 });
 
 // Work (ADR-030): the package-scoped task queue and its activity timeline. The
