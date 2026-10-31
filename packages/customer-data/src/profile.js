@@ -337,10 +337,12 @@ async function readSectionRows(service, references, subject = null) {
     // — skipped exactly as the sequential loop skipped it.
     const active = shapes.filter((filters) =>
       Object.values(filters).some((value) => Array.isArray(value) && value.length > 0));
-    const settled = await Promise.all(active.map((filters) => service.listWhere(filters).then(
-      (rows) => ({ ok: true, rows }),
-      () => ({ ok: false, rows: [] }),
-    )));
+    const settled = await Promise.all(active.map((filters) => Promise.resolve()
+      .then(() => service.listWhere(filters))
+      .then(
+        (rows) => ({ ok: true, rows }),
+        () => ({ ok: false, rows: [] }),
+      )));
     const byId = new Map();
     let queryable = false;
     for (const result of settled) {
