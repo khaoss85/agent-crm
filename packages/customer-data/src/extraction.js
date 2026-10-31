@@ -6,7 +6,7 @@ import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { CONTROL_RE, MAX_FIELD_LENGTH, safeString } from './normalize.js';
 import { ENRICHABLE_FIELDS, canonicalPhone } from './enrichment.js';
 import { canonicalClusterFor } from './profile.js';
-import { recordExternalIdentityRow } from './sender.js';
+import { isWinnerConflict, recordExternalIdentityRow } from './sender.js';
 import { deciding, subjectFields, subjectKey, trusted } from './store.js';
 
 /**
@@ -398,7 +398,25 @@ export function createEnrichmentExtraction({ database, modules, events, names })
         throw refusal('ENRICHMENT_OPTED_OUT', 409,
           'this subject opted out of enrichment: no proposal is accepted after the purge');
       }
+      const identityName = names?.identity ?? 'external-identity';
+      const holderOf = (row) => row !== null && typeof row === 'object'
+        ? { resource: row.subjectResource, id: row.subjectId } : null;
+      const refuseHeldPhone = (holder) => {
+        if (holder === null || holder.resource !== current.subjectResource || holder.id !== current.subjectId) {
+          throw refusal('PHONE_ALREADY_HELD', 409,
+            'this phone number is already held beside another customer: it stays on the first card');
+        }
+      };
       const row = await database.transactionAsync(async () => {
+        if (current.field === 'phone' && current.value) {
+          // The recordSubjectPhone discipline: one number names one record,
+          // once. The shared identity helper refreshes any sighting, so the
+          // holder is read by sourceKey before the flip — a foreign holder
+          // refuses 409 and nothing flips.
+          const seen = (await deciding(trusted(modules, identityName),
+            { sourceKey: `phone:${current.value}` }))[0] ?? null;
+          if (seen !== null) refuseHeldPhone(holderOf(seen));
+        }
         const decided = await enriched.applyManaged(id, {
           status: 'active', decisionReason: reason,
         }, { actor });
@@ -406,17 +424,29 @@ export function createEnrichmentExtraction({ database, modules, events, names })
           // The free-source discipline: an accepted phone becomes a
           // phone-bearing external identity, so sender resolution and the
           // facts read see it exactly like a free-source phone.
-          await recordExternalIdentityRow({
-            modules, names, system: 'phone', externalId: decided.value,
-            subject: {
-              resource: decided.subjectResource, id: decided.subjectId,
-              owner: decided.subjectOwner ?? 'host',
-              ownerPackage: decided.subjectOwnerPackage ?? null,
-              label: decided.subjectLabel ?? null,
-            },
-            runId: decided.observedByRunId ?? 'enrichment:decide',
-            actor,
-          });
+          const sourceKey = `phone:${decided.value}`;
+          try {
+            await recordExternalIdentityRow({
+              modules, names, system: 'phone', externalId: decided.value,
+              subject: {
+                resource: decided.subjectResource, id: decided.subjectId,
+                owner: decided.subjectOwner ?? 'host',
+                ownerPackage: decided.subjectOwnerPackage ?? null,
+                label: decided.subjectLabel ?? null,
+              },
+              runId: decided.observedByRunId ?? 'enrichment:decide',
+              actor,
+            });
+          } catch (error) {
+            if (!isWinnerConflict(error)) throw error;
+            const winner = (await deciding(trusted(modules, identityName), { sourceKey }))[0] ?? null;
+            refuseHeldPhone(holderOf(winner));
+          }
+          // The helper refreshes any sighting, so the holder is re-read
+          // inside the same transaction: a concurrent foreign hold refuses
+          // 409 and rolls the flip back with it — no sighting is bumped.
+          const linked = (await deciding(trusted(modules, identityName), { sourceKey }))[0] ?? null;
+          refuseHeldPhone(holderOf(linked));
         }
         return decided;
       });

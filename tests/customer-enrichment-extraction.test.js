@@ -401,6 +401,56 @@ test('an undialable AI phone is refused with the run, and an accepted phone link
   assert.equal(phones[0].subjectId, subject.id);
 });
 
+test('accepting a phone already held beside another customer refuses 409 and keeps the first card', async (t) => {
+  const { app } = await scene(t, 'extraction-phone-held-elsewhere');
+  const subjectA = await seedContact(app);
+  const resolvedB = await app.resolveChannelSender({
+    channel: 'email', handle: 'maria@prestigroup.example', email: 'maria@prestigroup.example',
+    firstName: 'Maria', lastName: 'Bianchi', actor: ACTOR,
+  });
+  assert.equal(resolvedB.outcome, 'created');
+  const subjectB = {
+    resource: 'contact',
+    id: app.modules.get('external-identity').service
+      .listWhere({ system: 'email', externalId: 'maria@prestigroup.example' })[0].subjectId,
+  };
+
+  const first = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subjectA,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '+393331234567', source: 'email-signature', sourceDetail: 'firma email del 18/10' },
+    ]),
+  });
+  const accepted = await app.decideEnrichmentProposal({
+    actor: ACTOR, id: first.proposals[0].id, decision: 'accepted',
+  });
+  assert.equal(accepted.outcome, 'accepted');
+
+  const second = await app.extractCustomerEnrichment({
+    actor: ACTOR,
+    ...subjectB,
+    sources: SOURCES,
+    adapter: fakeAdapter([
+      { field: 'phone', value: '+393331234567', source: 'email-signature' },
+    ]),
+  });
+  assert.equal(second.proposals.length, 1, 'the same number proposes beside the second customer too');
+  await assert.rejects(
+    app.decideEnrichmentProposal({ actor: ACTOR, id: second.proposals[0].id, decision: 'accepted' }),
+    (error) => error?.code === 'PHONE_ALREADY_HELD' && error?.status === 409,
+    'a phone held beside another customer is refused, never re-linked');
+
+  const phones = app.modules.get('external-identity').service
+    .listWhere({ system: 'phone', externalId: '+393331234567' });
+  assert.equal(phones.length, 1, 'no second identity row is stored');
+  assert.equal(phones[0].subjectId, subjectA.id, 'the number stays on the first card');
+  assert.equal(proposedRows(app, subjectB).length, 1, 'the refused proposal stays proposed, not active');
+  const factsB = await app.readCustomerEnrichment(subjectB);
+  assert.deepEqual(factsB.items, [], 'the refused number never reads as a fact beside the second customer');
+});
+
 test('only a human decides a proposal; a read that fails and an empty source list refuse', async (t) => {
   const { app } = await scene(t, 'extraction-guards');
   const subject = await seedContact(app);
