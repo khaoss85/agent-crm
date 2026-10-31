@@ -1009,7 +1009,9 @@ export function createCustomerCardView(deps) {
     // or without a storage the buttons still navigate, and the creation
     // screen opens unpicked instead of inventing a customer.
     const pick = customerPickFor(navCtx, card);
-    const offer = el('button', undefined, 'Nuova offerta');
+    // Voce c2793930850a: the creation voices are tiles like Chiama and
+    // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
+    const offer = el('button', 'bo-scheda-tile', 'Nuova offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
     offer.addEventListener('click', () => {
@@ -1017,7 +1019,7 @@ export function createCustomerCardView(deps) {
       navigate('#/modules/opportunity/new');
     });
     row.appendChild(offer);
-    const appointment = el('button', undefined, 'Nuovo appuntamento');
+    const appointment = el('button', 'bo-scheda-tile', 'Nuovo appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
     appointment.addEventListener('click', () => {

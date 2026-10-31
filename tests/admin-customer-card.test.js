@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   createCustomerCardView,
   mergeLinkedIdentities,
@@ -1846,4 +1847,41 @@ test('e9b4fc2f: the composer names its honest limit and shows the text refusal',
     String(err.textContent ?? '').includes('limite: 2000 caratteri'),
     'the text refusal names the limit instead of a generic failure',
   );
+});
+
+// Voce c2793930850a: the four quick actions are equal tiles — Chiama,
+// Scrivi, Nuova offerta and Nuovo appuntamento all carry the tile class, so
+// the 2x2 grid never shows a bare overflowing button. The note field, its
+// button and the help sentence live in the note form block inside the card,
+// and the ✦ union note keeps its class (its card-text size is CSS).
+test('c2793930850a: quick actions are equal tiles, the note form holds field, button and help', async () => {
+  const mount = await renderCard(stubClient());
+  const byAction = (action) => mount.findAll('button')
+    .find((node) => node.getAttribute('data-action') === action);
+  for (const action of ['call-customer', 'compose-message', 'new-offer', 'new-appointment']) {
+    const tile = byAction(action);
+    assert.ok(tile, `the ${action} quick action exists`);
+    assert.ok(String(tile.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile'),
+      `${action} is a tile like the other three`);
+  }
+  const form = mount.findAll('div')
+    .find((node) => node.getAttribute('class') === 'bo-scheda-note-form');
+  assert.ok(form, 'the note field lives in the note form block');
+  assert.ok(form.findAll('input').some((node) => node.getAttribute('name') === 'noteBody'),
+    'the note field is inside the form');
+  assert.ok(form.findAll('button').some((node) => node.getAttribute('data-action') === 'add-note'),
+    'the note button is inside the form');
+  assert.ok(form.textContent.includes('Non viene inviata a nessuno'),
+    'the help sentence stays inside the card form');
+  // bo:shots at 1440 cut «Nuovo appuntamento» mid-word (appuntam/ento):
+  // overflow-wrap:anywhere shrinks the tile below its longest word, so the
+  // tile rule must wrap at spaces (break-word), never inside a word.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const tileRules = [...css.matchAll(/\.bo-scheda-tile\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(tileRules.length > 0, 'the tile rule exists in styles.css');
+  const tileRule = tileRules[tileRules.length - 1];
+  assert.ok(/overflow-wrap\s*:\s*break-word/.test(tileRule),
+    'the tile wraps at spaces (break-word), never mid-word (anywhere)');
+  assert.ok(!/overflow-wrap\s*:\s*anywhere/.test(tileRule),
+    'the tile rule no longer shrinks below its longest word');
 });
