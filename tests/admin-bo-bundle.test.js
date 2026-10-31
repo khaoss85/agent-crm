@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compileFunction } from 'node:vm';
+import { compileFunction, runInNewContext } from 'node:vm';
 import {
   adminBundleWiring,
   buildAdminBundle,
@@ -70,6 +70,99 @@ test('every bundled import resolves to a provided export (no undefined at load)'
       );
     }
   }
+});
+
+/**
+ * The bundle executes, not just parses: every library module runs in load
+ * order and every provided binding is defined. Regression guard for the
+ * review finding where declaration exports (`export const …`) were stripped
+ * without registering them, so `CONNECTOR_DETAIL_CHANNELS` threw a
+ * `TypeError` on `CONNECTOR_CATALOG.map` and the shell stuck on the splash.
+ * The entry (`app.js`) is excluded: it boots the shell (DOM + network) and
+ * is covered by the mount test and the CI browser shots.
+ */
+test('the bundle executes: every provided binding is defined, the catalog maps', () => {
+  resetAdminBundleCache();
+  const built = buildAdminBundle(PUBLIC_DIR);
+  const marker = '/* ---- app.js (bundled, do not edit) ---- */';
+  const cutAt = built.jsBody.indexOf(marker);
+  assert.ok(cutAt !== -1, 'the entry section is marked');
+  const universal = () => {
+    const fn = () => universal();
+    return new Proxy(fn, {
+      get: () => universal(),
+      set: () => true,
+      apply: () => universal(),
+      construct: () => universal(),
+    });
+  };
+  const sandbox = {
+    console,
+    document: universal(),
+    window: universal(),
+    navigator: universal(),
+    location: { hash: '', href: 'http://localhost/bo/', pathname: '/bo/' },
+    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+    fetch: () => new Promise(() => {}),
+    URL,
+    URLSearchParams,
+    TextEncoder,
+    TextDecoder,
+    Object,
+    Array,
+    JSON,
+    Math,
+    Reflect,
+    Proxy,
+    Promise,
+    Map,
+    Set,
+    WeakMap,
+    WeakSet,
+    Error,
+    TypeError,
+    RangeError,
+    SyntaxError,
+    RegExp,
+    Date,
+    Number,
+    String,
+    Boolean,
+    BigInt,
+    Symbol,
+    Intl,
+    queueMicrotask,
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame: () => {},
+    CustomEvent: class {},
+    EventTarget: class {},
+    FormData: class {},
+    Blob: class {},
+    File: class {},
+    crypto: { randomUUID: () => 'stub-uuid', getRandomValues: (a) => a },
+  };
+  sandbox.globalThis = sandbox;
+  const registry = runInNewContext(`${built.jsBody.slice(0, cutAt)}\n__bo;`, sandbox, { timeout: 15000 });
+  const wiring = new Map(adminBundleWiring().map((mod) => [mod.file, mod]));
+  for (const file of built.order) {
+    if (file === 'app.js') continue;
+    const ns = registry[`./${file}`];
+    assert.ok(ns && typeof ns === 'object', `${file} registers its namespace`);
+    for (const name of wiring.get(file)?.provided ?? []) {
+      assert.notEqual(ns[name], undefined, `${file} provides a defined ${name} (otherwise the splash sticks)`);
+    }
+  }
+  assert.ok(
+    Array.isArray(registry['./admin-connectors.js'].CONNECTOR_CATALOG),
+    'the catalog loads as an array',
+  );
+  assert.ok(
+    Array.isArray(registry['./admin-connector-detail.js'].CONNECTOR_DETAIL_CHANNELS),
+    'the detail channels map the catalog at load instead of throwing TypeError',
+  );
 });
 
 test('first access loads at most 3 JS files, all versioned', async () => {
