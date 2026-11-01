@@ -3,7 +3,7 @@
   "sourceSha": "4b136aed2301eba2850b3a06033919656160e4644fe64d551268d1f1f387d0f8",
   "environment": {
     "node": "v24.10.0",
-    "pg": "unresolvable"
+    "pg": "resolvable"
   },
   "authorities": [
     {
