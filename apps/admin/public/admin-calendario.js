@@ -1677,7 +1677,13 @@ export function createCalendarioView(deps) {
     const rows = teamRowsWithRoles(named, state.hiddenMembers, state.members);
     const draftPerson = typeof state.draftFill?.teamMemberId === 'string' ? state.draftFill.teamMemberId : '';
     const keptPerson = typeof state.manual?.teamMemberId === 'string' ? state.manual.teamMemberId : '';
-    const current = keptPerson !== '' ? keptPerson : draftPerson;
+    // The incoming draft decides the control: a draft naming someone outside
+    // the known team paints the fallback field, even when a previous choice
+    // is kept — otherwise the draft id would be assigned to a select with no
+    // matching option, the browser would clear it, and the snapshot would
+    // save an empty person, losing the drafted identity (fetta 10, P2 di #481).
+    const draftKnown = draftPerson === '' || rows.length === 0 || rows.some((row) => row.id === draftPerson);
+    const current = draftKnown ? (keptPerson !== '' ? keptPerson : draftPerson) : draftPerson;
     const known = rows.length > 0 && (current === '' || rows.some((row) => row.id === current));
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
