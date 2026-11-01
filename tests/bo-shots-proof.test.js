@@ -192,6 +192,48 @@ test('the calendario proof pair is a render of the current tree, never the pre-#
   }
 });
 
+// The reporting proof pair (BO-F5-01, backlog:8691acfcf102, continues #332)
+// carries the same freshness gate: the committed PNGs must differ from the
+// pre-#508 blobs (rendered before the C13 legenda/stato passes #508, the
+// sigle-persone pass #510 and the obiettivo-in-euro pass #515), so a view
+// restyle without a fresh `npm run bo:shots -- --screen reporting` render
+// fails here first.
+const STALE_REPORTING_BLOBS = Object.freeze({
+  'reporting-1440x1800.png': '5af8665555b5080231a1d01ca87bfe85ab66b56d24f9638ee6b3cf5b8981e',
+  'reporting-390x1600.png': 'd94e3291a2cd3f80522fea57cc4782d6ba4a5ff725077117d4c2f337a71f3811',
+});
+
+test('the reporting proof pair is a render of the current tree, never the pre-#508 pair', () => {
+  for (const [file, stale] of Object.entries(STALE_REPORTING_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale pre-#508 render: re-run \`npm run bo:shots -- --screen reporting\`, copy the pair here`,
+    );
+  }
+});
+
+// The nuovo-modulo proof pair (BO-F5-01, backlog:8691acfcf102, continues
+// #332) carries the same freshness gate: the committed PNGs must differ
+// from the #447-era blobs (rendered for design pass 6, before the reporting
+// view passes #508/#510/#515 that share admin-reporting.js), so a view
+// restyle without a fresh `npm run bo:shots -- --screen nuovo-modulo`
+// render fails here first.
+const STALE_NUOVO_MODULO_BLOBS = Object.freeze({
+  'nuovo-modulo-1440x1800.png': 'e31c83b6710d6772bf2235fa94227c9d5a567e5d08ac9e6dc5dc46522f3f7df5',
+  'nuovo-modulo-390x1600.png': 'c5a2bc63217b96c4c3b5e8494ffb4f043fe77a55cbd7beffbbb97bda6d4acea6',
+});
+
+test('the nuovo-modulo proof pair is a render of the current tree, never the #447-era pair', () => {
+  for (const [file, stale] of Object.entries(STALE_NUOVO_MODULO_BLOBS)) {
+    assert.notEqual(
+      sha256Hex(join(proofDir, file)),
+      stale,
+      `${file} is the stale #447-era render: re-run \`npm run bo:shots -- --screen nuovo-modulo\`, copy the pair here`,
+    );
+  }
+});
+
 // The assistente proof pair (BO-F4-04, backlog:27dde5f048ee) carries the
 // AC-3 viewable proof: the assistant panel with record sources, the
 // execution trace and the conserved session history, at desktop and phone
