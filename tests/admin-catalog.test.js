@@ -208,7 +208,8 @@ test('provider rows render read-only with tier labels and no invite once Stripe 
   assert.ok(text.includes('49 € / mese'), 'the recurring amount renders with its interval');
   assert.ok(text.includes('fino a 10: 12 €'), 'quantity tier labels render');
   assert.ok(text.includes('oltre: 10 €'), 'the open-ended tier renders');
-  assert.equal(mount.findAll('input').length, 1, 'the only field left is the search — prices are text, never inputs');
+  const fields = mount.findAll('input').map((node) => node.getAttribute('name')).sort();
+  assert.deepEqual(fields, ['category', 'search'], 'the only fields are search and the exact-value category box — prices are text, never inputs');
   assert.equal(mount.findAll('select').length, 2, 'Fonte and state are bounded menus');
 });
 
@@ -299,6 +300,14 @@ const SEARCH_TABLE = {
 
 function findSearch(mount) {
   return mount.findAll('input').find((node) => node.getAttribute('name') === 'search');
+}
+
+function findCategoryBox(mount) {
+  return mount.findAll('input').find((node) => node.getAttribute('name') === 'category');
+}
+
+function findSourceMenu(mount) {
+  return mount.findAll('select').find((node) => node.getAttribute('name') === 'source');
 }
 
 function rowCount(mount) {
@@ -398,6 +407,74 @@ test('the search text survives a chip filter change', async () => {
   await flush();
   assert.equal(findSearch(mount).value, 'corso', 'the chip re-render keeps the search text');
   assert.equal(rowCount(mount), 1, 'the search still filters after the re-render');
+});
+
+test('a category past the page chips stays reachable through the exact-value box', async () => {
+  // Review on #516 head 3cc943a0 (P2): chips cover only the loaded page,
+  // so a category beyond the 200-row page needs a server-only exact-value
+  // box. Typing there never refetches; Filtra sends the exact value.
+  const CODA_TABLE = {
+    products: [{
+      productId: 'p9',
+      sku: 'CODA-1',
+      name: 'Lezione di coda',
+      description: 'Una lezione.',
+      category: 'coda',
+      source: 'manual',
+      priceReadOnly: false,
+      active: true,
+      version: 1,
+      offers: [],
+    }],
+    summary: { manual: 1, byProvider: {}, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE, 'category=coda&limit=200': CODA_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const box = findCategoryBox(mount);
+  assert.ok(box, 'the exact-value category box renders');
+  assert.ok(!mount.textContent.includes('Lezione di coda'), 'the off-page category is not on screen yet');
+  const reads = client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length;
+  box.value = 'coda';
+  box.dispatch('input');
+  await flush();
+  assert.equal(
+    client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length,
+    reads,
+    'typing a category never refetches: the box is server-only',
+  );
+
+  clickButton(mount, 'Filtra');
+  await flush();
+  const sent = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
+  assert.equal(sent.searchParams.get('category'), 'coda', 'Filtra sends the exact box value');
+  assert.ok(mount.textContent.includes('Lezione di coda'), 'the server-filtered row renders');
+  assert.equal(findCategoryBox(mount).value, 'coda', 'the box keeps the applied filter after the reload');
+});
+
+test('Cancella ricerca keeps the Fonte menu on the server filter that made the rows', async () => {
+  // Review on #516 head 3cc943a0 (P2): the menu still names the server
+  // filter that produced the loaded page, so clearing the search repaints
+  // with it instead of silently dropping it on the next Filtra.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE } });
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({ source: 'manual' });
+  assert.equal(findSourceMenu(mount).value, 'manual', 'the menu names the server filter');
+
+  const search = findSearch(mount);
+  search.value = 'zzz';
+  search.dispatch('input');
+  assert.equal(rowCount(mount), 0, 'the search narrows to nothing');
+
+  clickButton(mount, 'Cancella ricerca');
+  assert.equal(findSourceMenu(mount).value, 'manual', 'clearing keeps the Fonte menu');
+  assert.equal(findSearch(mount).value, '', 'clearing empties the field');
+  assert.equal(rowCount(mount), 2, 'the server-filtered rows repaint');
 });
 
 test('an unavailable catalog says so instead of a blank screen', async () => {
@@ -1325,8 +1402,9 @@ test('choosing a source then reloading from the server shows the same rows', asy
 });
 
 test('the category chips carry the exact data value, live and on reload', async () => {
-  // The category no longer has a free-text box: chips hold the exact value
-  // the server compares case-sensitively, so live and reload agree.
+  // Chips hold the exact value the server compares case-sensitively, so
+  // live and reload agree; the exact-value box covers categories past the
+  // loaded page (see the box test above).
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ tables: { '': SEARCH_TABLE } });
