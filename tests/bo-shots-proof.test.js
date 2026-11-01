@@ -119,14 +119,15 @@ test('the catalogo proof pair is a render of the current tree, never the pre-#42
   }
 });
 
-// The personalizzazione proof pair (BO-F6-14, backlog:195703d9fff1) carries
-// the same freshness gate as login and catalogo: the committed PNGs must
-// differ from the #442 blobs (rendered before the #452 one-add-menu and
-// #457 Google connettori passes), so a restyle without a fresh
+// The personalizzazione proof pair (BO-F4-01 seguito, backlog:7543aabbd901,
+// after BO-F6-14 backlog:195703d9fff1) carries the same freshness gate as
+// login and catalogo: the committed PNGs must differ from the #514 blobs
+// (rendered before the Telegram channel #513 and the connettori passes
+// #519/#522), so a restyle without a fresh
 // `npm run bo:shots -- --screen personalizzazione` render fails here first.
 const STALE_PERSONALIZZAZIONE_BLOBS = Object.freeze({
-  'personalizzazione-1440x1800.png': '8a0c16dc64d3fed62566aac2f335aea797ff9e328a4d999bf99d46a932313957',
-  'personalizzazione-390x1600.png': '45308cb4c14aabfcf50a0522139170409a05e0b6d5e18579fef374dde6c0b397',
+  'personalizzazione-1440x1800.png': 'd3d9ed99565dfee82ff6e0eaac38a81a2345fca0a8fefecae5cb5ad6ed55f4c9',
+  'personalizzazione-390x1600.png': '694ff08692befc33a9ca761a4aa4ba64ead4d85bc51a66585db4f7509e0074d5',
 });
 
 test('the personalizzazione proof pair is a render of the current tree, never the pre-#377 pair', () => {
