@@ -428,6 +428,7 @@ import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
+import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
@@ -725,6 +726,19 @@ const personalizzazioneView = createPersonalizzazioneView({
   toast,
 });
 
+// Skill detail (BO-F4-02): the seven sections of one catalog skill —
+// cycle, activatable rules, real-format definition, worked example with
+// trace, used connectors, copyable coding-agent prompt. Same shape as the
+// connector detail; owns no write (activation stays in Personalizzazione).
+const skillDetailView = createSkillDetailView({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  navigate: (hash) => { window.location.hash = hash; },
+  storage: shellStorage,
+  toast,
+});
+
 // Spazi e accessi (BO-F0-06): spaces, team and AI switches of one space.
 // The spaces are the shell's own list (the sidebar switcher reads the same
 // source); picking one here switches the same active space everywhere.
@@ -894,6 +908,7 @@ function shellScreenFor(target) {
     case 'calendario': return { id: 'calendario', label: 'Calendario' };
     case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
     case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
+    case 'skill-detail': return { id: 'impostazioni', label: 'Dettaglio skill' };
     case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
     case 'profilo': return { id: '', label: 'Profilo' };
     case 'componenti': return { id: null, label: 'Componenti' };
@@ -1166,6 +1181,7 @@ async function route() {
     else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
     else if (target.view === 'personalizzazione') await personalizzazioneView.render();
+    else if (target.view === 'skill-detail') await skillDetailView.render(target.skill);
     else if (target.view === 'componenti') createUiCatalogView({ doc: document, mount: moduleView }).render();
     else if (target.view === 'spazi-accessi') await spaziAccessiView.render();
     else if (target.view === 'profilo') await profiloView.render();

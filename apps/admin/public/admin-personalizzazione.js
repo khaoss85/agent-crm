@@ -1008,6 +1008,20 @@ export function createPersonalizzazioneView(deps) {
         });
       }
       actions.appendChild(add);
+      // Skill cards open the BO-F4-02 detail: the seven sections of the
+      // skill, from the cycle to the copyable coding-agent prompt.
+      if (state.tab === 'skill' && typeof entry.name === 'string' && entry.name.startsWith('skill:')) {
+        const slug = entry.name.slice('skill:'.length);
+        const detail = el(doc, 'a', {
+          text: 'Dettagli',
+          attrs: { href: `#/personalizzazione/skill/${slug}` },
+        });
+        detail.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          go(`#/personalizzazione/skill/${slug}`);
+        });
+        actions.appendChild(detail);
+      }
       card.appendChild(actions);
       box.appendChild(card);
     }

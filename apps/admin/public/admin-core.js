@@ -457,10 +457,19 @@ export function parseModuleRoute(hash) {
   }
   // Personalizzazione route: #/personalizzazione (BO-F4-01). One screen with
   // its own tabs, like the connectors route above — tab state lives in the
-  // view, never in the hash — so any deeper path is invalid, not a lookup.
+  // view, never in the hash — plus the skill detail
+  // #/personalizzazione/skill/<slug> (BO-F4-02). The slug is
+  // grammar-checked here; catalog membership is checked by the detail view,
+  // which renders an honest "unknown skill" note without ever fetching for
+  // it — a hostile hash still never becomes a request path.
   if (rawParts.length && rawParts[0] === 'personalizzazione') {
-    if (rawParts.length !== 1) return { view: 'invalid' };
-    return { view: 'personalizzazione' };
+    if (rawParts.length === 1) return { view: 'personalizzazione' };
+    if (rawParts.length === 3 && rawParts[1] === 'skill') {
+      const skill = safeDecode(rawParts[2]);
+      if (skill === null || !/^[a-z][a-z0-9-]*$/.test(skill)) return { view: 'invalid' };
+      return { view: 'skill-detail', skill };
+    }
+    return { view: 'invalid' };
   }
   // Spazi e accessi route: #/spazi-accessi (BO-F0-06). One screen — spaces,
   // team, AI switches — reached from Impostazioni; any deeper path is
