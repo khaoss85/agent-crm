@@ -24,7 +24,6 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { spaceRoleLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -245,46 +244,147 @@ export function teamRows(named, hidden) {
 }
 
 /**
- * BO-F6-11 fetta 7 (specs/calendario.md C10): the Team toggle rows with the
- * names and Italian roles the member list carries — only when such a list
- * exists (`GET /api/spine/memberships`, read by the view). The roster is the
- * union of the named filter ids and the membership subjects, so the operator
- * picks from the real team instead of typing blind. Roles reuse
- * `spaceRoleLabel` from the Spazi e accessi view (MEM_ACC_REUSE): the same
- * Italian words for the same roles, no second vocabulary. A row without a
- * membership keeps no role line, never an invented one; initials and tint
- * stay the grid's own (`memberInitials`/`memberColorIndex`), so a block and
- * its toggle always match.
+ * Non-empty trimmed text, or null. Display names and mailboxes travel
+ * through here, so a blank or non-string value never becomes a person.
+ * @param {unknown} value
+ */
+function cleanPersonText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text === '' ? null : text;
+}
+
+/** Lower-cased person key for grouping, or null when there is none. @param {unknown} value */
+function personKeyOf(value) {
+  const text = cleanPersonText(value);
+  return text === null ? null : text.toLowerCase();
+}
+
+/**
+ * backlog:df55cf25 — one Team row per PERSON, never a technical id on
+ * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
+ * with the control-plane displayName/email beside each opaque subject) names
+ * the human behind every subject, and one human can hold several subjects
+ * (`github|…`, `google|…`, mailbox): subjects merge on the person key —
+ * mailbox first (unique per person), then display name — so Dan is one row
+ * called Dan. A group with no roster name and no mailbox paints the
+ * operator's own typed words, unless they look like a technical subject
+ * (a pipe id never paints anywhere); such a row falls back to the generic
+ * «Membro del team». No role line: the E2E takes the «Proprietario» chip out
+ * of the card — the Team card filters the week, roles live on in Spazi e
+ * accessi. Tint stays hashed on the stable primary subject and initials
+ * follow the painted name, so a block and its toggle always match.
  * @param {unknown} named @param {unknown} hidden @param {unknown} members
  */
-export function teamRowsWithRoles(named, hidden, members) {
-  const names = Array.isArray(named) ? named.filter((id) => typeof id === 'string' && id !== '') : [];
-  const subjects = Array.isArray(members)
-    ? members
-      .filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
-      .map((member) => member.subject)
-    : [];
-  const ids = [...new Set([...names, ...subjects])];
+export function personRows(named, hidden, members) {
+  const names = Array.isArray(named) ? [...new Set(named.filter((id) => typeof id === 'string' && id !== ''))] : [];
   const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
-  const roles = new Map();
-  if (Array.isArray(members)) {
-    for (const member of members) {
-      if (member && typeof member.subject === 'string' && member.subject !== '' && !roles.has(member.subject)) {
-        roles.set(member.subject, member.role);
-      }
+  const roster = Array.isArray(members)
+    ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
+    : [];
+  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null}>} */
+  const groups = [];
+  const bySubject = new Map();
+  const byEmail = new Map();
+  const nameless = new Map();
+  const groupFor = (subject) => bySubject.get(subject) ?? null;
+  for (const member of roster) {
+    const subject = member.subject;
+    if (bySubject.has(subject)) continue;
+    const email = personKeyOf(member.email);
+    const display = cleanPersonText(member.displayName);
+    const displayKey = personKeyOf(display);
+    let group = (email !== null && byEmail.get(email)) || null;
+    if (!group && displayKey !== null) group = nameless.get(displayKey) ?? byEmailNamed(email, displayKey, groups);
+    if (!group) {
+      group = { subjects: [], displayName: null, email: null };
+      groups.push(group);
+    }
+    group.subjects.push(subject);
+    bySubject.set(subject, group);
+    if (email !== null && group.email === null) {
+      group.email = member.email.trim();
+      byEmail.set(email, group);
+      if (displayKey !== null && nameless.get(displayKey) === group) nameless.delete(displayKey);
+    }
+    if (group.displayName === null && display !== null) group.displayName = display;
+    if (group.email === null && displayKey !== null && !nameless.has(displayKey)) nameless.set(displayKey, group);
+  }
+  // The operator's named filter joins in: a named subject joins its roster
+  // group, an unknown one stands alone with no roster name.
+  for (const id of names) {
+    if (!groupFor(id)) {
+      const group = { subjects: [id], displayName: null, email: null };
+      groups.push(group);
+      bySubject.set(id, group);
     }
   }
-  return ids.map((id) => {
-    const role = roles.get(id);
+  const order = [];
+  const seen = new Set();
+  const rosterSubjects = roster.map((member) => member.subject);
+  for (const id of [...names, ...rosterSubjects]) {
+    const group = groupFor(id);
+    if (group && !seen.has(group)) {
+      seen.add(group);
+      order.push(group);
+    }
+  }
+  return order.map((group) => {
+    const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
+    const name = group.displayName ?? group.email;
+    const listed = group.subjects.some((subject) => names.includes(subject));
+    const label = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
     return {
-      id,
-      active: names.includes(id) && !off.has(id),
-      listed: names.includes(id),
-      color: memberColorIndex(id),
-      initials: memberInitials(id),
-      role: typeof role === 'string' && role !== '' ? spaceRoleLabel(role) : null,
+      ids: [...group.subjects],
+      id: primary,
+      name,
+      label,
+      active: listed && !group.subjects.some((subject) => off.has(subject)),
+      listed,
+      color: memberColorIndex(primary),
+      initials: memberInitials(name ?? primary),
     };
   });
+}
+
+/**
+ * Email groups found through a display-name lookup: an email-less roster row
+ * whose display name matches an emailed group's name joins that person. A
+ * four-person team shares no display names across humans; without this merge
+ * one half-synced identity would split the same human in two rows.
+ */
+function byEmailNamed(email, displayKey, groups) {
+  if (email !== null || displayKey === null) return null;
+  return groups.find((group) => group.email !== null && personKeyOf(group.displayName) === displayKey) ?? null;
+}
+
+/**
+ * backlog:df55cf25 — the readable member name for a week subject: the
+ * roster person name when the roster knows the subject, else the
+ * operator's own typed words unless they look like a technical subject. A
+ * pipe id never paints — the caller omits the member part instead. Null
+ * when nothing readable names the subject.
+ * @param {unknown} subject @param {unknown} named @param {unknown} members
+ */
+export function resolveMemberName(subject, named, members) {
+  if (typeof subject !== 'string' || subject === '') return null;
+  const rows = personRows(named, [], members);
+  const group = rows.find((row) => row.ids.includes(subject));
+  if (group && group.name) return group.name;
+  // A readable nickname the phrase or slot named paints back; a pipe id is
+  // a technical subject and never paints — the caller omits it instead.
+  if (!subject.includes('|')) return subject;
+  return null;
+}
+
+/**
+ * backlog:df55cf25 — the painted Team label for a week subject: the person
+ * name, the operator's typed words, or the generic fallback. Used where a
+ * line needs a member unconditionally (draft and confirmation lines).
+ * @param {unknown} subject @param {unknown} named @param {unknown} members
+ */
+export function memberLabelFor(subject, named, members) {
+  return resolveMemberName(subject, named, members) ?? 'Membro del team';
 }
 
 /**
@@ -859,24 +959,24 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * BO-F6-11 fetta 6+7 (specs/calendario.md C10, C11): the Team card — one
-   * toggle row per team member. Without a member list the rows name the
-   * opaque filter identities, never people (fetta 6); when the server names
-   * the organization team the roster joins in and each row carries its
-   * Italian role, reused from Spazi e accessi (fetta 7). The checkbox tint
-   * and avatar reuse the member's grid colour and initials either way. A
-   * click on a listed member hides that member's blocks (C11) with no
-   * reload; a click on a roster member nobody named yet lists them and
-   * loads their week instead of typing blind. Hiding the selected block's
-   * member closes the detail card, since its selection border is gone.
-   * Every row is a button, so the raw-control walk stays green.
+   * backlog:df55cf25 (specs/calendario.md C10, C11): the Team card — one
+   * toggle row per PERSON, never a technical id. Each row paints the person
+   * name (displayName, mailbox, or the operator's own typed words), tinted
+   * and initialled to match its grid blocks. No role line: the E2E takes
+   * the «Proprietario» chip out of the card (roles live on in Spazi e
+   * accessi). A click on a listed person hides all of their identities'
+   * blocks (C11) with no reload; a click on a roster person nobody named yet
+   * lists all of their subjects and loads their week instead of typing
+   * blind. Hiding the selected block's member closes the detail card, since
+   * its selection border is gone. Every row is a button, so the raw-control
+   * walk stays green.
    */
   function renderTeam() {
     const panel = el(doc, 'div', { className: 'panel cal-team' });
     panel.appendChild(el(doc, 'h2', { text: 'Team' }));
     if (state.filterRow) panel.appendChild(state.filterRow);
     const named = parseMemberFilter(state.memberFilter);
-    const rows = teamRowsWithRoles(named, state.hiddenMembers, state.members);
+    const rows = personRows(named, state.hiddenMembers, state.members);
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
@@ -893,29 +993,24 @@ export function createCalendarioView(deps) {
           type: 'button',
           'aria-pressed': row.active ? 'true' : 'false',
           title: row.listed
-            ? (row.active ? `Nascondi ${row.id} dalla settimana` : `Mostra ${row.id} nella settimana`)
-            : `Mostra ${row.id} nella settimana`,
+            ? (row.active ? `Nascondi ${row.label} dalla settimana` : `Mostra ${row.label} nella settimana`)
+            : `Mostra ${row.label} nella settimana`,
         },
       });
       const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });
       toggle.appendChild(box);
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
-      toggle.appendChild(el(doc, 'span', { text: row.id }));
-      // The role paints only when a membership names one — an honest second
-      // line in the card's own hint voice, never an invented job title.
-      if (typeof row.role === 'string' && row.role !== '') {
-        toggle.appendChild(el(doc, 'span', { className: 'ui-hint', text: row.role }));
-      }
+      toggle.appendChild(el(doc, 'span', { text: row.label }));
       toggle.addEventListener('click', () => {
         // A toggle click is the operator's own choice: the roster auto-fill
         // no longer owns the filter from here on.
         state.autoTeam = false;
         const current = parseMemberFilter(state.memberFilter);
-        if (!current.includes(row.id)) {
-          // A roster member nobody named yet: list them and load their week,
-          // like «Mostra settimana» does for typed names.
-          state.memberFilter = [...current, row.id].join(', ');
-          state.hiddenMembers = state.hiddenMembers.filter((id) => id !== row.id);
+        if (!row.ids.every((id) => current.includes(id))) {
+          // A roster person nobody named yet: list all of their subjects and
+          // load their week, like «Mostra settimana» does for typed names.
+          state.memberFilter = [...current, ...row.ids.filter((id) => !current.includes(id))].join(', ');
+          state.hiddenMembers = state.hiddenMembers.filter((id) => !row.ids.includes(id));
           const next = parseMemberFilter(state.memberFilter);
           if (next.length > 0) void loadWeek(next);
           else renderAll();
@@ -923,12 +1018,12 @@ export function createCalendarioView(deps) {
         }
         const hidden = new Set(state.hiddenMembers);
         if (row.active) {
-          hidden.add(row.id);
+          for (const id of row.ids) hidden.add(id);
           // A hidden selection has no visible border: close its detail card.
           const selected = selectedRow();
-          if (selected && String(selected.teamMemberId ?? '') === row.id) state.selectedId = null;
+          if (selected && row.ids.includes(String(selected.teamMemberId ?? ''))) state.selectedId = null;
         } else {
-          hidden.delete(row.id);
+          for (const id of row.ids) hidden.delete(id);
         }
         state.hiddenMembers = [...hidden];
         renderAll();
@@ -1110,14 +1205,17 @@ export function createCalendarioView(deps) {
 
   /**
    * A week block: the whole block is one button, so a click selects it and
-   * opens the detail card (C6). Colour and initials come from the opaque
-   * member id; gray stays reserved for multi-participant rows, which
-   * team-week never returns (one member per booking), so it never paints.
+   * opens the detail card (C6). Colour comes from the stable opaque member
+   * id while initials follow the painted person name (backlog:df55cf25),
+   * like the Team toggle; gray stays reserved for multi-participant rows,
+   * which team-week never returns (one member per booking), so it never
+   * paints.
    * @param {any} row @param {{lane: number, lanes: number}} lane
    */
   function renderEvent(row, lane) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
     const classes = ['cal-event', `cal-m${memberColorIndex(row?.teamMemberId)}`];
+    const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
     const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
     if (selected) classes.push('cal-selected');
     const status = String(row?.status ?? 'booked');
@@ -1137,7 +1235,7 @@ export function createCalendarioView(deps) {
     const foot = el(doc, 'span', { className: 'cal-day-foot' });
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
-    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
     if (channelOf(row) === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     }
@@ -1280,7 +1378,13 @@ export function createCalendarioView(deps) {
     }
     const display = displayNameOf(row, linked);
     const customer = display ?? (linked ? linked.id : null);
-    const participants = [row?.teamMemberId, customer].filter((part) => typeof part === 'string' && part !== '');
+    // backlog:df55cf25 — the member part is a person name, never the opaque
+    // team subject: the roster person name when known, else the operator's
+    // own typed words, else nothing (a pipe id never paints). The customer
+    // fallback (label, then id as inert text) stays: the card must name whom
+    // the booking is for even without a profile.
+    const member = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
+    const participants = [member, customer].filter((part) => typeof part === 'string' && part !== '');
     if (participants.length > 0) {
       card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
     }
@@ -1462,7 +1566,7 @@ export function createCalendarioView(deps) {
   function renderDraft(draft) {
     const box = el(doc, 'div', { className: 'cal-draft' });
     box.appendChild(el(doc, 'p', {
-      text: `Bozza: ${draft.teamMemberId ?? '—'} · ${romeShortDay(draft.startsAt) ?? '?'} ${romeTime(draft.startsAt) ?? ''}–${romeTime(draft.endsAt) ?? ''}`,
+      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(draft.startsAt) ?? '?'} ${romeTime(draft.startsAt) ?? ''}–${romeTime(draft.endsAt) ?? ''}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
     return box;
@@ -1693,17 +1797,22 @@ export function createCalendarioView(deps) {
    */
   function renderPersonChoice(form) {
     const named = parseMemberFilter(state.memberFilter);
-    const rows = teamRowsWithRoles(named, state.hiddenMembers, state.members);
+    const rows = personRows(named, state.hiddenMembers, state.members);
     const draftPerson = typeof state.draftFill?.teamMemberId === 'string' ? state.draftFill.teamMemberId : '';
     const keptPerson = typeof state.manual?.teamMemberId === 'string' ? state.manual.teamMemberId : '';
+    // One option per person: the value stays the opaque identity the server
+    // books (the already-used subject when the person was named, else the
+    // roster's first subject), while the label is always the person name.
+    const groupOf = (subject) => rows.find((row) => row.ids.includes(subject)) ?? null;
+    const valueOf = (subject) => groupOf(subject)?.id ?? subject;
     // The incoming draft decides the control: a draft naming someone outside
     // the known team paints the fallback field, even when a previous choice
     // is kept — otherwise the draft id would be assigned to a select with no
     // matching option, the browser would clear it, and the snapshot would
     // save an empty person, losing the drafted identity (fetta 10, P2 di #481).
-    const draftKnown = draftPerson === '' || rows.length === 0 || rows.some((row) => row.id === draftPerson);
+    const draftKnown = draftPerson === '' || rows.length === 0 || groupOf(draftPerson) !== null;
     const current = draftKnown ? (keptPerson !== '' ? keptPerson : draftPerson) : draftPerson;
-    const known = rows.length > 0 && (current === '' || rows.some((row) => row.id === current));
+    const known = rows.length > 0 && (current === '' || groupOf(current) !== null);
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
       if (current !== '') input.value = current;
@@ -1713,15 +1822,13 @@ export function createCalendarioView(deps) {
       form.appendChild(input);
       return input;
     }
+    const shown = current === '' ? '' : valueOf(current);
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.map((row) => ({
-        value: row.id,
-        label: typeof row.role === 'string' && row.role !== '' ? `${row.id} · ${row.role}` : row.id,
-      }))];
-    const wrap = uiSelect(doc, { name: 'teamMemberId', value: current, options });
+      ...rows.map((row) => ({ value: row.id, label: row.label }))];
+    const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {
-      if (current !== '') select.value = current;
+      if (shown !== '') select.value = shown;
       const track = () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(select.value ?? '') };
       };
@@ -1786,7 +1893,13 @@ export function createCalendarioView(deps) {
     if (state.draftFill) {
       state.manualOpen = true;
       const draft = state.draftFill;
-      if (draft.teamMemberId) inputs.teamMemberId.value = String(draft.teamMemberId);
+      if (draft.teamMemberId) {
+        // The select offers one option per person: a draft naming a
+        // non-primary subject still lands on that person's option.
+        const people = personRows(parseMemberFilter(state.memberFilter), state.hiddenMembers, state.members);
+        const person = people.find((row) => row.ids.includes(String(draft.teamMemberId)));
+        inputs.teamMemberId.value = person ? person.id : String(draft.teamMemberId);
+      }
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
       if (draft.notes) inputs.notes.value = String(draft.notes);
       const dayKey = romeDayKey(draft.startsAt);
@@ -1810,7 +1923,7 @@ export function createCalendarioView(deps) {
     if (state.confirmed) {
       panel.appendChild(el(doc, 'p', {
         className: 'cal-ok',
-        text: `Prenotato: ${state.confirmed.teamMemberId ?? ''} · ${romeShortDay(state.confirmed.startsAt) ?? ''} ${romeTime(state.confirmed.startsAt) ?? ''}.`,
+        text: `Prenotato: ${memberLabelFor(state.confirmed.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(state.confirmed.startsAt) ?? ''} ${romeTime(state.confirmed.startsAt) ?? ''}.`,
       }));
     }
     return panel;

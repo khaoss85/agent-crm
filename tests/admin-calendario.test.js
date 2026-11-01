@@ -11,13 +11,15 @@ import {
   lanesFor,
   memberColorIndex,
   memberInitials,
+  memberLabelFor,
   openingWeekKeys,
   parseMemberFilter,
+  personRows,
+  resolveMemberName,
   romeMinutes,
   romeWeekKeys,
   slotInGrid,
   teamRows,
-  teamRowsWithRoles,
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
@@ -1818,49 +1820,77 @@ test('hiding the selected block member closes the detail card', async () => {
   assert.ok(!texts(mount, 'strong').includes('piega'));
 });
 
-// BO-F6-11 fetta 7 (specs/calendario.md C10): the roster rows carry the
-// names and Italian roles the member list names — only when one exists.
-test('teamRowsWithRoles unions the named filter and the roster with Italian roles', () => {
+// backlog:df55cf25 (E2E 01/11): one row per person with the real name, never
+// a technical id, no role chip. Three subjects of the same human (OAuth,
+// Google, mailbox) merge on the person key into a single Dan row.
+test('personRows merges one human across subjects with the display name', () => {
   const members = [
-    { subject: 'marco', role: 'operator' },
-    { subject: 'sara', role: 'owner' },
-    { subject: 'elena', role: 'observer' },
+    { subject: 'github|48571113', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'google|1049abc', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'dan@example.com', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'sara', role: 'operator', displayName: 'Sara', email: 'sara@example.com' },
   ];
-  const rows = teamRowsWithRoles(['marco'], ['sara'], members);
-  assert.equal(rows.length, 3, 'named plus roster-only, deduped');
-  assert.deepEqual(rows[0], {
-    id: 'marco', active: true, listed: true,
-    color: memberColorIndex('marco'), initials: 'MA', role: 'Operatore',
-  });
-  assert.deepEqual(rows[1], {
-    id: 'sara', active: false, listed: false,
-    color: memberColorIndex('sara'), initials: 'SA', role: 'Proprietario',
-  });
-  assert.deepEqual(rows[2], {
-    id: 'elena', active: false, listed: false,
-    color: memberColorIndex('elena'), initials: 'EL', role: 'Osservatore',
-  });
-  assert.deepEqual(teamRowsWithRoles(['marco'], [], null), [
-    {
-      id: 'marco', active: true, listed: true,
-      color: memberColorIndex('marco'), initials: 'MA', role: null,
-    },
-  ], 'no member list: named rows with no role line, never invented');
-  assert.deepEqual(teamRowsWithRoles([], [], []), [], 'no names and no roster: no rows');
-  assert.deepEqual(teamRowsWithRoles(null, undefined, 'nope'), [], 'non-lists stay empty');
+  const named = ['github|48571113', 'google|1049abc', 'dan@example.com'];
+  const rows = personRows(named, [], members);
+  assert.equal(rows.length, 2, 'three subjects of Dan are one row, plus Sara');
+  assert.deepEqual(rows[0].ids, ['github|48571113', 'google|1049abc', 'dan@example.com']);
+  assert.equal(rows[0].id, 'github|48571113', 'the named subject stays the booking identity');
+  assert.equal(rows[0].name, 'Dan', 'the roster displayName wins over the mailbox');
+  assert.equal(rows[0].label, 'Dan', 'the row paints the name, never a subject');
+  assert.equal(rows[0].active, true);
+  assert.equal(rows[0].listed, true);
+  assert.equal(rows[0].color, memberColorIndex('github|48571113'), 'tint stays on the stable subject');
+  assert.equal(rows[0].initials, 'DA', 'initials follow the painted name');
+  assert.ok(!('role' in rows[0]), 'no role chip on the row: the E2E takes Proprietario out of the card');
+  assert.equal(rows[1].label, 'Sara');
 });
 
-// The Team card lists the roster with Italian roles and loads the whole
+// A bare roster row (no displayName, no email) names nobody: the operator's
+// own typed words paint, unless they look like a technical subject — a pipe
+// id never reaches the screen.
+test('personRows never paints a technical subject id', () => {
+  const rows = personRows(['github|48571113', 'marco'], [], [{ subject: 'github|48571113', role: 'owner' }]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].label, 'Membro del team', 'an unnameable subject gets the generic label');
+  assert.equal(rows[1].label, 'marco', 'the typed nickname paints back');
+  assert.equal(resolveMemberName('github|48571113', ['github|48571113', 'marco'], [{ subject: 'github|48571113', role: 'owner' }]), null);
+  assert.equal(resolveMemberName('marco', ['github|48571113', 'marco'], [{ subject: 'github|48571113', role: 'owner' }]), 'marco');
+  assert.equal(memberLabelFor('github|48571113', ['github|48571113'], [{ subject: 'github|48571113', role: 'owner' }]), 'Membro del team');
+  assert.equal(memberLabelFor(undefined, [], null), 'Membro del team');
+});
+
+// The mailbox alone still identifies the person when no displayName travels.
+test('personRows falls back to the mailbox before typed words', () => {
+  const rows = personRows([], [], [{ subject: 'x|1', role: 'member', email: 'Sara@Example.com' }]);
+  assert.equal(rows.length, 1, 'roster-only subjects still list the person');
+  assert.equal(rows[0].name, 'Sara@Example.com');
+  assert.equal(rows[0].label, 'Sara@Example.com');
+  assert.equal(rows[0].listed, false, 'never named: not listed, not active');
+  assert.equal(rows[0].active, false);
+  assert.equal(rows[0].initials, 'SA');
+  assert.deepEqual(personRows(['marco'], [], null), [
+    {
+      ids: ['marco'], id: 'marco', name: null, label: 'marco',
+      active: true, listed: true,
+      color: memberColorIndex('marco'), initials: 'MA',
+    },
+  ], 'no member list: named rows keep the typed words, never invented');
+  assert.deepEqual(personRows([], [], []), [], 'no names and no roster: no rows');
+  assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
+});
+
+// The Team card lists the roster with person names and loads the whole
 // roster week on mount, without typing any name first
-// (backlog:0533362e8efe). The toggles stay for filtering.
-test('the Team card shows the roster roles and loads its week with no typing', async () => {
+// (backlog:0533362e8efe). The toggles stay for filtering. No role chips:
+// backlog:df55cf25 takes «Proprietario» out of the card.
+test('the Team card shows the roster names and loads its week with no typing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
     week: WEEK_TWO,
     memberships: [
-      { subject: 'marco', role: 'operator' },
-      { subject: 'sara', role: 'owner' },
+      { subject: 'marco', role: 'operator', displayName: 'Marco' },
+      { subject: 'sara', role: 'owner', displayName: 'Sara' },
     ],
   });
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
@@ -1871,8 +1901,9 @@ test('the Team card shows the roster roles and loads its week with no typing', a
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(texts(mount, 'h2').includes('Team'), 'the Team card paints');
   assert.equal(teamToggles(mount).length, 2, 'one toggle per roster member, no typing needed');
-  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'the operator role paints in Italian');
-  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Proprietario')), 'the owner role paints in Italian');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Marco')), 'the person name paints');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Sara')), 'the person name paints');
+  assert.ok(!texts(mount, 'span').some((text) => text === 'Operatore' || text === 'Proprietario'), 'no role chip in the card');
   const teamWeek = client.calls.find((call) => String(call.path).startsWith('/api/appointments/team-week'));
   assert.ok(teamWeek, 'the roster week loads on mount');
   assert.ok(String(teamWeek.path).includes('marco') && String(teamWeek.path).includes('sara'), 'the whole roster is listed, never typed');
@@ -1882,6 +1913,59 @@ test('the Team card shows the roster roles and loads its week with no typing', a
     0,
     'no text field while the roster is known: the team comes from the space',
   );
+});
+
+// backlog:df55cf25 (E2E 01/11): the roster knows Dan under three subjects —
+// one toggle called Dan, and the detail card names Dan, never the pipe ids.
+test('the Team card merges one human across roster subjects', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [
+      {
+        teamMemberId: 'github|48571113',
+        appointments: [{
+          id: 'd1', status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'github|48571113',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        }],
+      },
+      {
+        teamMemberId: 'google|1049abc',
+        appointments: [{
+          id: 'd2', status: 'booked',
+          startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z',
+          serviceKey: 'barba', teamMemberId: 'google|1049abc',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        }],
+      },
+    ],
+  };
+  const members = [
+    { subject: 'github|48571113', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'google|1049abc', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'dan@example.com', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ week, memberships: members });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(teamToggles(mount).length, 1, 'three subjects of Dan are one toggle row');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Dan')), 'the toggle names the person');
+  const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n') + texts(mount, 'p').join('\n');
+  assert.ok(!painted.includes('github|48571113'), 'no technical subject id on screen');
+  assert.ok(!painted.includes('google|1049abc'), 'no technical subject id on screen');
+  assert.ok(!painted.includes('dan@example.com'), 'the mailbox is one person, not a second row');
+  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card, 'the detail card opens');
+  assert.ok(card.textContent.includes('Dan, Ada'), 'the card names the person and the customer');
+  assert.ok(!card.textContent.includes('|'), 'no pipe id in the card');
 });
 
 // A roster nobody has to type still filters: hiding a roster member hides
@@ -2058,14 +2142,13 @@ test('a failed member-list reload repaints the fallback, never a stale roster', 
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(teamToggles(mount).length, 2, 'two roster toggles while the list resolves');
-  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'the roster role paints while the list resolves');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('marco')), 'the person paints while the list resolves');
   refused = true;
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(teamToggles(mount).length, 0, 'no toggles without names or a list');
-  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Operatore')), 'no stale role without a list');
-  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('Proprietario')), 'no stale role without a list');
+  assert.ok(!teamToggles(mount).some((node) => node.textContent.includes('marco')), 'no stale person without a list');
   assert.ok(
     texts(mount, 'p').some((text) => text.includes('Nomina le persone')),
     'the honest prompt is back instead of the stale roster',
