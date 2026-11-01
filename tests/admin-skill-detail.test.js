@@ -103,11 +103,27 @@ test('every catalog skill resolves to its kernel entry by unit name', () => {
 
 test('activation reads the space-package rows, never invents a state', () => {
   const entry = skillEntryFor(SPACE_PACKAGE_CATALOG, 'debug-crm-run');
-  assert.equal(skillActivation(entry, [{ unit: 'skill:debug-crm-run', status: 'active' }]), 'attiva');
-  assert.equal(skillActivation(entry, [{ unit: 'skill:debug-crm-run', status: 'draft' }]), 'da-attivare');
-  assert.equal(skillActivation(entry, []), 'da-attivare');
-  assert.equal(skillActivation(entry, null), 'da-attivare');
-  assert.equal(skillActivation(null, []), 'sconosciuta');
+  assert.equal(skillActivation(entry, [{ unit: 'skill:debug-crm-run', status: 'active', spaceId: 'presti' }], 'presti'), 'attiva');
+  assert.equal(skillActivation(entry, [{ unit: 'skill:debug-crm-run', status: 'draft', spaceId: 'presti' }], 'presti'), 'da-attivare');
+  assert.equal(skillActivation(entry, [], 'presti'), 'da-attivare');
+  assert.equal(skillActivation(entry, null, 'presti'), 'da-attivare');
+  assert.equal(skillActivation(null, [], 'presti'), 'sconosciuta');
+});
+
+test('one space row never decides another space displayed state', () => {
+  const entry = skillEntryFor(SPACE_PACKAGE_CATALOG, 'debug-crm-run');
+  const rows = [
+    { unit: 'skill:debug-crm-run', status: 'active', spaceId: 'spazio-a' },
+    { unit: 'skill:debug-crm-run', status: 'draft', spaceId: 'spazio-b' },
+  ];
+  assert.equal(skillActivation(entry, rows, 'spazio-a'), 'attiva');
+  assert.equal(skillActivation(entry, rows, 'spazio-b'), 'da-attivare');
+  // A row without a space never counts: fail closed, never another space.
+  assert.equal(skillActivation(entry, [{ unit: 'skill:debug-crm-run', status: 'active' }], 'spazio-b'), 'da-attivare');
+  // Without a selected space the state is unknown, not another space's.
+  assert.equal(skillActivation(entry, rows, ''), 'sconosciuta');
+  assert.equal(skillActivation(entry, rows, null), 'sconosciuta');
+  assert.equal(skillActivation(entry, rows, undefined), 'sconosciuta');
 });
 
 test('the six-step cycle cites the file and the verbatim string that declares it', () => {
@@ -251,7 +267,7 @@ test('the view renders all seven sections from the live catalog row', async () =
     mount,
     client: stubClient({
       calls,
-      rows: [{ unit: 'skill:debug-crm-run', status: 'active' }],
+      rows: [{ unit: 'skill:debug-crm-run', status: 'active', spaceId: 'presti' }],
       preview: { headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [] },
     }),
     storage: { getItem: () => 'presti', setItem: () => {} },
@@ -270,6 +286,49 @@ test('the view renders all seven sections from the live catalog row', async () =
   assert.ok(text.includes('bundle verify'), 'the copyable prompt paints on the page');
   assert.ok(!calls.some((path) => path.includes('debug-crm-run') && !path.includes('unit=')),
     'the slug never becomes a bare request path');
+});
+
+test('the detail fetches rows filtered by the selected space, like Personalizzazione', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const calls = [];
+  const view = createSkillDetailView({
+    doc,
+    mount,
+    client: stubClient({
+      calls,
+      rows: [{ unit: 'skill:debug-crm-run', status: 'active', spaceId: 'spazio-a' }],
+      preview: { headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [] },
+    }),
+    storage: { getItem: () => 'spazio-b', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('debug-crm-run');
+  await flush();
+  const records = calls.filter((path) => path.startsWith('/api/modules/space-package/records'));
+  assert.equal(records.length, 1, 'rows are read once');
+  assert.ok(records[0].includes('filter.spaceId=spazio-b'), `rows are filtered by the selected space, got ${records[0]}`);
+  assert.ok(!calls.some((path) => path.includes('limit=200')), 'no unfiltered read leaves');
+  const text = mount.textContent;
+  assert.ok(text.includes('da-attivare'), 'space A active row never shows as active in space B');
+  assert.ok(!text.includes('Stato in questo spazio: attiva.'), 'no other space state is displayed');
+});
+
+test('without a selected space the detail reads no rows at all', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const calls = [];
+  const view = createSkillDetailView({
+    doc,
+    mount,
+    client: stubClient({ calls }),
+    storage: { getItem: () => '', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('debug-crm-run');
+  await flush();
+  assert.deepEqual(calls, ['/api/space-packages/catalog'], 'only the catalog is read, never other spaces rows');
+  assert.ok(mount.textContent.includes('sconosciuta'), 'the state reads unknown without a space');
 });
 
 test('an unknown skill renders an honest note without ever fetching for it', async () => {

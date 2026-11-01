@@ -78,15 +78,21 @@ export function skillEntryFor(units, slug) {
 
 /**
  * The activation state of a skill in a space, from the space-package rows
- * (same rows the Personalizzazione BO-F4-01 reads). Never invented: a
- * missing row is "da attivare", never an error.
+ * (same rows the Personalizzazione BO-F4-01 reads, already filtered by
+ * space server-side). Never invented: a missing row is "da attivare",
+ * never an error. The match is on unit AND spaceId, so one space's row
+ * can never decide another space's displayed state; without a selected
+ * space the state is unknown, never read from other spaces' rows.
  * @param {any} entry
  * @param {Array<any> | null | undefined} rows
+ * @param {unknown} spaceId
  */
-export function skillActivation(entry, rows) {
+export function skillActivation(entry, rows, spaceId) {
   if (!entry || typeof entry.name !== 'string') return 'sconosciuta';
+  if (typeof spaceId !== 'string' || spaceId === '') return 'sconosciuta';
   const list = Array.isArray(rows) ? rows : [];
-  const row = list.find((item) => item !== null && typeof item === 'object' && item.unit === entry.name);
+  const row = list.find((item) => item !== null && typeof item === 'object'
+    && item.unit === entry.name && item.spaceId === spaceId);
   return row && row.status === 'active' ? 'attiva' : 'da-attivare';
 }
 
@@ -403,11 +409,15 @@ export function createSkillDetailView(deps) {
     const entry = skillEntryFor(units, slug);
     if (entry === null) return { error: null, entry: null, rows: [], preview: null, space };
     let rows = [];
-    try {
-      const read = await client.request('/api/modules/space-package/records?limit=200');
-      rows = Array.isArray(read?.items) ? read.items : [];
-    } catch {
-      rows = [];
+    if (space !== '') {
+      try {
+        const read = await client.request(
+          `/api/modules/space-package/records?filter.spaceId=${encodeURIComponent(space)}`,
+        );
+        rows = Array.isArray(read?.items) ? read.items : [];
+      } catch {
+        rows = [];
+      }
     }
     let preview = null;
     if (space !== '') {
@@ -522,7 +532,7 @@ export function createSkillDetailView(deps) {
       mount.appendChild(box);
       return;
     }
-    const activation = skillActivation(entry, rows);
+    const activation = skillActivation(entry, rows, space);
     const sections = detailSections({ entry, slug, activation, preview });
     const head = el(doc, 'div', { cls: 'bo-skill-head' });
     head.appendChild(el(doc, 'h2', { text: `Skill · ${entry.label ?? slug}` }));

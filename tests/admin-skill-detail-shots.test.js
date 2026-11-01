@@ -141,7 +141,7 @@ const client = {
   async request(path) {
     if (path === '/api/space-packages/catalog') return { units: UNITS };
     if (path.startsWith('/api/modules/space-package/records')) {
-      return { items: [{ unit: 'skill:debug-crm-run', status: 'active' }] };
+      return { items: [{ unit: 'skill:debug-crm-run', status: 'active', spaceId: 'locale' }] };
     }
     if (path.startsWith('/api/space-packages/preview')) {
       return { headline: 'Canali: 1 riga. La Prova non scrive nulla.', counts: [{ module: 'channel-connection', count: 1 }], uncomposed: [], writes: 0 };
