@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildSequenceClaim,
   buildSequenzaDettaglio,
   buildSequenzeElenco,
   createSequenzeView,
+  freshSequenceKey,
   loadSequenzeData,
   loadSequenzaSteps,
   personStatusLabel,
   personStepLabel,
+  proposeSequenceFromPhrase,
   sequenceChannelLabel,
   sequenceDayLabel,
   sequenceQuandoLine,
@@ -15,6 +18,8 @@ import {
   sequenceTriggerPills,
   enrollmentStatusLabel,
   sequenzaOfferedAction,
+  SEQUENCE_STEP_CHANNELS,
+  SEQUENCE_TRIGGER_CHOICES,
 } from '../apps/admin/public/admin-sequenze.js';
 import { buildShellNav } from '../apps/admin/public/admin-shell.js';
 import { parseModuleRoute, shellNavInput } from '../apps/admin/public/admin-core.js';
@@ -468,7 +473,7 @@ test('Nuova sequenza is the primary CTA with Crea con l’AI beside it', async (
   assert.ok(!mount.querySelector('.bo-seq-menu'), 'no menu is painted anymore');
 });
 
-test('Nuova sequenza names the manual next step in Italian, twice hides it', async () => {
+test('Nuova sequenza opens a panel with name, trigger and steps, twice hides it', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createSequenzeView({ doc, mount, client: stubClient() });
@@ -477,43 +482,47 @@ test('Nuova sequenza names the manual next step in Italian, twice hides it', asy
   const manual = () => mount.querySelector('button[data-action="new-manual"]');
   manual().dispatch('click', {});
   await flush();
-  assert.ok(mount.textContent.includes('la vedi qui appena è pronta'), 'the manual voice names the outcome, in Italian');
+  assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel asks the name');
+  assert.ok(mount.querySelector('select[name="seq-trigger"]'), 'the panel asks the trigger');
+  assert.ok(mount.querySelector('input[name="seq-step-0-template"]'), 'the panel asks the first step');
   assert.equal(manual().getAttribute('aria-expanded'), 'true');
-  assert.equal(manual().__focused, true, 'the repaint keeps keyboard focus on the voice');
+  const name = mount.querySelector('input[name="seq-name"]');
+  assert.equal(name.__focused, true, 'focus moves to the name field');
   manual().dispatch('click', {});
   await flush();
-  assert.ok(!mount.textContent.includes('la vedi qui appena è pronta'), 'a second press hides the hint');
+  assert.ok(!mount.querySelector('input[name="seq-name"]'), 'a second press hides the panel');
 });
 
-test('the AI voice focuses the shell AI bar instead of painting a help sentence', async () => {
-  const doc = createFakeDocument();
-  const aiInput = doc.createElement('input');
-  aiInput.setAttribute('class', 'bo-ai-input ui-field');
-  const docWithBar = {
-    ...doc,
-    querySelector: (selector) => (selector === '.bo-ai-input' ? aiInput : null),
-  };
-  const mount = createMount();
-  const view = createSequenzeView({ doc: docWithBar, mount, client: stubClient() });
-  await view.renderSequenze();
-  await flush();
-  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
-  await flush();
-  assert.equal(aiInput.__focused, true, 'the AI voice moves focus to the real AI bar');
-  assert.ok(!mount.textContent.includes('barra AI'), 'no invented help sentence is painted');
-});
-
-test('without the shell bar the AI voice keeps focus and paints no hint', async () => {
+test('the AI voice opens its own proposal panel, not the manual one', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const view = createSequenzeView({ doc, mount, client: stubClient() });
   await view.renderSequenze();
   await flush();
-  const ai = () => mount.querySelector('button[data-action="new-ai"]');
-  ai().dispatch('click', {});
+  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
   await flush();
-  assert.ok(!mount.textContent.includes('barra AI'), 'no hint without the bar');
-  assert.equal(ai().__focused, true, 'focus stays on the AI voice');
+  assert.ok(mount.querySelector('input[name="seq-ai-phrase"]'), 'the AI panel asks one sentence');
+  assert.ok(!mount.querySelector('input[name="seq-name"]'), 'the manual panel stays closed');
+  assert.equal(
+    mount.querySelector('button[data-action="new-ai"]').getAttribute('aria-expanded'), 'true',
+  );
+  const phrase = mount.querySelector('input[name="seq-ai-phrase"]');
+  assert.equal(phrase.__focused, true, 'focus moves to the phrase field');
+});
+
+test('the two panels exclude each other', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSequenzeView({ doc, mount, client: stubClient() });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.querySelector('input[name="seq-name"]'));
+  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.querySelector('input[name="seq-ai-phrase"]'), 'the AI panel opens');
+  assert.ok(!mount.querySelector('input[name="seq-name"]'), 'the manual panel closes');
 });
 
 test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', async () => {
@@ -628,8 +637,192 @@ test('the sequenze screen renders no raw control', async () => {
   assert.deepEqual(rawControls(mount), [], 'every control of the header carries a ui-* class');
   mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
   await flush();
-  assert.deepEqual(rawControls(mount), [], 'the manual hint adds no raw control');
+  assert.deepEqual(rawControls(mount), [], 'the manual panel adds no raw control');
+  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
+  await flush();
+  assert.deepEqual(rawControls(mount), [], 'the AI panel adds no raw control');
+  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
+  await flush();
   mount.querySelector('button[data-open="seq-bentornato"]').dispatch('click', {});
   await flush();
   assert.deepEqual(rawControls(mount), [], 'the dettaglio adds no raw control');
+});
+
+test('proposeSequenceFromPhrase drafts a complete sequence from one sentence', () => {
+  const whatsapp = proposeSequenceFromPhrase('Ricontatta su WhatsApp i nuovi contatti dopo la prova');
+  assert.equal(whatsapp.proposal.triggerLabel, 'nuovo contatto WhatsApp');
+  assert.ok(whatsapp.proposal.steps.some((step) => step.channel === 'whatsapp'), 'names the channel it heard');
+  assert.ok(whatsapp.proposal.name.startsWith('Sequenza: '));
+  const offer = proposeSequenceFromPhrase('Dopo ogni offerta inviata, due email di sollecito');
+  assert.equal(offer.proposal.triggerLabel, 'offerta inviata');
+  assert.deepEqual(offer.proposal.steps.map((step) => step.channel), ['email']);
+  const fallback = proposeSequenceFromPhrase('Segui i nuovi arrivi');
+  assert.equal(fallback.proposal.triggerLabel, 'lead dal sito');
+  assert.deepEqual(fallback.proposal.steps.map((step) => step.channel), ['whatsapp', 'email']);
+  assert.deepEqual(fallback.proposal.steps.map((step) => step.dayOffset), [0, 2]);
+  assert.deepEqual(proposeSequenceFromPhrase('   '), { error: 'Scrivi una frase: da cosa parte e su quali canali.' });
+});
+
+test('buildSequenceClaim validates the hand-written panel before any POST', () => {
+  assert.deepEqual(SEQUENCE_TRIGGER_CHOICES, ['lead dal sito', 'nuovo contatto WhatsApp', 'offerta inviata']);
+  assert.deepEqual(SEQUENCE_STEP_CHANNELS, ['whatsapp', 'sms', 'email']);
+  const good = buildSequenceClaim({
+    name: 'Bentornato',
+    trigger: 'lead dal sito',
+    steps: [{ channel: 'whatsapp', wait: 0, template: 'Ciao' }],
+  });
+  assert.equal(good.claim.name, 'Bentornato');
+  assert.equal(good.claim.triggerLabel, 'lead dal sito');
+  assert.equal(good.claim.stopLabel, null);
+  assert.deepEqual(good.claim.steps, [{
+    dayOffset: 0, channel: 'whatsapp', templateName: 'Ciao', templateLanguage: 'it', templateVars: [],
+  }]);
+  assert.equal(buildSequenceClaim({ name: '  ', trigger: 'lead dal sito', steps: [{ channel: 'whatsapp', wait: 0, template: 'Ciao' }] }).error, 'Dai un nome alla sequenza.');
+  assert.ok(buildSequenceClaim({ name: 'X', trigger: 'luna piena', steps: [{ channel: 'whatsapp', wait: 0, template: 'Ciao' }] }).error.includes('Scegli da cosa parte'));
+  assert.ok(buildSequenceClaim({ name: 'X', trigger: 'lead dal sito', steps: [] }).error.includes('1 a 32 passi'));
+  assert.ok(buildSequenceClaim({ name: 'X', trigger: 'lead dal sito', steps: [{ channel: 'piccione', wait: 0, template: 'Ciao' }] }).error.includes('Passo 1'));
+  assert.ok(buildSequenceClaim({ name: 'X', trigger: 'lead dal sito', steps: [{ channel: 'sms', wait: 400, template: 'Ciao' }] }).error.includes('0 a 365'));
+  assert.ok(buildSequenceClaim({ name: 'X', trigger: 'lead dal sito', steps: [{ channel: 'sms', wait: 1, template: '  ' }] }).error.includes('nome al messaggio'));
+});
+
+test('freshSequenceKey never repeats a panel key', () => {
+  const first = freshSequenceKey();
+  const second = freshSequenceKey();
+  assert.ok(first.startsWith('bo-seq-'));
+  assert.notEqual(first, second);
+});
+
+/** A creation drive: POST /api/sequences/create stores, later reads list it. */
+function createDriveClient() {
+  const calls = [];
+  const stored = [];
+  return {
+    calls,
+    request: async (path, options = {}) => {
+      const body = typeof options.body === 'string' && options.body !== '' ? JSON.parse(options.body) : options.body;
+      calls.push({ path, method: options.method ?? 'GET', body });
+      if (path === '/api/schema') return { domains: { sequences: { sequencesContract: 1 } } };
+      if (path.startsWith('/api/modules/sequence/records?')) return { items: stored.map((row) => ({ ...row })) };
+      if (path.startsWith('/api/modules/sequence-enrollment/records?')) return { items: [] };
+      if (path.startsWith('/api/modules/sequence-send/records?')) return { items: [] };
+      if (path.startsWith('/api/modules/sequence-step/records?')) return { items: [] };
+      if (path === '/api/sequences/create' && (options.method ?? 'GET') === 'POST') {
+        const sequence = { id: stored.length + 1, status: 'draft', spaceId: body.spaceId, sourceKey: body.sourceKey, name: body.name, triggerLabel: body.triggerLabel ?? null, stopLabel: body.stopLabel ?? null };
+        stored.push(sequence);
+        return { sequence, steps: [], replayed: false };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+}
+
+function setField(mount, name, value, event = 'input') {
+  const node = mount.querySelector(`input[name="${name}"]`);
+  node.value = value;
+  node.dispatch(event, {});
+  return node;
+}
+
+test('Nuova sequenza creates through one POST and shows it in the elenco', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = createDriveClient();
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  setField(mount, 'seq-name', 'Bentornato PR');
+  mount.querySelector('select[name="seq-trigger"]').value = 'nuovo contatto WhatsApp';
+  mount.querySelector('select[name="seq-trigger"]').dispatch('change', {});
+  setField(mount, 'seq-step-0-template', 'Primo ciao');
+  mount.querySelector('button[data-action="step-add"]').dispatch('click', {});
+  await flush();
+  mount.querySelector('select[name="seq-step-1-channel"]').value = 'email';
+  mount.querySelector('select[name="seq-step-1-channel"]').dispatch('change', {});
+  setField(mount, 'seq-step-1-wait', '2');
+  setField(mount, 'seq-step-1-template', 'Ritroviamoci');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  const posts = client.calls.filter((call) => call.path === '/api/sequences/create');
+  assert.equal(posts.length, 1, 'exactly one creation POST');
+  assert.equal(posts[0].body.spaceId, 'presti');
+  assert.ok(typeof posts[0].body.sourceKey === 'string' && posts[0].body.sourceKey !== '');
+  assert.equal(posts[0].body.name, 'Bentornato PR');
+  assert.equal(posts[0].body.triggerLabel, 'nuovo contatto WhatsApp');
+  assert.equal(posts[0].body.steps.length, 2);
+  assert.deepEqual(posts[0].body.steps[1], {
+    dayOffset: 2, channel: 'email', templateName: 'Ritroviamoci', templateLanguage: 'it', templateVars: [],
+  });
+  assert.ok(!mount.querySelector('input[name="seq-name"]'), 'the panel closes after the creation');
+  assert.ok(mount.textContent.includes('Bentornato PR'), 'the elenco shows the new sequence');
+  assert.ok(mount.textContent.includes('Quando nuovo contatto WhatsApp'), 'the new detail names its trigger');
+});
+
+test('a double press on Crea still posts once', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = createDriveClient();
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  setField(mount, 'seq-name', 'Senza doppioni');
+  setField(mount, 'seq-step-0-template', 'Ciao');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  assert.equal(client.calls.filter((call) => call.path === '/api/sequences/create').length, 1);
+});
+
+test('a refused creation says so in Italian and keeps the panel', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = createDriveClient();
+  const client = {
+    calls: inner.calls,
+    request: async (path, options = {}) => {
+      if (path === '/api/sequences/create') {
+        const error = new Error('denied here');
+        error.status = 500;
+        throw error;
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  setField(mount, 'seq-name', 'Mai creata');
+  setField(mount, 'seq-step-0-template', 'Ciao');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Non riesco a creare la sequenza adesso'), 'an Italian failure, never a code');
+  assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open with its text');
+});
+
+test('Crea con l\u2019AI proposes without a POST and creates only on confirm', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = createDriveClient();
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-ai"]').dispatch('click', {});
+  await flush();
+  setField(mount, 'seq-ai-phrase', 'Dopo ogni offerta inviata, due email di sollecito');
+  mount.querySelector('button[data-action="ai-propose"]').dispatch('click', {});
+  await flush();
+  assert.equal(client.calls.filter((call) => call.path === '/api/sequences/create').length, 0, 'proposing never posts');
+  assert.ok(mount.textContent.includes('Quando offerta inviata'), 'the preview names the trigger');
+  assert.ok(mount.textContent.includes('Email'), 'the preview names the channel');
+  mount.querySelector('button[data-action="ai-confirm"]').dispatch('click', {});
+  await flush();
+  const posts = client.calls.filter((call) => call.path === '/api/sequences/create');
+  assert.equal(posts.length, 1, 'confirming posts exactly once');
+  assert.equal(posts[0].body.triggerLabel, 'offerta inviata');
+  assert.ok(mount.textContent.includes('Quando offerta inviata'), 'the elenco shows the confirmed sequence');
 });

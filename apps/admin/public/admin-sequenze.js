@@ -31,6 +31,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { humanWriteError } from './admin-core.js';
 
 /** How many rows each module read takes: one page, said out loud. */
 export const SEQUENZE_READ_LIMIT = 200;
@@ -72,7 +73,7 @@ function nonEmptyText(value) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiSelect } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian label for a sequence state; unknown states say so, never blank.
@@ -212,6 +213,132 @@ export function romeDayTime(value) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/**
+ * The triggers «Nuova sequenza» offers (backlog:1d0986a01a7b): three named
+ * starts, never a free text the package could not match to an enrollment
+ * rule. The label rides the record as `triggerLabel`.
+ */
+export const SEQUENCE_TRIGGER_CHOICES = Object.freeze([
+  'lead dal sito',
+  'nuovo contatto WhatsApp',
+  'offerta inviata',
+]);
+
+/**
+ * The channels a hand-written step can use: one-to-one follow-up channels.
+ * The package accepts any channel, but the panel offers only these three —
+ * a said-out-loud choice, not a server rule.
+ */
+export const SEQUENCE_STEP_CHANNELS = Object.freeze(['whatsapp', 'sms', 'email']);
+
+/** Template titles the AI proposal names for the first steps, in order. */
+const AI_TEMPLATE_TITLES = Object.freeze(['Primo contatto', 'Promemoria', 'Ultimo invito']);
+
+/** Progressive waits (days) the AI proposal gives its steps when the phrase names none. */
+const AI_DEFAULT_WAITS = Object.freeze([0, 2, 7]);
+
+/**
+ * A fresh caller-supplied idempotency key for one creation panel: retries
+ * and double clicks replay under it, two panels never share it.
+ */
+export function freshSequenceKey() {
+  try {
+    const uuid = globalThis.crypto?.randomUUID?.();
+    if (typeof uuid === 'string' && uuid !== '') return `bo-seq-${uuid}`;
+  } catch {
+    // No secure randomness here: the dated fallback below stays unique.
+  }
+  return `bo-seq-${Date.now().toString(36)}-${Math.floor(Math.random() * 0xffffffff).toString(36)}`;
+}
+
+/**
+ * The AI draft from one Italian sentence (backlog:1d0986a01a7b): a complete
+ * sequence — name, trigger and steps — from deterministic rules over the
+ * phrase, never a generation. The caller creates it only on confirm, so
+ * this function never touches the network. Returns `{ proposal }` or
+ * `{ error }` in plain Italian.
+ * @param {unknown} phrase
+ */
+export function proposeSequenceFromPhrase(phrase) {
+  const text = typeof phrase === 'string' ? phrase.trim() : '';
+  if (text === '') return { error: 'Scrivi una frase: da cosa parte e su quali canali.' };
+  const lower = text.toLowerCase();
+  const trigger = lower.includes('offert') || lower.includes('preventiv')
+    ? 'offerta inviata'
+    : lower.includes('whatsapp')
+      ? 'nuovo contatto WhatsApp'
+      : 'lead dal sito';
+  const channels = [];
+  for (const channel of ['whatsapp', 'sms', 'email']) {
+    const named = channel === 'email' ? ['email', 'mail'] : [channel];
+    if (named.some((word) => lower.includes(word)) && !channels.includes(channel)) channels.push(channel);
+  }
+  if (channels.length === 0) channels.push('whatsapp', 'email');
+  const picked = channels.slice(0, 4);
+  const words = text.split(/\s+/).slice(0, 6).join(' ');
+  const name = `Sequenza: ${words.length > 48 ? `${words.slice(0, 48)}…` : words}`;
+  return {
+    proposal: Object.freeze({
+      name,
+      triggerLabel: trigger,
+      steps: Object.freeze(picked.map((channel, index) => Object.freeze({
+        channel,
+        dayOffset: AI_DEFAULT_WAITS[index] ?? (7 * (index - 1)),
+        templateName: AI_TEMPLATE_TITLES[index] ?? `Passo ${index + 1}`,
+        templateLanguage: 'it',
+        templateVars: Object.freeze([]),
+      }))),
+    }),
+  };
+}
+
+/**
+ * Validate the hand-written panel into the create-sequence claim, or answer
+ * the first problem in plain Italian. Pure: the server validates fail-closed
+ * again, this only saves a round trip.
+ * @param {{ name?: unknown, trigger?: unknown, steps?: Array<any> }} form
+ */
+export function buildSequenceClaim(form) {
+  const record = form && typeof form === 'object' ? form : {};
+  const name = typeof record.name === 'string' ? record.name.trim() : '';
+  if (name === '') return { error: 'Dai un nome alla sequenza.' };
+  if (name.length > 200) return { error: 'Il nome è troppo lungo: al massimo 200 caratteri.' };
+  if (!SEQUENCE_TRIGGER_CHOICES.includes(record.trigger)) {
+    return { error: 'Scegli da cosa parte: lead dal sito, nuovo contatto WhatsApp o offerta inviata.' };
+  }
+  const rows = Array.isArray(record.steps) ? record.steps : [];
+  if (rows.length === 0 || rows.length > 32) return { error: 'Aggiungi da 1 a 32 passi.' };
+  const steps = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] && typeof rows[index] === 'object' ? rows[index] : {};
+    if (!SEQUENCE_STEP_CHANNELS.includes(row.channel)) {
+      return { error: `Passo ${index + 1}: scegli WhatsApp, SMS o Email.` };
+    }
+    const wait = typeof row.wait === 'string' && row.wait !== '' ? Number(row.wait) : row.wait;
+    if (!Number.isInteger(wait) || wait < 0 || wait > 365) {
+      return { error: `Passo ${index + 1}: l'attesa è un numero di giorni da 0 a 365.` };
+    }
+    const template = typeof row.template === 'string' ? row.template.trim() : '';
+    if (template === '') return { error: `Passo ${index + 1}: dai un nome al messaggio.` };
+    if (template.length > 128) return { error: `Passo ${index + 1}: il nome del messaggio è troppo lungo.` };
+    steps.push({
+      dayOffset: wait,
+      channel: row.channel,
+      templateName: template,
+      templateLanguage: 'it',
+      templateVars: [],
+    });
+  }
+  return {
+    claim: {
+      name,
+      triggerLabel: record.trigger,
+      stopLabel: null,
+      steps,
+    },
+  };
 }
 
 /**
@@ -653,20 +780,13 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     error: '',
     loaded: false,
     space: null,
-    hint: '',
+    creating: null,
+    aiPanel: null,
   };
 
-  // The shell's AI bar is the real creation entry for the AI button: its
-  // sequenze placeholder already says what to write, so pressing the button
-  // moves keyboard focus to it instead of painting a help sentence the
-  // prototype has not. Without the bar (a standalone mount) the button
-  // just keeps focus: no invented text, no dead control.
-  function focusAiBar() {
-    if (!documentNode || typeof documentNode.querySelector !== 'function') return false;
-    const bar = documentNode.querySelector('.bo-ai-input');
-    if (!bar || typeof bar.focus !== 'function') return false;
-    bar.focus();
-    return true;
+  /** One blank step row for the hand-written panel. */
+  function blankStep() {
+    return { channel: 'whatsapp', wait: 0, template: '' };
   }
   // Repainting the view swaps the button node that had keyboard focus, so a
   // press re-focuses its own button after paint() — Tab continues from there.
@@ -678,9 +798,9 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   /**
    * The prototype's header voices, top-right (owner 31/10): «Nuova sequenza»
    * is the primary CTA and «✦ Crea con l'AI» sits beside it in the
-   * assistant's colours. Creation itself belongs to the pilot (manual → the
-   * package operations, AI → the assistant seam), so a press only names the
-   * next step in plain Italian — never a fake record.
+   * assistant's colours. Each opens its own creation panel below the header —
+   * a hand-written one and a phrase-to-proposal one — and both create only
+   * through `POST /api/sequences/create`, never a fake record.
    */
   function renderNewActions() {
     const wrap = el(documentNode, 'div', 'bo-seq-actions');
@@ -691,31 +811,275 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       label: 'Nuova sequenza',
       attrs: {
         'data-action': 'new-manual',
-        'aria-expanded': state.hint !== '' ? 'true' : 'false',
+        'aria-expanded': state.creating !== null ? 'true' : 'false',
       },
     });
     manual.addEventListener('click', () => {
-      state.hint = state.hint !== ''
-        ? ''
-        : 'La nuova sequenza si crea dallo spazio con un nome, un trigger e i passi: la vedi qui appena è pronta.';
+      state.aiPanel = null;
+      state.creating = state.creating !== null ? null : {
+        key: freshSequenceKey(), name: '', trigger: SEQUENCE_TRIGGER_CHOICES[0], steps: [blankStep()], error: '', busy: false,
+      };
       paint();
-      refocusButton('new-manual');
+      if (state.creating !== null) {
+        const name = mount.querySelector('input[name="seq-name"]');
+        if (name && typeof name.focus === 'function') name.focus();
+        else refocusButton('new-manual');
+      } else refocusButton('new-manual');
     });
     wrap.appendChild(manual);
     // Assistant colours (agent-card/agent-line/agent-ink, like the scheda
     // «Chiedi all'AI» voice); el() adds the ui-btn system classes.
     const ai = el(documentNode, 'button', 'bo-seq-ai', '✦ Crea con l\u2019AI');
     ai.setAttribute('data-action', 'new-ai');
+    ai.setAttribute('aria-expanded', state.aiPanel !== null ? 'true' : 'false');
     ai.addEventListener('click', () => {
-      state.hint = '';
+      state.creating = null;
+      state.aiPanel = state.aiPanel !== null ? null : { phrase: '', proposal: null, error: '', busy: false };
       paint();
-      if (!focusAiBar()) refocusButton('new-ai');
+      if (state.aiPanel !== null) {
+        const phrase = mount.querySelector('input[name="seq-ai-phrase"]');
+        if (phrase && typeof phrase.focus === 'function') phrase.focus();
+        else refocusButton('new-ai');
+      } else refocusButton('new-ai');
     });
     wrap.appendChild(ai);
-    if (state.hint !== '') {
-      wrap.appendChild(el(documentNode, 'p', 'bo-seq-hint', state.hint));
-    }
     return wrap;
+  }
+
+  /**
+   * The hand-written panel: name, trigger and steps (channel, wait days,
+   * template). Fields write into `state.creating` on input, so a repaint
+   * never eats what the operator typed.
+   */
+  function renderManualPanel() {
+    const form = state.creating;
+    const panel = el(documentNode, 'section', 'bo-seq-panel');
+    panel.appendChild(el(documentNode, 'h3', undefined, 'Nuova sequenza'));
+    if (form.error !== '') panel.appendChild(el(documentNode, 'p', 'bo-seq-create-error', form.error));
+    const nameLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Nome');
+    const name = el(documentNode, 'input', 'ui-field', undefined);
+    name.setAttribute('type', 'text');
+    name.setAttribute('name', 'seq-name');
+    name.value = form.name;
+    name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
+    nameLabel.appendChild(name);
+    panel.appendChild(nameLabel);
+    const triggerLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Quando parte');
+    const triggerWrap = uiSelect(documentNode, {
+      name: 'seq-trigger',
+      value: form.trigger,
+      options: SEQUENCE_TRIGGER_CHOICES.map((choice) => ({ value: choice, label: choice })),
+    });
+    const trigger = triggerWrap.querySelector('select');
+    if (trigger) trigger.addEventListener('change', () => { form.trigger = String(trigger.value ?? ''); });
+    triggerLabel.appendChild(triggerWrap);
+    panel.appendChild(triggerLabel);
+    panel.appendChild(el(documentNode, 'h4', undefined, 'Passi'));
+    form.steps.forEach((step, index) => {
+      const row = el(documentNode, 'div', 'bo-seq-step-edit');
+      const channelWrap = uiSelect(documentNode, {
+        name: `seq-step-${index}-channel`,
+        value: step.channel,
+        options: SEQUENCE_STEP_CHANNELS.map((channel) => ({ value: channel, label: sequenceChannelLabel(channel) })),
+      });
+      const channel = channelWrap.querySelector('select');
+      if (channel) {
+        channel.setAttribute('aria-label', `Passo ${index + 1}: canale`);
+        channel.addEventListener('change', () => { step.channel = String(channel.value ?? ''); });
+      }
+      row.appendChild(channelWrap);
+      const wait = el(documentNode, 'input', 'ui-field', undefined);
+      wait.setAttribute('type', 'number');
+      wait.setAttribute('name', `seq-step-${index}-wait`);
+      wait.setAttribute('min', '0');
+      wait.setAttribute('max', '365');
+      wait.setAttribute('aria-label', `Passo ${index + 1}: attesa in giorni`);
+      wait.value = String(step.wait);
+      wait.addEventListener('input', () => {
+        const parsed = Number(String(wait.value ?? ''));
+        step.wait = Number.isInteger(parsed) ? parsed : String(wait.value ?? '');
+      });
+      row.appendChild(wait);
+      const template = el(documentNode, 'input', 'ui-field', undefined);
+      template.setAttribute('type', 'text');
+      template.setAttribute('name', `seq-step-${index}-template`);
+      template.setAttribute('aria-label', `Passo ${index + 1}: nome del messaggio`);
+      template.value = step.template;
+      template.addEventListener('input', () => { step.template = String(template.value ?? ''); });
+      row.appendChild(template);
+      if (form.steps.length > 1) {
+        const remove = uiButton(documentNode, {
+          variant: 'secondary', label: 'Togli', attrs: { 'data-action': 'step-remove', 'data-index': String(index) },
+        });
+        remove.addEventListener('click', () => {
+          form.steps.splice(index, 1);
+          form.error = '';
+          paint();
+        });
+        row.appendChild(remove);
+      }
+      panel.appendChild(row);
+    });
+    const add = uiButton(documentNode, {
+      variant: 'secondary', label: 'Aggiungi un passo', attrs: { 'data-action': 'step-add' },
+    });
+    add.addEventListener('click', () => {
+      if (form.steps.length < 32) form.steps.push(blankStep());
+      form.error = '';
+      paint();
+    });
+    panel.appendChild(add);
+    const row = el(documentNode, 'div', 'bo-seq-btns');
+    const create = uiButton(documentNode, {
+      variant: 'cta', label: 'Crea la sequenza', attrs: { 'data-action': 'create-manual' },
+    });
+    if (form.busy) create.setAttribute('disabled', 'true');
+    create.addEventListener('click', () => void submitManualCreate());
+    const cancel = uiButton(documentNode, {
+      variant: 'secondary', label: 'Annulla', attrs: { 'data-action': 'cancel-create' },
+    });
+    cancel.addEventListener('click', () => { state.creating = null; paint(); refocusButton('new-manual'); });
+    row.appendChild(create);
+    row.appendChild(cancel);
+    panel.appendChild(row);
+    return panel;
+  }
+
+  /** Create from the hand-written panel: validate, POST once, show it in the elenco. */
+  async function submitManualCreate() {
+    const form = state.creating;
+    if (!form || form.busy) return;
+    const checked = buildSequenceClaim({ name: form.name, trigger: form.trigger, steps: form.steps });
+    if (checked.error) {
+      form.error = checked.error;
+      paint();
+      return;
+    }
+    form.busy = true;
+    form.error = '';
+    paint();
+    try {
+      const answer = await bound.request('/api/sequences/create', {
+        method: 'POST',
+        body: { spaceId: state.space, sourceKey: form.key, ...checked.claim },
+        idempotencyKey: form.key,
+      });
+      const made = answer?.sequence ?? null;
+      const madeKey = typeof made?.sourceKey === 'string' && made.sourceKey !== '' ? made.sourceKey : form.key;
+      state.creating = null;
+      await renderSequenze();
+      state.selectedKey = madeKey;
+      paint();
+    } catch (error) {
+      form.busy = false;
+      form.error = humanWriteError(error, {
+        failed: 'Non riesco a creare la sequenza adesso: riprova più tardi.',
+        notComposed: 'Le sequenze non sono composte in questo spazio.',
+      });
+      paint();
+    }
+  }
+
+  /**
+   * The AI panel: one sentence in, a complete proposal out, created only on
+   * confirm. Proposing never touches the network; confirming POSTs once.
+   */
+  function renderAiPanel() {
+    const panelState = state.aiPanel;
+    const panel = el(documentNode, 'section', 'bo-seq-panel');
+    panel.appendChild(el(documentNode, 'h3', undefined, 'Crea con l\u2019AI'));
+    if (panelState.error !== '') panel.appendChild(el(documentNode, 'p', 'bo-seq-create-error', panelState.error));
+    const phraseLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Descrivi la sequenza in una frase');
+    const phrase = el(documentNode, 'input', 'ui-field', undefined);
+    phrase.setAttribute('type', 'text');
+    phrase.setAttribute('name', 'seq-ai-phrase');
+    phrase.value = panelState.phrase;
+    phrase.addEventListener('input', () => {
+      panelState.phrase = String(phrase.value ?? '');
+      panelState.proposal = null;
+    });
+    phraseLabel.appendChild(phrase);
+    panel.appendChild(phraseLabel);
+    const propose = uiButton(documentNode, {
+      variant: 'secondary', label: 'Proponi', attrs: { 'data-action': 'ai-propose' },
+    });
+    propose.addEventListener('click', () => {
+      const outcome = proposeSequenceFromPhrase(panelState.phrase);
+      panelState.proposal = outcome.proposal ?? null;
+      panelState.error = outcome.error ?? '';
+      paint();
+    });
+    panel.appendChild(propose);
+    if (panelState.proposal !== null) {
+      const proposal = panelState.proposal;
+      const preview = el(documentNode, 'div', 'bo-seq-proposal');
+      preview.appendChild(el(documentNode, 'p', 'bo-seq-proposal-name', proposal.name));
+      preview.appendChild(el(documentNode, 'p', 'bo-seq-proposal-trigger', `Quando ${proposal.triggerLabel}`));
+      const list = el(documentNode, 'ul', 'bo-seq-proposal-steps');
+      for (const step of proposal.steps) {
+        list.appendChild(el(documentNode, 'li', undefined,
+          `${sequenceChannelLabel(step.channel)} · ${sequenceDayLabel(step.dayOffset)} · ${step.templateName}`));
+      }
+      preview.appendChild(list);
+      panel.appendChild(preview);
+      const row = el(documentNode, 'div', 'bo-seq-btns');
+      const confirm = uiButton(documentNode, {
+        variant: 'cta', label: 'Crea la sequenza', attrs: { 'data-action': 'ai-confirm' },
+      });
+      if (panelState.busy) confirm.setAttribute('disabled', 'true');
+      confirm.addEventListener('click', () => void submitAiCreate());
+      const cancel = uiButton(documentNode, {
+        variant: 'secondary', label: 'Annulla', attrs: { 'data-action': 'cancel-ai' },
+      });
+      cancel.addEventListener('click', () => { state.aiPanel = null; paint(); refocusButton('new-ai'); });
+      row.appendChild(confirm);
+      row.appendChild(cancel);
+      panel.appendChild(row);
+    }
+    return panel;
+  }
+
+  /** Create the confirmed AI proposal: one POST, then the elenco shows it. */
+  async function submitAiCreate() {
+    const panelState = state.aiPanel;
+    if (!panelState || !panelState.proposal || panelState.busy) return;
+    panelState.busy = true;
+    panelState.error = '';
+    paint();
+    try {
+      const key = freshSequenceKey();
+      const answer = await bound.request('/api/sequences/create', {
+        method: 'POST',
+        body: {
+          spaceId: state.space,
+          sourceKey: key,
+          name: panelState.proposal.name,
+          triggerLabel: panelState.proposal.triggerLabel,
+          stopLabel: null,
+          steps: panelState.proposal.steps.map((step) => ({
+            dayOffset: step.dayOffset,
+            channel: step.channel,
+            templateName: step.templateName,
+            templateLanguage: step.templateLanguage,
+            templateVars: [...step.templateVars],
+          })),
+        },
+        idempotencyKey: key,
+      });
+      const made = answer?.sequence ?? null;
+      const madeKey = typeof made?.sourceKey === 'string' && made.sourceKey !== '' ? made.sourceKey : key;
+      state.aiPanel = null;
+      await renderSequenze();
+      state.selectedKey = madeKey;
+      paint();
+    } catch (error) {
+      panelState.busy = false;
+      panelState.error = humanWriteError(error, {
+        failed: 'Non riesco a creare la sequenza adesso: riprova più tardi.',
+        notComposed: 'Le sequenze non sono composte in questo spazio.',
+      });
+      paint();
+    }
   }
 
   function paint() {
@@ -732,6 +1096,8 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       'Follow-up che partono da soli quando succede qualcosa, sul canale giusto. Si fermano appena il cliente risponde.'));
     top.appendChild(renderNewActions());
     page.appendChild(top);
+    if (state.creating !== null) page.appendChild(renderManualPanel());
+    if (state.aiPanel !== null) page.appendChild(renderAiPanel());
     if (!state.loaded) {
       page.appendChild(el(documentNode, 'p', 'bo-muted', 'Leggo le sequenze…'));
       return;

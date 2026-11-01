@@ -505,6 +505,21 @@ export function buildRouter(app) {
     return await app.parseBookingPhrase({ ...stripServerControlledKeys(input) }, actor);
   });
 
+  // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
+  // and the «Crea con l'AI» confirmation create through the declared
+  // sequences create-sequence operation — the kernel owns the path and gates
+  // records.write, the package owns the rows. Without the sequences package
+  // composed the honest 404 names the missing operation; the caller-supplied
+  // sourceKey makes a retry or a double click replay instead of doubling.
+  router.add('POST', '/api/sequences/create', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createSequence !== 'function') {
+      throw new NotFoundError('Operation', 'sequence creation');
+    }
+    const input = recordInput(body);
+    return respond(201, await app.createSequence({ ...stripServerControlledKeys(input), actor }));
+  });
+
   // Signature provider events (ADR-017). A dedicated route, NOT a record
   // action: the payload arrives from outside, must be verified as the exact
   // bytes the provider signed before any state is touched, and its identity
