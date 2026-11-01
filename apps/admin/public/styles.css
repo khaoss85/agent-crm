@@ -1313,6 +1313,7 @@ select.bo-spazi-input { flex: none; }
 .catalog-filters { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; min-width: 0; }
 .catalog-filters input, .catalog-filters select { height: 36px; font-size: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); padding: 0 10px; width: auto; min-width: 0; }
 .catalog-filters select[name="source"] { flex: 1 1 110px; }
+.catalog-filters input[name="category"] { flex: 0 1 130px; max-width: 170px; }
 @media (max-width: 700px) {
   .catalog-filters { flex-wrap: wrap; }
 }

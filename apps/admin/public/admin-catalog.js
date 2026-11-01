@@ -917,7 +917,8 @@ export function createCatalogView(deps) {
     // provider name from the summary, which runs over the complete product
     // set before filters. Option values are the raw names `listProducts`
     // filters by; labels read Italian through `sourceLabel`. The category
-    // comes from the chips below, with the exact data value.
+    // comes from the chips below or the exact-value box, with the exact
+    // data value the server compares.
     const sourceSelect = el('select');
     sourceSelect.setAttribute('name', 'source');
     sourceSelect.setAttribute('aria-label', 'Filtra per fonte');
@@ -945,6 +946,20 @@ export function createCatalogView(deps) {
       activeSelect.appendChild(option);
     }
     activeSelect.value = active === 'true' || active === 'false' ? active : '';
+    // Category keeps a server-only exact-value box (review on #516 head
+    // 3cc943a0, P2): the chips below cover only the loaded page, so a
+    // category past the 200-row page would be unreachable without it. The
+    // box is never used for the live repaint — Filtra, the state select
+    // and the chips send it through renderTable, where the server compares
+    // it exactly, like its own vocabulary does.
+    const categoryInput = el('input', 'catalog-category-input');
+    categoryInput.setAttribute('type', 'text');
+    categoryInput.setAttribute('name', 'category');
+    categoryInput.setAttribute('aria-label', 'Filtra per categoria (valore esatto)');
+    categoryInput.setAttribute('placeholder', 'Categoria esatta');
+    categoryInput.setAttribute('list', 'catalog-category-options');
+    categoryInput.value = typeof category === 'string' ? category : '';
+    const readCategory = () => categoryInput.value ?? '';
     const applyButton = el('button', undefined, 'Filtra');
     const filterError = el('small', 'field-error', '');
     // The prototype's search (spec catalogo.md C9): exact placeholder,
@@ -958,15 +973,15 @@ export function createCatalogView(deps) {
     const readSearch = () => searchInput.value ?? '';
     // The search field and the Fonte menu filter the loaded rows in place
     // (no refetch, focus stays in the field) with the server's own values
-    // and comparison; the state select re-reads from the server at once,
-    // so no control waits for Filtra.
+    // and comparison. The category box stays server-only: typing there
+    // never refetches, it waits for Filtra, the state select or a chip.
     const repaint = () => { paintList(readSearch(), category, sourceSelect.value ?? ''); };
     searchInput.addEventListener('input', repaint);
     searchInput.addEventListener('search', repaint);
     sourceSelect.addEventListener('change', repaint);
     activeSelect.addEventListener('change', async () => {
       try {
-        await renderTable({ category, active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
+        await renderTable({ category: readCategory(), active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
       } catch (error) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
       }
@@ -974,7 +989,7 @@ export function createCatalogView(deps) {
     applyButton.addEventListener('click', async () => {
       applyButton.disabled = true;
       try {
-        await renderTable({ category, active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
+        await renderTable({ category: readCategory(), active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
       } catch (error) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
       } finally {
@@ -983,15 +998,26 @@ export function createCatalogView(deps) {
     });
     filters.appendChild(sourceSelect);
     filters.appendChild(activeSelect);
+    filters.appendChild(categoryInput);
     filters.appendChild(applyButton);
     filters.appendChild(searchInput);
     filters.appendChild(filterError);
-    // Category chips from the read itself, like the prototype's tabs.
+    // Category chips from the read itself, like the prototype's tabs. The
+    // same page values also feed the exact-value box suggestions — typing
+    // any other exact value still works, it just goes to the server.
     const counts = new Map();
     for (const product of table.products) {
       const key = typeof product.category === 'string' && product.category !== '' ? product.category : null;
       if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
     }
+    const categoryOptions = doc.createElement('datalist');
+    categoryOptions.setAttribute('id', 'catalog-category-options');
+    for (const key of counts.keys()) {
+      const option = doc.createElement('option');
+      option.setAttribute('value', key);
+      categoryOptions.appendChild(option);
+    }
+    filters.appendChild(categoryOptions);
     const bar = el('div', 'catalog-bar');
     const chips = el('div', 'catalog-chips');
     const chip = (label, value, count) => {
@@ -1096,10 +1122,15 @@ export function createCatalogView(deps) {
           ? `Nessun risultato per «${q}». Prova con un altro nome o codice.`
           : 'Nessun risultato per questi filtri. Prova a svuotarli.'));
         const clearSearch = el('button', 'catalog-clear-search', 'Cancella ricerca');
+        // 'Cancella ricerca' clears only the search text (review on #516
+        // head 3cc943a0, P2): the Fonte menu and the category box still
+        // name the server filter that produced the loaded page, so the
+        // repaint keeps them — otherwise the menu would read Tutte over
+        // rows the server filtered, and the next Filtra would silently
+        // drop a filter the operator never removed.
         clearSearch.addEventListener('click', () => {
           searchInput.value = '';
-          sourceSelect.value = '';
-          paintList('');
+          paintList('', category, sourceSelect.value ?? '');
         });
         empty.appendChild(clearSearch);
         list.appendChild(empty);
