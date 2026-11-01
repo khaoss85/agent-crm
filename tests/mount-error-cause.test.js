@@ -54,6 +54,13 @@ test('mountErrorAnswer falls back to closed vocabulary on non-token causes', () 
   assert.deepEqual(answer.body.error.cause, { code: 'UNKNOWN', name: 'Error' });
 });
 
+test('mountErrorAnswer never carries a free-text cause code (no host or path)', () => {
+  const answer = mountErrorAnswer(
+    new AppError('down', { code: 'STORAGE_UNAVAILABLE', status: 503, cause: { code: 'connect ECONNREFUSED 10.0.0.5:5432', name: 'Error: db.internal' } }),
+  );
+  assert.deepEqual(answer.body.error.cause, { code: 'UNKNOWN', name: 'Error' });
+});
+
 test('a failed /bo read answers the cause tokens through the mount', async () => {
   const app = createAccordoApp({ dbPath: ':memory:' });
   try {

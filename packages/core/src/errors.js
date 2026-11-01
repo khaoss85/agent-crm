@@ -71,7 +71,8 @@ export function causeTokens(error) {
   const code = raw?.code;
   const name = raw?.name;
   return Object.freeze({
-    code: typeof code === 'string' && code !== '' ? code : 'UNKNOWN',
-    name: typeof name === 'string' && name !== '' ? name : 'Error',
+    // Tokens only (ECONNREFUSED, 57P03, SESSION_MALFORMED): a free-text code could carry a host or a path.
+    code: typeof code === 'string' && /^[A-Za-z0-9_.-]{1,40}$/.test(code) ? code : 'UNKNOWN',
+    name: typeof name === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(name) ? name : 'Error',
   });
 }
