@@ -54,3 +54,25 @@ export function normalizeError(error) {
   }
   return new AppError('Unknown error', { details: error });
 }
+
+/**
+ * The two safe tokens of an error's cause for a diagnostic layer
+ * (backlog:7cacfe33): the driver `code` (SQLSTATE or Node errno) and the
+ * error `name` — the same pair `toSafeCause` keeps in
+ * `packages/core/src/postgresql-storage.js`, so a mapped storage failure
+ * stays diagnosable after its driver text is redacted. Only strings travel;
+ * anything else becomes the closed-vocabulary fallback, and a cause-free
+ * error answers null rather than an empty object.
+ * @param {unknown} error a normalized error
+ */
+export function causeTokens(error) {
+  const raw = error instanceof AppError ? error.cause : error?.cause;
+  if (raw === undefined || raw === null) return null;
+  const code = raw?.code;
+  const name = raw?.name;
+  return Object.freeze({
+    // Tokens only (ECONNREFUSED, 57P03, SESSION_MALFORMED): a free-text code could carry a host or a path.
+    code: typeof code === 'string' && /^[A-Za-z0-9_.-]{1,40}$/.test(code) ? code : 'UNKNOWN',
+    name: typeof name === 'string' && /^[A-Za-z0-9_]{1,40}$/.test(name) ? name : 'Error',
+  });
+}

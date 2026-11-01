@@ -87,7 +87,7 @@
 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { AppError, normalizeError } from '../../core/src/errors.js';
+import { AppError, causeTokens, normalizeError } from '../../core/src/errors.js';
 import { refuseThenableDomainValue } from '../../core/src/async-values.js';
 import {
   buildRouter,
@@ -299,20 +299,10 @@ export function createAdminShellMount(app, options = {}) {
           }
           return serializeEnvelope(envelope);
         } catch (error) {
-          const normalized = normalizeError(error);
           // The standalone server answers handler errors with `sendJson`,
           // which echoes the idempotency key — the mount serializes the same
           // envelope shape instead of the bare `json` helper.
-          return serializeEnvelope({
-            status: normalized.status,
-            body: {
-              error: {
-                code: normalized.code,
-                message: normalized.message,
-                details: normalized.details ?? null,
-              },
-            },
-          });
+          return serializeEnvelope(mountErrorAnswer(error));
         }
       }
       if (method !== 'GET' && method !== 'HEAD') {
@@ -485,6 +475,31 @@ function serializeBody(body) {
       'cache-control': 'no-store',
     },
     payload,
+  };
+}
+
+/**
+ * A handler failure as a mount answer (backlog:7cacfe33): the code, the
+ * bounded message and the details, plus the two safe tokens of the cause
+ * (`{code, name}`, null when the error carries none). The cause itself never
+ * travels — its message can hold a host, a user or URL text — but without the
+ * tokens a `STORAGE_UNAVAILABLE` envelope prints no SQLSTATE and nothing to
+ * diagnose, which is exactly how the 30/10 /bo outage read in production.
+ * Exported so tests drive this shape directly instead of copying it.
+ * @param {unknown} error
+ */
+export function mountErrorAnswer(error) {
+  const normalized = normalizeError(error);
+  return {
+    status: normalized.status,
+    body: {
+      error: {
+        code: normalized.code,
+        message: normalized.message,
+        details: normalized.details ?? null,
+        cause: causeTokens(normalized),
+      },
+    },
   };
 }
 

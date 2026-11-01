@@ -76,7 +76,7 @@ export {
 // never formats its own transport response. `normalizeError` is the same
 // normalization the kernel applies before an error crosses a surface, public
 // so a package-owned operation records the identical failure shape.
-export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError, normalizeError } from './src/errors.js';
+export { AppError, ValidationError, NotFoundError, ConflictError, ForbiddenError, normalizeError, causeTokens } from './src/errors.js';
 
 // ---- bounded outbound calls ----
 // A package that calls a provider bounds it with the framework's timeout
