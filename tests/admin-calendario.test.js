@@ -2198,6 +2198,56 @@ test('a draft outsider keeps the typed person field', async () => {
   assert.equal(field.value, 'marco');
 });
 
+// Fetta 10 (P2 di #481): a phrase draft naming an outsider wins over a
+// previous known choice. Before the fix the kept choice ('sara') decided the
+// control, the draft id ('marco') was assigned to a select with no matching
+// option, the browser cleared it, and the snapshot saved an empty person.
+test('a draft outsider wins over a previous known choice', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'marco',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const client = stubClient({
+    phrase: draft,
+    slots: [],
+    memberships: [{ subject: 'sara', role: 'member' }],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-25T10:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.ok(mount.querySelector('select[name="teamMemberId"]'), 'the known team starts as a choice');
+  choosePerson(mount, 'sara');
+  await pickCustomerByName(mount, 'Ada');
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'the outsider draft leaves the choice');
+  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
+  assert.ok(field, 'the typed field keeps the drafted outsider');
+  assert.equal(field.value, 'marco', 'the drafted identity is not lost');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'marco', 'the claim carries the drafted person');
+});
+
 // Fetta 9 (C22): the service label names no technical concept.
 test('the service field carries no listino jargon', async () => {
   const doc = createFakeDocument();
