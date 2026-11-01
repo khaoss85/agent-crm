@@ -64,6 +64,7 @@ export const SCREEN_NAMES = Object.freeze([
   'oggi',
   'clienti',
   'cliente',
+  'import',
   'pipeline',
   'calendario',
   'sequenze',
@@ -555,6 +556,7 @@ export const SCREENS = Object.freeze([
   { name: 'oggi', module: 'admin-oggi.js', ready: 'oggi-ready', expect: ['Richiama per il preventivo', 'Giulia Romano'] },
   { name: 'clienti', module: 'admin-clienti.js', ready: 'clienti-ready', expect: ['Marco Rossi', 'Anna Bianchi'] },
   { name: 'cliente', module: 'admin-customer-card.js', ready: 'cliente-ready', expect: ['Guido Presti', 'Ciao, vorrei prenotare una prova'] },
+  { name: 'import', module: 'admin-customer-data.js', ready: 'import-ready', expect: ['Importa clienti', 'Trascina qui il file', 'Abbina le colonne'] },
   { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Proposta'] },
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
@@ -582,6 +584,10 @@ export const SHELL_SCREENS = Object.freeze({
   oggi: { id: 'oggi', label: 'Oggi' },
   clienti: { id: 'clienti', label: 'Clienti' },
   cliente: { id: 'clienti', label: 'Clienti' },
+  // The Clienti import tool (backlog:5b164ab5): its own screen
+  // (#/import-clienti), reached from the list, with the list's voice
+  // highlighted — exactly like shellScreenFor in apps/admin/public/app.js.
+  import: { id: 'clienti', label: 'Importa clienti' },
   pipeline: { id: 'pipeline', label: 'Pipeline' },
   calendario: { id: 'calendario', label: 'Calendario' },
   sequenze: { id: 'sequenze', label: 'Sequenze' },
@@ -817,6 +823,46 @@ document.getElementById('probe').textContent = JSON.stringify({
   name: document.getElementById('view-module').textContent.includes('Guido Presti'),
 });
 document.title = 'cliente-ready';`;
+    case 'import': return `
+import { createCustomerDataView } from './admin-customer-data.js';
+const META = {
+  customerDataContract: 1,
+  import: {
+    mapping: { name: 'customer-rows', version: 1 },
+    maxRows: 500,
+    acceptance: ['partial', 'all_or_nothing'],
+  },
+};
+const client = {
+  async request(path) {
+    if (path === '/api/schema') return { domains: { 'customer-data': { metadata: META } } };
+    return { items: [] };
+  },
+};
+const view = createCustomerDataView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, notify: () => {}, spaceName: 'Studio Aurora' });
+await view.render();
+// Drive the tool like the operator: load a demo CSV through the real file
+// control, so the shot proves all three steps (drop zone, column match,
+// table check) instead of the empty first step.
+const input = document.querySelector('#view-module input[name="file"]');
+const transfer = new DataTransfer();
+transfer.items.add(new File(['nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n'], 'clienti.csv', { type: 'text/csv' }));
+input.files = transfer.files;
+input.dispatchEvent(new Event('change', { bubbles: true }));
+const deadline = Date.now() + 15000;
+while (!document.querySelector('#view-module select[name="mapping-0"]')) {
+  if (Date.now() > deadline) throw new Error('the import tool never loaded the demo file');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+const painted = document.getElementById('view-module');
+document.getElementById('probe').textContent = JSON.stringify({
+  back: painted.querySelectorAll('[data-action="back-to-clienti"]').length,
+  title: painted.textContent.includes('Importa clienti'),
+  crumb: painted.textContent.includes('Clienti') && painted.textContent.includes('Importa'),
+  drop: painted.querySelectorAll('[data-drop="customer-import"]').length,
+  rows: painted.querySelectorAll('.bo-import-table tr').length,
+});
+document.title = 'import-ready';`;
     case 'pipeline': return `
 import { createPipelineBoard } from './admin-pipeline.js';
 const PIPELINE = ${JSON.stringify(DEMO_PIPELINE)};
@@ -1402,6 +1448,14 @@ export function assertProbe(name, probe) {
     }
     case 'cliente': {
       if (probe.name !== true) throw new Error('cliente: the probe shows no customer name');
+      return;
+    }
+    case 'import': {
+      if (probe.back !== 1) throw new Error(`import: the probe lists ${String(probe.back)} back links, expected 1`);
+      if (probe.title !== true) throw new Error('import: the probe shows no Importa clienti title');
+      if (probe.crumb !== true) throw new Error('import: the probe shows no Clienti / Importa crumb');
+      if (probe.drop !== 1) throw new Error(`import: the probe lists ${String(probe.drop)} drop zones, expected 1`);
+      if (probe.rows !== 3) throw new Error(`import: the probe lists ${String(probe.rows)} check rows, expected 3`);
       return;
     }
     case 'pipeline': {

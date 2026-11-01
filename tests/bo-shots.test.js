@@ -7,7 +7,7 @@
  *   counts the files and checks every width and byte floor);
  * - the run works fully offline (loopback only) and exits 0 with a skip
  *   message where no runnable Chromium exists;
- * - the screen registry is exactly the thirteen delivered /bo screens plus the
+ * - the screen registry is exactly the fourteen delivered /bo screens plus the
  *   componenti catalog, and
  *   every harness page serves its real view module.
  *
@@ -47,6 +47,7 @@ const EXPECTED_SCREENS = [
   'oggi',
   'clienti',
   'cliente',
+  'import',
   'pipeline',
   'calendario',
   'sequenze',
@@ -61,7 +62,7 @@ const EXPECTED_SCREENS = [
   'componenti',
 ];
 
-test('the screen registry is the thirteen delivered screens plus the componenti catalog', () => {
+test('the screen registry is the fourteen delivered screens plus the componenti catalog', () => {
   assert.deepEqual([...BO_SCREENS], EXPECTED_SCREENS);
 });
 
@@ -159,6 +160,7 @@ test('every screen photographs with its shell identity from the /bo router', () 
     oggi: { id: 'oggi', label: 'Oggi' },
     clienti: { id: 'clienti', label: 'Clienti' },
     cliente: { id: 'clienti', label: 'Clienti' },
+    import: { id: 'clienti', label: 'Importa clienti' },
     pipeline: { id: 'pipeline', label: 'Pipeline' },
     calendario: { id: 'calendario', label: 'Calendario' },
     sequenze: { id: 'sequenze', label: 'Sequenze' },
@@ -256,6 +258,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
   // so each fixture has to record them. Static string checks only.
   const probes = new Map([
     ['login', ['magic:', 'email:', 'google:', 'story:', 'noValidate:']],
+    ['import', ['back:', 'title:', 'crumb:', 'drop:', 'rows:']],
     ['calendario', ['days:', 'events:', 'lede:', 'filled:']],
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
@@ -394,6 +397,7 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
   );
   assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 5 }), /members/);
   assert.throws(() => assertProbe('connettori', { rows: 0, badges: 0, openers: 0, flows: 0 }), /channel rows/);
+  assert.throws(() => assertProbe('import', { back: 0, title: false, crumb: false, drop: 0, rows: 0 }), /back links/);
 });
 
 test('without a runnable Chromium the command skips cleanly with exit 0', () => {
