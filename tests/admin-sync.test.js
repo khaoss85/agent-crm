@@ -690,10 +690,10 @@ test('the yellow grant cards use the prototype wording, soonest first', () => {
   // expiry-less whatsapp and the pending row stay out.
   assert.equal(cards.length, 2);
   assert.equal(cards[0].title, 'Il permesso di TikTok scade domani');
-  assert.equal(cards[0].route, '#/connettori/tiktok');
+  assert.equal(cards[0].route, '#/connettori/tiktok?binding=tt-1');
   assert.equal(cards[1].title, 'Il permesso di Instagram scade tra 3 giorni');
   assert.equal(cards[1].detail, 'Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.');
-  assert.equal(cards[1].route, '#/connettori/instagram');
+  assert.equal(cards[1].route, '#/connettori/instagram?binding=ig-1');
   const others = syncGrantCards(activityOf({
     connections: [entryOf({ connectionKey: 'wa-1', grantExpiresAt: '2026-10-25T18:00:00.000Z' })],
   }), NOW);
@@ -704,6 +704,17 @@ test('the yellow grant cards use the prototype wording, soonest first', () => {
   }), NOW);
   assert.equal(past[0].title, 'Il permesso di WhatsApp è scaduto');
   assert.deepEqual(syncGrantCards(null, NOW), []);
+});
+
+test('the yellow grant card names its binding, so the detail renews that row', () => {
+  const key = 'ch-conn/presti/whatsapp/+390200000002';
+  const cards = syncGrantCards(activityOf({
+    connections: [entryOf({ connectionKey: key, grantExpiresAt: '2026-10-28T12:00:00.000Z' })],
+  }), NOW);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].route, `#/connettori/whatsapp?binding=${encodeURIComponent(key)}`);
+  assert.ok(!cards[0].route.includes(' '), 'no raw spaces in the route');
+  assert.ok(!cards[0].route.includes('+3902'), 'the account travels encoded, never raw');
 });
 
 test('the purple identity cards name people, never record codes', () => {
@@ -882,10 +893,10 @@ test('the yellow card renews through the connector detail', async () => {
   assert.ok(mount.textContent.includes('Il permesso di Instagram scade tra 3 giorni'));
   assert.ok(mount.textContent.includes('Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.'));
   const renew = mount.findAll('a').find((node) => node.textContent === 'Rinnova in un clic');
-  assert.equal(renew.getAttribute('href'), '#/connettori/instagram');
+  assert.equal(renew.getAttribute('href'), '#/connettori/instagram?binding=ig-1');
   renew.dispatch('click');
   await flush();
-  assert.deepEqual(navigated, ['#/connettori/instagram']);
+  assert.deepEqual(navigated, ['#/connettori/instagram?binding=ig-1']);
 });
 
 test('the candidates read narrows to unresolved on the server', async () => {

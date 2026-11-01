@@ -1145,7 +1145,7 @@ async function route() {
     else if (target.view === 'customer-import') await customerDataView.render();
     else if (target.view === 'customer-new') await customerFormView.render();
     else if (target.view === 'connectors') await connectorsView.render();
-    else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
+    else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel, target.binding ?? null);
     else if (target.view === 'sync') await syncView.render();
     else if (target.view === 'reporting') await reportingView.renderReporting();
     else if (target.view === 'sequenze') {

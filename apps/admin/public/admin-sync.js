@@ -605,8 +605,14 @@ export function syncGrantCards(activity, nowMs = Date.now()) {
         : 'Rinnovalo ora per non perdere i nuovi arrivi nelle schede clienti.',
       // Only catalogued channels have a detail with a renewal flow: any
       // other binding routes to the list, never to the honest
-      // "Connettore sconosciuto" dead end (P2 Codex su #415).
-      route: channel !== null && cataloguedChannel(channel) ? `#/connettori/${channel}` : '#/connettori',
+      // "Connettore sconosciuto" dead end (P2 Codex su #415). The card
+      // names its own binding (backlog:3a3e6eaf), so the detail renews
+      // this row even when several active bindings share the channel.
+      route: channel !== null && cataloguedChannel(channel)
+        ? (typeof entry.connectionKey === 'string' && entry.connectionKey !== ''
+          ? `#/connettori/${channel}?binding=${encodeURIComponent(entry.connectionKey)}`
+          : `#/connettori/${channel}`)
+        : '#/connettori',
       expiresAt: entry.grantExpiresAt,
     });
   }

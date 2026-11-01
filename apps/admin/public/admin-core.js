@@ -269,6 +269,30 @@ function safeDecode(segment) {
 }
 
 /**
+ * Read the optional `binding` query of a connector-detail hash
+ * (`#/connettori/<canale>?binding=<connectionKey>`). Pure and total: only
+ * a short non-empty value survives; anything else is null, and the detail
+ * falls back to the first active binding. The value is compared exactly
+ * against loaded rows downstream — it never becomes a request path.
+ * @param {string} raw the hash without its leading `#`
+ * @returns {string | null}
+ */
+function bindingOf(raw) {
+  const tail = String(raw ?? '').split('?').slice(1).join('?').split('#')[0];
+  if (tail === '') return null;
+  let value = null;
+  try {
+    value = new URLSearchParams(tail).get('binding');
+  } catch {
+    return null;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.length > 1024) return null;
+  return trimmed;
+}
+
+/**
  * Parse an Admin hash into a route descriptor. Pure and total: malformed
  * encoding, encoded separators and dangerous names never throw and never
  * resolve to anything but an explicit view. Decodes each segment exactly once.
@@ -405,7 +429,13 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 2) return { view: 'invalid' };
     const channel = safeDecode(rawParts[1]);
     if (channel === null || !/^[a-z][a-z0-9-]*$/.test(channel)) return { view: 'invalid' };
-    return { view: 'connector-detail', channel };
+    // The Stato sync yellow card names the expiring binding, not just the
+    // channel (backlog:3a3e6eaf): `?binding=<connectionKey>` selects that
+    // row for renewal. The key is matched exactly against the loaded rows —
+    // it never becomes a request path — so an unknown or malformed value
+    // falls back to the first active binding instead of failing the route.
+    const binding = bindingOf(raw);
+    return binding === null ? { view: 'connector-detail', channel } : { view: 'connector-detail', channel, binding };
   }
   // Reporting and "+ Nuovo modulo" routes (BO-F5-01, docs/BUNDLES.md). One
   // screen each, same canonical discipline as every other route here: the

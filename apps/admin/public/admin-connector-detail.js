@@ -672,7 +672,7 @@ export function createConnectorDetailView(deps) {
     box.appendChild(panel);
   }
 
-  function render(channel) {
+  function render(channel, preferredConnectionKey = null) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     const entry = catalogFor(channel);
     if (entry === null) {
@@ -716,8 +716,16 @@ export function createConnectorDetailView(deps) {
     });
     const available = mapped.status !== 'non-disponibile';
     const connections = available ? mapped.connections : [];
+    // The Stato sync yellow card names its binding (backlog:3a3e6eaf): the
+    // requested row wins over the first active one, so a renewal always
+    // lands on the binding whose deadline the operator saw. Unknown keys
+    // fall back to the first active row, as before.
+    const preferred = typeof preferredConnectionKey === 'string' && preferredConnectionKey !== ''
+      ? connections.find((row) => row !== null && typeof row === 'object'
+        && row.connectionKey === preferredConnectionKey) ?? null
+      : null;
     const connection = available
-      ? (connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
+      ? (preferred ?? connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
       : null;
     const badge = !available
       ? 'Non disponibile qui'
@@ -809,7 +817,7 @@ export function createConnectorDetailView(deps) {
   }
 
   return {
-    render: async (channel) => {
+    render: async (channel, preferredConnectionKey = null) => {
       // Loading state: the mount never sits on stale content while the three
       // requests are in flight. render() clears it again on arrival.
       while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -819,7 +827,7 @@ export function createConnectorDetailView(deps) {
         : null;
       mount.appendChild(el(doc, 'p', 'bo-muted', 'Caricamento del connettore…'));
       await load();
-      render(channel);
+      render(channel, preferredConnectionKey);
     },
   };
 }
