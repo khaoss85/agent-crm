@@ -61,6 +61,25 @@ function installOutsideCloser(doc) {
   });
 }
 
+/**
+ * The week the calendar opens on (backlog:df55cf25): the Rome Mon..Sun week
+ * containing `now`, except on Saturday/Sunday — when the painted Mon..Fri
+ * work days would already be over — when the following Mon..Sun opens
+ * instead, so the grid shows the coming days, never the past ones. Pure and
+ * DOM-free so it is unit-tested without a browser.
+ */
+export function openingWeekKeys(now = new Date()) {
+  const instant = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
+  const todayKey = romeDayKey(instant);
+  if (!todayKey) return romeWeekKeys(instant);
+  // Noon UTC of the Rome day is afternoon in Rome on the same calendar
+  // day, so its UTC weekday is the Rome weekday — no DST arithmetic.
+  const dayIndex = (new Date(`${todayKey}T12:00:00Z`).getUTCDay() + 6) % 7;
+  if (dayIndex < 5) return romeWeekKeys(instant);
+  const monday = new Date(Date.parse(`${todayKey}T12:00:00Z`) + (7 - dayIndex) * 24 * 3600 * 1000);
+  return romeWeekKeys(monday);
+}
+
 /** Rome week (Monday..Sunday) containing `now`, as YYYY-MM-DD keys. */
 export function romeWeekKeys(now = new Date()) {
   const instant = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
@@ -400,7 +419,7 @@ export function createCalendarioView(deps) {
      * Only a positive `connected` calendar counts — anything else is the
      * honest "not connected" the week panel links to Profilo for. */
     calendar: null,
-    weekKeys: romeWeekKeys(clock()),
+    weekKeys: openingWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -771,7 +790,7 @@ export function createCalendarioView(deps) {
     next.addEventListener('click', () => shiftWeek(7));
     const today = el(doc, 'button', { className: 'secondary small', text: 'Oggi', attrs: { type: 'button' } });
     today.addEventListener('click', () => {
-      state.weekKeys = romeWeekKeys(clock());
+      state.weekKeys = openingWeekKeys(clock());
       state.week = null;
       state.proposals = [];
       state.aiNote = '';
