@@ -342,6 +342,10 @@ function postgresqlEndpoint(endpoint, secretResolver, purpose, tenantId, project
     user: endpoint.user,
     password: passwordFromEndpoint(endpoint, secretResolver, purpose, tenantId),
     ssl: sslFromEndpoint(endpoint, projectRoot),
+    // A deployment that shares one role-limited login between several pools
+    // names each pool's share here (backlog:a4cc9c96b266): the bootstrap
+    // already honours `max`, this was the seam that dropped it.
+    ...(Number.isInteger(endpoint.max) && endpoint.max > 0 ? { max: endpoint.max } : {}),
   };
 }
 
