@@ -540,11 +540,13 @@ test('a channel-level renewal renews the binding the card named, not the first a
     return mount.textContent;
   };
   // From B's card: the renewal reads and writes B's record only.
-  await renewAs(keyB);
+  const afterB = await renewAs(keyB);
   assert.equal(reads.length, 1, 'one record lookup for the renewal');
   assert.ok(reads[0].includes(`filter.sourceKey=${encodeURIComponent(keyB)}`), `the lookup names B (${reads[0]})`);
   assert.equal(posts.length, 1, 'one renew-connection-grant record action');
   assert.ok(posts[0].path.includes('/records/rec-B/'), `the renewal lands on B's record (${posts[0].path})`);
+  assert.ok(afterB.includes(`Chiave di collegamento: ${keyB}`), 'the rebuilt screen still details B after its renewal');
+  assert.ok(!afterB.includes(`Chiave di collegamento: ${keyA}`), 'the rebuilt screen does not fall back to A after renewing B');
   // Without a binding the old behavior is unchanged: the first active row.
   await renewAs(null);
   assert.ok(reads[0].includes(`filter.sourceKey=${encodeURIComponent(keyA)}`), `no binding renews the first active row (${reads[0]})`);

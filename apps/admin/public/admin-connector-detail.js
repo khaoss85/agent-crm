@@ -633,7 +633,7 @@ export function createConnectorDetailView(deps) {
         ? record.id : null;
       if (id === null) {
         toast('Collegamento non trovato: ricarica e riprova.', true);
-        render(channel);
+        render(channel, section.connectionKey);
         return;
       }
       await client.request(
@@ -645,7 +645,7 @@ export function createConnectorDetailView(deps) {
     } catch (error) {
       toast(errorOf(error), true);
     }
-    render(channel);
+    render(channel, section.connectionKey);
   }
 
   function renderConsumers(box, channel) {
