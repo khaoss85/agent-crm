@@ -4,7 +4,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { AppError } from '../packages/core/src/errors.js';
-import { createAccordoApp, createAdminShellMount, mountErrorAnswer } from '../packages/app/src/index.js';
+import { createAccordoApp, createAdminShellMount } from '../packages/app/src/index.js';
+// mountErrorAnswer is an internal of the mount, not public surface (the m2e2/m2e3 surface tests pin index.js).
+import { mountErrorAnswer } from '../packages/app/src/admin-mount.js';
 
 /**
  * The cause tokens behind a failed /bo read (backlog:7cacfe33).
