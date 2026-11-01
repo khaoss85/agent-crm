@@ -26,6 +26,7 @@ import {
   detailSections,
   directionOf,
   isConnectorDetailChannel,
+  renewalSection,
   statusLabel,
 } from '../apps/admin/public/admin-connector-detail.js';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
@@ -67,6 +68,24 @@ test('the detail route parses, hostile hashes stay invalid', () => {
   assert.ok(isConnectorDetailChannel('whatsapp'));
   assert.deepEqual([...CONNECTOR_DETAIL_CHANNELS].sort(), CONNECTOR_CATALOG.map((row) => row.channel).sort());
   assert.equal(catalogFor('nope'), null);
+});
+
+test('the detail route carries the card binding, hostile values stay harmless', () => {
+  const key = 'ch-conn/presti/whatsapp/+390200000002';
+  assert.deepEqual(
+    parseModuleRoute(`#/connettori/whatsapp?binding=${encodeURIComponent(key)}`),
+    { view: 'connector-detail', channel: 'whatsapp', binding: key },
+  );
+  // No binding: the old shape is unchanged.
+  assert.deepEqual(parseModuleRoute('#/connettori/whatsapp'), { view: 'connector-detail', channel: 'whatsapp' });
+  // Empty, missing or overlong bindings fall back to the first active row,
+  // never fail the route: the key is matched exactly, never fetched.
+  assert.deepEqual(parseModuleRoute('#/connettori/whatsapp?binding='), { view: 'connector-detail', channel: 'whatsapp' });
+  assert.deepEqual(parseModuleRoute('#/connettori/whatsapp?other=1'), { view: 'connector-detail', channel: 'whatsapp' });
+  assert.deepEqual(parseModuleRoute(`#/connettori/whatsapp?binding=${'k'.repeat(1025)}`), { view: 'connector-detail', channel: 'whatsapp' });
+  // The channel grammar still holds with a query attached.
+  assert.equal(parseModuleRoute('#/connettori/%2fetc?binding=x').view, 'invalid');
+  assert.equal(parseModuleRoute('#/connettori/a/b?binding=x').view, 'invalid');
 });
 
 test('every section reads the same channel-connection record', () => {
@@ -136,11 +155,10 @@ test('"skill che lo usano" shows only declared dependencies', () => {
   assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('appointments')));
 });
 
-function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true } = {}) {
+function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true, grants = [], renewed = [] } = {}) {
   return {
     async request(path, options = {}) {
       calls.push(path);
-      void options;
       if (path === '/api/schema') {
         return channels ? { domains: { channels: { metadata: { channelsContract: 1, adapters } } } } : { domains: {} };
       }
@@ -153,6 +171,16 @@ function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsap
         return { units };
       }
       if (path.startsWith('/api/connectors?')) return { connectors };
+      if (path.startsWith('/api/connectors/activity')) return { connections: grants };
+      if (path.startsWith('/api/modules/channel-connection/records') && !path.includes('/actions/')) {
+        return { items: [{ id: 'rec-1', sourceKey: connectors[0]?.connectionKey ?? 'k' }] };
+      }
+      if (path.includes('/actions/renew-connection-grant')) {
+        if (String(options.method ?? 'GET').toUpperCase() !== 'POST') throw new Error('renewal is a POST');
+        renewed.push(options.body);
+        return { record: { id: 'rec-1' } };
+      }
+      void options;
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -383,4 +411,165 @@ test('the Email detail offers Gmail Collega even without composed channels; othe
   await createConnectorDetailView({ doc, mount: other, client: stubClient({ profile, channels: false, calls: otherCalls }), navigate: () => {}, storage: null }).render('whatsapp');
   assert.ok(!otherCalls.includes('/api/profile'), 'only Email reads the Google connections');
   assert.ok(!other.findAll('section').some((node) => node.getAttribute('data-section') === 'google-connections'));
+});
+
+test('the renewal section only fires for an active binding with a stated, expiring grant', () => {
+  const now = Date.parse('2026-10-25T12:00:00.000Z');
+  const soon = new Date(now + 3 * 86400000).toISOString();
+  const section = renewalSection({ label: 'WhatsApp', connection: CONNECTION, grantExpiresAt: soon, nowMs: now });
+  assert.equal(section.key, 'rinnovo-permesso');
+  assert.equal(section.connectionKey, CONNECTION.connectionKey);
+  assert.ok(section.lines.some((line) => line.includes('scade tra 3 giorni')));
+  const expired = renewalSection({ label: 'WhatsApp', connection: CONNECTION, grantExpiresAt: '2026-10-20T12:00:00.000Z', nowMs: now });
+  assert.ok(expired.lines.some((line) => line.includes('è scaduto')));
+  assert.equal(renewalSection({ label: 'WhatsApp', connection: { ...CONNECTION, status: 'pending' }, grantExpiresAt: soon, nowMs: now }), null);
+  assert.equal(renewalSection({ label: 'WhatsApp', connection: CONNECTION, grantExpiresAt: null, nowMs: now }), null);
+  assert.equal(renewalSection({ label: 'WhatsApp', connection: CONNECTION, grantExpiresAt: '2026-12-25T12:00:00.000Z', nowMs: now }), null);
+  assert.equal(renewalSection({ label: 'WhatsApp', connection: null, grantExpiresAt: soon, nowMs: now }), null);
+  // The same deadline reads the same words on Stato sync and in the detail.
+  const sections = detailSections({ entry: ENTRY, connection: CONNECTION, spaceId: 'presti' });
+  assert.ok(!('rinnovoPermesso' in sections), 'no stated grant, no renewal section');
+  const withGrant = detailSections({ entry: ENTRY, connection: { ...CONNECTION, grantExpiresAt: soon }, spaceId: 'presti' });
+  assert.equal(withGrant.rinnovoPermesso.title, 'Rinnovo del permesso');
+});
+
+test('the detail records a renewal through the existing record action', async () => {
+  const now = Date.now();
+  const soon = new Date(now + 3 * 86400000).toISOString();
+  const renewed = [];
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const toasts = [];
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ grants: [{ connectionKey: CONNECTION.connectionKey, grantExpiresAt: soon }], renewed }),
+    storage: { getItem: () => 'presti', setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: (message, isError = false) => toasts.push({ message, isError }),
+  });
+  await view.render('whatsapp');
+  await flush();
+  assert.ok(mount.textContent.includes('Rinnovo del permesso'), 'the renewal section sits above the how-it-works sections');
+  const input = mount.findAll('input').find((node) => node.getAttribute('data-action') === 'renew-grant-expiry');
+  assert.ok(input, 'one datetime field for the provider-stated expiry');
+  input.value = soon.slice(0, 16);
+  const button = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'renew-grant');
+  assert.ok(button);
+  button.dispatch('click');
+  await flush(12);
+  assert.equal(renewed.length, 1, 'one renew-connection-grant record action');
+  assert.ok(!toasts.some((toast) => toast.isError), 'no error toast on success');
+  // An empty date never reaches the record action.
+  const bad = createMount(doc);
+  const badRenewed = [];
+  const badView = createConnectorDetailView({
+    doc,
+    mount: bad,
+    client: stubClient({ grants: [{ connectionKey: CONNECTION.connectionKey, grantExpiresAt: soon }], renewed: badRenewed }),
+    storage: { getItem: () => 'presti', setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: (message, isError = false) => toasts.push({ message, isError }),
+  });
+  await badView.render('whatsapp');
+  await flush();
+  const badButton = bad.findAll('button').find((node) => node.getAttribute('data-action') === 'renew-grant');
+  badButton.dispatch('click');
+  await flush(12);
+  assert.equal(badRenewed.length, 0, 'no record action without a provider-stated date');
+  assert.ok(toasts.some((toast) => toast.isError), 'the empty date warns');
+});
+
+test('a channel-level renewal renews the binding the card named, not the first active one', async () => {
+  // Two active WhatsApp bindings (backlog:3a3e6eaf): the yellow card for B
+  // routes the detail at B, and the Rinnovo must record grantExpiresAt on
+  // B's record — never on A's.
+  const keyA = 'presti:whatsapp:+390200000001';
+  const keyB = 'presti:whatsapp:+390200000002';
+  const connA = { ...CONNECTION, connectionKey: keyA, account: '+390200000001' };
+  const connB = { ...CONNECTION, connectionKey: keyB, account: '+390200000002' };
+  const now = Date.now();
+  const grants = [
+    { connectionKey: keyA, grantExpiresAt: new Date(now + 6 * 86400000).toISOString() },
+    { connectionKey: keyB, grantExpiresAt: new Date(now + 3 * 86400000).toISOString() },
+  ];
+  const ids = new Map([[keyA, 'rec-A'], [keyB, 'rec-B']]);
+  const reads = [];
+  const posts = [];
+  const twoBindingsClient = {
+    async request(path, options = {}) {
+      if (path === '/api/schema') {
+        return { domains: { channels: { metadata: { channelsContract: 1, adapters: [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }] } } } };
+      }
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      if (path.startsWith('/api/connectors?')) return { connectors: [connA, connB] };
+      if (path.startsWith('/api/connectors/activity')) return { connections: grants };
+      if (path.startsWith('/api/modules/channel-connection/records') && !path.includes('/actions/')) {
+        reads.push(path);
+        const wanted = new URLSearchParams(path.split('?')[1] ?? '').get('filter.sourceKey');
+        const id = (typeof wanted === 'string' && ids.get(wanted)) || null;
+        return { items: id === null ? [] : [{ id, sourceKey: wanted }] };
+      }
+      if (path.includes('/actions/renew-connection-grant')) {
+        posts.push({ path, body: options.body });
+        return { record: { id: 'ok' } };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const renewAs = async (binding) => {
+    reads.length = 0;
+    posts.length = 0;
+    const doc = createFakeDocument();
+    const mount = createMount(doc);
+    const view = createConnectorDetailView({
+      doc,
+      mount,
+      client: twoBindingsClient,
+      storage: { getItem: () => 'presti', setItem: () => {}, removeItem: () => {} },
+      navigate: () => {},
+    });
+    await view.render('whatsapp', binding);
+    await flush();
+    const input = mount.findAll('input').find((node) => node.getAttribute('data-action') === 'renew-grant-expiry');
+    assert.ok(input, 'the renewal section renders for the selected binding');
+    input.value = new Date(now + 30 * 86400000).toISOString().slice(0, 16);
+    const button = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'renew-grant');
+    button.dispatch('click');
+    await flush(12);
+    return mount.textContent;
+  };
+  // From B's card: the renewal reads and writes B's record only.
+  const afterB = await renewAs(keyB);
+  assert.equal(reads.length, 1, 'one record lookup for the renewal');
+  assert.ok(reads[0].includes(`filter.sourceKey=${encodeURIComponent(keyB)}`), `the lookup names B (${reads[0]})`);
+  assert.equal(posts.length, 1, 'one renew-connection-grant record action');
+  assert.ok(posts[0].path.includes('/records/rec-B/'), `the renewal lands on B's record (${posts[0].path})`);
+  assert.ok(afterB.includes(`Chiave di collegamento: ${keyB}`), 'the rebuilt screen still details B after its renewal');
+  assert.ok(!afterB.includes(`Chiave di collegamento: ${keyA}`), 'the rebuilt screen does not fall back to A after renewing B');
+  // Without a binding the old behavior is unchanged: the first active row.
+  await renewAs(null);
+  assert.ok(reads[0].includes(`filter.sourceKey=${encodeURIComponent(keyA)}`), `no binding renews the first active row (${reads[0]})`);
+  assert.ok(posts[0].path.includes('/records/rec-A/'), `no binding lands on A's record (${posts[0].path})`);
+  // An unknown binding never invents a row: it renews the first active one.
+  await renewAs('presti:whatsapp:+390200000009');
+  assert.ok(posts[0].path.includes('/records/rec-A/'), `an unknown binding falls back to the first active row (${posts[0].path})`);
+});
+
+test('the observer watches the renewal without touching it', async () => {
+  const soon = new Date(Date.now() + 3 * 86400000).toISOString();
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ grants: [{ connectionKey: CONNECTION.connectionKey, grantExpiresAt: soon }] }),
+    storage: { getItem: () => 'presti', setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    role: () => 'observer',
+  });
+  await view.render('whatsapp');
+  await flush();
+  assert.ok(mount.textContent.includes('Rinnovo del permesso'), 'the section stays visible');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'renew-grant').length, 0);
 });

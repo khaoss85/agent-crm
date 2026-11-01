@@ -10,10 +10,13 @@
 // channel catalog (`CONNECTOR_CATALOG` in `admin-connectors.js`), the live
 // connection rows of GET /api/connectors (projections of the
 // `channel-connection` record of `packages/channels`, one account bound to
-// one space) and the unit catalog of GET /api/space-packages/catalog (only
-// for display labels of the declared consumers). This file owns no storage,
-// no record and no new write: every change still goes through the guided
-// `#/connettori` flow (BO-F1-02), which the detail links to.
+// one space), the grant expiries of GET /api/connectors/activity (the same
+// ones the Stato sync yellow card reads) and the unit catalog of
+// GET /api/space-packages/catalog (only for display labels of the declared
+// consumers). The single write this file owns is the grant renewal through
+// the existing `renew-connection-grant` record action (P2 Codex su #415):
+// every other change still goes through the guided `#/connettori` flow
+// (BO-F1-02), which the detail links to.
 //
 // Acceptance contract, enforced by tests/admin-connector-detail.test.js:
 // every section reads the SAME `channel-connection` row (each section
@@ -33,6 +36,7 @@ import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } f
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { grantExpiring, grantExpiryWording } from './admin-sync.js';
 
 /** Every channel the detail can render, in catalog order. */
 export const CONNECTOR_DETAIL_CHANNELS = Object.freeze(CONNECTOR_CATALOG.map((entry) => entry.channel));
@@ -376,6 +380,11 @@ export function detailSections({ entry, connection, spaceId = null }) {
     : consumers.map((row) => `«${row.unit}» usa «${row.edge}»: ${row.via}`);
 
   const section = (key, title, lines) => Object.freeze({ key, title, connectionKey, lines: Object.freeze(lines) });
+  // The renewal cure for the Stato sync yellow card (P2 Codex su #415):
+  // the "Rinnova in un clic" route lands here, so an active binding with a
+  // stated, expiring grant carries its own renewal section — never just a
+  // link back to the list whose wizard serves no active connection.
+  const renewal = renewalSection({ label, connection, grantExpiresAt: rowGrant(connection) });
   return Object.freeze({
     cosaEntra: section('cosa-entra', 'Cosa entra in Accordo', cosaEntraLines),
     anteprimaScheda: section('anteprima-scheda', 'Come appare nella scheda cliente', anteprimaSchedaLines),
@@ -384,6 +393,50 @@ export function detailSections({ entry, connection, spaceId = null }) {
     chiRisponde: section('chi-risponde', 'Chi risponde', chiRispondeLines),
     dettagliTecnici: section('dettagli-tecnici', 'Dettagli tecnici', dettagliTecniciLines),
     skillCheLoUsano: section('skill-che-lo-usano', 'Skill e pacchetti che lo usano', skillCheLoUsanoLines),
+    ...(renewal === null ? {} : { rinnovoPermesso: renewal }),
+  });
+}
+
+/**
+ * The provider-stated grant expiry one live connection row carries, or null
+ * when the row states none. `readSyncState` rows never carry it — only the
+ * activity payload does — so the caller merges it in from there.
+ * @param {any} connection
+ */
+function rowGrant(connection) {
+  if (connection === null || typeof connection !== 'object') return null;
+  return typeof connection.grantExpiresAt === 'string' && connection.grantExpiresAt !== ''
+    ? connection.grantExpiresAt : null;
+}
+
+/**
+ * The `Rinnovo del permesso` section: only an active binding with a stated,
+ * expiring grant renews — anything else (pending, suspended, revoked, no
+ * stated expiry, calm grant) has nothing to renew and gets no section.
+ * The renewal records the provider-stated expiry through the existing
+ * `renew-connection-grant` record action, which the card on Stato sync can
+ * never invent. Pure and DOM-free, like every other section.
+ * @param {{ label?: unknown, connection: any, grantExpiresAt?: unknown, nowMs?: number }} input
+ */
+export function renewalSection({ label, connection, grantExpiresAt = null, nowMs = Date.now() } = {}) {
+  if (connection === null || typeof connection !== 'object') return null;
+  if (connection.status !== 'active') return null;
+  const connectionKey = typeof connection.connectionKey === 'string' && connection.connectionKey !== ''
+    ? connection.connectionKey : null;
+  if (connectionKey === null) return null;
+  const expiresAt = typeof grantExpiresAt === 'string' && grantExpiresAt !== '' ? grantExpiresAt : rowGrant(connection);
+  if (expiresAt === null || !grantExpiring(expiresAt, nowMs)) return null;
+  const name = typeof label === 'string' && label !== '' ? label : 'Connettore';
+  const when = grantExpiryWording(expiresAt, nowMs);
+  return Object.freeze({
+    key: 'rinnovo-permesso',
+    title: 'Rinnovo del permesso',
+    connectionKey,
+    expiresAt,
+    lines: Object.freeze([
+      `Il permesso di ${name} ${when}.`,
+      'Riautorizza presso il provider, poi registra qui la scadenza che il provider dichiara: solo una scadenza reale fa sparire l\u2019avviso.',
+    ]),
   });
 }
 
@@ -396,12 +449,17 @@ function errorOf(error) {
 /**
  * A view controller for the connector detail. Same injectable shape as the
  * other Admin views (`doc`, `mount`, `client`, `storage`, `navigate`), so it
- * stays testable without a browser.
+ * stays testable without a browser. The single write this view owns is the
+ * grant renewal through the existing `renew-connection-grant` record action
+ * (P2 Codex su #415) — every other change still goes through the guided
+ * `#/connettori` flow, which the detail links to.
+ * @param {{ doc: any, mount: any, client: { request: (path: string, options?: object) => Promise<any> }, navigate?: (hash: string) => void, storage?: any, role?: () => string | null, toast?: (message: string, isError?: boolean) => void }} deps
  */
 export function createConnectorDetailView(deps) {
   const { doc, mount, navigate } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
   const storage = deps.storage ?? null;
+  const toast = deps.toast ?? (() => {});
 
   const readSpace = () => {
     try {
@@ -416,6 +474,7 @@ export function createConnectorDetailView(deps) {
     spaceId: readSpace(),
     adapters: /** @type {Array<any>} */ ([]),
     entries: /** @type {Array<any>} */ ([]),
+    /** @type {Map<string, string>} */ grants: new Map(),
     units: /** @type {Array<any> | null} */ (null),
     catalogError: /** @type {string | null} */ (null),
     channelsReady: false,
@@ -423,6 +482,17 @@ export function createConnectorDetailView(deps) {
     loadError: null,
     /** @type {any} */ google: null,
   };
+
+  // The observer role watches without touching: the renewal write below
+  // hides for observers, like every write control on Stato sync. Unknown or
+  // absent roles keep the writer behavior local development always had.
+  function readOnly() {
+    try {
+      return typeof deps.role === 'function' && deps.role() === 'observer';
+    } catch {
+      return false;
+    }
+  }
 
   const refreshSpace = () => {
     state.spaceId = readSpace();
@@ -462,6 +532,27 @@ export function createConnectorDetailView(deps) {
       state.loaded = true;
     } catch (error) {
       state.loadError = errorOf(error);
+      return;
+    }
+    // The provider-stated grant expiries live only in the activity payload
+    // (the same one the Stato sync yellow card reads): without them the
+    // detail cannot offer a renewal, so they merge onto the rows below.
+    // A failed activity read degrades to no renewal section, never to a
+    // fault — the detail's own rows above already decided the screen.
+    state.grants = new Map();
+    try {
+      const activity = await client.request(
+        `/api/connectors/activity?spaceId=${encodeURIComponent(state.spaceId.trim())}`,
+      );
+      for (const item of Array.isArray(activity?.connections) ? activity.connections : []) {
+        if (item !== null && typeof item === 'object'
+          && typeof item.connectionKey === 'string' && item.connectionKey !== ''
+          && typeof item.grantExpiresAt === 'string' && item.grantExpiresAt !== '') {
+          state.grants.set(item.connectionKey, item.grantExpiresAt);
+        }
+      }
+    } catch {
+      state.grants = new Map();
     }
   }
 
@@ -485,6 +576,76 @@ export function createConnectorDetailView(deps) {
     }
     panel.appendChild(list);
     box.appendChild(panel);
+  }
+
+  // The renewal cure (P2 Codex su #415): the screen the Stato sync yellow
+  // card's "Rinnova in un clic" names. The human re-authorizes at the
+  // provider first, then records here the expiry the provider stated —
+  // through the existing `renew-connection-grant` record action, never an
+  // invented date. Markup stays minimal: the same section block plus one
+  // datetime field and one button.
+  function renderRenewal(box, channel, section) {
+    const panel = el(doc, 'section', 'bo-connector-row');
+    panel.appendChild(el(doc, 'h3', undefined, section.title));
+    const list = el(doc, 'ul', undefined);
+    for (const line of section.lines) {
+      list.appendChild(el(doc, 'li', undefined, line));
+    }
+    panel.appendChild(list);
+    if (!readOnly()) {
+      const field = el(doc, 'label', undefined, 'Nuova scadenza detta dal provider');
+      const input = doc.createElement('input');
+      input.setAttribute('type', 'datetime-local');
+      input.setAttribute('data-action', 'renew-grant-expiry');
+      field.appendChild(input);
+      panel.appendChild(field);
+      const button = el(doc, 'button', 'bo-sync-fix-action', 'Registra il rinnovo');
+      button.setAttribute('type', 'button');
+      button.setAttribute('data-action', 'renew-grant');
+      button.addEventListener('click', () => {
+        void renewGrant(channel, section, input, button);
+      });
+      panel.appendChild(button);
+    }
+    box.appendChild(panel);
+  }
+
+  async function renewGrant(channel, section, input, button) {
+    const raw = input !== null && typeof input === 'object' && typeof input.value === 'string' ? input.value : '';
+    const at = Date.parse(raw);
+    if (!Number.isFinite(at)) {
+      toast('Scrivi la scadenza che il provider dichiara, poi registra.', true);
+      return;
+    }
+    const grantExpiresAt = new Date(at).toISOString();
+    if (button !== null && typeof button === 'object' && typeof button.setAttribute === 'function') {
+      button.setAttribute('disabled', '');
+    }
+    try {
+      // The record id never travels on the read rows: resolve it from the
+      // same module endpoint the quality queue reads (MEM_ACC_REUSE),
+      // narrowed to this binding's source key.
+      const read = await client.request(
+        `/api/modules/channel-connection/records?filter.sourceKey=${encodeURIComponent(section.connectionKey)}&limit=1`,
+      );
+      const record = Array.isArray(read?.items) ? read.items[0] : null;
+      const id = record !== null && typeof record === 'object' && typeof record.id === 'string' && record.id !== ''
+        ? record.id : null;
+      if (id === null) {
+        toast('Collegamento non trovato: ricarica e riprova.', true);
+        render(channel, section.connectionKey);
+        return;
+      }
+      await client.request(
+        `/api/modules/channel-connection/records/${encodeURIComponent(id)}/actions/renew-connection-grant`,
+        { method: 'POST', body: { grantExpiresAt } },
+      );
+      toast('Permesso rinnovato: la nuova scadenza è registrata.');
+      await load();
+    } catch (error) {
+      toast(errorOf(error), true);
+    }
+    render(channel, section.connectionKey);
   }
 
   function renderConsumers(box, channel) {
@@ -511,7 +672,7 @@ export function createConnectorDetailView(deps) {
     box.appendChild(panel);
   }
 
-  function render(channel) {
+  function render(channel, preferredConnectionKey = null) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     const entry = catalogFor(channel);
     if (entry === null) {
@@ -555,8 +716,16 @@ export function createConnectorDetailView(deps) {
     });
     const available = mapped.status !== 'non-disponibile';
     const connections = available ? mapped.connections : [];
+    // The Stato sync yellow card names its binding (backlog:3a3e6eaf): the
+    // requested row wins over the first active one, so a renewal always
+    // lands on the binding whose deadline the operator saw. Unknown keys
+    // fall back to the first active row, as before.
+    const preferred = typeof preferredConnectionKey === 'string' && preferredConnectionKey !== ''
+      ? connections.find((row) => row !== null && typeof row === 'object'
+        && row.connectionKey === preferredConnectionKey) ?? null
+      : null;
     const connection = available
-      ? (connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
+      ? (preferred ?? connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
       : null;
     const badge = !available
       ? 'Non disponibile qui'
@@ -584,7 +753,20 @@ export function createConnectorDetailView(deps) {
       mount.appendChild(row);
       return;
     }
-    const sections = detailSections({ entry, connection, spaceId: state.spaceId.trim() });
+    // The grant expiry lives only in the activity payload (the same one the
+    // Stato sync yellow card reads): merge it onto the row so the renewal
+    // section and the card always name the same deadline.
+    const statedGrant = connection !== null && connection !== undefined
+      && typeof connection.connectionKey === 'string'
+      ? state.grants.get(connection.connectionKey) ?? null : null;
+    const bound = connection !== null && statedGrant !== null
+      ? { ...connection, grantExpiresAt: statedGrant } : connection;
+    const sections = detailSections({ entry, connection: bound, spaceId: state.spaceId.trim() });
+    // The "Rinnova in un clic" route lands here: the renewal cures the
+    // yellow card in place, above the how-it-works sections.
+    if (sections.rinnovoPermesso !== undefined && sections.rinnovoPermesso !== null) {
+      renderRenewal(mount, channel, sections.rinnovoPermesso);
+    }
     renderSection(mount, sections.cosaEntra);
     renderSection(mount, sections.anteprimaScheda);
     renderSection(mount, sections.impostazioniAccount);
@@ -635,7 +817,7 @@ export function createConnectorDetailView(deps) {
   }
 
   return {
-    render: async (channel) => {
+    render: async (channel, preferredConnectionKey = null) => {
       // Loading state: the mount never sits on stale content while the three
       // requests are in flight. render() clears it again on arrival.
       while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -645,7 +827,7 @@ export function createConnectorDetailView(deps) {
         : null;
       mount.appendChild(el(doc, 'p', 'bo-muted', 'Caricamento del connettore…'));
       await load();
-      render(channel);
+      render(channel, preferredConnectionKey);
     },
   };
 }

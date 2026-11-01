@@ -108,6 +108,20 @@ export function channelLabel(channel, catalog = CONNECTOR_CATALOG) {
 }
 
 /**
+ * Whether one channel id belongs to the connectable catalog: only those
+ * channels have a `#/connettori/<canale>` detail with a connection flow.
+ * Every other id (Google Calendar and Stripe on the fixed nine) must never
+ * render a `Collega` link to the honest "Connettore sconosciuto" dead end
+ * (P2 Codex su #415).
+ * @param {unknown} channel
+ * @param {ReadonlyArray<{ channel?: unknown }>} [catalog]
+ */
+export function cataloguedChannel(channel, catalog = CONNECTOR_CATALOG) {
+  return typeof channel === 'string' && channel !== '' && Array.isArray(catalog)
+    && catalog.some((row) => row != null && row.channel === channel);
+}
+
+/**
  * Italian relative time for one ISO instant. Unparseable instants read '—',
  * never "now": an unknown time must not pose as fresh.
  * @param {unknown} iso
@@ -167,10 +181,12 @@ export function syncAgo(iso, nowMs = Date.now()) {
  * The always-visible honest indicator (BO-F6-16): the prototype hero titles
  * (`Quasi tutto sincronizzato` / `Tutto sincronizzato`, `Sincronizzazione
  * in corso` while a pull runs), with the subtitle
- * `Ultimo aggiornamento <tempo> · <n> eventi sincronizzati oggi, in entrata
- * e in uscita.` `<n>` sums the `received` counters the activity payload
- * carries — the only today-count the payload has; entries with no traffic
- * keep an honest fallback, never a zero posing as measured.
+ * `Ultimo aggiornamento <tempo> · <n> eventi ricevuti in tutto.`
+ * `<n>` sums the `received` counters the activity payload carries, which
+ * are all-time tallies — the payload has no daily counter, so the label
+ * stays cumulative instead of posing as "oggi" (P2 Codex su #415; a real
+ * daily counter is a follow-up). Entries with no traffic keep an honest
+ * fallback, never a zero posing as measured.
  * @param {any} activity
  * @param {number} [nowMs]
  * @param {{ syncing?: boolean, extraCount?: number }} [options]
@@ -202,7 +218,7 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
     ? 'Nessun connettore collegato: collega il primo da Connettori.'
     : tempo === null
       ? 'Ancora nessun movimento registrato.'
-      : `Ultimo aggiornamento ${tempo} · ${received} eventi sincronizzati oggi, in entrata e in uscita.`;
+      : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
   if (syncing) {
     return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: total };
   }
@@ -490,6 +506,10 @@ export function syncChannelTable(activity, nowMs = Date.now()) {
             ? { text: 'Attivo', tone: 'attivo' }
             : { text: healthLabel(agg.worst), tone: 'altro' })
       : null;
+    // Google Calendar and Stripe have no catalog entry and no detail flow:
+    // their rows never route to the "Connettore sconosciuto" dead end
+    // (P2 Codex su #415).
+    const catalogued = cataloguedChannel(fixed.id);
     return {
       channel: fixed.id,
       label: fixed.name,
@@ -500,7 +520,8 @@ export function syncChannelTable(activity, nowMs = Date.now()) {
       lastAt: agg.lastAt,
       pill,
       keys: agg.keys,
-      detailRoute: `#/connettori/${fixed.id}`,
+      catalogued,
+      detailRoute: catalogued ? `#/connettori/${fixed.id}` : '#/connettori',
     };
   });
   for (const [channel, list] of byChannel) {
@@ -513,6 +534,7 @@ export function syncChannelTable(activity, nowMs = Date.now()) {
         : agg.worst === 'ok'
           ? { text: 'Attivo', tone: 'attivo' }
           : { text: healthLabel(agg.worst), tone: 'altro' };
+    const extraCatalogued = cataloguedChannel(channel);
     rows.push({
       channel,
       label: channelLabel(channel),
@@ -523,7 +545,8 @@ export function syncChannelTable(activity, nowMs = Date.now()) {
       lastAt: agg.lastAt,
       pill,
       keys: agg.keys,
-      detailRoute: `#/connettori/${channel}`,
+      catalogued: extraCatalogued,
+      detailRoute: extraCatalogued ? `#/connettori/${channel}` : '#/connettori',
     });
   }
   return rows;
@@ -540,6 +563,27 @@ export function syncChannelTable(activity, nowMs = Date.now()) {
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
  * @param {number} [nowMs]
  */
+/**
+ * The human words for one stated grant expiry (`è scaduto`, `scade oggi`,
+ * `scade domani`, `scade tra <n> giorni`), shared by the Stato sync yellow
+ * card and the connector detail renewal section so both name the same
+ * deadline. Unparseable instants read `con scadenza sconosciuta`, never a
+ * guess.
+ * @param {unknown} iso
+ * @param {number} [nowMs]
+ */
+export function grantExpiryWording(iso, nowMs = Date.now()) {
+  if (typeof iso !== 'string' || iso === '') return 'con scadenza sconosciuta';
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return 'con scadenza sconosciuta';
+  const diffMs = at - nowMs;
+  if (diffMs <= 0) return 'è scaduto';
+  if (diffMs < 86400000) return 'scade oggi';
+  const days = grantDaysLeft(iso, nowMs);
+  if (days === 1) return 'scade domani';
+  return `scade tra ${days} giorni`;
+}
+
 export function syncGrantCards(activity, nowMs = Date.now()) {
   const cards = [];
   for (const entry of entriesOf(activity)) {
@@ -550,11 +594,7 @@ export function syncGrantCards(activity, nowMs = Date.now()) {
     const channel = typeof entry.channel === 'string' && entry.channel !== '' ? entry.channel : null;
     const fixed = channel !== null ? SYNC_CHANNELS.find((row) => row.id === channel) : undefined;
     const label = fixed !== undefined ? fixed.name : channelLabel(channel);
-    const days = grantDaysLeft(entry.grantExpiresAt, nowMs);
-    const diffMs = Date.parse(entry.grantExpiresAt) - nowMs;
-    const when = diffMs <= 0 ? 'è scaduto'
-      : diffMs < 86400000 ? 'scade oggi'
-        : days === 1 ? 'scade domani' : `scade tra ${days} giorni`;
+    const when = grantExpiryWording(entry.grantExpiresAt, nowMs);
     cards.push({
       key: typeof entry.connectionKey === 'string' && entry.connectionKey !== '' ? entry.connectionKey : label,
       channel,
@@ -563,7 +603,16 @@ export function syncGrantCards(activity, nowMs = Date.now()) {
       detail: channel === 'instagram'
         ? 'Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.'
         : 'Rinnovalo ora per non perdere i nuovi arrivi nelle schede clienti.',
-      route: channel === null ? '#/connettori' : `#/connettori/${channel}`,
+      // Only catalogued channels have a detail with a renewal flow: any
+      // other binding routes to the list, never to the honest
+      // "Connettore sconosciuto" dead end (P2 Codex su #415). The card
+      // names its own binding (backlog:3a3e6eaf), so the detail renews
+      // this row even when several active bindings share the channel.
+      route: channel !== null && cataloguedChannel(channel)
+        ? (typeof entry.connectionKey === 'string' && entry.connectionKey !== ''
+          ? `#/connettori/${channel}?binding=${encodeURIComponent(entry.connectionKey)}`
+          : `#/connettori/${channel}`)
+        : '#/connettori',
       expiresAt: entry.grantExpiresAt,
     });
   }
@@ -981,7 +1030,10 @@ export function createSyncView(deps) {
 
   // The prototype's `Canali` card (BO-F6-16, fetta 2): nine fixed rows with
   // the mark, the name plus the fixed direction line, `agg. …`, `<n> eventi
-  // oggi` and the pill — or `Collega` for a channel with no binding. No
+  // ricevuti` (cumulative — the payload has no daily counter, P2 Codex su
+  // #415) and the pill — `Collega` for a catalogued channel with no binding,
+  // an honest `Non disponibile` for the fixed rows no catalog can connect
+  // (Google Calendar, Stripe). No
   // per-row pull: the prototype pulls globally from the hero, and the
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
@@ -1020,10 +1072,13 @@ export function createSyncView(deps) {
         undefined,
         !row.connected ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
-      line.appendChild(el(doc, 'td', undefined, !row.connected ? '—' : `${row.received} eventi oggi`));
+      line.appendChild(el(doc, 'td', undefined, !row.connected ? '—' : `${row.received} eventi ricevuti`));
       const stateCell = doc.createElement('td');
       if (!row.connected) {
-        if (!readOnly()) {
+        // Fixed rows with no catalog entry (Google Calendar, Stripe) have
+        // no detail flow: an honest `Non disponibile` instead of a `Collega`
+        // link to "Connettore sconosciuto" (P2 Codex su #415).
+        if (!readOnly() && row.catalogued === true) {
           const link = el(doc, 'a', 'bo-sync-fix-action', 'Collega');
           link.setAttribute('href', row.detailRoute);
           link.setAttribute('data-action', 'collega');
@@ -1033,8 +1088,10 @@ export function createSyncView(deps) {
             go(row.detailRoute);
           });
           stateCell.appendChild(link);
-        } else {
+        } else if (row.catalogued === true) {
           stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
+        } else {
+          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'Non disponibile'));
         }
       } else {
         const pill = el(doc, 'span', 'bo-sync-pill', row.pill.text);

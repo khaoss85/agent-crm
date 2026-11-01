@@ -645,9 +645,10 @@ const connectorsView = createConnectorsView({
   toast,
 });
 
-// Connector detail (BO-F5-03): the seven sections of one connector, all read
-// from the same channel-connection row, plus the declared consumers. Same
-// shape as the connectors view above; owns no storage and no write.
+// Connector detail (BO-F5-03): the sections of one connector, all read from
+// the same channel-connection row, plus the declared consumers. Same shape
+// as the connectors view above; the single write is the grant renewal
+// through the existing record action (hidden for observers, like Stato sync).
 const connectorDetailView = createConnectorDetailView({
   doc: document,
   mount: moduleView,
@@ -655,6 +656,9 @@ const connectorDetailView = createConnectorDetailView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The session role for the read-only state: observers watch without
+  // touching, like on Stato sync.
+  role: () => shellUser?.role ?? null,
   toast,
 });
 
@@ -1141,7 +1145,7 @@ async function route() {
     else if (target.view === 'customer-import') await customerDataView.render();
     else if (target.view === 'customer-new') await customerFormView.render();
     else if (target.view === 'connectors') await connectorsView.render();
-    else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel);
+    else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel, target.binding ?? null);
     else if (target.view === 'sync') await syncView.render();
     else if (target.view === 'reporting') await reportingView.renderReporting();
     else if (target.view === 'sequenze') {

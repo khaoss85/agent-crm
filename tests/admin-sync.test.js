@@ -18,6 +18,7 @@ import {
   SYNC_CHANNELS,
   SYNC_GRANT_EXPIRING_DAYS,
   SYNC_ROUTE,
+  cataloguedChannel,
   channelLabel,
   createSyncView,
   directionLabel,
@@ -25,6 +26,7 @@ import {
   feedKindLabel,
   grantDaysLeft,
   grantExpiring,
+  grantExpiryWording,
   healthAuthority,
   healthLabel,
   healthTone,
@@ -148,7 +150,7 @@ test('indicator is ok with a count and fix with N things to fix', () => {
   assert.equal(ok.tone, 'ok');
   assert.equal(ok.title, 'Tutto sincronizzato');
   assert.ok(ok.detail.includes('Ultimo aggiornamento 30 min fa'));
-  assert.ok(ok.detail.includes('10 eventi sincronizzati oggi, in entrata e in uscita.'));
+  assert.ok(ok.detail.includes('10 eventi ricevuti in tutto.'));
 
   const one = syncIndicator(activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] }), NOW);
   assert.equal(one.tone, 'fix');
@@ -333,7 +335,7 @@ test('the ok screen says nothing is broken and still shows the table', async () 
   assert.ok(text.includes('Tutto sincronizzato'));
   assert.ok(text.includes('✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
   assert.ok(text.includes('Ultimo aggiornamento'));
-  assert.ok(text.includes('eventi sincronizzati oggi, in entrata e in uscita.'));
+  assert.ok(text.includes('eventi ricevuti in tutto.'));
   assert.ok(text.includes('WhatsApp'));
   assert.equal(mount.findAll('table').length, 1);
   // No badge on the Stato sync tab while there is nothing to fix.
@@ -688,10 +690,10 @@ test('the yellow grant cards use the prototype wording, soonest first', () => {
   // expiry-less whatsapp and the pending row stay out.
   assert.equal(cards.length, 2);
   assert.equal(cards[0].title, 'Il permesso di TikTok scade domani');
-  assert.equal(cards[0].route, '#/connettori/tiktok');
+  assert.equal(cards[0].route, '#/connettori/tiktok?binding=tt-1');
   assert.equal(cards[1].title, 'Il permesso di Instagram scade tra 3 giorni');
   assert.equal(cards[1].detail, 'Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.');
-  assert.equal(cards[1].route, '#/connettori/instagram');
+  assert.equal(cards[1].route, '#/connettori/instagram?binding=ig-1');
   const others = syncGrantCards(activityOf({
     connections: [entryOf({ connectionKey: 'wa-1', grantExpiresAt: '2026-10-25T18:00:00.000Z' })],
   }), NOW);
@@ -702,6 +704,17 @@ test('the yellow grant cards use the prototype wording, soonest first', () => {
   }), NOW);
   assert.equal(past[0].title, 'Il permesso di WhatsApp è scaduto');
   assert.deepEqual(syncGrantCards(null, NOW), []);
+});
+
+test('the yellow grant card names its binding, so the detail renews that row', () => {
+  const key = 'ch-conn/presti/whatsapp/+390200000002';
+  const cards = syncGrantCards(activityOf({
+    connections: [entryOf({ connectionKey: key, grantExpiresAt: '2026-10-28T12:00:00.000Z' })],
+  }), NOW);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].route, `#/connettori/whatsapp?binding=${encodeURIComponent(key)}`);
+  assert.ok(!cards[0].route.includes(' '), 'no raw spaces in the route');
+  assert.ok(!cards[0].route.includes('+3902'), 'the account travels encoded, never raw');
 });
 
 test('the purple identity cards name people, never record codes', () => {
@@ -765,16 +778,19 @@ test('the table renders nine rows with the count, agg and pills', async () => {
   assert.ok(text.includes('↔ bidirezionale'));
   assert.ok(text.includes('↔ pagamenti e link'));
   assert.ok(text.includes('← in entrata'));
-  assert.ok(text.includes('10 eventi oggi'));
+  assert.ok(text.includes('10 eventi ricevuti'));
   assert.ok(text.includes('Permesso in scadenza'));
   assert.ok(text.includes('Attivo'));
-  // Every unconnected channel offers the guided flow, none invents data.
+  // Every unconnected catalogued channel offers the guided flow; the fixed
+  // rows no catalog can connect (Google Calendar, Stripe) read `Non
+  // disponibile` instead of a `Collega` link to a dead end.
   const collega = mount.findAll('a').filter((node) => node.textContent === 'Collega');
-  assert.equal(collega.length, 7);
+  assert.equal(collega.length, 5);
   assert.deepEqual(collega.map((node) => node.getAttribute('href')).sort(), [
-    '#/connettori/calendar', '#/connettori/email', '#/connettori/facebook',
-    '#/connettori/site-form', '#/connettori/stripe', '#/connettori/tiktok', '#/connettori/voice',
+    '#/connettori/email', '#/connettori/facebook',
+    '#/connettori/site-form', '#/connettori/tiktok', '#/connettori/voice',
   ]);
+  assert.ok(text.includes('Non disponibile'));
   // No per-row pull: the table carries no sync-now buttons.
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now').length, 0);
 });
@@ -787,7 +803,8 @@ test('the empty space still lists nine connectable rows', async () => {
   await flush();
   const text = mount.textContent;
   assert.ok(text.includes('0 di 9 collegati'));
-  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 9);
+  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 7);
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non disponibile').length, 2);
 });
 
 test('a failed read offers Riprova and retries on click', async () => {
@@ -876,10 +893,10 @@ test('the yellow card renews through the connector detail', async () => {
   assert.ok(mount.textContent.includes('Il permesso di Instagram scade tra 3 giorni'));
   assert.ok(mount.textContent.includes('Rinnovalo ora per continuare a ricevere i DM nelle schede clienti.'));
   const renew = mount.findAll('a').find((node) => node.textContent === 'Rinnova in un clic');
-  assert.equal(renew.getAttribute('href'), '#/connettori/instagram');
+  assert.equal(renew.getAttribute('href'), '#/connettori/instagram?binding=ig-1');
   renew.dispatch('click');
   await flush();
-  assert.deepEqual(navigated, ['#/connettori/instagram']);
+  assert.deepEqual(navigated, ['#/connettori/instagram?binding=ig-1']);
 });
 
 test('the candidates read narrows to unresolved on the server', async () => {
@@ -918,6 +935,40 @@ test('a failed candidates read stays honest: no quiet banner, one diagnostic', a
   } finally {
     console.warn = originalWarn;
   }
+});
+
+test('only catalogued channels have a detail flow', () => {
+  assert.ok(cataloguedChannel('whatsapp'));
+  assert.ok(cataloguedChannel('site-form'));
+  assert.ok(!cataloguedChannel('calendar'));
+  assert.ok(!cataloguedChannel('stripe'));
+  assert.ok(!cataloguedChannel('nope'));
+  assert.ok(!cataloguedChannel(null));
+  assert.ok(!cataloguedChannel('__proto__'));
+  // The fixed rows without a catalog entry never route to a dead end.
+  const rows = syncChannelTable(activityOf());
+  for (const channel of ['calendar', 'stripe']) {
+    const row = rows.find((item) => item.channel === channel);
+    assert.equal(row.detailRoute, '#/connettori');
+    assert.equal(row.catalogued, false);
+  }
+  const wa = rows.find((item) => item.channel === 'whatsapp');
+  assert.equal(wa.detailRoute, '#/connettori/whatsapp');
+  assert.equal(wa.catalogued, true);
+});
+
+test('the grant wording names one shared deadline', () => {
+  assert.equal(grantExpiryWording('2026-10-20T12:00:00.000Z', NOW), 'è scaduto');
+  assert.equal(grantExpiryWording('2026-10-25T18:00:00.000Z', NOW), 'scade oggi');
+  assert.equal(grantExpiryWording('2026-10-26T12:00:00.000Z', NOW), 'scade domani');
+  assert.equal(grantExpiryWording('2026-10-28T12:00:00.000Z', NOW), 'scade tra 3 giorni');
+  assert.equal(grantExpiryWording('nope', NOW), 'con scadenza sconosciuta');
+  assert.equal(grantExpiryWording(null, NOW), 'con scadenza sconosciuta');
+  // A fix row without a catalog entry falls back to the list, never a dead end.
+  const cards = syncGrantCards(activityOf({
+    connections: [entryOf({ connectionKey: 'cal-1', channel: 'calendar', grantExpiresAt: '2026-10-28T12:00:00.000Z' })],
+  }), NOW);
+  assert.equal(cards[0].route, '#/connettori');
 });
 
 test('an uncomposed candidates module stays silent with zero cards', async () => {
