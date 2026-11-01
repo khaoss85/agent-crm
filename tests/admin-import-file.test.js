@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildImportRows,
+  duplicateTargets,
   guessMapping,
   isWorkbookName,
   parseCsvText,
@@ -27,6 +28,13 @@ test('embedded newlines stay inside the quoted field', () => {
   const parsed = parseCsvText('nome,email\nAda,"riga uno\nriga due"\nBo,bo@esempio.it\n');
   assert.equal(parsed.rows.length, 2);
   assert.equal(parsed.rows[0][1], 'riga uno\nriga due');
+});
+
+test('delimiters inside a multiline quoted field never win the detection', () => {
+  const parsed = parseCsvText('nome,email,note\nAda,ada@esempio.it,"prima riga\n;;;;;\nultima"\n');
+  assert.equal(parsed.delimiter, ',');
+  assert.equal(parsed.rows.length, 1);
+  assert.deepEqual(parsed.rows[0], ['Ada', 'ada@esempio.it', 'prima riga\n;;;;;\nultima']);
 });
 
 test('an empty file has no columns', () => {
@@ -61,7 +69,7 @@ test('empty lines are skipped and counted, extra columns never travel', () => {
 });
 
 test('the phone column leaves the main rows and rides apart', () => {
-  const { phones, unlinkedPhones } = splitPhoneRows(
+  const { phones, phonesWithoutEmail, invalidPhones } = splitPhoneRows(
     [
       ['Ada', 'ada@esempio.it', '+39 333 1234567'],
       ['Bo', '', '+39 333 7654321'],
@@ -71,7 +79,19 @@ test('the phone column leaves the main rows and rides apart', () => {
     ['firstName', 'email', 'phone'],
   );
   assert.deepEqual(phones, [{ externalId: '+393331234567', email: 'ada@esempio.it' }]);
-  assert.equal(unlinkedPhones, 2);
+  assert.equal(phonesWithoutEmail, 1, 'the phone with no owner is not a bad number');
+  assert.equal(invalidPhones, 1, 'the malformed number is not a missing email');
+});
+
+test('manual duplicates are named and the first column wins', () => {
+  assert.deepEqual(duplicateTargets(['email', 'firstName', 'email', 'ignore', 'email']), ['email']);
+  assert.deepEqual(duplicateTargets(['email', 'firstName', 'ignore']), []);
+  const { rows } = buildImportRows(
+    ['a', 'b'],
+    [['prima@esempio.it', 'seconda@esempio.it']],
+    ['email', 'email'],
+  );
+  assert.deepEqual(rows, [{ fileIndex: 0, values: { email: 'prima@esempio.it' } }]);
 });
 
 test('a workbook name is refused with the honest Italian line', () => {

@@ -1694,6 +1694,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-import-drop { margin: 12px 0 0; border: 1.5px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center; background: var(--surface-soft); }
 .bo-import-drop-over { border-color: var(--accent); background: var(--accent-soft); }
 .bo-import-drop-text { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.bo-import-file-label { display: inline-block; margin: 0; padding: 8px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 14px; font-weight: 600; cursor: pointer; }
+.bo-import-file-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .bo-import-file { margin: 10px 0 0; font-size: 14px; }
 .bo-import-info, .bo-import-counts, .bo-import-applied { margin: 10px 0 0; font-size: 14px; }
 .bo-import-applied { color: var(--accent); font-weight: 600; }

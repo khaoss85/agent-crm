@@ -12,6 +12,7 @@ import {
 } from './admin-core.js';
 import {
   buildImportRows,
+  duplicateTargets,
   fieldLabel,
   guessMapping,
   IMPORT_FIELDS,
@@ -21,6 +22,18 @@ import {
   WORKBOOK_REFUSAL,
 } from './admin-import-file.js';
 import { bindAdminMutations } from './admin-submission.js';
+
+/**
+ * The server origin contract (packages/customer-data/src/normalize.js
+ * `requireSystem`): lowercase, starts with a letter, at most 64 chars. A
+ * hand-typed origin that breaks it would fail with the server's message, so
+ * the tool refuses it first, in the operator's words.
+ * @param {string} system
+ */
+function systemContractError(system) {
+  if (/^[a-z][a-z0-9-]{0,63}$/.test(String(system ?? ''))) return null;
+  return 'Il sistema di origine può usare solo lettere minuscole, numeri e trattini, deve iniziare con una lettera e stare in 64 caratteri.';
+}
 
 /**
  * **The Clienti import tool (ADR-037).**
@@ -236,17 +249,24 @@ export function createCustomerDataView(deps) {
     const drop = el('div', 'bo-import-drop');
     drop.setAttribute('data-drop', 'customer-import');
     drop.appendChild(el('p', 'bo-import-drop-text', 'Trascina qui il file oppure'));
-    const fileInput = el('input');
+    const fileInput = el('input', 'bo-import-file-input');
     fileInput.setAttribute('type', 'file');
+    fileInput.setAttribute('id', 'customer-import-file');
     fileInput.setAttribute('name', 'file');
     fileInput.setAttribute('accept', '.csv,text/csv');
     fileInput.setAttribute('aria-label', 'Scegli il file CSV');
+    // The native file control paints its button in the browser's language
+    // («Choose file» in a stock Chromium): the Italian label below opens it,
+    // so the page never shows English — the control stays for assistive tech.
+    const fileLabel = el('label', 'bo-import-file-label', 'Scegli il file CSV');
+    fileLabel.setAttribute('for', 'customer-import-file');
     fileInput.addEventListener('change', () => withBusy(async () => {
       const chosen = fileInput.files?.[0];
       if (!chosen) return;
       await loadChosenFile(chosen);
     }));
     drop.appendChild(fileInput);
+    drop.appendChild(fileLabel);
     drop.addEventListener('dragover', (event) => {
       event?.preventDefault?.();
       drop.classList.add('bo-import-drop-over');
@@ -288,6 +308,9 @@ export function createCustomerDataView(deps) {
         select.addEventListener('change', () => withBusy(async () => {
           file.mapping[index] = String(select.value ?? 'ignore');
           // The preview belongs to a mapping: a changed column clears it.
+          // A duplicate stays visible (the builders read the first
+          // occurrence, so nothing is dropped silently) and the step below
+          // refuses to send while it lasts.
           fileState.preview = null;
           fileState.applied = '';
         }));
@@ -322,14 +345,20 @@ export function createCustomerDataView(deps) {
       panel.appendChild(mapBox);
 
       // ── passo 3: controlla e importa ──────────────────────────────────
+      const dupes = duplicateTargets(file.mapping);
       const { rows: built, skippedEmpty } = buildImportRows(file.columns, file.rows, file.mapping);
-      const { phones, unlinkedPhones } = splitPhoneRows(file.rows, file.mapping);
+      const { phones, phonesWithoutEmail, invalidPhones } = splitPhoneRows(file.rows, file.mapping);
       const checkBox = el('div', 'customer-data-check');
       checkBox.appendChild(el('h2', undefined, '3. Controlla e importa'));
+      if (dupes.length > 0) {
+        checkBox.appendChild(el('p', 'field-error customer-data-duplicates',
+          `Due colonne puntano su «${fieldLabel(dupes[0])}»: correggi gli abbinamenti prima di continuare, una colonna per campo.`));
+      }
       const infoBits = [`${built.length} righe da importare`];
       if (skippedEmpty > 0) infoBits.push(`${skippedEmpty} righe vuote saltate`);
       if (phones.length > 0) infoBits.push(`${phones.length} telefoni da collegare`);
-      if (unlinkedPhones > 0) infoBits.push(`${unlinkedPhones} telefoni senza email non si collegano`);
+      if (phonesWithoutEmail > 0) infoBits.push(`${phonesWithoutEmail} telefoni senza email non si collegano`);
+      if (invalidPhones > 0) infoBits.push(`${invalidPhones} numeri di telefono non validi: controlla la colonna Telefono`);
       checkBox.appendChild(el('p', 'muted bo-import-info', `${infoBits.join(' · ')}.`));
       checkBox.appendChild(el('p', 'muted customer-data-preview-writes', 'L\u2019anteprima non scrive nulla: né schede né importazioni.'));
 
@@ -379,10 +408,14 @@ export function createCustomerDataView(deps) {
       busy.push(previewButton);
       previewButton.addEventListener('click', () => withBusy(async () => {
         if (built.length === 0) throw new Error('Nessuna riga da importare: abbina almeno una colonna.');
+        if (dupes.length > 0) throw new Error(`Due colonne puntano su «${fieldLabel(dupes[0])}»: correggi gli abbinamenti prima di continuare, una colonna per campo.`);
+        const system = file.system === '' ? slugFromFileName(file.name) : file.system;
+        const systemError = systemContractError(system);
+        if (systemError) throw new Error(systemError);
         const result = await client.request('/api/customer-data/import/preview', {
           method: 'POST',
           body: JSON.stringify({
-            system: file.system === '' ? slugFromFileName(file.name) : file.system,
+            system,
             rows: built.map((entry) => entry.values),
             acceptance: file.acceptance,
           }),
@@ -396,7 +429,10 @@ export function createCustomerDataView(deps) {
       busy.push(applyButton);
       applyButton.addEventListener('click', () => withBusy(async () => {
         if (built.length === 0) throw new Error('Nessuna riga da importare: abbina almeno una colonna.');
+        if (dupes.length > 0) throw new Error(`Due colonne puntano su «${fieldLabel(dupes[0])}»: correggi gli abbinamenti prima di continuare, una colonna per campo.`);
         const system = file.system === '' ? slugFromFileName(file.name) : file.system;
+        const systemError = systemContractError(system);
+        if (systemError) throw new Error(systemError);
         const applied = await client.request('/api/customer-data/import/apply', {
           method: 'POST',
           body: JSON.stringify({ system, rows: built.map((entry) => entry.values), acceptance: file.acceptance }),
@@ -459,7 +495,8 @@ export function createCustomerDataView(deps) {
         } else if (phones.length > 0) {
           summary += ' Nessun telefono collegato: le righe con telefono sono state scartate.';
         }
-        if (unlinkedPhones > 0) summary += ` ${unlinkedPhones} telefoni senza email non si collegano.`;
+        if (phonesWithoutEmail > 0) summary += ` ${phonesWithoutEmail} telefoni senza email non si collegano.`;
+        if (invalidPhones > 0) summary += ` ${invalidPhones} numeri di telefono non validi: controlla la colonna Telefono.`;
         fileState.preview = null;
         fileState.applied = summary;
       }));
@@ -584,9 +621,15 @@ export function createCustomerDataView(deps) {
    * @param {string} name
    */
   function slugFromFileName(name) {
+    // The server takes only ^[a-z][a-z0-9-]{0,63}$ (requireSystem): a file
+    // called «2024.csv», a long name or symbols would fail there with the
+    // server's message, so the default origin is shaped to the contract
+    // here. The operator can still change it, and the send validates it.
     const base = String(name ?? '').replace(/\.[^.]*$/, '');
-    const slug = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    return slug === '' ? 'file-importato' : slug;
+    const clean = base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace(/-+/g, '-');
+    const prefixed = /^[a-z]/.test(clean) ? clean : `file-${clean}`;
+    const slug = prefixed.slice(0, 64).replace(/-+$/g, '');
+    return /^[a-z][a-z0-9-]{0,63}$/.test(slug) ? slug : 'file-importato';
   }
 
   /**

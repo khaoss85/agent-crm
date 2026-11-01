@@ -275,6 +275,61 @@ test('no phone batch is sent when every row is rejected', async () => {
   assert.ok(mount.textContent.includes('Nessun telefono collegato: le righe con telefono sono state scartate.'));
 });
 
+test('two columns on the same field are refused in Italian and never sent', async () => {
+  const client = stubClient();
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  const phoneSelect = mount.findAll('select').find((node) => node.getAttribute('name') === 'mapping-2');
+  phoneSelect.value = 'email';
+  phoneSelect.dispatch('change');
+  await tick();
+  assert.ok(mount.textContent.includes('una colonna per campo'),
+    `the duplicate stays visible in Italian, got: ${mount.textContent.slice(0, 400)}`);
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'preview-customer-import').dispatch('click');
+  await tick();
+  assert.ok(!client.calls.some((call) => call.method === 'POST'
+    && call.path === '/api/customer-data/import/preview'), 'nothing travels while two columns share a field');
+  const error = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '').includes('customer-data-error'));
+  assert.ok(error?.textContent.includes('Due colonne'), `the send is refused in Italian, got: ${error?.textContent}`);
+});
+
+test('a file name starting with a digit still yields a valid origin', async () => {
+  const client = stubClient();
+  const { mount } = await renderTool(client);
+  await loadCsv(mount, '2024 clienti.csv', CSV);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'preview-customer-import').dispatch('click');
+  await tick();
+  const posted = client.calls.filter((call) => call.method === 'POST'
+    && call.path === '/api/customer-data/import/preview').at(-1);
+  assert.ok(posted, 'the preview was sent');
+  assert.equal(JSON.parse(posted.body).system, 'file-2024-clienti');
+});
+
+test('a hand-typed origin outside the server contract is refused in Italian', async () => {
+  const client = stubClient();
+  const { mount } = await renderTool(client);
+  await loadCsv(mount);
+  const system = mount.findAll('input').find((node) => node.getAttribute('name') === 'system');
+  system.value = 'Sistema!';
+  system.dispatch('input');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'preview-customer-import').dispatch('click');
+  await tick();
+  const error = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '').includes('customer-data-error'));
+  assert.ok(error?.textContent.includes('solo lettere minuscole'), `the origin is refused in Italian, got: ${error?.textContent}`);
+  assert.ok(!client.calls.some((call) => call.method === 'POST'
+    && call.path === '/api/customer-data/import/preview'), 'the contract-breaking origin never travels');
+});
+
+test('a malformed phone is never reported as a missing email', async () => {
+  const csv = 'nome,email,telefono\nCid,cid@esempio.it,non un numero\n';
+  const { mount } = await renderTool(stubClient());
+  await loadCsv(mount, 'clienti.csv', csv);
+  const text = mount.textContent;
+  assert.ok(text.includes('1 numeri di telefono non validi'), text.slice(0, 400));
+  assert.ok(!text.includes('senza email'), 'the two counts stay separate');
+});
+
 test('a changed column clears a preview that belongs to another mapping', async () => {
   const { mount } = await renderTool(stubClient());
   await loadCsv(mount);

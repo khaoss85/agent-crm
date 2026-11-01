@@ -46,22 +46,28 @@ export function fieldLabel(value) {
 }
 
 /**
- * Guess the delimiter from the first non-empty lines: the winner between
- * comma, semicolon and tab, counted outside quotes.
- * @param {string[]} lines
+ * Guess the delimiter from the raw file text: the winner between comma,
+ * semicolon and tab, counted outside quotes. The quote state crosses
+ * physical lines on purpose: a quoted field may hold newlines — and other
+ * delimiters — inside it, so counting line by line would read a
+ * continuation line as unquoted and pick the wrong delimiter.
+ * @param {string} text the raw file text, BOM included
  */
-function detectDelimiter(lines) {
+function detectDelimiter(text) {
   const counts = { ',': 0, ';': 0, '\t': 0 };
-  for (const line of lines.slice(0, 5)) {
-    if (line.trim() === '') continue;
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i += 1) {
-      const char = line[i];
+  const source = String(text ?? '');
+  let inQuotes = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (inQuotes) {
       if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (!inQuotes && (char === ',' || char === ';' || char === '\t')) {
-        counts[char] += 1;
+        if (source[i + 1] === '"') i += 1;
+        else inQuotes = false;
       }
+    } else if (char === '"') {
+      inQuotes = true;
+    } else if (char === ',' || char === ';' || char === '\t') {
+      counts[char] += 1;
     }
   }
   if (counts[';'] >= counts[','] && counts[';'] >= counts['\t'] && counts[';'] > 0) return ';';
@@ -77,7 +83,7 @@ function detectDelimiter(lines) {
 export function parseCsvText(text) {
   const source = String(text ?? '').replace(/^\uFEFF/, '');
   if (source.trim() === '') return { columns: [], rows: [], delimiter: ',' };
-  const delimiter = detectDelimiter(source.split(/\r?\n/));
+  const delimiter = detectDelimiter(source);
   const rows = [];
   let record = [];
   let field = '';
@@ -169,11 +175,40 @@ export function guessMapping(columns) {
 }
 
 /**
+ * Manual mapping duplicates: the fields two or more columns point to. The
+ * builders below read the first occurrence of each field, so a duplicate
+ * would silently drop a column — the view refuses to send while one lasts.
+ * @param {string[]} mapping one field value per column
+ * @returns {string[]} the duplicated field values, each once, never 'ignore'
+ */
+export function duplicateTargets(mapping) {
+  const seen = new Set();
+  const dupes = [];
+  for (const target of mapping ?? []) {
+    if (target === 'ignore') continue;
+    if (seen.has(target)) {
+      if (!dupes.includes(target)) dupes.push(target);
+    } else {
+      seen.add(target);
+    }
+  }
+  return dupes;
+}
+
+/**
  * Build the server rows from the mapped columns. Fully empty lines are
  * skipped and counted; extra keys never travel (the server contract above).
  * @param {string[]} columns @param {string[][]} rows @param {string[]} mapping
  */
 export function buildImportRows(columns, rows, mapping) {
+  // First column wins per field, like splitPhoneRows reads the first phone
+  // and email columns: a later column on the same field never overwrites
+  // silently. The view blocks sending while duplicates last, so this is
+  // the backstop, not the rule the operator sees.
+  const firstIndex = new Map();
+  for (const [index, target] of (mapping ?? []).entries()) {
+    if (target !== 'ignore' && !firstIndex.has(target)) firstIndex.set(target, index);
+  }
   const built = [];
   let skippedEmpty = 0;
   for (const [fileIndex, cells] of rows.entries()) {
@@ -181,6 +216,7 @@ export function buildImportRows(columns, rows, mapping) {
     for (let i = 0; i < columns.length; i += 1) {
       const target = mapping[i] ?? 'ignore';
       if (target === 'ignore' || target === 'phone') continue;
+      if (firstIndex.get(target) !== i) continue;
       const value = String(cells[i] ?? '').trim();
       if (value !== '') values[target] = value;
     }
@@ -206,25 +242,31 @@ export function isLinkablePhone(raw) {
 /**
  * Split the phone column out: one `phone`-system row per file row that
  * carries both a usable phone and the email that names its owner — the same
- * shape the manual form sends. Phones without an email cannot be linked and
- * are counted, never smuggled into the main rows.
+ * shape the manual form sends. Two separate counts explain the rest: rows
+ * whose phone has no email to link it with, and rows whose phone text is
+ * not a callable number. Neither is smuggled into the main rows.
  * @param {string[][]} rows @param {string[]} mapping
  */
 export function splitPhoneRows(rows, mapping) {
   const phoneIndex = mapping.indexOf('phone');
   const emailIndex = mapping.indexOf('email');
-  if (phoneIndex === -1) return { phones: [], unlinkedPhones: 0 };
+  if (phoneIndex === -1) return { phones: [], phonesWithoutEmail: 0, invalidPhones: 0 };
   const phones = [];
-  let unlinkedPhones = 0;
+  let phonesWithoutEmail = 0;
+  let invalidPhones = 0;
   for (const cells of rows) {
     const rawPhone = String(cells[phoneIndex] ?? '').trim();
     if (rawPhone === '') continue;
     const email = emailIndex === -1 ? '' : String(cells[emailIndex] ?? '').trim();
-    if (email === '' || !isLinkablePhone(rawPhone)) {
-      unlinkedPhones += 1;
+    if (email === '') {
+      phonesWithoutEmail += 1;
+      continue;
+    }
+    if (!isLinkablePhone(rawPhone)) {
+      invalidPhones += 1;
       continue;
     }
     phones.push({ externalId: normalizePhone(rawPhone), email });
   }
-  return { phones, unlinkedPhones };
+  return { phones, phonesWithoutEmail, invalidPhones };
 }
