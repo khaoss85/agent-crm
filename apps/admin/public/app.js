@@ -645,9 +645,10 @@ const connectorsView = createConnectorsView({
   toast,
 });
 
-// Connector detail (BO-F5-03): the seven sections of one connector, all read
-// from the same channel-connection row, plus the declared consumers. Same
-// shape as the connectors view above; owns no storage and no write.
+// Connector detail (BO-F5-03): the sections of one connector, all read from
+// the same channel-connection row, plus the declared consumers. Same shape
+// as the connectors view above; the single write is the grant renewal
+// through the existing record action (hidden for observers, like Stato sync).
 const connectorDetailView = createConnectorDetailView({
   doc: document,
   mount: moduleView,
@@ -655,6 +656,9 @@ const connectorDetailView = createConnectorDetailView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The session role for the read-only state: observers watch without
+  // touching, like on Stato sync.
+  role: () => shellUser?.role ?? null,
   toast,
 });
 
