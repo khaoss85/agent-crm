@@ -250,3 +250,21 @@ test('the assistente proof pair shows the panel with sources and trace at both w
     assert.ok(shot.bytes > floor, `${file} is a filled render (${shot.bytes}B over the ${floor}B floor)`);
   }
 });
+
+// The dettaglio-skill proof pair (BO-F4-02, backlog:c73c6ec83643) carries
+// the AC-3 viewable proof: the skill detail with its six-step cycle, the
+// real kernel definition, the example with its trace and the copyable
+// coding-agent prompt, at desktop and phone widths. The detail is a
+// sub-route (#/personalizzazione/skill/<slug>), not a router screen: the
+// pair is rendered by `tests/admin-skill-detail-shots.test.js`, and this
+// gate ties the committed blobs to a filled render at both widths, like
+// the size gate above.
+test('the dettaglio-skill proof pair shows the detail with its prompt at both widths', () => {
+  for (const [viewport, floor] of [[DESKTOP, 20000], [PHONE, 10000]]) {
+    const file = `dettaglio-skill-${viewport.width}x${viewport.height}.png`;
+    const shot = readPngSize(join(proofDir, file));
+    assert.equal(shot.width, viewport.width, `${file} renders at ${viewport.width}px wide`);
+    assert.equal(shot.height, viewport.height, `${file} renders at ${viewport.height}px tall`);
+    assert.ok(shot.bytes > floor, `${file} is a filled render (${shot.bytes}B over the ${floor}B floor)`);
+  }
+});

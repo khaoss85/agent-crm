@@ -608,6 +608,13 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-connector-row p { margin: 6px 0; font-size: 13px; }
 .bo-conn-row { cursor: pointer; }
 .bo-conn-row:hover { background: var(--surface-soft); }
+/* Skill detail (BO-F4-02): the seven sections reuse the connector row
+ * idiom. The coding-agent prompt is a pre: it scrolls inside its own box
+ * like every other panel pre, so a long bundle command never pushes the
+ * page sideways on a phone. Definition lines are inline code and wrap
+ * like the surrounding text. */
+.bo-skill-row pre { max-width: 100%; overflow-x: auto; }
+.bo-skill-row code { overflow-wrap: anywhere; }
 /* The row opener is a link wearing the row's words: bold name plus one
  * muted line, ink color with no underline — never a blue link. */
 .bo-conn-open {
