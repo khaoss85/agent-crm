@@ -205,10 +205,15 @@ export function memberColorIndex(memberId) {
   return hash % 5;
 }
 
-/** Avatar initials from the opaque member id ("marco" → "MA"). Never a name. @param {unknown} memberId */
+/**
+ * Avatar initials from the painted person name ("Dan" → "DA"): unicode
+ * letters, so accented Italian names keep their initial ("Èlena" → "ÈL").
+ * Falls back to the opaque subject when no name is known, and to "··" when
+ * nothing readable names the person. @param {unknown} memberId
+ */
 export function memberInitials(memberId) {
   if (typeof memberId !== 'string') return '··';
-  const letters = memberId.replace(/[^a-zA-Z]/g, '').slice(0, 2).toUpperCase();
+  const letters = Array.from(memberId.replace(/[^\p{L}]/gu, '')).slice(0, 2).join('').toUpperCase();
   return letters === '' ? '··' : letters;
 }
 
@@ -265,9 +270,11 @@ function personKeyOf(value) {
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
  * the human behind every subject, and one human can hold several subjects
- * (`github|…`, `google|…`, mailbox): subjects merge on the person key —
- * mailbox first (unique per person), then display name — so Dan is one row
- * called Dan. A group with no roster name and no mailbox paints the
+ * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
+ * mailbox (unique per person), so Dan is one row called Dan. A shared
+ * display name alone never merges — two email-less homonyms are two humans,
+ * two rows with the same label and distinct booking identities. A group
+ * with no roster name and no mailbox paints the
  * operator's own typed words, unless they look like a technical subject
  * (a pipe id never paints anywhere); such a row falls back to the generic
  * «Membro del team». No role line: the E2E takes the «Proprietario» chip out
@@ -286,16 +293,16 @@ export function personRows(named, hidden, members) {
   const groups = [];
   const bySubject = new Map();
   const byEmail = new Map();
-  const nameless = new Map();
   const groupFor = (subject) => bySubject.get(subject) ?? null;
   for (const member of roster) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
     const email = personKeyOf(member.email);
     const display = cleanPersonText(member.displayName);
-    const displayKey = personKeyOf(display);
+    // One human shares one mailbox: only a shared mailbox merges two
+    // subjects into one person row. A shared display name alone never
+    // merges — two email-less homonyms are two humans, two rows.
     let group = (email !== null && byEmail.get(email)) || null;
-    if (!group && displayKey !== null) group = nameless.get(displayKey) ?? byEmailNamed(email, displayKey, groups);
     if (!group) {
       group = { subjects: [], displayName: null, email: null };
       groups.push(group);
@@ -305,10 +312,8 @@ export function personRows(named, hidden, members) {
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
       byEmail.set(email, group);
-      if (displayKey !== null && nameless.get(displayKey) === group) nameless.delete(displayKey);
     }
     if (group.displayName === null && display !== null) group.displayName = display;
-    if (group.email === null && displayKey !== null && !nameless.has(displayKey)) nameless.set(displayKey, group);
   }
   // The operator's named filter joins in: a named subject joins its roster
   // group, an unknown one stands alone with no roster name.
@@ -339,23 +344,14 @@ export function personRows(named, hidden, members) {
       id: primary,
       name,
       label,
-      active: listed && !group.subjects.some((subject) => off.has(subject)),
       listed,
+      // Pressed while any of the person's identities paints: a partially
+      // hidden row still shows blocks, so it reads as on until fully off.
+      active: listed && group.subjects.some((subject) => !off.has(subject)),
       color: memberColorIndex(primary),
       initials: memberInitials(name ?? primary),
     };
   });
-}
-
-/**
- * Email groups found through a display-name lookup: an email-less roster row
- * whose display name matches an emailed group's name joins that person. A
- * four-person team shares no display names across humans; without this merge
- * one half-synced identity would split the same human in two rows.
- */
-function byEmailNamed(email, displayKey, groups) {
-  if (email !== null || displayKey === null) return null;
-  return groups.find((group) => group.email !== null && personKeyOf(group.displayName) === displayKey) ?? null;
 }
 
 /**
@@ -1006,9 +1002,11 @@ export function createCalendarioView(deps) {
         // no longer owns the filter from here on.
         state.autoTeam = false;
         const current = parseMemberFilter(state.memberFilter);
-        if (!row.ids.every((id) => current.includes(id))) {
+        if (!row.listed) {
           // A roster person nobody named yet: list all of their subjects and
           // load their week, like «Mostra settimana» does for typed names.
+          // Only a fully-unlisted row takes this path — a listed row (even
+          // partially listed) hides or shows with no reload below.
           state.memberFilter = [...current, ...row.ids.filter((id) => !current.includes(id))].join(', ');
           state.hiddenMembers = state.hiddenMembers.filter((id) => !row.ids.includes(id));
           const next = parseMemberFilter(state.memberFilter);
@@ -1204,17 +1202,30 @@ export function createCalendarioView(deps) {
   }
 
   /**
+   * backlog:df55cf25 — the booking identity a grid block tints by: the
+   * person's stable primary subject, the same identity the Team toggle
+   * hashes, so a block and its toggle always match even when the person
+   * holds several subjects. Unknown subjects tint by themselves.
+   * @param {unknown} subject
+   */
+  function tintSubjectOf(subject) {
+    if (typeof subject !== 'string' || subject === '') return subject;
+    const rows = personRows(parseMemberFilter(state.memberFilter), [], state.members);
+    return rows.find((row) => row.ids.includes(subject))?.id ?? subject;
+  }
+
+  /**
    * A week block: the whole block is one button, so a click selects it and
-   * opens the detail card (C6). Colour comes from the stable opaque member
-   * id while initials follow the painted person name (backlog:df55cf25),
-   * like the Team toggle; gray stays reserved for multi-participant rows,
-   * which team-week never returns (one member per booking), so it never
-   * paints.
+   * opens the detail card (C6). Colour comes from the person's stable
+   * primary subject while initials follow the painted person name
+   * (backlog:df55cf25), like the Team toggle; gray stays reserved for
+   * multi-participant rows, which team-week never returns (one member per
+   * booking), so it never paints.
    * @param {any} row @param {{lane: number, lanes: number}} lane
    */
   function renderEvent(row, lane) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
-    const classes = ['cal-event', `cal-m${memberColorIndex(row?.teamMemberId)}`];
+    const classes = ['cal-event', `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
     const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
     if (selected) classes.push('cal-selected');
@@ -1581,6 +1592,20 @@ export function createCalendarioView(deps) {
   }
 
   /**
+   * backlog:df55cf25 — the person identity the claim books: the visible
+   * field when the operator typed or chose someone, else the opaque
+   * identity kept in state. A pipe outsider never paints, so an empty
+   * visible field still books the exact drafted subject.
+   * @param {any} inputs
+   */
+  function claimedMember(inputs) {
+    const typed = String(inputs.teamMemberId?.value ?? '').trim();
+    if (typed !== '') return typed;
+    const kept = typeof state.manual?.teamMemberId === 'string' ? state.manual.teamMemberId.trim() : '';
+    return kept;
+  }
+
+  /**
    * The manual booking customer: picked by name from the search, never typed
    * as an id or a resource (owner 29/10). Without a pick the claim keeps the
    * historical fallback — contact with an empty id, «senza-cliente» downstream.
@@ -1800,11 +1825,7 @@ export function createCalendarioView(deps) {
     const rows = personRows(named, state.hiddenMembers, state.members);
     const draftPerson = typeof state.draftFill?.teamMemberId === 'string' ? state.draftFill.teamMemberId : '';
     const keptPerson = typeof state.manual?.teamMemberId === 'string' ? state.manual.teamMemberId : '';
-    // One option per person: the value stays the opaque identity the server
-    // books (the already-used subject when the person was named, else the
-    // roster's first subject), while the label is always the person name.
     const groupOf = (subject) => rows.find((row) => row.ids.includes(subject)) ?? null;
-    const valueOf = (subject) => groupOf(subject)?.id ?? subject;
     // The incoming draft decides the control: a draft naming someone outside
     // the known team paints the fallback field, even when a previous choice
     // is kept — otherwise the draft id would be assigned to a select with no
@@ -1815,16 +1836,25 @@ export function createCalendarioView(deps) {
     const known = rows.length > 0 && (current === '' || groupOf(current) !== null);
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
-      if (current !== '') input.value = current;
+      if (current !== '' && !current.includes('|')) input.value = current;
+      if (current.includes('|')) {
+        // A pipe id never paints: the visible field stays empty while the
+        // opaque identity rides in state for the claim only.
+        state.manual = { ...(state.manual ?? {}), teamMemberId: current };
+      }
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(input.value ?? '') };
       });
       form.appendChild(input);
       return input;
     }
-    const shown = current === '' ? '' : valueOf(current);
+    // One option per SUBJECT under the person label: the value stays the
+    // exact opaque identity the operator chose or the draft named, never
+    // remapped to the group primary — a silent remap would book (or fail)
+    // as a different identity with no notice that the choice changed.
+    const shown = current;
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.map((row) => ({ value: row.id, label: row.label }))];
+      ...rows.flatMap((row) => row.ids.map((subject) => ({ value: subject, label: row.label })))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {
@@ -1894,11 +1924,13 @@ export function createCalendarioView(deps) {
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
-        // The select offers one option per person: a draft naming a
-        // non-primary subject still lands on that person's option.
+        // The select offers every subject, so a known draft lands on its
+        // exact identity (never remapped); a pipe outsider never paints —
+        // its identity already rides in state for the claim only.
+        const raw = String(draft.teamMemberId);
         const people = personRows(parseMemberFilter(state.memberFilter), state.hiddenMembers, state.members);
-        const person = people.find((row) => row.ids.includes(String(draft.teamMemberId)));
-        inputs.teamMemberId.value = person ? person.id : String(draft.teamMemberId);
+        const person = people.find((row) => row.ids.includes(raw));
+        if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
       }
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
       if (draft.notes) inputs.notes.value = String(draft.notes);
@@ -1908,8 +1940,13 @@ export function createCalendarioView(deps) {
       if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
       // The draft has been absorbed into the visible form: snapshot it, so
       // a later re-render keeps the draft values instead of replaying them
-      // over the operator's own edits.
-      state.manual = snapshotManual(inputs);
+      // over the operator's own edits. A pipe outsider never painted, so an
+      // empty field keeps the drafted identity from state, not a blank.
+      const absorbed = snapshotManual(inputs);
+      if (absorbed.teamMemberId === '' && typeof draft.teamMemberId === 'string' && draft.teamMemberId !== '') {
+        absorbed.teamMemberId = String(draft.teamMemberId);
+      }
+      state.manual = absorbed;
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
@@ -1951,7 +1988,7 @@ export function createCalendarioView(deps) {
     const startsAt = day !== '' && start !== '' ? romeInstant(day, start) : null;
     const endsAt = day !== '' && end !== '' ? romeInstant(day, end) : null;
     const priceCents = priceToCents(read('price'));
-    const member = read('teamMemberId');
+    const member = claimedMember(inputs);
     // The customer rides the name-search pick, never a typed id or
     // resource: without a pick the historical contact/empty fallback stays.
     const customer = pickedCustomer();
@@ -2038,7 +2075,7 @@ export function createCalendarioView(deps) {
   function missingManualFields(inputs) {
     return missingBookingFields(
       {
-        teamMemberId: String(inputs.teamMemberId?.value ?? ''),
+        teamMemberId: claimedMember(inputs),
         serviceKey: String(inputs.serviceKey?.value ?? ''),
         date: String(inputs.date?.value ?? ''),
         start: String(inputs.start?.value ?? ''),
@@ -2054,7 +2091,12 @@ export function createCalendarioView(deps) {
     // The manual form is the source of truth for this submit: remember every
     // raw value (draft-derived ones included) so the re-render after propose
     // shows the same form Conferma will book. The draft has been absorbed.
+    // A pipe outsider never painted: an empty field must not wipe the
+    // identity the claim just booked.
     state.manual = snapshotManual(inputs);
+    if (state.manual.teamMemberId === '' && typeof claim.teamMemberId === 'string' && claim.teamMemberId !== '') {
+      state.manual.teamMemberId = claim.teamMemberId;
+    }
     state.draftFill = null;
     state.confirmed = null;
     const missing = missingManualFields(inputs);

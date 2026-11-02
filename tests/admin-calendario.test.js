@@ -1879,6 +1879,33 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
 });
 
+// backlog:df55cf25 (review P1 on #549): a shared display name alone never
+// merges — two email-less homonyms are two humans, two rows, two booking
+// identities. Toggling one row must never hide the other's blocks, and a
+// booking for the second human must never carry the first subject.
+test('personRows keeps email-less homonyms as separate rows', () => {
+  const members = [
+    { subject: 'a1', role: 'member', displayName: 'Rossi' },
+    { subject: 'a2', role: 'member', displayName: 'Rossi' },
+  ];
+  const rows = personRows(['a1', 'a2'], [], members);
+  assert.equal(rows.length, 2, 'same name without a shared mailbox is two humans');
+  assert.deepEqual(rows[0].ids, ['a1']);
+  assert.deepEqual(rows[1].ids, ['a2']);
+  assert.equal(rows[0].label, 'Rossi');
+  assert.equal(rows[1].label, 'Rossi');
+  assert.ok(rows[0].id !== rows[1].id, 'toggling and booking keep distinct identities');
+});
+
+// backlog:df55cf25 (review P3 on #549): initials are unicode letters, so an
+// accented Italian name keeps its initial instead of losing it.
+test('memberInitials keeps accented initials', () => {
+  assert.equal(memberInitials('Èlena'), 'ÈL');
+  assert.equal(memberInitials('marco'), 'MA');
+  assert.equal(memberInitials('github|48571113'), 'GI');
+  assert.equal(memberInitials(''), '··');
+});
+
 // The Team card lists the roster with person names and loads the whole
 // roster week on mount, without typing any name first
 // (backlog:0533362e8efe). The toggles stay for filtering. No role chips:
@@ -1966,6 +1993,199 @@ test('the Team card merges one human across roster subjects', async () => {
   assert.ok(card, 'the detail card opens');
   assert.ok(card.textContent.includes('Dan, Ada'), 'the card names the person and the customer');
   assert.ok(!card.textContent.includes('|'), 'no pipe id in the card');
+});
+
+// Shared fixtures for the #549 review cures: Dan holds two opaque subjects
+// under one mailbox, with one booking on each identity.
+const DAN_MEMBERS = [
+  { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+  { subject: 'google|2', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+];
+
+const DAN_WEEK = {
+  from: '2026-10-19T00:00:00.000Z',
+  to: '2026-10-26T00:00:00.000Z',
+  members: [
+    {
+      teamMemberId: 'github|1',
+      appointments: [{
+        id: 'd1', status: 'booked',
+        startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+        serviceKey: 'taglio', teamMemberId: 'github|1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    },
+    {
+      teamMemberId: 'google|2',
+      appointments: [{
+        id: 'd2', status: 'booked',
+        startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z',
+        serviceKey: 'barba', teamMemberId: 'google|2',
+        subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+      }],
+    },
+  ],
+};
+
+// backlog:df55cf25 (review P2 on #549): a listed person click hides (and
+// shows) the whole person with no reload — even a partially-listed row,
+// where the roster gained subjects after the filter was set.
+test('a partially-listed person hides with no reload', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // The roster resolves late: the operator types a subset first, then the
+  // roster arrives naming a second subject of the same person.
+  let releaseMembers = () => {};
+  const membersGate = new Promise((resolve) => { releaseMembers = resolve; });
+  const base = stubClient({ week: DAN_WEEK, memberships: DAN_MEMBERS });
+  const client = {
+    ...base,
+    async request(path, options) {
+      if (path === '/api/spine/memberships') {
+        await membersGate;
+        return { items: DAN_MEMBERS };
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  assert.ok(filter, 'the typed filter stays while the roster is unread');
+  filter.value = 'github|1';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the named identity paints');
+  releaseMembers();
+  for (let round = 0; round < 6; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(teamToggles(mount).length, 1, 'Dan is one row');
+  const weekCalls = () => client.calls.filter((call) => String(call.path).startsWith('/api/appointments/team-week')).length;
+  const callsBefore = weekCalls();
+  teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
+  assert.equal(weekCalls(), callsBefore, 'a listed person hides with no reload');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the person blocks disappear');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
+  teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
+  assert.equal(weekCalls(), callsBefore, 'showing again needs no reload either');
+  assert.ok(texts(mount, 'strong').includes('taglio'), 'the person blocks come back');
+});
+
+// backlog:df55cf25 (review P2 on #549): a block and its toggle always match
+// — both tint from the person's stable primary subject, even when the
+// booking sits on the person's second identity.
+test('blocks and toggle share the tint on a two-subject person', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ week: DAN_WEEK, memberships: DAN_MEMBERS });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const toggle = teamToggles(mount).find((node) => node.textContent.includes('Dan'));
+  assert.ok(toggle, 'the Dan toggle paints');
+  const tints = toggle.findAll('span')
+    .map((node) => String(node.getAttribute('class') ?? ''))
+    .filter((name) => name.startsWith('cal-m'));
+  assert.ok(tints.length > 0, 'the toggle carries a tint');
+  const blocks = mount.findAll('button')
+    .filter((node) => String(node.getAttribute('class') ?? '').includes('cal-event'));
+  assert.equal(blocks.length, 2, 'both identities paint their blocks');
+  for (const block of blocks) {
+    assert.ok(tints.some((tint) => String(block.getAttribute('class')).includes(tint)),
+      'every block matches the toggle tint');
+  }
+});
+
+// backlog:df55cf25 (review P2 on #549): an explicitly chosen non-primary
+// subject is booked as exactly that subject — never silently remapped to
+// the group primary.
+test('a chosen non-primary subject books exactly that subject', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    week: DAN_WEEK,
+    memberships: DAN_MEMBERS,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const person = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(person, 'the known team paints a choice');
+  const values = person.findAll('option').map((node) => node.getAttribute('value'));
+  assert.ok(values.includes('github|1') && values.includes('google|2'), 'both subjects stay exact options');
+  choosePerson(mount, 'google|2');
+  assert.equal(mount.querySelector('select[name="teamMemberId"]').value, 'google|2', 'the kept choice is not remapped');
+  await pickCustomerByName(mount, 'Ada');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'google|2', 'the claim books the chosen identity');
+});
+
+// backlog:df55cf25 (review P2 on #549): the manual fallback field never
+// paints a raw pipe id — a draft outsider keeps the visible field empty
+// while its identity rides in state for the claim only.
+test('a pipe outsider draft keeps an empty visible field and books exact', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = {
+    teamMemberId: 'github|48571113',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const client = stubClient({
+    phrase: draft,
+    slots: [],
+    memberships: [{ subject: 'sara', role: 'member' }],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa con github|48571113';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'an outsider is not forced into the choice');
+  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
+  assert.ok(field, 'the typed field keeps the drafted person');
+  assert.equal(field.value, '', 'no technical subject id paints on screen');
+  const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n') + texts(mount, 'p').join('\n');
+  assert.ok(!painted.includes('github|48571113'), 'no technical subject id on screen');
+  await pickCustomerByName(mount, 'Ada');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'github|48571113', 'the claim still books the exact drafted identity');
 });
 
 // A roster nobody has to type still filters: hiding a roster member hides
