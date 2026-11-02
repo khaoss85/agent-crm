@@ -451,6 +451,9 @@ export function createWorkPackage(options = {}) {
       buildCancelTaskAction(options.modules),
       buildPostponeTaskAction(options.modules),
       buildAddNoteAction(options.modules),
+      // PROBE backlog:86652c07 (AC-2, NON mergiare): azione dichiarata in piu'
+      // senza aggiornare il freeze M0. Il gate veloce deve fallire rosso.
+      { ...buildAddNoteAction(options.modules), name: 'probe-only-action', label: 'Probe only' },
     ],
     operations: [buildRecordSubjectNoteOperation(options.modules)],
     // None. A versioned policy earns its fingerprint when two consumers share a
