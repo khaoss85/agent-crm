@@ -340,6 +340,24 @@ test('the status shows the last run, the counts and the coded error', async (t) 
   assert.ok(!dump.includes(GRANT), 'the Bearer never lands in a row');
 });
 
+test('a foreign space reads the status as unknown, the owner still reads it revoked', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  await assert.rejects(
+    ctx.sync.readSyncStatus({ spaceId: 'altro-spazio', calendarId: CAL }),
+    (error) => error?.code === 'CALENDAR_GRANT_UNKNOWN',
+  );
+  await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
+  const revoked = await ctx.sync.readSyncStatus({ spaceId: SPACE, calendarId: CAL });
+  assert.equal(revoked.grantStatus, 'revoked', 'the owner inspects the revoked grant with no provider call');
+  assert.equal(revoked.bound, true, 'the binding row survives the revoke');
+  await assert.rejects(
+    ctx.sync.readSyncStatus({ spaceId: 'altro-spazio', calendarId: CAL }),
+    (error) => error?.code === 'CALENDAR_GRANT_UNKNOWN',
+  );
+});
+
 test('without the grant the provider refuses and the status says unbound', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());
@@ -351,6 +369,25 @@ test('without the grant the provider refuses and the status says unbound', async
     ctx.provider.listEvents({ calendarId: CAL, secret: '' }),
     (error) => error?.code === 'GOOGLE_GRANT_REFUSED',
   );
+});
+
+test('listEvents follows every result page and keeps the final sync token', async () => {
+  const calls = [];
+  const wire = (id) => ({ id, status: 'confirmed', updated: '2026-10-21T09:00:00.000Z' });
+  const page = (items, extra) => ({
+    ok: true, status: 200, json: async () => ({ items, ...extra }),
+  });
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    const params = new URL(url, 'https://www.googleapis.com').searchParams;
+    if (params.get('pageToken') === null) return page([wire('evt-page-1')], { nextPageToken: 'second' });
+    return page([wire('evt-page-2')], { nextSyncToken: 'rest-0-2' });
+  };
+  const provider = createHttpGoogleCalendar({ fetchImpl });
+  const listed = await provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: TIME_MIN });
+  assert.deepEqual(listed.items.map((event) => event.id), ['evt-page-1', 'evt-page-2']);
+  assert.equal(listed.nextSyncToken, 'rest-0-2', 'the token rides on the final page only');
+  assert.ok(calls.length === 2 && calls[1].includes('pageToken=second'), 'the same query continues the pages');
 });
 
 test('the factory refuses without a transport, and the grant never travels in text', async (t) => {

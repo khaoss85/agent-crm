@@ -201,9 +201,31 @@ export function createHttpGoogleCalendar(options = {}) {
         params.set('maxResults', '2500');
       }
       if (showDeleted) params.set('showDeleted', 'true');
-      const body = await get(`/calendars/${encodeURIComponent(id)}/events`, params.toString(), secret, 'listEvents');
-      const items = Array.isArray(body.items) ? body.items.map(toEngineEvent) : [];
-      const nextSyncToken = typeof body.nextSyncToken === 'string' ? body.nextSyncToken : undefined;
+      // Google pages below maxResults and only stamps nextSyncToken on
+      // the final page: follow every pageToken with the same query and
+      // combine the events, or an import would miss appointments and an
+      // incremental pull would persist an undefined cursor. The walk
+      // stays bounded: a provider answering page tokens forever refuses
+      // instead of hanging a run with no timeout above it.
+      const LIST_PAGES_MAX = 50;
+      const items = [];
+      let nextSyncToken;
+      let pageToken;
+      for (let seen = 0; ; seen += 1) {
+        if (seen >= LIST_PAGES_MAX) {
+          throw httpError('CALENDAR_PROVIDER_UNAVAILABLE', 502,
+            'google calendar listEvents returned too many pages: retry the sync');
+        }
+        if (pageToken !== undefined) params.set('pageToken', pageToken);
+        else params.delete('pageToken');
+        const body = await get(`/calendars/${encodeURIComponent(id)}/events`, params.toString(), secret, 'listEvents');
+        for (const wire of (Array.isArray(body.items) ? body.items : [])) items.push(toEngineEvent(wire));
+        if (typeof body.nextSyncToken === 'string') nextSyncToken = body.nextSyncToken;
+        pageToken = typeof body.nextPageToken === 'string' && body.nextPageToken !== ''
+          ? body.nextPageToken
+          : undefined;
+        if (pageToken === undefined) break;
+      }
       return Object.freeze({ items: Object.freeze(items), ...(nextSyncToken === undefined ? {} : { nextSyncToken }) });
     },
 

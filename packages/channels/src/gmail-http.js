@@ -143,7 +143,10 @@ function mapSendFailure(status) {
     throw httpError('Gmail provider refuses this message: the grant is missing, expired or revoked',
       'CHANNEL_SEND_REFUSED', 403);
   }
-  if (status === 429) {
+  if (status === 429 || (Number.isSafeInteger(status) && status >= 500 && status < 600)) {
+    // A provider outage is retryable through the outbox backoff, never a
+    // terminal refusal: a 503 once settled the job as failed_terminal with
+    // attempts remaining and forced a human requeue.
     throw httpError('Gmail provider temporarily unavailable', 'CHANNEL_SEND_TRANSIENT', 503);
   }
   throw httpError('Gmail provider refuses this message', 'CHANNEL_SEND_REFUSED', 422);

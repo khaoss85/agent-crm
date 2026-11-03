@@ -47,7 +47,7 @@ function restMessage({ id, threadId, from = CUSTOMER, at = AT, snippet = 'Buongi
 }
 
 /** A scripted Gmail REST double: list + get + send, Bearer-checked. */
-function createGmailRestDouble({ messages = [], bearer = GRANT } = {}) {
+function createGmailRestDouble({ messages = [], Bearer [REDACTED] GRANT, pageSize = 0 } = {}) {
   const requests = [];
   const store = new Map(messages.map((m) => [m.id, m]));
   const ok = (body) => ({ ok: true, status: 200, json: async () => body });
@@ -60,7 +60,17 @@ function createGmailRestDouble({ messages = [], bearer = GRANT } = {}) {
       if (init.headers?.Authorization !== `Bearer ${bearer}`) return fail(401);
       const parsed = new URL(url, 'https://gmail.googleapis.com');
       if (parsed.pathname === '/gmail/v1/users/me/messages' && (init.method ?? 'GET') === 'GET') {
-        return ok({ messages: [...store.values()].map((m) => ({ id: m.id, threadId: m.threadId })) });
+        // pageSize simulates Gmail paging below maxResults: the provider
+        // lists newest first, so page one can hold a newer message than
+        // page two of the same thread.
+        const all = [...store.values()].map((m) => ({ id: m.id, threadId: m.threadId }));
+        const size = Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : all.length;
+        const at = Number.parseInt(parsed.searchParams.get('pageToken') ?? '0', 10);
+        const start = Number.isSafeInteger(at) && at >= 0 ? at : 0;
+        const slice = all.slice(start, start + size);
+        return start + size < all.length
+          ? ok({ messages: slice, nextPageToken: String(start + size) })
+          : ok({ messages: slice });
       }
       const getMatch = /^\/gmail\/v1\/users\/me\/messages\/([^/]+)$/.exec(parsed.pathname);
       if (getMatch && (init.method ?? 'GET') === 'GET') {
@@ -204,4 +214,70 @@ test('a new Gmail message imports into the thread conversation over REST', async
   const dump = await harness.dumpStorage();
   assert.ok(!dump.includes(GRANT), 'the Bearer grant is in no row, job, or audit entry');
   assert.ok(dump.includes(SECRET_REF), 'the locator is the only secret shape at rest');
+});
+
+test('an older second page of the same thread still applies after a newer first page', async (t) => {
+  // Gmail lists newest first and pages below maxResults: page one holds
+  // the newer message, page two the older one of the same thread. The
+  // import adopts by identity, so the older message applies instead of
+  // being discarded by the live-delivery sequence rule.
+  const double = createGmailRestDouble({
+    messages: [
+      restMessage({ id: 'gmail-n1', threadId: 'thread-A', at: AT + 2000 }),
+      restMessage({ id: 'gmail-o1', threadId: 'thread-A', at: AT }),
+    ],
+    pageSize: 1,
+  });
+  const { definition, api } = httpAdapter(double);
+  const harness = createChannelsHarness({
+    adapterDefinition: definition,
+    fixtureApi: api,
+    secretRef: SECRET_REF,
+    secretValue: GRANT,
+    tenantId: 'channel-kit-gmail-http-pages',
+  });
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE, {
+    channel: 'email', account: MAILBOX, adapter: GMAIL_ADAPTER_NAME,
+    adapterVersion: GMAIL_ADAPTER_VERSION, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE, reg.connection.sourceKey);
+  await harness.startImport(SPACE, { connectionKey: reg.connection.sourceKey });
+  const first = await harness.advanceImport(SPACE, { connectionKey: reg.connection.sourceKey });
+  assert.equal(first.page?.imported, 1, 'the newer first page applies');
+  const second = await harness.advanceImport(SPACE, { connectionKey: reg.connection.sourceKey });
+  assert.equal(second.page?.imported, 1, 'the older second page applies too');
+  const rows = harness.inbox(SPACE).filter((row) => row.subject === 'email:thread-A');
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((row) => row.effect === 'applied'), 'no older message is discarded as out-of-order');
+});
+
+test('a 503 from messages.send is transient, a 422 stays a refusal', async () => {
+  const failing = createGmailRestDouble({ messages: [] });
+  const sendWith = (status) => async (url, init = {}) => {
+    if (String(url).endsWith('/messages/send')) {
+      return { ok: status >= 200 && status < 300, status, json: async () => ({}) };
+    }
+    return failing.fetch(url, init);
+  };
+  const outage = createGmailHttpIo({ fetchImpl: sendWith(503), mailbox: MAILBOX });
+  const transient = await outage.sendMessage({
+    message: { to: CUSTOMER, text: 'Ci vediamo giovedi', threadId: 'thread-A' },
+    secret: GRANT,
+    idempotencyKey: 'outage-1',
+  }).then(
+    () => { throw new Error('send should have failed transiently'); },
+    (error) => error,
+  );
+  assert.equal(transient.code, 'CHANNEL_SEND_TRANSIENT', 'the outbox retries an outage instead of dead-lettering it');
+  const refusing = createGmailHttpIo({ fetchImpl: sendWith(422), mailbox: MAILBOX });
+  const refused = await refusing.sendMessage({
+    message: { to: CUSTOMER, text: 'x', threadId: 'thread-A' },
+    secret: GRANT,
+    idempotencyKey: 'refused-1',
+  }).then(
+    () => { throw new Error('send should have been refused'); },
+    (error) => error,
+  );
+  assert.equal(refused.code, 'CHANNEL_SEND_REFUSED');
 });

@@ -1362,6 +1362,13 @@ export function createCalendarSyncOperations(options = {}) {
       // A missing row reads null (never bound, never run); a storage
       // failure throws instead of reporting a healthy-looking unbound.
       const state = await readState(cal);
+      // The owning space inspects its status even with a revoked grant
+      // (the read is local, no provider call) — a foreign or missing
+      // space reads as unknown, the same oracle rule as requireLiveGrant.
+      if (state && state.spaceId !== null && state.spaceId !== undefined && state.spaceId !== spaceId) {
+        throw syncError('CALENDAR_GRANT_UNKNOWN', 404,
+          `calendar "${cal}" has no grant for this space: bind it before syncing`);
+      }
       const conflicts = await pendingConflicts(cal);
       const run = lastRuns.get(cal) ?? null;
       return Object.freeze({
