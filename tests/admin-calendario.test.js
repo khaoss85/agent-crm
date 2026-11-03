@@ -2627,3 +2627,54 @@ test('a stashed appointment pick opens the manual form with the customer', async
   await plainView.render();
   assert.ok(!plain.textContent.includes('Cliente: Guido Presti'), 'no pick, no named customer');
 });
+
+// Supervisor design pass (Dan 03/11): press-and-drag on an empty part of a
+// day chooses the slot in half hours and opens Nuovo appuntamento beside it,
+// already filled with day, start and end; × closes it.
+test('dragging on a day column chooses the slot and opens the filled form beside it', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const days = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  const col = days()[2];
+  // 18 half-hour rows over 360 px: 20 px each, from 09:00.
+  col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 200, bottom: 360, height: 360, width: 200 });
+  col.dispatch('pointerdown', { button: 0, clientY: 85, target: col, preventDefault() {} }); // 11:00
+  col.dispatch('pointermove', { clientY: 125, target: col }); // 12:00 → 11:00–12:30
+  col.dispatch('pointerup', { target: col });
+  const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
+  assert.ok(pick, 'the chosen slot stays painted on the grid');
+  assert.equal(pick.textContent, '11:00–12:30');
+  const pop = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop'));
+  assert.ok(pop, 'the form opens beside the slot');
+  const value = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name)?.value;
+  assert.equal(value('date'), '2026-10-21');
+  assert.equal(value('start'), '11:00');
+  assert.equal(value('end'), '12:30');
+  pop.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi').dispatch('click');
+  assert.ok(!mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop')), '× closes the form');
+});
+
+test('a plain click on an empty slot is half an hour', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const col = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'))[0];
+  col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 200, bottom: 360, height: 360, width: 200 });
+  col.dispatch('pointerdown', { button: 0, clientY: 305, target: col, preventDefault() {} }); // 16:30
+  col.dispatch('pointerup', { target: col });
+  const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
+  assert.equal(pick?.textContent, '16:30–17:00');
+});

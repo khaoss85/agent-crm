@@ -1065,7 +1065,7 @@ select.bo-spazi-input { flex: none; }
 .cal-wrap .actions .ui-btn-cta { padding: 0 14px 0 16px; }
 .cal-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
 .cal-rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.cal-main { min-width: 0; }
+.cal-main { min-width: 0; position: relative; }
 .cal-wrap .panel { box-shadow: none; border-radius: 16px; border-color: var(--line-soft); padding: 18px; }
 .cal-wrap .panel > h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: 0; }
 .cal-ai { background: var(--agent-card); border-color: var(--agent-line) !important; }
@@ -1111,6 +1111,26 @@ select.bo-spazi-input { flex: none; }
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
+/* Press-and-drag on the grid (supervisor design pass 03/11): the chosen
+ * half hours read as one accent block, the form opens beside it. */
+.cal-day { cursor: cell; touch-action: none; user-select: none; }
+.cal-day .cal-event, .cal-day .bo-add-button { cursor: pointer; }
+.cal-pick { z-index: 3; margin: 1px 3px; padding: 4px 8px; border-radius: 8px; border: 2px solid var(--accent);
+  background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 700;
+  pointer-events: none; box-shadow: 0 6px 16px rgba(23, 107, 42, .14); }
+.cal-pick.is-dragging { opacity: .85; }
+.cal-pop { position: absolute; z-index: 40; width: 340px; max-width: calc(100% - 16px); border-radius: 16px;
+  background: var(--surface); box-shadow: 0 24px 60px rgba(23, 25, 18, .18), 0 0 0 1px var(--line-soft); }
+.cal-pop .cal-manual.panel { margin: 0; border: none; box-shadow: none; padding: 18px 18px 16px; background: transparent; }
+.cal-pop .cal-manual h2 { padding-right: 28px; }
+.cal-pop .cal-pop-close { position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border: none; border-radius: 8px;
+  background: transparent; color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer; min-height: 0; padding: 0; box-shadow: none; }
+.cal-pop .cal-pop-close:hover { background: var(--surface-soft); color: var(--ink); }
+.cal-pop .cal-manual input, .cal-pop .cal-manual select, .cal-pop .cal-manual textarea { width: 100%; max-width: none; flex-basis: 100%; box-sizing: border-box; }
+.cal-pop .cal-manual .actions, .cal-pop .cal-manual .cal-form-actions { margin-top: 4px; }
+.cal-pop .ui-search, .cal-pop .ui-select { display: flex; width: 100%; }
+.cal-pop .ui-search .ui-search-input { padding-left: 36px; }
+@media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
 .cal-draft { border: 1px dashed var(--line); border-radius: 9px; padding: 10px 12px; margin-top: 10px; font-size: 13px; }

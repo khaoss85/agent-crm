@@ -528,6 +528,8 @@ export function createCalendarioView(deps) {
     weekKeys: openingWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
+    /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
+    selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
     profiles: {},
     /** @type {any} */
@@ -785,13 +787,39 @@ export function createCalendarioView(deps) {
     else state.selectedId = null;
     rail.appendChild(renderAi());
     rail.appendChild(renderTeam());
-    rail.appendChild(renderManual());
+    if (!state.selection) rail.appendChild(renderManual());
     rail.appendChild(renderBooking());
     main.appendChild(renderWeek());
+    let pop = null;
+    if (state.selection) {
+      // The form opens beside the chosen block, like a calendar app; × or
+      // Esc closes it and the rail form comes back.
+      pop = el(doc, 'div', { className: 'cal-pop', attrs: { role: 'dialog', 'aria-label': 'Nuovo appuntamento' } });
+      const close = el(doc, 'button', { className: 'cal-pop-close', text: '×', attrs: { type: 'button', 'aria-label': 'Chiudi' } });
+      close.addEventListener('click', () => closeSlot());
+      pop.appendChild(close);
+      pop.appendChild(renderManual());
+      pop.addEventListener?.('keydown', (event) => { if (event.key === 'Escape') closeSlot(); });
+      main.appendChild(pop);
+    }
     layout.appendChild(rail);
     layout.appendChild(main);
     wrap.appendChild(layout);
     mount.appendChild(wrap);
+    if (pop) placePopover(main, pop);
+  }
+
+  /** Seats the popover beside the pick: right of it, or left on the last columns. */
+  function placePopover(main, pop) {
+    const pick = main.querySelector?.('[data-role="slot-pick"]');
+    if (!pick || typeof pick.getBoundingClientRect !== 'function' || typeof main.getBoundingClientRect !== 'function') return;
+    const box = main.getBoundingClientRect();
+    const at = pick.getBoundingClientRect();
+    const width = 340;
+    const right = at.right - box.left + 12;
+    const left = right + width > box.width ? Math.max(0, at.left - box.left - width - 12) : right;
+    const top = Math.max(0, Math.min(at.top - box.top, box.height - 120));
+    pop.setAttribute('style', `left: ${Math.round(left)}px; top: ${Math.round(top)}px`);
   }
 
   /**
@@ -1099,6 +1127,80 @@ export function createCalendarioView(deps) {
     return notice;
   }
 
+  /** «HH:MM» for minutes after midnight. */
+  function minutesLabel(minutes) {
+    return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+  }
+
+  /** The half-hour row under a pointer, as Rome minutes clamped to the grid body. */
+  function minuteAt(col, event) {
+    const rect = typeof col.getBoundingClientRect === 'function' ? col.getBoundingClientRect() : null;
+    if (!rect || !(rect.height > 0)) return null;
+    const fraction = Math.min(Math.max((Number(event.clientY) - rect.top) / rect.height, 0), 0.9999);
+    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_SLOT_MINUTES;
+  }
+
+  /** Opens the manual form for a slot chosen on the grid. */
+  function openSlot(key, start, end) {
+    state.selection = { key, start, end };
+    state.selectedId = null;
+    state.manual = { ...(state.manual ?? {}), date: key, start: minutesLabel(start), end: minutesLabel(end) };
+    state.manualOpen = true;
+    renderAll();
+    state.manualFirst?.focus?.();
+  }
+
+  function closeSlot() {
+    if (!state.selection) return;
+    state.selection = null;
+    renderAll();
+  }
+
+  /**
+   * Press-and-drag on a day column: the live block follows the pointer in
+   * half hours; release opens the form. Presses on an event, a ghost or the
+   * pick itself keep their own click.
+   * @param {any} col @param {string} key
+   */
+  function bindSlotDrag(col, key) {
+    if (typeof col.addEventListener !== 'function') return;
+    let drag = null;
+    const paint = () => {
+      if (!drag) return;
+      const start = Math.min(drag.anchor, drag.current);
+      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
+      drag.node.setAttribute('style', `grid-row: ${(start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(end - start) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`);
+      drag.node.textContent = `${minutesLabel(start)}–${minutesLabel(end)}`;
+    };
+    col.addEventListener('pointerdown', (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      if (event.target?.closest?.('.cal-event, .bo-add-button, .cal-pick')) return;
+      const minute = minuteAt(col, event);
+      if (minute === null) return;
+      event.preventDefault?.();
+      const node = el(doc, 'div', { className: 'cal-pick is-dragging', attrs: { 'aria-hidden': 'true' } });
+      col.appendChild(node);
+      drag = { anchor: minute, current: minute, node };
+      col.setPointerCapture?.(event.pointerId);
+      paint();
+    });
+    col.addEventListener('pointermove', (event) => {
+      if (!drag) return;
+      const minute = minuteAt(col, event);
+      if (minute === null || minute === drag.current) return;
+      drag.current = minute;
+      paint();
+    });
+    col.addEventListener('pointerup', () => {
+      if (!drag) return;
+      const start = Math.min(drag.anchor, drag.current);
+      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
+      drag = null;
+      openSlot(key, start, end);
+    });
+    col.addEventListener('pointercancel', () => { drag?.node?.remove?.(); drag = null; });
+  }
+
   function renderWeek() {
     const panel = el(doc, 'div', { className: 'panel cal-week' });
     panel.appendChild(el(doc, 'h2', { text: 'Settimana del team' }));
@@ -1173,6 +1275,21 @@ export function createCalendarioView(deps) {
         ghost.addEventListener('click', () => void confirmSlot(slot));
         col.appendChild(ghost);
       }
+      // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
+      // empty part of the day and drag to choose the slot; a plain click is
+      // 30 minutes. Releasing opens the Nuovo appuntamento form beside the
+      // chosen block, already filled with day, start and end.
+      if (state.selection && state.selection.key === key) {
+        col.appendChild(el(doc, 'div', {
+          className: 'cal-pick',
+          attrs: {
+            'data-role': 'slot-pick',
+            style: `grid-row: ${(state.selection.start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${Math.max(1, (state.selection.end - state.selection.start) / GRID_SLOT_MINUTES)}; grid-column: 1 / -1`,
+          },
+          text: `${minutesLabel(state.selection.start)}–${minutesLabel(state.selection.end)}`,
+        }));
+      }
+      bindSlotDrag(col, key);
       // The red now-line crosses the current day at the current Rome time,
       // only while the time falls inside the painted hours.
       if (isTodayInRome(`${key}T12:00:00Z`, now) && nowMin !== null && nowMin >= GRID_START_MINUTES && nowMin < GRID_END_MINUTES) {
@@ -1759,6 +1876,7 @@ export function createCalendarioView(deps) {
       });
       if (booked?.decision === 'booked') {
         state.confirmed = booked.appointment ?? claim;
+        state.selection = null;
         state.proposals = [];
         state.aiNote = '';
         state.bookingNote = '';
@@ -2140,6 +2258,7 @@ export function createCalendarioView(deps) {
       });
       if (booked?.decision === 'booked') {
         state.confirmed = booked.appointment ?? claim;
+        state.selection = null;
         state.bookingNote = '';
         state.draftFill = null;
       } else {
