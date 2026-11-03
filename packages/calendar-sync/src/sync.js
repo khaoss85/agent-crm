@@ -29,10 +29,13 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * Provider contract (fake-backed until credentials exist — owner decision
  * MEM_ACC_DECISIONS): every call is awaited, so a real adapter may return
  * promises; the fake answers synchronously and the engine cannot tell.
- * Required: `listEvents`, `insertEvent`, `patchEvent` (local slot moves
- * converge onto the linked event), `cancelEvent`,
+ * Required: `listEvents`, `insertEvent`, `cancelEvent`,
  * `findByAccordoSourceKey` (export reconciliation — a retry after a lost
  * link finds the already-inserted event instead of inserting a second).
+ * `patchEvent` is optional at composition and required only to push a
+ * local slot move onto the linked event: a move pushed without it fails
+ * closed (CALENDAR_SYNC_CONTEXT_INVALID) while every other path keeps
+ * syncing.
  * The reschedule push needs no provider read: it decides against the
  * link's stored fingerprint and patches through the stored event identity.
  * Every provider call takes one object param (`{ calendarId, … }`) plus
