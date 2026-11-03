@@ -148,7 +148,7 @@ export function createCustomerFormView(deps) {
     const slots = {};
     const field = (name, label, control, help = null) => {
       const wrap = el('p', 'bo-cliente-nuovo-field');
-      const tag = el('label', 'bo-cliente-nuovo-label', `${label}: `);
+      const tag = el('label', 'bo-cliente-nuovo-label', label);
       wrap.appendChild(tag);
       wrap.appendChild(control);
       const slot = fieldErrorSlot();
@@ -157,15 +157,21 @@ export function createCustomerFormView(deps) {
       if (help !== null) wrap.appendChild(el('small', 'bo-muted', help));
       controls[name] = control;
       slots[name] = slot;
-      panel.appendChild(wrap);
+      (into ?? panel).appendChild(wrap);
       return control;
     };
+    // The base fields sit in a two-column grid (Nome across the top), so the
+    // form reads as one card instead of a stack of full-width bars.
+    const grid = el('div', 'bo-cliente-nuovo-grid');
+    panel.appendChild(grid);
+    let into = grid;
 
     const nome = el('input', 'ui-field');
     nome.setAttribute('name', 'nome');
     nome.setAttribute('type', 'text');
     nome.setAttribute('placeholder', 'Mario Rossi');
     field('nome', 'Nome', nome);
+    nome.parentNode?.classList?.add('is-wide');
 
     const email = el('input', 'ui-field');
     email.setAttribute('name', 'email');
@@ -197,9 +203,11 @@ export function createCustomerFormView(deps) {
       'Promemoria per te: lo stato vero dipende da ordini, contratti o abbonamenti.');
 
     // One control per space-wide custom field, plus the inline adder.
+    into = panel;
     const customBox = el('div', 'bo-cliente-nuovo-custom');
     panel.appendChild(customBox);
-    const addToggle = uiSecondaryButton(doc, '+ Aggiungi campo');
+    const addToggle = el('button', 'bo-cliente-nuovo-addfield', '+ Aggiungi campo');
+    addToggle.setAttribute('type', 'button');
     addToggle.setAttribute('data-action', 'add-field');
     panel.appendChild(addToggle);
     const addBox = el('div', 'bo-cliente-nuovo-add');

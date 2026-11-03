@@ -1637,6 +1637,62 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-conn-addmenu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; }
 @media (max-width: 720px) { .ui-conn-addmenu { position: static; margin-top: 8px; } }
 
+/* Nuovo cliente (#/clienti/nuovo), design del supervisore 03/11: one card
+ * like «Nuovo modulo», base fields in two columns, custom fields as a quiet
+ * section with an inline adder; never full-width bars stacked to the edge. */
+.bo-cliente-nuovo {
+  max-width: 640px; margin: 8px auto 40px; padding: 28px; border-radius: 20px;
+  border: 1px solid var(--line-soft); background: var(--surface); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.bo-cliente-nuovo .bo-cliente-nuovo-title { font-size: 30px; line-height: 1.1; letter-spacing: -0.02em; max-width: none; }
+.bo-cliente-nuovo > .bo-muted { margin: -6px 0 4px; font-size: 13px; line-height: 1.45; }
+.bo-cliente-nuovo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+.bo-cliente-nuovo-field { display: flex; flex-direction: column; gap: 6px; margin: 0; min-width: 0; }
+.bo-cliente-nuovo-field.is-wide { grid-column: 1 / -1; }
+.bo-cliente-nuovo-label { font-size: 13px; font-weight: 700; color: var(--ink); }
+.bo-cliente-nuovo-field .ui-field { height: 44px; padding: 0 12px; }
+.bo-cliente-nuovo-field textarea.ui-field { height: auto; min-height: 88px; padding: 10px 12px; }
+.bo-cliente-nuovo-field > small.bo-muted { font-size: 12px; line-height: 1.4; }
+.bo-cliente-nuovo-field > small.field-error:empty, .bo-cliente-nuovo-error:empty { display: none; }
+.bo-cliente-nuovo-custom:empty { display: none; }
+.bo-cliente-nuovo-custom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px;
+  padding-top: 14px; border-top: 1px dashed var(--line-dashed); }
+.bo-cliente-nuovo .bo-campo-field { display: flex; flex-direction: column; gap: 6px; margin: 0; min-width: 0; }
+.bo-cliente-nuovo .bo-campo-label { font-size: 13px; font-weight: 700; color: var(--ink); }
+.bo-cliente-nuovo .bo-campo-field .ui-field { height: 44px; padding: 0 12px; }
+.bo-cliente-nuovo-addfield {
+  align-self: flex-start; border: none; background: transparent; padding: 4px 0; font: inherit;
+  font-size: 13px; font-weight: 700; color: var(--accent); cursor: pointer;
+}
+.bo-cliente-nuovo-addfield:hover { text-decoration: underline; text-underline-offset: 3px; }
+.bo-cliente-nuovo-add:empty { display: none; }
+.bo-campo-add {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 14px;
+  background: var(--surface-soft); border: 1px solid var(--line-soft);
+}
+.bo-campo-add-head { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 10px; }
+.bo-campo-add .ui-field { height: 40px; padding: 0 12px; background: var(--surface); }
+.bo-campo-add .ui-field[hidden] { display: none; }
+.bo-campo-add-actions { display: flex; gap: 8px; align-items: center; }
+.bo-campo-add-save {
+  height: 36px; padding: 0 14px; border-radius: 9px; border: 1px solid var(--ink);
+  background: var(--ink); color: var(--surface); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.bo-campo-add-save[disabled] { opacity: .6; cursor: progress; }
+.bo-campo-add-cancel {
+  height: 36px; padding: 0 10px; border: none; background: transparent; font: inherit;
+  font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer;
+}
+.bo-campo-add-cancel:hover { color: var(--ink); }
+.bo-campo-add > small.field-error:empty { display: none; }
+.bo-cliente-nuovo-actions { display: flex; gap: 8px; margin-top: 6px; padding-top: 16px; border-top: 1px solid var(--line-faint); }
+@media (max-width: 640px) {
+  .bo-cliente-nuovo { padding: 20px 16px; border-radius: 16px; margin-top: 0; }
+  .bo-cliente-nuovo-grid, .bo-cliente-nuovo-custom { grid-template-columns: 1fr; }
+  .bo-campo-add-head { grid-template-columns: 1fr; }
+}
+
 /* Design pass 8 — Profilo (#/profilo). No prototype screen: built from the
  * pieces every /bo screen already uses — kicker and display title, the
  * Personalizzazione connector card (48 px tile, name, line, pill, action). */
