@@ -29,9 +29,11 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * Provider contract (fake-backed until credentials exist — owner decision
  * MEM_ACC_DECISIONS): every call is awaited, so a real adapter may return
  * promises; the fake answers synchronously and the engine cannot tell.
- * Required: `listEvents`, `insertEvent`, `cancelEvent`,
+ * Required: `listEvents`, `insertEvent`, `patchEvent` (local slot moves
+ * converge onto the linked event), `cancelEvent`,
  * `findByAccordoSourceKey` (export reconciliation — a retry after a lost
- * link finds the already-inserted event instead of inserting a second).
+ * link finds the already-inserted event instead of inserting a second —
+ * and the live read the reschedule push compares the row against).
  * Every provider call takes one object param (`{ calendarId, … }`) plus
  * the call-time `secret` the engine resolved from the vault; a real
  * adapter must keep that shape.
@@ -1032,10 +1034,11 @@ export function createCalendarSyncOperations(options = {}) {
      * Push one local appointment to Google by source key: first reconcile
      * with the provider (an event the export already inserted but never
      * linked is linked, not inserted twice), then insert, then converge
-     * local cancellations. Any other lifecycle advance is Accordo-owned
-     * and acknowledged without a provider write. A repeated push with
-     * nothing changed is a no-op — the second of two syncs in a row
-     * writes nothing anywhere.
+     * local cancellations and local slot moves (a rescheduled row patches
+     * the linked event's times). Any other lifecycle advance is
+     * Accordo-owned and acknowledged without a provider write. A repeated
+     * push with nothing changed is a no-op — the second of two syncs in a
+     * row writes nothing anywhere.
      */
     async pushAppointment(calendarId, sourceKey, { spaceId, actor } = {}) {
       const who = actor ?? defaultActor;
@@ -1105,6 +1108,27 @@ export function createCalendarSyncOperations(options = {}) {
           googleUpdated: pushed.updated, localFingerprint: fingerprint, conflictNote: null,
         }, { actor: who });
         return { status: 'pushed', sourceKey, change: 'cancelled' };
+      }
+      // A local slot move (backlog:bdca2010d471) converges onto the linked
+      // Google event: the row moved through the governed reschedule, so the
+      // provider's times follow it. Anything else that changed the
+      // fingerprint without moving the slot (notes, summary) stays local —
+      // appointment rows are evidence-immutable outside lifecycle and slot,
+      // so there is no local write path for prose, exactly like before.
+      const live = await providerCall(calendarId, 'findByAccordoSourceKey',
+        { calendarId, sourceKey: row.sourceKey }, GRANT_PURPOSE_READ);
+      const slotMoved = live !== null
+        && (live?.start?.dateTime !== row.startsAt || live?.end?.dateTime !== row.endsAt);
+      if (slotMoved) {
+        const patched = await providerCall(calendarId, 'patchEvent', {
+          calendarId,
+          eventId: rowLinkEventId(link, calendarId),
+          patch: { start: { dateTime: row.startsAt }, end: { dateTime: row.endsAt } },
+        }, GRANT_PURPOSE_WRITE);
+        await linkService(context).applyManaged(link.id, {
+          googleUpdated: patched.updated, localFingerprint: fingerprint, conflictNote: null,
+        }, { actor: who });
+        return { status: 'pushed', sourceKey, change: 'rescheduled' };
       }
       await linkService(context).applyManaged(link.id, { localFingerprint: fingerprint }, { actor: who });
       return { status: 'acknowledged', sourceKey, reason: 'lifecycle is Accordo-owned: confirmed/done/no-show stay local' };

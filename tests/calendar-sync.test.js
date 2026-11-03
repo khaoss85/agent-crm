@@ -852,3 +852,40 @@ test('a push-converged cancellation leaves the older move snapshot standing, nev
   assert.equal(ctx.provider.getEvent(CAL, 'evt1').status, 'cancelled');
   assert.equal(ctx.appointmentRows().filter((r) => r.status === 'booked').length, 1);
 });
+
+test('a local reschedule is visible on Google after one push (backlog:bdca2010d471)', async (t) => {
+  // The drag-move write, end to end against the fake provider: book, export,
+  // move the row through the governed reschedule with its calendar named,
+  // and the linked event carries the new times. No test dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:moved:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(exported.status, 'exported');
+  const moved = await handle.rescheduleAppointment({
+    id: appointment.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:30:00.000Z',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'pushed');
+  assert.equal(moved.push.change, 'rescheduled');
+  const live = ctx.provider.getEvent(CAL, exported.eventId);
+  assert.equal(live.start.dateTime, '2026-10-22T14:00:00.000Z');
+  assert.equal(live.end.dateTime, '2026-10-22T15:30:00.000Z');
+  const again = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
+});
