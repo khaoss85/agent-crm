@@ -69,6 +69,10 @@ const errorFor = (mount, name) => mount.findAll('small').find((node) => node.get
 
 const setValue = (mount, name, value) => { field(mount, name).value = value; };
 
+const appliesOf = (client) => client.calls.filter((call) => call.path === '/api/customer-data/import/apply');
+const notesOf = (client) => client.calls.filter((call) => call.path === '/api/customer-hub/notes');
+const valuesOf = (client) => client.calls.filter((call) => call.path === '/api/customer-data/fields/value');
+
 const clickSave = (mount) => {
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-customer').dispatch('click');
 };
@@ -116,7 +120,7 @@ test('Salva with an empty form shows Italian errors and writes nothing', async (
   await view.render();
   clickSave(mount);
   await flush();
-  assert.equal(client.calls.length, 0, 'no request leaves the browser before the form is valid');
+  assert.equal(appliesOf(client).length, 0, 'no request leaves the browser before the form is valid');
   assert.match(errorFor(mount, 'nome').textContent, /obbligatorio/);
   assert.match(mount.textContent, /non si sa chi è il cliente/);
 });
@@ -130,10 +134,10 @@ test('Salva creates the customer and lands on its scheda', async () => {
   setValue(rendered.mount, 'azienda', 'Palestra Esempio');
   clickSave(rendered.mount);
   await flush();
-  assert.equal(client.calls.length, 1, 'one governed apply, not a parallel creation');
-  assert.equal(client.calls[0].path, '/api/customer-data/import/apply');
-  assert.equal(client.calls[0].body.system, MANUAL_IMPORT_SYSTEM);
-  assert.deepEqual(client.calls[0].body.rows, [{
+  const applies = appliesOf(client);
+  assert.equal(applies.length, 1, 'one governed apply, not a parallel creation');
+  assert.equal(applies[0].body.system, MANUAL_IMPORT_SYSTEM);
+  assert.deepEqual(applies[0].body.rows, [{
     firstName: 'Mario',
     lastName: 'Rossi',
     email: 'mario@esempio.it',
@@ -154,9 +158,10 @@ test('Salva links the phone with a second single-row apply', async () => {
   setValue(rendered.mount, 'telefono', '+39 333 1234567');
   clickSave(rendered.mount);
   await flush();
-  assert.equal(client.calls.length, 2, 'record first, phone-bearing identity second');
-  assert.equal(client.calls[1].body.system, MANUAL_PHONE_SYSTEM);
-  assert.equal(client.calls[1].body.rows[0].externalId, '+393331234567');
+  const applies = appliesOf(client);
+  assert.equal(applies.length, 2, 'record first, phone-bearing identity second');
+  assert.equal(applies[1].body.system, MANUAL_PHONE_SYSTEM);
+  assert.equal(applies[1].body.rows[0].externalId, '+393331234567');
   assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
   assert.ok(rendered.notes.some((note) => note.includes('senza duplicati')), 'a matched scheda warns instead of duplicating');
 });
@@ -194,7 +199,7 @@ test('Annulla navigates back to the list without writing', async () => {
   setValue(rendered.mount, 'nome', 'Mario Rossi');
   rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-customer').dispatch('click');
   await flush();
-  assert.equal(client.calls.length, 0, 'Annulla writes nothing');
+  assert.equal(appliesOf(client).length, 0, 'Annulla writes nothing');
   assert.equal(rendered.navigated(), '#/customer-data');
 });
 
@@ -213,4 +218,126 @@ test('a leaving route invalidates the form so a late save cannot clear the next 
 test('CLIENTI_NUOVO_ROUTE never points at the import tool', () => {
   assert.equal(CLIENTI_NUOVO_ROUTE, '#/clienti/nuovo');
   assert.ok(!CLIENTI_NUOVO_ROUTE.includes('import'));
+});
+
+const PHRASE_PREVIEW = {
+  customer: { firstName: 'Daniele', lastName: 'Pelleri', email: 'daniele@gmail.com', phone: '234341', companyName: null },
+  note: null,
+  fields: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [], value: 'sì', isNew: true }],
+  newFields: 1,
+};
+
+const phraseClient = ({ ai = true, defs = [] } = {}) => stubClient((path, body) => {
+  if (path === '/api/customer-data/phrase/ai-available') return { available: ai };
+  if (path === '/api/customer-data/fields') return { definitions: defs };
+  if (path === '/api/customer-data/phrase/preview') return PHRASE_PREVIEW;
+  if (path === '/api/customer-data/phrase/apply') {
+    return { subject: { resource: 'contact', id: 'c7' }, matchedExisting: false, phoneLinked: true, phoneWarning: null, fields: [] };
+  }
+  if (path === '/api/customer-data/fields/define') {
+    return { definition: { key: 'amico', label: 'Amico', type: 'si-no', options: [] }, replayed: false };
+  }
+  if (path === '/api/customer-data/fields/value') return { value: { key: body.key, value: body.value } };
+  if (path === '/api/customer-hub/notes') return { note: { id: 'n1' } };
+  return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+});
+
+const clickAction = (mount, action) => {
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === action).dispatch('click');
+};
+
+test('without the AI the ✦ area stays hidden and the manual path works', async () => {
+  const client = phraseClient({ ai: false });
+  const rendered = render(client);
+  await rendered.view.render();
+  assert.ok(!rendered.mount.textContent.includes('Scrivi o incolla'), 'no ✦ area without the adapter');
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'the manual path saves alone');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
+});
+
+test('with the AI the ✦ area previews the example sentence and Conferma stores it', async () => {
+  const client = phraseClient({ ai: true });
+  const rendered = render(client);
+  await rendered.view.render();
+  assert.ok(rendered.mount.textContent.includes('Scrivi o incolla'), 'the ✦ area renders when the AI is on');
+  const frase = rendered.mount.findAll('textarea').find((node) => node.getAttribute('name') === 'frase');
+  frase.value = 'daniele pelleri email daniele@gmail.com tel 234341 amico sì';
+  clickAction(rendered.mount, 'preview-phrase');
+  await flush();
+  assert.ok(rendered.mount.textContent.includes('Daniele'), 'the preview names the customer');
+  assert.ok(rendered.mount.textContent.includes('Amico'), 'the preview names the new field');
+  assert.ok(rendered.mount.textContent.includes('campo nuovo'), 'the preview says which fields it creates');
+  clickAction(rendered.mount, 'apply-phrase');
+  await flush();
+  const applies = client.calls.filter((call) => call.path === '/api/customer-data/phrase/apply');
+  assert.equal(applies.length, 1, 'the confirm stores through phrase/apply');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
+});
+
+test('the Nuovo cliente note lands in the cronologia through the single writer', async () => {
+  const client = phraseClient({ ai: false });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Ci ha conosciuti in palestra.');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(notesOf(client).length, 1, 'one note through POST /api/customer-hub/notes');
+  assert.deepEqual(notesOf(client)[0].body, { resource: 'contact', id: 'c7', text: 'Ci ha conosciuti in palestra.' });
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
+});
+
+test('a refused note warns but never blocks the created customer', async () => {
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') throw Object.assign(new Error('no'), { status: 503 });
+    return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Una nota.');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7', 'the customer still lands on its scheda');
+  assert.ok(rendered.notes.some((note) => note.includes('nota non si è salvata')), 'the warning names the note');
+});
+
+test('+ Aggiungi campo creates a space field and its control reads on the form', async () => {
+  const client = phraseClient({ ai: false });
+  const rendered = render(client);
+  await rendered.view.render();
+  clickAction(rendered.mount, 'add-field');
+  await flush();
+  const label = rendered.mount.findAll('input').find((node) => node.getAttribute('name') === 'nuovo-campo-label');
+  label.value = 'Amico';
+  clickAction(rendered.mount, 'create-field');
+  await flush();
+  const defines = client.calls.filter((call) => call.path === '/api/customer-data/fields/define');
+  assert.equal(defines.length, 1, 'one governed define');
+  assert.equal(defines[0].body.label, 'Amico');
+  assert.ok(rendered.notes.some((note) => note.includes('tutte le schede')), 'the confirm says the field is space-wide');
+});
+
+test('a manual custom value rides the save beside the customer', async () => {
+  const client = phraseClient({ ai: false, defs: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  const control = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  assert.ok(control, 'the space field reads on the form');
+  control.value = 'sì';
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(valuesOf(client).length, 1, 'one governed value write');
+  assert.deepEqual(valuesOf(client)[0].body, { resource: 'contact', id: 'c7', key: 'amico', value: 'sì' });
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
 });

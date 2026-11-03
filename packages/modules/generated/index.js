@@ -15,6 +15,10 @@ import { createChannelImportStateModule } from '../channel-import-state/src/inde
 import * as channelImportStateMigrationSource from '../channel-import-state/src/migration.js';
 import { createChannelInboxEventModule } from '../channel-inbox-event/src/index.js';
 import * as channelInboxEventMigrationSource from '../channel-inbox-event/src/migration.js';
+import { createCustomFieldDefModule } from '../custom-field-def/src/index.js';
+import * as customFieldDefMigrationSource from '../custom-field-def/src/migration.js';
+import { createCustomFieldValueModule } from '../custom-field-value/src/index.js';
+import * as customFieldValueMigrationSource from '../custom-field-value/src/migration.js';
 import { createCustomerBulkItemModule } from '../customer-bulk-item/src/index.js';
 import * as customerBulkItemMigrationSource from '../customer-bulk-item/src/migration.js';
 import { createCustomerBulkRunModule } from '../customer-bulk-run/src/index.js';
@@ -79,6 +83,8 @@ export const generatedModules = [
   { name: 'channel-import-outcome', createModule: createChannelImportOutcomeModule, migrations: migrationsOf(channelImportOutcomeMigrationSource, 'channelImportOutcome', 'channel-import-outcome') },
   { name: 'channel-import-state', createModule: createChannelImportStateModule, migrations: migrationsOf(channelImportStateMigrationSource, 'channelImportState', 'channel-import-state') },
   { name: 'channel-inbox-event', createModule: createChannelInboxEventModule, migrations: migrationsOf(channelInboxEventMigrationSource, 'channelInboxEvent', 'channel-inbox-event') },
+  { name: 'custom-field-def', createModule: createCustomFieldDefModule, migrations: migrationsOf(customFieldDefMigrationSource, 'customFieldDef', 'custom-field-def') },
+  { name: 'custom-field-value', createModule: createCustomFieldValueModule, migrations: migrationsOf(customFieldValueMigrationSource, 'customFieldValue', 'custom-field-value') },
   { name: 'customer-bulk-item', createModule: createCustomerBulkItemModule, migrations: migrationsOf(customerBulkItemMigrationSource, 'customerBulkItem', 'customer-bulk-item') },
   { name: 'customer-bulk-run', createModule: createCustomerBulkRunModule, migrations: migrationsOf(customerBulkRunMigrationSource, 'customerBulkRun', 'customer-bulk-run') },
   { name: 'customer-import-row', createModule: createCustomerImportRowModule, migrations: migrationsOf(customerImportRowMigrationSource, 'customerImportRow', 'customer-import-row') },

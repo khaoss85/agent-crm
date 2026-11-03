@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "custom-field-value",
+  "description": "One customer's value for one operator-defined property (backlog:434cc39a): the per-subject row beside the contact or company record, keyed by subject and field key. One row per subject and field: setting the same field again rewrites the value (an edit), never a second row. Values are operator-entered or human-confirmed AI proposals; the definition owns the type and every write is validated against it.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "fieldKey",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "value",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "updatedBy",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}
