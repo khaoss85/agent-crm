@@ -47,7 +47,7 @@ function restMessage({ id, threadId, from = CUSTOMER, at = AT, snippet = 'Buongi
 }
 
 /** A scripted Gmail REST double: list + get + send, Bearer-checked. */
-function createGmailRestDouble({ messages = [], Bearer [REDACTED] GRANT, pageSize = 0 } = {}) {
+function createGmailRestDouble({ messages = [], bearer = GRANT, pageSize = 0 } = {}) {
   const requests = [];
   const store = new Map(messages.map((m) => [m.id, m]));
   const ok = (body) => ({ ok: true, status: 200, json: async () => body });
