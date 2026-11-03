@@ -32,8 +32,9 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * Required: `listEvents`, `insertEvent`, `patchEvent` (local slot moves
  * converge onto the linked event), `cancelEvent`,
  * `findByAccordoSourceKey` (export reconciliation — a retry after a lost
- * link finds the already-inserted event instead of inserting a second —
- * and the live read the reschedule push compares the row against).
+ * link finds the already-inserted event instead of inserting a second).
+ * The reschedule push needs no provider read: it decides against the
+ * link's stored fingerprint and patches through the stored event identity.
  * Every provider call takes one object param (`{ calendarId, … }`) plus
  * the call-time `secret` the engine resolved from the vault; a real
  * adapter must keep that shape.
@@ -1110,16 +1111,18 @@ export function createCalendarSyncOperations(options = {}) {
         return { status: 'pushed', sourceKey, change: 'cancelled' };
       }
       // A local slot move (backlog:bdca2010d471) converges onto the linked
-      // Google event: the row moved through the governed reschedule, so the
-      // provider's times follow it. Anything else that changed the
-      // fingerprint without moving the slot (notes, summary) stays local —
-      // appointment rows are evidence-immutable outside lifecycle and slot,
-      // so there is no local write path for prose, exactly like before.
-      const live = await providerCall(calendarId, 'findByAccordoSourceKey',
-        { calendarId, sourceKey: row.sourceKey }, GRANT_PURPOSE_READ);
-      const slotMoved = live !== null
-        && (live?.start?.dateTime !== row.startsAt || live?.end?.dateTime !== row.endsAt);
-      if (slotMoved) {
+      // Google event: the row moved away from its stored fingerprint through
+      // the governed reschedule, so the provider's times follow it — resolved
+      // through the link's stored event identity, which also covers events
+      // imported from Google (they carry no export-only metadata). Anything
+      // else that changed the fingerprint without moving the slot (a remote
+      // move the pull has not applied yet plus a local confirm, notes,
+      // summary) stays local: the push writes nothing, so a remote schedule
+      // is never overwritten with stale local times — appointment rows are
+      // evidence-immutable outside lifecycle and slot, exactly like before.
+      const stored = JSON.parse(link.localFingerprint);
+      const localSlotMoved = row.startsAt !== stored[0] || row.endsAt !== stored[1];
+      if (localSlotMoved) {
         const patched = await providerCall(calendarId, 'patchEvent', {
           calendarId,
           eventId: rowLinkEventId(link, calendarId),

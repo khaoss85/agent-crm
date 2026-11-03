@@ -889,3 +889,70 @@ test('a local reschedule is visible on Google after one push (backlog:bdca2010d4
   const again = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
   assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
 });
+
+test('a local confirm never overwrites a remote move the pull has not applied yet (backlog:bdca2010d471)', async (t) => {
+  // P1 regression: export, move the event in Google, confirm locally, then
+  // push. The old code compared the live event against the row and patched
+  // Google with the stale local times. The push now decides against the
+  // stored fingerprint: a lifecycle-only advance writes nothing, the remote
+  // move survives, and the next pull applies it locally. No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:remote-wins:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(exported.status, 'exported');
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: exported.eventId, patch: { ...slot('21', '14:00', '15:00') } });
+  await handle.advanceAppointment(appointment, 'confirmed');
+  const push = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(push.status, 'acknowledged', 'a confirm without a local move writes nothing');
+  const live = ctx.provider.getEvent(CAL, exported.eventId);
+  assert.equal(live.start.dateTime, '2026-10-21T14:00:00.000Z', 'the remote move is not overwritten');
+  assert.equal(live.end.dateTime, '2026-10-21T15:00:00.000Z');
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const applied = pull.entries.find((e) => e.eventId === exported.eventId);
+  assert.equal(applied?.status, 'applied');
+  assert.equal(applied?.change, 'rescheduled');
+});
+
+test('a rescheduled import patches its linked Google event (backlog:bdca2010d471)', async (t) => {
+  // P2 regression: an appointment imported from Google carries no
+  // export-only metadata, so the old provider lookup missed its event and
+  // the move was acknowledged while Google kept the old slot. The push now
+  // patches through the link's stored event identity. No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const row = ctx.appointmentRows()[0];
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const moved = await handle.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:00:00.000Z',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'pushed');
+  assert.equal(moved.push.change, 'rescheduled');
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-22T14:00:00.000Z');
+  assert.equal(live.end.dateTime, '2026-10-22T15:00:00.000Z');
+  const again = await ctx.sync.pushAppointment(CAL, row.sourceKey);
+  assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
+});
