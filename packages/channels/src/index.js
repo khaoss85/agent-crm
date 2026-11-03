@@ -614,7 +614,7 @@ export function createChannelsPackage(options = {}) {
         reuses: ['channel-sender@1', 'space-permission-gate@1', 'llm-complete@1'],
         humanApproval: 'register, status changes, sends, replies and requeues require actor.type === "user"; provider-driven ingest runs under a system actor and ignores any caller-supplied actor; channel replies obey send-without-approval (off by default): with the switch off a reply waits as a space-ai-proposal and nothing is enqueued until a human approves',
         notModeled: [
-          'real provider adapters beyond WhatsApp and Instagram (Gmail, …) — fixture only until credentials exist',
+          'real provider adapters beyond WhatsApp, Instagram and Gmail — fixture only until credentials exist; Gmail speaks its REST API over the deployment fetch with the per-call vault grant (`src/gmail-http.js`), fake-backed by default',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
           'secret custody and rotation flow — the deployment owns it via resolveSecret',
           'reconciliation against provider truth — redelivery resumes unprocessed rows',
@@ -705,6 +705,11 @@ export {
   gmailThreadSubject,
   isGmailThreadId,
 } from './gmail.js';
+export {
+  GMAIL_API_BASE,
+  createGmailHttpIo,
+  normalizeGmailRestMessage,
+} from './gmail-http.js';
 export { verifyHmacWebhook, fingerprintPayload, hmacWebhookHeaders } from './crypto.js';
 export {
   CALENDAR_ADAPTER_NAME,

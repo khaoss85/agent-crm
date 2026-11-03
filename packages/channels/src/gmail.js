@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { verifyHmacWebhook } from './crypto.js';
+import { createGmailHttpIo } from './gmail-http.js';
 import { assertChannelAttachment } from './meta-webhook.js';
 
 /**
@@ -410,20 +411,37 @@ function assertAdapterConfig(input = {}) {
 }
 
 /**
- * Build the fake-backed Gmail adapter: `{ definition, api }` in the
- * fixture's shape, so the kit harness drives it unchanged. `secret` is the
- * declared test-only value the double expects; production resolves the
- * real OAuth token through the same `resolveSecret` edge.
+ * Build the Gmail adapter: `{ definition, api }` in the fixture's shape,
+ * so the kit harness drives it unchanged. `secret` is the declared
+ * test-only value the double expects; production resolves the real OAuth
+ * token through the same `resolveSecret` edge.
+ *
+ * Pass `httpFetch` (a fetch-compatible transport, backlog:d1da1ed51e9c)
+ * to speak the real Gmail REST API instead of the in-memory double:
+ * history paging and send go over HTTP with the call-time secret as the
+ * Bearer, against `config.baseUrl`. Without it the adapter stays
+ * fake-backed, exactly as before.
  *
  * @param {{
  *   secret?: string, mailbox?: string, baseUrl?: string, testOnly?: boolean,
+ *   httpFetch?: (url: string, init?: any) => Promise<any>,
  * }} options `mailbox` is the bound space address: the kit/self-test
- * loopback address.
+ * loopback address, and in production the linked mailbox the echo
+ * quarantine compares against.
  */
 export function createGmailChannelAdapter(options = {}) {
   const expectedSecret = typeof options.secret === 'string' && options.secret !== ''
     ? options.secret : 'gmail-fake-secret';
   const config = assertAdapterConfig(options);
+  const httpFetch = options.httpFetch;
+  if (httpFetch !== undefined && typeof httpFetch !== 'function') {
+    throw new ValidationError('Gmail adapter httpFetch must be a fetch-compatible function', {
+      field: 'config.httpFetch',
+    });
+  }
+  const httpIo = typeof httpFetch === 'function'
+    ? createGmailHttpIo({ fetchImpl: httpFetch, baseUrl: config.baseUrl, mailbox: config.mailbox })
+    : null;
   const state = {
     mode: 'ok',
     flakyRemaining: 0,
@@ -502,7 +520,7 @@ export function createGmailChannelAdapter(options = {}) {
     definition: {
       name: options.name ?? GMAIL_ADAPTER_NAME,
       version: GMAIL_ADAPTER_VERSION,
-      label: 'Gmail API (fake-backed)',
+      label: httpIo ? 'Gmail API' : 'Gmail API (fake-backed)',
       channel: 'email',
       config: {
         mailbox: config.mailbox,
@@ -568,6 +586,7 @@ export function createGmailChannelAdapter(options = {}) {
          * `resolveSecret` edge the import uses.
          */
         async listHistory({ secret, since, pageToken, limit }) {
+          if (httpIo) return httpIo.listHistory({ secret, since, pageToken, limit });
           if (secret !== expectedSecret) {
             throw new AppError('Gmail history refuses this secret', { code: 'CHANNEL_HISTORY_REFUSED', status: 403 });
           }
@@ -597,6 +616,7 @@ export function createGmailChannelAdapter(options = {}) {
 
       async sendOutbound({ message, secret, idempotencyKey }) {
         state.sendCalls += 1;
+        if (httpIo) return httpIo.sendMessage({ message, secret, idempotencyKey });
         if (secret !== expectedSecret) {
           throw new AppError('Gmail secret mismatch', { code: 'CHANNEL_SEND_REFUSED', status: 403 });
         }
