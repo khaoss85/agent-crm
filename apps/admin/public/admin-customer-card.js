@@ -4,6 +4,15 @@ import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library
 import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
+import {
+  addFieldForm,
+  defineField,
+  fetchFieldDefs,
+  fetchFieldValues,
+  fieldControl,
+  formatCustomValue,
+  saveFieldValue,
+} from './admin-custom-fields.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -417,7 +426,7 @@ export function createCustomerCardView(deps) {
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
-    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw] = await Promise.all([
+    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw] = await Promise.all([
       settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
       settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
       settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
@@ -431,6 +440,11 @@ export function createCustomerCardView(deps) {
       spaceId === null
         ? { value: null, error: null }
         : settle(() => client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)),
+      // Custom fields (backlog:434cc39a): the space-wide definitions with
+      // this customer's values. An older server without the routes answers
+      // 404, and the section hides instead of failing the card.
+      settle(() => fetchFieldDefs(client)),
+      settle(() => fetchFieldValues(client, resource, id)),
     ]);
     // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
     // retry — the package is not composed for this reader, so the read stays
@@ -440,6 +454,8 @@ export function createCustomerCardView(deps) {
     const profile = nullOn404(profileRaw);
     const enrichment = nullOn404(enrichmentRaw);
     const calls = nullOn404(callsRaw);
+    const fieldDefs = nullOn404(fieldDefsRaw);
+    const fieldValues = nullOn404(fieldValuesRaw);
     return {
       card: card.value,
       cardError: card.error,
@@ -451,6 +467,10 @@ export function createCustomerCardView(deps) {
       enrichmentError: enrichment.error,
       calls: calls.value,
       callsError: calls.error,
+      fieldDefs: fieldDefs.value,
+      fieldDefsError: fieldDefs.error,
+      fieldValues: fieldValues.value,
+      fieldValuesError: fieldValues.error,
     };
   }
 
@@ -1292,6 +1312,92 @@ export function createCustomerCardView(deps) {
     void card;
   }
 
+  /**
+   * Campi personalizzati (backlog:434cc39a): every space-wide field with
+   * this customer's value, editable in place, plus «+ Aggiungi campo». An
+   * edit rewrites the single row and re-reads the whole card, so a reload
+   * reads the edit. A failed read hides the section, never the scheda.
+   * @param {any} box
+   * @param {{defs: any, values: any, resource: string, id: string}} ctx
+   */
+  function customFields(box, ctx) {
+    if (!Array.isArray(ctx?.defs)) return false;
+    if (ctx.defs.length === 0 && !Array.isArray(ctx?.values)) return false;
+    box.appendChild(el('h4', undefined, 'Campi personalizzati'));
+    const byKey = new Map((Array.isArray(ctx.values) ? ctx.values : []).map((row) => [row?.key, row]));
+    for (const def of ctx.defs) {
+      const row = el('p', 'bo-scheda-fact');
+      row.appendChild(el('span', 'bo-scheda-fact-label', def?.label ?? def?.key ?? 'campo'));
+      const shown = formatCustomValue(def, byKey.get(def?.key)?.value ?? null);
+      row.appendChild(el('span', undefined, shown ?? '—'));
+      const edit = el('button', undefined, 'Modifica');
+      edit.setAttribute('type', 'button');
+      edit.setAttribute('data-action', `edit-field:${def?.key ?? ''}`);
+      edit.addEventListener('click', () => renderFieldForm(box, ctx, def));
+      row.appendChild(edit);
+      box.appendChild(row);
+    }
+    const add = el('button', undefined, '+ Aggiungi campo');
+    add.setAttribute('type', 'button');
+    add.setAttribute('data-action', 'add-field');
+    add.addEventListener('click', () => {
+      if (box.querySelector?.('.bo-campo-add')) return;
+      const form = addFieldForm(el, {
+        onDefine: async (input) => {
+          const created = await defineField(client, input);
+          await renderCard(ctx.resource, ctx.id);
+          toast('Campo creato: ora è in tutte le schede, nei filtri e nelle colonne.');
+          return created;
+        },
+      });
+      form.cancel.addEventListener('click', async () => {
+        await renderCard(ctx.resource, ctx.id);
+      });
+      box.appendChild(form.wrap);
+    });
+    box.appendChild(add);
+    return true;
+  }
+
+  /** In-place edit of one custom-field value: Salva rewrites the single row. */
+  function renderFieldForm(box, ctx, def) {
+    while (box.firstChild) box.removeChild(box.firstChild);
+    box.appendChild(el('h4', undefined, 'Campi personalizzati'));
+    const rows = Array.isArray(ctx.values) ? ctx.values : [];
+    const current = rows.find((row) => row?.key === def?.key)?.value ?? null;
+    const entry = fieldControl(el, def, current);
+    box.appendChild(entry.wrap);
+    const row = el('div', 'bo-scheda-form-actions');
+    const save = el('button', undefined, 'Salva');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'save-field-value');
+    const cancel = el('button', undefined, 'Annulla');
+    cancel.setAttribute('type', 'button');
+    cancel.setAttribute('data-action', 'cancel-field-value');
+    row.appendChild(save);
+    row.appendChild(cancel);
+    box.appendChild(row);
+    let busy = false;
+    save.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      entry.setError('');
+      try {
+        await saveFieldValue(client, {
+          resource: ctx.resource, id: ctx.id, key: def?.key, value: entry.read(),
+        });
+        toast('Campo salvato');
+        await renderCard(ctx.resource, ctx.id);
+      } catch (err) {
+        entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
+        busy = false;
+      }
+    });
+    cancel.addEventListener('click', async () => {
+      await renderCard(ctx.resource, ctx.id);
+    });
+  }
+
   const ENRICHED_FIELD_LABELS = Object.freeze({
     firstName: 'Nome', lastName: 'Cognome', role: 'Ruolo', companyName: 'Azienda', phone: 'Telefono',
   });
@@ -1873,6 +1979,7 @@ export function createCustomerCardView(deps) {
     const {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
+      fieldDefs, fieldDefsError, fieldValues, fieldValuesError,
     } = loaded;
     // C13: the re-read behind `Aggiorna` — the same enriched route the load
     // uses, with the same honest 404. Anything else still rejects, so the
@@ -1898,6 +2005,11 @@ export function createCustomerCardView(deps) {
     section(left, '', quickActions, card, { resource, id });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
+    // Custom fields (backlog:434cc39a): a failed defs/values read hides the
+    // section, never the scheda — like enrichment above.
+    if (!fieldDefsError && !fieldValuesError) {
+      section(left, '', customFields, { defs: fieldDefs, values: fieldValues, resource, id });
+    }
     section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
     if (timelineError) {
       section(center, 'bo-scheda-card-timeline', (box) => {

@@ -150,9 +150,20 @@ export function parseCustomerListQuery(input = {}) {
     throw new ValidationError('customer list query: page must be a positive integer', { field: 'page' });
   }
   const spaceId = text(source.spaceId, 'spaceId', 200);
+  // Custom-field filter (backlog:434cc39a): one space-wide field key plus an
+  // optional value needle. Syntax-checked here; the field must exist or the
+  // read refuses CUSTOM_FIELD_UNKNOWN in operations.js — a filter over an
+  // unknown field would answer an exact-looking empty page.
+  const campoRaw = text(source.campo, 'campo', 40);
+  const campo = campoRaw === undefined ? undefined : campoRaw.toLowerCase();
+  if (campo !== undefined && !/^[a-z0-9][a-z0-9-]*$/.test(campo)) {
+    throw new ValidationError('customer list query: campo must be a field key slug', { field: 'campo' });
+  }
+  const valore = text(source.valore, 'valore', 200);
   return Object.freeze({
     q, canale, stato, sort, vista, view,
     page: pageRaw, pageSize: pageSizeRaw, spaceId,
+    campo, valore,
   });
 }
 
@@ -232,8 +243,15 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     .join(' ');
 
   const today = typeof todayIso === 'string' && todayIso !== '' ? todayIso : new Date().toISOString().slice(0, 10);
+  const needle = typeof query.valore === 'string' && query.valore !== ''
+    ? query.valore.toLowerCase() : null;
   const filtered = all.filter((row) => {
     if (wantedStatus !== 'all' && row?.status?.value !== wantedStatus) return false;
+    if (query.campo !== undefined) {
+      const entry = (row?.customFields ?? []).find((field) => field?.key === query.campo) ?? null;
+      if (entry === null || entry.value === null || entry.value === undefined) return false;
+      if (needle !== null && !String(entry.value).toLowerCase().includes(needle)) return false;
+    }
     if (query.canale !== 'all' && !(row?.channels ?? []).includes(query.canale)) return false;
     if (channelHits.length > 0 && !channelHits.some((channel) => (row?.channels ?? []).includes(channel))) return false;
     if (strippedQ !== '' && !haystackOf(row).includes(strippedQ)) return false;
@@ -290,7 +308,10 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
+ *   customFields entries are shaped `{ key, label, type, options, value, updatedAt, updatedBy }`
+ *   (backlog:434cc39a): every defined field reads on every row — the list
+ *   columns — with a null value when never set.
  *   observedComplete is scan-wide (backlog:826e377c): false when the
  *   message or call scan behind the observed channels was partial or
  *   unreadable — the row then reads channelsComplete:false instead of an
@@ -372,5 +393,14 @@ export function shapeCustomerRow(subject, reads = {}) {
       source: budget.available === true ? (budget.source ?? null) : null,
       reason: budget.available === true ? null : (budget.reason ?? null),
     }),
+    customFields: Object.freeze((reads.customFieldsBySubject?.get(key) ?? []).map((entry) => Object.freeze({
+      key: entry?.key ?? null,
+      label: entry?.label ?? null,
+      type: entry?.type ?? null,
+      options: Object.freeze(Array.isArray(entry?.options) ? [...entry.options] : []),
+      value: entry?.value ?? null,
+      updatedAt: entry?.updatedAt ?? null,
+      updatedBy: entry?.updatedBy ?? null,
+    }))),
   });
 }

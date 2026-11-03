@@ -9,6 +9,10 @@ import { createChannelOriginsCapability } from './capability-channel-origins.js'
 import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
+import {
+  applyCustomerPhrase, customerPhraseAiAvailable, defineCustomField, listCustomFieldDefs,
+  parseCustomerPhrase, readCustomFieldValues, setCustomFieldValue,
+} from './custom-fields.js';
 import { createContactEnrichment } from './enrichment.js';
 import { EXTRACTION_SOURCE_KINDS, createEnrichmentExtraction } from './extraction.js';
 import { createCustomerDataOperations, LIMITATIONS } from './operations.js';
@@ -65,17 +69,38 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'customer-bulk-item',
   'enriched-field',
   'enrichment-opt-out',
+  'custom-field-def',
+  'custom-field-value',
 ]);
+
+/**
+ * A per-call phrase adapter counts only when it carries a callable
+ * `extractCustomer` (in-process fakes in tests). An HTTP JSON body can never
+ * carry a function, so a caller object from the wire neither enables the AI
+ * nor shadows the composed package phraseAdapter (backlog:434cc39a).
+ */
+function callablePhraseAdapter(candidate) {
+  return typeof candidate?.extractCustomer === 'function' ? candidate : null;
+}
 
 /**
  * @param {{
  *   matchPolicy?: any,
  *   config?: Record<string, string>,
+ *   phraseAdapter?: any,
  * }} [options]
  */
 export function createCustomerDataPackage(options = {}) {
   const config = options.config;
   const names = resolvedNames(config);
+  // The caller-built «✦ Scrivi o incolla» adapter (the OpenAI wiring in the
+  // pilot worker, the fake in tests): the framework never builds one, so it
+  // never holds a key. A per-call `adapter` on parse/ai-available counts only
+  // when callable (in-process fakes); the package-level one wins when
+  // composed, and a JSON body from the wire never counts. The reference
+  // composition passes none: without it the phrase preview refuses and the
+  // admin hides the ✦ area.
+  const phraseAdapter = options.phraseAdapter ?? null;
   // Build-time flag, like the module names above: the Google Contacts source
   // stays off unless the composition explicitly enables it, until the Google
   // verification approves the contacts.readonly scope.
@@ -474,6 +499,133 @@ export function createCustomerDataPackage(options = {}) {
           return (request) => enrichment.optOutContactEnrichment(request);
         },
       },
+      {
+        operationContract: 1,
+        name: 'define-custom-field',
+        appMethod: 'defineCustomField',
+        label: 'Add one space-wide custom field',
+        description:
+          'Define one operator-decided customer property («+ Aggiungi campo»: label, one of testo/numero/data/si-no/scelta). '
+          + 'Space-wide: the field reads on every scheda, in the list filters and in the list columns. '
+          + 'Idempotent on the identical definition; a divergent definition behind the same key refuses 409. '
+          + 'A human decision: the actor must be a user.',
+        input: [
+          { name: 'label', type: 'string', hint: 'The label the operator reads, e.g. "Amico".' },
+          { name: 'key', type: 'string', hint: 'Optional slug; derived from the label when absent.' },
+          { name: 'type', type: 'string', hint: 'One of testo, numero, data, si-no, scelta.' },
+          { name: 'options', type: 'json', hint: 'JSON array of options, scelta only.' },
+        ],
+        create(runtime) {
+          return (request) => defineCustomField({ modules: runtime.modules, names }, request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'list-custom-fields',
+        appMethod: 'listCustomFields',
+        label: 'List the space custom fields',
+        description:
+          'Every defined field of the space with its label, type and options. Writes nothing.',
+        input: [],
+        create(runtime) {
+          return (request) => listCustomFieldDefs({ modules: runtime.modules, names }, request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'set-custom-field-value',
+        appMethod: 'setCustomFieldValue',
+        label: 'Set one customer custom-field value',
+        description:
+          'Set one customer value for one defined field. The definition owns the type: an unknown key refuses, '
+          + 'a bad value refuses naming the field. An edit rewrites the single row, so a reload reads the edit. '
+          + 'A human decision: the actor must be a user.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'key', type: 'string', hint: 'The field key.' },
+          { name: 'value', type: 'json', hint: 'The value, in the field type canonical form.' },
+        ],
+        create(runtime) {
+          return (request) => setCustomFieldValue({ modules: runtime.modules, names }, request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-custom-field-values',
+        appMethod: 'readCustomFieldValues',
+        label: 'Read one customer custom-field values',
+        description:
+          'Every defined field of the space with this customer value (null when never set). Writes nothing.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+        ],
+        create(runtime) {
+          return (request) => readCustomFieldValues({ modules: runtime.modules, names }, request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'parse-customer-phrase',
+        appMethod: 'parseCustomerPhrase',
+        label: 'Preview one customer sentence',
+        description:
+          '«✦ Scrivi o incolla»: one Italian sentence into a customer draft plus custom-field proposals, naming '
+          + 'every field it would create. Writes nothing: only the human apply stores. Without a caller-built '
+          + 'adapter (per call, or the package phraseAdapter) it refuses CUSTOMER_PHRASE_AI_UNAVAILABLE. '
+          + 'A human decision: the actor must be a user.',
+        input: [
+          { name: 'phrase', type: 'string', hint: 'The sentence, e.g. "daniele pelleri email daniele@gmail.com tel 234341 amico sì".' },
+          { name: 'adapter', type: 'json', hint: 'Optional caller-built extractCustomer adapter for in-process calls (tests): only a callable counts, the composed package adapter wins.' },
+        ],
+        create(runtime) {
+          return (request) => parseCustomerPhrase(
+            { modules: runtime.modules, names, phraseLlm: phraseAdapter ?? callablePhraseAdapter(request?.adapter) }, request,
+          );
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'apply-customer-phrase',
+        appMethod: 'applyCustomerPhrase',
+        label: 'Apply one confirmed customer phrase',
+        description:
+          'Store the human-confirmed phrase: create (or match) the customer through the governed import-apply, '
+          + 'hold its phone beside it, define the new fields and set every value. Idempotent per field: retrying '
+          + 'replays. The note is never written here: the caller posts it to the subject-note endpoint, so the '
+          + 'cronologia keeps its single writer. A human decision: the actor must be a user.',
+        input: [
+          { name: 'customer', type: 'json', hint: 'The confirmed base customer: firstName, lastName, email, companyName, phone.' },
+          { name: 'fields', type: 'json', hint: 'The confirmed field entries: key, label, type, options, value.' },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => applyCustomerPhrase(
+            {
+              database: runtime.database, modules: runtime.modules, names,
+              importOperations: operations,
+            }, request,
+          );
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'customer-phrase-ai-available',
+        appMethod: 'customerPhraseAiAvailable',
+        label: 'Whether the phrase AI is on',
+        description:
+          'The probe the admin uses to show the ✦ area only when the AI is on. Writes nothing.',
+        input: [
+          { name: 'adapter', type: 'json', hint: 'Optional caller-built adapter to probe in-process (tests): only a callable counts.' },
+        ],
+        create() {
+          return (request) => customerPhraseAiAvailable({ phraseLlm: phraseAdapter ?? callablePhraseAdapter(request?.adapter) });
+        },
+      },
     ],
 
     /**
@@ -523,6 +675,19 @@ export function createCustomerDataPackage(options = {}) {
             proposals: 'one proposed enriched-field row per extracted field, each citing the linked source read — never a fact until a human decides',
             decisions: 'accepted flips the row to active, dismissed records the refusal with its reason; deciding twice answers the stored decision and a dismissal is never resurrected by a re-run',
             providerSilence: 'an adapter failure becomes ENRICHMENT_EXTRACTION_FAILED with a fixed message: provider text never leaves the package',
+          },
+        },
+        customFields: {
+          types: ['testo', 'numero', 'data', 'si-no', 'scelta'],
+          spaceWide: 'one definition serves every scheda, every list filter and every list column',
+          unknownRefuses: 'a value without a definition refuses CUSTOM_FIELD_UNKNOWN: the framework never invents a field from a value',
+          edit: 'setting the same field again rewrites the single row: a reload reads the edit, the list never doubles the customer',
+          aiPhrase: {
+            adapter: 'caller-built, passed per call or as the package phraseAdapter (the OpenAI wiring in the pilot worker, the fake in tests): the framework never holds a key',
+            noAi: 'without an adapter the preview refuses with CUSTOMER_PHRASE_AI_UNAVAILABLE and the admin hides the ✦ area',
+            previewWritesNothing: 'the preview names every field it would create; only the human apply stores',
+            noteSingleWriter: 'the apply never writes the note: the caller posts it to the subject-note endpoint, so the cronologia keeps its single writer',
+            providerSilence: 'an adapter failure becomes CUSTOMER_PHRASE_AI_UNUSABLE with a fixed message: provider text never leaves the package',
           },
         },
         canonicalIdentity: {

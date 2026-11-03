@@ -98,6 +98,129 @@ export function createCustomerDataOperations({ database, modules, events, config
     limitations: LIMITATIONS,
   });
 
+  /**
+   * The import-apply write path with no transaction of its own: resolve
+   * authoritatively, then write the run, the rows, the identities, the
+   * candidates and the findings. The caller holds the single enclosing
+   * `database.transactionAsync` — the public apply opens one, and the
+   * phrase apply (backlog:434cc39a) opens one around the customer, the
+   * definitions and the values together, so a refusal anywhere rolls
+   * everything back. Returns the public receipt shape plus the run
+   * coordinates the caller emits after its own commit.
+   */
+  const importInTransaction = async (request) => {
+    const actor = normalizeActor(request?.actor);
+    // Re-resolve authoritatively. A preview handed in by the caller is
+    // deliberately ignored: stale readiness authorises nothing.
+    const resolution = await resolveBatch({ request, policy, reader: readerFor() });
+
+    if (resolution.acceptance === 'all_or_nothing' && resolution.counts.rejected + resolution.counts.skipped > 0) {
+      throw new AppError(
+        `This import is all-or-nothing and ${resolution.counts.rejected + resolution.counts.skipped} of ${resolution.counts.rows} rows could not be accepted, so nothing was written`,
+        {
+          code: 'IMPORT_NOT_FULLY_ACCEPTABLE', status: 409,
+          details: Object.freeze({ counts: resolution.counts, firstProblemRow: resolution.receipts.find((r) => r.outcome !== 'accepted')?.index ?? null }),
+        },
+      );
+    }
+
+    const runs = trusted(modules, names.run);
+    const existing = (await runs.listWhere({ idempotencyKey: resolution.idempotencyKey }))[0];
+    if (existing) {
+      // Same payload → same run. A *different* payload cannot reach here:
+      // the key is derived from the payload itself. The stored rows carry
+      // the subjects the first apply created, so a replay answers the same
+      // shape as the original — never accepted with a missing subject.
+      const stored = await trusted(modules, names.row).listWhere({ runId: existing.id });
+      return Object.freeze({
+        receipt: Object.freeze({
+          ...summarize(resolution, 'apply', existing.id, subjectsByIndex(stored)),
+          replayed: true,
+          writes: 'nothing new — this exact import was already applied, and its run is returned unchanged',
+        }),
+        runId: existing.id,
+        system: resolution.system,
+        counts: resolution.counts,
+      });
+    }
+
+    const run = await runs.createManaged({
+      sourceKey: `customer-import:${resolution.idempotencyKey}`,
+      idempotencyKey: resolution.idempotencyKey,
+      system: resolution.system,
+      mapping: IMPORT_MAPPING.name,
+      mappingVersion: IMPORT_MAPPING.version,
+      mappingFingerprint: mappingFingerprint(),
+      policy: policy.name,
+      policyVersion: policy.version,
+      policyFingerprint: policy.fingerprint,
+      acceptance: resolution.acceptance,
+      status: 'applied',
+      rowCount: resolution.counts.rows,
+      acceptedCount: resolution.counts.accepted,
+      rejectedCount: resolution.counts.rejected,
+      skippedCount: resolution.counts.skipped,
+      candidateCount: 0,
+      issueCount: 0,
+      actorType: actor.type,
+      actorId: actor.id,
+      appliedAt: new Date().toISOString(),
+    }, { actor });
+
+    let candidateCount = 0;
+    let issueCount = 0;
+    const createdSubjects = new Map();
+
+    for (const receipt of resolution.receipts) {
+      let subject = receipt.subject ?? null;
+
+      // Create the record the row names, when nothing matched it.
+      if (receipt.outcome === 'accepted' && receipt.created) {
+        subject = await createSubjectFor(receipt.row, actor);
+        createdSubjects.set(receipt.index, subject);
+      }
+
+      await trusted(modules, names.row).createManaged({
+        sourceKey: `customer-import-row:${run.id}:${receipt.index}`,
+        runId: run.id,
+        rowIndex: receipt.index,
+        inputDigest: receipt.inputDigest,
+        outcome: receipt.outcome,
+        reasonCode: receipt.reasonCode,
+        reason: receipt.reason,
+        matchRule: receipt.rule,
+        ...subjectFields(subject ?? { resource: 'none', id: 'none', owner: 'host', ownerPackage: null, label: null }),
+        createdSubject: Boolean(receipt.created),
+      }, { actor });
+
+      // External identity: recorded for every accepted row that carries one.
+      if (receipt.outcome === 'accepted' && subject && receipt.row?.externalId) {
+        await recordExternalIdentity(receipt.row, subject, run.id, actor);
+      }
+
+      // Ambiguity becomes a candidate for a human, never a decision.
+      if (receipt.outcome === 'skipped' && receipt.reasonCode === REASON.AMBIGUOUS) {
+        candidateCount += await recordCandidates(receipt, run.id, actor);
+      }
+    }
+
+    // Data-quality findings from this run's own evidence.
+    issueCount = await recordIssues({ resolution, runId: run.id, actor });
+
+    await runs.applyManaged(run.id, { candidateCount, issueCount }, { actor });
+    return Object.freeze({
+      receipt: Object.freeze({
+        ...summarize(resolution, 'apply', run.id, createdSubjects),
+        replayed: false,
+        candidateCount,
+        issueCount,
+      }),
+      runId: run.id,
+      system: resolution.system,
+      counts: resolution.counts,
+    });
+  };
+
   return {
     /**
      * Import preview. **Writes nothing** — the whole point of the surface.
@@ -117,114 +240,24 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async applyCustomerImport(request) {
-      const actor = normalizeActor(request?.actor);
-      // Re-resolve authoritatively. A preview handed in by the caller is
-      // deliberately ignored: stale readiness authorises nothing.
-      const resolution = await resolveBatch({ request, policy, reader: readerFor() });
-
-      if (resolution.acceptance === 'all_or_nothing' && resolution.counts.rejected + resolution.counts.skipped > 0) {
-        throw new AppError(
-          `This import is all-or-nothing and ${resolution.counts.rejected + resolution.counts.skipped} of ${resolution.counts.rows} rows could not be accepted, so nothing was written`,
-          {
-            code: 'IMPORT_NOT_FULLY_ACCEPTABLE', status: 409,
-            details: Object.freeze({ counts: resolution.counts, firstProblemRow: resolution.receipts.find((r) => r.outcome !== 'accepted')?.index ?? null }),
-          },
-        );
-      }
-
-      const runs = trusted(modules, names.run);
-      const existing = (await runs.listWhere({ idempotencyKey: resolution.idempotencyKey }))[0];
-      if (existing) {
-        // Same payload → same run. A *different* payload cannot reach here:
-        // the key is derived from the payload itself. The stored rows carry
-        // the subjects the first apply created, so a replay answers the same
-        // shape as the original — never accepted with a missing subject.
-        const stored = await trusted(modules, names.row).listWhere({ runId: existing.id });
-        return Object.freeze({
-          ...summarize(resolution, 'apply', existing.id, subjectsByIndex(stored)),
-          replayed: true,
-          writes: 'nothing new — this exact import was already applied, and its run is returned unchanged',
-        });
-      }
-
-      const applied = await database.transactionAsync(async () => {
-        const run = await runs.createManaged({
-          sourceKey: `customer-import:${resolution.idempotencyKey}`,
-          idempotencyKey: resolution.idempotencyKey,
-          system: resolution.system,
-          mapping: IMPORT_MAPPING.name,
-          mappingVersion: IMPORT_MAPPING.version,
-          mappingFingerprint: mappingFingerprint(),
-          policy: policy.name,
-          policyVersion: policy.version,
-          policyFingerprint: policy.fingerprint,
-          acceptance: resolution.acceptance,
-          status: 'applied',
-          rowCount: resolution.counts.rows,
-          acceptedCount: resolution.counts.accepted,
-          rejectedCount: resolution.counts.rejected,
-          skippedCount: resolution.counts.skipped,
-          candidateCount: 0,
-          issueCount: 0,
-          actorType: actor.type,
-          actorId: actor.id,
-          appliedAt: new Date().toISOString(),
-        }, { actor });
-
-        let candidateCount = 0;
-        let issueCount = 0;
-        const createdSubjects = new Map();
-
-        for (const receipt of resolution.receipts) {
-          let subject = receipt.subject ?? null;
-
-          // Create the record the row names, when nothing matched it.
-          if (receipt.outcome === 'accepted' && receipt.created) {
-            subject = await createSubjectFor(receipt.row, actor);
-            createdSubjects.set(receipt.index, subject);
-          }
-
-          await trusted(modules, names.row).createManaged({
-            sourceKey: `customer-import-row:${run.id}:${receipt.index}`,
-            runId: run.id,
-            rowIndex: receipt.index,
-            inputDigest: receipt.inputDigest,
-            outcome: receipt.outcome,
-            reasonCode: receipt.reasonCode,
-            reason: receipt.reason,
-            matchRule: receipt.rule,
-            ...subjectFields(subject ?? { resource: 'none', id: 'none', owner: 'host', ownerPackage: null, label: null }),
-            createdSubject: Boolean(receipt.created),
-          }, { actor });
-
-          // External identity: recorded for every accepted row that carries one.
-          if (receipt.outcome === 'accepted' && subject && receipt.row?.externalId) {
-            await recordExternalIdentity(receipt.row, subject, run.id, actor);
-          }
-
-          // Ambiguity becomes a candidate for a human, never a decision.
-          if (receipt.outcome === 'skipped' && receipt.reasonCode === REASON.AMBIGUOUS) {
-            candidateCount += await recordCandidates(receipt, run.id, actor);
-          }
-        }
-
-        // Data-quality findings from this run's own evidence.
-        issueCount = await recordIssues({ resolution, runId: run.id, actor });
-
-        await runs.applyManaged(run.id, { candidateCount, issueCount }, { actor });
-        return { run, candidateCount, issueCount, createdSubjects };
-      });
-
+      const applied = await database.transactionAsync(() => importInTransaction(request));
       events.emit?.('customer-data.import.applied', {
-        runId: applied.run.id, system: resolution.system, counts: resolution.counts,
+        runId: applied.runId, system: applied.system, counts: applied.counts,
       });
+      return applied.receipt;
+    },
 
-      return Object.freeze({
-        ...summarize(resolution, 'apply', applied.run.id, applied.createdSubjects),
-        replayed: false,
-        candidateCount: applied.candidateCount,
-        issueCount: applied.issueCount,
-      });
+    /**
+     * INTERNAL to this package (backlog:434cc39a): the import-apply write
+     * path without a transaction of its own. The caller MUST already hold
+     * `database.transactionAsync` — nested outer transactions are refused
+     * on one connection, so the phrase apply opens the single enclosing
+     * transaction and this path joins it. Never call it outside one: a
+     * refusal partway through would leave the earlier rows committed.
+     * @param {any} request
+     */
+    async applyCustomerImportInTransaction(request) {
+      return importInTransaction(request);
     },
 
     /**
@@ -661,6 +694,90 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     }
   }
 
+  // Custom fields (backlog:434cc39a): space-wide definitions with this
+  // customer's value. The def/value modules are package-owned, so a missing
+  // service here is a fake module map in tests — zero definitions and zero
+  // columns, never a claim. The definitions come from the complete
+  // exact-match read, never a bounded display page: past 500 fields the
+  // page would hide older keys while the card still reads them, and a
+  // campo filter over one would wrongly refuse CUSTOM_FIELD_UNKNOWN.
+  // A campo filter over an unknown field refuses CUSTOM_FIELD_UNKNOWN
+  // instead of answering an exact-looking empty page.
+  const customDefs = await (async () => {
+    const service = optional(modules, names.fieldDef);
+    if (!service) return [];
+    const shaped = [];
+    const rows = typeof service.listWhere === 'function'
+      ? await service.listWhere({})
+      : (typeof service.list === 'function' ? await service.list({ limit: CUSTOMER_SCAN_LIMIT }) : []);
+    for (const row of rows) {
+      if (!row || typeof row.fieldKey !== 'string' || row.fieldKey === '') continue;
+      let options = [];
+      if (typeof row.options === 'string' && row.options !== '') {
+        try {
+          const parsed = JSON.parse(row.options);
+          if (Array.isArray(parsed)) options = parsed.filter((entry) => typeof entry === 'string');
+        } catch { /* a malformed options text reads as no options, never a crash */ }
+      }
+      shaped.push({
+        key: row.fieldKey,
+        label: typeof row.label === 'string' && row.label !== '' ? row.label : row.fieldKey,
+        type: typeof row.fieldType === 'string' ? row.fieldType : 'testo',
+        options,
+      });
+    }
+    return shaped;
+  })();
+  if (query.campo !== undefined && !customDefs.some((def) => def.key === query.campo)) {
+    throw new AppError(`custom field «${query.campo}» is not defined: add it first`, { code: 'CUSTOM_FIELD_UNKNOWN', status: 404 });
+  }
+  // A value read that fails is never a silent empty: with a campo filter
+  // the rows below would drop every match and still report an exact page,
+  // so the read refuses instead. Without a filter the scheda still reads
+  // — with null values — but the cause is logged with the space, never
+  // swallowed, so a failure nobody can diagnose is impossible (AGENTS.md).
+  let customValuesFailed = null;
+  const customValueRows = await (async () => {
+    const service = optional(modules, names.fieldValue);
+    if (!service || typeof service.listWhere !== 'function') return [];
+    const rows = [];
+    for (const resource of ['contact', 'company']) {
+      const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
+      if (ids.length === 0) continue;
+      try {
+        for (const row of await service.listWhere({ subjectResource: resource, subjectId: ids })) {
+          rows.push(row);
+        }
+      } catch (error) {
+        // A module that declares none of these shapes stays unread here;
+        // the rows below then read null values, never invented ones. Any
+        // other failure is recorded: it refuses below when a campo filter
+        // would turn it into an exact-looking wrong page.
+        customValuesFailed = error;
+        console.error(
+          `[accordo] customer custom values unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+        );
+      }
+    }
+    return rows;
+  })();
+  if (customValuesFailed !== null && query.campo !== undefined) {
+    throw new AppError('the campo filter needs the custom-field values, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  const customValuesBySubject = new Map(subjectKeys.map((key) => [key, new Map()]));
+  for (const row of customValueRows) {
+    if (!row || typeof row.fieldKey !== 'string') continue;
+    const key = keyOf(row.subjectResource, row.subjectId);
+    if (customValuesBySubject.has(key)) customValuesBySubject.get(key).set(row.fieldKey, row);
+  }
+  const customFieldsBySubject = new Map(subjectKeys.map((key) => [key, customDefs.map((def) => {
+    const row = customValuesBySubject.get(key).get(def.key) ?? null;
+    return {
+      key: def.key, label: def.label, type: def.type, options: def.options,
+      value: row?.value ?? null, updatedAt: row?.updatedAt ?? null, updatedBy: row?.updatedBy ?? null,
+    };
+  })]));
+
   // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
   // is only exact when both the message and the call scans are readable and
   // complete. A partial or unreadable scan must not feed an exact-looking
@@ -793,6 +910,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
         value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,
         source: { resource, id },
       }]]),
+      customFieldsBySubject: new Map([[key, customFieldsBySubject.get(key) ?? []]]),
     });
   });
 
@@ -823,6 +941,9 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     views,
     sorts: CUSTOMER_SORTS.map((sort) => ({ ...sort })),
     columns: CUSTOMER_COLUMNS.map((column) => ({ ...column })),
+    customColumns: Object.freeze(customDefs.map((def) => Object.freeze({
+      key: def.key, label: def.label, type: def.type, options: Object.freeze([...def.options]),
+    }))),
     pageSizes: [...CUSTOMER_PAGE_SIZES],
   });
 }
