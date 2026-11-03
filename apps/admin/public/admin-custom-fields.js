@@ -121,7 +121,7 @@ export function fieldControl(el, def, value = null) {
   const type = def?.type ?? def?.fieldType ?? 'testo';
   const wrap = el('p', 'bo-campo-field');
   const labelText = def?.label ?? def?.key ?? 'campo';
-  const tag = el('label', 'bo-campo-label', `${labelText}: `);
+  const tag = el('label', 'bo-campo-label', labelText);
   wrap.appendChild(tag);
   let control;
   if (type === 'si-no') {
@@ -191,17 +191,23 @@ export function addFieldForm(el, { onDefine }) {
   optionsInput.setAttribute('placeholder', 'Opzioni separate da virgola (solo Scelta)');
   optionsInput.setAttribute('aria-label', 'Opzioni del nuovo campo scelta');
   const error = el('small', 'field-error', '');
+  // Options only mean something for «Scelta»: the box shows for that type.
+  const syncOptions = () => { optionsInput.hidden = String(typeSelect.value) !== 'scelta'; };
+  syncOptions();
+  typeSelect.addEventListener('change', syncOptions);
+  const head = el('div', 'bo-campo-add-head');
   const row = el('div', 'bo-campo-add-actions');
-  const save = el('button', undefined, 'Crea campo');
+  const save = el('button', 'bo-campo-add-save', 'Crea campo');
   save.setAttribute('type', 'button');
   save.setAttribute('data-action', 'create-field');
-  const cancel = el('button', undefined, 'Annulla');
+  const cancel = el('button', 'bo-campo-add-cancel', 'Annulla');
   cancel.setAttribute('type', 'button');
   cancel.setAttribute('data-action', 'cancel-add-field');
   row.appendChild(save);
   row.appendChild(cancel);
-  wrap.appendChild(labelInput);
-  wrap.appendChild(typeSelect);
+  head.appendChild(labelInput);
+  head.appendChild(typeSelect);
+  wrap.appendChild(head);
   wrap.appendChild(optionsInput);
   wrap.appendChild(row);
   wrap.appendChild(error);
