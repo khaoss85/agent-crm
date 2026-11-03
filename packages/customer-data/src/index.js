@@ -593,7 +593,10 @@ export function createCustomerDataPackage(options = {}) {
             config: runtime.config, core: runtime.core, policy, names,
           });
           return (request) => applyCustomerPhrase(
-            { modules: runtime.modules, names, importOperations: operations }, request,
+            {
+              database: runtime.database, modules: runtime.modules, names,
+              importOperations: operations,
+            }, request,
           );
         },
       },

@@ -3,6 +3,7 @@
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { MAX_FIELD_LENGTH, safeString } from './normalize.js';
 import { canonicalPhone } from './enrichment.js';
+import { recordExternalIdentityRow } from './sender.js';
 import { deciding, trusted } from './store.js';
 
 /**
@@ -471,9 +472,45 @@ function phoneOrNull(raw) {
  * so the cronologia keeps its single writer. Without an identity (neither
  * an email nor a company) the apply refuses before creating anything.
  */
-export async function applyCustomerPhrase({ modules, core, names, importOperations }, request) {
+/**
+ * Link the phrase phone beside the confirmed customer (backlog:434cc39a).
+ * An E.164 number goes through the governed phone operation the manual
+ * form uses — same dialability gate, same held-elsewhere refusal, same
+ * race safety. A shorter local number the card cannot dial is still
+ * stored under the recognized 'phone' system (never an invented one), so
+ * the list and the scheda show it without offering a dead «Chiama» link.
+ * A number held beside another customer is never moved: false, and the
+ * caller warns. Best-effort beside a stored customer: throws only on
+ * storage failure, which the caller turns into the same warning.
+ */
+async function linkPhrasePhone({ modules, names, importOperations }, actor, subject, phone, runId) {
+  if (/^\+[1-9]\d{6,14}$/.test(phone)) {
+    // Twin of the E.164 gate in recordSubjectPhone: the same numbers the
+    // governed operation would take go through it, never around it.
+    const linked = await importOperations.recordSubjectPhone({
+      actor, resource: subject.resource, id: subject.id, phone,
+    });
+    return linked?.outcome === 'linked' || linked?.outcome === 'refreshed';
+  }
+  const identities = trusted(modules, names.identity);
+  const sourceKey = `phone:${phone}`;
+  const seen = (await deciding(identities, { sourceKey }))[0] ?? null;
+  if (seen !== null
+    && (seen.subjectResource !== subject.resource || String(seen.subjectId ?? '') !== String(subject.id))) {
+    return false;
+  }
+  const outcome = await recordExternalIdentityRow({
+    modules, names, system: 'phone', externalId: phone, subject, runId, actor,
+  });
+  return outcome === 'linked' || outcome === 'refreshed';
+}
+
+export async function applyCustomerPhrase({ database, modules, core, names, importOperations }, request) {
   const actor = requireUser(request?.actor, 'Applying a customer phrase');
   void core;
+  if (!database || typeof database.transactionAsync !== 'function') {
+    throw new ValidationError('applying a customer phrase needs the database handle for its single transaction', { field: 'database' });
+  }
   const input = request && typeof request === 'object' ? request : {};
   const customer = input.customer && typeof input.customer === 'object' ? input.customer : {};
   const firstName = safeString(customer.firstName, 'firstName', { required: true });
@@ -498,25 +535,57 @@ export async function applyCustomerPhrase({ modules, core, names, importOperatio
   if (lastName !== null) row.lastName = lastName;
   if (email !== null) row.email = email;
   if (companyName !== null) row.companyName = companyName;
-  const applied = await importOperations.applyCustomerImport({
-    actor, system: 'frase-cliente', rows: [row], acceptance: 'partial',
-  });
-  const receipt = applied?.receipts?.[0] ?? null;
-  const subject = receipt?.subject ?? null;
-  if (receipt?.outcome !== 'accepted' || !subject?.id) {
-    throw refusal('CUSTOMER_PHRASE_CUSTOMER_REFUSED', 409,
-      'il cliente della frase non si è potuto creare: correggi i campi e riprova');
-  }
+  // One enclosing transaction for the customer, its definitions and its
+  // values: any refusal — a bad value, a divergent definition raced in
+  // after the preview — rolls everything back, never a partial apply.
+  // The phone link stays outside on purpose: it is best-effort beside an
+  // already stored customer, through the same governed phone operation the
+  // manual form uses (system 'phone', E.164, race-safe), and a
+  // held-elsewhere number warns instead of undoing the confirmed customer.
+  const confirmed = await database.transactionAsync(async () => {
+    const applied = await importOperations.applyCustomerImportInTransaction({
+      actor, system: 'frase-cliente', rows: [row], acceptance: 'partial',
+    });
+    const receipt = applied?.receipt?.receipts?.[0] ?? null;
+    const subject = receipt?.subject ?? null;
+    if (receipt?.outcome !== 'accepted' || !subject?.id) {
+      throw refusal('CUSTOMER_PHRASE_CUSTOMER_REFUSED', 409,
+        'il cliente della frase non si è potuto creare: correggi i campi e riprova');
+    }
 
+    const stored = [];
+    for (const entry of fields) {
+      if (!entry || typeof entry !== 'object') continue;
+      const key = normalizeFieldKey(entry.key);
+      const defined = await defineCustomField({ modules, names }, {
+        actor, key,
+        label: entry.label,
+        type: entry.type ?? entry.fieldType,
+        options: entry.options,
+      });
+      const set = await setCustomFieldValue({ modules, names }, {
+        actor, resource: subject.resource, id: subject.id, key, value: entry.value,
+      });
+      stored.push(Object.freeze({ ...set.value, isNew: !defined.replayed }));
+    }
+    return { subject, receipt, stored, runId: applied.runId };
+  });
+
+  // The phone rides beside the confirmed customer, never inside its
+  // transaction: a held-elsewhere number warns instead of undoing the
+  // customer. An E.164 number goes through the governed phone operation
+  // the manual form uses (same checks, same race safety); a short or
+  // local number the card cannot dial is still stored under the
+  // recognized 'phone' system — visible in the list and on the scheda,
+  // just never a «Chiama» link — so the confirmed value is never lost.
   let phoneLinked = false;
   let phoneWarning = null;
   if (phone !== null && email !== null) {
     try {
-      const linked = await importOperations.applyCustomerImport({
-        actor, system: 'frase-cliente-telefono', rows: [{ externalId: phone, email }], acceptance: 'partial',
-      });
-      const linkReceipt = linked?.receipts?.[0] ?? null;
-      phoneLinked = linkReceipt?.outcome === 'accepted' && linkReceipt?.subject?.id === subject.id;
+      phoneLinked = await linkPhrasePhone(
+        { modules, names, importOperations },
+        actor, confirmed.subject, phone, confirmed.runId,
+      );
       if (!phoneLinked) phoneWarning = 'il telefono non si è collegato: aggiungilo dalla scheda';
     } catch {
       phoneWarning = 'il telefono non si è collegato: aggiungilo dalla scheda';
@@ -525,28 +594,12 @@ export async function applyCustomerPhrase({ modules, core, names, importOperatio
     phoneWarning = 'senza email il telefono non si collega: aggiungilo dalla scheda';
   }
 
-  const stored = [];
-  for (const entry of fields) {
-    if (!entry || typeof entry !== 'object') continue;
-    const key = normalizeFieldKey(entry.key);
-    const defined = await defineCustomField({ modules, names }, {
-      actor, key,
-      label: entry.label,
-      type: entry.type ?? entry.fieldType,
-      options: entry.options,
-    });
-    const set = await setCustomFieldValue({ modules, names }, {
-      actor, resource: subject.resource, id: subject.id, key, value: entry.value,
-    });
-    stored.push(Object.freeze({ ...set.value, isNew: !defined.replayed }));
-  }
-
   return Object.freeze({
-    subject: Object.freeze({ resource: subject.resource, id: subject.id }),
-    matchedExisting: receipt?.reasonCode === 'MATCHED_EXISTING',
+    subject: Object.freeze({ resource: confirmed.subject.resource, id: confirmed.subject.id }),
+    matchedExisting: confirmed.receipt?.reasonCode === 'MATCHED_EXISTING',
     phoneLinked,
     phoneWarning,
-    fields: Object.freeze(stored),
+    fields: Object.freeze(confirmed.stored),
   });
 }
 
