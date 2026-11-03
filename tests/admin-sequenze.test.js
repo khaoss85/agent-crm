@@ -696,6 +696,7 @@ test('freshSequenceKey never repeats a panel key', () => {
 function createDriveClient() {
   const calls = [];
   const stored = [];
+  const storedSteps = [];
   return {
     calls,
     request: async (path, options = {}) => {
@@ -705,11 +706,25 @@ function createDriveClient() {
       if (path.startsWith('/api/modules/sequence/records?')) return { items: stored.map((row) => ({ ...row })) };
       if (path.startsWith('/api/modules/sequence-enrollment/records?')) return { items: [] };
       if (path.startsWith('/api/modules/sequence-send/records?')) return { items: [] };
-      if (path.startsWith('/api/modules/sequence-step/records?')) return { items: [] };
+      if (path.startsWith('/api/modules/sequence-step/records?')) return { items: storedSteps.map((row) => ({ ...row })) };
       if (path === '/api/sequences/create' && (options.method ?? 'GET') === 'POST') {
         const sequence = { id: stored.length + 1, status: 'draft', spaceId: body.spaceId, sourceKey: body.sourceKey, name: body.name, triggerLabel: body.triggerLabel ?? null, stopLabel: body.stopLabel ?? null };
         stored.push(sequence);
-        return { sequence, steps: [], replayed: false };
+        // Like the server: the created steps persist and the steps read
+        // serves them back, so the detail can paint what was just written.
+        const createdSteps = Array.isArray(body.steps) ? body.steps.map((step, index) => ({
+          id: 1000 + stored.length * 100 + index,
+          sequenceSourceKey: body.sourceKey,
+          spaceId: body.spaceId,
+          stepOrder: index,
+          dayOffset: step.dayOffset,
+          channel: step.channel,
+          templateName: step.templateName,
+          templateLanguage: step.templateLanguage ?? 'it',
+          templateVars: JSON.stringify(step.templateVars ?? []),
+        })) : [];
+        storedSteps.push(...createdSteps);
+        return { sequence, steps: createdSteps, replayed: false };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -757,6 +772,27 @@ test('Nuova sequenza creates through one POST and shows it in the elenco', async
   assert.ok(!mount.querySelector('input[name="seq-name"]'), 'the panel closes after the creation');
   assert.ok(mount.textContent.includes('Bentornato PR'), 'the elenco shows the new sequence');
   assert.ok(mount.textContent.includes('Quando nuovo contatto WhatsApp'), 'the new detail names its trigger');
+  // The created steps are visible in the detail at once: channel, wait and
+  // text of each step, never «Questa sequenza non ha passi registrati».
+  assert.ok(!mount.textContent.includes('non ha passi registrati'), 'the new detail never reads empty');
+  assert.ok(mount.textContent.includes('Primo ciao'), 'the detail shows the first step text');
+  assert.ok(mount.textContent.includes('Ritroviamoci'), 'the detail shows the second step text');
+  assert.ok(mount.textContent.includes('Email'), 'the detail shows the second step channel');
+  assert.ok(mount.textContent.includes('+2 giorni'), 'the detail shows the second step wait');
+});
+
+test('the wait field reads its label and unit in plain sight', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = createDriveClient();
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('attesa'), 'the wait has a visible label, not only an aria-label');
+  assert.ok(text.includes('giorni'), 'the wait names its unit in days');
 });
 
 test('a double press on Crea still posts once', async () => {
