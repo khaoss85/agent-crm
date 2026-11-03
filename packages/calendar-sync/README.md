@@ -52,6 +52,11 @@ Two halves, two owners. Accordo owns **lifecycle**; Google owns
 4. A **local cancellation wins** over any concurrent Google change:
    the sync pushes the cancellation to Google so both sides converge
    on the freed slot, and the pending conflict clears.
+4b. A **local reschedule converges onto Google** (backlog
+   `bdca2010d471`): pushing a linked row whose slot moved patches the
+   event's times (`pushed` / `rescheduled`); any other local-only change
+   (notes/summary, other lifecycle steps) stays acknowledged without a
+   provider write.
 5. An import overlapping a held slot is **refused 409 and reported**:
    the no-double-booking invariant is never booked over.
 6. An event with **no customer mapping** is skipped and reported,

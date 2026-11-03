@@ -32,6 +32,12 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * Required: `listEvents`, `insertEvent`, `cancelEvent`,
  * `findByAccordoSourceKey` (export reconciliation — a retry after a lost
  * link finds the already-inserted event instead of inserting a second).
+ * `patchEvent` is optional at composition and required only to push a
+ * local slot move onto the linked event: a move pushed without it fails
+ * closed (CALENDAR_SYNC_CONTEXT_INVALID) while every other path keeps
+ * syncing.
+ * The reschedule push needs no provider read: it decides against the
+ * link's stored fingerprint and patches through the stored event identity.
  * Every provider call takes one object param (`{ calendarId, … }`) plus
  * the call-time `secret` the engine resolved from the vault; a real
  * adapter must keep that shape.
@@ -286,6 +292,11 @@ export function createCalendarSyncOperations(options = {}) {
       'calendar-sync is composed without an opened appointment-book@1 capability, so it cannot write appointment rows');
   }
   const provider = options.provider;
+  // patchEvent is deliberately NOT composed here: it is needed only when a
+  // linked event is actually moved, and requiring it at startup would take
+  // down every pull, push and export on deployments whose provider never
+  // reschedules. The reschedule branch below fails closed when it is
+  // missing, and everything else composes and runs without it.
   for (const key of ['listEvents', 'insertEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
     if (typeof provider?.[key] !== 'function') {
       throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500, `calendar-sync provider needs "${key}"`);
@@ -1076,10 +1087,11 @@ export function createCalendarSyncOperations(options = {}) {
      * Push one local appointment to Google by source key: first reconcile
      * with the provider (an event the export already inserted but never
      * linked is linked, not inserted twice), then insert, then converge
-     * local cancellations. Any other lifecycle advance is Accordo-owned
-     * and acknowledged without a provider write. A repeated push with
-     * nothing changed is a no-op — the second of two syncs in a row
-     * writes nothing anywhere.
+     * local cancellations and local slot moves (a rescheduled row patches
+     * the linked event's times). Any other lifecycle advance is
+     * Accordo-owned and acknowledged without a provider write. A repeated
+     * push with nothing changed is a no-op — the second of two syncs in a
+     * row writes nothing anywhere.
      */
     async pushAppointment(calendarId, sourceKey, { spaceId, actor } = {}) {
       const who = actor ?? defaultActor;
@@ -1149,6 +1161,52 @@ export function createCalendarSyncOperations(options = {}) {
           googleUpdated: pushed.updated, localFingerprint: fingerprint, conflictNote: null,
         }, { actor: who });
         return { status: 'pushed', sourceKey, change: 'cancelled' };
+      }
+      // A local slot move (backlog:bdca2010d471) converges onto the linked
+      // Google event: the row moved away from its stored fingerprint through
+      // the governed reschedule, so the provider's times follow it — resolved
+      // through the link's stored event identity, which also covers events
+      // imported from Google (they carry no export-only metadata). Anything
+      // else that changed the fingerprint without moving the slot (a remote
+      // move the pull has not applied yet plus a local confirm, notes,
+      // summary) stays local: the push writes nothing, so a remote schedule
+      // is never overwritten with stale local times — appointment rows are
+      // evidence-immutable outside lifecycle and slot, exactly like before.
+      const stored = JSON.parse(link.localFingerprint);
+      const localSlotMoved = row.startsAt !== stored[0] || row.endsAt !== stored[1];
+      if (localSlotMoved) {
+        if (link.pendingRemote) {
+          // An outstanding remote snapshot stands over this link: the local
+          // move must not silently overwrite Google, and it must not clear
+          // conflictNote either — pendingConflicts filters on that note, so
+          // clearing it alone would make the still-stored snapshot
+          // invisible while the next pull retries its stale slot onto the
+          // moved booking. The push stays pending with both fields
+          // preserved and nothing written; the operator resolves the remote
+          // change first, then the move converges.
+          return {
+            status: 'conflict',
+            sourceKey,
+            eventId: rowLinkEventId(link, calendarId),
+            reason: 'spostamento trattenuto: c’è ancora una modifica remota da risolvere su questo evento, e Google non è stato toccato',
+            pending: true,
+          };
+        }
+        if (typeof provider?.patchEvent !== 'function') {
+          // Fail closed only where the move actually needs it: every other
+          // push path composes and runs without patchEvent.
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            `il calendario "${calendarId}" è collegato ma il provider non sa spostare gli eventi (manca patchEvent): aggiorna il provider prima di spostare un evento collegato`);
+        }
+        const patched = await providerCall(calendarId, 'patchEvent', {
+          calendarId,
+          eventId: rowLinkEventId(link, calendarId),
+          patch: { start: { dateTime: row.startsAt }, end: { dateTime: row.endsAt } },
+        }, GRANT_PURPOSE_WRITE);
+        await linkService(context).applyManaged(link.id, {
+          googleUpdated: patched.updated, localFingerprint: fingerprint, conflictNote: null,
+        }, { actor: who });
+        return { status: 'pushed', sourceKey, change: 'rescheduled' };
       }
       await linkService(context).applyManaged(link.id, { localFingerprint: fingerprint }, { actor: who });
       return { status: 'acknowledged', sourceKey, reason: 'lifecycle is Accordo-owned: confirmed/done/no-show stay local' };

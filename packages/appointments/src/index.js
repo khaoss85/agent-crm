@@ -31,6 +31,7 @@ import {
   readAppointment,
   readSchedule,
   readTeamWeek,
+  rescheduleAppointment,
   reminderMessageKey,
   reminderSourceKey,
   reminderThreadKey,
