@@ -747,3 +747,72 @@ test('the shell storage initializes before the views that read it', () => {
     assert.ok(initialized < at, `shell storage initializes before ${use}, never in a temporal dead zone`);
   }
 });
+
+/**
+ * Campi personalizzati nell'elenco (backlog:434cc39a), contro un server finto.
+ *
+ * What it must prove: every space-wide definition reads as an opt-in list
+ * column (off by default, the stored value when on) and as a filter with an
+ * optional value needle — the pair the server sees — each clearing with its
+ * own ×.
+ */
+
+const customListClient = () => {
+  const calls = [];
+  const rows = [
+    {
+      ...ROW_MARCO,
+      customFields: [
+        { key: 'amico', label: 'Amico', type: 'si-no', options: [], value: 'sì', updatedAt: null, updatedBy: null },
+      ],
+    },
+    { ...ROW_ANNA, customFields: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [], value: null, updatedAt: null, updatedBy: null }] },
+  ];
+  return {
+    calls,
+    async request(path) {
+      calls.push(path);
+      return {
+        customerListContract: 1,
+        items: rows,
+        total: 2, page: 1, pageSize: 10, pages: 1, totalIsExact: true,
+        customColumns: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }],
+        ...MENUS,
+      };
+    },
+  };
+};
+
+test('434cc39a: a space field reads as an opt-in column, off until asked', async () => {
+  const { mount, view } = await render(customListClient());
+  assert.equal(view.getState().columns['campo:amico'], false, 'the custom column stays off by default');
+  assert.ok(!mount.textContent.includes('Amico:'), 'no custom column renders before the opt-in');
+  byAttr(mount, 'button', 'data-column', 'campo:amico').dispatch('click');
+  assert.equal(view.getState().columns['campo:amico'], true, 'the toggle opts in');
+  assert.ok(mount.textContent.includes('Amico:'), 'the column header reads');
+  assert.ok(mount.textContent.includes('sì'), 'the stored value reads in the row');
+});
+
+test('434cc39a: the campo filter reaches the server and clears with its ×', async () => {
+  const client = customListClient();
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-campo', 'amico').dispatch('click');
+  await flush();
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(last.includes('campo=amico'), `the server sees the field: ${last}`);
+  assert.ok(!last.includes('valore='), 'no needle without a value');
+  toolToggle(mount, 'Filtri').dispatch('click');
+  const needle = mount.findAll('input').find((node) => node.getAttribute('name') === 'valore');
+  assert.ok(needle, 'the value needle reads beside the field');
+  needle.value = 'sì';
+  byAttr(mount, 'button', 'data-action', 'apply-campo').dispatch('click');
+  await flush();
+  const withNeedle = client.calls[client.calls.length - 1];
+  assert.ok(withNeedle.includes('valore='), `the server sees the needle: ${withNeedle}`);
+  const chip = byAttr(mount, 'button', 'aria-label', 'Rimuovi filtro Amico: sì');
+  assert.ok(chip, 'the active campo filter carries its own ×');
+  chip.dispatch('click');
+  await flush();
+  const cleared = client.calls[client.calls.length - 1];
+  assert.ok(!cleared.includes('campo='), `the filter is gone: ${cleared}`);
+});

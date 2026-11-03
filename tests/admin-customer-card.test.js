@@ -175,12 +175,22 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null } = {}) {
   const requested = [];
-  return {
+  const writes = [];
+  const client = {
     calls: requested,
-    async request(path) {
+    writes,
+    async request(path, options = {}) {
+      let body = options?.body ?? {};
+      if (typeof body === 'string') {
+        try { body = body === '' ? {} : JSON.parse(body); } catch { /* keep raw */ }
+      }
       requested.push(path);
+      if ((options?.method ?? 'GET') !== 'GET') writes.push({ path, method: options.method, body });
+      if (onRequest) return onRequest(path, body, options);
+      if (path === '/api/customer-data/fields') return { definitions: fieldDefs };
+      if (path.startsWith('/api/customer-data/fields/values')) return { values: fieldValues };
       if (path.startsWith('/api/customer-hub/')) {
         if (failHub) throw Object.assign(new Error('Not Found'), { status: 404 });
         if (path.includes('/card/')) {
@@ -208,6 +218,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       throw new Error(`unexpected request ${path}`);
     },
   };
+  return client;
 }
 
 const renderCard = async (client, spaceId = undefined, toast = undefined) => {
@@ -2048,4 +2059,118 @@ test('d525f4aa48b2: tiles share one row height and the phone column stacks actio
   const phone = css.slice(css.indexOf('@media (max-width: 700px)'));
   assert.ok(/\.bo-scheda-grid\s*>\s*\.bo-scheda-col:nth-child\(2\)\s*\{[^}]*order:\s*0[^}]*\}/.test(phone),
     'at phone width the timeline-first rule stops: Azioni rapide read above Tutti i contatti');
+});
+
+/**
+ * Campi personalizzati sulla scheda (backlog:434cc39a), contro un server finto.
+ *
+ * What it must prove: the space-wide fields read on the scheda with this
+ * customer's values, an edit rewrites the value through the governed route
+ * and re-reads, + Aggiungi campo defines a field for every scheda, and a
+ * failed defs read hides the section without failing the scheda.
+ */
+
+const FIELD_DEFS = [
+  { key: 'amico', label: 'Amico', type: 'si-no', options: [] },
+  { key: 'hobby', label: 'Hobby', type: 'testo', options: [] },
+];
+
+const FIELD_VALUES = [
+  { key: 'amico', label: 'Amico', type: 'si-no', options: [], value: 'sì', updatedAt: '2026-11-03', updatedBy: 'u1' },
+  { key: 'hobby', label: 'Hobby', type: 'testo', options: [], value: null, updatedAt: null, updatedBy: null },
+];
+
+const flush = async (times = 24) => {
+  for (let i = 0; i < times; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+};
+
+test('434cc39a: the scheda reads the space fields with this customer values', async () => {
+  const mount = await renderCard(stubClient({ fieldDefs: FIELD_DEFS, fieldValues: FIELD_VALUES }));
+  const text = mount.textContent;
+  assert.ok(text.includes('Campi personalizzati'), 'the section reads');
+  assert.ok(text.includes('Amico'), 'the space field reads on the scheda');
+  assert.ok(text.includes('sì'), 'the stored value reads');
+});
+
+test('434cc39a: an edit rewrites the single row and re-reads', async () => {
+  let saved = null;
+  const client = stubClient({
+    fieldDefs: FIELD_DEFS,
+    fieldValues: FIELD_VALUES,
+    onRequest: (path, body) => {
+      if (path === '/api/customer-data/fields') return { definitions: FIELD_DEFS };
+      if (path.startsWith('/api/customer-data/fields/values')) return { values: FIELD_VALUES };
+      if (path === '/api/customer-data/fields/value') {
+        saved = body;
+        return { value: { key: body.key, label: 'Amico', type: 'si-no', options: [], value: body.value } };
+      }
+      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD : TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      throw new Error(`unexpected request ${path}`);
+    },
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  const edit = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico');
+  assert.ok(edit, 'every field carries its Modifica');
+  edit.dispatch('click');
+  await flush();
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-field-value');
+  assert.ok(save, 'the edit form carries Salva');
+  save.dispatch('click');
+  await flush();
+  assert.deepEqual(saved, { resource: 'contact', id: 'c1', key: 'amico', value: 'sì' }, 'one governed value write');
+});
+
+test('434cc39a: + Aggiungi campo defines a space field from the scheda', async () => {
+  let defined = null;
+  const client = stubClient({
+    onRequest: (path, body) => {
+      if (path === '/api/customer-data/fields') return { definitions: [] };
+      if (path.startsWith('/api/customer-data/fields/values')) return { values: [] };
+      if (path === '/api/customer-data/fields/define') {
+        defined = body;
+        return { definition: { key: 'amico', label: 'Amico', type: 'si-no', options: [] }, replayed: false };
+      }
+      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD : TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      throw new Error(`unexpected request ${path}`);
+    },
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('+ Aggiungi campo'), 'the adder reads even with no fields yet');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-field').dispatch('click');
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'nuovo-campo-label').value = 'Amico';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'create-field').dispatch('click');
+  await flush();
+  assert.equal(defined?.label, 'Amico', 'the define reaches the governed route');
+});
+
+test('434cc39a: a failed fields read hides the section, never the scheda', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const client = stubClient({
+    onRequest: (path) => {
+      if (path === '/api/customer-data/fields') throw failure;
+      if (path.startsWith('/api/customer-data/fields/values')) throw failure;
+      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD : TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      throw new Error(`unexpected request ${path}`);
+    },
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Campi personalizzati'), 'no section on a failed read');
+  assert.ok(text.includes('Guido Presti'), 'the name still shows');
 });

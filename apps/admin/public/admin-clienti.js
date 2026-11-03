@@ -141,8 +141,11 @@ export function createCustomerListView(deps) {
     return node;
   };
 
+  // Custom fields (backlog:434cc39a): `campo` is the field key, `valore`
+  // the optional needle — the same pair the list query reads server-side.
   const state = {
     vista: 'tutti', q: '', canale: 'all', stato: 'all', sort: 'recent',
+    campo: '', valore: '',
     page: 1, pageSize: 10, columns: null,
   };
   let data = null;
@@ -198,6 +201,8 @@ export function createCustomerListView(deps) {
     if (state.q !== '') params.set('q', state.q);
     if (state.canale !== 'all') params.set('canale', state.canale);
     if (state.stato !== 'all') params.set('stato', state.stato);
+    if (state.campo !== '') params.set('campo', state.campo);
+    if (state.campo !== '' && state.valore !== '') params.set('valore', state.valore);
     const spaceId = activeSpaceId();
     if (spaceId) params.set('spaceId', spaceId);
     return params.toString();
@@ -365,7 +370,20 @@ export function createCustomerListView(deps) {
 
     const views = data?.views ?? FALLBACK_VIEWS;
     const sorts = data?.sorts ?? FALLBACK_SORTS;
-    const columnsMeta = data?.columns ?? FALLBACK_COLUMNS;
+    // Custom fields (backlog:434cc39a): every space-wide definition reads
+    // as an opt-in list column, off until the operator asks for it — the
+    // same explicit-boolean rule as the AI budget column.
+    const customDefs = Array.isArray(data?.customColumns) ? data.customColumns : [];
+    const columnsMeta = [
+      ...(data?.columns ?? FALLBACK_COLUMNS),
+      ...customDefs.map((def) => ({
+        id: `campo:${def?.key ?? ''}`,
+        label: def?.label ?? def?.key ?? 'campo',
+        always: false,
+        ai: false,
+        def: false,
+      })),
+    ];
     const sizes = data?.pageSizes ?? FALLBACK_SIZES;
     if (state.columns === null) state.columns = normalizeColumns(columnsMeta, readStoredColumns());
     else state.columns = normalizeColumns(columnsMeta, state.columns);
@@ -435,7 +453,7 @@ export function createCustomerListView(deps) {
     // columns with its visible/total), so the assistant entry joins the
     // Filtri menu instead of a fourth word beside it: same question, same
     // fallback, same action, one tap away.
-    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.q !== '' ? 1 : 0);
+    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.q !== '' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
     const filtersBox = menuBox(toolLabel('filtri', { badge: activeFilters }), (menu, closeMenu) => {
       const aiItem = el('button', 'bo-clienti-item', '✦ Crea un filtro con l\u2019AI');
       aiItem.setAttribute('data-action', 'ai-filter');
@@ -470,6 +488,40 @@ export function createCustomerListView(deps) {
           reload();
         });
         menu.appendChild(item);
+      }
+      // Custom fields (backlog:434cc39a): one space-wide field filters the
+      // list, with an optional value needle — the pair the server reads.
+      if (customDefs.length > 0) {
+        menu.appendChild(el('p', 'bo-clienti-group', 'Campo personalizzato'));
+        for (const def of customDefs) {
+          const key = String(def?.key ?? '');
+          if (key === '') continue;
+          const item = el('button', 'bo-clienti-item' + (state.campo === key ? ' active' : ''),
+            String(def?.label ?? key));
+          item.setAttribute('data-campo', key);
+          item.addEventListener('click', () => {
+            state.campo = state.campo === key ? '' : key;
+            state.valore = '';
+            reload();
+          });
+          menu.appendChild(item);
+        }
+        if (state.campo !== '') {
+          const needle = el('input', 'ui-field');
+          needle.setAttribute('type', 'search');
+          needle.setAttribute('name', 'valore');
+          needle.setAttribute('aria-label', 'Valore del campo personalizzato');
+          needle.setAttribute('placeholder', 'Valore…');
+          needle.value = state.valore;
+          menu.appendChild(needle);
+          const apply = el('button', 'bo-clienti-item', 'Applica valore');
+          apply.setAttribute('data-action', 'apply-campo');
+          apply.addEventListener('click', () => {
+            state.valore = String(needle.value ?? '').trim();
+            reload();
+          });
+          menu.appendChild(apply);
+        }
       }
       menu.appendChild(el('p', 'bo-muted', 'Es. «clienti di Milano con offerta sopra 10.000 €»'));
     }, 'Filtri');
@@ -544,12 +596,23 @@ export function createCustomerListView(deps) {
     if (state.canale !== 'all') chip(channelLabel(state.canale), () => { state.canale = 'all'; reload(); });
     if (state.stato !== 'all') chip(STATO_LABELS[state.stato] ?? state.stato, () => { state.stato = 'all'; reload(); });
     if (state.q !== '') chip(`«${state.q}»`, () => { state.q = ''; reload(); });
+    if (state.campo !== '') {
+      const def = customDefs.find((entry) => String(entry?.key ?? '') === state.campo) ?? null;
+      const label = String(def?.label ?? state.campo);
+      chip(state.valore !== '' ? `${label}: ${state.valore}` : label, () => {
+        state.campo = '';
+        state.valore = '';
+        reload();
+      });
+    }
     if (chips.childNodes.length > 0) {
       const clearAll = el('button', 'bo-clienti-clear', 'Azzera');
       clearAll.addEventListener('click', () => {
         state.canale = 'all';
         state.stato = 'all';
         state.q = '';
+        state.campo = '';
+        state.valore = '';
         reload();
       });
       chips.appendChild(clearAll);
@@ -627,8 +690,19 @@ export function createCustomerListView(deps) {
         wrap.appendChild(source);
         return wrap;
       }
-      default:
+      default: {
+        // Custom fields (backlog:434cc39a): `campo:<key>` reads the row's
+        // own customFields entry — a value every defined field carries, null
+        // when never set.
+        if (columnId.startsWith('campo:')) {
+          const key = columnId.slice('campo:'.length);
+          const entry = (row.customFields ?? []).find((field) => field?.key === key) ?? null;
+          const value = entry?.value;
+          if (value === null || value === undefined || String(value) === '') return el('span', 'bo-muted', '—');
+          return el('span', undefined, String(value));
+        }
         return el('span', 'bo-muted', '—');
+      }
     }
   }
 

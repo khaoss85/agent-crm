@@ -3,12 +3,23 @@
 import { elFor, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { bindAdminMutations } from './admin-submission.js';
 import { customerImportReasonLabel } from './admin-core.js';
+import {
+  addFieldForm,
+  applyPhrase,
+  defineField,
+  fetchFieldDefs,
+  fieldControl,
+  phraseAiAvailable,
+  postSubjectNote,
+  previewPhrase,
+  saveFieldValue,
+} from './admin-custom-fields.js';
 
 /**
- * The "Nuovo cliente" form (backlog:273de560). "Aggiungi cliente → Compila
- * manualmente" opens this form on `#/clienti/nuovo`, not the JSON import
- * tool: the prototype's Clienti screen carries no import tool, and the
- * import stays a separate tool on `#/import-clienti`.
+ * The "Nuovo cliente" form (backlog:273de560, backlog:434cc39a). "Aggiungi
+ * cliente → Compila manualmente" opens this form on `#/clienti/nuovo`, not
+ * the JSON import tool: the prototype's Clienti screen carries no import
+ * tool, and the import stays a separate tool on `#/import-clienti`.
  *
  * Saving uses the same governed operation as the import tool —
  * `POST /api/customer-data/import/apply` with a single row — so matching,
@@ -18,9 +29,16 @@ import { customerImportReasonLabel } from './admin-core.js';
  * record, which is the only phone the framework stores (the contact
  * record carries no phone field).
  *
- * Stato and Nota have no framework home: the status is derived from signed
- * business and nothing stores a free note. Both fields stay visible with
- * an honest line saying so, and the PR states the non-coverage.
+ * «✦ Scrivi o incolla» (backlog:434cc39a): when the server composition
+ * carries the AI adapter, the form opens with a sentence area — the AI
+ * previews name, email, phone and the new custom fields, and only the
+ * human Conferma stores. Without the adapter the area hides and the manual
+ * fields work alone. «+ Aggiungi campo» defines one space-wide field, and
+ * the note posts through the single writer (POST /api/customer-hub/notes)
+ * so it lands in the scheda cronologia.
+ *
+ * Stato has no framework home: the status is derived from signed business
+ * and nothing stores it. The field stays visible with an honest line.
  */
 
 export const CLIENTI_NUOVO_ROUTE = '#/clienti/nuovo';
@@ -115,6 +133,13 @@ export function createCustomerFormView(deps) {
     panel.appendChild(el('p', 'bo-muted',
       'Compila e premi Salva: il cliente si crea con la stessa operazione dell\u2019importazione.'));
 
+    // «✦ Scrivi o incolla» fills in only when the server says the AI is
+    // on; without it the manual fields below work alone.
+    const aiBox = el('div', 'bo-cliente-nuovo-ai');
+    panel.appendChild(aiBox);
+    const previewBox = el('div', 'bo-cliente-nuovo-preview');
+    panel.appendChild(previewBox);
+
     const general = el('p', 'field-error bo-cliente-nuovo-error', '');
     general.setAttribute('data-general-error', '');
     panel.appendChild(general);
@@ -171,10 +196,19 @@ export function createCustomerFormView(deps) {
     field('stato', 'Stato', stato,
       'Promemoria per te: lo stato vero dipende da ordini, contratti o abbonamenti.');
 
+    // One control per space-wide custom field, plus the inline adder.
+    const customBox = el('div', 'bo-cliente-nuovo-custom');
+    panel.appendChild(customBox);
+    const addToggle = uiSecondaryButton(doc, '+ Aggiungi campo');
+    addToggle.setAttribute('data-action', 'add-field');
+    panel.appendChild(addToggle);
+    const addBox = el('div', 'bo-cliente-nuovo-add');
+    panel.appendChild(addBox);
+
     const nota = el('textarea', 'ui-field');
     nota.setAttribute('name', 'nota');
     nota.setAttribute('placeholder', 'Come ci ha conosciuti, cosa cerca…');
-    field('nota', 'Nota', nota, 'La nota non si salva ancora: resta come follow-up.');
+    field('nota', 'Nota', nota, 'La nota si salva nella cronologia della scheda.');
 
     const actions = el('div', 'bo-cliente-nuovo-actions');
     const save = uiButton(doc, { variant: 'primary', label: 'Salva', attrs: { 'data-action': 'save-customer' } });
@@ -190,6 +224,56 @@ export function createCustomerFormView(deps) {
       }
       general.textContent = errors.general ?? '';
     };
+
+    // Space definitions load once; a failure reads as no custom fields,
+    // never a broken form — the manual base fields always work.
+    let fieldDefs = [];
+    try {
+      fieldDefs = await fetchFieldDefs(client);
+    } catch {
+      fieldDefs = [];
+    }
+    if (token !== renderToken) return;
+    const customControls = fieldDefs.map((def) => fieldControl(el, def));
+    for (const entry of customControls) customBox.appendChild(entry.wrap);
+
+    let addOpen = false;
+    addToggle.addEventListener('click', () => {
+      if (addOpen) return;
+      addOpen = true;
+      const form = addFieldForm(el, {
+        onDefine: async (input) => {
+          const created = await defineField(client, input);
+          if (token !== renderToken) return created;
+          const def = created?.definition ?? null;
+          if (def) {
+            const entry = fieldControl(el, def);
+            customBox.appendChild(entry.wrap);
+            customControls.push(entry);
+            fieldDefs = [...fieldDefs, def];
+          }
+          while (addBox.firstChild) addBox.removeChild(addBox.firstChild);
+          addOpen = false;
+          notify('Campo creato: ora è in tutte le schede, nei filtri e nelle colonne.');
+          return created;
+        },
+      });
+      form.cancel.addEventListener('click', () => {
+        while (addBox.firstChild) addBox.removeChild(addBox.firstChild);
+        addOpen = false;
+      });
+      addBox.appendChild(form.wrap);
+    });
+
+    // The ✦ area: probe first, render only when the AI is on.
+    let aiOn = false;
+    try {
+      aiOn = await phraseAiAvailable(client);
+    } catch {
+      aiOn = false;
+    }
+    if (token !== renderToken) return;
+    if (aiOn) renderAiBox(aiBox, previewBox, token, { setErrors, customControls, fieldDefs, notify });
 
     let busy = false;
     save.addEventListener('click', () => void saveCustomer());
@@ -242,13 +326,37 @@ export function createCustomerFormView(deps) {
             warning = 'Il cliente è creato, ma il telefono non si è collegato. Riprova dalla scheda.';
           }
         }
+        // Custom values, one governed write per touched field; a refused
+        // value warns with the field's own Italian error, never blocks.
+        for (const entry of customControls) {
+          const key = entry.control.getAttribute('data-field-key');
+          const typed = entry.read().trim();
+          if (typed === '') continue;
+          try {
+            await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
+          } catch (err) {
+            entry.setError(String(err?.message ?? 'Valore non valido.'));
+            if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
+          }
+          if (token !== renderToken) return;
+        }
+        // The note through the single writer: it lands in the cronologia.
+        const noteText = String(nota.value ?? '').trim();
+        if (noteText !== '') {
+          try {
+            await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
+          } catch {
+            if (token !== renderToken) return;
+            if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
+          }
+        }
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
         if (warning !== null) notify(warning);
       } catch (error) {
         if (token !== renderToken) return;
-        const field = error?.details?.field;
-        if (typeof field === 'string' && slots[field]) {
-          setErrors({ [field]: String(error?.message ?? 'Valore non valido.') });
+        const fieldName = error?.details?.field;
+        if (typeof fieldName === 'string' && slots[fieldName]) {
+          setErrors({ [fieldName]: String(error?.message ?? 'Valore non valido.') });
         } else {
           setErrors({ general: 'Non si è potuto creare il cliente. Riprova più tardi.' });
         }
@@ -273,6 +381,129 @@ export function createCustomerFormView(deps) {
         ok: false,
         warning: `Il cliente è creato, ma il telefono non si è collegato (${customerImportReasonLabel(receipt?.reasonCode)}).`,
       };
+    }
+
+    /**
+     * «✦ Scrivi o incolla»: the sentence area, the preview (base plus the
+     * new fields it would create) and the human Conferma. Nothing writes
+     * before Conferma; Annulla drops the preview.
+     */
+    function renderAiBox(box, preview, renderTokenAtBuild, ctx) {
+      const title = el('p', 'bo-cliente-nuovo-ai-title', '✦ Scrivi o incolla');
+      box.appendChild(title);
+      const area = el('textarea', 'ui-field');
+      area.setAttribute('name', 'frase');
+      area.setAttribute('placeholder', 'es. daniele pelleri email daniele@gmail.com tel 234341 amico sì');
+      area.setAttribute('aria-label', 'Descrivi il cliente in una frase');
+      box.appendChild(area);
+      const go = uiButton(doc, { variant: 'primary', label: 'Interpreta', attrs: { 'data-action': 'preview-phrase' } });
+      box.appendChild(go);
+      const error = el('small', 'field-error', '');
+      box.appendChild(error);
+      let working = false;
+      go.addEventListener('click', async () => {
+        if (working) return;
+        const phrase = String(area.value ?? '').trim();
+        if (phrase === '') {
+          error.textContent = 'Scrivi una frase: almeno nome e un contatto.';
+          return;
+        }
+        working = true;
+        go.disabled = true;
+        error.textContent = '';
+        try {
+          const draft = await previewPhrase(client, phrase);
+          if (token !== renderToken || token !== renderTokenAtBuild) return;
+          renderPreview(preview, draft, ctx);
+        } catch (err) {
+          if (token !== renderToken) return;
+          error.textContent = String(err?.message ?? 'L\u2019AI non ha capito la frase: compila i campi a mano.');
+        } finally {
+          working = false;
+          go.disabled = false;
+        }
+      });
+    }
+
+    function renderPreview(box, draft, ctx) {
+      while (box.firstChild) box.removeChild(box.firstChild);
+      box.appendChild(el('h3', undefined, 'Anteprima: cosa salvo'));
+      const customer = draft?.customer ?? {};
+      const lines = [];
+      const fullName = [customer.firstName, customer.lastName].filter(Boolean).join(' ');
+      if (fullName !== '') lines.push(['Nome', fullName]);
+      if (customer.email) lines.push(['Email', customer.email]);
+      if (customer.phone) lines.push(['Telefono', customer.phone]);
+      if (customer.companyName) lines.push(['Azienda', customer.companyName]);
+      for (const entry of draft?.fields ?? []) {
+        lines.push([`${entry?.label ?? entry?.key ?? 'campo'}${entry?.isNew ? ' (campo nuovo)' : ''}`, entry?.value ?? '']);
+      }
+      if (draft?.note) lines.push(['Nota', draft.note]);
+      if (lines.length === 0) {
+        box.appendChild(el('p', 'bo-muted', 'La frase non dice abbastanza: scrivi almeno nome e un contatto.'));
+        return;
+      }
+      for (const [label, value] of lines) {
+        const row = el('p', 'bo-cliente-nuovo-preview-row');
+        row.appendChild(el('span', 'bo-cliente-nuovo-preview-label', `${label}: `));
+        row.appendChild(el('span', undefined, String(value)));
+        box.appendChild(row);
+      }
+      if (Number(draft?.newFields ?? 0) > 0) {
+        box.appendChild(el('p', 'bo-muted',
+          'Alla conferma creo anche i campi nuovi: da lì sono in tutte le schede, nei filtri e nelle colonne.'));
+      }
+      const row = el('div', 'bo-cliente-nuovo-actions');
+      const confirm = uiButton(doc, { variant: 'primary', label: 'Conferma e crea', attrs: { 'data-action': 'apply-phrase' } });
+      const back = uiSecondaryButton(doc, 'Annulla');
+      back.setAttribute('data-action', 'cancel-preview');
+      row.appendChild(confirm);
+      row.appendChild(back);
+      box.appendChild(row);
+      const error = el('small', 'field-error', '');
+      box.appendChild(error);
+      let working = false;
+      back.addEventListener('click', () => {
+        while (box.firstChild) box.removeChild(box.firstChild);
+      });
+      confirm.addEventListener('click', async () => {
+        if (working) return;
+        working = true;
+        confirm.disabled = true;
+        try {
+          const applied = await applyPhrase(client, { customer: draft.customer, fields: draft.fields ?? [] });
+          if (token !== renderToken) return;
+          const subject = applied?.subject ?? null;
+          if (!subject?.id) {
+            error.textContent = 'Il cliente della frase non si è potuto creare: correggi i campi e riprova.';
+            return;
+          }
+          let warning = null;
+          if (applied?.matchedExisting) {
+            warning = 'Esisteva già una scheda così: eccola, senza duplicati.';
+          } else if (applied?.phoneWarning) {
+            warning = 'Il cliente è creato, ma il telefono non si è collegato: aggiungilo dalla scheda.';
+          }
+          // The phrase note through the single writer, like the manual one.
+          const noteText = String(draft?.note ?? '').trim() !== '' ? String(draft.note).trim() : String(nota.value ?? '').trim();
+          if (noteText !== '') {
+            try {
+              await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
+            } catch {
+              if (token !== renderToken) return;
+              if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
+            }
+          }
+          navigate(`#/customer-card/${subject.resource}/${subject.id}`);
+          if (warning !== null) ctx.notify(warning);
+        } catch (err) {
+          if (token !== renderToken) return;
+          error.textContent = String(err?.message ?? 'Non si è potuto creare il cliente. Riprova più tardi.');
+        } finally {
+          working = false;
+          confirm.disabled = false;
+        }
+      });
     }
 
     mount.appendChild(panel);
