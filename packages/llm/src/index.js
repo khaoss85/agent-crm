@@ -61,6 +61,21 @@ export {
   estimateCostCents,
   openLlmComplete,
 };
+export {
+  MESSAGE_DRAFT_KINDS,
+  MESSAGE_DRAFT_MAX_CHANNELS,
+  MESSAGE_DRAFT_MAX_HISTORY,
+  MESSAGE_DRAFT_MAX_HISTORY_TEXT_CHARS,
+  MESSAGE_DRAFT_MAX_INTENT_CHARS,
+  MESSAGE_DRAFT_MAX_NAME_CHARS,
+  MESSAGE_DRAFT_MAX_SUBJECT_CHARS,
+  MESSAGE_DRAFT_MAX_VARIANT_CHARS,
+  MESSAGE_DRAFT_PURPOSE,
+  assertMessageDraftInput,
+  buildMessageDraftPrompt,
+  draftCustomerMessage,
+  parseMessageDraftResponse,
+} from './message-draft.js';
 export { LLM_ADAPTER_CONTRACT, LLM_MAX_CHARS_PER_TOKEN, LlmRegistries, assertCompletion, assertGenerateInput, validateLlmAdapter } from './adapter.js';
 export { LLM_KIT_CHECKS, runLlmAdapterKit } from './kit.js';
 
