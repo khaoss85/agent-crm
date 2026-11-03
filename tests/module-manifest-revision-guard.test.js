@@ -150,7 +150,7 @@ const RECORDED = Object.freeze({
   "support-case": { revision: 1, sqlite: "e8d8198a39ab0345bb4fd617e904f33f86c2f92374f32be887f7dee3a4986a90", pg: "073323fb6e54f1ac78d4c096b4524c0963a0badf85673c4e1a18206aecb13dca" },
   "teammate-agent": { revision: 1, sqlite: "31aa25373be0f9117ffcdff50599f3f4c3b26757f37dcde804893c1824c3a7d4", pg: "20f02cf966f4de2d19c37b3f00a2f169ac7e6ebde3787126ce8c1be4a61964d0" },
   "teammate-assignment": { revision: 1, sqlite: "9dd4b30fd23bb4b1612e2f5e6281741e2bbf9b9f0432f0f47a79b3a13b645b97", pg: "ac2bed31a9ca809265c93c109d11b62d4eea5c1c0bb1d09e4296ff0c98595827" },
-  "teammate-run": { revision: 1, sqlite: "a37ec6a485866acf05e18d7383705095e545d24ba4d42ff1842b7777abb6e6e7", pg: "4e5f3459f08c2b6eaaaea3a4d2c62267d0df72993899a3398a90734255db2f9b" },
+  "teammate-run": { revision: 1, sqlite: "3527377dd152b3d5e99149ba78598dce449ed3c517ffe607d269a5fa13067518", pg: "6ff897107c406d366d884e2fce239032f0180b9e3833e22a1f750bcbc5f532d8" },
   "order-component": { revision: 1, sqlite: "8f8dfcac4f6a8e65ac8dd36bdfaa54ed2f5806fdea83b9800f1a5d4e7785f465", pg: "ed3084f7ec7cd6a619a73525b07107e3fe994c545ae0e647cc75eb3f4b9edc61" },
   "order-line": { revision: 1, sqlite: "2b19ae821b035132af504c3ebea773b0a787edfb68d95eb8cd694636bf963b97", pg: "1ba1eb36667449ab92ae25aa10b1457f9b0463d11aa4465b9e2ba62269320430" },
   "order-term": { revision: 1, sqlite: "566e5d825eee926708b87bbd9b5fc9f30d287219864d89c4fc5226ff38cf98fe", pg: "1b61dc8cb26411eb9d4e43bcef3b0e10e50840fb73aa13a364f6c4b3b821f6d3" },

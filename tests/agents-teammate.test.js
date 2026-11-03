@@ -142,7 +142,7 @@ test('an execution proposes actions that apply only after a human approval', asy
       proposals: [{ action: 'draft-report', payload: { title: 'Report vendite' } }],
     }),
   });
-  assert.deepEqual(summary, { advanced: 1, proposed: 1, artifacts: 0, capped: 0, failed: 0, errors: [] });
+  assert.deepEqual(summary, { advanced: 1, proposed: 1, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [] });
   assert.equal(applied.length, 0, 'nothing is applied before approval');
   // The proposal waits: approving with a non-human actor refuses.
   await assert.rejects(
@@ -291,6 +291,7 @@ test('every execution is recorded with agent, assignment, cost and outcome', asy
     agentSourceKey: 'ag-log',
     phrase: 'ogni giorno il report vendite',
     plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 9,
   });
   await ops.runDue({
     actor: SYSTEM,
@@ -323,4 +324,73 @@ test('the package declares its identity, resources and operations', () => {
   assert.deepEqual(graph.resources, ['teammate-agent', 'teammate-assignment', 'teammate-run']);
   const names = (graph.operations ?? []).map((entry) => entry.name).sort();
   assert.deepEqual(names, ['approve-run', 'create-agent', 'create-assignment', 'run-due']);
+});
+
+test('a capped agent refuses an assignment without a cost estimate', async () => {
+  const { ops } = compose();
+  await makeAgent(ops, { sourceKey: 'ag-cap', spendingCapCents: 100 });
+  await assert.rejects(
+    () => ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey: 'as-noest',
+      agentSourceKey: 'ag-cap',
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+    }),
+    (error) => error.code === 'AGENT_COST_ESTIMATE_REQUIRED',
+  );
+});
+
+test('two overlapping sweeps execute once: the loser never re-executes', async () => {
+  const { ops } = compose();
+  await makeAgent(ops);
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-race',
+    agentSourceKey: 'ag-vendite',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+  });
+  let executions = 0;
+  const execute = async () => {
+    executions += 1;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return { kind: 'artifact', costCents: 3, artifact: { n: executions } };
+  };
+  const [first, second] = await Promise.all([
+    ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
+    ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
+  ]);
+  assert.equal(executions, 1, 'one execution for one due slot');
+  assert.equal(first.artifacts + second.artifacts, 1);
+  assert.equal(first.skipped + second.skipped, 1);
+});
+
+test('a failed execution keeps a sanitized diagnostic with code and space', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops);
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-boom',
+    agentSourceKey: 'ag-vendite',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+  });
+  const failure = new Error('token sk-live-abc is invalid');
+  failure.code = 'PROVIDER_DOWN';
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => { throw failure; },
+  });
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, assignmentSourceKey: 'as-boom' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].outcome, 'failed');
+  assert.match(rows[0].note, /PROVIDER_DOWN/);
+  assert.match(rows[0].note, /presti/);
+  assert.doesNotMatch(rows[0].note, /sk-live-abc/);
 });

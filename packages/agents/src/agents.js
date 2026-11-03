@@ -35,7 +35,11 @@ import { AppError, ValidationError } from '../../core/index.js';
 export const AGENT_STATES = Object.freeze(['active', 'paused']);
 export const ASSIGNMENT_STATES = Object.freeze(['active', 'paused', 'completed']);
 export const ASSIGNMENT_TERMINAL = Object.freeze(['completed']);
-export const RUN_OUTCOMES = Object.freeze(['proposed', 'applied', 'artifact', 'capped', 'failed']);
+export const RUN_OUTCOMES = Object.freeze(['started', 'proposed', 'applied', 'artifact', 'capped', 'failed']);
+export const RUN_TERMINAL = Object.freeze(['proposed', 'applied', 'artifact', 'capped', 'failed']);
+
+/** A claim older than this is reclaimed: its sweep never finished. */
+export const AGENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 export const CADENCES = Object.freeze(['daily', 'weekly', 'monthly', 'once']);
 
 export const AGENTS_DOMAIN = 'agents';
@@ -271,6 +275,31 @@ export function assertAssignmentTransition(from, event) {
 
 export function assertRunTransition(from, event) {
   assertTransition('Run', from, event, { approve: ['proposed'] });
+}
+
+/**
+ * A capped agent never runs on an unknown cost: the estimate is the budget
+ * allowance the cap check enforces, and the executor's actual cost is
+ * checked against the same allowance after it runs.
+ * @param {unknown} capCents @param {unknown} costPerRunCents
+ */
+export function requireCostEstimate(capCents, costPerRunCents) {
+  if (capCents === null || capCents === undefined) return 0;
+  if (!Number.isInteger(costPerRunCents) || costPerRunCents <= 0) {
+    throw new AppError('A capped agent needs a positive costPerRunCents estimate on every assignment', {
+      code: 'AGENT_COST_ESTIMATE_REQUIRED', status: 422,
+    });
+  }
+  return costPerRunCents;
+}
+
+/** A failure diagnostic with the error name/code and the space, never the message. @param {unknown} error @param {string} spaceId */
+export function sanitizeFailure(error, spaceId) {
+  const code = error && typeof error === 'object' && typeof error.code === 'string' && error.code !== ''
+    ? error.code
+    : (error instanceof Error ? error.name : 'UNKNOWN');
+  const safe = code.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80) || 'UNKNOWN';
+  return `Execution failed (${safe}) in space ${spaceId}.`;
 }
 
 /** Deterministic run identity: a retry of the same due instant replays the stored run. */

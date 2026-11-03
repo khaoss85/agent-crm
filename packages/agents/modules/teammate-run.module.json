@@ -9,7 +9,7 @@
     { "name": "assignmentSourceKey", "type": "string", "index": true, "writable": "managed" },
     { "name": "startedAt", "type": "timestamp", "writable": "managed" },
     { "name": "costCents", "type": "integer", "writable": "managed" },
-    { "name": "outcome", "type": "enum", "values": ["proposed", "applied", "artifact", "capped", "failed"], "writable": "managed" },
+    { "name": "outcome", "type": "enum", "values": ["started", "proposed", "applied", "artifact", "capped", "failed"], "writable": "managed" },
     { "name": "proposals", "type": "string", "writable": "managed", "required": false },
     { "name": "artifact", "type": "string", "writable": "managed", "required": false },
     { "name": "artifactVersion", "type": "integer", "writable": "managed", "required": false },

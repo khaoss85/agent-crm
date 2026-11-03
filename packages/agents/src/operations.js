@@ -4,7 +4,9 @@ import { AppError, ConflictError, nowIso } from '../../core/index.js';
 import {
   AGENTS_DOMAIN,
   AGENT_APPLY_PERMISSION,
+  AGENT_CLAIM_LEASE_MS,
   AGENT_TIMER_ACTOR,
+  RUN_TERMINAL,
   agentRunKey,
   assertAgentTransition,
   assertAssignmentTransition,
@@ -19,7 +21,9 @@ import {
   monthStartIso,
   parsePhraseSchedule,
   requireAgentActor,
+  requireCostEstimate,
   requireHumanActor,
+  sanitizeFailure,
   spentSince,
 } from './agents.js';
 
@@ -134,7 +138,8 @@ export function createAgentOperations(options = {}) {
     const record = request && typeof request === 'object' ? request : {};
     const actor = requireAgentActor(record.actor, 'Creating an assignment');
     const input = checkAssignmentInput(record);
-    await loadAgent(input.spaceId, input.agentSourceKey);
+    const agent = await loadAgent(input.spaceId, input.agentSourceKey);
+    requireCostEstimate(agent.spendingCapCents, input.costPerRunCents);
     const at = now();
     const schedule = record.plan !== undefined && record.plan !== null
       ? checkSchedulePlan(record.plan)
@@ -185,17 +190,6 @@ export function createAgentOperations(options = {}) {
     );
   }
 
-  async function recordRun(row, actor) {
-    try {
-      const created = await runs().createManaged(row, { actor });
-      return { run: created, duplicate: false };
-    } catch (error) {
-      if (!isWinnerConflict(error)) throw error;
-      const stored = (await runs().listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey }))[0] ?? null;
-      return { run: stored, duplicate: true };
-    }
-  }
-
   /**
    * Run every due active assignment. `execute({ agent, assignment })` is the
    * worker/AI seam returning `{ kind: 'proposals' | 'artifact', ... }`.
@@ -216,12 +210,15 @@ export function createAgentOperations(options = {}) {
     const due = (await assignments().listWhere(scopeSpace ? { spaceId: scopeSpace } : {}))
       .filter((row) => row && row.status === 'active'
         && typeof row.nextRunAt === 'string' && Date.parse(row.nextRunAt) <= Date.parse(at));
-    const summary = { advanced: 0, proposed: 0, artifacts: 0, capped: 0, failed: 0, errors: [] };
+    const summary = {
+      advanced: 0, proposed: 0, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [],
+    };
     for (const assignment of due) {
       const spaceId = assignment.spaceId;
       const agent = await loadAgent(spaceId, assignment.agentSourceKey);
       if (agent.status !== 'active') continue;
       const startedAt = at;
+      const runKey = agentRunKey(assignment.sourceKey, startedAt);
       const base = {
         spaceId,
         agentSourceKey: agent.sourceKey,
@@ -233,61 +230,98 @@ export function createAgentOperations(options = {}) {
         sourcePackage: AGENTS_DOMAIN,
         sourceAction: 'run-due',
       };
-      const costPerRun = Number.isInteger(assignment.costPerRunCents) ? assignment.costPerRunCents : 0;
+      // 1. Cap gate first: a capped agent runs only against a positive
+      // estimate, and the estimate is the allowance. Unknown cost never runs.
       if (agent.spendingCapCents !== null && agent.spendingCapCents !== undefined) {
+        const estimate = requireCostEstimate(agent.spendingCapCents, assignment.costPerRunCents);
         const spent = await monthSpent(spaceId, agent.sourceKey, at);
-        if (spent + costPerRun > agent.spendingCapCents) {
-          const { run } = await recordRun({
+        if (spent + estimate > agent.spendingCapCents) {
+          await runs().createManaged({
             ...base,
-            sourceKey: agentRunKey(assignment.sourceKey, startedAt),
+            sourceKey: runKey,
             costCents: 0,
             outcome: 'capped',
-            note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${costPerRun}c.`,
-          }, actor);
-          if (run) {
-            summary.capped += 1;
-            summary.advanced += 1;
-            await advanceAssignment(assignment, startedAt);
-          }
+            note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
+          }, { actor });
+          summary.capped += 1;
+          summary.advanced += 1;
+          await advanceAssignment(assignment, startedAt);
           continue;
         }
       }
+      // 2. Claim the slot before executing: overlapping sweeps serialize on
+      // the UNIQUE run key. The loser replays or skips, never re-executes.
+      let claim = null;
+      let reclaimed = false;
+      try {
+        claim = await runs().createManaged({
+          ...base,
+          sourceKey: runKey,
+          costCents: 0,
+          outcome: 'started',
+          note: 'Slot claimed, execution not yet recorded.',
+        }, { actor });
+      } catch (error) {
+        if (!isWinnerConflict(error)) throw error;
+        const stored = (await runs().listWhere({ spaceId, sourceKey: runKey }))[0] ?? null;
+        if (stored && RUN_TERMINAL.includes(stored.outcome)) {
+          // A retry after a finished run: replay the stored outcome,
+          // advance past the slot, never execute again.
+          summary[stored.outcome === 'applied' ? 'proposed' : stored.outcome] += 1;
+          summary.advanced += 1;
+          await advanceAssignment(assignment, startedAt);
+          continue;
+        }
+        const leaseMs = Date.parse(now()) - Date.parse(stored?.decidedAt ?? now());
+        if (stored && stored.outcome === 'started' && Number.isFinite(leaseMs) && leaseMs > AGENT_CLAIM_LEASE_MS) {
+          // The claiming sweep never finished: reclaim its slot.
+          claim = stored;
+          reclaimed = true;
+        } else {
+          summary.skipped += 1;
+          continue;
+        }
+      }
+      void reclaimed;
+      // 3. Execute, then finalize the claimed row. A crash between the
+      // claim and the finalize leaves a `started` row the next sweep
+      // reclaims after the lease — the work runs again, the evidence stays
+      // one row per slot.
       let checked;
       try {
         checked = checkExecuteResult(await execute({ agent, assignment }));
       } catch (error) {
-        const code = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN';
-        const { run } = await recordRun({
-          ...base,
-          sourceKey: agentRunKey(assignment.sourceKey, startedAt),
+        await runs().applyManaged(claim.id, {
           costCents: 0,
           outcome: 'failed',
-          note: `Execution failed before recording a result (${code}).`,
-        }, actor);
-        if (run) {
-          summary.failed += 1;
-          summary.advanced += 1;
-          await advanceAssignment(assignment, startedAt);
-        } else {
-          summary.errors.push({ assignmentSourceKey: assignment.sourceKey, spaceId, code });
-        }
+          note: sanitizeFailure(error, spaceId),
+        }, { actor });
+        summary.failed += 1;
+        summary.advanced += 1;
+        summary.errors.push({
+          assignmentSourceKey: assignment.sourceKey,
+          spaceId,
+          code: error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN',
+        });
+        await advanceAssignment(assignment, startedAt);
         continue;
       }
       const costCents = checkCostCents(checked.costCents, 'result.costCents') ?? 0;
+      const capped = agent.spendingCapCents !== null && agent.spendingCapCents !== undefined;
+      const estimate = Number.isInteger(assignment.costPerRunCents) ? assignment.costPerRunCents : 0;
+      const overrun = capped && costCents > estimate
+        ? ` Actual cost ${costCents}c exceeded the ${estimate}c estimate.`
+        : '';
       if (checked.kind === 'proposals') {
-        const { run } = await recordRun({
-          ...base,
-          sourceKey: agentRunKey(assignment.sourceKey, startedAt),
+        await runs().applyManaged(claim.id, {
           costCents,
           outcome: 'proposed',
           proposals: JSON.stringify(checked.proposals),
-          note: `${checked.proposals.length} action proposal(s) waiting for human approval.`,
-        }, actor);
-        if (run) {
-          summary.proposed += 1;
-          summary.advanced += 1;
-          await advanceAssignment(assignment, startedAt);
-        }
+          note: `${checked.proposals.length} action proposal(s) waiting for human approval.${overrun}`,
+        }, { actor });
+        summary.proposed += 1;
+        summary.advanced += 1;
+        await advanceAssignment(assignment, startedAt);
         continue;
       }
       const previous = await runs().listWhere({ spaceId, assignmentSourceKey: assignment.sourceKey });
@@ -297,19 +331,16 @@ export function createAgentOperations(options = {}) {
           version = row.artifactVersion + 1;
         }
       }
-      const { run } = await recordRun({
-        ...base,
-        sourceKey: `${agentRunKey(assignment.sourceKey, startedAt)}:v${version}`,
+      await runs().applyManaged(claim.id, {
         costCents,
         outcome: 'artifact',
         artifact: JSON.stringify(checked.artifact),
         artifactVersion: version,
-      }, actor);
-      if (run) {
-        summary.artifacts += 1;
-        summary.advanced += 1;
-        await advanceAssignment(assignment, startedAt);
-      }
+        ...(overrun === '' ? {} : { note: overrun.trim() }),
+      }, { actor });
+      summary.artifacts += 1;
+      summary.advanced += 1;
+      await advanceAssignment(assignment, startedAt);
     }
     return summary;
   }
