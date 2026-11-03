@@ -371,7 +371,7 @@ test('an activated order shows evidence only — no obligation, billing or renew
   assert.ok(text.includes('commercial treatment overridden by admin (the policy said "ambiguous")'), text);
   assert.ok(text.includes('post-signature-operational-activation'), 'the term provenance is evidence too');
   assert.ok(text.includes('subscription line · no further obligation'), 'both axes are readable per line');
-  assert.ok(text.includes('EUR 2,850.00 net per period'), 'subscription lines show the per-period amount');
+  assert.ok(text.includes('2.850 € net per period'), 'subscription lines show the per-period amount in the Italian screen form');
   assert.ok(text.includes('pending_handover'), 'the delivery obligation is a pending marker');
   assert.ok(text.includes('Nothing executes, schedules, staffs or completes them'));
   // Those words exist only inside the "not modeled" disclosure — never as a

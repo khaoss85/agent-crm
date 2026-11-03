@@ -12,6 +12,7 @@
 
 import { elFor } from './admin-ui.js';
 import { formatAmount, humanReadError } from './admin-core.js';
+import { parseEuroToCents } from './admin-catalog.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -39,19 +40,16 @@ function quoteStatusLabel(status) {
   return '—';
 }
 
+/** UUID shape: never painted as a name, it is a technical id, not a person. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Display name of an audit actor; empty actors stay an em dash. */
 function actorLabel(entry) {
-  if (typeof entry?.actorId === 'string' && entry.actorId.trim() !== '') return entry.actorId;
   if (entry?.actorType === 'system') return 'sistema';
+  if (typeof entry?.actorId === 'string' && entry.actorId.trim() !== '') {
+    return UUID_SHAPE.test(entry.actorId.trim()) ? 'utente' : entry.actorId;
+  }
   return '—';
-}
-
-/** Euro text to integer cents, or null when not a plain non-negative amount. */
-function parseEuroToCents(raw) {
-  const text = String(raw ?? '').trim().replace(',', '.');
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
-  const cents = Math.round(Number(text) * 100);
-  return Number.isSafeInteger(cents) ? cents : null;
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -76,7 +74,7 @@ export function createOfferDetail(deps) {
     const key = record.pipelineStage ?? record.stage;
     for (const pipeline of pipelines) {
       const stage = (pipeline?.stages ?? []).find((candidate) => candidate?.key === key);
-      if (stage) return stage.label ?? key;
+      if (stage) return stage.label ?? '—';
     }
     return '—';
   }
@@ -299,7 +297,7 @@ export function createOfferDetail(deps) {
     if (lines.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna riga in questo preventivo.'));
     for (const line of lines) {
       panel.appendChild(el('p', 'quote-line',
-        `${line.sku ?? '—'} · ${line.offerName ?? '—'} · quantità ${line.quantity ?? '—'} · sconto ${((line.discountBps ?? 0) / 100).toFixed(2)}% · netto ${money(line.netAmountCents, quote.currency)}`));
+        `${line.sku ?? '—'} · ${line.offerName ?? '—'} · quantità ${line.quantity ?? '—'} · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}% · netto ${money(line.netAmountCents, quote.currency)}`));
     }
     panel.appendChild(el('h5', undefined, `Versioni (${versions.length})`));
     if (versions.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna versione per questo preventivo.'));

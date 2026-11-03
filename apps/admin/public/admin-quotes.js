@@ -93,6 +93,13 @@ export function createQuoteView(deps) {
     return '—';
   };
 
+  /** Italian label of a version policy decision; unknown decisions stay an em dash. */
+  const policyDecisionLabel = (decision) => {
+    if (decision === 'approval_required') return 'Richiede approvazione';
+    if (decision === 'auto_approve') return 'Approvazione automatica';
+    return quoteStatusLabel(decision);
+  };
+
   /** Italian label of a pricing model; unknown models stay an em dash. */
   const pricingModelLabel = (model) => {
     if (model === 'flat_fee') return 'quota fissa';
@@ -508,7 +515,7 @@ export function createQuoteView(deps) {
         ...versionTotals.recurringTotals.map((group, index) => `${money(group.netAmountCents, version.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`),
       ].join(' · ');
       const link = el('a', undefined,
-        `Versione ${version.versionNumber} · ${quoteStatusLabel(version.policyDecision)} · ${periods}`);
+        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
       if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${version.decisionReason}`));
@@ -662,7 +669,7 @@ export function createQuoteView(deps) {
       evidence.appendChild(el('h4', undefined, 'Prova del documento firmato'));
       for (const [label, value] of [
         ['Artefatto del fornitore', artifact.providerArtifactId ?? '—'],
-        ['Document hash', artifact.documentHash],
+        ['Impronta del documento', artifact.documentHash],
         ['Impronta dell’artefatto', artifact.artifactHash ?? '—'],
         ['Tipo', artifact.mimeType ?? '—'],
         ['Completato il', artifact.completedAt ?? '—'],
