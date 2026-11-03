@@ -3,6 +3,7 @@
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
+import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import {
   addFieldForm,
@@ -572,9 +573,24 @@ export function createCustomerCardView(deps) {
    * the scheda labels it; every row is text, never a raw channel key.
    * @param {any} card the frozen card from `read-customer-card`
    * @param {unknown} connections the sync-state entries (`GET /api/connectors`), or null before they load
+   * @param {unknown} profile the space-profile answer (`GET /api/profile`, served by
+   *   the pilot), or null when unreadable — its linked Gmail mailbox also
+   *   connects Email (backlog:a935af6a6d19)
    */
-  function composerChannelsFor(card, connections) {
+  function composerChannelsFor(card, connections, profile) {
     const list = Array.isArray(connections) ? connections : [];
+    // Voce a935af6a6d19: the profile Google link counts for Email. The
+    // Connettori screen links channel connections (one row per account),
+    // while Profilo links the operator's Gmail mailbox — without this the
+    // composer says «non collegato» on a space whose mailbox is linked.
+    // A revoked, errored or unreadable link changes nothing: only a
+    // `connected` Gmail item with a mailbox connects the channel.
+    const items = Array.isArray(profile?.connections?.items) && profile.connections.available === true
+      ? profile.connections.items
+      : [];
+    const gmail = items.find((item) => item?.connector === 'gmail' && item?.status === 'connected'
+      && typeof item?.account === 'string' && item.account.trim() !== '') ?? null;
+    const gmailSender = gmail !== null ? gmail.account.trim() : null;
     const socials = Array.isArray(card?.socials) ? card.socials : [];
     const handleFor = (system) => {
       const found = socials.find((row) => String(row?.system ?? '').toLowerCase() === system
@@ -594,12 +610,17 @@ export function createCustomerCardView(deps) {
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
       const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      // The channel connection wins (it carries the connectionKey the send
+      // queues on); the profile Gmail mailbox only fills the gap, with no
+      // key — the server still needs its own email connection to send.
+      const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
-        connected: live !== null,
+        connected: live !== null || gmailLinked,
         connectionKey: live?.connectionKey ?? null,
+        sender: gmailLinked ? gmailSender : null,
       });
     });
   }
@@ -891,9 +912,11 @@ export function createCustomerCardView(deps) {
    * The «Scrivi» composer panel (backlog:e9b4fc2f): channel choice among
    * the customer's own channels, preselected recipient, text, Invia.
    * A channel without a connection reads switched off with its link to
-   * Connettori; a channel without any address names that instead. Invia
-   * queues through `POST /api/customer-hub/messages` — the recipient
-   * stays server-derived, the panel only shows it.
+   * Connettori — except Email with the space Gmail linked in the profile,
+   * which reads connected with its sender (backlog:a935af6a6d19); a channel
+   * without any address names that instead. Invia queues through
+   * `POST /api/customer-hub/messages` — the recipient stays server-derived,
+   * the panel only shows it.
    */
   function openComposer(box, card, navCtx) {
     const old = box.querySelector('div[data-composer="open"]');
@@ -911,26 +934,32 @@ export function createCustomerCardView(deps) {
     }
     const wait = el('p', 'bo-muted', 'Leggo i canali collegati…');
     panel.appendChild(wait);
-    client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
+    // Voce a935af6a6d19: Email also reads the space profile's Gmail link
+    // (`GET /api/profile`, served by the pilot). An unreadable profile
+    // resolves to null and changes nothing — the channel connections
+    // decide alone, like before.
+    readProfile(client).then((profile) => {
+      client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
         panel.removeChild(wait);
-        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : []);
+        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile);
       },
       (error) => {
         panel.removeChild(wait);
         if (isNotComposedFailure(error)) {
-          buildComposerForm(panel, card, navCtx, spaceId, []);
+          buildComposerForm(panel, card, navCtx, spaceId, [], profile);
           return;
         }
         panel.appendChild(el('p', 'field-error', humanReadError(error, {
           failed: 'I canali non si sono potuti leggere. Riprova più tardi.',
         })));
       },
-    );
+      );
+    });
   }
 
-  function buildComposerForm(panel, card, navCtx, spaceId, connections) {
-    const channels = composerChannelsFor(card, connections);
+  function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
+    const channels = composerChannelsFor(card, connections, profile);
     const list = el('div', 'bo-scheda-composer-channels');
     const toLine = el('p', 'bo-muted', '');
     const subjectHolder = el('div', undefined, '');
@@ -978,7 +1007,13 @@ export function createCustomerCardView(deps) {
         row.appendChild(el('span', 'bo-muted', ` — ${entry.recipient}, non collegato `));
         row.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
       } else {
-        row.appendChild(el('span', 'bo-muted', ` — a ${entry.recipient} (collegato)`));
+        // Voce a935af6a6d19: a Gmail-linked Email names its sender — the
+        // operator sees which mailbox the message leaves from. `el` keeps
+        // the mailbox text, never markup.
+        const detail = typeof entry.sender === 'string' && entry.sender !== ''
+          ? ` — da ${entry.sender} a ${entry.recipient} (collegato)`
+          : ` — a ${entry.recipient} (collegato)`;
+        row.appendChild(el('span', 'bo-muted', detail));
         radio.addEventListener('click', () => select(entry));
         if (selected === null) selected = entry;
       }
