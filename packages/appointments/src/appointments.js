@@ -477,8 +477,9 @@ const memberBookingChains = new Map();
  * writers on real storage — SQLite `BEGIN IMMEDIATE` holds the second
  * connection until the winner commits, Postgres `SERIALIZABLE` refuses the
  * loser with a retryable conflict whose retry re-reads the winner. The two
- * chains never nest (a booking holds the member chain, an advance holds the
- * id chain, never both at once), so they cannot deadlock each other.
+ * chains nest only in one fixed order — a reschedule holds the member chain
+ * outside and the id chain inside, an advance holds only the id chain —
+ * so they cannot deadlock each other.
  */
 const appointmentAdvanceChains = new Map();
 
@@ -1212,9 +1213,20 @@ export async function rescheduleAppointment(context, request) {
       moved: true,
     };
   };
+  // The move serializes on the appointment identity as well as the member:
+  // withMemberBooking outside, withAppointmentAdvance inside, always in
+  // this order. A move racing a cancel or a confirm on the same row can no
+  // longer commit from a stale read — the loser re-reads the winner inside
+  // critical (the terminal check above runs under both chains) and either
+  // refuses 409 or advances the winner's row, never a terminal row silently
+  // moved to a new slot.
+  const recordId = safeText(first.id, 'id', MAX_ID);
   const { appointment, moved } = await withMemberBooking(
     memberId,
-    runInTransaction ? () => runInTransaction(critical) : critical,
+    () => withAppointmentAdvance(
+      recordId,
+      runInTransaction ? () => runInTransaction(critical) : critical,
+    ),
   );
   // The calendar edge was validated above, before any row was touched: the
   // push rides the idempotent path. A runtime push failure must not throw —

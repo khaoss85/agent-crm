@@ -289,7 +289,12 @@ export function createCalendarSyncOperations(options = {}) {
       'calendar-sync is composed without an opened appointment-book@1 capability, so it cannot write appointment rows');
   }
   const provider = options.provider;
-  for (const key of ['listEvents', 'insertEvent', 'patchEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
+  // patchEvent is deliberately NOT composed here: it is needed only when a
+  // linked event is actually moved, and requiring it at startup would take
+  // down every pull, push and export on deployments whose provider never
+  // reschedules. The reschedule branch below fails closed when it is
+  // missing, and everything else composes and runs without it.
+  for (const key of ['listEvents', 'insertEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
     if (typeof provider?.[key] !== 'function') {
       throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500, `calendar-sync provider needs "${key}"`);
     }
@@ -1123,6 +1128,29 @@ export function createCalendarSyncOperations(options = {}) {
       const stored = JSON.parse(link.localFingerprint);
       const localSlotMoved = row.startsAt !== stored[0] || row.endsAt !== stored[1];
       if (localSlotMoved) {
+        if (link.pendingRemote) {
+          // An outstanding remote snapshot stands over this link: the local
+          // move must not silently overwrite Google, and it must not clear
+          // conflictNote either — pendingConflicts filters on that note, so
+          // clearing it alone would make the still-stored snapshot
+          // invisible while the next pull retries its stale slot onto the
+          // moved booking. The push stays pending with both fields
+          // preserved and nothing written; the operator resolves the remote
+          // change first, then the move converges.
+          return {
+            status: 'conflict',
+            sourceKey,
+            eventId: rowLinkEventId(link, calendarId),
+            reason: 'spostamento trattenuto: c’è ancora una modifica remota da risolvere su questo evento, e Google non è stato toccato',
+            pending: true,
+          };
+        }
+        if (typeof provider?.patchEvent !== 'function') {
+          // Fail closed only where the move actually needs it: every other
+          // push path composes and runs without patchEvent.
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            `il calendario "${calendarId}" è collegato ma il provider non sa spostare gli eventi (manca patchEvent): aggiorna il provider prima di spostare un evento collegato`);
+        }
         const patched = await providerCall(calendarId, 'patchEvent', {
           calendarId,
           eventId: rowLinkEventId(link, calendarId),

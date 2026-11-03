@@ -959,12 +959,12 @@ test('a rescheduled import patches its linked Google event (backlog:bdca2010d471
   assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
 });
 
-test('composition refuses a provider without patchEvent before any move', async (t) => {
-  // P1 regression: patchEvent is required by the documented provider
-  // contract (local slot moves patch the linked event), but composition
-  // did not enforce it — the first reschedule with a calendar then failed
-  // with a TypeError after the slot move had already committed. A provider
-  // without patchEvent now fails closed at composition. No dials Google.
+test('a provider without patchEvent composes and syncs, failing closed only on a linked move', async (t) => {
+  // P1 regression (second round): requiring patchEvent at composition took
+  // down every pull, push and export on deployments whose provider never
+  // reschedules. patchEvent is required only where the move actually needs
+  // it — the reschedule branch fails closed there, everything else runs
+  // without it. No dials Google.
   const ctx = setup();
   t.after(() => ctx.close());
   const full = ctx.provider;
@@ -974,18 +974,85 @@ test('composition refuses a provider without patchEvent before any move', async 
     cancelEvent: full.cancelEvent.bind(full),
     findByAccordoSourceKey: full.findByAccordoSourceKey.bind(full),
   };
-  assert.throws(
-    () => createCalendarSyncOperations({
-      modules: ctx.modules,
-      appointmentBook: createAppointmentBookCapability({}),
-      provider: withoutPatch,
-      mapping: ctx.mapping,
-      database: ctx.database,
-    }),
-    (error) => {
-      assert.equal(error?.code, 'CALENDAR_SYNC_CONTEXT_INVALID');
-      assert.match(error?.message ?? '', /patchEvent/);
-      return true;
-    },
-  );
+  const sync = createCalendarSyncOperations({
+    modules: ctx.modules,
+    appointmentBook: createAppointmentBookCapability({}),
+    provider: withoutPatch,
+    mapping: ctx.mapping,
+    database: ctx.database,
+  });
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  const imported = await sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(imported.entries.filter((entry) => entry.status === 'imported').length, 1);
+  const row = ctx.appointmentRows()[0];
+  const noop = await sync.pushAppointment(CAL, row.sourceKey);
+  assert.equal(noop.status, 'noop', 'a push with nothing changed needs no patchEvent');
+  const fingerprint = ctx.linkRows()[0].localFingerprint;
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: sync,
+  });
+  const moved = await handle.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:00:00.000Z',
+    spaceId: 's-presti',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true, 'the local move still commits');
+  assert.equal(moved.push, null);
+  assert.equal(moved.pushError?.code, 'CALENDAR_SYNC_CONTEXT_INVALID');
+  const live = full.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-21T09:00:00.000Z', 'Google keeps the old slot');
+  assert.equal(live.end.dateTime, '2026-10-21T10:00:00.000Z');
+  assert.equal(ctx.linkRows()[0].localFingerprint, fingerprint, 'a refused push writes no link');
+});
+
+test('a local move over an outstanding remote snapshot stays pending: Google untouched, snapshot visible', async (t) => {
+  // P1 regression (second round): the reschedule push cleared conflictNote
+  // without deciding pendingRemote, hiding the outstanding remote conflict
+  // (pendingConflicts filters on the note) and blindly overwriting Google.
+  // The push now converges nothing while the snapshot stands: it answers
+  // pending with both fields preserved, and Google keeps the remote slot.
+  // No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  assert.equal(pull.entries.find((entry) => entry.eventId === 'evt1').status, 'conflict');
+  assert.ok(ctx.linkRows()[0].pendingRemote, 'the remote snapshot stands');
+  const note = ctx.linkRows()[0].conflictNote;
+  assert.ok(note, 'the conflict is visible');
+  const row = ctx.appointmentRows().find((candidate) => candidate.sourceKey === `gcal:${CAL}:evt1`);
+  const moving = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const moved = await moving.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-21T16:00:00.000Z',
+    endsAt: '2026-10-21T17:00:00.000Z',
+    spaceId: 's-presti',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true, 'the local move still commits');
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'conflict', 'the push converges nothing while the snapshot stands');
+  assert.equal(moved.push.pending, true);
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-21T14:00:00.000Z', 'Google keeps the remote slot, not the local move');
+  assert.equal(live.end.dateTime, '2026-10-21T15:00:00.000Z');
+  assert.ok(ctx.linkRows()[0].pendingRemote, 'the snapshot is not hidden');
+  assert.equal(ctx.linkRows()[0].conflictNote, note, 'the conflict note is preserved');
 });

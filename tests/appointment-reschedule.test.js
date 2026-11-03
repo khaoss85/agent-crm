@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  advanceAppointment,
   createAppointmentBookCapability,
   rescheduleAppointment,
 } from '../packages/appointments/src/appointments.js';
@@ -140,6 +141,32 @@ test('a stretch over the row\u2019s own old slot is a longer booking, not a conf
   );
   assert.equal(out.moved, true);
   assert.equal(out.appointment.endsAt, '2026-10-20T19:00:00.000Z');
+});
+
+test('a move racing a cancellation on the same row serializes: the cancel wins, the move refuses', async () => {
+  // P1 regression: reschedule serialized only on the member chain while
+  // advance serialized only on the id chain, so a move racing a cancel on
+  // the same row both read booked and both committed — a terminal row at
+  // the new slot. The move now holds the identity chain inside the member
+  // chain, so the loser re-reads the winner: the cancellation commits, the
+  // move refuses 409, and the terminal row never moves.
+  const service = fakeAppointments([row()]);
+  const moving = rescheduleAppointment(contextFor(service), move());
+  const cancelling = advanceAppointment(
+    { appointments: service, actor: ACTOR, now: () => '2026-10-20T09:00:00.000Z' },
+    { id: 'a-1' },
+    'cancelled',
+    'Customer called off',
+  );
+  const [movedOut, cancelledOut] = await Promise.allSettled([moving, cancelling]);
+  assert.equal(cancelledOut.status, 'fulfilled', 'the cancellation commits');
+  assert.equal(movedOut.status, 'rejected', 'the loser re-reads the winner and refuses');
+  assert.equal(movedOut.reason?.code, 'APPOINTMENTS_INVALID_STATE');
+  assert.equal(movedOut.reason?.status, 409);
+  const final = service.rows.find((candidate) => candidate.id === 'a-1');
+  assert.equal(final.status, 'cancelled');
+  assert.equal(final.startsAt, '2026-10-20T17:00:00.000Z', 'a terminal row keeps its old slot');
+  assert.equal(service.writes.length, 1, 'the refused move writes nothing');
 });
 
 test('a terminal booking never moves', async () => {
