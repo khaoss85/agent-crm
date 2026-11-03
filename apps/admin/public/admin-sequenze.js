@@ -888,6 +888,10 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         channel.addEventListener('change', () => { step.channel = String(channel.value ?? ''); });
       }
       row.appendChild(channelWrap);
+      // The wait reads labelled with its unit: a bare number («0») says
+      // nothing about what it counts, so the label names both — attesa in
+      // giorni — in plain sight, not only in the aria-label.
+      const waitLabel = el(documentNode, 'label', 'bo-seq-field-label', `Passo ${index + 1}: attesa (giorni)`);
       const wait = el(documentNode, 'input', 'ui-field', undefined);
       wait.setAttribute('type', 'number');
       wait.setAttribute('name', `seq-step-${index}-wait`);
@@ -899,7 +903,8 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         const parsed = Number(String(wait.value ?? ''));
         step.wait = Number.isInteger(parsed) ? parsed : String(wait.value ?? '');
       });
-      row.appendChild(wait);
+      waitLabel.appendChild(wait);
+      row.appendChild(waitLabel);
       const template = el(documentNode, 'input', 'ui-field', undefined);
       template.setAttribute('type', 'text');
       template.setAttribute('name', `seq-step-${index}-template`);
@@ -967,8 +972,12 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       const made = answer?.sequence ?? null;
       const madeKey = typeof made?.sourceKey === 'string' && made.sourceKey !== '' ? made.sourceKey : form.key;
       state.creating = null;
-      await renderSequenze();
+      // The new key is selected BEFORE the reload: renderSequenze() reads
+      // the steps of the selected sequence, so selecting after it would
+      // paint the detail from an empty cache — «no passi registrati» for a
+      // sequence that has them.
       state.selectedKey = madeKey;
+      await renderSequenze();
       paint();
     } catch (error) {
       form.busy = false;
@@ -1069,8 +1078,10 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       const made = answer?.sequence ?? null;
       const madeKey = typeof made?.sourceKey === 'string' && made.sourceKey !== '' ? made.sourceKey : key;
       state.aiPanel = null;
-      await renderSequenze();
+      // Same ordering as the manual creation: select first, so the reload
+      // reads the new sequence's steps before the detail paints.
       state.selectedKey = madeKey;
+      await renderSequenze();
       paint();
     } catch (error) {
       panelState.busy = false;
