@@ -223,6 +223,7 @@ test('the REST mapping posts text and tagged replies to the bound page id', () =
     secret: SECRET,
   });
   assert.equal(taggedRequest.body.tag, INSTAGRAM_HUMAN_AGENT_TAG);
+  assert.equal(taggedRequest.body.messaging_type, 'MESSAGE_TAG', 'a tagged reply uses the shape Meta accepts');
   assert.throws(
     () => buildInstagramSendRequest({ message: { to: 'ig-user-9', text: 'x' }, config, secret: '' }),
     (error) => error.code === 'CHANNEL_SECRET_UNAVAILABLE',
@@ -248,7 +249,7 @@ test('composition refuses a non-Meta page id; the Graph origin stays https', () 
 });
 
 test('window enforcement uses the injected clock: late replies refuse at queue time, tagged ones pass', async (t) => {
-  const { harness, clock } = setup();
+  const { harness, api, clock } = setup();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   const inbound = graphBody({ mid: 'm_win_2', sender: 'ig-user-11', atMs: T0 });
@@ -267,6 +268,12 @@ test('window enforcement uses the injected clock: late replies refuse at queue t
     messageKey: 'm-win-tagged',
   });
   assert.equal((await harness.pump(tagged.jobId)).state, 'succeeded');
+  assert.deepEqual(api.sentRequests().at(-1).body, {
+    recipient: { id: 'ig-user-11' },
+    messaging_type: 'MESSAGE_TAG',
+    tag: INSTAGRAM_HUMAN_AGENT_TAG,
+    message: { text: 'Riprendiamo da qui' },
+  });
 
   // Past 7 days even the tag is closed.
   clock.set(T0 + 8 * DAY_MS);

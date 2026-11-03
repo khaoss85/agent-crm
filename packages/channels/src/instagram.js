@@ -110,7 +110,9 @@ function malformedMessage(reason) {
  *
  * Replies go to `POST /{api-version}/{page-id}/messages` with
  * `messaging_type: 'RESPONSE'` (Meta's in-window reply); a
- * `HUMAN_AGENT`-tagged reply carries the tag for the 7-day window.
+ * `HUMAN_AGENT`-tagged reply carries the tag for the 7-day window
+ * with `messaging_type: 'MESSAGE_TAG'` (the shape Meta requires for
+ * tagged sends).
  * Outside the window Instagram has no template fallback — the caller
  * waits for the next customer message instead.
  */
@@ -140,7 +142,7 @@ export function buildInstagramSendRequest({ message, config, secret }) {
     headers,
     body: {
       recipient: { id: to },
-      messaging_type: 'RESPONSE',
+      messaging_type: tag === undefined ? 'RESPONSE' : 'MESSAGE_TAG',
       ...(tag === undefined ? {} : { tag }),
       message: { text: message.text },
     },
