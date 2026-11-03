@@ -487,6 +487,16 @@ export function createCalendarioView(deps) {
   let renderToken = 0;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
+  /**
+   * Drops a pending read (backlog:607f33ee): the view paints into the
+   * shell's shared mount, so a late week response must not repaint a
+   * screen the operator already left. The shell calls this on every route
+   * that is not Calendario.
+   */
+  function invalidate() {
+    renderToken += 1;
+    memberToken += 1;
+  }
   installOutsideCloser(doc);
 
   const readSpace = () => {
@@ -639,7 +649,10 @@ export function createCalendarioView(deps) {
         });
       }
     }
-    renderAll();
+    // Same mount guard as the roster and profile reads below: a late week
+    // answer never paints over another screen sharing the mount
+    // (backlog:607f33ee).
+    if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**
@@ -2166,5 +2179,5 @@ export function createCalendarioView(deps) {
     if (members.length > 0) await loadWeek(members);
   }
 
-  return { render };
+  return { render, invalidate };
 }

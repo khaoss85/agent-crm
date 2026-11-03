@@ -1071,6 +1071,11 @@ async function route() {
   const hash = window.location.hash || '#/';
   if (targetForHash(hash).view === 'settings') {
     clientiListView.invalidate();
+    // backlog:607f33ee: same shared-mount race as below — a late async
+    // view must not repaint the settings panel just opened.
+    if (oggiView) oggiView.invalidate();
+    if (sequenzeView) sequenzeView.invalidate();
+    calendarioView.invalidate();
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
     renderSettingsPanel({
@@ -1093,6 +1098,14 @@ async function route() {
   // save still in flight must die when the operator leaves the form —
   // otherwise its late response clears the screen just opened.
   if (target.view !== 'customer-new') customerFormView.invalidate();
+  // backlog:607f33ee: every async view paints straight into the shared
+  // mount, so a read still in flight must die when the operator leaves
+  // the view — otherwise its late response repaints the screen just
+  // opened (Sequenze overwriting Calendario, Oggi overwriting a deep
+  // link opened right after login).
+  if (target.view !== 'dashboard' && oggiView) oggiView.invalidate();
+  if (target.view !== 'sequenze' && sequenzeView) sequenzeView.invalidate();
+  if (target.view !== 'calendario') calendarioView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
     // Space home (BO-F3-04): the Oggi screen, never the demo. The
