@@ -1322,8 +1322,17 @@ function appendLinkList(doc, mount, links, navigate) {
 export function createOggiView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client: bound } = bindAdminMutations(deps.client, deps);
-  /** Guard against a stale async response overwriting a newer view. */
+  /**
+   * Guard against a stale async response overwriting a newer view
+   * (backlog:607f33ee): the home paints into the shell's shared mount, so
+   * a late Oggi response must not repaint a screen the operator already
+   * left. The shell calls invalidate() on every route that is not the
+   * home; the token below covers overlapping home reads.
+   */
   let renderToken = 0;
+  function invalidate() {
+    renderToken += 1;
+  }
   /** Session-local triage: decided suggestions only, records stay the truth. */
   let triage = {};
   /** Last loaded data, repainted on triage without re-reading. */
@@ -1498,5 +1507,6 @@ export function createOggiView(deps) {
       }
       paint();
     },
+    invalidate,
   };
 }

@@ -766,6 +766,17 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
   const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
+  /**
+   * Drops a pending read (backlog:607f33ee): the view paints straight into
+   * the shell's shared mount, so a late response must not repaint a screen
+   * the operator already left (Sequenze overwriting Calendario, or vice
+   * versa). The shell calls invalidate() on every route that is not
+   * Sequenze; the token below covers overlapping reads of this view.
+   */
+  let renderToken = 0;
+  function invalidate() {
+    renderToken += 1;
+  }
   const state = {
     available: false,
     sequences: [],
@@ -1167,12 +1178,14 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   }
 
   async function selectSequence(key) {
+    const token = renderToken;
     state.selectedKey = key;
     state.confirming = null;
     state.error = '';
     paint();
     if (key !== '' && !state.stepsByKey.has(key)) {
       const outcome = await loadSequenzaSteps(client, key, state.space);
+      if (token !== renderToken) return;
       if (state.selectedKey === key) {
         state.stepsByKey.set(key, outcome);
         paint();
@@ -1181,6 +1194,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   }
 
   async function runSequenceAction(sequence, action) {
+    const token = renderToken;
     state.busy = true;
     state.error = '';
     paint();
@@ -1193,9 +1207,11 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         `/api/modules/sequence/records/${encodeURIComponent(String(id))}/actions/${encodeURIComponent(action)}`,
         { method: 'POST', body: {} },
       );
+      if (token !== renderToken) return;
       state.confirming = null;
       await renderSequenze();
     } catch (error) {
+      if (token !== renderToken) return;
       const message = error instanceof Error ? error.message : String(error ?? '');
       const changed = /409|INVALID_STATE|not allowed from state/i.test(message);
       state.error = changed
@@ -1212,6 +1228,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
   }
 
   async function renderSequenze() {
+    const token = ++renderToken;
     state.busy = false;
     if (!documentNode) return;
     paint();
@@ -1223,6 +1240,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       state.stepsByKey = new Map();
     }
     const data = await loadSequenzeData(client, state.space);
+    if (token !== renderToken) return;
     state.available = data.sequencesAvailable;
     state.sequences = data.sequences;
     state.enrollments = data.enrollments;
@@ -1232,10 +1250,11 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     state.loaded = true;
     if (state.selectedKey !== '' && state.available) {
       const outcome = await loadSequenzaSteps(client, state.selectedKey, state.space);
+      if (token !== renderToken) return;
       state.stepsByKey.set(state.selectedKey, outcome);
     }
     paint();
   }
 
-  return { renderSequenze, paint, state };
+  return { renderSequenze, paint, state, invalidate };
 }
