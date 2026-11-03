@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
+import { createCleanupProposals } from './cleanup.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
@@ -52,7 +53,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -485,6 +486,25 @@ export function createCustomerDataOperations({ database, modules, events, config
           subject: Object.freeze({ resource, id: subject.id }),
         });
       });
+    },
+
+    /**
+     * Propose data-cleanup corrections (backlog:4c8bd203): scan the stored
+     * records and open one «Da fare» task per finding through the composed
+     * work follow-up@1 edge, plus deterministic duplicate-candidate rows for
+     * the merge suspects. Proposals only — never a contact, company or
+     * identity row: the merge, the completion and the next step happen
+     * through the existing governed writes after a human confirms.
+     * @param {{actor?: unknown}} [request]
+     */
+    async proposeDataCleanup(request) {
+      const receipt = await createCleanupProposals({
+        database, modules, policy, names, followUpProvider,
+      }).proposeDataCleanup(request);
+      events.emit?.('customer-data.cleanup.proposed', {
+        complete: receipt.complete, counts: receipt.counts,
+      });
+      return receipt;
     },
 
   };

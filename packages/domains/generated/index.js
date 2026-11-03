@@ -29,8 +29,10 @@ import { createMagicLinkPackage, createMemoryMagicLinkStore } from '../../magic-
 import { createSequencesPackage } from '../../sequences/src/index.js';
 import { createWorkPackage } from '../../work/src/index.js';
 
+const workDefinition = createWorkPackage();
+
 export const generatedDomains = [
-  createCustomerDataPackage(),
+  createCustomerDataPackage({ work: workDefinition }),
   createSpacePermissionsDomain(),
   createChannelsPackage(),
   // BO-F6-06 slice 1 (backlog:ed4bbd35883a): local composition only. The
@@ -41,5 +43,5 @@ export const generatedDomains = [
   // credentials, no transport, no Google machinery.
   createMagicLinkPackage({ store: createMemoryMagicLinkStore() }),
   createSequencesPackage(),
-  createWorkPackage(),
+  workDefinition,
 ];
