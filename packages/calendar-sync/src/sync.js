@@ -310,6 +310,50 @@ export function createCalendarSyncOperations(options = {}) {
   }
   const defaultActor = options.actor ?? { type: 'system', id: 'calendar-sync' };
   const now = typeof options.now === 'function' ? options.now : () => new Date().toISOString();
+  // Process-local run ledger behind readSyncStatus (backlog:d1da1ed51e9c):
+  // one entry per calendar — the last run's instant, counts and coded
+  // error. Surfaced by the worker; persisting it is follow-up work.
+  const lastRuns = new Map();
+
+  /** The counts one run result carries, without interpreting new statuses. */
+  function tallyRun(result) {
+    const entries = [];
+    if (Array.isArray(result?.entries)) entries.push(...result.entries);
+    if (result?.pull && Array.isArray(result.pull.entries)) entries.push(...result.pull.entries);
+    if (result?.push && Array.isArray(result.push.entries)) entries.push(...result.push.entries);
+    if (result && typeof result === 'object' && typeof result.status === 'string') entries.push(result);
+    let applied = 0;
+    let conflicts = 0;
+    let pushed = 0;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (entry.status === 'conflict' || entry.pending === true) conflicts += 1;
+      else if (entry.status === 'applied' || entry.status === 'imported') applied += 1;
+      else if (entry.status === 'exported' || entry.status === 'linked' || entry.status === 'pushed') pushed += 1;
+    }
+    return { decided: entries.length, applied, conflicts, pushed, error: null };
+  }
+
+  function recordRun(calendarId, patch) {
+    const prev = lastRuns.get(calendarId) ?? { runs: 0 };
+    lastRuns.set(calendarId, Object.freeze({
+      at: now(),
+      runs: prev.runs + 1,
+      decided: patch.decided ?? 0,
+      applied: patch.applied ?? 0,
+      conflicts: patch.conflicts ?? 0,
+      pushed: patch.pushed ?? 0,
+      error: patch.error ?? null,
+    }));
+  }
+
+  function canonicalIdOrNull(value) {
+    try {
+      return canonicalCalendarId(value);
+    } catch {
+      return null;
+    }
+  }
   const context = { modules, names };
   const database = options.database ?? null;
   if (database !== null && typeof database !== 'object') {
@@ -1356,7 +1400,66 @@ export function createCalendarSyncOperations(options = {}) {
       }, who);
       return { calendarId: cal, grantStatus: 'revoked' };
     },
+
+    /**
+     * The sync status one space watches (backlog:d1da1ed51e9c): the last
+     * run per calendar — when it ran, how many changes it decided, how
+     * many applied, how many still conflict, and the coded error when the
+     * last run failed — plus the binding facts from the state row. A
+     * purely local read: no provider call, no grant needed, so the status
+     * renders while the grant is revoked — exactly when the operator
+     * needs the error. The run record is process-local (the worker
+     * surfaces it; persisting it across restarts is follow-up work).
+     */
+    async readSyncStatus({ calendarId, spaceId } = {}) {
+      const cal = canonicalCalendarId(calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
+      // A missing row reads null (never bound, never run); a storage
+      // failure throws instead of reporting a healthy-looking unbound.
+      const state = await readState(cal);
+      // The owning space inspects its status even with a revoked grant
+      // (the read is local, no provider call) — a foreign or missing
+      // space reads as unknown, the same oracle rule as requireLiveGrant.
+      if (state && state.spaceId !== null && state.spaceId !== undefined && state.spaceId !== spaceId) {
+        throw syncError('CALENDAR_GRANT_UNKNOWN', 404,
+          `calendar "${cal}" has no grant for this space: bind it before syncing`);
+      }
+      const conflicts = await pendingConflicts(cal);
+      const run = lastRuns.get(cal) ?? null;
+      return Object.freeze({
+        calendarId: cal,
+        bound: !!(state && state.secretRef),
+        grantStatus: (state && state.grantStatus) || 'unbound',
+        spaceId: (state && state.spaceId) ?? null,
+        hasSyncToken: !!(state && state.syncToken),
+        lastRun: run ? { ...run } : null,
+        pendingConflicts: conflicts,
+      });
+    },
   };
+
+  // Every mutating run records its outcome for readSyncStatus: when it
+  // ran, how many changes it decided, and the coded error when it threw.
+  // The error code is already normalized by providerCall (a fixed code,
+  // never provider text), so the status can expose it safely.
+  for (const key of ['importFuture', 'pullIncremental', 'syncOnce', 'pushAppointment', 'pushLocalChanges']) {
+    const run = api[key].bind(api);
+    api[key] = async (...args) => {
+      const calendarId = canonicalIdOrNull(args[0]);
+      try {
+        const result = await run(...args);
+        if (calendarId !== null) recordRun(calendarId, tallyRun(result));
+        return result;
+      } catch (error) {
+        if (calendarId !== null) {
+          recordRun(calendarId, {
+            error: typeof error?.code === 'string' && error.code !== '' ? error.code : 'CALENDAR_PROVIDER_UNAVAILABLE',
+          });
+        }
+        throw error;
+      }
+    };
+  }
 
   return api;
 

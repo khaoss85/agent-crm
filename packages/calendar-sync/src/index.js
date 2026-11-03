@@ -271,6 +271,18 @@ export function createCalendarSyncPackage(options = {}) {
           return (params) => ops.revokeCalendarGrant(params);
         },
       },
+      {
+        operationContract: 1,
+        name: 'read-sync-status',
+        label: 'Read sync status',
+        appMethod: 'readSyncStatus',
+        description: 'One calendar\'s sync status: the binding facts, whether a sync token is stored, the last run (instant, decided/applied/conflict/pushed counts, coded error) and the pending operator conflicts. A purely local read: no provider call, no grant needed.',
+        input: [{ ...SPACE_INPUT }, { ...CALENDAR_INPUT }],
+        create(runtime) {
+          const ops = operations(runtime);
+          return (params) => ops.readSyncStatus(params);
+        },
+      },
     ],
     /** Function-free, additive schema metadata — never a secret, never a function. */
     metadata() {
@@ -288,11 +300,12 @@ export function createCalendarSyncPackage(options = {}) {
         secretDiscipline: 'calendars store the vault secretRef, never the grant; the deployment resolves it per call through resolveSecret and the provider authenticates with the call-time secret; provider errors are normalized to codes with fixed messages, so no grant, token or personal detail lands in a row, an error or a log',
         humanApproval: 'import, export and push-channel registration are human decisions (actor required on every booking); provider-driven pulls run under a system actor',
         notModeled: [
+          'push-channel watch/stop against Google — the deployment opens the channel (the provider watch call) and owns the webhook route; the sync verifies deliveries and pulls',
           'recurrence or series expansion — each synced event is one timed occurrence; all-day events are refused by slot validation',
           'reminders for imported bookings (remindAt stays null — Google keeps notifying on its side)',
           'confirmed/done/no-show propagation to Google — lifecycle stays Accordo-side',
           'the per-space HTTP route — the pilot owns it and passes spaceId from the verified path',
-          'real Google transport — the space grant resolves from the vault but the provider stays fake-backed until credentials exist (owner decision MEM_ACC_DECISIONS)',
+          'real Google transport — `src/google-http.js` speaks the Calendar v3 API over the deployment fetch with the per-call vault grant; the default composition stays fake-backed until credentials exist (owner decision MEM_ACC_DECISIONS)',
         ],
         reuses: ['appointment-book@1'],
       };
@@ -304,3 +317,4 @@ export function createCalendarSyncPackage(options = {}) {
 
 export { createCalendarSyncOperations, appointmentFingerprint } from './sync.js';
 export { createFakeGoogleCalendar, GOOGLE_SYNC_TOKEN_INVALID } from './google-fake.js';
+export { createHttpGoogleCalendar, GOOGLE_CALENDAR_API_BASE, toEngineEvent } from './google-http.js';

@@ -1803,13 +1803,18 @@ const COMPOSER_CONNECTORS = {
   ],
 };
 
-function composerClient({ connectors = COMPOSER_CONNECTORS } = {}) {
+function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null } = {}) {
   const base = stubClient();
   const posts = [];
   return {
     posts,
     async request(path, options = {}) {
       if (path.startsWith('/api/connectors')) return connectors;
+      if (path === '/api/profile') {
+        if (profile instanceof Error) throw profile;
+        if (!profile) throw Object.assign(new Error('no profile'), { status: 404 });
+        return profile;
+      }
       if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') {
         posts.push(JSON.parse(options.body));
         return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
@@ -1818,6 +1823,20 @@ function composerClient({ connectors = COMPOSER_CONNECTORS } = {}) {
     },
   };
 }
+
+// Voce a935af6a6d19: the space profile links the operator's Gmail mailbox
+// while no email channel connection exists — the owner's 03/11 case.
+const COMPOSER_GMAIL_PROFILE = {
+  member: { name: 'Daniele Pelleri', email: 'daniele.pelleri@gmail.com', role: 'owner' },
+  connections: {
+    available: true,
+    reason: null,
+    items: [
+      { connector: 'calendar', status: 'connected', account: 'daniele.pelleri@gmail.com' },
+      { connector: 'gmail', status: 'connected', account: 'daniele.pelleri@gmail.com' },
+    ],
+  },
+};
 
 const flushComposer = async (rounds = 6) => {
   for (let round = 0; round < rounds; round += 1) {
@@ -1887,6 +1906,72 @@ test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled
   const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
   assert.ok(send, 'the Invia button exists');
   assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
+});
+
+// Voce a935af6a6d19 (acceptance 1): Gmail linked in the space profile, no
+// email channel connection — Email reads connected and names its sender.
+test('a935af6a6d19: with Gmail linked in the profile Email is connected and shows its sender', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  const text = panel.textContent;
+  assert.ok(text.includes('daniele.pelleri@gmail.com'), 'the linked mailbox reads as the sender');
+  assert.ok(text.includes('guido@palestra-esempio.it'), 'the customer email still reads as the recipient');
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  assert.equal(byValue('email').getAttribute('disabled'), null, 'Email is selectable on the profile Gmail link');
+  assert.equal(byValue('whatsapp').getAttribute('disabled'), 'disabled', 'WhatsApp without a connection stays off');
+  const links = panel.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(links.length > 0, 'the truly unlinked channels still link to Connettori');
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.equal(send.getAttribute('disabled'), null, 'Invia is available on the Gmail-linked Email');
+});
+
+// Voce a935af6a6d19 (acceptance 2): a channel with no link anywhere — no
+// channel connection and no profile Gmail — reads off with its Collega link.
+test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [] },
+      profile: {
+        member: { name: 'Daniele Pelleri', email: 'daniele.pelleri@gmail.com', role: 'owner' },
+        connections: {
+          available: true,
+          reason: null,
+          items: [{ connector: 'gmail', status: 'disconnected', account: '' }],
+        },
+      },
+    }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without any link stays off');
+  assert.ok(panel.textContent.includes('non collegato'), 'the off channel says it is not linked');
+  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(link, 'the off channel links to Connettori');
+  assert.equal(link.getAttribute('href'), '#/connettori');
+});
+
+// Voce a935af6a6d19: a revoked Gmail link connects nothing — revocation
+// reads like no link, never like a sender.
+test('a935af6a6d19: a revoked Gmail link leaves Email off', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [] },
+      profile: {
+        member: { name: 'Daniele Pelleri', email: null, role: 'owner' },
+        connections: {
+          available: true,
+          reason: null,
+          items: [{ connector: 'gmail', status: 'revoked', account: 'daniele.pelleri@gmail.com' }],
+        },
+      },
+    }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const email = radios.find((node) => node.getAttribute('value') === 'email');
+  assert.equal(email.getAttribute('disabled'), 'disabled', 'a revoked mailbox connects nothing');
+  assert.ok(!panel.textContent.includes('daniele.pelleri@gmail.com'), 'no sender reads from a revoked link');
 });
 
 test('e9b4fc2f: the composer names its honest limit and shows the text refusal', async () => {
