@@ -104,7 +104,7 @@ asserts instead of a delivery.
 | Telegram | `telegram` | `telegram-bot@1` (`src/telegram.js`) | in + out (no service window) | `runChannelAdapterKit`, `tests/channels-telegram.test.js` |
 | Facebook (Messenger) | `facebook` | `messenger-graph@1` (`src/messenger.js`) | in + out (24-hour window, 7 days with `HUMAN_AGENT`) | `runChannelAdapterKit`, `tests/channels-messenger.test.js` |
 | TikTok | `tiktok` | `tiktok-inbox@1` (`src/tiktok.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-tiktok.test.js` |
-| Email | `email` | `gmail-api@1` (`src/gmail.js`) | in + out (no service window; 90-day history import) | `runChannelAdapterKit`, `tests/channels-gmail.test.js` |
+| Email | `email` | `gmail-api@1` (`src/gmail.js`, real REST via `src/gmail-http.js`) | in + out (no service window; 90-day history import) | `runChannelAdapterKit`, `tests/channels-gmail.test.js`, `tests/channels-gmail-http.test.js` |
 | Telefono/centralino | `voice` | `voice-pbx@1` (`src/voice.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-voice.test.js` |
 | Form sito | `site-form` | `site-form-inbox@1` (`src/site-form.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-site-form.test.js` |
 | Google Calendar | `calendar` | `calendar-push@1` (`src/calendar.js`) | in only — sends refuse `CHANNEL_SEND_UNSUPPORTED` | `runChannelAdapterKit`, `tests/channels-calendar.test.js` |
@@ -245,12 +245,16 @@ asserts instead of a delivery.
 ## What it deliberately does not do
 
 - No real provider adapters beyond WhatsApp, Instagram, Messenger,
-  Gmail, TikTok, voice, site-form, calendar and Stripe: fixture only
-  until credentials exist. No credential is invented, requested or
-  stored. All nine are fake-backed until the provider decision: the same
-  modes as the fixture, no provider edge (WhatsApp, Gmail, TikTok,
-  voice, site-form, calendar and Stripe share the channel HMAC scheme;
-  Instagram and Messenger verify hub signatures).
+  TikTok, voice, site-form, calendar and Stripe: fixture only until
+  credentials exist. Gmail additionally speaks its real REST API
+  (`src/gmail-http.js`, backlog:d1da1ed51e9c: history paging and send
+  over an injected fetch with the per-call vault grant); the default
+  composition stays fake-backed until credentials exist. No credential
+  is invented, requested or stored. All nine are fake-backed until the
+  provider decision: the same modes as the fixture, no provider edge
+  (WhatsApp, Gmail, TikTok, voice, site-form, calendar and Stripe share
+  the channel HMAC scheme; Instagram and Messenger verify hub
+  signatures).
 - No per-space HTTP route: the pilot owns it and passes `spaceId` from
   the verified path, never from the body.
 - No secret custody or rotation flow: the deployment resolves `secretRef`

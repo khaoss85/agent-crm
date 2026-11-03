@@ -618,6 +618,20 @@ export function createChannelOperations(deps) {
   async function storeInboxItem(service, {
     spaceId, connection, adapter, item, payloadFingerprint, actor, now, imported = false, importKey = null,
   }) {
+    // History pages arrive provider-ordered (Gmail lists newest first),
+    // so an older message listed after a newer sibling applied is still
+    // unseen history, never a live out-of-order redelivery. The import
+    // adopts by (connection, providerEventId) identity — duplicates are
+    // already caught by the source key above — so on the import path an
+    // out-of-order verdict becomes an apply with the import marker. The
+    // webhook path keeps the discard exactly as decided.
+    const decideStoredEffect = (candidate) => {
+      const decision = decideEffect(candidate, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+      if (imported && decision.effect === 'ignored') {
+        return { effect: 'applied', effectReason: '' };
+      }
+      return decision;
+    };
     const already = service.listWhere({ sourceKey: item.sourceKey })[0];
     if (already) {
       if (already.payloadFingerprint !== payloadFingerprint) {
@@ -646,7 +660,7 @@ export function createChannelOperations(deps) {
       if (connection.status !== 'active') {
         return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
       }
-      const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+      const decision = decideStoredEffect(item);
       const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
       // Two redeliveries racing the same unprocessed row both read it as
       // received: the winner moves it, the loser's transition then lands on
@@ -692,11 +706,12 @@ export function createChannelOperations(deps) {
       return { duplicate: false, quarantined: true, eventId: row.id, effect: row.effect };
     }
 
-    const decision = decideEffect(item, service.listWhere({ spaceId, connectionKey: connection.sourceKey }));
+    const decision = decideStoredEffect(item);
     // An applied import row carries the import marker instead of the empty
     // reason: later webhooks of the same message adopt it through the
-    // marker rather than 409ing on the envelope. Quarantine and ignore
-    // reasons stay exactly as decided — evidence keeps its explanation.
+    // marker rather than 409ing on the envelope. Quarantine reasons (and
+    // webhook ignores) stay exactly as decided — evidence keeps its
+    // explanation.
     const reason = imported && decision.effect === 'applied' && decision.effectReason === ''
       ? CHANNEL_IMPORT_ROW_REASON
       : decision.effectReason;

@@ -8,11 +8,15 @@ export as Google events; each side sees the other's changes after one
 sync cycle. Push notifications only say «something changed» — the sync
 then pulls incrementally on its stored sync token.
 
-Fake-backed on purpose (owner decision MEM_ACC_DECISIONS: no Google
+Fake-backed by default (owner decision MEM_ACC_DECISIONS: no Google
 credentials exist yet, and none are invented here):
 `src/google-fake.js` speaks sync tokens, tombstones and push channels,
 so every acceptance bullet is proven against the fake. The real adapter
-implements the same four provider functions against Google's API.
+(`src/google-http.js`, backlog:d1da1ed51e9c) implements the same four
+provider functions against the Google Calendar v3 REST API over an
+injected fetch transport — the deployment passes the platform's
+authenticated fetch and the OAuth token the engine resolves per call
+from the space grant.
 
 ## Reuse, not duplication
 
@@ -110,6 +114,13 @@ push-converged cancellation leaving the older move snapshot standing
 instead of rebooking it, the package factory forwarding an explicit
 database handle, and creation refusing without a storage transaction.
 No test dials Google.
+
+`tests/calendar-sync-http.test.js` proves the same story against
+`src/google-http.js` over a scripted REST double: a Google event becomes
+an appointment with no duplicate on re-run, a local booking becomes a
+Google event carrying the round-trip key, an expired token reconciles,
+and `read-sync-status` shows the last run, the counts and the coded
+error. No test dials Google.
 
 ## Event detail (BO-F3-01, backlog `3ec06fdee0e2`)
 
