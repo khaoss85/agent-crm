@@ -142,7 +142,7 @@ test('an execution proposes actions that apply only after a human approval', asy
       proposals: [{ action: 'draft-report', payload: { title: 'Report vendite' } }],
     }),
   });
-  assert.deepEqual(summary, { advanced: 1, proposed: 1, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [] });
+  assert.deepEqual(summary, { advanced: 1, proposed: 1, applied: 0, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [] });
   assert.equal(applied.length, 0, 'nothing is applied before approval');
   // The proposal waits: approving with a non-human actor refuses.
   await assert.rejects(
@@ -366,6 +366,265 @@ test('two overlapping sweeps execute once: the loser never re-executes', async (
   assert.equal(executions, 1, 'one execution for one due slot');
   assert.equal(first.artifacts + second.artifacts, 1);
   assert.equal(first.skipped + second.skipped, 1);
+});
+
+test('a retry at the same instant replays every terminal outcome with the exact summary shape', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops);
+  const outcomes = ['proposed', 'applied', 'artifact', 'capped', 'failed'];
+  for (const outcome of outcomes) {
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey: `as-replay-${outcome}`,
+      agentSourceKey: 'ag-vendite',
+      phrase: 'ogni lunedì il report vendite',
+      plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+    });
+    await modules.get('teammate-run').service.createManaged({
+      sourceKey: `run:as-replay-${outcome}:${MON_0801}`,
+      spaceId: SPACE,
+      agentSourceKey: 'ag-vendite',
+      assignmentSourceKey: `as-replay-${outcome}`,
+      startedAt: MON_0801,
+      decidedAt: MON_0801,
+      actorType: 'system',
+      actorId: 'agent-sweep',
+      sourcePackage: 'agents',
+      sourceAction: 'run-due',
+      costCents: 5,
+      outcome,
+      proposals: outcome === 'proposed' ? '[]' : undefined,
+    }, { actor: SYSTEM });
+  }
+  let executions = 0;
+  const summary = await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => { executions += 1; throw new Error('must not execute on replay'); },
+  });
+  assert.equal(executions, 0, 'a retry replays the stored rows, never executes again');
+  // Exact shape: no NaN, no verbatim 'artifact' key, 'applied' has its bucket.
+  assert.deepEqual(summary, {
+    advanced: 5, proposed: 1, applied: 1, artifacts: 1, capped: 1, failed: 1, skipped: 0, errors: [],
+  });
+});
+
+test('two concurrent capped sweeps never crash: one records, the other replays', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'ag-race-cap', spendingCapCents: 100 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-race-cap',
+    agentSourceKey: 'ag-race-cap',
+    phrase: 'ogni giorno il report',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 60,
+  });
+  await modules.get('teammate-run').service.createManaged({
+    sourceKey: 'run:as-race-cap:2026-11-01T08:01:00.000Z',
+    spaceId: SPACE,
+    agentSourceKey: 'ag-race-cap',
+    assignmentSourceKey: 'as-race-cap',
+    startedAt: '2026-11-01T08:01:00.000Z',
+    decidedAt: '2026-11-01T08:01:00.000Z',
+    actorType: 'system',
+    actorId: 'agent-sweep',
+    sourcePackage: 'agents',
+    sourceAction: 'run-due',
+    costCents: 100,
+    outcome: 'artifact',
+    artifact: JSON.stringify({ day: 1 }),
+    artifactVersion: 1,
+  }, { actor: SYSTEM });
+  let executions = 0;
+  const execute = async () => { executions += 1; return { kind: 'artifact', costCents: 1, artifact: {} }; };
+  const [first, second] = await Promise.all([
+    ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
+    ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
+  ]);
+  assert.equal(executions, 0, 'over the cap nothing executes');
+  assert.equal(first.capped + second.capped, 2, 'winner records capped, loser replays capped');
+  assert.equal(first.advanced + second.advanced, 2);
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, assignmentSourceKey: 'as-race-cap', sourceKey: `run:as-race-cap:${MON_0801}` });
+  assert.equal(rows.length, 1, 'one capped row per slot');
+  assert.equal(rows[0].outcome, 'capped');
+});
+
+test('an executor that reports far above the cap is stopped, not recorded as a success', async () => {
+  const { ops, modules } = compose();
+  const kinds = { artifact: 'ag-liar-artifact', proposals: 'ag-liar-proposals' };
+  for (const [kind, agentSourceKey] of Object.entries(kinds)) {
+    await makeAgent(ops, { sourceKey: agentSourceKey, spendingCapCents: 100 });
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey: `as-liar-${kind}`,
+      agentSourceKey,
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+      costPerRunCents: 60,
+    });
+  }
+  let executions = 0;
+  const execute = async ({ assignment }) => {
+    executions += 1;
+    return assignment.sourceKey === 'as-liar-artifact'
+      ? { kind: 'artifact', costCents: 1000, artifact: { total: 1 } }
+      : { kind: 'proposals', costCents: 1000, proposals: [{ action: 'draft-report', payload: {} }] };
+  };
+  const summary = await ops.runDue({ actor: SYSTEM, at: MON_0801, execute });
+  assert.deepEqual([summary.capped, summary.artifacts, summary.proposed], [2, 0, 0]);
+  for (const agentSourceKey of Object.values(kinds)) {
+    const rows = await modules.get('teammate-run').service
+      .listWhere({ spaceId: SPACE, agentSourceKey });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].outcome, 'capped', 'the overrun is flagged, not a success');
+    assert.equal(rows[0].costCents, 1000, 'the true cost stays on the ledger');
+    assert.match(rows[0].note, /cap/i);
+    assert.ok(!rows[0].artifact && !rows[0].proposals, 'nothing is stored from an over-cap run');
+  }
+  // The ledger now exceeds the cap: the next sweep stops at the gate
+  // without executing again.
+  const second = await ops.runDue({ actor: SYSTEM, at: '2026-11-03T08:01:00.000Z', execute });
+  assert.equal(second.capped, 2);
+  assert.equal(executions, 2, 'no execution past the overrun');
+});
+
+test('two concurrent approvals apply each proposal once', async () => {
+  const { ops } = compose();
+  await makeAgent(ops);
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-approve-race',
+    agentSourceKey: 'ag-vendite',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 4,
+      proposals: [
+        { action: 'draft-report', payload: {} },
+        { action: 'notify-owner', payload: {} },
+      ],
+    }),
+  });
+  const runKey = `run:as-approve-race:${MON_0801}`;
+  const counts = new Map();
+  const applyAction = async ({ proposal, idempotencyKey }) => {
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    counts.set(proposal.action, (counts.get(proposal.action) ?? 0) + 1);
+    assert.match(idempotencyKey, /^agent-approval:run:as-approve-race:/);
+    return { ok: true };
+  };
+  const [first, second] = await Promise.all([
+    ops.approveRun({ actor: USER, spaceId: SPACE, runSourceKey: runKey, applyAction }),
+    ops.approveRun({ actor: USER, spaceId: SPACE, runSourceKey: runKey, applyAction }),
+  ]);
+  assert.deepEqual([counts.get('draft-report'), counts.get('notify-owner')], [1, 1]);
+  assert.equal(first.run.outcome, 'applied');
+  assert.equal(second.run.outcome, 'applied');
+  assert.ok([first, second].some((result) => result.duplicate === true), 'the loser replays');
+});
+
+test('a retry after a partial approval failure resumes past applied proposals', async () => {
+  const { ops } = compose();
+  await makeAgent(ops);
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-approve-retry',
+    agentSourceKey: 'ag-vendite',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 4,
+      proposals: [
+        { action: 'draft-report', payload: {} },
+        { action: 'notify-owner', payload: {} },
+      ],
+    }),
+  });
+  const runKey = `run:as-approve-retry:${MON_0801}`;
+  const attempts = new Map();
+  let failSecond = true;
+  const applyAction = async ({ proposal }) => {
+    attempts.set(proposal.action, (attempts.get(proposal.action) ?? 0) + 1);
+    if (proposal.action === 'notify-owner' && failSecond) throw new Error('provider down');
+    return { ok: true };
+  };
+  await assert.rejects(
+    () => ops.approveRun({ actor: USER, spaceId: SPACE, runSourceKey: runKey, applyAction }),
+    (error) => error.message === 'provider down',
+  );
+  failSecond = false;
+  const { run } = await ops.approveRun({ actor: USER, spaceId: SPACE, runSourceKey: runKey, applyAction });
+  assert.equal(run.outcome, 'applied');
+  assert.equal(attempts.get('draft-report'), 1, 'the applied proposal is not duplicated');
+  assert.equal(attempts.get('notify-owner'), 2, 'the failed proposal is retried once');
+});
+
+test('a stale approval claim is taken over, a live one refuses', async () => {
+  const { ops, modules } = compose();
+  const { AGENT_APPROVAL_LEASE_MS } = await import('../packages/agents/src/agents.js');
+  await makeAgent(ops, { sourceKey: 'ag-stale' });
+  for (const sourceKey of ['as-stale', 'as-live']) {
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey,
+      agentSourceKey: 'ag-stale',
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+    });
+  }
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({
+      kind: 'proposals', costCents: 1, proposals: [{ action: 'draft-report', payload: {} }],
+    }),
+  });
+  const service = modules.get('teammate-run').service;
+  const staleRow = (await service.listWhere({ spaceId: SPACE, sourceKey: `run:as-stale:${MON_0801}` }))[0];
+  const staleAt = Date.parse(MON_07) - AGENT_APPROVAL_LEASE_MS - 1000;
+  await service.applyManaged(staleRow.id, { note: `approval-claim someone ${staleAt}` }, { actor: SYSTEM });
+  const liveRow = (await service.listWhere({ spaceId: SPACE, sourceKey: `run:as-live:${MON_0801}` }))[0];
+  await service.applyManaged(liveRow.id, { note: `approval-claim someone ${Date.parse(MON_07)}` }, { actor: SYSTEM });
+  // The stale claim is taken over and the proposal applies once.
+  let staleApplied = 0;
+  const stale = await ops.approveRun({
+    actor: USER,
+    spaceId: SPACE,
+    runSourceKey: `run:as-stale:${MON_0801}`,
+    applyAction: async () => { staleApplied += 1; return { ok: true }; },
+  });
+  assert.equal(stale.run.outcome, 'applied');
+  assert.equal(staleApplied, 1);
+  // The live claim refuses with a retryable 409: no write happens.
+  let liveApplied = 0;
+  await assert.rejects(
+    () => ops.approveRun({
+      actor: USER,
+      spaceId: SPACE,
+      runSourceKey: `run:as-live:${MON_0801}`,
+      applyAction: async () => { liveApplied += 1; return { ok: true }; },
+    }),
+    (error) => error.code === 'AGENT_APPROVAL_IN_PROGRESS',
+  );
+  assert.equal(liveApplied, 0);
 });
 
 test('a failed execution keeps a sanitized diagnostic with code and space', async () => {

@@ -40,6 +40,10 @@ export const RUN_TERMINAL = Object.freeze(['proposed', 'applied', 'artifact', 'c
 
 /** A claim older than this is reclaimed: its sweep never finished. */
 export const AGENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
+/** One governed write through the approval seam never runs unbounded. */
+export const AGENT_APPLY_TIMEOUT_MS = 30 * 1000;
+/** An approval claim without a fresh progress heartbeat is taken over. */
+export const AGENT_APPROVAL_LEASE_MS = 3 * AGENT_APPLY_TIMEOUT_MS;
 export const CADENCES = Object.freeze(['daily', 'weekly', 'monthly', 'once']);
 
 export const AGENTS_DOMAIN = 'agents';
@@ -279,8 +283,11 @@ export function assertRunTransition(from, event) {
 
 /**
  * A capped agent never runs on an unknown cost: the estimate is the budget
- * allowance the cap check enforces, and the executor's actual cost is
- * checked against the same allowance after it runs.
+ * allowance the pre-execution cap check enforces, and the executor's actual
+ * cost is enforced against the remaining allowance after it runs — a run
+ * whose actual cost no longer fits is recorded as `capped` (cost kept on
+ * the ledger, proposals/artifact dropped) instead of landing overspend as
+ * a normal success.
  * @param {unknown} capCents @param {unknown} costPerRunCents
  */
 export function requireCostEstimate(capCents, costPerRunCents) {
