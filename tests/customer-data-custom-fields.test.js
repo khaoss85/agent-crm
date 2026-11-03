@@ -192,6 +192,91 @@ test('without the AI the ✦ area stays hidden and the manual path works', async
   assert.equal(values.find((entry) => entry.key === 'livello')?.value, 'pro');
 });
 
+test('an E.164 phrase phone links through the governed phone path and reads on the list row', async (t) => {
+  const { app } = scene(t);
+  const answer = { ...EXAMPLE_ANSWER, phone: '+393331234567' };
+  const preview = await app.parseCustomerPhrase({
+    actor: OPERATOR,
+    phrase: 'daniele pelleri email daniele@gmail.com tel +393331234567 amico sì',
+    adapter: fakeAdapterFor(answer),
+  });
+  const applied = await app.applyCustomerPhrase({
+    actor: OPERATOR, customer: preview.customer, fields: preview.fields,
+  });
+  assert.equal(applied.phoneLinked, true, 'the governed phone operation takes the E.164 number');
+  assert.equal(applied.phoneWarning, null);
+  const list = await app.listCustomers({});
+  const row = list.items.find((item) => item.id === applied.subject.id);
+  assert.equal(row?.phone?.value, '+393331234567', 'the list shows the confirmed phone, never null');
+  assert.equal(row?.phone?.system, 'phone', 'a recognized phone system, so the scheda can dial it');
+});
+
+test('a refused field value rolls the whole phrase apply back: no customer, no definitions, no values', async (t) => {
+  const { app } = scene(t);
+  const countBefore = (await app.listCustomers({})).items.length;
+  await assert.rejects(
+    () => app.applyCustomerPhrase({
+      actor: OPERATOR,
+      customer: { firstName: 'daniele', lastName: 'pelleri', email: 'daniele@gmail.com' },
+      fields: [
+        { key: 'amico', label: 'Amico', type: 'si-no', value: 'sì' },
+        { key: 'livello-num', label: 'Livello num', type: 'numero', value: 'non-un-numero' },
+      ],
+    }),
+    (error) => error?.code === 'VALIDATION_ERROR',
+    'the bad numeric value refuses the whole confirmation',
+  );
+  assert.equal((await app.listCustomers({})).items.length, countBefore, 'no partial customer survives');
+  assert.deepEqual(await app.listCustomFields({}), [], 'no partial definition survives');
+});
+
+test('past 500 definitions every key still reads: columns and the campo filter see the oldest key', async (t) => {
+  const { app } = scene(t);
+  const total = 503;
+  for (let index = 0; index < total; index += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await app.defineCustomField({ actor: OPERATOR, key: `extra-${index}`, label: `Extra ${index}`, type: 'testo' });
+  }
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it',
+  });
+  await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: contact.id, key: 'extra-0', value: 'primo',
+  });
+  const list = await app.listCustomers({});
+  assert.equal(list.customColumns.length, total, 'every defined field is a column, not a 500-row page');
+  assert.ok(list.customColumns.some((column) => column.key === 'extra-0'), 'the oldest key is still listed');
+  const filtered = await app.listCustomers({ campo: 'extra-0', valore: 'primo' });
+  assert.ok(filtered.items.some((item) => item.id === contact.id), 'a filter over an old key matches');
+});
+
+test('an unreadable value store refuses a campo filter instead of an exact-looking empty page', async (t) => {
+  const { app } = scene(t);
+  await app.defineCustomField({ actor: OPERATOR, label: 'Amico', type: 'si-no' });
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' });
+  const contact = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it',
+  });
+  await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: contact.id, key: 'amico', value: 'sì',
+  });
+  const service = app.modules.get('custom-field-value').service;
+  const original = service.listWhere.bind(service);
+  service.listWhere = async () => { throw new Error('boom-storage'); };
+  try {
+    await assert.rejects(
+      () => app.listCustomers({ campo: 'amico', valore: 'sì' }),
+      (error) => error?.code === 'CUSTOMER_LIST_UNAVAILABLE' && error?.status === 409,
+      'with a filter the failure refuses instead of answering an exact empty page',
+    );
+    const open = await app.listCustomers({});
+    assert.ok(open.items.length >= 1, 'without a filter the list still reads, with null values');
+  } finally {
+    service.listWhere = original;
+  }
+});
+
 test('the Nuovo cliente note lands in the cronologia through the single writer', async (t) => {
   const { app } = scene(t);
   const preview = await app.parseCustomerPhrase({
