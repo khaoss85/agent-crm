@@ -899,11 +899,14 @@ const client = {
 // lookup spans every named field, never only <input>.
 const byName = (inputName) => document.querySelector('[name="' + inputName + '"]');
 const click = (label) => [...document.querySelectorAll('button')].find((b) => b.textContent.includes(label)).click();
+// The demo clock is a workday inside the fixture week: openingWeekKeys
+// (backlog:df55cf25) rolls Saturday/Sunday forward to the coming week,
+// and a weekend pin would open an empty week with no demo events.
 const view = createCalendarioView({
   doc: document,
   mount: document.getElementById('view-module'),
   client,
-  now: () => new Date('2026-10-25T10:00:00Z'),
+  now: () => new Date('2026-10-22T10:00:00Z'),
 });
 await view.render();
 byName('members').value = 'marco, sara';
