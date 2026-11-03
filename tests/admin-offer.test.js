@@ -317,3 +317,44 @@ test('offer routes parse canonically; hostile routes are invalid', async () => {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
 });
+
+// Production 03/11: the shared space answered the record read 404 for a card
+// the Pipeline board had just painted; the detail said «Offerta non trovata».
+// The board's own list is the fallback, so the detail opens the same offer.
+test('a record read 404 falls back to the board list and the detail opens', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient();
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/modules/opportunity/records/')) {
+        throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
+      }
+      if (path.startsWith('/api/opportunities?')) return { items: [offerRecord()] };
+      return base.request(path, options);
+    },
+  };
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer from the board list paints');
+  assert.ok(!mount.textContent.includes('Offerta non trovata'), 'never the not-found line for a card the board showed');
+});
+
+test('an offer missing from the board list too still says not found', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = {
+    async request(path) {
+      if (path === '/api/schema') return { modules: [] };
+      if (path.startsWith('/api/modules/opportunity/records/')) {
+        throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
+      }
+      if (path.startsWith('/api/opportunities?')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('assente');
+  assert.ok(mount.textContent.includes('non trovata'), 'a truly missing offer says so');
+});

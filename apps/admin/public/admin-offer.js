@@ -145,6 +145,27 @@ export function createOfferDetail(deps) {
   }
 
   /** @param {string} offerId */
+  /**
+   * The offer the pipeline card opened. The record read comes first; when
+   * it answers not found, the same list the Pipeline board paints from
+   * (`/api/opportunities`) is the fallback — production 03/11: the shared
+   * space answered the record read 404 for a card the board had just shown,
+   * and the detail said «Offerta non trovata».
+   * @param {string} id
+   */
+  async function readOffer(id) {
+    try {
+      return await client.request(`/api/modules/opportunity/records/${encodeURIComponent(id)}`);
+    } catch (error) {
+      const status = Number(/** @type {any} */ (error)?.status ?? 0);
+      if (status !== 404) throw error;
+      const list = await client.request('/api/opportunities?limit=200');
+      const found = Array.isArray(list?.items) ? list.items.find((item) => String(item?.id ?? '') === id) : null;
+      if (!found) throw error;
+      return found;
+    }
+  }
+
   async function renderOfferDetail(offerId) {
     const token = ++renderToken;
     editing = false;
@@ -158,7 +179,7 @@ export function createOfferDetail(deps) {
     let auditUnreadable = false;
     try {
       schema = await client.request('/api/schema');
-      record = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(offerId)}`);
+      record = await readOffer(offerId);
       quotes = await fetchLinked('quote', 'opportunityId', record.id);
       try {
         const audit = await client.request(
