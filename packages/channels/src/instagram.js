@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHmac } from 'node:crypto';
-import { AppError } from '../../core/index.js';
+import { AppError, ValidationError } from '../../core/index.js';
 import { verifyHmacWebhook } from './crypto.js';
 // Batch iteration, echo detection, the window rule and the hub-signature
 // check live once in the shared Meta module every Meta adapter delegates
@@ -64,10 +64,14 @@ import {
  * WhatsApp adapter. Sends to the bound page itself are ordinary
  * recipients: the old test-only loopback bypass is gone.
  *
- * Real credentials do not exist yet (owner decision MEM_ACC_DECISIONS):
- * delivery runs against the injected fake transport — the same
- * programmable failure modes as the fixture (`ok`, `flaky(n)`,
- * `refuse`, `timeout`) — never against Meta.
+ * Fake-backed on purpose (owner decision MEM_ACC_DECISIONS: no Meta
+ * credentials exist yet, and none are invented here): the transport is a
+ * programmable in-memory double with the same modes as the fixture
+ * (`ok`, `flaky(n)`, `refuse`, `timeout`), and the Graph send mapping
+ * is a pure function (`buildInstagramSendRequest`) so the URL, auth
+ * scheme and body shape are unit-proven without dialing Meta — the same
+ * split the WhatsApp adapter uses (backlog:e32a7dfecb80). The fake
+ * records exactly this shape per send.
  */
 
 export const INSTAGRAM_ADAPTER_NAME = 'instagram-graph';
@@ -80,6 +84,9 @@ export const INSTAGRAM_TAG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_ID = 256;
 const MAX_TEXT = 4096;
 const HUB_SIGNATURE_HEADER = 'x-hub-signature-256';
+/** Meta page (Instagram business account) ids are bounded digits. */
+const PAGE_ID = /^\d{1,32}$/;
+const API_VERSION = /^\d{1,2}\.\d{1,2}$/;
 /** Inbox subjects carry the `ig:` prefix, so senders stay 3 chars shorter. */
 const SUBJECT_PREFIX = 'ig:';
 const MAX_SENDER = MAX_ID - SUBJECT_PREFIX.length;
@@ -94,6 +101,69 @@ function malformedMessage(reason) {
   throw new AppError(`Instagram message is not well-formed: ${reason}`, {
     code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
   });
+}
+
+/**
+ * The Graph send mapping as a pure function: URL, Bearer auth from the
+ * call-time secret (never stored), and the message/tag bodies.
+ * Unit-proven here; the fake records exactly this shape per send.
+ *
+ * Replies go to `POST /{api-version}/{page-id}/messages` with
+ * `messaging_type: 'RESPONSE'` (Meta's in-window reply); a
+ * `HUMAN_AGENT`-tagged reply carries the tag for the 7-day window.
+ * Outside the window Instagram has no template fallback — the caller
+ * waits for the next customer message instead.
+ */
+export function buildInstagramSendRequest({ message, config, secret }) {
+  if (!message || typeof message !== 'object') {
+    throw new AppError('Instagram send needs a normalized message', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
+  }
+  if (typeof secret !== 'string' || secret === '') {
+    throw new AppError('Instagram send needs the call-time secret', { code: 'CHANNEL_SECRET_UNAVAILABLE', status: 500 });
+  }
+  const to = typeof message.to === 'string' ? message.to.trim() : '';
+  if (to === '' || to.length > MAX_ID) {
+    throw new AppError('Instagram send needs a bounded "to"', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
+  }
+  if (typeof message.text !== 'string' || message.text === '' || message.text.length > MAX_TEXT) {
+    throw new AppError('Instagram send needs non-empty "text" (at most 4096 chars)', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
+  }
+  const tag = message.tag;
+  if (tag !== undefined && tag !== INSTAGRAM_HUMAN_AGENT_TAG) {
+    throw new AppError(`Instagram send tag must be "${INSTAGRAM_HUMAN_AGENT_TAG}" when present`, { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
+  }
+  const url = `${config.baseUrl}/v${config.apiVersion}/${config.pageId}/messages`;
+  const headers = { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' };
+  return {
+    method: 'POST',
+    url,
+    headers,
+    body: {
+      recipient: { id: to },
+      messaging_type: 'RESPONSE',
+      ...(tag === undefined ? {} : { tag }),
+      message: { text: message.text },
+    },
+  };
+}
+
+function assertInstagramConfig(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ValidationError('Instagram adapter options must be a plain object', { field: 'config' });
+  }
+  const pageId = typeof input.pageId === 'string' ? input.pageId : '';
+  if (!PAGE_ID.test(pageId)) {
+    throw new ValidationError('Instagram adapter needs a bounded pageId (Meta page-id digits)', { field: 'config.pageId' });
+  }
+  const apiVersion = input.apiVersion === undefined ? '21.0' : input.apiVersion;
+  if (typeof apiVersion !== 'string' || !API_VERSION.test(apiVersion)) {
+    throw new ValidationError('Instagram adapter apiVersion must look like "21.0"', { field: 'config.apiVersion' });
+  }
+  const baseUrl = input.baseUrl === undefined ? 'https://graph.facebook.com' : input.baseUrl;
+  if (typeof baseUrl !== 'string' || !/^https:\/\/[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(baseUrl)) {
+    throw new ValidationError('Instagram adapter baseUrl must be a bounded https origin', { field: 'config.baseUrl' });
+  }
+  return Object.freeze({ pageId, apiVersion, baseUrl });
 }
 
 /** Headers a fake Graph client sends for a signed body (tests only). */
@@ -144,25 +214,28 @@ function isCanonicalInstant(value) {
 
 /**
  * @param {{
- *   secret?: string, pageId?: string, testOnly?: boolean,
- *   nowMs?: () => number,
+ *   secret?: string, pageId?: string, apiVersion?: string, baseUrl?: string,
+ *   testOnly?: boolean, nowMs?: () => number,
  * }} options `secret` is the expected fixture value the fake transport
  * shares (never stored — compared in memory at send time, like the
- * fixture). `pageId` is the bound Instagram account: the kit/self-test
- * loopback address. `nowMs` is injectable for window tests.
+ * fixture). `pageId` is the bound Instagram business account id (Meta
+ * page-id digits): the address the Graph send mapping posts replies to.
+ * `nowMs` is injectable for window tests.
  */
 export function createInstagramChannelAdapter(options = {}) {
-  const expectedSecret = options.secret ?? 'instagram-fixture-secret';
-  const pageId = options.pageId ?? 'ig-page-fake';
+  const expectedSecret = typeof options.secret === 'string' && options.secret !== ''
+    ? options.secret : 'instagram-fixture-secret';
+  const config = assertInstagramConfig(options);
   const testOnly = options.testOnly ?? true;
   const nowMs = typeof options.nowMs === 'function' ? options.nowMs : () => Date.now();
+  const pageId = config.pageId;
   // The adapter keeps no per-user window memory: the reply window reads the
   // persisted inbox per (space, connection) through the `outboundWindow`
   // capability below, so one space can never send on another's consent.
   const state = {
     mode: 'ok',
     flakyRemaining: 0,
-    /** @type {Map<string, {providerMessageId: string, message: any}>} */
+    /** @type {Map<string, {providerMessageId: string, request: any}>} */
     sentByKey: new Map(),
     sendCalls: 0,
     seedCounter: 0,
@@ -183,7 +256,10 @@ export function createInstagramChannelAdapter(options = {}) {
       state.seedCounter = 0;
     },
     sentMessages() {
-      return [...state.sentByKey.values()].map((entry) => entry.message);
+      return [...state.sentByKey.values()].map((entry) => entry.request.body);
+    },
+    sentRequests() {
+      return [...state.sentByKey.values()].map((entry) => entry.request);
     },
   };
 
@@ -272,7 +348,12 @@ export function createInstagramChannelAdapter(options = {}) {
       version: INSTAGRAM_ADAPTER_VERSION,
       label: 'Instagram Graph',
       channel: 'instagram',
-      config: { testOnly, pageId },
+      config: {
+        pageId: config.pageId,
+        apiVersion: config.apiVersion,
+        baseUrl: config.baseUrl,
+        testOnly,
+      },
 
       verifyInbound({ rawBody, headers, secret }) {
         if (verifyMetaHubSignature(rawBody, headers?.[HUB_SIGNATURE_HEADER], secret)) {
@@ -427,8 +508,24 @@ export function createInstagramChannelAdapter(options = {}) {
         }
         const existing = state.sentByKey.get(idempotencyKey);
         if (existing) return { providerMessageId: existing.providerMessageId };
+        const request = buildInstagramSendRequest({
+          message,
+          config: {
+            pageId: config.pageId,
+            apiVersion: config.apiVersion,
+            baseUrl: config.baseUrl,
+          },
+          secret,
+        });
         const providerMessageId = `igmid.fake-${state.sentByKey.size + 1}`;
-        state.sentByKey.set(idempotencyKey, { providerMessageId, message });
+        // The auth header is call-time only: the retained copy keeps the
+        // wire shape minus the secret, so no dump of sentRequests() leaks it.
+        const { Authorization: _withheld, ...publicHeaders } = request.headers;
+        void _withheld;
+        state.sentByKey.set(idempotencyKey, {
+          providerMessageId,
+          request: { method: request.method, url: request.url, headers: publicHeaders, body: request.body },
+        });
         return { providerMessageId };
       },
     },

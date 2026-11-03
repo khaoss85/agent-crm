@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { runChannelAdapterKit } from '../packages/channels/src/kit.js';
 import { fixtureWebhookHeaders } from '../packages/channels/src/fixture.js';
 import {
+  buildInstagramSendRequest,
   createInstagramChannelAdapter,
   instagramEventBody,
   instagramWebhookHeaders,
@@ -191,7 +192,59 @@ test('a reply inside the window sends once; the same key queued twice sends once
   assert.equal(first.jobId, second.jobId, 'the idempotency root resolves identically');
   assert.equal((await harness.pump(first.jobId)).state, 'succeeded');
   assert.equal(api.state.sentByKey.size, 1, 'one effective provider send');
-  assert.ok(api.sentMessages()[0].text.includes('alle 18'));
+  assert.ok(api.sentMessages()[0].message.text.includes('alle 18'));
+  const [request] = api.sentRequests();
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, `https://graph.facebook.com/v21.0/${PAGE_ID}/messages`);
+  assert.deepEqual(request.body, {
+    recipient: { id: 'ig-user-9' },
+    messaging_type: 'RESPONSE',
+    message: { text: 'Certo, alle 18!' },
+  });
+  assert.ok(!('Authorization' in request.headers), 'the retained copy never carries the secret');
+});
+
+test('the REST mapping posts text and tagged replies to the bound page id', () => {
+  const config = { pageId: PAGE_ID, apiVersion: '21.0', baseUrl: 'https://fake-meta.test' };
+  const textRequest = buildInstagramSendRequest({
+    message: { to: 'ig-user-9', text: 'Ciao!' }, config, secret: SECRET,
+  });
+  assert.equal(textRequest.method, 'POST');
+  assert.equal(textRequest.url, `https://fake-meta.test/v21.0/${PAGE_ID}/messages`);
+  assert.equal(textRequest.headers.Authorization, `Bearer ${SECRET}`);
+  assert.deepEqual(textRequest.body, {
+    recipient: { id: 'ig-user-9' },
+    messaging_type: 'RESPONSE',
+    message: { text: 'Ciao!' },
+  });
+  const taggedRequest = buildInstagramSendRequest({
+    message: { to: 'ig-user-9', text: 'Riprendiamo da qui', tag: INSTAGRAM_HUMAN_AGENT_TAG },
+    config,
+    secret: SECRET,
+  });
+  assert.equal(taggedRequest.body.tag, INSTAGRAM_HUMAN_AGENT_TAG);
+  assert.throws(
+    () => buildInstagramSendRequest({ message: { to: 'ig-user-9', text: 'x' }, config, secret: '' }),
+    (error) => error.code === 'CHANNEL_SECRET_UNAVAILABLE',
+  );
+  assert.throws(
+    () => buildInstagramSendRequest({ message: { to: 'ig-user-9', text: 'x', tag: 'PROMO' }, config, secret: SECRET }),
+    (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED',
+  );
+});
+
+test('composition refuses a non-Meta page id; the Graph origin stays https', () => {
+  assert.throws(
+    () => createInstagramChannelAdapter({ pageId: 'ig-page-fake' }),
+    /pageId/,
+  );
+  assert.throws(
+    () => createInstagramChannelAdapter({ pageId: PAGE_ID, baseUrl: 'http://plain.test' }),
+    /baseUrl/,
+  );
+  const { definition } = createInstagramChannelAdapter({ pageId: PAGE_ID });
+  assert.equal(definition.config.pageId, PAGE_ID);
+  assert.equal(definition.config.apiVersion, '21.0');
 });
 
 test('window enforcement uses the injected clock: late replies refuse at queue time, tagged ones pass', async (t) => {
