@@ -414,6 +414,7 @@ import { renderDemoChrome } from './admin-demo.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
 import { createQuoteView } from './admin-quotes.js';
+import { createOfferDetail } from './admin-offer.js';
 import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
@@ -493,6 +494,14 @@ const pipelineBoard = createPipelineBoard({
 // Quote builder (ADR-016) over the ADR-009 override seam: the generic action
 // forms cannot browse a price book, so this focused view owns that experience
 // while every mutation still goes through the same server actions.
+const offerDetail = createOfferDetail({
+  doc: document,
+  mount: moduleView,
+  client: moduleClient,
+  submissions,
+  navigate: (hash) => { window.location.hash = hash; },
+});
+
 const quoteView = createQuoteView({
   doc: document,
   mount: moduleView,
@@ -899,6 +908,7 @@ function shellScreenFor(target) {
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
+    case 'offer-detail': return { id: 'pipeline', label: 'Offerta' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
     // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
@@ -1168,6 +1178,7 @@ async function route() {
     else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId);
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') await clientiListView.render();
     else if (target.view === 'customer-import') await customerDataView.render();

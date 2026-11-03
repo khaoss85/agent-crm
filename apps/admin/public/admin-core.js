@@ -386,6 +386,16 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'sequenze' };
   }
+  // Offer detail route: #/offerte/<id> (backlog:ef92f728). The deal page
+  // behind the pipeline card's Apri button — same canonical discipline as
+  // module detail routes; anything else is invalid, not a lookup.
+  if (rawParts.length && rawParts[0] === 'offerte') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 2) return { view: 'invalid' };
+    const offerId = safeDecode(rawParts[1]);
+    if (offerId === null || offerId === '' || offerId.includes('/')) return { view: 'invalid' };
+    return { view: 'offer-detail', offerId };
+  }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
   if (rawParts.length && rawParts[0] === 'quotes') {

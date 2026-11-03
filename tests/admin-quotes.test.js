@@ -125,27 +125,28 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
 
   const text = mount.textContent;
   // Grouped totals: one-time, monthly and annual are shown separately and are
-  // never combined into a single grand total.
-  assert.ok(text.includes('EUR 5,000.00'), `one-time total rendered (${text})`);
-  assert.ok(text.includes('EUR 3,200.00'), 'monthly total rendered');
-  assert.ok(text.includes('EUR 9,500.00'), 'annual total rendered');
-  assert.ok(text.includes('One-time'), 'the one-time group is labelled');
-  assert.ok(text.includes('Recurring every 1 month(s)'), 'the monthly group is labelled');
-  assert.ok(text.includes('Recurring every 1 year(s)'), 'the annual group is labelled');
+  // never combined into a single grand total. Amounts use the Italian screen
+  // form: dot for thousands, comma for cents, EUR as the € sign.
+  assert.ok(text.includes('5.000 €'), `one-time total rendered (${text})`);
+  assert.ok(text.includes('3.200 €'), 'monthly total rendered');
+  assert.ok(text.includes('9.500 €'), 'annual total rendered');
+  assert.ok(text.includes('Una tantum'), 'the one-time group is labelled');
+  assert.ok(text.includes('Ricorrente ogni 1 mese'), 'the monthly group is labelled');
+  assert.ok(text.includes('Ricorrente ogni 1 anno'), 'the annual group is labelled');
   assert.ok(!/ARR|MRR|TCV/.test(text), 'no ARR/MRR/TCV is implied');
-  assert.ok(text.includes('Periods are never combined'), 'the grouping contract is disclosed');
-  assert.ok(text.includes('server-calculated'), 'the money contract is disclosed');
-  assert.ok(text.includes('5.00%'), 'basis points shown as a percentage');
-  assert.ok(text.includes('Discount in basis points'), 'the discount unit is explained');
-  assert.ok(text.includes('flat fees are charged once'), 'quantity semantics disclosed');
+  assert.ok(text.includes('I periodi non si sommano mai'), 'the grouping contract is disclosed');
+  assert.ok(text.includes('calcolati dal server'), 'the money contract is disclosed');
+  assert.ok(text.includes('5,00%'), 'basis points shown as a percentage');
+  assert.ok(text.includes('Sconto in punti base'), 'the discount unit is explained');
+  assert.ok(text.includes('le quote fisse si addebitano una volta'), 'quantity semantics disclosed');
   // Component breakdown with the tier band.
   const components = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-component');
   assert.equal(components.length, 3, 'every component of the composite offer is shown');
-  assert.ok(components[0].textContent.includes('one-time'), 'charge type shown');
-  assert.ok(components[1].textContent.includes('every 1 month(s)'), 'recurrence shown');
+  assert.ok(components[0].textContent.includes('una tantum'), 'charge type shown');
+  assert.ok(components[1].textContent.includes('ogni 1 mese'), 'recurrence shown');
   const tiers = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-tier');
   assert.equal(tiers.length, 1, 'the tier band is shown');
-  assert.ok(tiers[0].textContent.includes('30 × EUR 40.00'), `tier breakdown rendered (${tiers[0].textContent})`);
+  assert.ok(tiers[0].textContent.includes('30 × 40 €'), `tier breakdown rendered (${tiers[0].textContent})`);
   // Draft controls exist; approval/revise controls do not.
   assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '') === 'quote-add-line'));
   assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '') === 'quote-submit'));
@@ -212,12 +213,12 @@ test('pending approval shows human decision controls; approved and rejected show
 
   const approved = createMount();
   await createQuoteView({ doc: createFakeDocument(), mount: approved, client: stubClient({ quoteRecord: quote({ status: 'approved', currentVersionId: 'v1' }) }) }).renderQuoteDetail('q1');
-  assert.ok(approved.textContent.includes('read-only'), 'the commercial content of an approved quote is read-only');
+  assert.ok(approved.textContent.includes('in sola lettura'), 'the commercial content of an approved quote is read-only');
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-add-line').length, 0);
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-decide').length, 0);
   // The commercial view never invents a signature surface on its own: without
   // the ADR-017 schema block it degrades to a statement, not a control.
-  assert.ok(approved.textContent.includes('Signature is not enabled in this project.'));
+  assert.ok(approved.textContent.includes('La firma non è attiva in questo progetto.'));
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'signature-request').length, 0);
 });
 
@@ -232,9 +233,9 @@ test('version history lists immutable versions with their policy decision', asyn
   const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-version-row');
   assert.equal(rows.length, 2);
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
-  assert.ok(rows[1].textContent.includes('approval_required'));
-  assert.ok(rows[1].textContent.includes('one-time EUR 5,000.00'), 'versions show grouped periods');
-  assert.ok(rows[1].textContent.includes('EUR 3,200.00 / 1 month(s)'), 'recurring period shown per version');
+  assert.ok(rows[1].textContent.includes('Richiede approvazione'));
+  assert.ok(rows[1].textContent.includes('una tantum 5.000 €'), 'versions show grouped periods');
+  assert.ok(rows[1].textContent.includes('3.200 € ogni 1 mese'), 'recurring period shown per version');
 });
 
 test('hostile catalog and quote values render as inert text', async () => {
@@ -276,10 +277,10 @@ test('cf340b571e98: the detail links back to the customer scheda', async () => {
   assert.equal(back.textContent, '← Ada Rossi', 'the link names the customer');
   assert.equal(mount.childNodes[0], back, 'the back link paints above the detail');
   const text = mount.textContent;
-  assert.ok(text.includes('Lines (1)'), 'the detail still shows the lines');
-  assert.ok(text.includes('EUR 5,000.00'), 'the detail still shows the total');
-  assert.ok(text.includes('Status'), 'the detail still shows the state');
-  assert.ok(text.includes('Versions (0)'), 'the detail still shows the history');
+  assert.ok(text.includes('Righe (1)'), 'the detail still shows the lines');
+  assert.ok(text.includes('5.000 €'), 'the detail still shows the total');
+  assert.ok(text.includes('Stato'), 'the detail still shows the state');
+  assert.ok(text.includes('Versioni (0)'), 'the detail still shows the history');
 });
 
 test('cf340b571e98: a quote without a resolvable customer still renders without the way back', async () => {
@@ -299,8 +300,9 @@ test('cf340b571e98: a quote without a resolvable customer still renders without 
     await createQuoteView({ doc: createFakeDocument(), mount, client: variant.client }).renderQuoteDetail('q1');
     assert.equal(mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-back').length, 0,
       `${variant.name}: no back link`);
-    assert.ok(mount.textContent.includes('Quote q1'), `${variant.name}: the detail still renders`);
-    assert.ok(mount.textContent.includes('Totals by commercial period'), `${variant.name}: the totals still render`);
+    assert.ok(mount.textContent.includes('Preventivo'), `${variant.name}: the detail still renders`);
+    assert.ok(!/Quote q1/.test(mount.textContent), `${variant.name}: no technical id in the heading`);
+    assert.ok(mount.textContent.includes('Totali per periodo commerciale'), `${variant.name}: the totals still render`);
   }
 });
 
@@ -343,4 +345,34 @@ test('quote routes parse canonically; hostile routes are invalid', () => {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
   assert.equal(parseModuleRoute('#/modules/quote').view, 'list', 'module routes unchanged');
+});
+
+test('ef92f728: the quote detail shows no English and no technical id, amounts in Italian', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [],
+    opportunityRecord: {
+      id: 'o1', companyId: 'co1', companyName: 'Palestra Esempio',
+      contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT', stage: 'proposal',
+    },
+  });
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(text.includes('Preventivo · Proposta esempio — Pacchetto 10 PT'), 'the heading names the offer, never an id');
+  for (const english of [
+    'Quote ', 'Totals by', 'Loading', 'Status:', 'Currency', 'Draft revision',
+    'Lines (', 'Versions (', 'Add line', 'Update', 'Remove', 'Submit', 'Approve',
+    'Reject', 'Revise', 'Signature', 'Order', ' one-time ', 'every 1 month',
+    'server-calculated', 'list ', 'discount ', 'net (', 'quantity ', 'flat',
+  ]) {
+    assert.ok(!text.includes(english), `no English UI text: ${english}`);
+  }
+  assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID in visible text');
+  assert.ok(text.includes('5.000 €'), 'thousands use the dot separator');
+  assert.ok(text.includes('7.790 €'), 'line totals use the dot separator');
+  assert.ok(text.includes('5,00%'), 'percentages use the comma');
 });

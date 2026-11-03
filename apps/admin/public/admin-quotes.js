@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatMinorUnits, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -72,7 +72,7 @@ export function createQuoteView(deps) {
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
-  const money = (cents, currency) => (typeof cents === 'number' ? formatMinorUnits(cents, currency) : '—');
+  const money = (cents, currency) => formatAmount(cents, currency);
   /** Frozen VAT text for one group, or '' when the totals predate VAT. */
   const vatText = (vatEntry, currency, rateBps) => {
     if (!Number.isSafeInteger(rateBps) || rateBps < 0 || rateBps > 10000
@@ -80,8 +80,44 @@ export function createQuoteView(deps) {
       || !Number.isSafeInteger(vatEntry?.grossAmountCents)) {
       return '';
     }
-    const label = rateBps % 100 === 0 ? String(rateBps / 100) : (rateBps / 100).toFixed(2);
-    return ` · VAT ${label}% ${money(vatEntry.vatAmountCents, currency)} · total ${money(vatEntry.grossAmountCents, currency)}`;
+    const label = rateBps % 100 === 0 ? String(rateBps / 100) : (rateBps / 100).toFixed(2).replace('.', ',');
+    return ` · IVA ${label}% ${money(vatEntry.vatAmountCents, currency)} · totale ${money(vatEntry.grossAmountCents, currency)}`;
+  };
+
+  /** Italian label of a quote status; unknown states stay an em dash. */
+  const quoteStatusLabel = (status) => {
+    if (status === 'draft') return 'Bozza';
+    if (status === 'pending_approval') return 'In attesa di approvazione';
+    if (status === 'approved') return 'Approvato';
+    if (status === 'rejected') return 'Rifiutato';
+    return '—';
+  };
+
+  /** Italian label of a version policy decision; unknown decisions stay an em dash. */
+  const policyDecisionLabel = (decision) => {
+    if (decision === 'approval_required') return 'Richiede approvazione';
+    if (decision === 'auto_approve') return 'Approvazione automatica';
+    return quoteStatusLabel(decision);
+  };
+
+  /** Italian label of a pricing model; unknown models stay an em dash. */
+  const pricingModelLabel = (model) => {
+    if (model === 'flat_fee') return 'quota fissa';
+    if (model === 'per_unit') return 'a unità';
+    if (model === 'volume') return 'a volume';
+    if (model === 'graduated' || model === 'tiered') return 'a scaglioni';
+    return '—';
+  };
+
+  /** Italian label of a commercial period: month, year, week, day. */
+  const periodLabel = (count, interval) => {
+    const n = Number(count) || 0;
+    const one = n === 1;
+    if (interval === 'month') return one ? 'mese' : 'mesi';
+    if (interval === 'year') return one ? 'anno' : 'anni';
+    if (interval === 'week') return one ? 'settimana' : 'settimane';
+    if (interval === 'day') return one ? 'giorno' : 'giorni';
+    return String(interval ?? '—');
   };
 
   async function fetchRows(module, filter) {
@@ -95,38 +131,40 @@ export function createQuoteView(deps) {
    * from. Resolved quote → opportunity → contact (else company), reading the
    * same contact/company name the scheda header shows. Best-effort: any
    * missing or unreadable step yields null, never a failed detail — righe,
-   * totale, stato and storia render with or without the way back.
+   * totale, stato and storia render with or without the way back. Returns
+   * the link together with the opportunity name for the Italian heading.
    * @param {any} quote
    */
   async function resolveCardBackLink(quote) {
     const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
-    if (opportunityId === null) return null;
+    if (opportunityId === null) return { back: null, opportunityName: null };
     let opportunity;
     try {
       opportunity = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}`);
     } catch {
-      return null;
+      return { back: null, opportunityName: null };
     }
+    const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
     const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
     const subjectId = contactId ?? companyId;
-    if (resource === null || subjectId === null) return null;
+    if (resource === null || subjectId === null) return { back: null, opportunityName };
     const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
     const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : null;
-    if (name === null) return null;
+    if (name === null) return { back: null, opportunityName };
     const back = el('a', 'quote-back');
     back.setAttribute('href', `#/customer-card/${resource}/${encodeURIComponent(subjectId)}`);
     // Text only: a hostile customer name stays inert text inside the link.
     back.textContent = `← ${name}`;
-    return back;
+    return { back, opportunityName };
   }
 
   async function renderQuoteList() {
     const token = ++renderToken;
     clear();
-    mount.appendChild(el('h2', 'panel-title', 'Quotes'));
-    const status = el('p', 'muted', 'Loading quotes…');
+    mount.appendChild(el('h2', 'panel-title', 'Preventivi'));
+    const status = el('p', 'muted', 'Caricamento…');
     mount.appendChild(status);
     let schema;
     let quotes;
@@ -137,22 +175,24 @@ export function createQuoteView(deps) {
       books = await fetchRows('price-book', (book) => book.active === true);
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Could not load quotes. Try again later.' });
+      status.textContent = humanReadError(error, { failed: 'Preventivi non leggibili. Riprova più tardi.' });
       return;
     }
     if (token !== renderToken) return;
     if (!commercialBlock(schema)) {
-      status.textContent = 'Commercial Operations is not enabled in this project.';
+      status.textContent = 'La gestione commerciale non è attiva in questo progetto.';
       return;
     }
-    status.textContent = quotes.truncated ? `Showing the first ${LIST_LIMIT} quotes only.` : `${quotes.rows.length} quote(s).`;
+    status.textContent = quotes.truncated
+      ? `Mostro solo i primi ${LIST_LIMIT} preventivi.`
+      : `${quotes.rows.length} preventiv${quotes.rows.length === 1 ? 'o' : 'i'}.`;
 
     // Create form: opportunity id + active price book → the server action.
     const form = el('div', 'quote-create');
-    form.appendChild(el('h3', undefined, 'New quote'));
+    form.appendChild(el('h3', undefined, 'Nuovo preventivo'));
     const opportunityInput = el('input');
     opportunityInput.setAttribute('name', 'opportunityId');
-    opportunityInput.setAttribute('placeholder', 'Opportunity id');
+    opportunityInput.setAttribute('placeholder', 'ID offerta');
     const bookSelect = el('select');
     bookSelect.setAttribute('name', 'priceBookId');
     for (const book of books.rows) {
@@ -161,12 +201,12 @@ export function createQuoteView(deps) {
       bookSelect.appendChild(option);
       if (bookSelect.value === undefined || bookSelect.value === '') bookSelect.value = book.id;
     }
-    const createButton = el('button', undefined, 'Create quote');
+    const createButton = el('button', undefined, 'Crea preventivo');
     const createError = el('small', 'field-error', '');
     createButton.addEventListener('click', async () => {
       const opportunityId = String(opportunityInput.value ?? '').trim();
       if (!opportunityId) {
-        createError.textContent = 'Opportunity id is required';
+        createError.textContent = 'Scegli l’offerta per cui creare il preventivo.';
         return;
       }
       createButton.disabled = true;
@@ -177,7 +217,7 @@ export function createQuoteView(deps) {
         );
         navigate(`#/quotes/${created.result.quote.id}`);
       } catch (error) {
-        createError.textContent = error?.message ?? 'Create failed';
+        createError.textContent = error?.message ?? 'Creazione non riuscita';
       } finally {
         createButton.disabled = false;
       }
@@ -194,10 +234,10 @@ export function createQuoteView(deps) {
       row.setAttribute('data-quote', quote.id);
       const quoteTotals = parseTotals(quote.totalsJson);
       const recurringSummary = quoteTotals.recurringTotals
-        .map((group) => `${money(group.netAmountCents, quote.currency)}/${group.intervalCount}${group.interval[0]}`)
-        .join(' + ') || 'no recurring';
+        .map((group) => `${money(group.netAmountCents, quote.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`)
+        .join(' + ') || 'nessuna ricorrenza';
       const link = el('a', undefined,
-        `${quote.id} — ${quote.status} — one-time ${money(quoteTotals.oneTimeTotal?.netAmountCents ?? 0, quote.currency)} · ${recurringSummary}`);
+        `Preventivo · ${quoteStatusLabel(quote.status)} · una tantum ${money(quoteTotals.oneTimeTotal?.netAmountCents ?? 0, quote.currency)} · ${recurringSummary}`);
       link.setAttribute('href', `#/quotes/${quote.id}`);
       row.appendChild(link);
       list.appendChild(row);
@@ -208,9 +248,9 @@ export function createQuoteView(deps) {
   async function renderQuoteDetail(quoteId) {
     const token = ++renderToken;
     clear();
-    const heading = el('h2', 'panel-title', `Quote ${quoteId}`);
+    const heading = el('h2', 'panel-title', 'Preventivo');
     mount.appendChild(heading);
-    const status = el('p', 'muted', 'Loading quote…');
+    const status = el('p', 'muted', 'Caricamento…');
     mount.appendChild(status);
     let schema;
     let quote;
@@ -227,7 +267,7 @@ export function createQuoteView(deps) {
         .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Could not load the quote. Try again later.' });
+      status.textContent = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
       return;
     }
     if (token !== renderToken) return;
@@ -237,8 +277,9 @@ export function createQuoteView(deps) {
     // Heading and status already paint as the loading indicator, so they move
     // below the link with remove-then-append (a move in both the real DOM
     // and the test double, never a copy).
-    const back = await resolveCardBackLink(quote);
+    const { back, opportunityName } = await resolveCardBackLink(quote);
     if (token !== renderToken) return;
+    if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
     if (back !== null) {
       mount.removeChild(heading);
       mount.removeChild(status);
@@ -250,9 +291,9 @@ export function createQuoteView(deps) {
     const summary = el('div', 'quote-summary');
     summary.setAttribute('data-status', quote.status);
     for (const [label, value] of [
-      ['Status', quote.status],
-      ['Currency', quote.currency],
-      ['Draft revision', quote.draftRevision],
+      ['Stato', quoteStatusLabel(quote.status)],
+      ['Valuta', quote.currency],
+      ['Revisione bozza', quote.draftRevision],
     ]) {
       const row = el('p', 'quote-fact');
       row.appendChild(el('strong', undefined, `${label}: `));
@@ -267,23 +308,23 @@ export function createQuoteView(deps) {
     const totals = parseTotals(quote.totalsJson);
     const totalsPanel = el('div', 'quote-totals');
     totalsPanel.setAttribute('data-recurring-groups', String(totals.recurringTotals.length));
-    totalsPanel.appendChild(el('h3', undefined, 'Totals by commercial period'));
+    totalsPanel.appendChild(el('h3', undefined, 'Totali per periodo commerciale'));
     const totalRow = (label, group, vatEntry) => {
       const row = el('p', 'quote-total-row');
       row.setAttribute('data-total', label);
       row.appendChild(el('strong', undefined, `${label}: `));
       row.appendChild(el('span', undefined,
-        `${money(group.netAmountCents, group.currency ?? quote.currency)} net (list ${money(group.listAmountCents, group.currency ?? quote.currency)}, discount ${money(group.discountAmountCents, group.currency ?? quote.currency)})${vatText(vatEntry, group.currency ?? quote.currency, totals.vatRateBps)}`));
+        `${money(group.netAmountCents, group.currency ?? quote.currency)} netto (listino ${money(group.listAmountCents, group.currency ?? quote.currency)}, sconto ${money(group.discountAmountCents, group.currency ?? quote.currency)})${vatText(vatEntry, group.currency ?? quote.currency, totals.vatRateBps)}`));
       totalsPanel.appendChild(row);
     };
-    if (totals.oneTimeTotal) totalRow('One-time', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
+    if (totals.oneTimeTotal) totalRow('Una tantum', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
     totals.recurringTotals.forEach((group, index) => {
-      totalRow(`Recurring every ${group.intervalCount} ${group.interval}(s)`, group, totals.vat?.recurring?.[index] ?? null);
+      totalRow(`Ricorrente ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`, group, totals.vat?.recurring?.[index] ?? null);
     });
     if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
-      totalsPanel.appendChild(el('p', 'empty', 'No lines yet.'));
+      totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
-    totalsPanel.appendChild(el('p', 'muted', 'All amounts are server-calculated (1/100 currency units, two decimals). Periods are never combined into a single total, and no annualized or contract-value figure is derived (contract term is not modeled).'));
+    totalsPanel.appendChild(el('p', 'muted', 'Tutti gli importi sono calcolati dal server (centesimi, due decimali). I periodi non si sommano mai in un unico totale e non si ricava nessuna cifra annualizzata o di contratto (la durata del contratto non è modellata).'));
     mount.appendChild(totalsPanel);
 
     const errorLine = el('small', 'field-error', '');
@@ -296,7 +337,7 @@ export function createQuoteView(deps) {
         await fn();
         await renderQuoteDetail(quoteId); // re-render from server state
       } catch (error) {
-        errorLine.textContent = error?.message ?? 'Request failed';
+        errorLine.textContent = error?.message ?? 'Richiesta non riuscita';
         for (const control of busy) control.disabled = false;
       }
     };
@@ -308,28 +349,28 @@ export function createQuoteView(deps) {
 
     // Draft lines with controlled edit/remove.
     const linesPanel = el('div', 'quote-lines');
-    linesPanel.appendChild(el('h3', undefined, `Lines (${lines.length})`));
+    linesPanel.appendChild(el('h3', undefined, `Righe (${lines.length})`));
     for (const line of lines) {
       const row = el('div', 'quote-line');
       row.setAttribute('data-line', line.id);
       row.appendChild(el('span', 'quote-line-head',
-        `${line.sku} · ${line.offerName} (rev ${line.offerRevision}) · qty ${line.quantity} · discount ${(line.discountBps / 100).toFixed(2)}% · net ${money(line.netAmountCents, quote.currency)}`));
+        `${line.sku} · ${line.offerName} (rev. ${line.offerRevision}) · quantità ${line.quantity} · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}% · netto ${money(line.netAmountCents, quote.currency)}`));
       // Every price component of the offer, with its tier breakdown.
       const breakdown = parseBreakdown(line.breakdownJson);
       const componentList = el('div', 'quote-components');
       for (const component of breakdown) {
         const recurrence = component.chargeType === 'one_time'
-          ? 'one-time'
-          : `every ${component.intervalCount} ${component.interval}(s)`;
+          ? 'una tantum'
+          : `ogni ${component.intervalCount} ${periodLabel(component.intervalCount, component.interval)}`;
         const componentRow = el('p', 'quote-component');
         componentRow.setAttribute('data-component', component.componentId ?? component.componentKey ?? '');
         componentRow.textContent =
-          `${component.label ?? component.componentKey} · ${component.pricingModel} · ${recurrence} · list ${money(component.listAmountCents, quote.currency)} · net ${money(component.netAmountCents, quote.currency)}`;
+          `${component.label ?? component.componentKey} · ${pricingModelLabel(component.pricingModel)} · ${recurrence} · listino ${money(component.listAmountCents, quote.currency)} · netto ${money(component.netAmountCents, quote.currency)}`;
         componentList.appendChild(componentRow);
         for (const band of component.tierBreakdown ?? []) {
           const bandRow = el('p', 'quote-tier');
           bandRow.textContent =
-            `tier ${band.position}: ${band.from}–${band.to ?? '∞'} · ${band.quantity} × ${money(band.unitAmountCents, quote.currency)}${band.flatAmountCents ? ` + ${money(band.flatAmountCents, quote.currency)} flat` : ''} = ${money(band.amountCents, quote.currency)}`;
+            `fascia ${band.position}: ${band.from}–${band.to ?? '∞'} · ${band.quantity} × ${money(band.unitAmountCents, quote.currency)}${band.flatAmountCents ? ` + ${money(band.flatAmountCents, quote.currency)} quota fissa` : ''} = ${money(band.amountCents, quote.currency)}`;
           componentList.appendChild(bandRow);
         }
       }
@@ -341,9 +382,9 @@ export function createQuoteView(deps) {
         const discountInput = el('input');
         discountInput.setAttribute('type', 'number');
         discountInput.value = String(line.discountBps);
-        discountInput.setAttribute('title', 'Discount in basis points: 1000 = 10.00%');
-        const updateButton = el('button', undefined, 'Update');
-        const removeButton = el('button', undefined, 'Remove');
+        discountInput.setAttribute('title', 'Sconto in punti base: 1000 = 10,00%');
+        const updateButton = el('button', undefined, 'Aggiorna');
+        const removeButton = el('button', undefined, 'Rimuovi');
         busy.push(updateButton, removeButton);
         updateButton.addEventListener('click', () => withBusy(() => act('update-line', {
           lineId: line.id,
@@ -369,7 +410,7 @@ export function createQuoteView(deps) {
 
     if (quote.status === 'draft') {
       const addPanel = el('div', 'quote-add-line');
-      addPanel.appendChild(el('h3', undefined, 'Add line'));
+      addPanel.appendChild(el('h3', undefined, 'Aggiungi riga'));
       const entrySelect = el('select');
       for (const entry of entries) {
         const option = el('option', undefined, `${entry.name} — ${entry.componentCount} component(s)`);
@@ -377,15 +418,15 @@ export function createQuoteView(deps) {
         entrySelect.appendChild(option);
         if (entrySelect.value === undefined || entrySelect.value === '') entrySelect.value = entry.id;
       }
-      if (entries.length === 0) addPanel.appendChild(el('p', 'empty', 'No quote-eligible offers in this price book.'));
+      if (entries.length === 0) addPanel.appendChild(el('p', 'empty', 'Nessuna offerta aggiungibile in questo listino.'));
       const quantityInput = el('input');
       quantityInput.setAttribute('type', 'number');
       quantityInput.value = '1';
       const discountInput = el('input');
       discountInput.setAttribute('type', 'number');
       discountInput.value = '0';
-      const hint = el('small', 'muted', 'Quantity applies to per-unit and tiered components; flat fees are charged once. Discount in basis points (integer 0–10000): 1000 = 10.00%.');
-      const addButton = el('button', undefined, 'Add line');
+      const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Sconto in punti base (intero 0–10000): 1000 = 10,00%.');
+      const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
       addButton.addEventListener('click', () => withBusy(() => act('add-line', {
         offerId: entrySelect.value,
@@ -405,7 +446,7 @@ export function createQuoteView(deps) {
       mount.appendChild(addPanel);
 
       const submitPanel = el('div', 'quote-submit');
-      submitPanel.appendChild(el('h3', undefined, 'Submit for approval'));
+      submitPanel.appendChild(el('h3', undefined, 'Invia per l’approvazione'));
       const policySelect = el('select');
       for (const policy of commercialBlock(schema)?.discountPolicies ?? []) {
         const option = el('option', undefined, `${policy.label} (v${policy.version})`);
@@ -413,7 +454,7 @@ export function createQuoteView(deps) {
         policySelect.appendChild(option);
         if (policySelect.value === undefined || policySelect.value === '') policySelect.value = `${policy.name}@${policy.version}`;
       }
-      const submitButton = el('button', undefined, 'Submit');
+      const submitButton = el('button', undefined, 'Invia');
       busy.push(submitButton);
       submitButton.addEventListener('click', () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
@@ -430,12 +471,12 @@ export function createQuoteView(deps) {
 
     if (quote.status === 'pending_approval') {
       const decidePanel = el('div', 'quote-decide');
-      decidePanel.appendChild(el('h3', undefined, 'Pending human approval'));
-      decidePanel.appendChild(el('p', 'muted', 'Decisions are made as the local Admin user actor; role enforcement waits for the Production Spine.'));
+      decidePanel.appendChild(el('h3', undefined, 'In attesa di approvazione'));
+      decidePanel.appendChild(el('p', 'muted', 'Le decisioni sono prese come utente Admin locale; i ruoli veri arrivano con il Production Spine.'));
       const reasonInput = el('input');
-      reasonInput.setAttribute('placeholder', 'Decision reason (required to reject)');
-      const approveButton = el('button', undefined, 'Approve');
-      const rejectButton = el('button', undefined, 'Reject');
+      reasonInput.setAttribute('placeholder', 'Motivo della decisione (obbligatorio per rifiutare)');
+      const approveButton = el('button', undefined, 'Approva');
+      const rejectButton = el('button', undefined, 'Rifiuta');
       busy.push(approveButton, rejectButton);
       approveButton.addEventListener('click', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {})));
       rejectButton.addEventListener('click', () => withBusy(() => act('reject', { reason: reasonInput.value })));
@@ -450,7 +491,7 @@ export function createQuoteView(deps) {
 
     if (quote.status === 'rejected') {
       const revisePanel = el('div', 'quote-revise');
-      const reviseButton = el('button', undefined, 'Revise (back to draft)');
+      const reviseButton = el('button', undefined, 'Rivedi (torna in bozza)');
       busy.push(reviseButton);
       reviseButton.addEventListener('click', () => withBusy(() => act('revise', {})));
       revisePanel.appendChild(reviseButton);
@@ -459,22 +500,22 @@ export function createQuoteView(deps) {
     }
 
     if (quote.status === 'approved') {
-      mount.appendChild(el('p', 'quote-approved', 'Approved — the commercial content of this quote is read-only.'));
-      await renderSignature({ quote, schema, mount, el, client, withBusy, busy, money });
+      mount.appendChild(el('p', 'quote-approved', 'Approvato — il contenuto commerciale di questo preventivo è in sola lettura.'));
+      await renderSignature({ quote, schema, mount, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel });
     }
 
     const versionsPanel = el('div', 'quote-versions');
-    versionsPanel.appendChild(el('h3', undefined, `Versions (${versions.length})`));
+    versionsPanel.appendChild(el('h3', undefined, `Versioni (${versions.length})`));
     for (const version of versions) {
       const row = el('div', 'quote-version-row');
       row.setAttribute('data-version', version.id);
       const versionTotals = parseTotals(version.totalsJson);
       const periods = [
-        `one-time ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`,
-        ...versionTotals.recurringTotals.map((group, index) => `${money(group.netAmountCents, version.currency)} / ${group.intervalCount} ${group.interval}(s)${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`),
+        `una tantum ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`,
+        ...versionTotals.recurringTotals.map((group, index) => `${money(group.netAmountCents, version.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`),
       ].join(' · ');
       const link = el('a', undefined,
-        `v${version.versionNumber} · ${version.policyDecision} · ${version.policy}@${version.policyVersion} · ${periods}`);
+        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
       if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${version.decisionReason}`));
@@ -489,12 +530,31 @@ export function createQuoteView(deps) {
    * control, which is an explicit human action with its caveat stated in the
    * UI. No payment, invoice or delivery control exists.
    */
-  async function renderSignature({ quote, schema, mount, el, client, withBusy, busy, money }) {
+  async function renderSignature({ quote, schema, mount, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel }) {
+    const envelopeStatusLabel = (status) => {
+      if (status === 'sent') return 'Inviata';
+      if (status === 'completed') return 'Completata';
+      if (status === 'declined') return 'Rifiutata';
+      if (status === 'voided') return 'Annullata';
+      return '—';
+    };
+    const signerStatusLabel = (status) => {
+      if (status === 'signed') return 'firmato';
+      if (status === 'pending') return 'in attesa';
+      if (status === 'declined') return 'rifiutato';
+      return '—';
+    };
+    const orderStatusLabel = (status) => {
+      if (status === 'accepted') return 'Accettato';
+      if (status === 'pending') return 'In attesa';
+      if (status === 'cancelled') return 'Annullato';
+      return '—';
+    };
     const panel = el('div', 'quote-signature');
-    panel.appendChild(el('h3', undefined, 'Signature'));
+    panel.appendChild(el('h3', undefined, 'Firma'));
     mount.appendChild(panel);
     if (!signatureBlock(schema)) {
-      panel.appendChild(el('p', 'muted', 'Signature is not enabled in this project.'));
+      panel.appendChild(el('p', 'muted', 'La firma non è attiva in questo progetto.'));
       return;
     }
     let envelopes;
@@ -509,14 +569,14 @@ export function createQuoteView(deps) {
       orders = (await fetchRows('order', (row) => row.quoteId === quote.id)).rows;
       orderTotals = (await fetchRows('order-total')).rows;
     } catch (error) {
-      panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Could not load signature state. Try again later.' })));
+      panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Stato della firma non leggibile. Riprova più tardi.' })));
       return;
     }
     const envelope = envelopes[0] ?? null;
 
     if (!envelope) {
       const form = el('div', 'signature-request');
-      form.appendChild(el('p', 'muted', 'Sending for signature is a real external side effect: it requires a human user actor. This is a human-actor boundary, not Sales or Legal role enforcement — real roles need the Production Spine.'));
+      form.appendChild(el('p', 'muted', 'L’invio per la firma è un effetto esterno reale: serve un utente umano. Questo è un confine di attore umano, non un controllo di ruoli commerciali o legali — i ruoli veri arrivano con il Production Spine.'));
       const providerSelect = el('select');
       for (const provider of (signatureBlock(schema).providers ?? [])) {
         const option = el('option', undefined, `${provider.label} (v${provider.version})`);
@@ -526,14 +586,14 @@ export function createQuoteView(deps) {
       }
       const nameInput = el('input');
       nameInput.setAttribute('name', 'signerName');
-      nameInput.setAttribute('placeholder', 'Signer name');
+      nameInput.setAttribute('placeholder', 'Nome del firmatario');
       const emailInput = el('input');
       emailInput.setAttribute('name', 'signerEmail');
-      emailInput.setAttribute('placeholder', 'Signer email');
+      emailInput.setAttribute('placeholder', 'Email del firmatario');
       const roleInput = el('input');
       roleInput.setAttribute('name', 'signerRole');
-      roleInput.setAttribute('placeholder', 'Role (optional)');
-      const requestButton = el('button', undefined, 'Request signature');
+      roleInput.setAttribute('placeholder', 'Ruolo (facoltativo)');
+      const requestButton = el('button', undefined, 'Richiedi firma');
       busy.push(requestButton);
       const request = () => withBusy(() => {
         const [provider, version] = String(providerSelect.value).split('@');
@@ -549,7 +609,7 @@ export function createQuoteView(deps) {
       });
       requestButton.addEventListener('click', request);
       for (const control of [providerSelect, nameInput, emailInput, roleInput, requestButton]) form.appendChild(control);
-      form.appendChild(el('small', 'muted', 'All signers are required to sign; the declared order is recorded, not sequentially enforced. Signer identity assurance is not claimed.'));
+      form.appendChild(el('small', 'muted', 'Tutti i firmatari devono firmare; l’ordine dichiarato è registrato, non imposto in sequenza. Nessuna garanzia sull’identità dei firmatari.'));
       form.__request = request;
       form.__name = nameInput;
       form.__email = emailInput;
@@ -561,11 +621,11 @@ export function createQuoteView(deps) {
     state.setAttribute('data-envelope', envelope.id);
     state.setAttribute('data-status', envelope.status);
     for (const [label, value] of [
-      ['Status', envelope.status],
-      ['Provider', `${envelope.provider} v${envelope.providerVersion}`],
-      ['Provider envelope', envelope.providerEnvelopeId ?? '—'],
-      ['Document hash', envelope.documentHash],
-      ['Document format', envelope.documentFormat],
+      ['Stato', envelopeStatusLabel(envelope.status)],
+      ['Fornitore', `${envelope.provider} v${envelope.providerVersion}`],
+      ['Busta del fornitore', envelope.providerEnvelopeId ?? '—'],
+      ['Impronta del documento', envelope.documentHash],
+      ['Formato del documento', envelope.documentFormat],
     ]) {
       const row = el('p', 'signature-fact');
       row.appendChild(el('strong', undefined, `${label}: `));
@@ -577,14 +637,14 @@ export function createQuoteView(deps) {
     const TERMINAL = ['completed', 'declined', 'voided'];
     if (envelope.failureCode) {
       const outcome = envelope.failureCode === 'PROVIDER_ENVELOPE_ABSENT'
-        ? 'The provider does not have this envelope: it was never accepted. This quote version cannot be sent again in this milestone — its signature request is closed.'
+        ? 'Il fornitore non ha questa busta: non è mai stata accettata. Questa versione non si può inviare di nuovo in questa fase — la richiesta di firma è chiusa.'
         : envelope.providerEnvelopeId
-          ? 'The provider DID accept this envelope; only the local step after it failed. Reconcile to pick the outcome back up.'
-          : 'Whether the provider accepted this envelope is UNKNOWN. Reconcile to find out — never request a second signature.';
-      state.appendChild(el('p', 'signature-failure', `The ${envelope.failurePhase} phase failed (${envelope.failureCode}). ${outcome}`));
+          ? 'Il fornitore HA accettato questa busta; solo il passo locale dopo è fallito. Riconcilia per riprendere l’esito.'
+          : 'Non si sa se il fornitore ha accettato questa busta. Riconcilia per scoprirlo — mai chiedere una seconda firma.';
+      state.appendChild(el('p', 'signature-failure', `La fase ${envelope.failurePhase} non è riuscita (${envelope.failureCode}). ${outcome}`));
     }
     if (!TERMINAL.includes(envelope.status)) {
-      const reconcileButton = el('button', undefined, 'Reconcile with provider');
+      const reconcileButton = el('button', undefined, 'Riconcilia con il fornitore');
       busy.push(reconcileButton);
       const reconcile = () => withBusy(() => client.request(`/api/signature/envelopes/${encodeURIComponent(envelope.id)}/reconcile`, { method: 'POST', body: '{}' }));
       reconcileButton.addEventListener('click', reconcile);
@@ -597,7 +657,7 @@ export function createQuoteView(deps) {
     for (const signer of signers.filter((row) => row.envelopeId === envelope.id).sort((a, b) => (a.signingOrder ?? 0) - (b.signingOrder ?? 0))) {
       const row = el('p', 'signature-signer');
       row.setAttribute('data-signer', signer.signerKey);
-      row.textContent = `${signer.signingOrder}. ${signer.name} <${signer.email}> · ${signer.role} · ${signer.status}`;
+      row.textContent = `${signer.signingOrder}. ${signer.name} <${signer.email}> · ${signer.role} · ${signerStatusLabel(signer.status)}`;
       signerList.appendChild(row);
     }
     panel.appendChild(signerList);
@@ -606,21 +666,21 @@ export function createQuoteView(deps) {
     if (artifact) {
       const evidence = el('div', 'signed-artifact');
       evidence.setAttribute('data-artifact', artifact.id);
-      evidence.appendChild(el('h4', undefined, 'Signed artifact evidence'));
+      evidence.appendChild(el('h4', undefined, 'Prova del documento firmato'));
       for (const [label, value] of [
-        ['Provider artifact', artifact.providerArtifactId ?? '—'],
-        ['Document hash', artifact.documentHash],
-        ['Artifact hash', artifact.artifactHash ?? '—'],
-        ['Type', artifact.mimeType ?? '—'],
-        ['Completed at', artifact.completedAt ?? '—'],
-        ['Reference', artifact.storageRef ?? '—'],
+        ['Artefatto del fornitore', artifact.providerArtifactId ?? '—'],
+        ['Impronta del documento', artifact.documentHash],
+        ['Impronta dell’artefatto', artifact.artifactHash ?? '—'],
+        ['Tipo', artifact.mimeType ?? '—'],
+        ['Completato il', artifact.completedAt ?? '—'],
+        ['Riferimento', artifact.storageRef ?? '—'],
       ]) {
         const row = el('p', 'artifact-fact');
         row.appendChild(el('strong', undefined, `${label}: `));
         row.appendChild(el('span', undefined, String(value ?? '—')));
         evidence.appendChild(row);
       }
-      evidence.appendChild(el('p', 'muted', 'The artifact bytes are held by the provider: this record stores hashes, metadata and a reference. Long-term object-storage durability is not claimed, and this is not a legally qualified signature.'));
+      evidence.appendChild(el('p', 'muted', 'I byte dell’artefatto restano dal fornitore: qui si registrano impronte, metadati e un riferimento. Nessuna garanzia di conservazione a lungo termine, e non è una firma legalmente qualificata.'));
       panel.appendChild(evidence);
     }
 
@@ -628,20 +688,20 @@ export function createQuoteView(deps) {
     if (order) {
       const orderPanel = el('div', 'quote-order');
       orderPanel.setAttribute('data-order', order.id);
-      orderPanel.appendChild(el('h3', undefined, 'Order'));
+      orderPanel.appendChild(el('h3', undefined, 'Ordine'));
       const idRow = el('p', 'order-fact');
-      idRow.appendChild(el('strong', undefined, 'Order: '));
-      idRow.appendChild(el('span', undefined, `${order.id} · ${order.status} · accepted ${order.acceptedAt ?? '—'}`));
+      idRow.appendChild(el('strong', undefined, 'Ordine: '));
+      idRow.appendChild(el('span', undefined, `Ordine · ${orderStatusLabel(order.status)} · accettato il ${order.acceptedAt ?? '—'}`));
       orderPanel.appendChild(idRow);
       for (const total of orderTotals.filter((row) => row.orderId === order.id)) {
         const row = el('p', 'order-total');
-        row.setAttribute('data-total', total.kind === 'one_time' ? 'One-time' : `Recurring every ${total.intervalCount} ${total.interval}(s)`);
+        row.setAttribute('data-total', total.kind === 'one_time' ? 'Una tantum' : `Ricorrente ogni ${total.intervalCount} ${periodLabel(total.intervalCount, total.interval)}`);
         row.textContent = total.kind === 'one_time'
-          ? `One-time: ${money(total.netAmountCents, total.currency)} net`
-          : `Recurring every ${total.intervalCount} ${total.interval}(s): ${money(total.netAmountCents, total.currency)} net`;
+          ? `Una tantum: ${money(total.netAmountCents, total.currency)} netto`
+          : `Ricorrente ogni ${total.intervalCount} ${periodLabel(total.intervalCount, total.interval)}: ${money(total.netAmountCents, total.currency)} netto`;
         orderPanel.appendChild(row);
       }
-      orderPanel.appendChild(el('p', 'muted', 'Order figures are copied from the signed quote version and are never recalculated from the current catalog. Periods are never combined, and no annualized or contract-value figure is derived. No billing, invoice, payment or fulfillment state exists in this milestone.'));
+      orderPanel.appendChild(el('p', 'muted', 'Le cifre dell’ordine sono copiate dalla versione firmata e mai ricalcolate dal catalogo attuale. I periodi non si sommano mai e non si ricava nessuna cifra annualizzata o di contratto. In questa fase non esiste nessuno stato di fatturazione, fattura, pagamento o evasione.'));
       panel.appendChild(orderPanel);
       // Contract activation (Milestone 12) lives in the optional contracts
       // domain package: it renders only when the server publishes that domain.
