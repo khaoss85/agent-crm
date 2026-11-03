@@ -1,0 +1,65 @@
+{
+  "manifestVersion": 1,
+  "revision": 1,
+  "name": "custom-field-def",
+  "description": "One operator-defined customer property (backlog:434cc39a): a space-wide field with a key, an Italian label and a type (testo, numero, data, si-no, scelta). Definitions are space-wide: every scheda, filter and list column reads the same set. The framework never invents one: a definition is a human decision, and a value without a definition is refused.",
+  "table": "custom_field_defs",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "required": false,
+      "unique": true,
+      "column": "source_key",
+      "writable": "managed"
+    },
+    {
+      "name": "fieldKey",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "index": true,
+      "column": "field_key",
+      "writable": "managed"
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "label",
+      "writable": "managed"
+    },
+    {
+      "name": "fieldType",
+      "type": "enum",
+      "required": false,
+      "unique": false,
+      "column": "field_type",
+      "writable": "managed",
+      "values": [
+        "testo",
+        "numero",
+        "data",
+        "si-no",
+        "scelta"
+      ]
+    },
+    {
+      "name": "options",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "options",
+      "writable": "managed"
+    },
+    {
+      "name": "createdBy",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "created_by",
+      "writable": "managed"
+    }
+  ]
+}

@@ -24,6 +24,8 @@ export function resolvedNames(config = {}) {
     bulkItem: config.bulkItemModule ?? 'customer-bulk-item',
     enriched: config.enrichedFieldModule ?? 'enriched-field',
     optOut: config.enrichmentOptOutModule ?? 'enrichment-opt-out',
+    fieldDef: config.customFieldDefModule ?? 'custom-field-def',
+    fieldValue: config.customFieldValueModule ?? 'custom-field-value',
   };
 }
 

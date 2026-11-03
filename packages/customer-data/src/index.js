@@ -65,6 +65,8 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'customer-bulk-item',
   'enriched-field',
   'enrichment-opt-out',
+  'custom-field-def',
+  'custom-field-value',
 ]);
 
 /**
