@@ -289,7 +289,7 @@ export function createCalendarSyncOperations(options = {}) {
       'calendar-sync is composed without an opened appointment-book@1 capability, so it cannot write appointment rows');
   }
   const provider = options.provider;
-  for (const key of ['listEvents', 'insertEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
+  for (const key of ['listEvents', 'insertEvent', 'patchEvent', 'cancelEvent', 'findByAccordoSourceKey']) {
     if (typeof provider?.[key] !== 'function') {
       throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500, `calendar-sync provider needs "${key}"`);
     }

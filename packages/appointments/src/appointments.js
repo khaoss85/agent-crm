@@ -1075,12 +1075,15 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
  * 409, the way concurrent bookings do.
  *
  * A drop without a move (same instants) is a no-op answering the stored row
- * with `moved: false`, never a second write. The reminder keeps its `dueAt`:
- * the sweep still fires it there (its title names the old slot — cosmetic,
- * said so in the PR). When the request names `calendar`, the linked Google
- * event is converged through the injected `calendarSync.pushAppointment`
- * handle after the commit, exactly like the confirm path: validated before
- * any row exists, answered as data (`push` / `pushError`) after it, never a
+ * with `moved: false`, never a second write. The stored reminder keeps its
+ * `dueAt` only when the new slot still starts after it: a move that would
+ * strand the reminder at or after the slot is refused, so the booking
+ * invariant (`remindAt` before `startsAt`) survives the drag. When the
+ * request names `calendar`, it also names the `spaceId` the push is gated
+ * on (required, like the confirm path), and the linked Google event is
+ * converged through the injected `calendarSync.pushAppointment` handle
+ * after the commit, exactly like the confirm path: validated before any
+ * row exists, answered as data (`push` / `pushError`) after it, never a
  * throw past the commit.
  */
 export async function rescheduleAppointment(context, request) {
@@ -1108,9 +1111,18 @@ export async function rescheduleAppointment(context, request) {
   // A named calendar is validated before any row is touched: a statically
   // preventable miscomposition fails here, never after a committed move the
   // caller received an error for — the same order the confirm path keeps.
+  // The push is space-gated (a bound calendar syncs only for its owning
+  // space), so a calendar move also names the spaceId, exactly like the
+  // confirm path: without it a bound calendar would answer
+  // CALENDAR_GRANT_UNKNOWN after the row already moved.
   let calendarId = null;
+  let spaceId = null;
   let calendarPush = null;
   if (record.calendar !== undefined && record.calendar !== null) {
+    if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+      throw new ValidationError('spaceId is required: a calendar move is gated on the space switch', { field: 'spaceId' });
+    }
+    spaceId = record.spaceId;
     calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
     const calendarSync = context?.calendarSync ?? null;
     if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
@@ -1163,6 +1175,20 @@ export async function rescheduleAppointment(context, request) {
     if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
       return { appointment: current, moved: false };
     }
+    // The booking invariant survives the drag: the stored reminder still
+    // fires before the slot. Re-read inside the critical section, so a
+    // reminder written between the two reads is seen too.
+    const dueAt = current.reminderDueAt ?? null;
+    if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
+      const dueMs = Date.parse(dueAt);
+      if (Number.isFinite(dueMs) && startsAt.ms <= dueMs) {
+        throw new AppError(
+          `The stored reminder is due at ${dueAt}: the new slot starts at ${startsAt.iso}, at or after the reminder, `
+          + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
+          { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
+        );
+      }
+    }
     const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
     const others = held.filter((row) => row && row.id !== current.id);
     const conflict = findOverlap(
@@ -1199,7 +1225,7 @@ export async function rescheduleAppointment(context, request) {
   let pushError = null;
   if (calendarPush !== null) {
     try {
-      push = await calendarPush(calendarId, appointment.sourceKey, { actor: who });
+      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
     } catch (error) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code

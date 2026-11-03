@@ -877,6 +877,7 @@ test('a local reschedule is visible on Google after one push (backlog:bdca2010d4
     id: appointment.id,
     startsAt: '2026-10-22T14:00:00.000Z',
     endsAt: '2026-10-22T15:30:00.000Z',
+    spaceId: 's-presti',
     calendar: { calendarId: CAL },
   });
   assert.equal(moved.moved, true);
@@ -944,6 +945,7 @@ test('a rescheduled import patches its linked Google event (backlog:bdca2010d471
     id: row.id,
     startsAt: '2026-10-22T14:00:00.000Z',
     endsAt: '2026-10-22T15:00:00.000Z',
+    spaceId: 's-presti',
     calendar: { calendarId: CAL },
   });
   assert.equal(moved.moved, true);
@@ -955,4 +957,35 @@ test('a rescheduled import patches its linked Google event (backlog:bdca2010d471
   assert.equal(live.end.dateTime, '2026-10-22T15:00:00.000Z');
   const again = await ctx.sync.pushAppointment(CAL, row.sourceKey);
   assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
+});
+
+test('composition refuses a provider without patchEvent before any move', async (t) => {
+  // P1 regression: patchEvent is required by the documented provider
+  // contract (local slot moves patch the linked event), but composition
+  // did not enforce it — the first reschedule with a calendar then failed
+  // with a TypeError after the slot move had already committed. A provider
+  // without patchEvent now fails closed at composition. No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const full = ctx.provider;
+  const withoutPatch = {
+    listEvents: full.listEvents.bind(full),
+    insertEvent: full.insertEvent.bind(full),
+    cancelEvent: full.cancelEvent.bind(full),
+    findByAccordoSourceKey: full.findByAccordoSourceKey.bind(full),
+  };
+  assert.throws(
+    () => createCalendarSyncOperations({
+      modules: ctx.modules,
+      appointmentBook: createAppointmentBookCapability({}),
+      provider: withoutPatch,
+      mapping: ctx.mapping,
+      database: ctx.database,
+    }),
+    (error) => {
+      assert.equal(error?.code, 'CALENDAR_SYNC_CONTEXT_INVALID');
+      assert.match(error?.message ?? '', /patchEvent/);
+      return true;
+    },
+  );
 });

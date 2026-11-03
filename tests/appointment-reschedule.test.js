@@ -225,7 +225,7 @@ test('a slot with no duration or past a day is refused like a booking', async ()
 test('a named calendar without a push handle fails before any write', async () => {
   const service = fakeAppointments([row()]);
   await assert.rejects(
-    rescheduleAppointment(contextFor(service), { ...move(), calendar: { calendarId: 'room-1' } }),
+    rescheduleAppointment(contextFor(service), { ...move(), spaceId: 's-1', calendar: { calendarId: 'room-1' } }),
     (error) => {
       assert.ok(error instanceof AppError);
       assert.equal(error.code, 'APPOINTMENTS_CALENDAR_UNAVAILABLE');
@@ -235,10 +235,25 @@ test('a named calendar without a push handle fails before any write', async () =
   assert.equal(service.writes.length, 0);
 });
 
+test('a calendar move without a spaceId is refused before any write', async () => {
+  const service = fakeAppointments([row()]);
+  await assert.rejects(
+    rescheduleAppointment(contextFor(service), { ...move(), calendar: { calendarId: 'room-1' } }),
+    (error) => {
+      assert.ok(error instanceof ValidationError);
+      assert.equal(error.details.field, 'spaceId');
+      return true;
+    },
+  );
+  assert.equal(service.writes.length, 0);
+});
+
 test('a runtime push failure rides as data: the move stands, the code travels', async () => {
   const service = fakeAppointments([row()]);
+  const seen = [];
   const calendarSync = {
-    async pushAppointment() {
+    async pushAppointment(calendarId, sourceKey, options) {
+      seen.push({ calendarId, sourceKey, spaceId: options?.spaceId });
       const error = new Error('grant gone');
       error.code = 'GOOGLE_GRANT_REFUSED';
       error.status = 401;
@@ -247,12 +262,41 @@ test('a runtime push failure rides as data: the move stands, the code travels', 
   };
   const out = await rescheduleAppointment(
     contextFor(service, { calendarSync }),
-    { ...move(), calendar: { calendarId: 'room-1' } },
+    { ...move(), spaceId: 's-1', calendar: { calendarId: 'room-1' } },
   );
   assert.equal(out.moved, true);
   assert.equal(out.appointment.startsAt, '2026-10-21T17:00:00.000Z');
   assert.equal(out.push, null);
   assert.deepEqual(out.pushError, { code: 'GOOGLE_GRANT_REFUSED' });
+  assert.deepEqual(seen, [{ calendarId: 'room-1', sourceKey: 'gym:move:1', spaceId: 's-1' }]);
+});
+
+test('a move that strands the stored reminder refuses 409 and writes nothing', async () => {
+  const service = fakeAppointments([row({ reminderDueAt: '2026-10-20T16:00:00.000Z' })]);
+  await assert.rejects(
+    rescheduleAppointment(
+      contextFor(service),
+      { id: 'a-1', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' },
+    ),
+    (error) => {
+      assert.ok(error instanceof AppError);
+      assert.equal(error.code, 'APPOINTMENTS_REMINDER_AFTER_SLOT');
+      assert.equal(error.status, 409);
+      return true;
+    },
+  );
+  assert.equal(service.writes.length, 0, 'a stranded-reminder move writes nothing');
+});
+
+test('a move that keeps the reminder before the slot still commits', async () => {
+  const service = fakeAppointments([row({ reminderDueAt: '2026-10-20T16:00:00.000Z' })]);
+  const out = await rescheduleAppointment(
+    contextFor(service),
+    { id: 'a-1', startsAt: '2026-10-20T18:00:00.000Z', endsAt: '2026-10-20T19:00:00.000Z' },
+  );
+  assert.equal(out.moved, true);
+  assert.equal(out.appointment.startsAt, '2026-10-20T18:00:00.000Z');
+  assert.equal(service.writes.length, 1);
 });
 
 test('appointment-book@1 opens rescheduleAppointment beside book and advance', async () => {
