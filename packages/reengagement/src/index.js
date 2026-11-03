@@ -15,7 +15,7 @@ import {
 /**
  * The re-engagement domain package (backlog:f50ad5c9).
  *
- * Presti's first teammate agent, above the channels window rule and the
+ * A teammate agent above the channels window rule and the
  * llm composer: every day it finds the customers who arrived from
  * WhatsApp, Instagram or email and were never answered — or not contacted
  * for N days — and prepares one message each with the card's own history

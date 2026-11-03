@@ -58,7 +58,7 @@ test('acceptance: one proposal per silent customer, none for the others', async 
     customers: [
       customer({ customerId: 'cus-silent-wa' }),
       customer({
-        customerId: 'cus-replied-ig', channel: 'instagram', lastOutboundAt: NINE_DAYS_AGO,
+        customerId: 'cus-replied-ig', channel: 'instagram', lastOutboundAt: TWO_DAYS_AGO,
         connectedChannels: ['instagram'], windowState: 'in-window',
       }),
       customer({ customerId: 'cus-recent-mail', channel: 'email', lastInboundAt: TWO_DAYS_AGO }),
@@ -123,6 +123,63 @@ test('acceptance: outside the window with no template, another channel — still
   assert.equal(proposals[0].channel, 'email');
   const reasons = Object.fromEntries(skipped.map((entry) => [entry.customerId, entry.reason]));
   assert.deepEqual(reasons, { 'cus-stale-no-route': 'no-sendable-route' });
+});
+
+test('a stale reply knocks again: silence counts from the latest contact', async () => {
+  const { proposals, skipped } = await scanReengagement({
+    customers: [
+      customer({
+        customerId: 'cus-stale-reply', lastInboundAt: TEN_DAYS_AGO, lastOutboundAt: NINE_DAYS_AGO,
+      }),
+    ],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: fakeDraftText(),
+  });
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].customerRef.customerId, 'cus-stale-reply');
+  assert.deepEqual(skipped, []);
+});
+
+test('facebook is windowed too: the fallback skips it for a channel with no observation', async () => {
+  const { proposals, skipped } = await scanReengagement({
+    customers: [
+      customer({
+        customerId: 'cus-fb-fallback', windowState: 'needs-template',
+        connectedChannels: ['whatsapp', 'facebook', 'email'],
+      }),
+      customer({
+        customerId: 'cus-fb-only', windowState: 'needs-template',
+        connectedChannels: ['whatsapp', 'facebook'],
+      }),
+    ],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: fakeDraftText(),
+  });
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].channel, 'email');
+  const reasons = Object.fromEntries(skipped.map((entry) => [entry.customerId, entry.reason]));
+  assert.deepEqual(reasons, { 'cus-fb-only': 'no-sendable-route' });
+});
+
+test('an unusable draft skips instead of proposing a free-text knock with no text', async () => {
+  for (const [name, draft] of [['null', null], ['empty-object', {}], ['blank', { text: '   ' }]]) {
+    const { proposals, skipped } = await scanReengagement({
+      customers: [customer({ customerId: `cus-no-draft-${name}` })],
+      quietDays: 7,
+      nowMs: NOW_MS,
+      draftText: async () => draft,
+    });
+    assert.deepEqual(proposals, []);
+    assert.deepEqual(skipped.map((entry) => entry.reason), ['no-draft']);
+  }
+  assert.throws(() => buildReengagementProposal({
+    candidate: { customerId: 'cus-a', displayName: 'Anna', channel: 'whatsapp' },
+    route: { kind: 'free-text', channel: 'whatsapp', template: null },
+    draft: { text: '  ' },
+    day: '2026-11-03',
+  }), /draft/);
 });
 
 test('the route invariant holds for every decided route: stale windowed channels never read free text', () => {
@@ -209,9 +266,14 @@ test('selection answers every quiet state: replied, recent, unsupported and miss
   assert.equal(REENGAGEMENT_DEFAULT_QUIET_DAYS, 7);
   assert.ok(REENGAGEMENT_INBOUND_CHANNELS.includes('whatsapp'));
   const replied = selectReengagementCandidate(
-    { ...customer({}), channel: 'email', lastOutboundAt: NINE_DAYS_AGO }, base,
+    { ...customer({}), channel: 'email', lastOutboundAt: TWO_DAYS_AGO }, base,
   );
   assert.equal(replied.skip, 'replied');
+  const staleReply = selectReengagementCandidate(
+    { ...customer({}), channel: 'email', lastOutboundAt: NINE_DAYS_AGO }, base,
+  );
+  assert.equal(staleReply.skip, null);
+  assert.equal(staleReply.candidate.silentDays, 9);
   const recent = selectReengagementCandidate({ ...customer({}), lastInboundAt: TWO_DAYS_AGO }, base);
   assert.equal(recent.skip, 'recent');
   const unsupported = selectReengagementCandidate({ ...customer({}), channel: 'sms' }, base);

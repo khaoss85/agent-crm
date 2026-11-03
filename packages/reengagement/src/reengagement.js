@@ -3,7 +3,8 @@
 import { ValidationError } from '../../core/index.js';
 
 /**
- * The re-engagement agent (backlog:f50ad5c9): Presti's first teammate agent.
+ * The re-engagement agent (backlog:f50ad5c9): a teammate agent that
+ * re-contacts silent customers.
  *
  * Every day it finds the customers who arrived from WhatsApp, Instagram or
  * email and were never answered — or not contacted for N days — prepares one
@@ -54,8 +55,14 @@ export const REENGAGEMENT_PERMISSION = 'send-without-approval';
 /** Arrival channels in scope for this agent, in the packet's order. */
 export const REENGAGEMENT_INBOUND_CHANNELS = Object.freeze(['whatsapp', 'instagram', 'email']);
 
-/** Channels whose free text needs the 24-hour window (the channels rule). */
-export const REENGAGEMENT_WINDOW_CHANNELS = Object.freeze(['whatsapp', 'instagram']);
+/**
+ * Channels whose free text needs the 24-hour window. Mirrors the adapters
+ * that declare `outboundWindow` in `packages/channels` (whatsapp.js,
+ * instagram.js, messenger.js serving `facebook`): the window itself stays
+ * enforced there, this list only steers the route away from free text no
+ * channel observation could send.
+ */
+export const REENGAGEMENT_WINDOW_CHANNELS = Object.freeze(['whatsapp', 'instagram', 'facebook']);
 
 /** Customer silence before the agent knocks, unless the caller says otherwise. */
 export const REENGAGEMENT_DEFAULT_QUIET_DAYS = 7;
@@ -86,6 +93,7 @@ export const REENGAGEMENT_SKIP_REASONS = Object.freeze([
   'recent',
   'no-inbound',
   'no-sendable-route',
+  'no-draft',
 ]);
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -309,7 +317,14 @@ export function selectReengagementCandidate(customer, { nowMs, quietDays }) {
   if (customer.consent === 'unknown') return Object.freeze({ candidate: null, skip: 'consent-unknown' });
   const inboundAt = Date.parse(customer.lastInboundAt);
   if (customer.lastOutboundAt !== null && Date.parse(customer.lastOutboundAt) >= inboundAt) {
-    return Object.freeze({ candidate: null, skip: 'replied' });
+    // Answered once, but silence still counts: the knock returns when the
+    // latest contact — the reply itself — is older than quietDays.
+    const outDays = silentDays(customer.lastOutboundAt, nowMs);
+    if (outDays < quietDays) return Object.freeze({ candidate: null, skip: 'replied' });
+    return Object.freeze({
+      candidate: Object.freeze({ ...customer, silentDays: outDays }),
+      skip: null,
+    });
   }
   const days = silentDays(customer.lastInboundAt, nowMs);
   if (days < quietDays) return Object.freeze({ candidate: null, skip: 'recent' });
@@ -333,6 +348,8 @@ export function decideReengagementRoute(candidate) {
   if (candidate.approvedTemplate !== null) {
     return Object.freeze({ kind: 'template', channel: candidate.channel, template: candidate.approvedTemplate });
   }
+  // Fallback only to a channel that sends free text with no window
+  // observation (the scan observes one window: the arrival channel's).
   const fallback = candidate.connectedChannels.find((name) => !REENGAGEMENT_WINDOW_CHANNELS.includes(name));
   if (fallback !== undefined) {
     return Object.freeze({ kind: 'free-text', channel: fallback, template: null });
@@ -373,6 +390,13 @@ export function buildReengagementIntent(candidate) {
 export function buildReengagementProposal({ candidate, route, draft, day }) {
   if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
     throw new ValidationError('reengagement day must be a UTC YYYY-MM-DD day', { field: 'day' });
+  }
+  if (route.kind === 'free-text'
+    && (draft === null || draft === undefined
+      || typeof draft.text !== 'string' || draft.text.trim() === '')) {
+    throw new ValidationError('reengagement free-text proposal needs a non-empty draft', {
+      field: 'draft.text',
+    });
   }
   const actionKey = `reengagement:${candidate.customerId}:${day}`;
   if (actionKey.length > 256) {
@@ -435,6 +459,12 @@ export async function scanReengagement({ customers, quietDays, nowMs, draftText 
     const draft = route.kind === 'template'
       ? null
       : await draftText({ candidate, route, intent });
+    if (route.kind === 'free-text'
+      && (draft === null || draft === undefined
+        || typeof draft.text !== 'string' || draft.text.trim() === '')) {
+      skipped.push(Object.freeze({ customerId: checked.customerId, reason: 'no-draft' }));
+      continue;
+    }
     proposals.push(buildReengagementProposal({ candidate, route, draft, day }));
   }
   return Object.freeze({ proposals: Object.freeze(proposals), skipped: Object.freeze(skipped) });

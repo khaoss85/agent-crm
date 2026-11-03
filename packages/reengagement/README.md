@@ -1,6 +1,6 @@
 # Re-engagement agent
 
-Presti's first teammate agent ([f50ad5c9]): every day it finds the customers
+A teammate agent ([f50ad5c9]): every day it finds the customers
 who arrived from WhatsApp, Instagram or email and were never answered — or
 not contacted for N days — and prepares one message each.
 
@@ -13,7 +13,8 @@ not contacted for N days — and prepares one message each.
   knock;
 - one skip reason per other customer (`replied`, `recent`, `opted-out`,
   `consent-unknown`, `no-inbound`, `unsupported-channel`,
-  `no-sendable-route`).
+  `no-sendable-route`, `no-draft` — the last when the wording edge
+  returns no usable text for a free-text route).
 
 Outside the 24-hour Meta window a proposal is an approved template or
 another connected channel — never free text. The window itself is observed
