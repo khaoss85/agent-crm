@@ -74,6 +74,16 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
 ]);
 
 /**
+ * A per-call phrase adapter counts only when it carries a callable
+ * `extractCustomer` (in-process fakes in tests). An HTTP JSON body can never
+ * carry a function, so a caller object from the wire neither enables the AI
+ * nor shadows the composed package phraseAdapter (backlog:434cc39a).
+ */
+function callablePhraseAdapter(candidate) {
+  return typeof candidate?.extractCustomer === 'function' ? candidate : null;
+}
+
+/**
  * @param {{
  *   matchPolicy?: any,
  *   config?: Record<string, string>,
@@ -85,9 +95,11 @@ export function createCustomerDataPackage(options = {}) {
   const names = resolvedNames(config);
   // The caller-built «✦ Scrivi o incolla» adapter (the OpenAI wiring in the
   // pilot worker, the fake in tests): the framework never builds one, so it
-  // never holds a key. A per-call `adapter` on parse/ai-available wins over
-  // this package-level one. The reference composition passes none: without
-  // it the phrase preview refuses and the admin hides the ✦ area.
+  // never holds a key. A per-call `adapter` on parse/ai-available counts only
+  // when callable (in-process fakes); the package-level one wins when
+  // composed, and a JSON body from the wire never counts. The reference
+  // composition passes none: without it the phrase preview refuses and the
+  // admin hides the ✦ area.
   const phraseAdapter = options.phraseAdapter ?? null;
   // Build-time flag, like the module names above: the Google Contacts source
   // stays off unless the composition explicitly enables it, until the Google
@@ -565,11 +577,11 @@ export function createCustomerDataPackage(options = {}) {
           + 'A human decision: the actor must be a user.',
         input: [
           { name: 'phrase', type: 'string', hint: 'The sentence, e.g. "daniele pelleri email daniele@gmail.com tel 234341 amico sì".' },
-          { name: 'adapter', type: 'json', hint: 'Optional caller-built extractCustomer adapter winning over the package one (tests).' },
+          { name: 'adapter', type: 'json', hint: 'Optional caller-built extractCustomer adapter for in-process calls (tests): only a callable counts, the composed package adapter wins.' },
         ],
         create(runtime) {
           return (request) => parseCustomerPhrase(
-            { modules: runtime.modules, names, phraseLlm: request?.adapter ?? phraseAdapter }, request,
+            { modules: runtime.modules, names, phraseLlm: phraseAdapter ?? callablePhraseAdapter(request?.adapter) }, request,
           );
         },
       },
@@ -608,10 +620,10 @@ export function createCustomerDataPackage(options = {}) {
         description:
           'The probe the admin uses to show the ✦ area only when the AI is on. Writes nothing.',
         input: [
-          { name: 'adapter', type: 'json', hint: 'Optional caller-built adapter to probe instead of the package one (tests).' },
+          { name: 'adapter', type: 'json', hint: 'Optional caller-built adapter to probe in-process (tests): only a callable counts.' },
         ],
         create() {
-          return (request) => customerPhraseAiAvailable({ phraseLlm: request?.adapter ?? phraseAdapter });
+          return (request) => customerPhraseAiAvailable({ phraseLlm: phraseAdapter ?? callablePhraseAdapter(request?.adapter) });
         },
       },
     ],

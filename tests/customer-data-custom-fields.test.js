@@ -211,6 +211,50 @@ test('an E.164 phrase phone links through the governed phone path and reads on t
   assert.equal(row?.phone?.system, 'phone', 'a recognized phone system, so the scheda can dial it');
 });
 
+test('a company-only phrase keeps its confirmed phone: no email, no drop', async (t) => {
+  const { app } = scene(t);
+  const preview = await app.parseCustomerPhrase({
+    actor: OPERATOR,
+    phrase: 'acme azienda tel +393331112223',
+    adapter: fakeAdapterFor({
+      firstName: 'Acme',
+      companyName: 'Acme',
+      phone: '+393331112223',
+      fields: [],
+    }),
+  });
+  assert.equal(preview.customer.companyName, 'Acme');
+  assert.equal(preview.customer.email, null);
+  const applied = await app.applyCustomerPhrase({
+    actor: OPERATOR, customer: preview.customer, fields: preview.fields,
+  });
+  assert.equal(applied.phoneLinked, true, 'the company subject links the phone like a contact');
+  assert.equal(applied.phoneWarning, null, 'nothing the human confirmed is dropped');
+  const list = await app.listCustomers({});
+  const row = list.items.find((item) => item.id === applied.subject.id);
+  assert.equal(row?.phone?.value, '+393331112223', 'the list shows the confirmed phone, never null');
+  assert.equal(row?.phone?.system, 'phone', 'a recognized phone system, so the scheda can dial it');
+});
+
+test('a JSON-shaped adapter from the wire never switches the phrase AI on', async (t) => {
+  const { app } = scene(t);
+  // A JSON body can never carry a function: `{}` must read exactly like no
+  // adapter at all, so a caller cannot force the ✦ area on — or the AI off
+  // when the host composes its own. The probe discriminates the regression
+  // (a bare `{}` used to read as available:true); the preview locks the 503.
+  const probe = await app.customerPhraseAiAvailable({ adapter: {} });
+  assert.equal(probe.available, false, 'a JSON-shaped adapter never switches the AI on');
+  await assert.rejects(
+    () => app.parseCustomerPhrase({
+      actor: OPERATOR,
+      phrase: 'daniele pelleri email daniele@gmail.com',
+      adapter: {},
+    }),
+    (error) => error?.code === 'CUSTOMER_PHRASE_AI_UNAVAILABLE' && error?.status === 503,
+    'a forged adapter cannot stand in for the composed one',
+  );
+});
+
 test('a refused field value rolls the whole phrase apply back: no customer, no definitions, no values', async (t) => {
   const { app } = scene(t);
   const countBefore = (await app.listCustomers({})).items.length;

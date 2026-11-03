@@ -381,7 +381,12 @@ export async function parseCustomerPhrase({ modules, names, phraseLlm }, request
   if (phrase.length < 3) {
     throw new ValidationError('la frase dice troppo poco: scrivi almeno nome e un contatto', { field: 'phrase' });
   }
-  const adapter = input.adapter ?? phraseLlm ?? null;
+  // A caller-supplied `adapter` counts only when it carries a callable
+  // extractCustomer (in-process fakes in tests): an HTTP JSON body can never
+  // carry a function, so a `{}` from the wire neither enables the AI nor
+  // shadows the composed phraseLlm — forcing the AI off is impossible.
+  const adapter = phraseLlm
+    ?? (typeof input.adapter?.extractCustomer === 'function' ? input.adapter : null);
   if (!adapter || typeof adapter.extractCustomer !== 'function') {
     throw refusal('CUSTOMER_PHRASE_AI_UNAVAILABLE', 503,
       'l\u2019AI non è attiva per questo spazio: compila i campi a mano');
@@ -580,7 +585,10 @@ export async function applyCustomerPhrase({ database, modules, core, names, impo
   // just never a «Chiama» link — so the confirmed value is never lost.
   let phoneLinked = false;
   let phoneWarning = null;
-  if (phone !== null && email !== null) {
+  // The confirmed phone links whatever the identity is — contact (email) or
+  // company: recordSubjectPhone holds numbers beside both resources, so a
+  // company-only phrase keeps its number instead of dropping it.
+  if (phone !== null) {
     try {
       phoneLinked = await linkPhrasePhone(
         { modules, names, importOperations },
@@ -590,8 +598,6 @@ export async function applyCustomerPhrase({ database, modules, core, names, impo
     } catch {
       phoneWarning = 'il telefono non si è collegato: aggiungilo dalla scheda';
     }
-  } else if (phone !== null) {
-    phoneWarning = 'senza email il telefono non si collega: aggiungilo dalla scheda';
   }
 
   return Object.freeze({
