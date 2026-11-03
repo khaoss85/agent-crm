@@ -43,7 +43,7 @@ function offerRecord(overrides = {}) {
   };
 }
 
-function stubClient({ record: recordOverride, quotes = [], lines = [], versions = [], audit = [], failPatch = null } = {}) {
+function stubClient({ record: recordOverride, quotes = [], lines = [], versions = [], audit = [], failPatch = null, failAudit = null, failLinked = null } = {}) {
   const record = recordOverride ?? offerRecord();
   const calls = [];
   return {
@@ -57,10 +57,16 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
         Object.assign(record, JSON.parse(options.body));
         return { ...record };
       }
-      if (path.startsWith('/api/modules/quote/records')) return { items: quotes };
+      if (path.startsWith('/api/modules/quote/records')) {
+        if (failLinked) throw Object.assign(new Error(failLinked.message), failLinked);
+        return { items: quotes };
+      }
       if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
       if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
-      if (path.startsWith('/api/audit')) return { items: audit };
+      if (path.startsWith('/api/audit')) {
+        if (failAudit) throw Object.assign(new Error(failAudit.message), failAudit);
+        return { items: audit };
+      }
       return { items: [] };
     },
   };
@@ -107,7 +113,8 @@ const AUDIT = [
 test('the detail shows the seven facts, quotes with lines, and history', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [QUOTE], lines: [LINE], versions: [VERSION], audit: AUDIT }) });
+  const client = stubClient({ quotes: [QUOTE], lines: [LINE], versions: [VERSION], audit: AUDIT });
+  const view = createOfferDetail({ doc, mount, client });
   await view.renderOfferDetail('off1');
 
   const text = mount.textContent;
@@ -129,7 +136,8 @@ test('the detail shows the seven facts, quotes with lines, and history', async (
   assert.ok(text.includes('Creata da:'), 'the author fact paints');
   // Quotes, lines, versions and history render from server state.
   assert.ok(text.includes('Preventivi (1)'), 'the linked quotes paint');
-  assert.ok(text.includes('Preventivo · Bozza · 5.000 €'), 'the quote state and total paint in Italian');
+  assert.ok(text.includes('Preventivo · Bozza · una tantum 5.000 €'), 'the quote state and total paint in Italian');
+  assert.ok(text.includes('Approvazione automatica'), 'the version policy decision paints in Italian, not as a dash');
   assert.ok(text.includes('Righe (1)'), 'the quote lines paint');
   assert.ok(text.includes('PT10 · Pacchetto 10 PT · quantità 2 · sconto 5,00% · netto 12.000 €'),
     'the line paints with an Italian percentage and thousands');
@@ -144,6 +152,14 @@ test('the detail shows the seven facts, quotes with lines, and history', async (
   const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q1');
   assert.ok(link, 'the quote links to its page');
   assert.equal(link.textContent, 'Apri il preventivo', 'the link says where it goes');
+  // Linked collections are narrowed server-side, never a filtered global page.
+  const paths = client.calls.map((call) => call.path);
+  assert.ok(paths.some((path) => path.includes('/api/modules/quote/records') && path.includes('filter.opportunityId=off1')),
+    'quotes are read with the server-side opportunity filter');
+  assert.ok(paths.some((path) => path.includes('/api/modules/quote-line/records') && path.includes('filter.quoteId=q1')),
+    'lines are read with the server-side quote filter');
+  assert.ok(paths.some((path) => path.includes('/api/modules/quote-version/records') && path.includes('filter.quoteId=q1')),
+    'versions are read with the server-side quote filter');
 });
 
 test('the detail degrades honestly when the server is unreadable', async () => {
@@ -154,6 +170,87 @@ test('the detail degrades honestly when the server is unreadable', async () => {
   const text = mount.textContent;
   assert.ok(text.includes('Ancora nessun preventivo per questa offerta.'), 'empty quotes stay honest');
   assert.ok(text.includes('Ancora nessun evento registrato per questa offerta.'), 'empty history stays honest');
+});
+
+test('a subscription-only quote never paints a zero one-time total', async () => {
+  const recurringOnly = {
+    ...QUOTE,
+    id: 'q2',
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+      recurringTotals: [
+        { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320000, discountAmountCents: 0, netAmountCents: 320000 },
+      ],
+    }),
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [recurringOnly], audit: [] }) });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(text.includes('3.200 € ogni 1 mese'), 'the recurring group paints with its own period');
+  assert.ok(!text.includes('una tantum'), 'no zero one-time group paints beside it');
+  const header = mount.findAll('h4').map((node) => node.textContent).join('\n');
+  assert.ok(header.includes('Preventivo · Bozza · 3.200 € ogni 1 mese'), 'the header is the recurring group alone');
+});
+
+test('an unreadable audit trail is not an empty one', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const view = createOfferDetail({
+      doc,
+      mount,
+      client: stubClient({ quotes: [], audit: [], failAudit: { message: 'boom', code: 'AUDIT_READ_FAILED' } }),
+    });
+    await view.renderOfferDetail('off1');
+  } finally {
+    console.error = originalError;
+  }
+  const text = mount.textContent;
+  assert.ok(text.includes('Cronologia non leggibile. Riprova più tardi.'), 'the failure gets its own line');
+  assert.ok(!text.includes('Ancora nessun evento registrato'), 'the empty-trail line stays out');
+  assert.ok(logged.length > 0, 'the cause is logged for diagnosis');
+});
+
+test('technical actor handles never paint, even off the UUID shape', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const audit = [
+    { action: 'opportunity.created', actorId: 'admin-ui', actorType: 'user', createdAt: '2026-10-02T09:15:00.000Z' },
+    { action: 'opportunity.updated', actorId: 'stranger-handle', actorType: 'user', createdAt: '2026-10-28T18:40:00.000Z' },
+  ];
+  const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [], audit }) });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('admin-ui'), 'the service handle never paints');
+  assert.ok(!text.includes('stranger-handle'), 'an uncorroborated handle never paints');
+  assert.ok(text.includes('Creata da: utente'), 'the author degrades to a generic word');
+});
+
+test('a full linked page says it shows only the first rows', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const full = { items: new Array(200).fill(null).map((_, index) => ({ id: `q${index}` })) };
+  const client = {
+    calls: [],
+    async request(path) {
+      this.calls.push(path);
+      if (path === '/api/schema') return SCHEMA;
+      if (path.startsWith('/api/modules/opportunity/records/')) return { ...offerRecord() };
+      if (path.startsWith('/api/modules/quote/records')) return full;
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+  assert.ok(mount.textContent.includes('Mostro solo i primi 200 preventivi.'), 'the truncation notice paints');
 });
 
 test('Modifica prefills from the record and Salva PATCHes the three facts', async () => {

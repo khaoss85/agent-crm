@@ -40,16 +40,61 @@ function quoteStatusLabel(status) {
   return '—';
 }
 
+/**
+ * Italian label of a version policy decision. Same contract as the quote
+ * screen (admin-quotes.js): approval flavours first, quote states as the
+ * fallback, an em dash for anything unknown.
+ */
+function policyDecisionLabel(decision) {
+  if (decision === 'approval_required') return 'Richiede approvazione';
+  if (decision === 'auto_approve') return 'Approvazione automatica';
+  return quoteStatusLabel(decision);
+}
+
+/**
+ * Italian label of a commercial period. Same contract as the quote screen
+ * (admin-quotes.js): month, year, week, day with singular and plural.
+ */
+function periodLabel(count, interval) {
+  const n = Number(count) || 0;
+  const one = n === 1;
+  if (interval === 'month') return one ? 'mese' : 'mesi';
+  if (interval === 'year') return one ? 'anno' : 'anni';
+  if (interval === 'week') return one ? 'settimana' : 'settimane';
+  if (interval === 'day') return one ? 'giorno' : 'giorni';
+  return String(interval ?? '—');
+}
+
+/**
+ * Display page bound, same as the other admin screens: a collection read
+ * never claims completeness past this many rows without saying so.
+ */
+const LIST_LIMIT = 200;
+
 /** UUID shape: never painted as a name, it is a technical id, not a person. */
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Display name of an audit actor; empty actors stay an em dash. */
-function actorLabel(entry) {
+/**
+ * Documented service identities: technical handles, never a person's name.
+ * (Admin mutations write `admin-ui`; the system writes with `system`.)
+ */
+const SERVICE_ACTORS = new Set(['admin-ui']);
+
+/**
+ * Display name of an audit actor. A technical id is never painted: the
+ * system reads `sistema`, UUIDs and known service handles read `utente`,
+ * and any other id paints only when the record corroborates it as a human
+ * display value (the referente, the contact or the company the deal
+ * stores). Empty actors stay an em dash.
+ */
+function actorLabel(entry, record) {
   if (entry?.actorType === 'system') return 'sistema';
-  if (typeof entry?.actorId === 'string' && entry.actorId.trim() !== '') {
-    return UUID_SHAPE.test(entry.actorId.trim()) ? 'utente' : entry.actorId;
-  }
-  return '—';
+  const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
+  if (id === '') return '—';
+  if (UUID_SHAPE.test(id) || SERVICE_ACTORS.has(id)) return 'utente';
+  const known = [record?.owner, record?.contactName, record?.companyName]
+    .filter((value) => typeof value === 'string' && value !== '');
+  return known.includes(id) ? id : 'utente';
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -79,6 +124,26 @@ export function createOfferDetail(deps) {
     return '—';
   }
 
+  /**
+   * One linked collection, read server-side by its indexed parent key so a
+   * workspace with more than a page of records still finds this parent's
+   * rows. The bound stays disclosed: callers show the notice when hit.
+   */
+  async function fetchLinked(module, field, id) {
+    const result = await client.request(
+      `/api/modules/${module}/records?limit=${LIST_LIMIT}&filter.${field}=${encodeURIComponent(String(id))}`,
+    );
+    const rows = Array.isArray(result?.items) ? result.items : [];
+    return { rows, truncated: rows.length >= LIST_LIMIT };
+  }
+
+  /** Log a decoration-read failure with its cause, never its payload. */
+  function logReadFailure(area, error) {
+    if (typeof console !== 'undefined' && typeof console.error === 'function') {
+      console.error('[bo] offerta non leggibile', { area, code: error?.code ?? null });
+    }
+  }
+
   /** @param {string} offerId */
   async function renderOfferDetail(offerId) {
     const token = ++renderToken;
@@ -90,20 +155,23 @@ export function createOfferDetail(deps) {
     let record;
     let quotes;
     let auditItems;
+    let auditUnreadable = false;
     try {
       schema = await client.request('/api/schema');
       record = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(offerId)}`);
-      const quoteRows = await client.request('/api/modules/quote/records?limit=200');
-      quotes = (quoteRows.items ?? []).filter((quote) => quote?.opportunityId === record.id);
+      quotes = await fetchLinked('quote', 'opportunityId', record.id);
       try {
         const audit = await client.request(
           `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=100`,
         );
         auditItems = Array.isArray(audit?.items) ? audit.items : [];
-      } catch {
+      } catch (error) {
         // The audit trail is decoration: facts, quotes and lines render
-        // without it rather than failing the whole detail.
+        // without it rather than failing the whole detail. An unreadable
+        // trail is not an empty one: it gets its own line and a log cause.
+        logReadFailure('audit', error);
         auditItems = [];
+        auditUnreadable = true;
       }
     } catch (error) {
       if (token !== renderToken) return;
@@ -131,7 +199,7 @@ export function createOfferDetail(deps) {
       ['Chiusura prevista', dayOf(record.expectedCloseDate) ?? '—'],
       ['Creata il', dayOf(record.createdAt) ?? '—'],
       ['Ultima modifica', dayOf(record.updatedAt) ?? '—'],
-      ['Creata da', created ? actorLabel(created) : '—'],
+      ['Creata da', created ? actorLabel(created, record) : '—'],
     ]) {
       const row = el('p', 'offer-fact');
       row.appendChild(el('strong', undefined, `${label}: `));
@@ -147,11 +215,14 @@ export function createOfferDetail(deps) {
     paintEdit(editWrap, record, offerId, token);
 
     const quotesPanel = el('div', 'offer-quotes');
-    quotesPanel.appendChild(el('h3', undefined, `Preventivi (${quotes.length})`));
-    if (quotes.length === 0) {
+    quotesPanel.appendChild(el('h3', undefined, `Preventivi (${quotes.rows.length})`));
+    if (quotes.rows.length === 0) {
       quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
     }
-    for (const quote of quotes) {
+    if (quotes.truncated) {
+      quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
+    }
+    for (const quote of quotes.rows) {
       quotesPanel.appendChild(await paintQuote(quote, token, record));
       if (token !== renderToken) return;
     }
@@ -159,12 +230,14 @@ export function createOfferDetail(deps) {
 
     const historyPanel = el('div', 'offer-history');
     historyPanel.appendChild(el('h3', undefined, `Cronologia (${auditItems.length})`));
-    if (auditItems.length === 0) {
+    if (auditUnreadable) {
+      historyPanel.appendChild(el('p', 'field-error', 'Cronologia non leggibile. Riprova più tardi.'));
+    } else if (auditItems.length === 0) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
     }
     for (const entry of auditItems) {
       const row = el('p', 'history-event');
-      row.appendChild(el('span', undefined, `${dayOf(entry?.createdAt) ?? '—'} · ${auditActionLabel(entry?.action)} · ${actorLabel(entry)}`));
+      row.appendChild(el('span', undefined, `${dayOf(entry?.createdAt) ?? '—'} · ${auditActionLabel(entry?.action)} · ${actorLabel(entry, record)}`));
       historyPanel.appendChild(row);
     }
     mount.appendChild(historyPanel);
@@ -263,36 +336,43 @@ export function createOfferDetail(deps) {
     wrap.__editError = errorNode;
   }
 
-  /** One linked quote: stato, totale, righe e versioni (la sua cronologia). */
+  /**
+   * One linked quote: stato, totali per periodo, righe e versioni. Periods
+   * are never combined: the one-time group paints only when it carries a
+   * value, and each recurring group paints with its own period, mirroring
+   * the quote screen's `Totali per periodo commerciale`.
+   */
   async function paintQuote(quote, token, record) {
     const panel = el('div', 'offer-quote');
     panel.setAttribute('data-quote', quote.id);
     const totals = parseTotals(quote.totalsJson);
-    const total = totals.oneTimeTotal
-      ? money(totals.oneTimeTotal.netAmountCents, quote.currency)
-      : (totals.recurringTotals[0] ? money(totals.recurringTotals[0].netAmountCents, quote.currency) : '—');
-    panel.appendChild(el('h4', undefined, `Preventivo · ${quoteStatusLabel(quote.status)} · ${total}`));
+    panel.appendChild(el('h4', undefined, `Preventivo · ${quoteStatusLabel(quote.status)} · ${quoteTotalSummary(totals, quote.currency)}`));
     const link = el('a', undefined, 'Apri il preventivo');
     link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
     panel.appendChild(link);
 
     let lines = [];
     let versions = [];
+    let partial = false;
     try {
-      const lineRows = await client.request('/api/modules/quote-line/records?limit=200');
-      lines = (lineRows.items ?? [])
-        .filter((line) => line?.quoteId === quote.id && line?.removed === false)
+      const fetchedLines = await fetchLinked('quote-line', 'quoteId', quote.id);
+      lines = fetchedLines.rows
+        .filter((line) => line?.removed === false)
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      const versionRows = await client.request('/api/modules/quote-version/records?limit=200');
-      versions = (versionRows.items ?? [])
-        .filter((version) => version?.quoteId === quote.id)
+      const fetchedVersions = await fetchLinked('quote-version', 'quoteId', quote.id);
+      versions = fetchedVersions.rows
         .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
-    } catch {
+      partial = fetchedLines.truncated || fetchedVersions.truncated;
+    } catch (error) {
+      logReadFailure('lines-versions', error);
       panel.appendChild(el('p', 'field-error', 'Righe e versioni non leggibili. Riprova più tardi.'));
       return panel;
     }
     if (token !== renderToken) return panel;
 
+    if (partial) {
+      panel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} elementi per elenco.`));
+    }
     panel.appendChild(el('h5', undefined, `Righe (${lines.length})`));
     if (lines.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna riga in questo preventivo.'));
     for (const line of lines) {
@@ -303,7 +383,7 @@ export function createOfferDetail(deps) {
     if (versions.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna versione per questo preventivo.'));
     for (const version of versions) {
       panel.appendChild(el('p', 'quote-version',
-        `Versione ${version.versionNumber ?? '—'} · ${quoteStatusLabel(version.policyDecision)} · ${money(versionTotalsNet(version), version.currency ?? quote.currency)}`));
+        `Versione ${version.versionNumber ?? '—'} · ${policyDecisionLabel(version.policyDecision)} · ${money(versionTotalsNet(version), version.currency ?? quote.currency)}`));
     }
     return panel;
   }
@@ -325,7 +405,33 @@ function parseTotals(text) {
   };
 }
 
-/** Net of one frozen version: one-time first, then the first recurring group. */
+/**
+ * A totals group carries a value only when its net is a nonzero integer:
+ * the server always persists a zero-valued one-time group, even for
+ * subscription-only quotes, so truthiness alone would paint `0 €`.
+ */
+function groupHasValue(group) {
+  return Number.isSafeInteger(group?.netAmountCents) && group.netAmountCents !== 0;
+}
+
+/**
+ * Header summary of a linked quote: the one-time group only when it carries
+ * a value, then each valued recurring group with its own period. Periods
+ * are never summed; with no valued group the header stays an em dash.
+ */
+function quoteTotalSummary(totals, currency) {
+  const parts = [];
+  if (groupHasValue(totals.oneTimeTotal)) {
+    parts.push(`una tantum ${formatAmount(totals.oneTimeTotal.netAmountCents, currency)}`);
+  }
+  for (const group of totals.recurringTotals) {
+    if (!groupHasValue(group)) continue;
+    parts.push(`${formatAmount(group.netAmountCents, currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : '—';
+}
+
+/** Net of one frozen version: valued one-time first, then valued recurring. */
 function versionTotalsNet(version) {
   let totals = {};
   try {
@@ -333,9 +439,10 @@ function versionTotalsNet(version) {
   } catch {
     totals = {};
   }
-  if (totals.oneTimeTotal) return totals.oneTimeTotal.netAmountCents ?? 0;
-  if (Array.isArray(totals.recurringTotals) && totals.recurringTotals[0]) {
-    return totals.recurringTotals[0].netAmountCents ?? 0;
+  if (groupHasValue(totals.oneTimeTotal)) return totals.oneTimeTotal.netAmountCents;
+  if (Array.isArray(totals.recurringTotals)) {
+    const valued = totals.recurringTotals.find((group) => groupHasValue(group));
+    if (valued) return valued.netAmountCents;
   }
   return 0;
 }
