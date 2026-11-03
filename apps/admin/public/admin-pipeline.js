@@ -10,7 +10,8 @@
 //
 // Views: Kanban columns plus a Lista table over the same filtered records.
 // Search plus the Referente, Creata and Stati pills filter both views
-// client-side; "Azzera filtri" resets them. The
+// client-side; "Azzera filtri" resets them. Apri navigates to the offer
+// detail page (#/offerte/<id>) — the card never expands in place. The
 // summary (count + per-currency totals) and the forecast always describe the
 // filtered set. The forecast is a declared heuristic — won and paid at face
 // value plus 60% of the open ones — labeled as a stima, never a commitment.
@@ -25,8 +26,9 @@
 // to a won or lost stage — from Sposta or a drop — never posts straight:
 // it reveals the card's Conferma panel (Persa adds the mandatory reason
 // input) and only Conferma posts. The Lista rows are read-only; moves
-// happen on Kanban cards. Apri opens a card to read and edit its three
-// commercial facts (importo, chiusura, referente) through PATCH.
+// happen on Kanban cards. Apri navigates to the offer detail page
+// (#/offerte/<id>), where its three commercial facts (importo, chiusura,
+// referente) are read and edited through PATCH.
 //
 // BO-F6-10 fetta Lista (backlog:31bed527): testi esatti C7/C16/C21, intestazioni
 // C19 nell'ordine del prototipo, pill di stato con pallino e percentuale di
@@ -136,27 +138,9 @@ export function createPipelineBoard(deps) {
   let filteredPipeline = null;
   /** Record id → live card controls (reason reveal on drops to lost). */
   const cardNodes = new Map();
-  /** Record ids with the detail section open (Apri) or being edited. */
-  const expandedCards = new Set();
-  const editingCards = new Set();
   /** Record id → pending won/lost move awaiting Conferma. */
   const pendingConfirm = new Map();
 
-  /** Euro text to integer cents, or null when not a plain non-negative amount. */
-  function parseEuroToCents(raw) {
-    const text = String(raw ?? '').trim().replace(',', '.');
-    if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
-    const cents = Math.round(Number(text) * 100);
-    return Number.isSafeInteger(cents) ? cents : null;
-  }
-
-  /** PATCH the three fields the card edits — never a stage or customer move. */
-  async function patchOffer(recordId, patch) {
-    return client.request(
-      `/api/opportunities/${encodeURIComponent(recordId)}`,
-      { method: 'PATCH', body: JSON.stringify(patch) },
-    );
-  }
   /** Live stage columns of the current render: drop and dragend sweep their
    * drop-target hook, so a cancelled drag never leaves a column marked. */
   const columnNodes = [];
@@ -279,11 +263,8 @@ export function createPipelineBoard(deps) {
       state.created = '';
     }
     cached = { pipeline, pipelines: composed, records };
-    // A fresh server read may have moved the records: an open detail, an
-    // in-progress edit or a pending Conferma from the previous read is
-    // stale, never replayed onto the new truth.
-    expandedCards.clear();
-    editingCards.clear();
+    // A fresh server read may have moved the records: a pending Conferma
+    // from the previous read is stale, never replayed onto the new truth.
     pendingConfirm.clear();
     return renderAll(token);
   }
@@ -966,21 +947,23 @@ export function createPipelineBoard(deps) {
       unmarkDropTargets();
     });
 
-    // Voce 96e7b579: Apri shows what the card is made of and edits the
-    // three commercial facts (importo, chiusura, referente) through the
-    // PATCH route — never a stage or customer move. Only the opportunity
-    // board offers it: a generated staged module has its own record
-    // screen behind its rows.
-    const editable = pipeline.module === 'opportunity';
-    if (editable) {
-      const opener = renderOfferOpener(pipeline, record);
-      card.appendChild(opener);
-      card.__open = opener.__toggle; // test hook
-      card.__edit = opener.__edit;
-      card.__save = opener.__save;
-      card.__cancelEdit = opener.__cancelEdit;
-      card.__editInputs = opener.__inputs;
-      card.__editError = opener.__error;
+    // Backlog ef92f728: Apri navigates to the offer detail page
+    // (#/offerte/<id>) — the card never expands in place. Only the
+    // opportunity board offers it: a generated staged module has its own
+    // record screen behind its rows.
+    const detailed = pipeline.module === 'opportunity';
+    if (detailed) {
+      const open = el(doc, 'button', {
+        class: 'small secondary',
+        text: 'Apri',
+        attrs: { type: 'button', 'data-action': 'open-offer' },
+      });
+      const go = () => {
+        if (typeof deps.navigate === 'function') deps.navigate(`#/offerte/${encodeURIComponent(String(record.id))}`);
+      };
+      open.addEventListener('click', go);
+      card.appendChild(open);
+      card.__open = go; // test hook
     }
 
     // Terminal stages have no move control (server enforces it regardless).
@@ -1121,142 +1104,6 @@ export function createPipelineBoard(deps) {
       controls.confirmReason.focus();
     }
     return true;
-  }
-
-  /**
-   * Voce 96e7b579: the Apri toggle plus the detail/edit section of one
-   * card. Detail reads the record just rendered (Valore, Chiusura,
-   * Referente); Modifica swaps it for the three inputs; Salva validates
-   * like the Nuova offerta form (euro text, optional ISO date, mandatory
-   * referente) and PATCHes; Annulla drops the edits by re-reading the
-   * cached record, so nothing stale stays on screen. A refused save keeps
-   * the form with the server's Italian error, never a blank card.
-   * @param {any} pipeline @param {Record<string, any>} record
-   */
-  function renderOfferOpener(pipeline, record) {
-    const wrap = el(doc, 'div', { class: 'card-offer' });
-    const id = String(record.id);
-    const toggle = () => {
-      if (expandedCards.has(id)) {
-        expandedCards.delete(id);
-        editingCards.delete(id);
-      } else {
-        expandedCards.add(id);
-      }
-      renderAll(renderToken);
-    };
-    const open = el(doc, 'button', {
-      class: 'small secondary',
-      text: expandedCards.has(id) ? 'Chiudi' : 'Apri',
-      attrs: { type: 'button', 'data-action': 'open-offer' },
-    });
-    open.addEventListener('click', toggle);
-    wrap.appendChild(open);
-    wrap.__toggle = toggle; // test hook
-
-    if (!expandedCards.has(id)) return wrap;
-
-    const detail = el(doc, 'div', { class: 'card-detail' });
-    const row = (label, value) => {
-      const line = el(doc, 'p', { class: 'card-fact' });
-      line.appendChild(el(doc, 'span', { text: `${label}: ` }));
-      line.appendChild(el(doc, 'strong', { text: value }));
-      detail.appendChild(line);
-    };
-
-    if (!editingCards.has(id)) {
-      row('Valore', formatAmount(record.valueCents, record.currency));
-      row('Chiusura', dayOf(record.expectedCloseDate) ?? '—');
-      row('Referente', typeof record.owner === 'string' && record.owner ? record.owner : '—');
-      const edit = el(doc, 'button', {
-        class: 'small secondary', text: 'Modifica', attrs: { type: 'button', 'data-action': 'edit-offer' },
-      });
-      const startEdit = () => {
-        editingCards.add(id);
-        renderAll(renderToken);
-      };
-      edit.addEventListener('click', startEdit);
-      detail.appendChild(edit);
-      wrap.appendChild(detail);
-      wrap.__edit = startEdit; // test hook
-      return wrap;
-    }
-
-    // Edit form: the same euro/date/referente rules as Nuova offerta.
-    const form = el(doc, 'form', { class: 'card-edit' });
-    const errorNode = el(doc, 'small', { class: 'field-error hidden' });
-    form.appendChild(errorNode);
-    /** @type {Record<string, any>} */
-    const inputs = {};
-    const addField = (name, label, { type = 'text', value = '' } = {}) => {
-      const fieldRow = el(doc, 'div', { class: 'field-row' });
-      const inputId = `edit-${id}-${name}`;
-      fieldRow.appendChild(el(doc, 'label', { text: label, attrs: { for: inputId } }));
-      const input = el(doc, 'input', { attrs: { id: inputId, name, type } });
-      input.value = value;
-      fieldRow.appendChild(input);
-      form.appendChild(fieldRow);
-      inputs[name] = input;
-    };
-    addField('value', 'Valore EUR', {
-      value: Number.isSafeInteger(record.valueCents) ? (record.valueCents / 100).toFixed(2) : '',
-    });
-    addField('expiry', 'Chiusura', { type: 'date', value: dayOf(record.expectedCloseDate) ?? '' });
-    addField('owner', 'Referente', { value: typeof record.owner === 'string' ? record.owner : '' });
-
-    let busy = false;
-    const save = async (event) => {
-      if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      if (busy) return;
-      const cents = parseEuroToCents(inputs.value.value);
-      const owner = String(inputs.owner.value ?? '').trim();
-      const expiry = String(inputs.expiry.value ?? '').trim();
-      /** @type {Record<string, string>} */
-      const failures = {};
-      if (cents === null) failures.value = "Il valore è obbligatorio, in euro (es. 250.00).";
-      if (owner === '') failures.owner = 'Il referente è obbligatorio.';
-      if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
-      if (Object.keys(failures).length > 0) {
-        errorNode.textContent = Object.values(failures)[0];
-        errorNode.setAttribute('class', 'field-error');
-        return;
-      }
-      busy = true;
-      try {
-        await patchOffer(id, {
-          valueCents: cents,
-          expectedCloseDate: expiry === '' ? null : expiry,
-          owner,
-        });
-        editingCards.delete(id);
-        toast('Offerta aggiornata.');
-        await renderBoard(pipeline.name); // re-render: server state is the truth
-      } catch (error) {
-        busy = false;
-        errorNode.textContent = humanReadError(error, { failed: 'Modifica non riuscita. Riprova più tardi.' });
-        errorNode.setAttribute('class', 'field-error');
-      }
-    };
-    const cancelEdit = () => {
-      editingCards.delete(id);
-      renderAll(renderToken);
-    };
-    form.addEventListener('submit', save);
-    const saveButton = el(doc, 'button', { class: 'small primary', text: 'Salva', attrs: { type: 'submit' } });
-    const cancelButton = el(doc, 'button', {
-      class: 'small secondary', text: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-edit' },
-    });
-    cancelButton.addEventListener('click', cancelEdit);
-    form.appendChild(saveButton);
-    form.appendChild(cancelButton);
-    detail.appendChild(form);
-    wrap.appendChild(detail);
-    wrap.__edit = () => {};
-    wrap.__save = save; // test hook
-    wrap.__cancelEdit = cancelEdit;
-    wrap.__inputs = inputs;
-    wrap.__error = errorNode;
-    return wrap;
   }
 
   return { renderBoard };
