@@ -661,6 +661,68 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     }
   }
 
+  // Custom fields (backlog:434cc39a): space-wide definitions with this
+  // customer's value. The def/value modules are package-owned, so a missing
+  // service here is a fake module map in tests — zero definitions and zero
+  // columns, never a claim. A campo filter over an unknown field refuses
+  // CUSTOM_FIELD_UNKNOWN instead of answering an exact-looking empty page.
+  const customDefs = await (async () => {
+    const service = optional(modules, names.fieldDef);
+    if (!service || typeof service.list !== 'function') return [];
+    const shaped = [];
+    for (const row of await service.list({ limit: CUSTOMER_SCAN_LIMIT })) {
+      if (!row || typeof row.fieldKey !== 'string' || row.fieldKey === '') continue;
+      let options = [];
+      if (typeof row.options === 'string' && row.options !== '') {
+        try {
+          const parsed = JSON.parse(row.options);
+          if (Array.isArray(parsed)) options = parsed.filter((entry) => typeof entry === 'string');
+        } catch { /* a malformed options text reads as no options, never a crash */ }
+      }
+      shaped.push({
+        key: row.fieldKey,
+        label: typeof row.label === 'string' && row.label !== '' ? row.label : row.fieldKey,
+        type: typeof row.fieldType === 'string' ? row.fieldType : 'testo',
+        options,
+      });
+    }
+    return shaped;
+  })();
+  if (query.campo !== undefined && !customDefs.some((def) => def.key === query.campo)) {
+    throw new AppError(`custom field «${query.campo}» is not defined: add it first`, { code: 'CUSTOM_FIELD_UNKNOWN', status: 404 });
+  }
+  const customValueRows = await (async () => {
+    const service = optional(modules, names.fieldValue);
+    if (!service || typeof service.listWhere !== 'function') return [];
+    const rows = [];
+    for (const resource of ['contact', 'company']) {
+      const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
+      if (ids.length === 0) continue;
+      try {
+        for (const row of await service.listWhere({ subjectResource: resource, subjectId: ids })) {
+          rows.push(row);
+        }
+      } catch {
+        // A module that declares none of these shapes stays unread here;
+        // the rows below then read null values, never invented ones.
+      }
+    }
+    return rows;
+  })();
+  const customValuesBySubject = new Map(subjectKeys.map((key) => [key, new Map()]));
+  for (const row of customValueRows) {
+    if (!row || typeof row.fieldKey !== 'string') continue;
+    const key = keyOf(row.subjectResource, row.subjectId);
+    if (customValuesBySubject.has(key)) customValuesBySubject.get(key).set(row.fieldKey, row);
+  }
+  const customFieldsBySubject = new Map(subjectKeys.map((key) => [key, customDefs.map((def) => {
+    const row = customValuesBySubject.get(key).get(def.key) ?? null;
+    return {
+      key: def.key, label: def.label, type: def.type, options: def.options,
+      value: row?.value ?? null, updatedAt: row?.updatedAt ?? null, updatedBy: row?.updatedBy ?? null,
+    };
+  })]));
+
   // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
   // is only exact when both the message and the call scans are readable and
   // complete. A partial or unreadable scan must not feed an exact-looking
@@ -793,6 +855,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
         value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,
         source: { resource, id },
       }]]),
+      customFieldsBySubject: new Map([[key, customFieldsBySubject.get(key) ?? []]]),
     });
   });
 
@@ -823,6 +886,9 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     views,
     sorts: CUSTOMER_SORTS.map((sort) => ({ ...sort })),
     columns: CUSTOMER_COLUMNS.map((column) => ({ ...column })),
+    customColumns: Object.freeze(customDefs.map((def) => Object.freeze({
+      key: def.key, label: def.label, type: def.type, options: Object.freeze([...def.options]),
+    }))),
     pageSizes: [...CUSTOMER_PAGE_SIZES],
   });
 }

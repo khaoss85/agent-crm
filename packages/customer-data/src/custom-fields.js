@@ -102,7 +102,7 @@ function requireFieldType(raw) {
  * each a short plain string. Every other type stores ''.
  */
 function requireOptions(raw, fieldType) {
-  if (fieldType !== 'scelta') return '';
+  if (fieldType !== 'scelta') return null;
   let parsed = raw;
   if (typeof parsed === 'string') {
     try {
@@ -125,7 +125,11 @@ function requireOptions(raw, fieldType) {
 }
 
 export function parseFieldOptions(row) {
-  if (!row || row.fieldType !== 'scelta' || typeof row.options !== 'string' || row.options === '') return [];
+  if (!row) return [];
+  const fieldType = row.fieldType ?? row.type;
+  if (fieldType !== 'scelta') return [];
+  if (Array.isArray(row.options)) return row.options.filter((entry) => typeof entry === 'string');
+  if (typeof row.options !== 'string' || row.options === '') return [];
   try {
     const parsed = JSON.parse(row.options);
     return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === 'string') : [];
@@ -146,7 +150,8 @@ export function normalizeFieldValue(def, raw) {
   if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
     throw new ValidationError(`«${field}» ha bisogno di un valore`, { field: 'value' });
   }
-  switch (def?.fieldType) {
+  const fieldType = def?.fieldType ?? def?.type;
+  switch (fieldType) {
     case 'testo': {
       return safeString(raw, 'value', { max: MAX_CUSTOM_VALUE_LENGTH, required: true });
     }
@@ -222,7 +227,7 @@ export async function defineCustomField({ modules, names }, request) {
 
   const stored = await existingDef(defs, key);
   if (stored) {
-    const same = stored.label === label && stored.fieldType === fieldType && String(stored.options ?? '') === options;
+    const same = stored.label === label && stored.fieldType === fieldType && String(stored.options ?? '') === String(options ?? '');
     if (!same) {
       throw refusal('CUSTOM_FIELD_DEFINITION_CONFLICT', 409,
         `«${stored.label}» esiste già con un altro tipo o altre opzioni: cambia chiave, non la definizione`);
@@ -239,7 +244,7 @@ export async function defineCustomField({ modules, names }, request) {
     if (!isUniqueConflict(error)) throw error;
     const winner = await existingDef(defs, key);
     if (!winner) throw error;
-    const same = winner.label === label && winner.fieldType === fieldType && String(winner.options ?? '') === options;
+    const same = winner.label === label && winner.fieldType === fieldType && String(winner.options ?? '') === String(options ?? '');
     if (!same) {
       throw refusal('CUSTOM_FIELD_DEFINITION_CONFLICT', 409,
         `«${winner.label}» esiste già con un altro tipo o altre opzioni: cambia chiave, non la definizione`);

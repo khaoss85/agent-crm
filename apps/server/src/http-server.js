@@ -627,7 +627,84 @@ export function buildRouter(app) {
       page: query.page,
       pageSize: query.pageSize,
       spaceId: query.spaceId,
+      campo: query.campo,
+      valore: query.valore,
     });
+  });
+
+  // Custom fields (backlog:434cc39a): the operator-decided scheda
+  // properties. Same enumerated-adapter shape as the profile route: the
+  // kernel owns the path, gates the role boundary, and delegates to the
+  // composed application operations — without customer-data composed each
+  // answers an honest 404. Definitions are space-wide; values name a
+  // contact or a company that exists, never a ghost record.
+  router.add('POST', '/api/customer-data/fields/define', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.defineCustomField !== 'function') {
+      throw new NotFoundError('Operation', 'custom field define');
+    }
+    return respond(201, await app.defineCustomField({ ...stripServerControlledKeys(body), actor }));
+  });
+
+  router.add('GET', '/api/customer-data/fields', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.listCustomFields !== 'function') {
+      throw new NotFoundError('Operation', 'custom field list');
+    }
+    return await app.listCustomFields({});
+  });
+
+  router.add('POST', '/api/customer-data/fields/value', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setCustomFieldValue !== 'function') {
+      throw new NotFoundError('Operation', 'custom field value');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a custom field value needs resource contact or company', { field: 'resource' });
+    }
+    return respond(200, await app.setCustomFieldValue({ ...stripServerControlledKeys(input), actor }));
+  });
+
+  router.add('GET', '/api/customer-data/fields/values', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readCustomFieldValues !== 'function') {
+      throw new NotFoundError('Operation', 'custom field values');
+    }
+    return await app.readCustomFieldValues({ resource: query.resource, id: query.id });
+  });
+
+  // «✦ Scrivi o incolla» (backlog:434cc39a): the preview writes nothing, so
+  // it gates records.read; the apply gates records.write. The AI adapter is
+  // the host composition's (package phraseAdapter): the reference server
+  // composes none, so the preview answers 503 CUSTOMER_PHRASE_AI_UNAVAILABLE
+  // and the admin hides the ✦ area instead of running anything.
+  router.add('GET', '/api/customer-data/phrase/ai-available', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.customerPhraseAiAvailable !== 'function') {
+      throw new NotFoundError('Operation', 'phrase AI probe');
+    }
+    return await app.customerPhraseAiAvailable({});
+  });
+
+  router.add('POST', '/api/customer-data/phrase/preview', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.parseCustomerPhrase !== 'function') {
+      throw new NotFoundError('Operation', 'phrase preview');
+    }
+    return await app.parseCustomerPhrase({ ...stripServerControlledKeys(body), actor });
+  });
+
+  router.add('POST', '/api/customer-data/phrase/apply', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.applyCustomerPhrase !== 'function') {
+      throw new NotFoundError('Operation', 'phrase apply');
+    }
+    return respond(201, await app.applyCustomerPhrase({ ...stripServerControlledKeys(body), actor }));
   });
 
   // Customer Hub (BO-F1-06): the scheda cliente reads the card and the
