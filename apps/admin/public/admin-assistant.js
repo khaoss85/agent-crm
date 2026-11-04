@@ -40,11 +40,15 @@ export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
 const ASSISTANT_ASK_PATH = '/api/assistant/ask';
 
 /**
- * Italian notice shown when free questions are unavailable: the panel stays
- * usable, only the free-question box is off, and the message says the
- * questions arrive with the key.
+ * Italian notices when free questions are unavailable. The panel never
+ * blames the key by default: the pilot backend serves suggestions only, and
+ * free questions are not part of the MVP. The key sentence appears only
+ * when the status really reports a missing key (LLM_SECRET_UNAVAILABLE);
+ * a disabled space (LLM_SPACE_DISABLED) says the assistant is off there.
  */
-export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave AI attiva in questo spazio: per ora non lo è, intanto i suggerimenti qui sopra leggono i tuoi dati veri.';
+export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti (Suggerisci), che leggono dati reali.';
+export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: in questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci).';
+export const ASSISTANT_SUGGEST_ONLY_NOTICE = 'In questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci): le domande libere non sono attive.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */
 export const FREE_QUESTION_MAX_LENGTH = 500;
@@ -982,10 +986,27 @@ export async function runSuggestion(client, suggestionId, customer = null) {
 }
 
 /**
+ * Which dry-run notice tells the truth about a non-live status: the key
+ * sentence only for a really missing key, the off-in-this-space sentence
+ * for a disabled space, the suggest-only line for anything else (absent
+ * backend, unknown shape — the pilot serves suggestions only). Reads both
+ * `code` and `reason`, mirroring packages/llm error codes.
+ * @param {unknown} status
+ */
+export function assistantDisabledNotice(status) {
+  const code = status !== null && typeof status === 'object'
+    ? status.code ?? status.reason ?? status.errorCode
+    : null;
+  if (code === 'LLM_SECRET_UNAVAILABLE') return FREE_QUESTION_DISABLED_NOTICE;
+  if (code === 'LLM_SPACE_DISABLED') return ASSISTANT_SPACE_DISABLED_NOTICE;
+  return ASSISTANT_SUGGEST_ONLY_NOTICE;
+}
+
+/**
  * The assistant backend probe: live only when the server publishes the
  * assistant status with free questions enabled. Anything else — 404, a
- * disabled flag, a network failure — is dry-run: the panel stays usable and
- * only the free-question box is off, with the key message.
+ * disabled flag, a network failure — is dry-run: the panel stays usable,
+ * the free-question box is hidden, and the notice names the real reason.
  * @param {{ request: (path: string) => Promise<any> }} client
  */
 export async function probeAssistantBackend(client) {
@@ -1001,15 +1022,22 @@ export async function probeAssistantBackend(client) {
       && status.endpoint === ASSISTANT_ASK_PATH) {
       return { mode: 'live', freeQuestions: 'enabled', endpoint: status.endpoint, notice: '' };
     }
-  } catch {
-    // Absent backend (today): dry-run, never a failure.
+    return {
+      mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: assistantDisabledNotice(status),
+    };
+  } catch (error) {
+    // Absent backend (today): dry-run, never a failure. A refusal carrying
+    // a stable code still names its reason.
+    return {
+      mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: assistantDisabledNotice(error),
+    };
   }
-  return { mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: FREE_QUESTION_DISABLED_NOTICE };
 }
 
 /**
- * One free question. In dry-run the question is refused with the key message
- * before any request leaves the panel — zero requests, never a silent call.
+ * One free question. In dry-run the question is refused with the status
+ * notice (or the suggest-only line when the status carries none) before
+ * any request leaves the panel — zero requests, never a silent call.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ mode: string, endpoint?: string | null }} status
  * @param {unknown} question
@@ -1020,15 +1048,18 @@ export async function askFreeQuestion(client, status, question) {
   if (text.length > FREE_QUESTION_MAX_LENGTH) {
     throw new Error(`La domanda è troppo lunga (massimo ${FREE_QUESTION_MAX_LENGTH} caratteri).`);
   }
+  const refusal = typeof status?.notice === 'string' && status.notice !== ''
+    ? status.notice
+    : ASSISTANT_SUGGEST_ONLY_NOTICE;
   if (status?.mode !== 'live' || typeof status?.endpoint !== 'string') {
-    return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
+    return { ok: false, disabled: true, notice: refusal };
   }
   // Re-validate the contract here instead of trusting status.endpoint: a
   // direct caller passing { mode: 'live', endpoint: '/api/...' } must never
   // steer the question text at an arbitrary route. Anything off-contract is
   // dry-run, with zero requests.
   if (status.endpoint !== ASSISTANT_ASK_PATH) {
-    return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
+    return { ok: false, disabled: true, notice: refusal };
   }
   // One fresh submission-owned key per question: keys come from the Admin
   // submission controller (KEY_RE) so the real client gate accepts them, and
@@ -1521,6 +1552,19 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (history) scroll.appendChild(history);
     panel.appendChild(scroll);
 
+    // Free questions are not part of the MVP: without a live backend the
+    // panel shows no free-question field at all — one honest line saying
+    // the assistant here suggests replies (Suggerisci), with the reason the
+    // status reported. The key sentence appears only for a really missing
+    // key, never as the default.
+    if (!live) {
+      const notice = typeof state.status?.notice === 'string' && state.status.notice !== ''
+        ? state.status.notice
+        : ASSISTANT_SUGGEST_ONLY_NOTICE;
+      panel.appendChild(el(doc, 'p', 'bo-assistant-notice', notice));
+      mount.appendChild(panel);
+      return;
+    }
     const free = el(doc, 'form', 'bo-assistant-free');
     free.appendChild(el(doc, 'p', 'bo-assistant-heading bo-assistant-free-label', 'Domanda libera'));
     const row = el(doc, 'div', 'bo-assistant-free-row');
@@ -1528,12 +1572,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     input.setAttribute('type', 'search');
     input.setAttribute('class', 'bo-assistant-input ui-field'); // BO-F6-02: system field class.
     input.setAttribute('aria-label', 'Domanda libera');
-    if (!live) {
-      input.setAttribute('disabled', 'true');
-      input.setAttribute('placeholder', 'Domande libere non ancora attive');
-    } else {
-      input.setAttribute('placeholder', 'Scrivi una domanda…');
-    }
+    input.setAttribute('placeholder', 'Scrivi una domanda…');
     // A caller-drafted handoff (BO-F5-01 "+ Nuovo modulo"): the description
     // typed on the screen lands in the panel input, so the user never
     // retypes it. Text only — never markup, never a submit.
@@ -1541,12 +1580,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     row.appendChild(input);
     const send = el(doc, 'button', 'bo-assistant-send', 'Chiedi');
     send.setAttribute('type', 'submit');
-    if (!live) send.setAttribute('disabled', 'true');
     row.appendChild(send);
     free.appendChild(row);
-    if (!live) {
-      free.appendChild(el(doc, 'p', 'bo-assistant-notice', FREE_QUESTION_DISABLED_NOTICE));
-    }
     free.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       void submitFreeQuestion(typeof input.value === 'string' ? input.value : '');
