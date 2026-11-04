@@ -28,6 +28,7 @@ import { createChannelsPackage } from '../../channels/src/index.js';
 import { createMagicLinkPackage, createMemoryMagicLinkStore } from '../../magic-link/src/index.js';
 import { createSequencesPackage } from '../../sequences/src/index.js';
 import { createWorkPackage } from '../../work/src/index.js';
+import { createReengagementPackage } from '../../reengagement/src/index.js';
 
 const workDefinition = createWorkPackage();
 
@@ -44,4 +45,8 @@ export const generatedDomains = [
   createMagicLinkPackage({ store: createMemoryMagicLinkStore() }),
   createSequencesPackage(),
   workDefinition,
+  // f50ad5c9: the re-engagement agent computes one scan over caller values
+  // and owns no records, so it composes with no seams: the host worker
+  // injects the wording edge when it needs drafted knocks.
+  createReengagementPackage(),
 ];
