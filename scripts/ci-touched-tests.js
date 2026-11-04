@@ -214,6 +214,12 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // so the unlisted-guard audit below does not see its shape — it is
   // listed here by audit, like the raw-driver boundary.
   'tests/framework-neutrality.test.js',
+  // Pinned digests of files anywhere in the repo: a JTBD row pins its test
+  // file's bytes, an evidence document pins its plan's fingerprint. #555
+  // (admin-quotes.test.js translated) and #570 (a composition change) moved
+  // them with a green fast and a red full suite the night after.
+  'tests/jtbd-portfolio-gate.test.js',
+  'tests/implementation-evidence.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
