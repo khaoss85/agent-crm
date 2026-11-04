@@ -440,6 +440,57 @@ export function slotInGrid(startsAt, endsAt) {
 }
 
 /**
+ * backlog:d1e4d90e — draft duration in whole minutes for the suggest path:
+ * the model's endsAt minus startsAt when the draft searched that size, else
+ * the stated durationMinutes when the search accepts it, else the default
+ * step. A «45 minuti» sentence without a time still searches 45, never 30.
+ * @param {any} draft
+ */
+export function draftMinutes(draft) {
+  const from = draft?.startsAt ? Date.parse(draft.startsAt) : NaN;
+  const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
+  const pair = Math.round((to - from) / 60000);
+  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
+  const stated = draft?.durationMinutes;
+  if (Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated)) return stated;
+  return 30;
+}
+
+/**
+ * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
+ * the model answers a name («Marco»), the search needs booking identities.
+ * An exact identity wins; then one display-name match (case-insensitive).
+ * Homonyms and strangers resolve to nothing — the caller keeps the drafted
+ * words on the outsider path instead of booking as the wrong human.
+ * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ */
+export function resolveDraftMemberIds(draftMember, named, members) {
+  if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
+  const rows = personRows(named, [], members);
+  const exact = rows.find((row) => row.ids.includes(draftMember));
+  if (exact) return [...exact.ids];
+  const wanted = draftMember.trim().toLowerCase();
+  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
+  if (byName.length === 1) return [...byName[0].ids];
+  return [];
+}
+
+/**
+ * backlog:d1e4d90e — keep phrase proposals bookable: begun steps are cut, so
+ * a «45 minuti con Marco» search never proposes the past. Out-of-hours steps
+ * stay, named below the grid by their honest lines (BO-F6-11 fetta 8, owner
+ * 29/10) — only the past is unbookable for everyone.
+ * @param {unknown} slots @param {number} [nowMs]
+ */
+export function filterPhraseProposals(slots, nowMs = Date.now()) {
+  if (!Array.isArray(slots)) return [];
+  return slots.filter((slot) => {
+    const startMs = Date.parse(String(slot?.startsAt ?? ''));
+    return Number.isFinite(startMs) && startMs >= nowMs;
+  });
+}
+
+/**
  * Overlap lanes per day column: events sharing Rome time split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
@@ -1610,14 +1661,6 @@ export function createCalendarioView(deps) {
     return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
   }
 
-  /** Draft duration in whole minutes when the suggest path accepts it, else the default step. @param {any} draft */
-  function draftMinutes(draft) {
-    const from = draft?.startsAt ? Date.parse(draft.startsAt) : NaN;
-    const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
-    const minutes = Math.round((to - from) / 60000);
-    return [15, 30, 45, 60, 90, 120].includes(minutes) ? minutes : 30;
-  }
-
   /** Suggest window over the shown Rome week, with the day-margin idiom of the booking path. */
   function suggestBounds() {
     if (!Array.isArray(state.weekKeys) || state.weekKeys.length === 0) return null;
@@ -1670,8 +1713,14 @@ export function createCalendarioView(deps) {
         state.aiNote = 'Settimana non valida.';
         return;
       }
+      // backlog:d1e4d90e — the draft names a person («Marco»), the search
+      // needs booking identities: resolve against the known team, and search
+      // every identity the human holds. Unresolved words keep the outsider
+      // path below, never a booking as the wrong human.
+      const memberIds = resolveDraftMemberIds(member, parseMemberFilter(state.memberFilter), state.members);
+      const searchIds = memberIds.length > 0 ? memberIds : [member];
       const found = await client.request(
-        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(member)}`
+        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
         + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
         + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
       );
@@ -1684,23 +1733,37 @@ export function createCalendarioView(deps) {
         }
       }
       // One row and one ghost per slot, like the week grid caps its own
-      // columns: the first 24 carry the search, never an invented rest.
-      state.proposals = kept.slice(0, 24);
+      // columns: the first 24 carry the search, never an invented rest. Only
+      // future steps inside the painted hours are proposed (backlog:d1e4d90e).
+      const proposals = filterPhraseProposals(kept);
+      state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
-      state.aiNote = kept.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
+      state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
     } catch (error) {
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
-      state.aiNote = humanReadError(error, {
-        failed: 'Ricerca non riuscita. Riprova più tardi.',
-        notComposed: 'Il calendario non è composto in questo spazio.',
-      });
+      const record = error !== null && typeof error === 'object' ? error : {};
+      state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
+        ? 'La frase indica un momento già passato: prova con un giorno futuro.'
+        : humanReadError(error, {
+          failed: 'Ricerca non riuscita. Riprova più tardi.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
     } finally {
       state.aiLoading = false;
       renderAll();
     }
-    if (state.draft) fillManual(state.draft);
+    // A resolved person prefills its single booking identity; with several
+    // (or none) the choice stays with the operator on the manual form.
+    if (state.draft) {
+      const ids = resolveDraftMemberIds(
+        typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '',
+        parseMemberFilter(state.memberFilter),
+        state.members,
+      );
+      fillManual(ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft);
+    }
   }
 
   /** @param {any} draft */

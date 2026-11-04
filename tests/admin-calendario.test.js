@@ -7,6 +7,8 @@ import {
   createCalendarioView,
   dayHead,
   displayKeys,
+  draftMinutes,
+  filterPhraseProposals,
   gridRowsFor,
   lanesFor,
   memberColorIndex,
@@ -15,6 +17,7 @@ import {
   openingWeekKeys,
   parseMemberFilter,
   personRows,
+  resolveDraftMemberIds,
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
@@ -2677,4 +2680,55 @@ test('a plain click on an empty slot is half an hour', async () => {
   col.dispatch('pointerup', { target: col });
   const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   assert.equal(pick?.textContent, '16:30–17:00');
+});
+
+test('draftMinutes prefers the pair, then the stated duration, then 30 (backlog:d1e4d90e)', () => {
+  assert.equal(
+    draftMinutes({ startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' }),
+    45,
+  );
+  assert.equal(draftMinutes({ durationMinutes: 45 }), 45, 'a 45 minuti sentence without a time searches 45');
+  assert.equal(draftMinutes({ durationMinutes: 7 }), 30, 'an unacceptable duration falls back');
+  assert.equal(draftMinutes({}), 30);
+  assert.equal(draftMinutes(null), 30);
+});
+
+test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d1e4d90e)', () => {
+  const members = [
+    { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+    { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    { subject: 'coach-sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('coach-sara', [], members), ['coach-sara'], 'exact identity wins');
+  assert.deepEqual(
+    resolveDraftMemberIds('marco', [], members),
+    ['coach-guido', 'google|g1'],
+    'one human across subjects resolves to every identity',
+  );
+  assert.deepEqual(resolveDraftMemberIds('MARCO ', [], members), ['coach-guido', 'google|g1'], 'case and spaces ignored');
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
+  assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
+});
+
+test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:d1e4d90e)', () => {
+  const nowMs = Date.parse('2026-11-04T08:00:00.000Z');
+  const slots = [
+    { startsAt: '2026-11-02T08:00:00.000Z', endsAt: '2026-11-02T08:30:00.000Z' },
+    { startsAt: '2026-11-04T05:00:00.000Z', endsAt: '2026-11-04T05:30:00.000Z' },
+    { startsAt: '2026-11-04T22:00:00.000Z', endsAt: '2026-11-04T22:30:00.000Z' },
+    { startsAt: '2026-11-04T08:00:00.000Z', endsAt: '2026-11-04T08:30:00.000Z' },
+    { startsAt: '2026-11-04T09:00:00.000Z', endsAt: '2026-11-04T09:30:00.000Z' },
+    { startsAt: 'not-a-time', endsAt: '2026-11-04T09:30:00.000Z' },
+  ];
+  assert.deepEqual(
+    filterPhraseProposals(slots, nowMs).map((slot) => slot.startsAt),
+    ['2026-11-04T22:00:00.000Z', '2026-11-04T08:00:00.000Z', '2026-11-04T09:00:00.000Z'],
+    'past Monday and corrupt rows go, future night steps stay for the honest lines',
+  );
+  assert.deepEqual(filterPhraseProposals('nope', nowMs), [], 'non-lists stay empty');
 });
