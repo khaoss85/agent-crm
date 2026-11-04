@@ -137,6 +137,39 @@ test('a rerun replays the stored proposals and writes nothing twice', async (t) 
     'the rerun replays the merge proposal instead of writing it twice');
 });
 
+test('a rescan after a customer rename replays the stored tasks instead of failing', async (t) => {
+  const { app, guido } = await scene(t);
+  const first = await app.proposeDataCleanup({ actor: AGENT });
+  assert.ok(first.counts.tasksWritten > 0, 'first run opens tasks');
+
+  await app.services.contacts.update(guido.id, { firstName: 'Guido Maria' }, { actor: { type: 'user', id: 'rename-test' } });
+
+  const tasksBefore = (await app.modules.get('work-task').service.list({ limit: 500 })).length;
+  const second = await app.proposeDataCleanup({ actor: AGENT });
+  assert.equal(second.counts.tasksWritten, 0, 'no second task after the rename');
+  assert.ok(second.counts.tasksReplayed > 0, 'the rescan replays the stored tasks');
+  assert.equal((await app.modules.get('work-task').service.list({ limit: 500 })).length, tasksBefore);
+  assert.ok(second.proposals.some((proposal) => proposal.kind === 'merge' && proposal.taskReplayed === true),
+    'the merge proposal answers its stored task with the new display title');
+});
+
+test('a duplicate pair naming an opted-out contact proposes no merge and opens no task', async (t) => {
+  const { app } = await scene(t);
+  const opted = await app.optOutContactEnrichment({
+    email: 'guido.presti@palestra-esempio.it', reason: 'do not merge my identities',
+    actor: { type: 'user', id: 'opt-out-test' },
+  });
+  assert.equal(opted.outcome, 'opted-out');
+
+  const receipt = await app.proposeDataCleanup({ actor: AGENT });
+  assert.ok(receipt.proposals.every((proposal) => proposal.kind !== 'merge'),
+    'no merge proposal for the suppressed pair');
+  assert.equal(receipt.counts.candidatesWritten, 0, 'no candidate is stored for the suppressed pair');
+  const mergeTasks = (await app.modules.get('work-task').service.list({ limit: 500 }))
+    .filter((task) => String(task.sourceKey ?? '').startsWith('cleanup:merge:'));
+  assert.equal(mergeTasks.length, 0, 'no «Da fare» task without a candidate to decide on');
+});
+
 test('a card with no phone proposes the completion, with the customer rows untouched', async (t) => {
   const { app, maria, snapshot } = await scene(t);
   const before = await snapshot();

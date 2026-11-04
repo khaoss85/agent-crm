@@ -369,6 +369,18 @@ export function createCleanupProposals({ database, modules, policy, names, follo
     let tasksReplayed = 0;
     const openTask = async (proposal) => {
       if (!canWriteTasks) return { taskId: null, replayed: null };
+      // The follow-up's semantic identity includes the title, so a rescan
+      // after a customer rename would throw WORK_FOLLOW_UP_CONFLICT for the
+      // same source key and roll back the whole scan. The source key alone
+      // names the finding: a stored task for it is the same proposal with an
+      // older display title, and replaying it keeps later scans green.
+      if (typeof taskSvc.listWhere === 'function') {
+        const storedTask = (await taskSvc.listWhere({ sourceKey: proposal.sourceKey }))[0] ?? null;
+        if (storedTask) {
+          tasksReplayed += 1;
+          return { taskId: storedTask.id ?? null, replayed: true };
+        }
+      }
       const subject = subjectOf(proposal.subject.resource, proposal.subject.id, proposal.subject.label);
       const { task, replayed } = await followUps.createFollowUp({
         sourceKey: proposal.sourceKey,
@@ -401,6 +413,14 @@ export function createCleanupProposals({ database, modules, policy, names, follo
         candidatesWritten += written;
         const sourceKey = `duplicate:${subjectKey(pair.left)}|${subjectKey(pair.right)}`;
         const stored = (await deciding(trusted(modules, names.candidate), { sourceKey }))[0] ?? null;
+        if (written === 0 && stored === null) {
+          // recordCandidatePairs skips pairs naming an opted-out contact
+          // (owner decision Q-G1) without writing. Zero writes with no
+          // stored row means suppression, not a replay: no task to open and
+          // no merge proposal to return, so the operator never sees a merge
+          // task without a candidate to decide on.
+          continue;
+        }
         const mergeKey = `cleanup:merge:${subjectKey(pair.left)}:${subjectKey(pair.right)}`;
         const { taskId, replayed } = await openTask({
           subject: { resource: pair.left.resource, id: pair.left.id, label: pair.left.label },
