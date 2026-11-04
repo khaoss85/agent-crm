@@ -2259,3 +2259,33 @@ test('434cc39a: a failed fields read hides the section, never the scheda', async
   assert.ok(!text.includes('Campi personalizzati'), 'no section on a failed read');
   assert.ok(text.includes('Guido Presti'), 'the name still shows');
 });
+
+test('every card write carries a submission-owned Idempotency-Key, as the real client demands (production 04/11)', async () => {
+  // The real /bo client refuses a mutation without an idempotency key before
+  // any request leaves (requireSubmissionContext): «Aggiungi nota» answered
+  // «Nota non salvata» in production with no request at all.
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const writes = [];
+  const strict = {
+    async request(path, opts = {}) {
+      const method = String(opts?.method ?? 'GET').toUpperCase();
+      if (method === 'GET') return base.request(path);
+      if (typeof opts.idempotencyKey !== 'string' || opts.headers?.['Idempotency-Key'] !== opts.idempotencyKey) {
+        throw Object.assign(new Error('Admin mutations require a submission-owned Idempotency-Key'), { code: 'ADMIN_SUBMISSION_REQUIRED' });
+      }
+      writes.push({ path, method });
+      return { ok: true };
+    },
+  };
+  const seen = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client: strict, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare giovedì';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+  await flushClicks();
+  assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }]);
+});

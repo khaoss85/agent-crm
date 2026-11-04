@@ -5,6 +5,7 @@ import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './ad
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
+import { bindAdminMutations } from './admin-submission.js';
 import {
   addFieldForm,
   defineField,
@@ -379,7 +380,13 @@ export function mergeLinkedIdentities(timeline) {
 
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
-  const { client } = deps;
+  // Every write of the card (note, Dettagli, phone, call, message, stage)
+  // goes through the submission controller like every other view
+  // (bindAdminMutations, #567): the raw client refuses a mutation without a
+  // submission-owned Idempotency-Key before any request leaves, so in
+  // production «Aggiungi nota» answered «Nota non salvata» with no request
+  // at all (04/11).
+  const { client } = bindAdminMutations(deps.client, deps);
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
