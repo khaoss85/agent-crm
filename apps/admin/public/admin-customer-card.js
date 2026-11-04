@@ -1000,7 +1000,9 @@ export function createCustomerCardView(deps) {
   const composerDrafts = new Map();
 
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
-    const draftKey = `${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
+    // Keyed by space too: a draft never crosses into another workspace
+    // (Muse P2 on #588), the same boundary the send payload keeps.
+    const draftKey = `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
     const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '' };
     const keepDraft = () => {
       const subject = subjectInput !== null ? subjectInput.value : draft.subject;
@@ -1088,6 +1090,8 @@ export function createCustomerCardView(deps) {
       } else {
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}`);
         radio.addEventListener('click', () => select(entry));
+        // Arrow keys move a radio with `change`, not `click` (Muse P2 on #588).
+        radio.addEventListener('change', () => select(entry));
         if (selected === null) selected = entry;
       }
       list.appendChild(chip);
@@ -1115,18 +1119,26 @@ export function createCustomerCardView(deps) {
       fromRow.setAttribute('data-empty', 'true');
       subjectHolder.setAttribute('data-empty', 'true');
     }
-    // Gmail habits: Esc closes, Cmd/Ctrl+Invio sends.
-    panel.addEventListener?.('keydown', (event) => {
-      if (event.key === 'Escape') {
-        if (panel.parentNode) panel.parentNode.removeChild(panel);
-      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault?.();
-        if (typeof send.click === 'function') send.click();
-      }
-    });
+    // Gmail habits: Esc closes, Cmd/Ctrl+Invio sends. openComposer reuses the
+    // panel across rebuilds, so the listener is added once per panel and
+    // always reaches the current form's send (Muse P1 on #588: one listener
+    // per rebuild queued one POST each).
+    panel.__composerSend = () => doSend();
+    if (panel.__composerKeys !== true) {
+      panel.__composerKeys = true;
+      panel.addEventListener?.('keydown', (event) => {
+        if (event.key === 'Escape') {
+          if (panel.parentNode) panel.parentNode.removeChild(panel);
+        } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault?.();
+          if (typeof panel.__composerSend === 'function') void panel.__composerSend();
+        }
+      });
+    }
     if (typeof text.focus === 'function' && selected !== null) text.focus();
     let busy = false;
-    send.addEventListener('click', async () => {
+    send.addEventListener('click', () => { void doSend(); });
+    async function doSend() {
       if (busy || selected === null) return;
       if (text.value.trim() === '') {
         err.textContent = 'Scrivi il messaggio prima di inviarlo.';
@@ -1158,7 +1170,7 @@ export function createCustomerCardView(deps) {
       } finally {
         busy = false;
       }
-    });
+    }
   }
     // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
     // creation flows with this customer already chosen. The pick travels

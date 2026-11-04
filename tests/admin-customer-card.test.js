@@ -2317,3 +2317,32 @@ test('composer gmail: closing keeps the draft and Scrivi brings it back', async 
   assert.ok(reopened, 'Scrivi reopens the window');
   assert.equal(reopened.findAll('textarea')[0].value, 'Bozza da non perdere', 'the draft is restored');
 });
+
+// Muse P1 on #588: Scrivi pressed again while open rebuilds the same panel;
+// Cmd/Ctrl+Invio must still queue exactly one message.
+test('composer gmail: reopen then Cmd+Invio sends exactly once', async () => {
+  const { mount, client } = await openComposerMount();
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  panel.findAll('textarea')[0].value = 'Una volta sola';
+  panel.dispatch('keydown', { key: 'Enter', metaKey: true });
+  await flushComposer();
+  assert.equal(client.posts.length, 1, 'one keydown, one send');
+});
+
+// Muse P2 on #588: arrow keys move the radio with `change`; the shown
+// recipient and the sent channel follow it.
+test('composer gmail: a keyboard change of channel moves the recipient too', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const usable = radios.filter((node) => node.getAttribute('disabled') === null);
+  assert.ok(usable.length >= 1, 'at least one usable channel');
+  for (const radio of usable) {
+    radio.dispatch('change');
+    const chip = radio.parentNode;
+    assert.equal(chip.getAttribute('data-selected'), 'true', 'the pill follows the keyboard choice');
+  }
+});
