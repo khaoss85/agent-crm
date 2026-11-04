@@ -2297,3 +2297,52 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
   assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
   assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }]);
 });
+
+// Composer stile Gmail (Dan 04/11): ✕ and Esc close the window but never
+// lose the typed text — the draft comes back when Scrivi reopens it.
+test('composer gmail: closing keeps the draft and Scrivi brings it back', async () => {
+  const { mount, panel } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  area.value = 'Bozza da non perdere';
+  area.dispatch('input');
+  const close = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close');
+  assert.ok(close, 'the window has a close button');
+  close.dispatch('click');
+  await flushComposer();
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined,
+    'the composer window is closed');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(reopened, 'Scrivi reopens the window');
+  assert.equal(reopened.findAll('textarea')[0].value, 'Bozza da non perdere', 'the draft is restored');
+});
+
+// Muse P1 on #588: Scrivi pressed again while open rebuilds the same panel;
+// Cmd/Ctrl+Invio must still queue exactly one message.
+test('composer gmail: reopen then Cmd+Invio sends exactly once', async () => {
+  const { mount, client } = await openComposerMount();
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  panel.findAll('textarea')[0].value = 'Una volta sola';
+  panel.dispatch('keydown', { key: 'Enter', metaKey: true });
+  await flushComposer();
+  assert.equal(client.posts.length, 1, 'one keydown, one send');
+});
+
+// Muse P2 on #588: arrow keys move the radio with `change`; the shown
+// recipient and the sent channel follow it.
+test('composer gmail: a keyboard change of channel moves the recipient too', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const usable = radios.filter((node) => node.getAttribute('disabled') === null);
+  assert.ok(usable.length >= 1, 'at least one usable channel');
+  for (const radio of usable) {
+    radio.dispatch('change');
+    const chip = radio.parentNode;
+    assert.equal(chip.getAttribute('data-selected'), 'true', 'the pill follows the keyboard choice');
+  }
+});

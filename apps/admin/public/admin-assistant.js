@@ -44,7 +44,7 @@ const ASSISTANT_ASK_PATH = '/api/assistant/ask';
  * usable, only the free-question box is off, and the message says the
  * questions arrive with the key.
  */
-export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti qui sotto, che leggono dati reali.';
+export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave AI attiva in questo spazio: per ora non lo è, intanto i suggerimenti qui sopra leggono i tuoi dati veri.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */
 export const FREE_QUESTION_MAX_LENGTH = 500;
@@ -1311,8 +1311,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   function renderTrace(answer) {
     const trace = answer?.trace;
     if (!trace || !Array.isArray(trace.reads) || trace.reads.length === 0) return null;
-    const wrap = el(doc, 'div', 'bo-assistant-trace');
-    wrap.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Traccia di esecuzione'));
+    // Collapsed by default (Dan 04/11): the reads are proof for whoever
+    // wants it, not the answer — «Come ho risposto» opens them.
+    const wrap = el(doc, 'details', 'bo-assistant-trace');
+    wrap.appendChild(el(doc, 'summary', 'bo-assistant-trace-summary', 'Come ho risposto · Traccia di esecuzione'));
     const list = el(doc, 'ul', 'bo-assistant-trace-list');
     for (const read of trace.reads) {
       if (!read || typeof read.target !== 'string') continue;
@@ -1468,9 +1470,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     clearMount();
     if (!state.open) return;
     const panel = el(doc, 'aside', 'bo-assistant');
+    panel.setAttribute('aria-label', 'Assistente');
     const header = el(doc, 'div', 'bo-assistant-header');
     header.appendChild(el(doc, 'h2', 'bo-assistant-name', 'Assistente'));
-    const close = el(doc, 'button', 'bo-assistant-close', 'Chiudi');
+    const live = state.status?.mode === 'live';
+    header.appendChild(el(doc, 'span', 'bo-assistant-mode', live ? 'AI attiva' : 'solo suggerimenti'));
+    const close = el(doc, 'button', 'bo-assistant-close', '✕');
+    close.setAttribute('type', 'button');
     close.setAttribute('aria-label', 'Chiudi assistente');
     close.addEventListener('click', () => {
       state.open = false;
@@ -1479,38 +1485,52 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     header.appendChild(close);
     panel.appendChild(header);
 
+    // Conversation column (Dan 04/11, design): answer first as a card,
+    // suggestions as chips, history and errors under it; the question box
+    // stays pinned at the bottom like a chat.
+    const scroll = el(doc, 'div', 'bo-assistant-scroll');
+    const answer = renderAnswer();
+    if (!answer && !state.busy) {
+      const hello = el(doc, 'div', 'bo-assistant-hello');
+      hello.appendChild(el(doc, 'p', 'bo-assistant-hello-title', 'Cosa vuoi sapere?'));
+      hello.appendChild(el(doc, 'p', 'bo-assistant-hello-text', 'Rispondo leggendo i dati di questo spazio e ti porto alla scheda giusta.'));
+      scroll.appendChild(hello);
+    }
+    if (answer) scroll.appendChild(answer);
+    if (state.busy) {
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Lavoro in corso…'));
+    }
+    if (state.error !== '') {
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-error', state.error));
+    }
     const list = el(doc, 'div', 'bo-assistant-suggestions');
-    list.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Suggerimenti'));
+    list.appendChild(el(doc, 'p', 'bo-assistant-heading', answer ? 'Altre domande' : 'Prova a chiedere'));
+    const chips = el(doc, 'div', 'bo-assistant-chips');
     for (const suggestion of suggestionsFor(state.screenId)) {
       const button = el(doc, 'button', 'bo-assistant-suggestion', suggestion.title);
+      button.setAttribute('type', 'button');
       button.setAttribute('title', suggestion.detail);
       button.addEventListener('click', () => {
         void runSuggestionById(suggestion.id);
       });
-      list.appendChild(button);
+      chips.appendChild(button);
     }
-    panel.appendChild(list);
-
-    if (state.busy) {
-      panel.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Lavoro in corso…'));
-    }
-    const answer = renderAnswer();
-    if (answer) panel.appendChild(answer);
+    list.appendChild(chips);
+    scroll.appendChild(list);
     const history = renderHistory();
-    if (history) panel.appendChild(history);
-    if (state.error !== '') {
-      panel.appendChild(el(doc, 'p', 'bo-assistant-error', state.error));
-    }
+    if (history) scroll.appendChild(history);
+    panel.appendChild(scroll);
 
     const free = el(doc, 'form', 'bo-assistant-free');
-    free.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Domanda libera'));
+    free.appendChild(el(doc, 'p', 'bo-assistant-heading bo-assistant-free-label', 'Domanda libera'));
+    const row = el(doc, 'div', 'bo-assistant-free-row');
     const input = doc.createElement('input');
     input.setAttribute('type', 'search');
     input.setAttribute('class', 'bo-assistant-input ui-field'); // BO-F6-02: system field class.
     input.setAttribute('aria-label', 'Domanda libera');
-    if (state.status?.mode !== 'live') {
+    if (!live) {
       input.setAttribute('disabled', 'true');
-      input.setAttribute('placeholder', 'Le domande libere arrivano con la chiave');
+      input.setAttribute('placeholder', 'Domande libere non ancora attive');
     } else {
       input.setAttribute('placeholder', 'Scrivi una domanda…');
     }
@@ -1518,11 +1538,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // typed on the screen lands in the panel input, so the user never
     // retypes it. Text only — never markup, never a submit.
     if (typeof state.draft === 'string' && state.draft !== '') input.value = state.draft;
-    free.appendChild(input);
+    row.appendChild(input);
     const send = el(doc, 'button', 'bo-assistant-send', 'Chiedi');
-    if (state.status?.mode !== 'live') send.setAttribute('disabled', 'true');
-    free.appendChild(send);
-    if (state.status?.mode !== 'live') {
+    send.setAttribute('type', 'submit');
+    if (!live) send.setAttribute('disabled', 'true');
+    row.appendChild(send);
+    free.appendChild(row);
+    if (!live) {
       free.appendChild(el(doc, 'p', 'bo-assistant-notice', FREE_QUESTION_DISABLED_NOTICE));
     }
     free.addEventListener('submit', (event) => {
