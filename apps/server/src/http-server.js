@@ -478,6 +478,9 @@ export function buildRouter(app) {
       from: query.from,
       to: query.to,
       ...(slotMinutes === undefined ? {} : { slotMinutes }),
+      // A proposal must be bookable (backlog:d1e4d90e): the server names its
+      // own now, so steps already begun are cut, never offered as free.
+      nowIso: new Date().toISOString(),
     });
   });
   router.add('POST', '/api/appointments/propose', async ({ body, actor, identity, organizationId }) => {

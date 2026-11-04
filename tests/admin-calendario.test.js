@@ -7,6 +7,8 @@ import {
   createCalendarioView,
   dayHead,
   displayKeys,
+  draftMinutes,
+  filterPhraseProposals,
   gridRowsFor,
   lanesFor,
   memberColorIndex,
@@ -15,6 +17,9 @@ import {
   openingWeekKeys,
   parseMemberFilter,
   personRows,
+  resolveDraftMemberIds,
+  personFreeSlots,
+  rankPhraseProposals,
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
@@ -85,7 +90,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -126,6 +131,7 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
       if (path.startsWith('/api/appointments/suggest-slots')) {
+        if (suggestGroups !== undefined) return { from: '', to: '', slotMinutes: 30, members: suggestGroups };
         return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots }] };
       }
       if (path === '/api/appointments/phrase') return { draft: phrase, dryRun: false, spaceId: 'locale' };
@@ -387,7 +393,9 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
+  // so the view clock must still see them as future — same Oct 19–25 week.
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   // The ghosts need the loaded week: name the member first.
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -448,7 +456,8 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     slots,
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
@@ -530,7 +539,8 @@ test('a failed Conferma names the manual form, never a code', async () => {
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -736,7 +746,9 @@ test('a 19:00 proposal is named below the grid with its real time, never on the 
   };
   const slots = [{ startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e);
+  // the 19:00 Rome step stays future, so the honest out-of-hours line proves.
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -2736,4 +2748,195 @@ test('the auto-filled roster is not operator text: leaving with it alone sets no
   } finally {
     resetVersionWatchState();
   }
+});
+
+test('draftMinutes prefers the pair, then the stated duration, then 30 (backlog:d1e4d90e)', () => {
+  assert.equal(
+    draftMinutes({ startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' }),
+    45,
+  );
+  assert.equal(draftMinutes({ durationMinutes: 45 }), 45, 'a 45 minuti sentence without a time searches 45');
+  assert.equal(draftMinutes({ durationMinutes: 7 }), 30, 'an unacceptable duration falls back');
+  assert.equal(draftMinutes({}), 30);
+  assert.equal(draftMinutes(null), 30);
+});
+
+test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d1e4d90e)', () => {
+  const members = [
+    { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+    { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    { subject: 'coach-sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('coach-sara', [], members), ['coach-sara'], 'exact identity wins');
+  assert.deepEqual(
+    resolveDraftMemberIds('marco', [], members),
+    ['coach-guido', 'google|g1'],
+    'one human across subjects resolves to every identity',
+  );
+  assert.deepEqual(resolveDraftMemberIds('MARCO ', [], members), ['coach-guido', 'google|g1'], 'case and spaces ignored');
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
+  assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
+});
+
+// backlog:d1e4d90e — the server answers per booking identity, so one human
+// with two identities needs the intersection: a step held under coach-guido
+// must not be offered as free under google|g1.
+test('personFreeSlots offers a step only when every identity reports it free', () => {
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const other = { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' };
+  const held = [
+    { teamMemberId: 'coach-guido', slots: [other] },
+    { teamMemberId: 'google|g1', slots: [step, other] },
+  ];
+  assert.deepEqual(
+    personFreeSlots(held, ['coach-guido', 'google|g1'], 'coach-guido'),
+    [{ ...other, teamMemberId: 'coach-guido' }],
+    'the step held under one identity is not offered under the other',
+  );
+  const free = [
+    { teamMemberId: 'coach-guido', slots: [step, other] },
+    { teamMemberId: 'google|g1', slots: [step, other] },
+  ];
+  assert.deepEqual(
+    personFreeSlots(free, ['coach-guido', 'google|g1'], 'coach-guido'),
+    [
+      { ...step, teamMemberId: 'coach-guido' },
+      { ...other, teamMemberId: 'coach-guido' },
+    ],
+    'free under both means offered once, booked on the drafted identity',
+  );
+  assert.deepEqual(
+    personFreeSlots(free, ['coach-guido', 'google|g1'], 'Marco'),
+    [
+      { ...step, teamMemberId: 'coach-guido' },
+      { ...other, teamMemberId: 'coach-guido' },
+    ],
+    'a name match books the first searched identity, deterministically',
+  );
+  assert.deepEqual(
+    personFreeSlots([{ teamMemberId: 'coach-guido', slots: [step] }], ['coach-guido', 'google|g1'], 'coach-guido'),
+    [],
+    'a searched identity with no answer group proves nothing: fail closed',
+  );
+  assert.deepEqual(
+    personFreeSlots([{ teamMemberId: 'marco', slots: [step, { startsAt: '', endsAt: '' }] }], ['marco'], 'marco'),
+    [{ ...step, teamMemberId: 'marco' }],
+    'a single identity keeps the plain union, corrupt rows dropped',
+  );
+  assert.deepEqual(personFreeSlots('nope', ['marco'], 'marco'), [], 'non-lists stay empty');
+});
+
+test('a phrase step held under one identity is never proposed under the other', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const client = stubClient({
+    phrase: {
+      teamMemberId: 'coach-guido',
+      serviceKey: 'taglio',
+      startsAt: step.startsAt,
+      endsAt: step.endsAt,
+    },
+    memberships: [
+      { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+      { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    ],
+    suggestGroups: [
+      { teamMemberId: 'coach-guido', slots: [] },
+      { teamMemberId: 'google|g1', slots: [step] },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
+  assert.ok(suggest, 'the phrase feeds a slot search');
+  assert.ok(suggest.path.includes('google%7Cg1'), 'every identity the human holds is searched');
+  assert.ok(
+    texts(mount, 'p').includes('Nessuno slot libero questa settimana, prova con altri giorni.'),
+    'the step held under coach-guido is not offered as free under google|g1',
+  );
+  assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal rows, only the manual Conferma');
+});
+
+test('a phrase step free under every identity is proposed once on the drafted one', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const client = stubClient({
+    phrase: {
+      teamMemberId: 'coach-guido',
+      serviceKey: 'taglio',
+      startsAt: step.startsAt,
+      endsAt: step.endsAt,
+    },
+    memberships: [
+      { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+      { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    ],
+    suggestGroups: [
+      { teamMemberId: 'coach-guido', slots: [step] },
+      { teamMemberId: 'google|g1', slots: [step] },
+    ],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const confirms = mount.querySelector('.cal-slots').findAll('button')
+    .filter((node) => node.textContent === 'Conferma');
+  assert.equal(confirms.length, 1, 'one row for the step free under both identities, never two');
+  await pickCustomerByName(mount, 'Ada');
+  confirms[0].dispatch('click');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const booked = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(booked.length, 1, 'Conferma calls confirmBooking');
+  assert.equal(payload(booked[0]).teamMemberId, 'coach-guido', 'the booking stays on the drafted identity');
+});
+
+test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:d1e4d90e)', () => {
+  const nowMs = Date.parse('2026-11-04T08:00:00.000Z');
+  const slots = [
+    { startsAt: '2026-11-02T08:00:00.000Z', endsAt: '2026-11-02T08:30:00.000Z' },
+    { startsAt: '2026-11-04T05:00:00.000Z', endsAt: '2026-11-04T05:30:00.000Z' },
+    { startsAt: '2026-11-04T22:00:00.000Z', endsAt: '2026-11-04T22:30:00.000Z' },
+    { startsAt: '2026-11-04T08:00:00.000Z', endsAt: '2026-11-04T08:30:00.000Z' },
+    { startsAt: '2026-11-04T09:00:00.000Z', endsAt: '2026-11-04T09:30:00.000Z' },
+    { startsAt: 'not-a-time', endsAt: '2026-11-04T09:30:00.000Z' },
+  ];
+  assert.deepEqual(
+    filterPhraseProposals(slots, nowMs).map((slot) => slot.startsAt),
+    ['2026-11-04T22:00:00.000Z', '2026-11-04T08:00:00.000Z', '2026-11-04T09:00:00.000Z'],
+    'past Monday and corrupt rows go, future night steps stay for the honest lines',
+  );
+  assert.deepEqual(filterPhraseProposals('nope', nowMs), [], 'non-lists stay empty');
+});
+
+test('rankPhraseProposals puts the painted hours first, night stays behind (backlog:d1e4d90e)', () => {
+  // 2026-11-04: Rome is UTC+1, so 02:00Z is night and 08:00Z is 09:00 in Rome.
+  const night = { startsAt: '2026-11-04T02:00:00.000Z', endsAt: '2026-11-04T02:30:00.000Z' };
+  const morning = { startsAt: '2026-11-04T08:00:00.000Z', endsAt: '2026-11-04T08:30:00.000Z' };
+  const evening = { startsAt: '2026-11-04T17:30:00.000Z', endsAt: '2026-11-04T18:00:00.000Z' };
+  assert.deepEqual(
+    rankPhraseProposals([night, evening, morning]).map((slot) => slot.startsAt),
+    [morning.startsAt, night.startsAt, evening.startsAt],
+    'day steps first in time order, out-of-hours behind for the honest lines, never dropped',
+  );
+  assert.deepEqual(rankPhraseProposals([night]), [night], 'a night-only week still proposes honestly');
+  assert.deepEqual(rankPhraseProposals('nope'), [], 'non-lists stay empty');
 });
