@@ -227,7 +227,43 @@ test('the suggestion filter is bounded: members, window, steps', async () => {
     }),
     /must be one of/,
   );
+  await assert.rejects(
+    suggestSlots(storage, {
+      teamMemberIds: ['a'],
+      from: '2026-10-20T16:00:00.000Z',
+      to: '2026-10-20T19:00:00.000Z',
+      nowIso: 'not-an-instant',
+    }),
+    (error) => {
+      assert.equal(error.details?.field, 'nowIso');
+      return true;
+    },
+  );
   assert.ok(SUGGEST_SLOT_MINUTES.includes(30));
+});
+
+test('a named nowIso cuts steps already begun, never the future (backlog:d1e4d90e)', async () => {
+  const service = fakeAppointments();
+  const storage = { modules: modulesFor(service) };
+  const window = {
+    teamMemberIds: ['coach-guido'],
+    from: '2026-10-20T16:00:00.000Z',
+    to: '2026-10-20T19:00:00.000Z',
+    slotMinutes: 60,
+  };
+  const cut = await suggestSlots(storage, { ...window, nowIso: '2026-10-20T17:30:00.000Z' });
+  assert.deepEqual(
+    cut.members[0].slots.map((slot) => slot.startsAt),
+    ['2026-10-20T18:00:00.000Z'],
+  );
+  const kept = await suggestSlots(storage, window);
+  assert.deepEqual(
+    kept.members[0].slots.map((slot) => slot.startsAt),
+    ['2026-10-20T16:00:00.000Z', '2026-10-20T17:00:00.000Z', '2026-10-20T18:00:00.000Z'],
+    'without nowIso every step stays, exactly as before',
+  );
+  const empty = await suggestSlots(storage, { ...window, nowIso: '2026-10-20T19:00:00.000Z' });
+  assert.deepEqual(empty.members[0].slots, [], 'a window fully past answers empty, never invented');
 });
 
 test('propose with the switch on answers a draft and writes nothing', async () => {
@@ -552,6 +588,52 @@ test('the phrase refuses without a handle and on an unusable draft', async () =>
     );
   }
   assert.equal(service.rows.length, 0, 'a draft never writes');
+});
+
+test('the phrase carries a stated duration and refuses a past draft (backlog:d1e4d90e)', async () => {
+  const service = fakeAppointments();
+  const withText = (text) => capabilityFor({ service, phraseLlm: { async complete() { return { text, dryRun: false }; } } });
+  const timed = await withText('{"teamMemberId": "coach-guido", "durationMinutes": 45}').parseBookingPhrase({
+    spaceId: 'spazio-prova', phrase: 'trova 45 minuti con Guido',
+  });
+  assert.equal(timed.draft.durationMinutes, 45);
+  assert.equal(timed.draft.startsAt, undefined, 'a time never named is never invented');
+  for (const text of ['{"durationMinutes": 0}', '{"durationMinutes": 45.5}', '{"durationMinutes": "quarantacinque"}']) {
+    await assert.rejects(
+      withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'qualcosa' }),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+        return true;
+      },
+      `duration must be refused: ${text}`,
+    );
+  }
+  await assert.rejects(
+    withText('{"teamMemberId": "coach-guido", "startsAt": "2026-10-17T08:00:00.000Z"}').parseBookingPhrase({
+      spaceId: 'spazio-prova', phrase: 'lunedì scorso alle 10 con Guido',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_IN_PAST');
+      assert.equal(error.status, 422);
+      return true;
+    },
+    'a draft at the reference instant is past, never proposed',
+  );
+});
+
+test('the phrase names the Rome weekday and the next-occurrence rule (backlog:d1e4d90e)', async () => {
+  const service = fakeAppointments();
+  let seen = null;
+  const phraseLlm = {
+    async complete(request) {
+      seen = request;
+      return { text: '{"teamMemberId": "coach-guido"}', dryRun: true };
+    },
+  };
+  await capabilityFor({ service, phraseLlm }).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'lunedì con Guido' });
+  assert.ok(Array.isArray(seen.messages) && seen.messages.length === 2);
+  assert.match(seen.messages[0].content, /NEXT occurrence/i, 'the system prompt resolves weekdays forward');
+  assert.match(seen.messages[1].content, /Europe\/Rome: .*17 ottobre 2026/i, 'the reference instant names the Rome weekday');
 });
 
 test('the flow is exposed on appointment-book@1 with the direct path unchanged', async () => {
