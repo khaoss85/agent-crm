@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Quote builder renders from server state only — these tests drive it
@@ -65,6 +66,7 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
       if (options.method === 'POST') {

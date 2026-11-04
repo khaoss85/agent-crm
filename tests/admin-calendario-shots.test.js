@@ -24,6 +24,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -151,7 +152,8 @@ const WEEK = ${JSON.stringify(WEEK)};
 const SLOTS = ${JSON.stringify(SLOTS)};
 const DRAFT = ${JSON.stringify(DRAFT)};
 const client = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {

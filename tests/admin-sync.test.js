@@ -13,6 +13,7 @@
  * channels package, or on a failed read.
  */
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SYNC_CHANNELS,
@@ -91,6 +92,7 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, options });
       if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
         if (path === '/api/connectors/sync-now') {

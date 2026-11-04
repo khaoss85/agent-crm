@@ -21,6 +21,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -97,6 +98,7 @@ const MEMBERS = [
 ];
 const client = {
   async request(path, options) {
+    enforceAdminWriteGate(path, options);
     const opts = options || {};
     if (path === '/api/spine/context') {
       return { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };

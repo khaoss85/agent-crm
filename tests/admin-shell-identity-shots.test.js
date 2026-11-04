@@ -134,7 +134,7 @@ const view = createShellView({
 const oggi = createOggiView({
   doc: document,
   mount: document.getElementById('view-module'),
-  client: { request: async () => { throw new Error('no-backend-in-shot'); } },
+  client: { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); throw new Error('no-backend-in-shot'); } },
   navigate: () => {},
 });
 await oggi.render({

@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import {
@@ -816,6 +817,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   const seen = [];
   const data = await loadOggiData({
     request: async (path) => {
+      enforceAdminWriteGate(path, options);
       seen.push(path);
       if (path === '/api/schema') return { domains: {} };
       if (path === '/api/profile') return profile;
@@ -828,6 +830,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
 
   const refused = await loadOggiData({
     request: async (path) => {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { domains: {} };
       throw new Error('no profile here');
     },
@@ -1000,6 +1003,7 @@ function oggiFakeClient(state) {
   return {
     posts: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const method = String(options.method ?? 'GET').toUpperCase();
       if (method !== 'GET') {
         this.posts.push({ path, body: options.body });
@@ -1045,6 +1049,7 @@ test('Oggi view postpones through the work-task action, then keeps the open row'
   const client = {
     posts: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const method = String(options.method ?? 'GET').toUpperCase();
       if (method !== 'GET') {
         this.posts.push({ path, body: options.body });

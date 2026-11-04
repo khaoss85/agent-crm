@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   CLIENTI_NUOVO_ROUTE,
@@ -31,6 +32,7 @@ function stubClient(handler) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       let body = options?.body ?? {};
       if (typeof body === 'string') {
         try { body = body === '' ? {} : JSON.parse(body); } catch { /* keep raw */ }

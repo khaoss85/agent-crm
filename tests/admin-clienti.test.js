@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
 import { CLIENTI_NUOVO_ROUTE } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Clienti list (BO-F1-05), against a stub server.
@@ -75,7 +76,8 @@ function stubClient({ pages = null, onRequest = () => {} } = {}) {
   const calls = [];
   return {
     calls,
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       onRequest(path);
       const query = new URL(path, 'http://localhost').searchParams;
@@ -235,7 +237,7 @@ test('the AI entry point degrades to a hint without an LLM backend', async () =>
 });
 
 test('a space the server does not compose reads as unavailable, never blank', async () => {
-  const failing = { calls: [], async request() { throw Object.assign(new Error('no such space'), { status: 404 }); } };
+  const failing = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw Object.assign(new Error('no such space'), { status: 404 }); } };
   const { mount } = await render(failing);
   assert.ok(mount.textContent.includes('Clienti non composto in questo spazio'));
 });
@@ -317,7 +319,7 @@ test('BO-F6-08 fetta 1: the table header names Cliente plus only the visible col
 });
 
 test('BO-F6-08 fetta 1: an empty page reads the prototype text and 0 di 0 with page controls', async () => {
-  const empty = { calls: [], async request() { return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
+  const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
   const { mount } = await render(empty);
   assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'));
   assert.ok(mount.textContent.includes('0 di 0'), 'the pager keeps its 0 di 0 interval');
@@ -389,7 +391,8 @@ test('a list read still in flight dies when the operator leaves the list', async
   const mount = createMount();
   const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
   const client = {
-    async request() {
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
       await gate;
       return {
         customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1,
@@ -629,7 +632,8 @@ test('the filters menu carries the prototype example', async () => {
 test('view pills show server counts when the server names them', async () => {
   const counted = {
     calls: [],
-    async request() {
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
       return {
         customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
         totalIsExact: true, ...MENUS,
@@ -644,7 +648,7 @@ test('view pills show server counts when the server names them', async () => {
 });
 
 test('the fallback views keep the prototype order before the server answers', async () => {
-  const bare = { calls: [], async request() { return {}; } };
+  const bare = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return {}; } };
   const { mount } = await render(bare);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
@@ -707,7 +711,7 @@ test('a row carries avatar, tiles, state pill, last contact, next step and its c
 
 test('a server failure reads as an Italian retry, never technical', async () => {
   // C23: Italian, non-technical, with a retry; never codes or English.
-  const failing = { calls: [], async request() { throw Object.assign(new Error('boom'), { status: 500 }); } };
+  const failing = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw Object.assign(new Error('boom'), { status: 500 }); } };
   const { mount } = await render(failing);
   const text = mount.textContent;
   assert.ok(text.includes('Riprova'), 'the failure offers a retry');
@@ -770,7 +774,8 @@ const customListClient = () => {
   ];
   return {
     calls,
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       return {
         customerListContract: 1,

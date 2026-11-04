@@ -21,6 +21,7 @@ import {
 } from '../apps/admin/public/admin-connectors.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { SETTINGS_AREAS } from '../apps/admin/public/admin-shell.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -165,6 +166,7 @@ function stubClient({ schema = null, sync = null, calls = null, authorize = null
   return {
     calls: seen,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const body = stubBody(options);
       seen.push({ path, body });
       if (path === '/api/schema') {
@@ -407,13 +409,7 @@ test('mutations go through the submission controller, never raw', async () => {
   const enforcing = {
     calls: inner.calls,
     async request(path, options = {}) {
-      const method = String(options.method ?? 'GET').toUpperCase();
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-        && !(typeof options.idempotencyKey === 'string' && options.idempotencyKey !== '')) {
-        const error = new Error('Admin mutations require a submission-owned Idempotency-Key');
-        error.code = 'ADMIN_SUBMISSION_REQUIRED';
-        throw error;
-      }
+      enforceAdminWriteGate(path, options);
       return inner.request(path, options);
     },
   };

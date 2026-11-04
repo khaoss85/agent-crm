@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Voce ef92f728: the deal page behind the pipeline card's Apri button.
@@ -49,6 +50,7 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
       if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
@@ -237,7 +239,8 @@ test('a full linked page says it shows only the first rows', async () => {
   const full = { items: new Array(200).fill(null).map((_, index) => ({ id: `q${index}` })) };
   const client = {
     calls: [],
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       this.calls.push(path);
       if (path === '/api/schema') return SCHEMA;
       if (path.startsWith('/api/modules/opportunity/records/')) return { ...offerRecord() };
@@ -328,6 +331,7 @@ test('a record read 404 falls back to the board list and the detail opens', asyn
   const client = {
     calls: base.calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/modules/opportunity/records/')) {
         throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
       }
@@ -345,7 +349,8 @@ test('an offer missing from the board list too still says not found', async () =
   const doc = createFakeDocument();
   const mount = createMount();
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { modules: [] };
       if (path.startsWith('/api/modules/opportunity/records/')) {
         throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });

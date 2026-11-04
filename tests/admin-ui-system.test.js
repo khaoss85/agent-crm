@@ -12,6 +12,7 @@
  *   class list carries no `ui-*` system class.
  */
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -211,7 +212,8 @@ test('the connectors view renders no raw control', async () => {
   const mount = createMount();
   const channels = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form'];
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') {
         return {
           domains: {

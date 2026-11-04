@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderServiceOperations, resetServiceSelection } from '../apps/admin/public/admin-service.js';
+import { bindAdminMutations } from '../apps/admin/public/admin-submission.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin Service Operations section (Milestone 15).
@@ -151,6 +153,7 @@ async function render(data, { fail = 0, truncate = null, scripted = {}, results 
   const actions = [];
   const client = {
     request: async (path, options) => {
+      enforceAdminWriteGate(path, options);
       const match = /^\/api\/modules\/([^/]+)\/records\/([^/]+)\/actions\/([^/]+)$/.exec(path);
       assert.ok(match, `the Admin posts to a real action route: ${path}`);
       const [, module, id, action] = match.map(decodeURIComponent);
@@ -173,7 +176,9 @@ async function render(data, { fail = 0, truncate = null, scripted = {}, results 
     }
   };
   await renderServiceOperations({
-    contract: CONTRACT, schema: SCHEMA, mount, el, client, fetchRows,
+    // Same wiring as production: the quotes view binds once and hands the
+    // section its bound client (#567).
+    contract: CONTRACT, schema: SCHEMA, mount, el, client: bindAdminMutations(client).client, fetchRows,
     money: (cents, currency) => `${currency} ${(cents / 100).toFixed(2)}`,
     withBusy, busy,
   });
@@ -564,14 +569,24 @@ test('a stale read is discarded rather than rendered over a newer one', async (t
   const busy = [];
   const rendering = renderServiceOperations({
     contract: CONTRACT, schema: SCHEMA, mount, el,
-    client: { request: async () => ({ result: {} }) }, fetchRows,
+    client: {
+      request: async (path = '', options = {}) => {
+        enforceAdminWriteGate(path, options);
+        return { result: {} };
+      },
+    }, fetchRows,
     money: () => '', withBusy: async (fn) => fn(), busy,
   });
   // Force a second, newer read by clicking Retry is not possible while the
   // first hangs, so drive the token directly through a second render call.
   const second = renderServiceOperations({
     contract: CONTRACT, schema: SCHEMA, mount, el,
-    client: { request: async () => ({ result: {} }) }, fetchRows,
+    client: {
+      request: async (path = '', options = {}) => {
+        enforceAdminWriteGate(path, options);
+        return { result: {} };
+      },
+    }, fetchRows,
     money: () => '', withBusy: async (fn) => fn(), busy,
   });
   await second;

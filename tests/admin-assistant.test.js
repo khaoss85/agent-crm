@@ -13,6 +13,7 @@ import {
   suggestionsFor,
 } from '../apps/admin/public/admin-assistant.js';
 import { requireSubmissionContext } from '../apps/admin/public/admin-submission.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 const CONVS = {
@@ -51,6 +52,7 @@ function stubClient(routes) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, options });
       if (Object.hasOwn(routes, path)) {
         const value = routes[path];
@@ -359,10 +361,7 @@ function gatedClient(routes) {
   return {
     calls: inner.calls,
     async request(path, options = {}) {
-      const method = String(options.method ?? 'GET').toUpperCase();
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-        requireSubmissionContext(options);
-      }
+      enforceAdminWriteGate(path, options);
       return inner.request(path, options);
     },
   };

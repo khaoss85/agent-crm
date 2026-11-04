@@ -24,6 +24,7 @@ import { promisify } from 'node:util';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, extname } from 'node:path';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const PUBLIC = join(ROOT, 'apps', 'admin', 'public');
@@ -165,6 +166,7 @@ import { createSyncView } from '/admin-sync.js';
 const activity = ${JSON.stringify(FIXTURES[state])};
 const client = {
   async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (String(options.method ?? 'GET').toUpperCase() !== 'GET') return { pulled: 1 };
     if (path === '/api/schema') return { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
     if (path.startsWith('/api/connectors/activity')) return activity;

@@ -26,6 +26,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -212,6 +213,7 @@ await Promise.all([
 await document.fonts.ready.catch(() => {});
 const viewClient = {
   async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
       return { task: { ...TASKS[0], status: 'completed' } };
     }
@@ -239,7 +241,8 @@ await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: n
 // threads plus quality issues for the urgenti answer, call outcomes for the
 // chiamate one. Unknown paths throw, so the backend probe stays dry-run.
 const panelClient = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/modules/conversation/records?limit=50') return CONVS;
     if (path === '/api/modules/data-quality-issue/records?limit=50') return ISSUES;
     if (path === '/api/modules/interaction-call/records?limit=100') return CALLS;

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin's action controls are generic: they are built purely from the
@@ -59,6 +60,7 @@ function stubClient(record, { failWith } = {}) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') {
         return { generatedResourceContract: 1, generatedModules: [LEAD_META] };
@@ -142,6 +144,7 @@ test('a successful action re-renders the detail so state and buttons update', as
   const client = {
     calls: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       this.calls.push({ path, method: options.method ?? 'GET' });
       if (path === '/api/schema') return { generatedResourceContract: 1, generatedModules: [LEAD_META] };
       if (options.method === 'POST') {
@@ -207,6 +210,7 @@ test('integer action inputs render as number controls and post JSON numbers', as
   const calls = [];
   const client = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return { generatedResourceContract: 1, generatedModules: [meta] };
       if (options.method === 'POST') return { ok: true };
@@ -246,7 +250,8 @@ test('hostile action metadata and values are rendered as text, never markup', as
   const doc = createFakeDocument();
   const mount = createMount();
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { generatedResourceContract: 1, generatedModules: [meta] };
       return record;
     },

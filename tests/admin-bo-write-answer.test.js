@@ -23,7 +23,7 @@ test('the bound client hands screens the opened result of a write', async () => 
   const receipt = { receipts: [{ outcome: 'accepted', subject: { id: 'c1' } }] };
   const memory = new Map();
   const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v), removeItem: (k) => memory.delete(k) };
-  const raw = { request: async () => ({ saved: receipt, spaceId: 'space-1' }) };
+  const raw = { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return { saved: receipt, spaceId: 'space-1' }; } };
   const { client } = bindAdminMutations(raw, { storage });
   const answer = await client.request('/api/customer-data/import/apply', { method: 'POST', body: JSON.stringify({ rows: [] }) });
   assert.deepEqual(answer, receipt);

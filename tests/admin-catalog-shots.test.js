@@ -20,6 +20,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 import { chromiumRuns, findChromium } from '../scripts/bo-shots.js';
 
@@ -54,7 +55,8 @@ const SCHEMA = { commercial: { commercialContract: 1, discountPolicies: [{
   fingerprint: 'shot', config: { autoApproveMaxBps: 1000, ownerApprovalMaxBps: 3000, approvalKey: 'owner' },
 }] } };
 const client = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/schema') return SCHEMA;
     if (path.startsWith('/api/catalog/products')) return MANUAL;
     throw new Error('unexpected ' + path);

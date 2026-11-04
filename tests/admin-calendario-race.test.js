@@ -6,6 +6,7 @@ import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { createOggiView } from '../apps/admin/public/admin-oggi.js';
 import { createSequenzeView } from '../apps/admin/public/admin-sequenze.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Backoffice race (backlog:607f33ee): every async admin view paints into
@@ -20,7 +21,8 @@ const NOW = new Date('2026-10-21T08:40:00Z');
 
 function calendarioClient() {
   return {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/memberships') return { items: [] };
       if (path === '/api/profile') {
         return { member: null, connections: { available: false, reason: 'PROFILE_NOT_COMPOSED', items: [] } };
@@ -35,7 +37,8 @@ function calendarioClient() {
 
 function gatedSequenzeClient(release) {
   return {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { domains: { sequences: { sequencesContract: 1 } } };
       if (path.startsWith('/api/modules/sequence/records')) {
         await release.gate;
@@ -49,7 +52,8 @@ function gatedSequenzeClient(release) {
 
 function gatedOggiClient(release) {
   return {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') {
         await release.gate;
         return { domains: {} };

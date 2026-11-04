@@ -13,6 +13,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SPAZI_AI_DEFAULTS,
@@ -43,6 +44,7 @@ const SPACE = 'spazio-1';
 function stubClient({ context = null, members = [], overrides = [], calls = null, fail = {}, connectorsBySpace = null, customersBySpace = null, needsBySpace = null } = {}) {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const rawBody = options?.body ?? null;
       let body = rawBody;
       if (typeof rawBody === 'string' && rawBody !== '') {
@@ -368,6 +370,7 @@ test('a late answer never repaints over the screen that replaced it', async () =
   const inner = stubClient({ members });
   const gated = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const method = (options?.method ?? 'GET').toUpperCase();
       if (path === '/api/spine/memberships' && method !== 'POST' && membersCalls++ === 0) {
         await membersGate;
@@ -415,6 +418,7 @@ test('flipping a switch confirms first, then runs set-permission', async () => {
 test('a refused flip renders the server refusal and keeps the screen usable', async () => {
   const refusing = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/context') return { membership: { role: 'observer' }, roles: { observer: [] } };
       if (path === '/api/spine/memberships') return { items: [] };
       if (path.startsWith('/api/space-permissions/effective')) return { spaceId: 'spazio-1', overrides: [] };
@@ -449,6 +453,7 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
 test('a 405 flip keeps the switch and shows an Italian refusal', async () => {
   const refusing = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/context') return { membership: { role: 'owner' }, roles: { owner: [] } };
       if (path === '/api/spine/memberships') return { items: [] };
       if (path.startsWith('/api/space-permissions/effective')) return { spaceId: 'spazio-1', overrides: [] };

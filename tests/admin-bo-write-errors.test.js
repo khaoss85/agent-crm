@@ -22,6 +22,7 @@ import { humanWriteError } from '../apps/admin/public/admin-core.js';
 import { missingBookingFields } from '../apps/admin/public/admin-calendario.js';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 const flush = async (rounds = 30) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
@@ -87,6 +88,7 @@ function calendarioClient({ failConfirmWith = null } = {}) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/appointments/confirm' && failConfirmWith) throw failConfirmWith;
       if (path === '/api/appointments/propose' || path === '/api/appointments/confirm') {
