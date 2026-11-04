@@ -1562,6 +1562,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         ? state.status.notice
         : ASSISTANT_SUGGEST_ONLY_NOTICE;
       panel.appendChild(el(doc, 'p', 'bo-assistant-notice', notice));
+      // BO-F5-01 draft handoff ("+ Nuovo modulo" -> assistant): with no live
+      // backend there is no free-question field, but the caller's draft must
+      // not vanish silently — show it as inert read-only text (text only via
+      // el(), never markup, never a submit) next to the honest notice.
+      if (typeof state.draft === 'string' && state.draft !== '') {
+        panel.appendChild(el(doc, 'p', 'bo-assistant-draft', state.draft));
+      }
       mount.appendChild(panel);
       return;
     }
@@ -1594,8 +1601,9 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   return {
     /**
      * @param {unknown} screenId
-     * @param {unknown} [draft] a caller-typed description to prefill the
-     * free-question input with (BO-F5-01); anything else clears the draft.
+     * @param {unknown} [draft] a caller-typed description: with a live
+     * backend it prefills the free-question input (BO-F5-01), without one
+     * it is shown as inert read-only text; anything else clears the draft.
      * @param {unknown} [customer] the customer in context
      * (`{ resource, id }`, validated like every record identity); anything
      * else clears the context, so a later screen never reuses a stale one.

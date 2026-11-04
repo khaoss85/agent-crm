@@ -775,6 +775,47 @@ test('pannello: open with a draft prefills the free-question input as text', asy
   assert.equal(mount.findAll('input')[0].value, '', 'no stale draft survives');
 });
 
+test('pannello: in dry-run il draft resta visibile come testo inerte, mai perso', async () => {
+  // BO-F5-01 sul percorso reale di oggi (nessun backend live: solo dry-run):
+  // senza campo libero il testo del chiamante non deve sparire in silenzio —
+  // resta come testo inerte di sola lettura, mai markup, mai un invio.
+  function openDryRun() {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const panel = createAssistantPanel({
+      doc,
+      mount,
+      client: stubClient({
+        [ASSISTANT_STATUS_PATH]: { freeQuestions: 'disabled' },
+        '/api/modules/conversation/records?limit=50': CONVS,
+        '/api/modules/interaction-call/records?limit=100': CALLS,
+      }),
+      navigate: () => {},
+      notify: () => {},
+    });
+    return { doc, mount, panel };
+  }
+  const { mount, panel } = openDryRun();
+  await panel.open('nuovo-modulo', 'un modulo sonde per i KPI del pilota');
+  assert.equal(panel.getState().mode, 'dry-run');
+  assert.equal(mount.findAll('input').length, 0, 'no free-question field in dry-run');
+  assert.equal(mount.findAll('form').length, 0, 'no free-question form in dry-run');
+  const draft = mount.querySelector('.bo-assistant-draft');
+  assert.ok(draft, 'the draft is shown');
+  assert.equal(draft.textContent, 'un modulo sonde per i KPI del pilota');
+  assert.equal(draft.childNodes.length, 0, 'draft is text, never markup');
+  // A hostile draft lands as inert text, never markup, never a submit.
+  await panel.open('nuovo-modulo', '<img src=x onerror=alert(1)>');
+  assert.equal(mount.findAll('input').length, 0);
+  const hostile = mount.querySelector('.bo-assistant-draft');
+  assert.ok(hostile, 'the hostile draft is shown');
+  assert.equal(hostile.textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(hostile.childNodes.length, 0, 'hostile draft is text, never markup');
+  // Opening without a draft shows no draft line.
+  await panel.open('nuovo-modulo');
+  assert.equal(mount.querySelector('.bo-assistant-draft'), null, 'no stale draft survives');
+});
+
 test('pannello: contatta chiede conferma, naviga solo al secondo passo', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
