@@ -55,6 +55,20 @@ function trusted(modules, name) {
 }
 
 /**
+ * One source of truth for a due slot's identity: the slot is the
+ * assignment's due instant (`nextRunAt`), never the sweep's wall clock.
+ * Two sweeps at different milliseconds contend the same UNIQUE run key,
+ * so the loser replays instead of executing twice past the spending cap.
+ * @param {any} assignment
+ */
+function slotOf(assignment, at) {
+  const slot = typeof assignment?.nextRunAt === 'string' && assignment.nextRunAt !== ''
+    ? assignment.nextRunAt
+    : at;
+  return { startedAt: slot, runKey: agentRunKey(assignment.sourceKey, slot) };
+}
+
+/**
  * A stored terminal outcome counts in its own documented summary bucket:
  * `artifact` counts as `artifacts`, `applied` as `applied` — never as a
  * verbatim key that would corrupt the summary with NaN or a wrong bucket.
@@ -460,8 +474,7 @@ export function createAgentOperations(options = {}) {
       const spaceId = assignment.spaceId;
       const agent = await loadAgent(spaceId, assignment.agentSourceKey);
       if (agent.status !== 'active') continue;
-      const startedAt = at;
-      const runKey = agentRunKey(assignment.sourceKey, startedAt);
+      const { startedAt, runKey } = slotOf(assignment, at);
       const base = {
         spaceId,
         agentSourceKey: agent.sourceKey,
@@ -505,6 +518,9 @@ export function createAgentOperations(options = {}) {
               outcome: 'capped',
               note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
             }, 'capped', assignment, startedAt, summary, actor);
+            // finalizeClaim already counted and advanced: never fall
+            // through to the outer capped/advanced increment below.
+            continue;
           }
           summary.capped += 1;
           summary.advanced += 1;
