@@ -2,6 +2,7 @@ import { createSubmissionController, requireSubmissionContext } from './admin-su
 import { createAssistantPanel } from './admin-assistant.js';
 import { resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
+import { withSchemaCache } from './admin-schema-cache.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -103,7 +104,11 @@ function leaveForSpaceLogin(target) {
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
-  async request(path, options = {}) {
+  // One schema read per open, shared by every view (admin-schema-cache.js).
+  request(path, options = {}) {
+    return schemaCachedRequest(path, options);
+  },
+  async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
     /** @type {Record<string, string>} */
     const requestHeaders = {
@@ -160,6 +165,7 @@ const moduleClient = {
     return payload;
   },
 };
+const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
 
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
