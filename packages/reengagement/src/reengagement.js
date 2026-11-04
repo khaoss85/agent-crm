@@ -334,7 +334,10 @@ export function selectReengagementCandidate(customer, { nowMs, quietDays }) {
 /**
  * Pick the sendable route for one candidate. The acceptance invariant:
  * a windowed channel outside the window never yields free text — only an
- * approved template, another connected channel, or no route at all.
+ * approved template (whatsapp, the sole adapter with template sends),
+ * another connected channel, or no route at all. Instagram and Messenger
+ * document no template fallback, so their needs-template customers fall
+ * through to the fallback below.
  *
  * @param {ReturnType<typeof assertReengagementCustomer>} candidate
  */
@@ -345,7 +348,7 @@ export function decideReengagementRoute(candidate) {
   if (candidate.windowState === 'in-window') {
     return Object.freeze({ kind: 'free-text', channel: candidate.channel, template: null });
   }
-  if (candidate.approvedTemplate !== null) {
+  if (candidate.approvedTemplate !== null && candidate.channel === 'whatsapp') {
     return Object.freeze({ kind: 'template', channel: candidate.channel, template: candidate.approvedTemplate });
   }
   // Fallback only to a channel that sends free text with no window
@@ -456,9 +459,15 @@ export async function scanReengagement({ customers, quietDays, nowMs, draftText 
       continue;
     }
     const intent = buildReengagementIntent(candidate);
-    const draft = route.kind === 'template'
-      ? null
-      : await draftText({ candidate, route, intent });
+    let draft = null;
+    if (route.kind !== 'template') {
+      try {
+        draft = await draftText({ candidate, route, intent });
+      } catch {
+        skipped.push(Object.freeze({ customerId: checked.customerId, reason: 'no-draft' }));
+        continue;
+      }
+    }
     if (route.kind === 'free-text'
       && (draft === null || draft === undefined
         || typeof draft.text !== 'string' || draft.text.trim() === '')) {

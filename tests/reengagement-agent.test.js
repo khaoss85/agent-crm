@@ -187,6 +187,56 @@ test('the route invariant holds for every decided route: stale windowed channels
   assert.ok(route.kind === 'template' || route.kind === 'none' || route.channel === 'email');
 });
 
+test('no template route on instagram/facebook: only whatsapp sends approved templates', async () => {
+  for (const channel of ['instagram', 'facebook']) {
+    const route = decideReengagementRoute(customer({
+      channel,
+      windowState: 'needs-template',
+      approvedTemplate: { name: 'riattivazione' },
+      connectedChannels: [channel, 'email'],
+    }));
+    assert.notEqual(route.kind, 'template');
+    assert.ok(route.kind === 'none' || route.channel === 'email');
+  }
+  const { proposals, skipped } = await scanReengagement({
+    customers: [
+      customer({
+        customerId: 'cus-ig-template', channel: 'instagram', windowState: 'needs-template',
+        approvedTemplate: { name: 'riattivazione' },
+        connectedChannels: ['instagram', 'email'],
+      }),
+    ],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: fakeDraftText(),
+  });
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].kind, 'free-text');
+  assert.equal(proposals[0].channel, 'email');
+  assert.deepEqual(skipped, []);
+});
+
+test('a throwing draftText skips that customer instead of aborting the sweep', async () => {
+  const draftText = async ({ candidate }) => {
+    if (candidate.customerId === 'cus-draft-boom') throw new Error('LLM timeout');
+    return { text: `Ciao ${candidate.displayName}, ti scrivo da Presti.` };
+  };
+  const { proposals, skipped } = await scanReengagement({
+    customers: [
+      customer({ customerId: 'cus-draft-ok' }),
+      customer({ customerId: 'cus-draft-boom' }),
+    ],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText,
+  });
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].customerRef.customerId, 'cus-draft-ok');
+  assert.deepEqual(skipped.map((entry) => [entry.customerId, entry.reason]), [
+    ['cus-draft-boom', 'no-draft'],
+  ]);
+});
+
 test('unknown consent skips fail-closed and malformed customers refuse the scan', async () => {
   const { proposals, skipped } = await scanReengagement({
     customers: [customer({ customerId: 'cus-unknown', consent: 'unknown' })],
