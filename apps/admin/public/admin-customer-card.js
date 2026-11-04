@@ -992,7 +992,22 @@ export function createCustomerCardView(deps) {
     });
   }
 
+  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
+  // close the window, the typed text and subject stay here and come back
+  // when the composer reopens on the same customer. Cleared only by a send
+  // the server accepted. In memory: a reload still drops them, like any
+  // unsent form.
+  const composerDrafts = new Map();
+
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
+    const draftKey = `${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '' };
+    const keepDraft = () => {
+      const subject = subjectInput !== null ? subjectInput.value : draft.subject;
+      if (text.value === '' && subject === '') composerDrafts.delete(draftKey);
+      else composerDrafts.set(draftKey, { text: text.value, subject });
+      draft.subject = subject;
+    };
     const channels = composerChannelsFor(card, connections, profile);
     const body = el('div', 'bo-composer-body');
     // Channel chips: one radio per channel (kept for keyboard and tests),
@@ -1015,6 +1030,8 @@ export function createCustomerCardView(deps) {
     text.setAttribute('rows', '8');
     text.setAttribute('placeholder', 'Scrivi il messaggio…');
     text.setAttribute('aria-label', 'Messaggio');
+    if (draft.text !== '') text.value = draft.text;
+    text.addEventListener?.('input', keepDraft);
     const foot = el('div', 'bo-composer-foot');
     const limitHint = el('span', 'bo-composer-limit', 'Massimo 2000 caratteri');
     const err = el('p', 'field-error', '');
@@ -1045,6 +1062,8 @@ export function createCustomerCardView(deps) {
         subjectInput.setAttribute('placeholder', 'Oggetto');
         subjectInput.setAttribute('aria-label', 'Oggetto');
         subjectInput.setAttribute('maxlength', '256');
+        if (draft.subject !== '') subjectInput.value = draft.subject;
+        subjectInput.addEventListener?.('input', keepDraft);
         subjectHolder.appendChild(subjectInput);
       }
     };
@@ -1129,6 +1148,7 @@ export function createCustomerCardView(deps) {
           payload.subject = subjectInput.value.trim();
         }
         await client.request('/api/customer-hub/messages', { method: 'POST', body: JSON.stringify(payload) });
+        composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {

@@ -2297,3 +2297,23 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
   assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
   assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }]);
 });
+
+// Composer stile Gmail (Dan 04/11): ✕ and Esc close the window but never
+// lose the typed text — the draft comes back when Scrivi reopens it.
+test('composer gmail: closing keeps the draft and Scrivi brings it back', async () => {
+  const { mount, panel } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  area.value = 'Bozza da non perdere';
+  area.dispatch('input');
+  const close = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close');
+  assert.ok(close, 'the window has a close button');
+  close.dispatch('click');
+  await flushComposer();
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined,
+    'the composer window is closed');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(reopened, 'Scrivi reopens the window');
+  assert.equal(reopened.findAll('textarea')[0].value, 'Bozza da non perdere', 'the draft is restored');
+});
