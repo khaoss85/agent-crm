@@ -266,6 +266,21 @@ function personKeyOf(value) {
 }
 
 /**
+ * Member creation instant (epoch ms), or null when the roster carries none.
+ * The roster's own order is the fallback: it lists members oldest first.
+ * @param {any} member
+ */
+function memberBornAt(member) {
+  const raw = member?.createdAt ?? member?.created_at ?? null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const ms = Date.parse(raw);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  return null;
+}
+
+/**
  * backlog:df55cf25 — one Team row per PERSON, never a technical id on
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
@@ -273,7 +288,8 @@ function personKeyOf(value) {
  * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
  * mailbox (unique per person), so Dan is one row called Dan. A shared
  * display name alone never merges — two email-less homonyms are two humans,
- * two rows with the same label and distinct booking identities. A group
+ * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
+ * «Rossi (2)» in member-creation order, never a technical id). A group
  * with no roster name and no mailbox paints the
  * operator's own typed words, unless they look like a technical subject
  * (a pipe id never paints anywhere); such a row falls back to the generic
@@ -289,7 +305,7 @@ export function personRows(named, hidden, members) {
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
-  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null}>} */
+  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
   const groups = [];
   const bySubject = new Map();
   const byEmail = new Map();
@@ -304,11 +320,13 @@ export function personRows(named, hidden, members) {
     // merges — two email-less homonyms are two humans, two rows.
     let group = (email !== null && byEmail.get(email)) || null;
     if (!group) {
-      group = { subjects: [], displayName: null, email: null };
+      group = { subjects: [], displayName: null, email: null, born: null, bornIndex: groups.length };
       groups.push(group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
+    const born = memberBornAt(member);
+    if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
       byEmail.set(email, group);
@@ -334,11 +352,39 @@ export function personRows(named, hidden, members) {
       order.push(group);
     }
   }
-  return order.map((group) => {
+  const painted = order.map((group) => {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const label = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    const base = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    return { group, primary, name, listed, base };
+  });
+  // Same base label on two humans is unreadable: the operator could not tell
+  // which toggle hides whose blocks (owner 04/11: «Marco Rossi (1)»,
+  // «Marco Rossi (2)», in member-creation order, never a technical id).
+  // Numbering follows member creation — member.createdAt when the roster
+  // carries it, else the roster's own order — and stays in this one place,
+  // so Team, manual choice and booking lines read the same label.
+  const byBase = new Map();
+  for (const entry of painted) {
+    const list = byBase.get(entry.base) ?? [];
+    list.push(entry);
+    byBase.set(entry.base, list);
+  }
+  const ordinalOf = new Map();
+  for (const entries of byBase.values()) {
+    if (entries.length < 2) continue;
+    const dated = entries.every((entry) => entry.group.born !== null);
+    const ranked = [...entries].sort((left, right) => (
+      dated
+        ? (left.group.born - right.group.born || left.group.bornIndex - right.group.bornIndex)
+        : (left.group.bornIndex - right.group.bornIndex)
+    ));
+    ranked.forEach((entry, index) => ordinalOf.set(entry.group, index + 1));
+  }
+  return painted.map(({ group, primary, name, listed, base }) => {
+    const ordinal = ordinalOf.get(group);
+    const label = ordinal === undefined ? base : `${base} (${ordinal})`;
     return {
       ids: [...group.subjects],
       id: primary,
@@ -366,7 +412,10 @@ export function resolveMemberName(subject, named, members) {
   if (typeof subject !== 'string' || subject === '') return null;
   const rows = personRows(named, [], members);
   const group = rows.find((row) => row.ids.includes(subject));
-  if (group && group.name) return group.name;
+  // The painted person label, with the homonym ordinal when two humans share
+  // the base name — the same string the Team toggle and the manual choice
+  // show, so every line names the same human.
+  if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
   if (!subject.includes('|')) return subject;
@@ -744,8 +793,17 @@ export function createCalendarioView(deps) {
       return;
     }
     try {
+      // One row per person, every identity of each listed person: the roster
+      // may name sibling subjects after the filter was set (or the filter
+      // names a subset), and the merged row must show the whole person's
+      // week — never the filter subset only. The typed filter stays
+      // untouched: only the request widens to the listed rows' subjects.
+      const listedIds = personRows(members, [], state.members)
+        .filter((row) => row.listed)
+        .flatMap((row) => row.ids);
+      const expanded = [...members, ...listedIds.filter((id) => !members.includes(id))];
       const week = await client.request(
-        `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(members.join(','))}`
+        `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(expanded.join(','))}`
         + `&from=${encodeURIComponent(window.from)}&to=${encodeURIComponent(window.to)}`,
       );
       if (token !== renderToken) return;
@@ -753,9 +811,11 @@ export function createCalendarioView(deps) {
       state.weekError = null;
       state.unavailable = false;
       // A reloaded week drops deselections nobody named anymore: toggling a
-      // ghost would filter nothing and confuse the next render. A selection
+      // ghost would filter nothing and confuse the next render. A hidden
+      // sibling of a listed person stays hidden with its row — pruning to
+      // the raw filter would resurrect half a hidden person. A selection
       // whose member stays hidden loses its detail card with the reload.
-      state.hiddenMembers = state.hiddenMembers.filter((id) => members.includes(id));
+      state.hiddenMembers = state.hiddenMembers.filter((id) => expanded.includes(id));
       if (state.selectedId !== null) {
         const reselected = selectedRow();
         if (reselected && state.hiddenMembers.includes(String(reselected.teamMemberId ?? ''))) state.selectedId = null;

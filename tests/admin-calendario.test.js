@@ -1891,10 +1891,11 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
 });
 
-// backlog:df55cf25 (review P1 on #549): a shared display name alone never
-// merges — two email-less homonyms are two humans, two rows, two booking
-// identities. Toggling one row must never hide the other's blocks, and a
-// booking for the second human must never carry the first subject.
+// backlog:df55cf25 (review P1 on #549, owner 04/11): a shared display name
+// alone never merges — two email-less homonyms are two humans, two rows, two
+// booking identities, with ordinal labels in member-creation order. Toggling
+// one row must never hide the other's blocks, and a booking for the second
+// human must never carry the first subject.
 test('personRows keeps email-less homonyms as separate rows', () => {
   const members = [
     { subject: 'a1', role: 'member', displayName: 'Rossi' },
@@ -1904,9 +1905,92 @@ test('personRows keeps email-less homonyms as separate rows', () => {
   assert.equal(rows.length, 2, 'same name without a shared mailbox is two humans');
   assert.deepEqual(rows[0].ids, ['a1']);
   assert.deepEqual(rows[1].ids, ['a2']);
-  assert.equal(rows[0].label, 'Rossi');
-  assert.equal(rows[1].label, 'Rossi');
+  assert.equal(rows[0].label, 'Rossi (1)');
+  assert.equal(rows[1].label, 'Rossi (2)');
+  assert.ok(rows[0].label !== rows[1].label, 'the two toggles read differently');
   assert.ok(rows[0].id !== rows[1].id, 'toggling and booking keep distinct identities');
+});
+
+// backlog:df55cf25 (owner 04/11, single source of truth): one grouping table
+// holding every person-row case — the merged cures of #549 and this one. The
+// ordinal follows member creation (member.createdAt when the roster carries
+// it, else the roster's own order), never a technical id.
+test('personRows grouping table: merge, homonyms, ordinals', () => {
+  const cases = [
+    {
+      name: 'one human across subjects merges on the shared mailbox',
+      named: ['github|1', 'google|2', 'dan@example.com'],
+      members: [
+        { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'google|2', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'dan@example.com', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+      ],
+      want: [{ ids: ['github|1', 'google|2', 'dan@example.com'], label: 'Dan' }],
+    },
+    {
+      name: 'the mailbox merges case-insensitively',
+      named: ['x|1', 'x|2'],
+      members: [
+        { subject: 'x|1', role: 'member', displayName: 'Dan', email: 'Dan@Example.com' },
+        { subject: 'x|2', role: 'member', displayName: 'Dan', email: 'dan@example.com' },
+      ],
+      want: [{ ids: ['x|1', 'x|2'], label: 'Dan' }],
+    },
+    {
+      name: 'different mailboxes are different humans',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi', email: 'a@example.com' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi', email: 'b@example.com' },
+      ],
+      want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      name: 'email-less homonyms stay separate with ordinals',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi' },
+      ],
+      want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      name: 'three homonyms count up in roster order even when named reversed',
+      named: ['a3', 'a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi' },
+        { subject: 'a3', role: 'member', displayName: 'Rossi' },
+      ],
+      want: [{ ids: ['a3'], label: 'Rossi (3)' }, { ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      name: 'the ordinal follows member.createdAt when the roster carries it',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi', createdAt: '2026-10-20T10:00:00.000Z' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi', createdAt: '2026-10-18T10:00:00.000Z' },
+      ],
+      want: [{ ids: ['a1'], label: 'Rossi (2)' }, { ids: ['a2'], label: 'Rossi (1)' }],
+    },
+    {
+      name: 'a unique name keeps no ordinal',
+      named: ['github|1'],
+      members: [
+        { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'sara', role: 'operator', displayName: 'Sara', email: 'sara@example.com' },
+      ],
+      want: [{ ids: ['github|1'], label: 'Dan' }],
+    },
+  ];
+  for (const { name, named, members, want } of cases) {
+    const rows = personRows(named, [], members);
+    assert.deepEqual(
+      rows.filter((row) => row.listed).map((row) => ({ ids: row.ids, label: row.label })),
+      want,
+      name,
+    );
+  }
 });
 
 // backlog:df55cf25 (review P3 on #549): initials are unicode letters, so an
@@ -2110,6 +2194,125 @@ test('blocks and toggle share the tint on a two-subject person', async () => {
     assert.ok(tints.some((tint) => String(block.getAttribute('class')).includes(tint)),
       'every block matches the toggle tint');
   }
+});
+
+// backlog:df55cf25 (owner 04/11): two email-less homonyms paint two distinct
+// toggles; hiding one hides only its blocks, and the manual choice offers
+// two distinct labels booking the right human.
+test('email-less homonyms toggle and book the right human', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [
+      {
+        teamMemberId: 'a1',
+        appointments: [{
+          id: 'r1', status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'a1',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        }],
+      },
+      {
+        teamMemberId: 'a2',
+        appointments: [{
+          id: 'r2', status: 'booked',
+          startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z',
+          serviceKey: 'barba', teamMemberId: 'a2',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        }],
+      },
+    ],
+  };
+  const members = [
+    { subject: 'a1', role: 'member', displayName: 'Rossi' },
+    { subject: 'a2', role: 'member', displayName: 'Rossi' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    week,
+    memberships: members,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const toggles = teamToggles(mount);
+  assert.equal(toggles.length, 2, 'two humans are two toggles');
+  assert.ok(toggles.some((node) => node.textContent.includes('Rossi (1)')), 'the first human paints');
+  assert.ok(toggles.some((node) => node.textContent.includes('Rossi (2)')), 'the second human paints');
+  const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n');
+  assert.ok(!painted.includes('a1') && !painted.includes('a2'), 'no technical subject id on screen');
+  toggles.find((node) => node.textContent.includes('Rossi (1)')).dispatch('click');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'hiding the first hides only its blocks');
+  assert.ok(texts(mount, 'strong').includes('barba'), 'the second human stays');
+  const options = mount.querySelector('select[name="teamMemberId"]').findAll('option')
+    .map((node) => node.textContent);
+  assert.ok(options.includes('Rossi (1)') && options.includes('Rossi (2)'), 'the choice names both humans distinctly');
+  choosePerson(mount, 'a2');
+  await pickCustomerByName(mount, 'Ada');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'a2', 'the claim books the chosen human, not the first');
+});
+
+// backlog:df55cf25 (review P2 on #549): a partially-listed hide survives the
+// next reload, and the week is requested for every subject of each listed
+// person — never the filter subset only.
+test('a hidden partially-listed person stays hidden after a reload', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseMembers = () => {};
+  const membersGate = new Promise((resolve) => { releaseMembers = resolve; });
+  const base = stubClient({ week: DAN_WEEK, memberships: DAN_MEMBERS });
+  const client = {
+    ...base,
+    async request(path, options) {
+      if (path === '/api/spine/memberships') {
+        await membersGate;
+        return { items: DAN_MEMBERS };
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  assert.ok(filter, 'the typed filter stays while the roster is unread');
+  filter.value = 'github|1';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseMembers();
+  for (let round = 0; round < 6; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(teamToggles(mount).length, 1, 'Dan is one row');
+  teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the person blocks disappear');
+  clickButton(mount, 'Oggi');
+  for (let round = 0; round < 6; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const weekCalls = client.calls.filter((call) => String(call.path).startsWith('/api/appointments/team-week'));
+  const last = decodeURIComponent(String(weekCalls[weekCalls.length - 1]?.path ?? ''));
+  assert.ok(last.includes('github|1') && last.includes('google|2'), 'the reload asks for every subject of the listed person');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the named identity stays hidden');
+  assert.ok(!texts(mount, 'strong').includes('barba'), 'the sibling identity stays hidden too');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
 });
 
 // backlog:df55cf25 (review P2 on #549): an explicitly chosen non-primary
