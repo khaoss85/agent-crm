@@ -807,7 +807,11 @@ export function createSyncView(deps) {
       return;
     }
     const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
-    state.channelsReady = Boolean(meta && meta.channelsContract === 1);
+    // Any composed channels domain reads the activity: the shared hosting
+    // composes the read-only «Reader Channels» domain, which carries no
+    // channelsContract, and the screen used to answer «non composti» there
+    // with Gmail and Calendar connected (production, 04/11).
+    state.channelsReady = Boolean(meta);
     if (!state.channelsReady || state.spaceId.trim() === '') return;
     try {
       state.activity = await client.request(
@@ -1195,7 +1199,7 @@ export function createSyncView(deps) {
       return;
     }
     if (!state.channelsReady) {
-      renderNote('I connettori non sono composti in questo ambiente: niente da sincronizzare.');
+      renderNote('La sincronizzazione dei canali non è attiva in questo spazio.');
       return;
     }
     if (!state.loaded || state.activity === null) {
