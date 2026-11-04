@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ASSISTANT_SPACE_DISABLED_NOTICE,
   ASSISTANT_STATUS_PATH,
+  ASSISTANT_SUGGEST_ONLY_NOTICE,
   FREE_QUESTION_DISABLED_NOTICE,
   SUGGESTION_CATALOG,
   askFreeQuestion,
+  assistantDisabledNotice,
   createAssistantPanel,
   isSafeRecordId,
   probeAssistantBackend,
@@ -438,20 +441,52 @@ test('azioni malformate rifiutano prima di eseguire', async () => {
   );
 });
 
-// Acceptance 4: without an LLM key the panel is usable, free questions off with a clear message.
+// Acceptance d8d9ddd0: without free questions the panel is usable, the free
+// field hidden, one honest line. The key sentence appears only for a really
+// missing key — never as the default.
 
 test('probe: 404 o forma inattesa valgono dry-run, mai un errore', async () => {
   const missing = stubClient({});
   assert.deepEqual(await probeAssistantBackend(missing), {
-    mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: FREE_QUESTION_DISABLED_NOTICE,
+    mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: ASSISTANT_SUGGEST_ONLY_NOTICE,
   });
-  assert.ok(FREE_QUESTION_DISABLED_NOTICE.includes('chiave'));
+  assert.ok(!ASSISTANT_SUGGEST_ONLY_NOTICE.includes('chiave OpenAI'));
+  assert.ok(FREE_QUESTION_DISABLED_NOTICE.includes('finché la chiave OpenAI non è configurata'));
   const odd = stubClient({ [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled' } });
   assert.equal((await probeAssistantBackend(odd)).mode, 'dry-run');
   const live = stubClient({ [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/assistant/ask' } });
   assert.deepEqual(await probeAssistantBackend(live), {
     mode: 'live', freeQuestions: 'enabled', endpoint: '/api/assistant/ask', notice: '',
   });
+});
+
+test('probe: la riga dice la causa vera (chiave mancante, spazio non attivo, resto)', async () => {
+  for (const field of ['code', 'reason', 'errorCode']) {
+    const keyMissing = stubClient({
+      [ASSISTANT_STATUS_PATH]: { freeQuestions: 'disabled', [field]: 'LLM_SECRET_UNAVAILABLE' },
+    });
+    assert.deepEqual(await probeAssistantBackend(keyMissing), {
+      mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: FREE_QUESTION_DISABLED_NOTICE,
+    }, field);
+    const spaceOff = stubClient({
+      [ASSISTANT_STATUS_PATH]: { freeQuestions: 'disabled', [field]: 'LLM_SPACE_DISABLED' },
+    });
+    assert.deepEqual(await probeAssistantBackend(spaceOff), {
+      mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: ASSISTANT_SPACE_DISABLED_NOTICE,
+    }, field);
+  }
+  assert.ok(ASSISTANT_SPACE_DISABLED_NOTICE.includes('non attivo in questo spazio'));
+  // A refusal carrying the stable code names its reason too.
+  const refused = new Error('spazio non attivo');
+  Object.assign(refused, { status: 403, code: 'LLM_SPACE_DISABLED' });
+  assert.equal((await probeAssistantBackend(stubClient({ [ASSISTANT_STATUS_PATH]: refused }))).notice,
+    ASSISTANT_SPACE_DISABLED_NOTICE);
+  const noKey = new Error('chiave assente');
+  Object.assign(noKey, { status: 500, code: 'LLM_SECRET_UNAVAILABLE' });
+  assert.equal((await probeAssistantBackend(stubClient({ [ASSISTANT_STATUS_PATH]: noKey }))).notice,
+    FREE_QUESTION_DISABLED_NOTICE);
+  assert.equal(assistantDisabledNotice(null), ASSISTANT_SUGGEST_ONLY_NOTICE);
+  assert.equal(assistantDisabledNotice({ code: 'SOMETHING_ELSE' }), ASSISTANT_SUGGEST_ONLY_NOTICE);
 });
 
 test('probe: dot-segment o suffissi sotto /api/assistant/ restano dry-run', async () => {
@@ -561,7 +596,7 @@ test('probe: un endpoint arbitrario sotto /api/ resta dry-run', async () => {
     [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/modules/conversation/records/conv-1/actions/close' },
   });
   assert.deepEqual(await probeAssistantBackend(sneaky), {
-    mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: FREE_QUESTION_DISABLED_NOTICE,
+    mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: ASSISTANT_SUGGEST_ONLY_NOTICE,
   });
   const lookalike = stubClient({
     [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/assistant-evil/ask' },
@@ -569,14 +604,19 @@ test('probe: un endpoint arbitrario sotto /api/ resta dry-run', async () => {
   assert.equal((await probeAssistantBackend(lookalike)).mode, 'dry-run');
 });
 
-test('domanda libera in dry-run: rifiuto col messaggio chiave, zero richieste', async () => {
+test('domanda libera in dry-run: rifiuto onesto, zero richieste', async () => {
   const client = stubClient({
     [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/assistant/ask' },
   });
   const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'chi devo ricontattare?');
   assert.equal(outcome.disabled, true);
-  assert.ok(outcome.notice.includes('chiave'));
+  assert.equal(outcome.notice, ASSISTANT_SUGGEST_ONLY_NOTICE);
   assert.ok(client.calls.every((call) => call.path !== '/api/assistant/ask'));
+  // With a key-missing status the refusal carries the key line.
+  const keyed = await askFreeQuestion(
+    client, { mode: 'dry-run', notice: FREE_QUESTION_DISABLED_NOTICE }, 'chi devo ricontattare?',
+  );
+  assert.ok(keyed.notice.includes('finché la chiave OpenAI non è configurata'));
 });
 
 test('domanda vuota o troppo lunga rifiuta prima di ogni richiesta', async () => {
@@ -623,7 +663,7 @@ test('domande libere distinte hanno identità distinte e valide', async () => {
 
 // Panel rendering: suggestions, sources as links, two-step confirm, dry-run box.
 
-test('pannello: suggerimenti per schermata, fonti cliccabili, box disabilitato in dry-run', async () => {
+test('pannello: suggerimenti per schermata, fonti cliccabili, niente campo libero in dry-run', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const navigated = [];
@@ -642,7 +682,11 @@ test('pannello: suggerimenti per schermata, fonti cliccabili, box disabilitato i
   const buttons = mount.findAll('button').map((node) => node.textContent);
   assert.ok(buttons.includes('Chi devo ricontattare?'));
   assert.ok(buttons.includes('Quali lead mostrano segnali caldi?'));
-  assert.ok(mount.textContent.includes('Le domande libere arrivano con la chiave'));
+  // No free-question field: one honest line, never the key sentence.
+  assert.equal(mount.findAll('input').length, 0);
+  assert.ok(!mount.textContent.includes('Domanda libera'));
+  assert.ok(mount.textContent.includes('suggerisce le risposte ai messaggi (Suggerisci)'));
+  assert.ok(!mount.textContent.includes('finché la chiave OpenAI non è configurata'));
 
   const suggestion = mount.findByText('button', 'Chi devo ricontattare?');
   suggestion.dispatch('click', {});
@@ -660,6 +704,48 @@ test('pannello: suggerimenti per schermata, fonti cliccabili, box disabilitato i
   assert.ok(navigated.length === 1 && navigated[0].startsWith('#/'));
 });
 
+test('pannello: i tre stati (attivo solo Suggerisci, spazio non attivo, chiave mancante)', async () => {
+  async function openWith(status) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const panel = createAssistantPanel({
+      doc,
+      mount,
+      client: stubClient({ [ASSISTANT_STATUS_PATH]: status }),
+      navigate: () => {},
+      notify: () => {},
+    });
+    await panel.open('clienti');
+    return { panel, mount };
+  }
+  // Attivo con soli suggerimenti: niente campo libero, una riga onesta.
+  const suggestOnly = await openWith({ freeQuestions: 'disabled' });
+  assert.equal(suggestOnly.panel.getState().mode, 'dry-run');
+  assert.equal(suggestOnly.mount.findAll('input').length, 0);
+  assert.equal(suggestOnly.mount.findAll('form').length, 0);
+  assert.ok(suggestOnly.mount.textContent.includes('suggerisce le risposte ai messaggi (Suggerisci)'));
+  assert.ok(!suggestOnly.mount.textContent.includes('finché la chiave OpenAI non è configurata'));
+  assert.ok(!suggestOnly.mount.textContent.includes('non attivo in questo spazio'));
+  // Spazio non attivo: la riga lo dice, senza parlare di chiave.
+  const spaceOff = await openWith({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+  assert.equal(spaceOff.panel.getState().mode, 'dry-run');
+  assert.equal(spaceOff.mount.findAll('input').length, 0);
+  assert.ok(spaceOff.mount.textContent.includes('non attivo in questo spazio'));
+  assert.ok(spaceOff.mount.textContent.includes('(Suggerisci)'));
+  assert.ok(!spaceOff.mount.textContent.includes('finché la chiave OpenAI non è configurata'));
+  // Chiave mancante: solo qui compare la frase della chiave.
+  const noKey = await openWith({ freeQuestions: 'disabled', code: 'LLM_SECRET_UNAVAILABLE' });
+  assert.equal(noKey.panel.getState().mode, 'dry-run');
+  assert.equal(noKey.mount.findAll('input').length, 0);
+  assert.ok(noKey.mount.textContent.includes('finché la chiave OpenAI non è configurata'));
+  // Live: il campo libero c'è e nessuna riga di scusa.
+  const live = await openWith({ freeQuestions: 'enabled', endpoint: '/api/assistant/ask' });
+  assert.equal(live.panel.getState().mode, 'live');
+  assert.equal(live.mount.findAll('input').length, 1);
+  assert.ok(live.mount.textContent.includes('Domanda libera'));
+  assert.ok(!live.mount.textContent.includes('suggerisce le risposte ai messaggi (Suggerisci)'));
+});
+
 test('pannello: open with a draft prefills the free-question input as text', async () => {
   // BO-F5-01 (backlog:8691acfc, P2 admin-reporting.js:289): the description
   // typed on the "+ Nuovo modulo" screen lands in the panel input, so the
@@ -670,6 +756,7 @@ test('pannello: open with a draft prefills the free-question input as text', asy
     doc,
     mount,
     client: stubClient({
+      [ASSISTANT_STATUS_PATH]: { freeQuestions: 'enabled', endpoint: '/api/assistant/ask' },
       '/api/modules/conversation/records?limit=50': CONVS,
       '/api/modules/interaction-call/records?limit=100': CALLS,
     }),
@@ -686,6 +773,47 @@ test('pannello: open with a draft prefills the free-question input as text', asy
   // Opening without a draft clears the prefill.
   await panel.open('nuovo-modulo');
   assert.equal(mount.findAll('input')[0].value, '', 'no stale draft survives');
+});
+
+test('pannello: in dry-run il draft resta visibile come testo inerte, mai perso', async () => {
+  // BO-F5-01 sul percorso reale di oggi (nessun backend live: solo dry-run):
+  // senza campo libero il testo del chiamante non deve sparire in silenzio —
+  // resta come testo inerte di sola lettura, mai markup, mai un invio.
+  function openDryRun() {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const panel = createAssistantPanel({
+      doc,
+      mount,
+      client: stubClient({
+        [ASSISTANT_STATUS_PATH]: { freeQuestions: 'disabled' },
+        '/api/modules/conversation/records?limit=50': CONVS,
+        '/api/modules/interaction-call/records?limit=100': CALLS,
+      }),
+      navigate: () => {},
+      notify: () => {},
+    });
+    return { doc, mount, panel };
+  }
+  const { mount, panel } = openDryRun();
+  await panel.open('nuovo-modulo', 'un modulo sonde per i KPI del pilota');
+  assert.equal(panel.getState().mode, 'dry-run');
+  assert.equal(mount.findAll('input').length, 0, 'no free-question field in dry-run');
+  assert.equal(mount.findAll('form').length, 0, 'no free-question form in dry-run');
+  const draft = mount.querySelector('.bo-assistant-draft');
+  assert.ok(draft, 'the draft is shown');
+  assert.equal(draft.textContent, 'un modulo sonde per i KPI del pilota');
+  assert.equal(draft.childNodes.length, 0, 'draft is text, never markup');
+  // A hostile draft lands as inert text, never markup, never a submit.
+  await panel.open('nuovo-modulo', '<img src=x onerror=alert(1)>');
+  assert.equal(mount.findAll('input').length, 0);
+  const hostile = mount.querySelector('.bo-assistant-draft');
+  assert.ok(hostile, 'the hostile draft is shown');
+  assert.equal(hostile.textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(hostile.childNodes.length, 0, 'hostile draft is text, never markup');
+  // Opening without a draft shows no draft line.
+  await panel.open('nuovo-modulo');
+  assert.equal(mount.querySelector('.bo-assistant-draft'), null, 'no stale draft survives');
 });
 
 test('pannello: contatta chiede conferma, naviga solo al secondo passo', async () => {

@@ -90,11 +90,15 @@ The ⌘K bar opens the assistant side panel
   `ASSISTANT_HISTORY_LIMIT` answers in the session history ("Cronologia"),
   reopenable without rerunning the reads. In-memory only, never persisted:
   sources carry customer labels that must not rest on disk.
-- Without a configured LLM key the backend probe
-  (`GET /api/assistant/status`, published by a future backend) misses and
-  the panel runs in dry-run: suggestions stay usable on real data, and the
-  free-question box is disabled with the message that free questions arrive
-  with the key. With the backend live the box posts to its endpoint.
+- Free questions are not part of the MVP: until the backend probe
+  (`GET /api/assistant/status`, published by a future backend) reports
+  free questions enabled with an endpoint, the panel runs in dry-run:
+  suggestions stay usable on real data, the free-question field is hidden,
+  and one line says the assistant here suggests replies (Suggerisci). The
+  sentence about the OpenAI key appears only when the status really
+  reports a missing key (`LLM_SECRET_UNAVAILABLE`); a disabled space
+  (`LLM_SPACE_DISABLED`) says the assistant is off there. With the backend
+  live the box posts to its endpoint.
 
 ## How it works
 
