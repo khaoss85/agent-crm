@@ -37,6 +37,9 @@ import {
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  touchedTestDistances,
+  nearestFirst,
+  fillNearest,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -1608,4 +1611,31 @@ test('every declared exclusion is load-bearing and reasoned', () => {
       `${relative} no longer looks like a repo-wide guard: drop its exclusion entry`,
     );
   }
+});
+
+test('an oversized selection keeps the nearest tests: a direct importer before a far one', () => {
+  // #555: admin-quotes.js changed, admin-signature imports it directly, and
+  // the oversized fallback dropped it with the far importers of admin-core.
+  const tests = contents({
+    'tests/admin-signature.test.js': "import { createQuoteView } from '../apps/admin/public/admin-quotes.js';\n",
+    'tests/admin-far.test.js': "import { shell } from '../apps/admin/public/app.js';\n",
+  });
+  const imports = new Map([
+    ['apps/admin/public/app', new Set(['apps/admin/public/admin-quotes'])],
+  ]);
+  const distances = touchedTestDistances(['apps/admin/public/admin-quotes.js'], tests, imports);
+  assert.equal(distances.get('tests/admin-signature.test.js'), 1);
+  assert.equal(distances.get('tests/admin-far.test.js'), 2);
+  assert.deepEqual(nearestFirst(distances), ['tests/admin-signature.test.js', 'tests/admin-far.test.js']);
+  assert.deepEqual(
+    selectTouchedTests(['apps/admin/public/admin-quotes.js'], tests, imports),
+    ['tests/admin-far.test.js', 'tests/admin-signature.test.js'],
+  );
+});
+
+test('the fill never passes the file budget and never repeats a planned test', () => {
+  const ranked = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js'];
+  assert.deepEqual(fillNearest(['tests/a.test.js', 'tests/g.test.js'], ranked, 3), ['tests/b.test.js']);
+  assert.deepEqual(fillNearest(['tests/g.test.js'], ranked, 1), []);
+  assert.deepEqual(fillNearest([], ranked, 10), ranked);
 });
