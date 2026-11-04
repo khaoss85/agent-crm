@@ -1961,6 +1961,60 @@ test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async
   assert.equal(link.getAttribute('href'), '#/connettori');
 });
 
+// Voce 8ce25b0f445f (P3 review su #588): unlinked channels name the address
+// to link in the visible «canale non collegato» line — a phone has no hover.
+test('8ce25b0f445f: unlinked channels name their address in the off line', async () => {
+  const { panel } = await openComposerMount();
+  const off = panel.findAll('p')
+    .find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+  assert.ok(off, 'the off line exists');
+  assert.ok(off.textContent.includes('non collegato'), 'the off line says the channel is not linked');
+  assert.ok(off.textContent.includes('+39 333 1234567'),
+    'the off line names the number to link, readable without hover');
+});
+
+// Voce 8ce25b0f445f (P3 review su #588): Scrivi pressed twice while channels
+// load paints the newest opening only — no crash, no doubled form.
+test('8ce25b0f445f: Scrivi twice while loading paints one panel', async () => {
+  const profileReleases = [];
+  const connectorReleases = [];
+  const slow = composerClient();
+  const client = {
+    posts: slow.posts,
+    async request(path, options = {}) {
+      if (path === '/api/profile') {
+        return new Promise((_, reject) => profileReleases.push(
+          () => reject(Object.assign(new Error('no profile'), { status: 404 }))));
+      }
+      if (path.startsWith('/api/connectors')) {
+        return new Promise((resolve) => connectorReleases.push(() => resolve(COMPOSER_CONNECTORS)));
+      }
+      return slow.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  const write = mount.findAll('button')
+    .find((node) => node.getAttribute('data-action') === 'compose-message');
+  assert.ok(write, 'a Scrivi action exists');
+  write.dispatch('click');
+  write.dispatch('click');
+  assert.equal(profileReleases.length, 2, 'both openings are loading');
+  for (const release of profileReleases.splice(0)) release();
+  await flushComposer();
+  assert.equal(connectorReleases.length, 1, 'only the newest opening keeps loading');
+  for (const release of connectorReleases.splice(0)) release();
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(panel, 'the composer panel is open');
+  const bodies = panel.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-composer-body'));
+  assert.equal(bodies.length, 1, 'the newest opening paints exactly one form');
+  assert.ok(!panel.textContent.includes('Leggo i canali collegati'),
+    'no stale loading line survives the newest opening');
+});
+
 // Voce a935af6a6d19: a revoked Gmail link connects nothing — revocation
 // reads like no link, never like a sender.
 test('a935af6a6d19: a revoked Gmail link leaves Email off', async () => {
