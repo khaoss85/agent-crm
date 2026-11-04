@@ -24,6 +24,7 @@ import {
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { hasUnsavedWork, resetVersionWatchState } from '../apps/admin/public/admin-version.js';
 import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -2677,4 +2678,62 @@ test('a plain click on an empty slot is half an hour', async () => {
   col.dispatch('pointerup', { target: col });
   const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   assert.equal(pick?.textContent, '16:30–17:00');
+});
+
+// backlog:49bd3657b0f8: the view keeps the typed phrase in module state
+// across re-renders, so after the shell routes away the DOM check would
+// read a clean page while the draft survives. Leaving mirrors it into the
+// bundle watch: the reload waits behind the notice instead of losing it.
+test('leaving Calendario with a typed phrase keeps a draft mark, so the bundle watch waits', async () => {
+  resetVersionWatchState();
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    const field = mount.querySelector('textarea[name="phrase"]');
+    assert.ok(field, 'the phrase field renders');
+    field.value = 'trova 45 minuti con marco';
+    field.dispatch('input');
+    view.invalidate();
+    assert.equal(hasUnsavedWork(createFakeDocument()), true, 'the retained phrase defers the reload on a clean screen');
+  } finally {
+    resetVersionWatchState();
+  }
+});
+
+test('clearing the phrase clears the draft mark, so the bundle reloads', async () => {
+  resetVersionWatchState();
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    const field = mount.querySelector('textarea[name="phrase"]');
+    assert.ok(field, 'the phrase field renders');
+    field.value = 'trova 45 minuti con marco';
+    field.dispatch('input');
+    field.value = '';
+    field.dispatch('input');
+    view.invalidate();
+    assert.equal(hasUnsavedWork(createFakeDocument()), false, 'no draft, no wait');
+  } finally {
+    resetVersionWatchState();
+  }
+});
+
+test('the auto-filled roster is not operator text: leaving with it alone sets no mark', async () => {
+  resetVersionWatchState();
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ memberships: [{ subject: 'marco' }] });
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    for (let round = 0; round < 4; round += 1) await new Promise((resolve) => setImmediate(resolve));
+    view.invalidate();
+    assert.equal(hasUnsavedWork(createFakeDocument()), false, 'an auto-filled roster never pins the notice');
+  } finally {
+    resetVersionWatchState();
+  }
 });

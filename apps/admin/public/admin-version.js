@@ -164,7 +164,10 @@ export function hasUnsavedWork(doc) {
   const list = Array.isArray(fields) ? fields : Array.from(fields ?? []);
   for (const field of list) {
     if (field === null || typeof field !== 'object') continue;
-    if (field.disabled === true) continue;
+    // No disabled exception: a save in flight disables its own field
+    // (the note box) while the text is still unsent, and a failed save
+    // keeps the text for retry — skipping disabled fields would reload
+    // over it. A false dirty only waits behind the notice.
     const tag = typeof field.tagName === 'string' ? field.tagName.toUpperCase() : '';
     if (tag === 'TEXTAREA') {
       if (typeof field.value === 'string' && field.value !== '') return true;

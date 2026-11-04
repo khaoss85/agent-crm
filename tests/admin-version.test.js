@@ -165,7 +165,7 @@ test('hasUnsavedWork leans dirty: text counts, controls do not', () => {
   );
   assert.equal(
     hasUnsavedWork(fakeDoc({ fields: [fakeField({ value: 'bozza', disabled: true })] })),
-    false,
+    true,
   );
   markUnsaved('composer');
   assert.equal(hasUnsavedWork(fakeDoc()), true);
@@ -220,6 +220,61 @@ test('checkBundleVersion reloads when clean, waits when text is on screen', asyn
   assert.equal(dirtyDoc._state.banner.textContent, BO_UPDATE_NOTICE);
   dirtyDoc._state.banner.click();
   assert.equal(dirtyReloads, 1, 'the operator confirms the waiting reload');
+});
+
+test('a retained draft mark defers the reload on a clean screen', async () => {
+  resetVersionWatchState();
+  try {
+    const current = 'bo-aaaa000000.js';
+    const served = 'bo-bbbb111111.js';
+    markUnsaved('calendario-draft');
+    // Another screen's DOM: no fields, but the draft survives elsewhere.
+    const awayDoc = fakeDoc({ scripts: [fakeScript(`/bo/${current}`)] });
+    let reloaded = 0;
+    const outcome = await checkBundleVersion({
+      adminBase: '/bo',
+      doc: awayDoc,
+      fetchImpl: okFetch(served),
+      reload: () => { reloaded++; },
+    });
+    assert.equal(outcome, 'deferred');
+    assert.equal(reloaded, 0);
+    assert.equal(awayDoc._state.banner.textContent, BO_UPDATE_NOTICE);
+    clearUnsaved('calendario-draft');
+    const next = await checkBundleVersion({
+      adminBase: '/bo',
+      doc: awayDoc,
+      fetchImpl: okFetch(served),
+      reload: () => { reloaded++; },
+    });
+    assert.equal(next, 'reloaded');
+    assert.equal(reloaded, 1);
+  } finally {
+    resetVersionWatchState();
+  }
+});
+
+test('a save in flight counts as unsaved: a disabled populated field waits', async () => {
+  resetVersionWatchState();
+  try {
+    const current = 'bo-aaaa000000.js';
+    const served = 'bo-bbbb111111.js';
+    const busyDoc = fakeDoc({
+      scripts: [fakeScript(`/bo/${current}`)],
+      fields: [fakeField({ tag: 'INPUT', type: 'text', value: 'nota in volo', disabled: true })],
+    });
+    let reloaded = 0;
+    const outcome = await checkBundleVersion({
+      adminBase: '/bo',
+      doc: busyDoc,
+      fetchImpl: okFetch(served),
+      reload: () => { reloaded++; },
+    });
+    assert.equal(outcome, 'deferred');
+    assert.equal(reloaded, 0);
+  } finally {
+    resetVersionWatchState();
+  }
 });
 
 test('checkBundleVersion stays silent on unknown, same and failed reads', async () => {
