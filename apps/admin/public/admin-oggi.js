@@ -717,6 +717,76 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
  * The exact per-channel table lives in Stato sync; Oggi only needs the
  * headline count, so the total is a fixed constant, never metadata.
  */
+/** Italian channel names for the inbox rows. */
+const OGGI_CHANNEL_NAMES = Object.freeze({ whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Messenger', tiktok: 'TikTok', email: 'Email', phone: 'Telefono', voice: 'Telefono', sms: 'SMS', 'website-form': 'Form del sito', web: 'Form del sito', telegram: 'Telegram' });
+export const INBOX_LIMIT = 6;
+
+/**
+ * How long a message has waited, in plain Italian.
+ * @param {unknown} value
+ * @param {Date} now
+ */
+export function waitedFor(value, now = new Date()) {
+  const at = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(at)) return '';
+  const minutes = Math.max(0, Math.round((now.getTime() - at) / 60000));
+  if (minutes < 1) return 'adesso';
+  if (minutes < 60) return `da ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return hours === 1 ? 'da 1 ora' : `da ${hours} ore`;
+  const days = Math.round(hours / 24);
+  return days === 1 ? 'da ieri' : `da ${days} giorni`;
+}
+
+/**
+ * The «Da rispondere» inbox (MVP Presti, Dan 04/11): the conversations whose
+ * latest message is the customer's, newest first. One row per conversation,
+ * never per message; a conversation the team answered last is not waiting.
+ * The label is the stored subject snapshot, never an id.
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number }} input
+ */
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT } = {}) {
+  const byId = new Map();
+  for (const conversation of conversations) {
+    if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
+  }
+  const latest = new Map();
+  for (const message of messages) {
+    // A message without a conversation still belongs to someone: grouped by
+    // subject and channel, so a channel that does not thread is not lost.
+    const key = nonEmptyText(message?.conversationId)
+      ?? (nonEmptyText(message?.subjectId) ? `${message.subjectResource ?? ''}:${message.subjectId}:${message.channel ?? ''}` : null);
+    const at = Date.parse(String(message?.occurredAt ?? ''));
+    if (!key || !Number.isFinite(at)) continue;
+    const seen = latest.get(key);
+    if (!seen || at > seen.at) latest.set(key, { at, message });
+  }
+  const waiting = [];
+  for (const [conversationId, { at, message }] of latest) {
+    if (message.direction !== 'inbound') continue;
+    const conversation = byId.get(conversationId) ?? null;
+    if (conversation?.status === 'closed') continue;
+    const channel = String(message.channel ?? conversation?.channel ?? '').toLowerCase();
+    const subject = {
+      subjectOwner: message.subjectOwner ?? conversation?.subjectOwner,
+      subjectResource: message.subjectResource ?? conversation?.subjectResource,
+      subjectId: message.subjectId ?? conversation?.subjectId,
+    };
+    waiting.push({
+      id: conversationId,
+      at,
+      channel,
+      mono: channelTile(channel) ?? badgeInitials(conversation?.subjectLabel),
+      name: nonEmptyText(conversation?.subjectLabel) ?? nonEmptyText(message.subjectLabel) ?? 'Cliente',
+      preview: briefSnippet(message.body, 110) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
+      when: [waitedFor(message.occurredAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
+      href: cardHrefForSubject(subject),
+    });
+  }
+  waiting.sort((a, b) => b.at - a.at);
+  return { total: waiting.length, rows: waiting.slice(0, Math.max(0, limit)) };
+}
+
 export const OGGI_TOTAL_CHANNELS = 9;
 
 /**
@@ -867,6 +937,10 @@ export async function loadOggiData(client, now = new Date()) {
     profile: null,
     briefMessages: [],
     briefCalls: [],
+    inboxComposed: false,
+    inboxAvailable: false,
+    inboxMessages: [],
+    inboxConversations: [],
     next: null,
   };
   let domains = {};
@@ -914,6 +988,25 @@ export async function loadOggiData(client, now = new Date()) {
   } catch (error) {
     noteReadFailure('profile', error);
     outcome.profile = null;
+  }
+  // The «Da rispondere» inbox: the latest messages and their conversations.
+  // A failed read keeps the section honest (unavailable), never empty-as-calm.
+  if (domains.interactions != null) {
+    outcome.inboxComposed = true;
+    // Messages are the inbox; conversations only lend the name and the
+    // closed state, so a space without the conversation module still lists
+    // who is waiting.
+    const [messages, conversations] = await Promise.allSettled([
+      readModulePage(client, 'interaction-message'),
+      readModulePage(client, 'conversation'),
+    ]);
+    if (messages.status === 'fulfilled') {
+      outcome.inboxMessages = messages.value;
+      outcome.inboxAvailable = true;
+    } else {
+      noteReadFailure('inbox', messages.reason);
+    }
+    if (conversations.status === 'fulfilled') outcome.inboxConversations = conversations.value;
   }
   outcome.next = nextAppointment(outcome.appointments, now);
   if (outcome.next != null && domains.interactions != null) {
@@ -1142,6 +1235,57 @@ export function renderOggi({
   }
   page.appendChild(advisor);
 
+  // ---- Da rispondere: the conversations waiting for the team ----
+  if (home.inbox != null) {
+    const inbox = el(doc, 'section', 'bo-oggi-section bo-oggi-inbox');
+    const inboxHead = el(doc, 'div', 'bo-oggi-head');
+    inboxHead.appendChild(el(doc, 'h3', undefined, 'Da rispondere'));
+    const waitingCount = Number(home.inbox.total ?? 0);
+    inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', waitingCount === 1 ? '1 in attesa' : `${waitingCount} in attesa`));
+    inbox.appendChild(inboxHead);
+    const inboxRows = Array.isArray(home.inbox.rows) ? home.inbox.rows : [];
+    if (home.inbox.available === false) {
+      inbox.appendChild(el(doc, 'p', 'bo-muted', 'I messaggi non si sono potuti leggere. Riprova più tardi.'));
+    } else if (inboxRows.length === 0) {
+      inbox.appendChild(el(doc, 'p', 'bo-muted', 'Nessun messaggio aspetta una risposta.'));
+    } else {
+      const list = el(doc, 'div', 'bo-oggi-actions');
+      for (const entry of inboxRows) {
+        const row = el(doc, 'div', 'bo-oggi-row bo-oggi-inbox-row');
+        row.setAttribute('data-conversation', String(entry.id ?? ''));
+        row.appendChild(el(doc, 'span', `bo-oggi-mono${entry.channel ? ` bo-tile-${entry.channel}` : ''}`, String(entry.mono ?? '')));
+        const body = el(doc, 'div', 'bo-oggi-body');
+        const href = typeof entry.href === 'string' && entry.href !== '' ? entry.href : null;
+        const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(entry.name ?? ''));
+        if (href) {
+          title.setAttribute('href', href);
+          title.addEventListener('click', (event) => {
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            navigate(href);
+          });
+        }
+        body.appendChild(title);
+        body.appendChild(el(doc, 'p', 'bo-oggi-why', String(entry.preview ?? '')));
+        if (entry.when) body.appendChild(el(doc, 'p', 'bo-oggi-note', String(entry.when)));
+        row.appendChild(body);
+        if (href) {
+          const controls = el(doc, 'div', 'bo-oggi-btns');
+          const reply = el(doc, 'button', 'small primary', 'Rispondi');
+          reply.setAttribute('data-action', 'inbox-reply');
+          reply.addEventListener('click', () => navigate(href));
+          controls.appendChild(reply);
+          row.appendChild(controls);
+        }
+        list.appendChild(row);
+      }
+      inbox.appendChild(list);
+      if (waitingCount > inboxRows.length) {
+        inbox.appendChild(el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} conversazioni più recenti su ${waitingCount}.`));
+      }
+    }
+    page.appendChild(inbox);
+  }
+
   // ---- Agenda and pre-call brief: two cards side by side ----
   const pair = el(doc, 'div', 'bo-oggi-pair');
   page.appendChild(pair);
@@ -1367,6 +1511,11 @@ export function createOggiView(deps) {
         capped: built.capped,
         agenda,
         brief,
+        inbox: !last.inboxComposed
+          ? null
+          : last.inboxAvailable
+            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, now: lastMeta.now }) }
+            : { available: false, total: 0, rows: [] },
         missing,
         connections: last.connections,
         profile: last.profile ?? null,
@@ -1503,6 +1652,7 @@ export function createOggiView(deps) {
           interactionsAvailable: false, tasks: [], appointments: [], connections: [],
           profile: null,
           briefMessages: [], briefCalls: [], next: null,
+          inboxAvailable: false, inboxMessages: [], inboxConversations: [],
         };
       }
       paint();
