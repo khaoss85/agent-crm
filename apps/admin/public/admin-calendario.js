@@ -491,6 +491,25 @@ export function filterPhraseProposals(slots, nowMs = Date.now()) {
 }
 
 /**
+ * backlog:d1e4d90e — rank phrase proposals so the painted hours win: the
+ * night is always free, so the first free steps of the week are night steps
+ * and a plain time order fills every proposal with the night. Steps inside
+ * the 09:00–18:00 grid come first (in time order), out-of-hours steps after
+ * (in time order, for the honest lines below the grid) — never dropped, only
+ * ordered, so fetta 8 still names them.
+ * @param {unknown} slots
+ */
+export function rankPhraseProposals(slots) {
+  if (!Array.isArray(slots)) return [];
+  return [...slots].sort((left, right) => {
+    const leftIn = slotInGrid(left?.startsAt, left?.endsAt) ? 0 : 1;
+    const rightIn = slotInGrid(right?.startsAt, right?.endsAt) ? 0 : 1;
+    if (leftIn !== rightIn) return leftIn - rightIn;
+    return String(left?.startsAt ?? '').localeCompare(String(right?.startsAt ?? ''));
+  });
+}
+
+/**
  * backlog:d1e4d90e — one person's free steps across every booking identity
  * they hold: the server answers per identity, so a step the human holds
  * under one identity looks free under their other one. A step is offered
@@ -1785,7 +1804,10 @@ export function createCalendarioView(deps) {
       // future steps are proposed — cut against the view clock so tests pin
       // it (backlog:d1e4d90e). Out-of-hours steps stay for the honest lines
       // below the grid (fetta 8), never dropped.
-      const proposals = filterPhraseProposals(kept, clock().getTime());
+      // backlog:d1e4d90e — the night is always free, so rank the painted
+      // hours first: day steps fill the proposals, night steps stay behind
+      // for the honest lines, never dropped (fetta 8).
+      const proposals = rankPhraseProposals(filterPhraseProposals(kept, clock().getTime()));
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
       state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';

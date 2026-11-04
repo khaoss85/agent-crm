@@ -19,6 +19,7 @@ import {
   personRows,
   resolveDraftMemberIds,
   personFreeSlots,
+  rankPhraseProposals,
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
@@ -2865,4 +2866,18 @@ test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:
     'past Monday and corrupt rows go, future night steps stay for the honest lines',
   );
   assert.deepEqual(filterPhraseProposals('nope', nowMs), [], 'non-lists stay empty');
+});
+
+test('rankPhraseProposals puts the painted hours first, night stays behind (backlog:d1e4d90e)', () => {
+  // 2026-11-04: Rome is UTC+1, so 02:00Z is night and 08:00Z is 09:00 in Rome.
+  const night = { startsAt: '2026-11-04T02:00:00.000Z', endsAt: '2026-11-04T02:30:00.000Z' };
+  const morning = { startsAt: '2026-11-04T08:00:00.000Z', endsAt: '2026-11-04T08:30:00.000Z' };
+  const evening = { startsAt: '2026-11-04T17:30:00.000Z', endsAt: '2026-11-04T18:00:00.000Z' };
+  assert.deepEqual(
+    rankPhraseProposals([night, evening, morning]).map((slot) => slot.startsAt),
+    [morning.startsAt, night.startsAt, evening.startsAt],
+    'day steps first in time order, out-of-hours behind for the honest lines, never dropped',
+  );
+  assert.deepEqual(rankPhraseProposals([night]), [night], 'a night-only week still proposes honestly');
+  assert.deepEqual(rankPhraseProposals('nope'), [], 'non-lists stay empty');
 });
