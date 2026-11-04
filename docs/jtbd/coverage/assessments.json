@@ -7,7 +7,7 @@
    "jtbdId": "ACC-JTBD-CRM-ADMIN-003",
    "jobName": "Configurare entità, campi, relazioni e layout",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "8947286f060ddc76fdd6ee78b9419c741d843e9b",
+   "verifiedAtSha": "40bac5ea6abdf94c2fd707c5d706677aa98ef1f5",
    "evidence": [
     {
      "kind": "TEST",
@@ -31,7 +31,7 @@
      "kind": "TEST",
      "path": "tests/admin-modules.test.js",
      "claim": "the generated Admin lists, creates, opens and edits the record, producing audit and events",
-     "sha256": "00f4ecf8e6150be49d2ae901bedea09e5961cc9253a7a7ef27274ae12b262aaa"
+     "sha256": "b402c36f039c23232287088f3f817bea9313fe4da44f176e1c287d5bf7f3b764"
     }
    ],
    "factIds": [
@@ -50,7 +50,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-008",
    "jobName": "Instradare approvazioni",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "8947286f060ddc76fdd6ee78b9419c741d843e9b",
+   "verifiedAtSha": "40bac5ea6abdf94c2fd707c5d706677aa98ef1f5",
    "evidence": [
     {
      "kind": "TEST",
@@ -88,7 +88,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-009",
    "jobName": "Generare quote e documenti",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "8947286f060ddc76fdd6ee78b9419c741d843e9b",
+   "verifiedAtSha": "40bac5ea6abdf94c2fd707c5d706677aa98ef1f5",
    "evidence": [
     {
      "kind": "TEST",
@@ -106,7 +106,7 @@
      "kind": "TEST",
      "path": "tests/admin-quotes.test.js",
      "claim": "the quote and its versions render in the Admin with server-computed totals",
-     "sha256": "20e2b7950da63bff0f0ef9c72aa479046a716ad19c4040b2f0c3a9647da82314"
+     "sha256": "3d5813af50effab5a0f4e0472281cfa741d8996c6252e364f64263ff2bf696d6"
     }
    ],
    "factIds": [
@@ -124,7 +124,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-012",
    "jobName": "Portare contratto a firma e close",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "8947286f060ddc76fdd6ee78b9419c741d843e9b",
+   "verifiedAtSha": "40bac5ea6abdf94c2fd707c5d706677aa98ef1f5",
    "evidence": [
     {
      "kind": "TEST",
@@ -154,7 +154,7 @@
    "jtbdId": "ACC-JTBD-DATA-SCI-005",
    "jobName": "Costruire lead e account scoring",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "8947286f060ddc76fdd6ee78b9419c741d843e9b",
+   "verifiedAtSha": "40bac5ea6abdf94c2fd707c5d706677aa98ef1f5",
    "evidence": [
     {
      "kind": "TEST",
