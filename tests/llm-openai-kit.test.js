@@ -75,6 +75,9 @@ test('the openai adapter passes the same kit on a stubbed transport', async () =
   const body = JSON.parse(first.init.body);
   assert.equal(body.model, MODEL);
   assert.equal(body.stream, false);
+  // The current models refuse `max_tokens` with a 400 (production, 04/11).
+  assert.equal(typeof body.max_completion_tokens, 'number', 'the bound travels as max_completion_tokens');
+  assert.equal('max_tokens' in body, false, 'never max_tokens');
 });
 
 test('the openai adapter names the cheapest model exactly once by default', () => {
