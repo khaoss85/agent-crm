@@ -425,6 +425,21 @@ export function resetAdminBundleCache() {
   bundleCache.clear();
 }
 
+/**
+ * The served bundle identity for open shells (backlog:49bd3657b0f8).
+ *
+ * An open tab keeps the old bundle in memory after a release, so the shell
+ * polls this identity and compares it with the script it was served. The
+ * names carry the content hashes, so a new deploy is a new identity with
+ * nothing else to version. Pure read of the in-memory build above.
+ *
+ * @param {string} [publicDir]
+ */
+export function bundleVersion(publicDir = PUBLIC_DIR) {
+  const bundle = getAdminBundle(publicDir);
+  return { jsName: bundle.jsName, cssName: bundle.cssName };
+}
+
 function main() {
   if (!process.argv.includes('--check')) {
     console.error('admin-bundle: the bundle is generated at serve time, never written. Use --check.');

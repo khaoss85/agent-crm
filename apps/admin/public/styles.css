@@ -1786,3 +1786,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-import-table-wrap { margin: 12px 0 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
 .bo-import-table { margin: 0; }
 .customer-data-mapping-row, .customer-data-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* backlog:49bd3657b0f8 — the bundle-update notice: one fixed bar on top of
+   every screen, product colors, readable on a phone. The notice is a single
+   button whose label is the notice itself, so it reads and confirms in one
+   gesture; it stays on screen until the operator confirms. */
+.bo-update-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 200; display: block; width: 100%; margin: 0; padding: 12px 16px; border: none; border-bottom: 1px solid var(--line); background: var(--ink); color: var(--paper); font: inherit; font-size: 14px; font-weight: 700; text-align: center; cursor: pointer; }
+.bo-update-banner:hover { text-decoration: underline; }
+.bo-update-banner:focus-visible { outline: 2px solid var(--paper); outline-offset: -4px; }
