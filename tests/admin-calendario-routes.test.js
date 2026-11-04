@@ -93,6 +93,22 @@ test('suggest-slots forwards the step granularity', async () => {
   });
 });
 
+test('suggest-slots names the server now so begun steps are cut (backlog:d1e4d90e)', async () => {
+  const app = stubApp();
+  await withServer(app, async (base) => {
+    const response = await fetch(
+      `${base}/api/appointments/suggest-slots?teamMemberIds=marco&from=2026-10-22T00:00:00.000Z&to=2026-10-23T00:00:00.000Z`,
+    );
+    assert.equal(response.status, 200);
+    const suggest = app.calls.find((call) => call.method === 'suggestAppointmentSlots');
+    assert.ok(suggest, 'the suggest operation runs');
+    assert.ok(
+      typeof suggest.input.nowIso === 'string' && !Number.isNaN(Date.parse(suggest.input.nowIso)),
+      'the server passes a valid reference instant',
+    );
+  });
+});
+
 test('propose and confirm ride the caller actor from the request', async () => {
   const app = stubApp();
   await withServer(app, async (base) => {

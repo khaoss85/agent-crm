@@ -1486,7 +1486,9 @@ function flowAppointments(context, names) {
 
 /**
  * Validate the suggestion filter: named members (never a scan — there is no
- * roster to scan), a bounded window, a step from the fixed set.
+ * roster to scan), a bounded window, a step from the fixed set, and the
+ * optional reference instant past steps are cut against (backlog:d1e4d90e:
+ * a proposal must be bookable, so a step already begun is never offered).
  */
 function validateSuggestFilter(filter) {
   const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
@@ -1525,6 +1527,13 @@ function validateSuggestFilter(filter) {
   if (!Number.isSafeInteger(slotMinutes) || !SUGGEST_SLOT_MINUTES.includes(slotMinutes)) {
     throw new ValidationError(`slotMinutes must be one of ${SUGGEST_SLOT_MINUTES.join(', ')}`, { field: 'slotMinutes' });
   }
+  // The instant past steps are cut against: named by callers that propose to
+  // a human (the backoffice calendar passes its own now), absent for plain
+  // window reads, which keep every step exactly as before.
+  let nowMs = null;
+  if (value.nowIso !== undefined && value.nowIso !== null) {
+    nowMs = realIsoInstant(value.nowIso, 'nowIso').ms;
+  }
   const steps = Math.floor((to.ms - from.ms) / (slotMinutes * 60 * 1000));
   if (steps > MAX_SUGGEST_STEPS_PER_MEMBER) {
     throw new ValidationError(
@@ -1533,7 +1542,7 @@ function validateSuggestFilter(filter) {
     );
   }
   return {
-    members, fromMs: from.ms, toMs: to.ms, fromIso: from.iso, toIso: to.iso, slotMinutes,
+    members, fromMs: from.ms, toMs: to.ms, fromIso: from.iso, toIso: to.iso, slotMinutes, nowMs,
   };
 }
 
@@ -1543,7 +1552,9 @@ function validateSuggestFilter(filter) {
  * only: no row is written, no slot is invented. Cancelled bookings hold
  * nothing; every other state holds its slot — the same rule `findOverlap`
  * enforces, reused here so a suggestion never offers a slot the booking path
- * would refuse.
+ * would refuse. When the filter names `nowIso`, a step already begun is cut
+ * too: a proposal must be bookable, so the past is never offered
+ * (backlog:d1e4d90e).
  *
  * @param {{modules: any, moduleNames?: Record<string, string>}} storage
  */
@@ -1557,6 +1568,10 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
     const held = await appointments.listWhere({ teamMemberId });
     const slots = [];
     for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
+      // A proposal must be fully ahead: a step already begun cannot be
+      // booked whole, so with a reference instant named it is cut silently —
+      // an empty answer, never an invented one.
+      if (checked.nowMs !== null && start < checked.nowMs) continue;
       const candidate = { teamMemberId, startMs: start, endMs: start + slotMs };
       // findOverlap throws on a held row whose slot cannot be proven: a
       // corrupt witness fails the suggestion closed, never a silent free slot.
@@ -1914,14 +1929,38 @@ export async function bookFromLink(context, request) {
   });
 }
 
+/**
+ * The Rome weekday line beside the reference instant (backlog:d1e4d90e): the
+ * model resolves a named weekday against it, so «lunedì» past never answers
+ * a past Monday. Presentation only — an unparseable instant adds nothing and
+ * the parse still runs against the raw instant.
+ */
+function romeDayLine(nowIso) {
+  try {
+    const instant = new Date(String(nowIso));
+    if (Number.isNaN(instant.getTime())) return '';
+    const words = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    }).format(instant);
+    return ` (Europe/Rome: ${words})`;
+  } catch {
+    return '';
+  }
+}
+
 const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italian customer sentence. '
   + 'Reply with JSON only, no other text, with any of these keys: '
   + '{"teamMemberId": "opaque team identity, only when the sentence names a person", '
   + '"serviceKey": "lowercase listino slug, only when the sentence names a service", '
   + '"startsAt": "ISO instant the sentence asks for, resolved against the reference instant", '
   + '"endsAt": "ISO instant the appointment ends, when the sentence gives a duration or an end", '
+  + '"durationMinutes": "integer minutes the sentence states for the appointment, only when stated", '
   + '"notes": "anything else worth keeping, at most one line"}. '
-  + 'Omit every key the sentence does not state. Never invent a person, a service or a time.';
+  + 'Omit every key the sentence does not state. Never invent a person, a service or a time. '
+  + 'The reference instant also names the weekday: a weekday the sentence names means its NEXT occurrence after '
+  + 'the reference instant, never a past day. When the sentence states a day or a time, startsAt is required — '
+  + 'never drop it. When the sentence states a duration in minutes, endsAt is startsAt plus that duration; '
+  + 'when no day or time is stated, still record the stated durationMinutes so the caller can size the search.';
 
 /**
  * Parse "fissa con una frase" (BO-F3-02, AI option): turn the customer's
@@ -1950,6 +1989,7 @@ export async function parseBookingPhrase(context, request) {
   }
   const actor = requireActor(context?.actor);
   const now = typeof context?.now === 'function' ? context.now() : new Date().toISOString();
+  const nowMs = Date.parse(String(now));
   let completion;
   try {
     completion = await llm.complete({
@@ -1958,7 +1998,7 @@ export async function parseBookingPhrase(context, request) {
       purpose: 'suggest',
       messages: [
         { role: 'system', content: PHRASE_SYSTEM },
-        { role: 'user', content: `Reference instant: ${now}. Sentence: ${phrase}` },
+        { role: 'user', content: `Reference instant: ${now}${romeDayLine(now)}. Sentence: ${phrase}` },
       ],
       maxTokens: 512,
     });
@@ -1970,7 +2010,7 @@ export async function parseBookingPhrase(context, request) {
     });
   }
   const text = completion && typeof completion.text === 'string' ? completion.text : '';
-  const draft = extractPhraseDraft(text);
+  const draft = extractPhraseDraft(text, nowMs);
   return Object.freeze({
     draft,
     dryRun: completion?.dryRun === true,
@@ -1978,8 +2018,13 @@ export async function parseBookingPhrase(context, request) {
   });
 }
 
-/** Strictly validate the model's JSON: known keys only, every one proven. */
-function extractPhraseDraft(text) {
+/**
+ * Strictly validate the model's JSON: known keys only, every one proven. A
+ * draft naming a moment at or before the reference instant is refused with
+ * its own code (backlog:d1e4d90e): the caller tells the human to name a
+ * future day instead of proposing the past.
+ */
+function extractPhraseDraft(text, nowMs) {
   const fenced = String(text ?? '').replace(/```(?:json)?/gi, '').trim();
   let parsed;
   try {
@@ -2014,13 +2059,29 @@ function extractPhraseDraft(text) {
       && Date.parse(draft.endsAt) <= Date.parse(draft.startsAt)) {
       throw new ValidationError('draft.endsAt must be after draft.startsAt', { field: 'draft.endsAt' });
     }
+    if (draft.startsAt !== undefined && Number.isSafeInteger(nowMs)
+      && Date.parse(draft.startsAt) <= nowMs) {
+      throw new AppError(
+        'The workspace AI placed the booking at or before the reference instant: name a future day instead',
+        { code: 'APPOINTMENTS_AI_DRAFT_IN_PAST', status: 422, details: { field: 'draft.startsAt' } },
+      );
+    }
+    if (parsed.durationMinutes !== undefined) {
+      const minutes = parsed.durationMinutes;
+      if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
+        throw new ValidationError('draft.durationMinutes must be whole minutes from 1 to 1440', { field: 'draft.durationMinutes' });
+      }
+      draft.durationMinutes = minutes;
+    }
     if (parsed.notes !== undefined) {
       draft.notes = safeText(parsed.notes, 'draft.notes', MAX_NOTES);
     }
   } catch (error) {
     // A known key with an invalid value is an unusable draft, never a raw
-    // validation leak: the caller books with the manual option instead.
-    if (error instanceof AppError && error.code === 'APPOINTMENTS_AI_DRAFT_UNUSABLE') throw error;
+    // validation leak: the caller books with the manual option instead. A
+    // past draft keeps its own code so the caller can name the fix.
+    if (error instanceof AppError
+      && (error.code === 'APPOINTMENTS_AI_DRAFT_UNUSABLE' || error.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST')) throw error;
     throw new AppError(
       `The workspace AI returned an invalid booking draft (${error instanceof Error ? error.message : String(error)}): book with the manual option instead`,
       {
