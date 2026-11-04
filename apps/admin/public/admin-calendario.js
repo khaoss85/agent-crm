@@ -491,6 +491,57 @@ export function filterPhraseProposals(slots, nowMs = Date.now()) {
 }
 
 /**
+ * backlog:d1e4d90e — one person's free steps across every booking identity
+ * they hold: the server answers per identity, so a step the human holds
+ * under one identity looks free under their other one. A step is offered
+ * only when every searched identity reports it free — otherwise Conferma
+ * would book the same human twice. A searched identity with no answer
+ * group proves nothing, so its steps stay unoffered (fail closed). A
+ * single searched identity keeps the plain union, exactly as before.
+ * The offered step books the drafted identity when the draft named one of
+ * the searched identities, else the first searched identity — deterministic,
+ * never invented.
+ * @param {unknown} groups @param {unknown} searchIds @param {unknown} member
+ */
+export function personFreeSlots(groups, searchIds, member) {
+  const list = Array.isArray(groups) ? groups : [];
+  const ids = Array.isArray(searchIds)
+    ? searchIds.filter((id) => typeof id === 'string' && id !== '')
+    : [];
+  const valid = (slot) => slot
+    && typeof slot.startsAt === 'string' && slot.startsAt !== ''
+    && typeof slot.endsAt === 'string' && slot.endsAt !== '';
+  const named = typeof member === 'string' && ids.includes(member) ? member : null;
+  if (ids.length <= 1) {
+    const kept = [];
+    for (const group of list) {
+      for (const slot of group?.slots ?? []) {
+        if (!slot?.startsAt || !slot?.endsAt) continue;
+        kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: group?.teamMemberId ?? member });
+      }
+    }
+    return kept;
+  }
+  const keyOf = (slot) => `${slot.startsAt} ${slot.endsAt}`;
+  let common = null;
+  for (const id of ids) {
+    const group = list.find((entry) => entry?.teamMemberId === id);
+    if (!group) return [];
+    const keys = new Set((group.slots ?? []).filter(valid).map(keyOf));
+    common = common === null ? keys : new Set([...common].filter((key) => keys.has(key)));
+    if (common.size === 0) return [];
+  }
+  const first = list.find((entry) => entry?.teamMemberId === ids[0]);
+  const bookAs = named ?? first?.teamMemberId ?? ids[0];
+  const kept = [];
+  for (const slot of first?.slots ?? []) {
+    if (!valid(slot) || !common.has(keyOf(slot))) continue;
+    kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: bookAs });
+  }
+  return kept;
+}
+
+/**
  * Overlap lanes per day column: events sharing Rome time split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
@@ -1725,13 +1776,10 @@ export function createCalendarioView(deps) {
         + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
       );
       const groups = Array.isArray(found?.members) ? found.members : [];
-      const kept = [];
-      for (const group of groups) {
-        for (const slot of group?.slots ?? []) {
-          if (!slot?.startsAt || !slot?.endsAt) continue;
-          kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: group.teamMemberId ?? member });
-        }
-      }
+      // backlog:d1e4d90e — the searched identities belong to one resolved
+      // person: offer a step only when every identity reports it free, so a
+      // booking under one identity never double-books their other one.
+      const kept = personFreeSlots(groups, searchIds, member);
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
       // future steps are proposed — cut against the view clock so tests pin

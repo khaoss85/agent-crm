@@ -18,6 +18,7 @@ import {
   parseMemberFilter,
   personRows,
   resolveDraftMemberIds,
+  personFreeSlots,
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
@@ -87,7 +88,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -128,6 +129,7 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
       if (path.startsWith('/api/appointments/suggest-slots')) {
+        if (suggestGroups !== undefined) return { from: '', to: '', slotMinutes: 30, members: suggestGroups };
         return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots }] };
       }
       if (path === '/api/appointments/phrase') return { draft: phrase, dryRun: false, spaceId: 'locale' };
@@ -2719,6 +2721,132 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
   assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
   assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
+});
+
+// backlog:d1e4d90e — the server answers per booking identity, so one human
+// with two identities needs the intersection: a step held under coach-guido
+// must not be offered as free under google|g1.
+test('personFreeSlots offers a step only when every identity reports it free', () => {
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const other = { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' };
+  const held = [
+    { teamMemberId: 'coach-guido', slots: [other] },
+    { teamMemberId: 'google|g1', slots: [step, other] },
+  ];
+  assert.deepEqual(
+    personFreeSlots(held, ['coach-guido', 'google|g1'], 'coach-guido'),
+    [{ ...other, teamMemberId: 'coach-guido' }],
+    'the step held under one identity is not offered under the other',
+  );
+  const free = [
+    { teamMemberId: 'coach-guido', slots: [step, other] },
+    { teamMemberId: 'google|g1', slots: [step, other] },
+  ];
+  assert.deepEqual(
+    personFreeSlots(free, ['coach-guido', 'google|g1'], 'coach-guido'),
+    [
+      { ...step, teamMemberId: 'coach-guido' },
+      { ...other, teamMemberId: 'coach-guido' },
+    ],
+    'free under both means offered once, booked on the drafted identity',
+  );
+  assert.deepEqual(
+    personFreeSlots(free, ['coach-guido', 'google|g1'], 'Marco'),
+    [
+      { ...step, teamMemberId: 'coach-guido' },
+      { ...other, teamMemberId: 'coach-guido' },
+    ],
+    'a name match books the first searched identity, deterministically',
+  );
+  assert.deepEqual(
+    personFreeSlots([{ teamMemberId: 'coach-guido', slots: [step] }], ['coach-guido', 'google|g1'], 'coach-guido'),
+    [],
+    'a searched identity with no answer group proves nothing: fail closed',
+  );
+  assert.deepEqual(
+    personFreeSlots([{ teamMemberId: 'marco', slots: [step, { startsAt: '', endsAt: '' }] }], ['marco'], 'marco'),
+    [{ ...step, teamMemberId: 'marco' }],
+    'a single identity keeps the plain union, corrupt rows dropped',
+  );
+  assert.deepEqual(personFreeSlots('nope', ['marco'], 'marco'), [], 'non-lists stay empty');
+});
+
+test('a phrase step held under one identity is never proposed under the other', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const client = stubClient({
+    phrase: {
+      teamMemberId: 'coach-guido',
+      serviceKey: 'taglio',
+      startsAt: step.startsAt,
+      endsAt: step.endsAt,
+    },
+    memberships: [
+      { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+      { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    ],
+    suggestGroups: [
+      { teamMemberId: 'coach-guido', slots: [] },
+      { teamMemberId: 'google|g1', slots: [step] },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
+  assert.ok(suggest, 'the phrase feeds a slot search');
+  assert.ok(suggest.path.includes('google%7Cg1'), 'every identity the human holds is searched');
+  assert.ok(
+    texts(mount, 'p').includes('Nessuno slot libero questa settimana, prova con altri giorni.'),
+    'the step held under coach-guido is not offered as free under google|g1',
+  );
+  assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal rows, only the manual Conferma');
+});
+
+test('a phrase step free under every identity is proposed once on the drafted one', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const client = stubClient({
+    phrase: {
+      teamMemberId: 'coach-guido',
+      serviceKey: 'taglio',
+      startsAt: step.startsAt,
+      endsAt: step.endsAt,
+    },
+    memberships: [
+      { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+      { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    ],
+    suggestGroups: [
+      { teamMemberId: 'coach-guido', slots: [step] },
+      { teamMemberId: 'google|g1', slots: [step] },
+    ],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const confirms = mount.querySelector('.cal-slots').findAll('button')
+    .filter((node) => node.textContent === 'Conferma');
+  assert.equal(confirms.length, 1, 'one row for the step free under both identities, never two');
+  await pickCustomerByName(mount, 'Ada');
+  confirms[0].dispatch('click');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const booked = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(booked.length, 1, 'Conferma calls confirmBooking');
+  assert.equal(payload(booked[0]).teamMemberId, 'coach-guido', 'the booking stays on the drafted identity');
 });
 
 test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:d1e4d90e)', () => {
