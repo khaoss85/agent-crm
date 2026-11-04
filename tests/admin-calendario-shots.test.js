@@ -170,7 +170,9 @@ const view = createCalendarioView({
   client,
   // Pin Rome time like the unit tests: the fixture week is Oct 2026, so the
   // painted week must be that one whatever day the CI runner boots on.
-  now: () => new Date('2026-10-23T06:00:00Z'),
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
+  // so the view clock must still see them as future — same Oct 19–25 week.
+  now: () => new Date('2026-10-21T06:00:00Z'),
 });
 await view.render();
 byName('members').value = 'marco, sara';

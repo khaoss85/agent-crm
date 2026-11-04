@@ -389,7 +389,9 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
+  // so the view clock must still see them as future — same Oct 19–25 week.
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   // The ghosts need the loaded week: name the member first.
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -450,7 +452,8 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     slots,
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
@@ -532,7 +535,8 @@ test('a failed Conferma names the manual form, never a code', async () => {
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -738,7 +742,9 @@ test('a 19:00 proposal is named below the grid with its real time, never on the 
   };
   const slots = [{ startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e);
+  // the 19:00 Rome step stays future, so the honest out-of-hours line proves.
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';

@@ -1734,8 +1734,10 @@ export function createCalendarioView(deps) {
       }
       // One row and one ghost per slot, like the week grid caps its own
       // columns: the first 24 carry the search, never an invented rest. Only
-      // future steps inside the painted hours are proposed (backlog:d1e4d90e).
-      const proposals = filterPhraseProposals(kept);
+      // future steps are proposed — cut against the view clock so tests pin
+      // it (backlog:d1e4d90e). Out-of-hours steps stay for the honest lines
+      // below the grid (fetta 8), never dropped.
+      const proposals = filterPhraseProposals(kept, clock().getTime());
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
       state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
