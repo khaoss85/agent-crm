@@ -925,7 +925,13 @@ export function createCustomerCardView(deps) {
    * `POST /api/customer-hub/messages` — the recipient stays server-derived,
    * the panel only shows it.
    */
+  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
+  // A slow first load never paints over (or crashes on) a newer opening:
+  // stale callbacks return without touching the panel.
+  let composerGeneration = 0;
+
   function openComposer(box, card, navCtx) {
+    const generation = (composerGeneration += 1);
     const old = box.querySelector('div[data-composer="open"]');
     if (old) {
       while (old.firstChild) old.removeChild(old.firstChild);
@@ -973,13 +979,16 @@ export function createCustomerCardView(deps) {
     // resolves to null and changes nothing — the channel connections
     // decide alone, like before.
     readProfile(client).then((profile) => {
+      if (generation !== composerGeneration) return;
       client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
-        panel.removeChild(wait);
+        if (generation !== composerGeneration) return;
+        if (wait.parentNode === panel) panel.removeChild(wait);
         buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile);
       },
       (error) => {
-        panel.removeChild(wait);
+        if (generation !== composerGeneration) return;
+        if (wait.parentNode === panel) panel.removeChild(wait);
         if (isNotComposedFailure(error)) {
           buildComposerForm(panel, card, navCtx, spaceId, [], profile);
           return;
@@ -1086,7 +1095,9 @@ export function createCustomerCardView(deps) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
-        offLinked.push(entry.label);
+        // Voce 8ce25b0f445f: the address reads in the line too, not only in
+        // the title — a phone has no hover.
+        offLinked.push(`${entry.label} (${entry.recipient})`);
       } else {
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}`);
         radio.addEventListener('click', () => select(entry));
