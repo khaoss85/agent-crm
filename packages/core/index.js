@@ -340,3 +340,12 @@ export {
   assertBindAddress,
   assertBoundOrganization,
 } from './src/tenant-binding.js';
+
+// ---- pipeline move-stage factory (ADR-014) ----
+// A composition registers the returned definition in its `selected.actions`
+// to make a staged core module actionable: registration in checked-in source
+// IS the eligibility declaration the generic action surface checks, and the
+// worker's `runAction` resolves through the same registry. Published here so
+// a consumer never reaches into `packages/core/src/*` for it: the header
+// above names that coupling out of contract.
+export { buildMoveStageAction } from './src/pipeline-actions.js';
