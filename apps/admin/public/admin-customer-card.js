@@ -932,8 +932,35 @@ export function createCustomerCardView(deps) {
     }
     const panel = old ?? el('div', 'bo-scheda-composer');
     panel.setAttribute('data-composer', 'open');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Scrivi al cliente');
+    panel.removeAttribute?.('data-minimized');
     if (!old) box.appendChild(panel);
-    panel.appendChild(el('h4', undefined, 'Scrivi al cliente'));
+    // Gmail-style window (Dan 04/11): a header bar with the purpose and the
+    // customer, minimize and close; the form lives in the body below.
+    const head = el('div', 'bo-composer-head');
+    const customer = typeof card?.name === 'string' ? card.name.trim() : '';
+    const title = el('h4', 'bo-composer-title', 'Scrivi al cliente');
+    if (customer !== '') title.appendChild(el('span', 'bo-composer-to-name', ` · ${customer}`));
+    head.appendChild(title);
+    const minimize = el('button', 'bo-composer-icon', '–');
+    minimize.setAttribute('type', 'button');
+    minimize.setAttribute('aria-label', 'Riduci');
+    minimize.setAttribute('data-action', 'composer-minimize');
+    minimize.addEventListener('click', () => {
+      if (panel.getAttribute('data-minimized') === 'true') panel.removeAttribute?.('data-minimized');
+      else panel.setAttribute('data-minimized', 'true');
+    });
+    const close = el('button', 'bo-composer-icon', '✕');
+    close.setAttribute('type', 'button');
+    close.setAttribute('aria-label', 'Chiudi');
+    close.setAttribute('data-action', 'composer-close');
+    close.addEventListener('click', () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+    });
+    head.appendChild(minimize);
+    head.appendChild(close);
+    panel.appendChild(head);
     const spaceId = activeSpaceId();
     if (spaceId === null) {
       panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per collegare i canali e inviare.'));
@@ -967,15 +994,31 @@ export function createCustomerCardView(deps) {
 
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
     const channels = composerChannelsFor(card, connections, profile);
+    const body = el('div', 'bo-composer-body');
+    // Channel chips: one radio per channel (kept for keyboard and tests),
+    // visually a pill row like Gmail's «Da/A» chips. Unusable channels stay
+    // visible but switched off, and say why in one line under the row.
     const list = el('div', 'bo-scheda-composer-channels');
-    const toLine = el('p', 'bo-muted', '');
-    const subjectHolder = el('div', undefined, '');
+    list.setAttribute('role', 'radiogroup');
+    list.setAttribute('aria-label', 'Canale');
+    const offLine = el('p', 'bo-composer-off', '');
+    const fromRow = el('div', 'bo-composer-row');
+    const toRow = el('div', 'bo-composer-row');
+    const toLine = el('span', 'bo-composer-value', '');
+    const fromValue = el('span', 'bo-composer-value', '');
+    fromRow.appendChild(el('span', 'bo-composer-label', 'Da'));
+    fromRow.appendChild(fromValue);
+    toRow.appendChild(el('span', 'bo-composer-label', 'A'));
+    toRow.appendChild(toLine);
+    const subjectHolder = el('div', 'bo-composer-subject-row', '');
     const text = el('textarea', 'bo-scheda-composer-text');
-    text.setAttribute('rows', '4');
+    text.setAttribute('rows', '8');
     text.setAttribute('placeholder', 'Scrivi il messaggio…');
-    const limitHint = el('p', 'bo-muted', 'Massimo 2000 caratteri: il testo entra nella cronologia.');
+    text.setAttribute('aria-label', 'Messaggio');
+    const foot = el('div', 'bo-composer-foot');
+    const limitHint = el('span', 'bo-composer-limit', 'Massimo 2000 caratteri');
     const err = el('p', 'field-error', '');
-    const send = el('button', undefined, 'Invia');
+    const send = el('button', 'primary', 'Invia');
     send.setAttribute('type', 'button');
     send.setAttribute('data-action', 'composer-send');
     let selected = null;
@@ -983,59 +1026,86 @@ export function createCustomerCardView(deps) {
     const radios = [];
     const select = (entry) => {
       selected = entry;
-      for (const row of radios) row.radio.checked = row.entry === entry;
-      toLine.textContent = `A: ${entry.recipient}`;
+      for (const row of radios) {
+        row.radio.checked = row.entry === entry;
+        row.chip.setAttribute('data-selected', row.entry === entry ? 'true' : 'false');
+      }
+      toLine.textContent = entry.recipient;
+      const sender = typeof entry.sender === 'string' && entry.sender !== '' ? entry.sender : '';
+      fromValue.textContent = sender;
+      fromRow.setAttribute('data-empty', sender === '' ? 'true' : 'false');
       if (subjectInput !== null) {
         subjectHolder.removeChild(subjectInput);
         subjectInput = null;
       }
+      subjectHolder.setAttribute('data-empty', entry.channel === 'email' ? 'false' : 'true');
       if (entry.channel === 'email') {
         subjectInput = el('input', 'bo-scheda-composer-subject');
         subjectInput.setAttribute('type', 'text');
-        subjectInput.setAttribute('placeholder', 'Oggetto (facoltativo)');
+        subjectInput.setAttribute('placeholder', 'Oggetto');
+        subjectInput.setAttribute('aria-label', 'Oggetto');
         subjectInput.setAttribute('maxlength', '256');
         subjectHolder.appendChild(subjectInput);
       }
     };
+    const offLinked = [];
     for (const entry of channels) {
-      const row = el('label', 'bo-scheda-composer-channel');
+      const chip = el('label', 'bo-scheda-composer-channel');
       const radio = el('input', undefined, '');
       radio.setAttribute('type', 'radio');
       radio.setAttribute('name', 'composer-channel');
       radio.setAttribute('value', entry.channel);
-      row.appendChild(radio);
-      row.appendChild(el('span', undefined, entry.label));
-      const usable = entry.recipient !== null && entry.connected;
+      chip.appendChild(radio);
+      chip.appendChild(el('span', undefined, entry.label));
       if (entry.recipient === null) {
         radio.setAttribute('disabled', 'disabled');
-        row.appendChild(el('span', 'bo-muted', ' — nessun indirizzo su questo canale'));
+        chip.setAttribute('data-off', 'true');
+        chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
-        row.appendChild(el('span', 'bo-muted', ` — ${entry.recipient}, non collegato `));
-        row.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+        chip.setAttribute('data-off', 'true');
+        chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
+        offLinked.push(entry.label);
       } else {
-        // Voce a935af6a6d19: a Gmail-linked Email names its sender — the
-        // operator sees which mailbox the message leaves from. `el` keeps
-        // the mailbox text, never markup.
-        const detail = typeof entry.sender === 'string' && entry.sender !== ''
-          ? ` — da ${entry.sender} a ${entry.recipient} (collegato)`
-          : ` — a ${entry.recipient} (collegato)`;
-        row.appendChild(el('span', 'bo-muted', detail));
+        chip.setAttribute('title', `${entry.label}: ${entry.recipient}`);
         radio.addEventListener('click', () => select(entry));
         if (selected === null) selected = entry;
       }
-      list.appendChild(row);
-      radios.push({ entry, radio });
+      list.appendChild(chip);
+      radios.push({ entry, radio, chip });
     }
-    panel.appendChild(list);
-    panel.appendChild(toLine);
-    panel.appendChild(subjectHolder);
-    panel.appendChild(text);
-    panel.appendChild(limitHint);
-    panel.appendChild(send);
-    panel.appendChild(err);
+    if (offLinked.length > 0) {
+      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+    }
+    body.appendChild(list);
+    if (offLinked.length > 0) body.appendChild(offLine);
+    body.appendChild(fromRow);
+    body.appendChild(toRow);
+    body.appendChild(subjectHolder);
+    body.appendChild(text);
+    body.appendChild(err);
+    foot.appendChild(send);
+    foot.appendChild(limitHint);
+    panel.appendChild(body);
+    panel.appendChild(foot);
     if (selected !== null) select(selected);
-    else send.setAttribute('disabled', 'disabled');
+    else {
+      send.setAttribute('disabled', 'disabled');
+      toLine.textContent = 'Nessun canale collegato per questo cliente';
+      fromRow.setAttribute('data-empty', 'true');
+      subjectHolder.setAttribute('data-empty', 'true');
+    }
+    // Gmail habits: Esc closes, Cmd/Ctrl+Invio sends.
+    panel.addEventListener?.('keydown', (event) => {
+      if (event.key === 'Escape') {
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
+      } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault?.();
+        if (typeof send.click === 'function') send.click();
+      }
+    });
+    if (typeof text.focus === 'function' && selected !== null) text.focus();
     let busy = false;
     send.addEventListener('click', async () => {
       if (busy || selected === null) return;
