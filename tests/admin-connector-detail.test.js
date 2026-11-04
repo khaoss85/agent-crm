@@ -14,6 +14,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -158,6 +159,7 @@ test('"skill che lo usano" shows only declared dependencies', () => {
 function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true, grants = [], renewed = [] } = {}) {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       if (path === '/api/schema') {
         return channels ? { domains: { channels: { metadata: { channelsContract: 1, adapters } } } } : { domains: {} };
@@ -498,6 +500,7 @@ test('a channel-level renewal renews the binding the card named, not the first a
   const posts = [];
   const twoBindingsClient = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') {
         return { domains: { channels: { metadata: { channelsContract: 1, adapters: [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }] } } } };
       }

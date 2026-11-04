@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   addFieldForm,
@@ -13,6 +14,7 @@ import {
   previewPhrase,
   saveFieldValue,
 } from '../apps/admin/public/admin-custom-fields.js';
+import { bindAdminMutations } from '../apps/admin/public/admin-submission.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -26,9 +28,10 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 function stubClient(handler) {
   const calls = [];
-  return {
+  const inner = {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       let body = options?.body ?? {};
       if (typeof body === 'string') {
         try { body = body === '' ? {} : JSON.parse(body); } catch { /* keep raw */ }
@@ -37,6 +40,12 @@ function stubClient(handler) {
       return handler(path, body, options);
     },
   };
+  // The helpers never bind themselves: in production the cliente-nuovo and
+  // customer-card views hand them a bound client (#567, #581). The test
+  // wires the same; `calls` stays readable on the wrapper for the assertions.
+  const { client } = bindAdminMutations(inner);
+  client.calls = calls;
+  return client;
 }
 
 const flush = async (times = 12) => {

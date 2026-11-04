@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   NUOVO_MODULO_ROUTE,
@@ -118,7 +119,8 @@ test('reporting screen serves the bundle rows live, with the "+ Nuovo modulo" en
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         assert.match(path, /\/api\/modules\/reporting\/records/);
         return { items: [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }] };
@@ -146,7 +148,8 @@ test('reporting screen without the bundle says so honestly, never blank', async 
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         throw Object.assign(new Error('not found'), { status: 404 });
       },
@@ -179,7 +182,8 @@ test('a 500 (or auth, or network) failure is an error state with a log line, nev
       doc,
       mount,
       client: {
-        request: async (path) => {
+        request: async (path, options = {}) => {
+          enforceAdminWriteGate(path, options);
           if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
           return failure.fail();
         },
@@ -207,7 +211,8 @@ test('a 404 stays the honest not-composed state with no error log', async () => 
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         throw Object.assign(new Error('not found'), { status: 404, code: 'MODULE_NOT_FOUND' });
       },
@@ -233,7 +238,8 @@ test('a 200 without an items array is a load error, never "not composed"', async
       doc,
       mount,
       client: {
-        request: async (path) => {
+        request: async (path, options = {}) => {
+          enforceAdminWriteGate(path, options);
           if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
           return body;
         },
@@ -263,7 +269,8 @@ test('renderNuovoModulo invalidates an in-flight renderReporting', async () => {
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         await gate;
         return { items: [{ metric: 'tardiva', period: '2026-10', value: 1 }] };
@@ -292,7 +299,8 @@ test('a stale reporting response never overwrites the newer view', async () => {
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         calls += 1;
         if (calls === 1) await gate;
@@ -317,7 +325,7 @@ test('nuovo modulo is the prototype form: four questions, Genera il modulo, the 
   const view = createReportingView({
     doc,
     mount,
-    client: { request: async () => ({ items: [] }) },
+    client: { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return { items: [] }; } },
     navigate: () => {},
     onAskAi: (screenId, description) => asked.push([screenId, description]),
   });
@@ -377,7 +385,7 @@ test('assistant guides the AI bundle path with real steps and screen links', asy
   assert.ok(options.some((option) => option.id === 'bo05:nuovo-modulo:crea-ai'), 'the nuovo-modulo screen has its suggestion');
   assert.equal(aiPlaceholder('nuovo-modulo'), 'Descrivi: «un modulo sonde per i KPI del pilota»');
   // The guide reads no records, but the gate still wants a client shape.
-  const answer = await runSuggestion({ request: async () => ({}) }, 'bo05:nuovo-modulo:crea-ai');
+  const answer = await runSuggestion({ request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return {}; } }, 'bo05:nuovo-modulo:crea-ai');
   assert.match(answer.lines.join(' '), /provato davvero|mostra un record/, 'the guide names the installability proof');
   assert.match(answer.lines.join(' '), /mai nel kernel|non esiste/, 'the guide refuses simulation');
   assert.ok(!answer.lines.join(' ').includes('bundle verify'), 'the guide never names the CLI command');

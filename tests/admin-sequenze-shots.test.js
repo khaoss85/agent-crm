@@ -22,6 +22,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -108,13 +109,15 @@ const SENDS = [
 ];
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createSequenzeView } from './admin-sequenze.js';
 const SEQUENCES = ${JSON.stringify(SEQUENCES)};
 const STEPS = ${JSON.stringify(STEPS)};
 const ENROLLMENTS = ${JSON.stringify(ENROLLMENTS)};
 const SENDS = ${JSON.stringify(SENDS)};
 const client = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/schema') return { domains: { sequences: { sequencesContract: 1 } } };
     if (path.includes('/sequence-step/')) return { items: STEPS.filter((s) => path.includes(encodeURIComponent(s.sequenceSourceKey)) || !path.includes('filter.sequenceSourceKey')) };
     if (path.includes('/sequence-enrollment/')) return { items: ENROLLMENTS };

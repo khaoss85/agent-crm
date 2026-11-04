@@ -25,6 +25,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -110,6 +111,7 @@ const SESSION_JSON = JSON.stringify(SESSION_PROFILE).replace(/</g, '\\u003c');
 // read '\\n' here (runtime '\n'): a single backslash puts a raw newline
 // inside a quoted string of the in-page module and it never executes.
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createShellView } from './admin-shell.js';
 import { readSessionProfile } from './admin-session.js';
 import { createOggiView } from './admin-oggi.js';
@@ -134,7 +136,7 @@ const view = createShellView({
 const oggi = createOggiView({
   doc: document,
   mount: document.getElementById('view-module'),
-  client: { request: async () => { throw new Error('no-backend-in-shot'); } },
+  client: { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); throw new Error('no-backend-in-shot'); } },
   navigate: () => {},
 });
 await oggi.render({

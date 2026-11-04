@@ -19,6 +19,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -245,7 +246,8 @@ function stubClient({ entry, rows = [], preview = null, calls = [], catalogError
     ? [...SPACE_PACKAGE_CATALOG.filter((row) => row.name !== entry.name), entry]
     : SPACE_PACKAGE_CATALOG;
   return {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       if (path === '/api/space-packages/catalog') {
         if (catalogError !== null) throw catalogError;

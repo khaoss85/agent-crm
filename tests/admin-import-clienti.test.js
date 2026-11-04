@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { WORKBOOK_REFUSAL } from '../apps/admin/public/admin-import-file.js';
 import { createCustomerDataView } from '../apps/admin/public/admin-customer-data.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Clienti import tool flow (backlog:5b164ab5): header, breadcrumb,
@@ -50,6 +51,7 @@ function stubClient(overrides = {}) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') {
         return { domains: { 'customer-data': { metadata: META } } };

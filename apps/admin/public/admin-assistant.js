@@ -1033,10 +1033,12 @@ export async function askFreeQuestion(client, status, question) {
   // One fresh submission-owned key per question: keys come from the Admin
   // submission controller (KEY_RE) so the real client gate accepts them, and
   // the full question text is never truncated into a colliding identity.
+  const questionKey = issueAdminKey();
   const body = await client.request(status.endpoint, {
     method: 'POST',
     body: { question: text },
-    idempotencyKey: issueAdminKey(),
+    idempotencyKey: questionKey,
+    headers: { 'Idempotency-Key': questionKey },
   });
   const lines = Array.isArray(body?.lines) ? body.lines.map((line) => String(line)).filter((line) => line !== '') : [];
   /** @type {Source[]} */
@@ -1195,6 +1197,7 @@ export async function runAssistantAction(client, action, options = {}) {
       method: request.method ?? 'POST',
       body: request.body ?? {},
       idempotencyKey: key,
+      headers: { 'Idempotency-Key': key },
     });
   } catch (error) {
     recordExecution('failed', error instanceof Error ? error.message : 'Azione fallita.');

@@ -1,6 +1,7 @@
 // @ts-check
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   channelOf,
@@ -100,6 +101,7 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (failWith) throw failWith;
       if (path.startsWith('/api/customer-data/profile/')) {
@@ -1260,7 +1262,8 @@ test('the WA badge is fail-closed on the row channel marker', async () => {
     mount,
     client: {
       calls,
-      async request(path) {
+      async request(path, options = {}) {
+        enforceAdminWriteGate(path, options);
         calls.push(path);
         if (path === '/api/spine/memberships' || path === '/api/profile') {
           // No roster on this double: the spine is uncomposed here, an
@@ -1455,7 +1458,8 @@ test('overlapping profile reads cache under their own keys', async () => {
   const calls = [];
   const client = {
     calls,
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       if (path.startsWith('/api/customer-data/profile/')) {
         await gate;
@@ -1557,7 +1561,8 @@ test('a late profile answer never repaints over the customer card', async () => 
   let releaseProfile = () => {};
   const gate = new Promise((resolve) => { releaseProfile = resolve; });
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) {
         await gate;
         return { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } };
@@ -1616,7 +1621,8 @@ test('a late profile answer never repaints over the customer card', async () => 
 test('an unexpected profile failure is logged with the space, never the message', async () => {
   const failure = { status: 500, code: 'UPSTREAM_BOOM', message: 'provider outage REF-123 involving Ada Rossi' };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
@@ -1670,7 +1676,8 @@ test('an unexpected profile failure is logged with the space, never the message'
 test('a missing profile stays silent while the card falls back', async () => {
   const failure = { status: 404, code: 'NOT_FOUND', message: 'no such customer' };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
@@ -2137,6 +2144,7 @@ test('a partially-listed person hides with no reload', async () => {
   const client = {
     ...base,
     async request(path, options) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/memberships') {
         await membersGate;
         return { items: DAN_MEMBERS };
@@ -2558,7 +2566,8 @@ test('a failed member-list reload repaints the fallback, never a stale roster', 
   const mount = createMount();
   let refused = false;
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/memberships') {
         if (refused) {
           const forbidden = new Error('forbidden');

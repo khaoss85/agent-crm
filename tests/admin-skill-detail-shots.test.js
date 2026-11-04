@@ -23,6 +23,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -101,6 +102,7 @@ const UNITS = [
 ];
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { buildShellNav as buildHarnessShellNav, createShellView } from './admin-shell.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 const UNITS = ${JSON.stringify(UNITS)};
@@ -138,7 +140,8 @@ await Promise.all([
 ]).catch(() => {});
 await document.fonts.ready.catch(() => {});
 const client = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/space-packages/catalog') return { units: UNITS };
     if (path.startsWith('/api/modules/space-package/records')) {
       return { items: [{ unit: 'skill:debug-crm-run', status: 'active', spaceId: 'locale' }] };

@@ -10,6 +10,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   FORECAST_LEGEND,
@@ -112,7 +113,8 @@ function harness(options = {}) {
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
         requests.push(path);
         if (path.includes('/api/reporting/dashboard')) {
           if (dashboard instanceof Error) throw dashboard;

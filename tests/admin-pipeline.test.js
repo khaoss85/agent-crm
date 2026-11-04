@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createPipelineBoard } from '../apps/admin/public/admin-pipeline.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The pipeline board renders purely from schema `pipelines` metadata plus the
@@ -45,6 +46,7 @@ function stubClient(records, { failMove, pipelines } = {}) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return { pipelineContract: 1, pipelines: pipelines ?? [PIPELINE] };
       if (options.method === 'POST') {
@@ -147,6 +149,7 @@ test('move toasts name the stage label and failures stay friendly (C25)', async 
     const client = {
       calls,
       async request(path, options = {}) {
+        enforceAdminWriteGate(path, options);
         calls.push({ path, method: options.method ?? 'GET', body: options.body });
         if (path === '/api/schema') return { pipelineContract: 1, pipelines: [pipeline] };
         if (options.method === 'POST') {
@@ -364,6 +367,7 @@ test('hostile stage labels and record values render as inert text', async () => 
   const mount = createMount();
   const client = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') {
         return {
           pipelineContract: 1,
@@ -399,7 +403,7 @@ test('unsupported contract and unknown pipeline fail gracefully', async () => {
   const mount = createMount();
   const boardOld = createPipelineBoard({
     doc, mount,
-    client: { async request() { return { pipelineContract: 99, pipelines: [] }; } },
+    client: { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { pipelineContract: 99, pipelines: [] }; } },
   });
   await boardOld.renderBoard('b2b-sales');
   assert.ok(mount.textContent.includes('va aggiornato'));
@@ -778,6 +782,7 @@ test('switching pipelines resets the previous board’s filters', async () => {
   const client = {
     calls: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE, pipelineB] };
       if (options.method === 'POST') return { ok: true };
       return { items: records };
@@ -896,6 +901,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   const mount = createMount();
   const client = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { pipelineContract: 1, pipelines: [ITALIAN] };
       if (options.method === 'POST') return { ok: true };
       return { items: records };
@@ -1350,7 +1356,8 @@ test('kanban rides a scroll wrap hiding the end cue at the end (backlog 339ca222
  */
 function navigableClient(records, pipelines = [PIPELINE]) {
   return {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { pipelineContract: 1, pipelines };
       return { items: records };
     },

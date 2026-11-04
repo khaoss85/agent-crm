@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin signature and order section (ADR-017) renders from server state
@@ -85,6 +86,7 @@ function stubClient({ envelopes = [], signers = [], artifacts = [], orders = [],
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
       if (options.method === 'POST') return { ok: true, result: { envelope: envelopes[0] ?? ENVELOPE } };
@@ -220,6 +222,7 @@ test('a project without signature enabled degrades to a clear message', async ()
   const client = {
     calls: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       client.calls.push({ path, method: options.method ?? 'GET' });
       if (path === '/api/schema') return { commercial: SCHEMA.commercial };
       if (path.startsWith('/api/modules/quote/records/')) return APPROVED_QUOTE;

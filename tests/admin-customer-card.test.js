@@ -9,6 +9,7 @@ import {
 } from '../apps/admin/public/admin-customer-card.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -182,6 +183,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
     calls: requested,
     writes,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       let body = options?.body ?? {};
       if (typeof body === 'string') {
         try { body = body === '' ? {} : JSON.parse(body); } catch { /* keep raw */ }
@@ -520,7 +522,10 @@ test('voce 908f2eb9bbfb, review round 2: a 404 timeline or profile is not-compos
 
 test('voce 908f2eb9bbfb, review round 2: a synchronously-throwing read fails the card, never blanks it', async () => {
   const syncThrow = {
-    request() { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); },
+    request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    },
   };
   const mount = await renderCard(syncThrow);
   const text = mount.textContent;
@@ -1089,9 +1094,10 @@ test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', a
     linked: false, optedOut: null, items: [],
   };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/enriched/')) return current;
-      return stubClient().request(path);
+      return stubClient().request(path, options);
     },
   };
   const doc = createFakeDocument();
@@ -1121,12 +1127,13 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
     items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
   };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/enriched/')) {
         if (fail) throw Object.assign(new Error('boom'), { status: 500 });
         return enriched;
       }
-      return stubClient().request(path);
+      return stubClient().request(path, options);
     },
   };
   const doc = createFakeDocument();
@@ -1577,6 +1584,7 @@ const recordingClient = (base, onWrite = null) => {
   return {
     writes,
     async request(path, opts = {}) {
+      enforceAdminWriteGate(path, opts);
       const method = opts?.method ?? 'GET';
       if (method === 'GET') return base.request(path);
       const body = opts?.body === undefined ? undefined : JSON.parse(String(opts.body));
@@ -1809,6 +1817,7 @@ function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null } = {
   return {
     posts,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/connectors')) return connectors;
       if (path === '/api/profile') {
         if (profile instanceof Error) throw profile;
@@ -1985,6 +1994,7 @@ test('e9b4fc2f: the composer names its honest limit and shows the text refusal',
   const client = {
     ...base,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') throw refusal;
       return base.request(path, options);
     },
@@ -2270,9 +2280,7 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
     async request(path, opts = {}) {
       const method = String(opts?.method ?? 'GET').toUpperCase();
       if (method === 'GET') return base.request(path);
-      if (typeof opts.idempotencyKey !== 'string' || opts.headers?.['Idempotency-Key'] !== opts.idempotencyKey) {
-        throw Object.assign(new Error('Admin mutations require a submission-owned Idempotency-Key'), { code: 'ADMIN_SUBMISSION_REQUIRED' });
-      }
+      enforceAdminWriteGate(path, opts);
       writes.push({ path, method });
       return { ok: true };
     },

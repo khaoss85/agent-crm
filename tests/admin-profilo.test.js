@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createProfiloView, profiloInitials, PROFILO_ROUTE } from '../apps/admin/public/admin-profilo.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 // Profilo inside /bo (design pass 8): the session person and their Google
 // connections, read from GET /api/profile (backlog:0994cd18347e). Collega and
@@ -17,7 +18,8 @@ async function render(answer, member = { name: 'Elena Rinaldi', email: 'elena@st
     doc,
     mount,
     member: () => member,
-    client: { request: async (path) => {
+    client: { request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       assert.equal(path, '/api/profile');
       if (answer instanceof Error) throw answer;
       return answer;

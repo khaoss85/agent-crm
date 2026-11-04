@@ -6,6 +6,7 @@ import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
 import { writePendingCustomerPick, takePendingCustomerPick } from '../apps/admin/public/admin-prefill.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { NotFoundError, ValidationError, ConflictError } from '../packages/core/src/errors.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Real server + real fetch + a fake document: exercises the Admin view code and
@@ -107,6 +108,7 @@ function startServer(t, configure) {
 function clientFor(baseUrl) {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const response = await fetch(`${baseUrl}${path}`, {
         ...options,
         headers: { 'content-type': 'application/json', 'x-actor-type': 'user', 'x-actor-id': 'admin-ui', ...(options.headers || {}) },
@@ -323,6 +325,7 @@ test('stale out-of-order renders do not overwrite the current view', async (t) =
   const base = clientFor(baseUrl);
   const slowFirst = {
     request(path, options) {
+      enforceAdminWriteGate(path, options);
       call += 1;
       const delay = call === 1 ? 40 : 1;
       return new Promise((resolve, reject) => {
@@ -446,6 +449,7 @@ test('list label resolution deduplicates and bounds by-id fetches', async (t) =>
   let getCalls = 0;
   const counting = {
     request(path, options) {
+      enforceAdminWriteGate(path, options);
       if (/\/api\/modules\/partner\/records\/[^?]+$/.test(path)) getCalls += 1;
       return base.request(path, options);
     },
@@ -478,7 +482,8 @@ test('an unsupported schema contract version names the update, with no retry', a
   const doc = createFakeDocument();
   const mount = createMount();
   const client = {
-    async request() {
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
       return { generatedResourceContract: 999, generatedModules: [] };
     },
   };
@@ -503,7 +508,7 @@ test('a transient list failure still offers a retry', async (t) => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = {
-    async request() { throw new Error('boom'); },
+    async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw new Error('boom'); },
   };
   const admin = createModuleAdmin({ doc, mount, client, navigate: () => {} });
   await admin.renderList('partner');
@@ -603,6 +608,7 @@ function catalogClient(baseUrl, catalog) {
   const base = clientFor(baseUrl);
   return {
     request(path, options) {
+      enforceAdminWriteGate(path, options);
       if (String(path).startsWith('/api/catalog/products')) return catalog;
       return base.request(path, options);
     },
@@ -718,6 +724,7 @@ test('96e7b579: a failed cliente read offers a retry, never an empty choice', as
   const { baseUrl } = await startServer(t, () => {});
   const base = clientFor(baseUrl);
   const failing = { request(path, options) {
+    enforceAdminWriteGate(path, options);
     if (String(path).startsWith('/api/companies')) throw new Error('boom');
     return base.request(path, options);
   } };
@@ -735,6 +742,7 @@ test('96e7b579: without a catalog the offer still files with a hand-typed value'
   const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
   const base = clientFor(baseUrl);
   const noCatalog = { request(path, options) {
+    enforceAdminWriteGate(path, options);
     if (String(path).startsWith('/api/catalog/products')) {
       const error = new Error('manual catalog not composed');
       Object.assign(error, { status: 404 });
