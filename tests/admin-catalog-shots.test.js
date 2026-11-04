@@ -20,7 +20,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 import { chromiumRuns, findChromium } from '../scripts/bo-shots.js';
 
@@ -30,6 +30,7 @@ const BROWSER_SKIP = chromiumRuns(CHROMIUM)
   : 'no runnable Chromium here (set CHROMIUM_BIN); the Mac CI runner produces the PNGs';
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createCatalogView } from './admin-catalog.js';
 const MANUAL = {
   products: [{

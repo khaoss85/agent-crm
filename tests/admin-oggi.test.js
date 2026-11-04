@@ -384,7 +384,8 @@ test('triage done and postpone are both reversible with undo', () => {
 test('execute re-reads the record and refuses a changed datum', async () => {
   const action = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [], now: OGGI_NOW }).actions[0];
   const calls = [];
-  const matching = async (path) => {
+  const matching = async (path, options = {}) => {
+    enforceAdminWriteGate(path, options);
     assert.ok(path.endsWith('/records/task-1'), `re-reads by id: ${path}`);
     return { ...TASK_OPEN };
   };
@@ -396,7 +397,10 @@ test('execute re-reads the record and refuses a changed datum', async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1].status, 'open');
 
-  const changed = async () => ({ ...TASK_OPEN, title: 'Titolo cambiato nel frattempo' });
+  const changed = async (path = '', options = {}) => {
+    enforceAdminWriteGate(path, options);
+    return { ...TASK_OPEN, title: 'Titolo cambiato nel frattempo' };
+  };
   let ran = false;
   await assert.rejects(
     executeAdvisorAction({ request: changed }, action, async () => { ran = true; }),
@@ -404,7 +408,10 @@ test('execute re-reads the record and refuses a changed datum', async () => {
   );
   assert.equal(ran, false, 'the domain action never fires on stale data');
 
-  const closed = async () => ({ ...TASK_OPEN, status: 'completed' });
+  const closed = async (path = '', options = {}) => {
+    enforceAdminWriteGate(path, options);
+    return { ...TASK_OPEN, status: 'completed' };
+  };
   await assert.rejects(
     executeAdvisorAction({ request: closed }, action, async () => {}),
     (error) => error.code === 'OGGI_STALE_RECORD',
@@ -412,7 +419,7 @@ test('execute re-reads the record and refuses a changed datum', async () => {
 
   let requested = false;
   await assert.rejects(
-    executeAdvisorAction({ request: async () => { requested = true; } }, { record: {} }, async () => {}),
+    executeAdvisorAction({ request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); requested = true; } }, { record: {} }, async () => {}),
     (error) => error.code === 'OGGI_INVALID_RECORD',
   );
   assert.equal(requested, false, 'no read without a cited record');
@@ -816,7 +823,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   };
   const seen = [];
   const data = await loadOggiData({
-    request: async (path) => {
+    request: async (path, options = {}) => {
       enforceAdminWriteGate(path, options);
       seen.push(path);
       if (path === '/api/schema') return { domains: {} };
@@ -829,7 +836,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   assert.equal(countConnectedNine(data.connections, data.profile), 1, 'Gmail counts Email as connected');
 
   const refused = await loadOggiData({
-    request: async (path) => {
+    request: async (path, options = {}) => {
       enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { domains: {} };
       throw new Error('no profile here');

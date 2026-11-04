@@ -23,7 +23,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -102,6 +102,7 @@ const UNITS = [
 ];
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { buildShellNav as buildHarnessShellNav, createShellView } from './admin-shell.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 const UNITS = ${JSON.stringify(UNITS)};

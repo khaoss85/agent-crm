@@ -110,9 +110,11 @@ const SESSION_JSON = JSON.stringify(SESSION_PROFILE).replace(/</g, '\\u003c');
 // read '\\n' here (runtime '\n'): a single backslash puts a raw newline
 // inside a quoted string of the in-page module and it never executes.
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createShellView } from './admin-shell.js';
 import { readSessionProfile } from './admin-session.js';
 import { createOggiView } from './admin-oggi.js';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE } from './helpers/admin-strict-client.js';
 // Any throw still finishes the harness with its cause in the probe, so a CI
 // failure names the in-page error instead of only "module did not finish".
 const finishHarness = (probe) => {

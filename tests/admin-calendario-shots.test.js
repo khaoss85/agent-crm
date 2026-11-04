@@ -24,7 +24,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -147,6 +147,7 @@ const DRAFT = {
 };
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(WEEK)};
 const SLOTS = ${JSON.stringify(SLOTS)};

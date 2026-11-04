@@ -113,7 +113,7 @@ function harness(options = {}) {
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         requests.push(path);
         if (path.includes('/api/reporting/dashboard')) {

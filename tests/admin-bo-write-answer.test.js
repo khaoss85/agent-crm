@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bindAdminMutations, unwrapBoWriteAnswer } from '../apps/admin/public/admin-submission.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 // Production 03/11: the /bo writes ride the worker and answer
 // { saved, spaceId }; the Nuovo cliente form read receipts[0] off the

@@ -381,7 +381,8 @@ test('a refused write says the state moved and reloads, never a raw error', asyn
 test('without the package the screen says so in Italian, never a blank page', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = { request: async (path) => {
+  const client = { request: async (path, options = {}) => {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/schema') return { domains: {} };
     throw new Error(`unexpected request ${path}`);
   } };

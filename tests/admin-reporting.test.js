@@ -119,7 +119,7 @@ test('reporting screen serves the bundle rows live, with the "+ Nuovo modulo" en
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         assert.match(path, /\/api\/modules\/reporting\/records/);
@@ -148,7 +148,7 @@ test('reporting screen without the bundle says so honestly, never blank', async 
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         throw Object.assign(new Error('not found'), { status: 404 });
@@ -182,7 +182,7 @@ test('a 500 (or auth, or network) failure is an error state with a log line, nev
       doc,
       mount,
       client: {
-        request: async (path) => {
+        request: async (path, options = {}) => {
           enforceAdminWriteGate(path, options);
           if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
           return failure.fail();
@@ -211,7 +211,7 @@ test('a 404 stays the honest not-composed state with no error log', async () => 
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         throw Object.assign(new Error('not found'), { status: 404, code: 'MODULE_NOT_FOUND' });
@@ -238,7 +238,7 @@ test('a 200 without an items array is a load error, never "not composed"', async
       doc,
       mount,
       client: {
-        request: async (path) => {
+        request: async (path, options = {}) => {
           enforceAdminWriteGate(path, options);
           if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
           return body;
@@ -269,7 +269,7 @@ test('renderNuovoModulo invalidates an in-flight renderReporting', async () => {
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         await gate;
@@ -299,7 +299,7 @@ test('a stale reporting response never overwrites the newer view', async () => {
     doc,
     mount,
     client: {
-      request: async (path) => {
+      request: async (path, options = {}) => {
         enforceAdminWriteGate(path, options);
         if (path.includes('/api/reporting/dashboard')) return emptyDashboard();
         calls += 1;

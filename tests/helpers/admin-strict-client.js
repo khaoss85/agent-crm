@@ -53,3 +53,17 @@ export function enforceAdminWriteGate(_path, options = {}) {
     throw error;
   }
 }
+
+/**
+ * The same gate for the browser fixtures (`*-shots`, `*-browser`): those
+ * scripts run in chromium, where the node import above does not exist, so a
+ * bare `enforceAdminWriteGate(...)` call dies with ReferenceError and paints
+ * an empty screen. Interpolate this prelude at the top of the fixture
+ * template instead of duplicating the predicate per file.
+ */
+export const ADMIN_WRITE_GATE_BROWSER_PRELUDE = [
+  `const ADMIN_SUBMISSION_REQUIRED = ${JSON.stringify(ADMIN_SUBMISSION_REQUIRED)};`,
+  `const MUTATION_METHODS = new Set(${JSON.stringify([...MUTATION_METHODS])});`,
+  isAdminWrite.toString(),
+  enforceAdminWriteGate.toString(),
+].join('\n');

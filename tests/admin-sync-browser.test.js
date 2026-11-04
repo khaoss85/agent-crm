@@ -24,7 +24,7 @@ import { promisify } from 'node:util';
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, extname } from 'node:path';
-import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 const ROOT = join(import.meta.dirname, '..');
 const PUBLIC = join(ROOT, 'apps', 'admin', 'public');
@@ -163,6 +163,7 @@ function harnessHtml(state) {
 <div class="shell"><div id="mount"></div></div>
 <script type="module">
 import { createSyncView } from '/admin-sync.js';
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 const activity = ${JSON.stringify(FIXTURES[state])};
 const client = {
   async request(path, options = {}) {
