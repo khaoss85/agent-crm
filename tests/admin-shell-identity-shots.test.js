@@ -25,6 +25,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -114,7 +115,6 @@ ${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createShellView } from './admin-shell.js';
 import { readSessionProfile } from './admin-session.js';
 import { createOggiView } from './admin-oggi.js';
-import { ADMIN_WRITE_GATE_BROWSER_PRELUDE } from './helpers/admin-strict-client.js';
 // Any throw still finishes the harness with its cause in the probe, so a CI
 // failure names the in-page error instead of only "module did not finish".
 const finishHarness = (probe) => {

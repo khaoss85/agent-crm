@@ -510,6 +510,9 @@ test('a control does not double-submit, and a refusal keeps the typed input', as
   reason.value = 'agreed with the customer on a call';
   const approve = buttonLabelled(mount, 'Approve');
   await approve.dispatch('click');
+  // The bound client settles through the submission controller (extra
+  // microtask hops): flush before asserting, like the tests above.
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls.length, 1, 'one call');
   assert.equal(calls[0].input.reason, 'agreed with the customer on a call');
   assert.match(one(mount, 'field-error').textContent, /DELIVERY_TRANSITION_NOT_ALLOWED/,
