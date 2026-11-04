@@ -20,6 +20,7 @@
 // Oggi helpers, never as UTC or ISO.
 
 import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
+import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
@@ -666,6 +667,29 @@ export function createCalendarioView(deps) {
   function invalidate() {
     renderToken += 1;
     memberToken += 1;
+    trackRetainedDraft();
+  }
+
+  /**
+   * Retained user text (backlog:49bd3657b0f8): the view keeps what the
+   * operator typed in module state across re-renders, so after the shell
+   * routes away the DOM check would read a clean page while the draft
+   * survives here. Mirror it into the bundle watch: a kept draft defers
+   * the reload behind the notice instead of losing the text. Runs on
+   * every repaint and on every route away, so the mark always matches
+   * the state — set or cleared, never stale. The auto-filled roster
+   * (autoTeam) is nobody's text and never counts; only what the operator
+   * typed does.
+   */
+  function trackRetainedDraft() {
+    const typedFilter = state.autoTeam === true ? '' : (state.memberFilter ?? '');
+    const manualText = Object.values(state.manual ?? {})
+      .some((value) => String(value ?? '') !== '');
+    markUnsaved('calendario-draft',
+      (state.phrase ?? '') !== ''
+      || String(typedFilter) !== ''
+      || (state.customerQuery ?? '') !== ''
+      || manualText);
   }
   installOutsideCloser(doc);
 
@@ -951,6 +975,7 @@ export function createCalendarioView(deps) {
       }));
       wrap.appendChild(box);
       mount.appendChild(wrap);
+      trackRetainedDraft();
       return;
     }
     // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
@@ -988,6 +1013,7 @@ export function createCalendarioView(deps) {
     wrap.appendChild(layout);
     mount.appendChild(wrap);
     if (pop) placePopover(main, pop);
+    trackRetainedDraft();
   }
 
   /** Seats the popover beside the pick: right of it, or left on the last columns. */

@@ -2,6 +2,7 @@ import { createSubmissionController, requireSubmissionContext } from './admin-su
 import { createAssistantPanel } from './admin-assistant.js';
 import { resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
+import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
@@ -1229,6 +1230,13 @@ async function route() {
 window.addEventListener('hashchange', route);
 populateNav();
 route();
+// backlog:49bd3657b0f8: after a release the tab still runs the old bundle
+// in memory, so the shell polls the served bundle identity — once now, on
+// every navigation and every minute — and shows a persistent notice the
+// operator confirms (the shell never reloads on its own, so no text is
+// ever lost). The watch never breaks the shell: a failed poll only waits
+// for the next.
+startBundleWatch({ adminBase: ADMIN_BASE });
 // backlog:3f74a2f296ec: the shell frame (nav + view skeleton) is on screen
 // from here, so the branded loading splash leaves now; the views fill their
 // data in afterwards. If the boot above ever throws, the splash stays —

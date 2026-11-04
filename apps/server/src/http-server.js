@@ -16,7 +16,7 @@ import { isExposableGeneratedModule } from '../../../packages/core/src/generated
 import { stripServerControlledKeys } from '../../../packages/core/src/actor.js';
 import { assertBindAddress } from '../../../packages/core/src/tenant-binding.js';
 import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js';
-import { getAdminBundle } from './admin-bundle.js';
+import { bundleVersion, getAdminBundle } from './admin-bundle.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
@@ -1896,12 +1896,20 @@ export async function readStaticFile(publicDir, pathname) {
   // from the in-memory build, keyed to the sources on disk. A hashed name
   // from a previous deploy is not the current build, so it 404s — the entry
   // HTML is no-store, so the browser refetches it and learns the new name.
-  // Only the top-level entry points are virtual; anything nested still reads
-  // from disk below.
+  // Only the top-level entry points and the bundle identity (`version.json`)
+  // are virtual; anything nested still reads from disk below.
   if (requestPath === '/index.html' || requestPath === '/login.html') {
     const bundle = getAdminBundle(publicDir);
     const html = requestPath === '/index.html' ? bundle.indexHtml : bundle.loginHtml;
     return { data: Buffer.from(html, 'utf8'), contentType: 'text/html; charset=utf-8' };
+  }
+  // The served bundle identity for open shells (backlog:49bd3657b0f8): an
+  // open tab keeps the old bundle in memory after a release, so the shell
+  // polls this file and compares it with the script it was served. Same
+  // in-memory build as the entry HTML above, so the two never disagree.
+  if (requestPath === '/version.json') {
+    const version = bundleVersion(publicDir);
+    return { data: Buffer.from(JSON.stringify(version), 'utf8'), contentType: 'application/json; charset=utf-8' };
   }
   const leaf = requestPath.split('/').pop() ?? '';
   if (/^bo-[0-9a-f]+\.js$/.test(leaf) || /^bo-styles-[0-9a-f]+\.css$/.test(leaf)) {
@@ -1942,7 +1950,7 @@ export async function readStaticFile(publicDir, pathname) {
  */
 export function staticCacheControl(pathname) {
   const name = String(pathname ?? '').split('/').pop() ?? '';
-  if (name === '' || name === 'index.html' || name === 'login.html') return 'no-store';
+  if (name === '' || name === 'index.html' || name === 'login.html' || name === 'version.json') return 'no-store';
   if (/^bo-[0-9a-f]+\.js$/.test(name) || /^bo-styles-[0-9a-f]+\.css$/.test(name)) {
     return 'public, max-age=31536000, immutable';
   }
