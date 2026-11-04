@@ -1,6 +1,6 @@
 // @ts-check
 
-import { definePackage, selectPackageGraph } from '../../core/index.js';
+import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildCustomerDataActions } from './actions.js';
 import { BULK_ACTIONS, MAX_BULK_ITEMS } from './bulk.js';
 import { createCustomerIdentityCapability } from './capability.js';
@@ -88,11 +88,34 @@ function callablePhraseAdapter(candidate) {
  *   matchPolicy?: any,
  *   config?: Record<string, string>,
  *   phraseAdapter?: any,
+ *   work?: { capabilities?: Array<any> },
  * }} [options]
+ *   `work` is the composed work package definition — the same object the
+ *   composition lists beside this package. The cleanup scan takes the
+ *   created `follow-up@1` capability object from it, so every «Da fare»
+ *   proposal is written with the provider's own validation and never with a
+ *   second write path from this package. The edge is optional, like the
+ *   channels send edge in appointments: a composition without work still
+ *   scans and still records duplicate candidates, and the receipt names
+ *   `tasksUnavailable` instead of writing tasks nobody could confirm. It
+ *   stays out of `requires` on purpose (a composition without work must keep
+ *   booting, reading and importing); what keeps a wrong handover fail-closed
+ *   is the open-time check that the handed object settles on the provider
+ *   capability contract pinned by the edge version, refusing otherwise with
+ *   PACKAGE_DEPENDENCY_MISMATCH naming the edge.
  */
 export function createCustomerDataPackage(options = {}) {
   const config = options.config;
   const names = resolvedNames(config);
+  const offeredFollowUp = Array.isArray(options.work?.capabilities)
+    ? options.work.capabilities.find((entry) => entry?.name === 'follow-up' && entry?.version === 1) ?? null
+    : null;
+  if (options.work !== undefined && offeredFollowUp === null) {
+    throw new AppError(
+      'The customer-data package was composed with a work edge that is not the work follow-up@1 capability',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 500 },
+    );
+  }
   // The caller-built «✦ Scrivi o incolla» adapter (the OpenAI wiring in the
   // pilot worker, the fake in tests): the framework never builds one, so it
   // never holds a key. A per-call `adapter` on parse/ai-available counts only
@@ -235,6 +258,25 @@ export function createCustomerDataPackage(options = {}) {
             config: runtime.config, core: runtime.core, policy, names,
           });
           return (request) => operations.recordSubjectPhone(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'propose-data-cleanup',
+        appMethod: 'proposeDataCleanup',
+        label: 'Propose data-cleanup corrections',
+        description:
+          'Scan the stored records for duplicates, missing or malformed channels and cards with no next step; '
+          + 'propose merge, completion and next step as «Da fare» tasks plus duplicate-candidate rows. '
+          + 'Proposals only: customer rows change solely through the governed writes after a human confirms.',
+        input: [],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+            followUpProvider: offeredFollowUp,
+          });
+          return (request) => operations.proposeDataCleanup(request);
         },
       },
       {
