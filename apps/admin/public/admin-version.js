@@ -4,17 +4,17 @@
  * Bundle-update notice for the Admin shell (backlog:49bd3657b0f8).
  *
  * A release is a new process, hence a new bundle name: the server builds
- * the bundle at serve time and the name carries its content hash, while an
- * open tab keeps the old bundle in memory. Without a notice the tab writes
- * through the old code until the session looks lost. This module polls the
- * served bundle identity and either reloads the tab (nothing unsaved) or
- * shows a persistent notice the operator confirms (text still on screen).
+ * the bundle at serve time and the names carry their content hashes, while
+ * an open tab keeps the old bundle in memory. Without a notice the tab
+ * writes through the old code until the session looks lost. This module
+ * polls the served bundle identity and shows a persistent notice the
+ * operator confirms (text still on screen). The shell never reloads on
+ * its own: the operator always confirms, so no text is ever lost —
+ * selects, retained drafts and in-flight saves included.
  *
- * Keeping text safe is the whole point, so the reload waits whenever the
- * page holds unsent text: any non-empty textarea or text-like input counts
- * as unsaved, and views with non-DOM draft state mark it through
- * markUnsaved. A false dirty only delays the reload behind a notice; a
- * false clean would lose text, so the heuristic leans dirty.
+ * Views with non-DOM draft state can still mark it through markUnsaved,
+ * and hasUnsavedWork still reports unsent text for its own callers; the
+ * watch itself no longer branches on it.
  *
  * Pure on purpose: every decision is a tested function of its inputs, and
  * the only impure edges (fetch, reload, timers) arrive as parameters.
@@ -28,6 +28,8 @@ export const BO_UPDATE_NOTICE = 'È disponibile una nuova versione · Aggiorna';
 
 const BO_BUNDLE_NAME_PATTERN = /^bo-[0-9a-f]+\.js$/;
 
+const BO_BUNDLE_CSS_PATTERN = /^bo-styles-[0-9a-f]+\.css$/;
+
 /** Text-like input types whose content is user text worth keeping. */
 const BO_TEXT_INPUT_TYPES = Object.freeze(new Set([
   '',
@@ -39,8 +41,6 @@ const BO_TEXT_INPUT_TYPES = Object.freeze(new Set([
   'password',
   'number',
 ]));
-
-let boReloadFired = false;
 
 /** Sources with programmatic draft state, by caller-chosen key. */
 const boUnsavedSources = new Set();
@@ -66,10 +66,9 @@ export function clearUnsaved(source) {
 }
 
 /**
- * Reset the watch state (one reload per page): tests only.
+ * Reset the watch state: tests only.
  */
 export function resetVersionWatchState() {
-  boReloadFired = false;
   boUnsavedSources.clear();
 }
 
@@ -90,7 +89,9 @@ export function parseVersionPayload(text) {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const jsName = /** @type {any} */ (parsed).jsName;
   if (typeof jsName !== 'string' || !BO_BUNDLE_NAME_PATTERN.test(jsName)) return null;
-  return Object.freeze({ jsName });
+  const cssName = /** @type {any} */ (parsed).cssName;
+  if (typeof cssName !== 'string' || !BO_BUNDLE_CSS_PATTERN.test(cssName)) return null;
+  return Object.freeze({ jsName, cssName });
 }
 
 /**
@@ -128,15 +129,66 @@ export function currentBundleName(doc) {
 }
 
 /**
- * @param {unknown} current the bundle this tab runs, or null when unknown
+ * The stylesheet this tab was served, from its own link tag. Null when
+ * the page carries no hashed stylesheet (unknown shell).
+ * @param {{ querySelectorAll?: Function } | undefined} [doc]
+ */
+export function currentStyleName(doc) {
+  let source = doc;
+  if (source === undefined || source === null) {
+    if (typeof globalThis.document === 'undefined') return null;
+    source = globalThis.document;
+  }
+  let links;
+  try {
+    links = typeof source.querySelectorAll === 'function'
+      ? source.querySelectorAll('link[rel="stylesheet"]')
+      : [];
+  } catch {
+    return null;
+  }
+  const list = Array.isArray(links) ? links : Array.from(links ?? []);
+  for (const link of list) {
+    let href = null;
+    try {
+      href = typeof link.getAttribute === 'function' ? link.getAttribute('href') : link?.href;
+    } catch {
+      continue;
+    }
+    if (typeof href !== 'string' || href === '') continue;
+    const leaf = href.split('?')[0].split('#')[0].split('/').pop() ?? '';
+    if (BO_BUNDLE_CSS_PATTERN.test(leaf)) return leaf;
+  }
+  return null;
+}
+
+/**
+ * Whether the served bundle is newer than the one this tab runs: a change
+ * of either the script or the stylesheet name is an update. Unknown on
+ * either side never mandates anything.
+ * @param {unknown} current the bundle this tab runs: a js name string, or
+ *   `{ jsName, cssName }` (cssName null when the tab has no hashed
+ *   stylesheet); anything else reads as unknown
  * @param {unknown} served the bundle the server serves now, or null
  */
 export function isUpdateAvailable(current, served) {
-  if (typeof current !== 'string' || current === '') return false;
   if (served === null || typeof served !== 'object' || Array.isArray(served)) return false;
-  const jsName = /** @type {any} */ (served).jsName;
-  if (typeof jsName !== 'string' || jsName === '') return false;
-  return jsName !== current;
+  const servedJs = /** @type {any} */ (served).jsName;
+  if (typeof servedJs !== 'string' || servedJs === '') return false;
+  const servedCss = /** @type {any} */ (served).cssName;
+  const servedCssKnown = typeof servedCss === 'string' && servedCss !== '';
+  if (typeof current === 'string') {
+    if (current === '') return false;
+    return servedJs !== current;
+  }
+  if (current === null || typeof current !== 'object' || Array.isArray(current)) return false;
+  const currentJs = /** @type {any} */ (current).jsName;
+  if (typeof currentJs !== 'string' || currentJs === '') return false;
+  if (servedJs !== currentJs) return true;
+  const currentCss = /** @type {any} */ (current).cssName;
+  if (!servedCssKnown) return false;
+  if (typeof currentCss !== 'string' || currentCss === '') return false;
+  return servedCss !== currentCss;
 }
 
 /**
@@ -226,11 +278,11 @@ export function ensureUpdateBanner(doc, options = {}) {
 /**
  * One poll against the served bundle identity.
  *
- * Returns `current` (same bundle), `reloaded` (new bundle, nothing
- * unsaved, the tab reloaded), `deferred` (new bundle, text on screen, the
- * notice waits for the operator), `unknown` (this tab carries no bundle
- * name to compare) or `failed` (the read said nothing usable — retried on
- * the next navigation or minute, never a notice).
+ * Returns `current` (same bundle), `deferred` (new bundle, the notice
+ * waits for the operator, who always confirms — the shell never reloads
+ * on its own, so no text is ever lost), `unknown` (this tab carries no
+ * bundle name to compare) or `failed` (the read said nothing usable —
+ * retried on the next navigation or minute, never a notice).
  */
 export async function checkBundleVersion(options = {}) {
   const adminBase = typeof options?.adminBase === 'string' ? options.adminBase : '';
@@ -243,8 +295,8 @@ export async function checkBundleVersion(options = {}) {
   }
   const win = options?.win
     ?? (typeof globalThis.window === 'undefined' ? undefined : globalThis.window);
-  const current = currentBundleName(doc);
-  if (current === null) return 'unknown';
+  const jsName = currentBundleName(doc);
+  if (jsName === null) return 'unknown';
   if (fetchImpl === null) return 'failed';
   let text = null;
   try {
@@ -256,21 +308,15 @@ export async function checkBundleVersion(options = {}) {
   }
   const served = parseVersionPayload(text);
   if (served === null) return 'failed';
+  const current = { jsName, cssName: currentStyleName(doc) };
   if (!isUpdateAvailable(current, served)) return 'current';
-  if (hasUnsavedWork(doc)) {
-    ensureUpdateBanner(doc, {
-      onUpdate: () => {
-        if (typeof options?.reload === 'function') options.reload();
-        else if (win?.location && typeof win.location.reload === 'function') win.location.reload();
-      },
-    });
-    return 'deferred';
-  }
-  if (boReloadFired) return 'deferred';
-  boReloadFired = true;
-  if (typeof options?.reload === 'function') options.reload();
-  else if (win?.location && typeof win.location.reload === 'function') win.location.reload();
-  return 'reloaded';
+  ensureUpdateBanner(doc, {
+    onUpdate: () => {
+      if (typeof options?.reload === 'function') options.reload();
+      else if (win?.location && typeof win.location.reload === 'function') win.location.reload();
+    },
+  });
+  return 'deferred';
 }
 
 /**

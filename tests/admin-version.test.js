@@ -16,6 +16,7 @@ import {
   BO_VERSION_POLL_MS,
   checkBundleVersion,
   currentBundleName,
+  currentStyleName,
   ensureUpdateBanner,
   hasUnsavedWork,
   isUpdateAvailable,
@@ -29,19 +30,21 @@ import {
 /**
  * Bundle-update notice (backlog:49bd3657b0f8): after a release an open tab
  * still runs the old bundle in memory, so the server exposes the served
- * bundle identity and the shell polls it — reloading when nothing is
- * unsaved, waiting behind a persistent notice when text is on screen.
+ * bundle identity and the shell polls it — always showing a persistent
+ * notice the operator confirms, never reloading on its own.
  */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC_DIR = join(root, 'apps/admin/public');
 
 const fakeScript = (src) => ({ getAttribute: (name) => (name === 'src' ? src : null) });
-const fakeDoc = ({ scripts = [], fields = [], banner = null } = {}) => {
+const fakeLink = (href) => ({ getAttribute: (name) => (name === 'href' ? href : null) });
+const fakeDoc = ({ scripts = [], links = [], fields = [], banner = null } = {}) => {
   const state = { appended: [], banner };
   return {
     querySelectorAll: (selector) => {
       if (String(selector).includes('script')) return scripts;
+      if (String(selector).includes('link')) return links;
       return fields;
     },
     getElementById: () => state.banner,
@@ -73,11 +76,12 @@ const fakeField = ({ tag = 'TEXTAREA', value = '', type = null, disabled = false
   disabled,
   getAttribute: (name) => (name === 'type' ? type : null),
 });
-const okFetch = (jsName) => async (url, options) => ({
+const DEFAULT_CSS = 'bo-styles-000000000000.css';
+const okFetch = (jsName, cssName = DEFAULT_CSS) => async (url, options) => ({
   url,
   options,
   ok: true,
-  text: async () => JSON.stringify({ jsName, cssName: 'bo-styles-000000000000.css' }),
+  text: async () => JSON.stringify({ jsName, cssName }),
 });
 
 test('bundleVersion names the same in-memory build the entry HTML serves', async () => {
@@ -98,6 +102,7 @@ test('readStaticFile serves /version.json as JSON, never from disk', async () =>
   const parsed = parseVersionPayload(found.data.toString('utf8'));
   assert.ok(parsed, 'the served body parses as a bundle identity');
   assert.equal(parsed.jsName, bundleVersion(PUBLIC_DIR).jsName);
+  assert.equal(parsed.cssName, bundleVersion(PUBLIC_DIR).cssName);
 });
 
 test('staticCacheControl: /version.json is no-store, like the entries', () => {
@@ -114,17 +119,24 @@ test('the mount serves /bo/version.json with no-store, without a profile', async
     const answer = await mount.handle({ method: 'GET', path: '/bo/version.json', headers: {} });
     assert.equal(answer.status, 200);
     assert.equal(answer.headers['cache-control'], 'no-store');
-    assert.equal(parseVersionPayload(answer.body.toString('utf8')).jsName, built.jsName);
+    const served = parseVersionPayload(answer.body.toString('utf8'));
+    assert.equal(served.jsName, built.jsName);
+    assert.equal(served.cssName, built.cssName);
   } finally {
     app.close();
   }
 });
 
 test('parseVersionPayload reads only a shaped bundle identity', () => {
-  assert.deepEqual(parseVersionPayload(JSON.stringify({ jsName: 'bo-abcdef123456.js' })), { jsName: 'bo-abcdef123456.js' });
+  assert.deepEqual(
+    parseVersionPayload(JSON.stringify({ jsName: 'bo-abcdef123456.js', cssName: 'bo-styles-123456abcdef.css' })),
+    { jsName: 'bo-abcdef123456.js', cssName: 'bo-styles-123456abcdef.css' },
+  );
   assert.equal(parseVersionPayload(''), null);
   assert.equal(parseVersionPayload('not json'), null);
-  assert.equal(parseVersionPayload(JSON.stringify({ jsName: 'app.js' })), null);
+  assert.equal(parseVersionPayload(JSON.stringify({ jsName: 'app.js', cssName: 'bo-styles-123456abcdef.css' })), null);
+  assert.equal(parseVersionPayload(JSON.stringify({ jsName: 'bo-abcdef123456.js', cssName: 'styles.css' })), null);
+  assert.equal(parseVersionPayload(JSON.stringify({ jsName: 'bo-abcdef123456.js' })), null, 'a missing cssName is unknown, never an update');
   assert.equal(parseVersionPayload(JSON.stringify({})), null);
   assert.equal(parseVersionPayload(JSON.stringify([])), null);
   assert.equal(parseVersionPayload(null), null);
@@ -139,11 +151,43 @@ test('currentBundleName reads the hashed script, never the sources', () => {
   );
 });
 
-test('isUpdateAvailable compares names, unknown never mandates a reload', () => {
-  assert.equal(isUpdateAvailable('bo-aaaa.js', { jsName: 'bo-aaaa.js' }), false);
-  assert.equal(isUpdateAvailable('bo-aaaa.js', { jsName: 'bo-bbbb123456.js' }), true);
-  assert.equal(isUpdateAvailable(null, { jsName: 'bo-bbbb123456.js' }), false);
-  assert.equal(isUpdateAvailable('bo-aaaa.js', null), false);
+test('currentStyleName reads the hashed stylesheet, never the source', () => {
+  assert.equal(currentStyleName(fakeDoc({ links: [] })), null);
+  assert.equal(currentStyleName(fakeDoc({ links: [fakeLink('styles.css')] })), null);
+  assert.equal(
+    currentStyleName(fakeDoc({ links: [fakeLink('styles.css'), fakeLink('/bo/bo-styles-abcdef123456.css?v=3')] })),
+    'bo-styles-abcdef123456.css',
+  );
+});
+
+test('isUpdateAvailable compares names, unknown never mandates a notice', () => {
+  assert.equal(isUpdateAvailable('bo-aaaa000000.js', { jsName: 'bo-aaaa000000.js' }), false);
+  assert.equal(isUpdateAvailable('bo-aaaa000000.js', { jsName: 'bo-bbbb111111.js' }), true);
+  assert.equal(isUpdateAvailable(null, { jsName: 'bo-bbbb111111.js' }), false);
+  assert.equal(isUpdateAvailable('bo-aaaa000000.js', null), false);
+  assert.equal(
+    isUpdateAvailable(
+      { jsName: 'bo-aaaa000000.js', cssName: 'bo-styles-000000000000.css' },
+      { jsName: 'bo-aaaa000000.js', cssName: 'bo-styles-000000000000.css' },
+    ),
+    false,
+  );
+  assert.equal(
+    isUpdateAvailable(
+      { jsName: 'bo-aaaa000000.js', cssName: 'bo-styles-000000000000.css' },
+      { jsName: 'bo-aaaa000000.js', cssName: 'bo-styles-111111111111.css' },
+    ),
+    true,
+    'a CSS-only release shows the notice',
+  );
+  assert.equal(
+    isUpdateAvailable(
+      { jsName: 'bo-aaaa000000.js', cssName: null },
+      { jsName: 'bo-aaaa000000.js', cssName: 'bo-styles-111111111111.css' },
+    ),
+    false,
+    'unknown stylesheet never mandates a notice',
+  );
 });
 
 test('hasUnsavedWork leans dirty: text counts, controls do not', () => {
@@ -188,7 +232,7 @@ test('ensureUpdateBanner shows the exact notice once, text only', () => {
   assert.equal(updated, 1);
 });
 
-test('checkBundleVersion reloads when clean, waits when text is on screen', async () => {
+test('checkBundleVersion never reloads on its own: clean or dirty, only the notice', async () => {
   resetVersionWatchState();
   const current = 'bo-aaaa000000.js';
   const served = 'bo-bbbb111111.js';
@@ -200,8 +244,11 @@ test('checkBundleVersion reloads when clean, waits when text is on screen', asyn
     fetchImpl: okFetch(served),
     reload: () => { reloaded++; },
   });
-  assert.equal(clean, 'reloaded');
-  assert.equal(reloaded, 1);
+  assert.equal(clean, 'deferred');
+  assert.equal(reloaded, 0, 'a clean screen waits for the operator too');
+  assert.equal(cleanDoc._state.banner.textContent, BO_UPDATE_NOTICE);
+  cleanDoc._state.banner.click();
+  assert.equal(reloaded, 1, 'the operator confirms the waiting update');
 
   resetVersionWatchState();
   const dirtyDoc = fakeDoc({
@@ -219,42 +266,31 @@ test('checkBundleVersion reloads when clean, waits when text is on screen', asyn
   assert.equal(dirtyReloads, 0);
   assert.equal(dirtyDoc._state.banner.textContent, BO_UPDATE_NOTICE);
   dirtyDoc._state.banner.click();
-  assert.equal(dirtyReloads, 1, 'the operator confirms the waiting reload');
+  assert.equal(dirtyReloads, 1, 'the operator confirms the waiting update');
 });
 
-test('a retained draft mark defers the reload on a clean screen', async () => {
+test('a CSS-only release shows the notice', async () => {
   resetVersionWatchState();
-  try {
-    const current = 'bo-aaaa000000.js';
-    const served = 'bo-bbbb111111.js';
-    markUnsaved('calendario-draft');
-    // Another screen's DOM: no fields, but the draft survives elsewhere.
-    const awayDoc = fakeDoc({ scripts: [fakeScript(`/bo/${current}`)] });
-    let reloaded = 0;
-    const outcome = await checkBundleVersion({
-      adminBase: '/bo',
-      doc: awayDoc,
-      fetchImpl: okFetch(served),
-      reload: () => { reloaded++; },
-    });
-    assert.equal(outcome, 'deferred');
-    assert.equal(reloaded, 0);
-    assert.equal(awayDoc._state.banner.textContent, BO_UPDATE_NOTICE);
-    clearUnsaved('calendario-draft');
-    const next = await checkBundleVersion({
-      adminBase: '/bo',
-      doc: awayDoc,
-      fetchImpl: okFetch(served),
-      reload: () => { reloaded++; },
-    });
-    assert.equal(next, 'reloaded');
-    assert.equal(reloaded, 1);
-  } finally {
-    resetVersionWatchState();
-  }
+  const current = 'bo-aaaa000000.js';
+  const sameJs = 'bo-aaaa000000.js';
+  const newCss = 'bo-styles-111111111111.css';
+  const doc = fakeDoc({
+    scripts: [fakeScript(`/bo/${current}`)],
+    links: [fakeLink(`/bo/${DEFAULT_CSS}`)],
+  });
+  let reloaded = 0;
+  const outcome = await checkBundleVersion({
+    adminBase: '/bo',
+    doc,
+    fetchImpl: okFetch(sameJs, newCss),
+    reload: () => { reloaded++; },
+  });
+  assert.equal(outcome, 'deferred');
+  assert.equal(reloaded, 0);
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_NOTICE);
 });
 
-test('a save in flight counts as unsaved: a disabled populated field waits', async () => {
+test('a save in flight waits behind the notice: a disabled populated field', async () => {
   resetVersionWatchState();
   try {
     const current = 'bo-aaaa000000.js';
@@ -272,6 +308,7 @@ test('a save in flight counts as unsaved: a disabled populated field waits', asy
     });
     assert.equal(outcome, 'deferred');
     assert.equal(reloaded, 0);
+    assert.equal(busyDoc._state.banner.textContent, BO_UPDATE_NOTICE);
   } finally {
     resetVersionWatchState();
   }
