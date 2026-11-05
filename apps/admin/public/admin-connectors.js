@@ -27,7 +27,7 @@
 
 import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { googleConnectionsCard } from './admin-profilo.js';
+import { googleConnectionsCard, metaConnectionsCard } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** The three guided steps, in order. */
@@ -363,6 +363,7 @@ export function createConnectorsView(deps) {
     /** @type {any} */ flow: null,
     busyControls: /** @type {Array<any>} */ ([]),
     /** @type {any} */ google: null,
+    /** @type {any} */ meta: null,
   };
 
   const setBusy = (busy) => {
@@ -742,6 +743,10 @@ export function createConnectorsView(deps) {
     // Google consent, not through the channels package: they show here
     // whether or not the channels are composed.
     if (state.google !== null) mount.appendChild(state.google.node);
+    // WhatsApp, Instagram and Messenger connect through the pilot's Meta
+    // consent (backlog:92f993586110), from the same profile read: the card
+    // stays hidden until the pilot reports Meta.
+    if (state.meta !== null) mount.appendChild(state.meta.node);
 
     // No Spazio field and no Ricarica button here: the shell space picker
     // owns the active space through ACTIVE_SPACE_KEY, and every load and
@@ -774,6 +779,7 @@ export function createConnectorsView(deps) {
   return {
     render: async () => {
       state.google = googleConnectionsCard({ doc, client: deps.client });
+      state.meta = metaConnectionsCard({ doc, ready: state.google.answer });
       await load();
       render();
     },

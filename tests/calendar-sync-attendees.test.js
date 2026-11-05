@@ -8,7 +8,9 @@
  * calendar imported nothing. The engine event now carries them — email,
  * displayName and responseStatus only, each bounded — proven here against
  * a real `events.list` wire shape, and through `listEvents` over a
- * scripted HTTP double. No test dials Google.
+ * scripted HTTP double. No test dials Google. Google's `self` flag rides
+ * along when true (backlog:13c09f03), so the lead resolver can tell the
+ * calendar owner apart from a real guest.
  */
 
 import test from 'node:test';
@@ -79,15 +81,22 @@ test('toEngineEvent keeps attendees and organizer from a real events.list payloa
 
   assert.deepEqual(lesson.attendees, [
     { email: 'cliente@example.com', displayName: 'Mario Rossi', responseStatus: 'accepted' },
-    { email: 'coach@example.com', displayName: 'Guido', responseStatus: 'accepted' },
+    { email: 'coach@example.com', displayName: 'Guido', responseStatus: 'accepted', self: true },
   ]);
-  assert.deepEqual(lesson.organizer, { email: 'coach@example.com', displayName: 'Guido' });
+  assert.deepEqual(lesson.organizer, { email: 'coach@example.com', displayName: 'Guido', self: true });
   for (const person of [...lesson.attendees, lesson.organizer]) {
     assert.ok(Object.isFrozen(person), 'attendee entries are frozen');
     for (const key of Object.keys(person)) {
-      assert.ok(['email', 'displayName', 'responseStatus'].includes(key), `only matching keys travel (got ${key})`);
+      assert.ok(['email', 'displayName', 'responseStatus', 'self', 'resource'].includes(key), `only matching keys travel (got ${key})`);
     }
   }
+  const room = toEngineEvent({
+    id: 'evt-sala-1', status: 'confirmed', updated: '2026-11-04T10:00:00.000Z',
+    start: { dateTime: '2026-11-06T10:00:00+01:00' }, end: { dateTime: '2026-11-06T11:00:00+01:00' },
+    attendees: [{ email: 'sala@example.com', displayName: 'Sala Rossa', resource: true }],
+  });
+  assert.deepEqual(room.attendees, [{ email: 'sala@example.com', displayName: 'Sala Rossa', resource: true }],
+    'a room carries its resource flag so the resolver can skip it');
   assert.ok(Object.isFrozen(lesson.attendees), 'the attendees list is frozen');
   assert.equal(lesson.extendedProperties.accordoSourceKey, 'gcal:primary:evt-lezione-1');
 

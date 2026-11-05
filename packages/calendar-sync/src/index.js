@@ -54,7 +54,11 @@ const SPACE_INPUT = {
  *   appointmentBook?: any, provider?: any, mapping?: any,
  *   actor?: unknown, now?: () => string, modules?: Record<string, string>,
  *   database?: any, resolveSecret?: (reference: string, context: {spaceId: string, purpose: string}) => Promise<string>,
- * }} [options] `appointmentBook` is the created `appointment-book@1`
+ *   ownerEmails?: string[],
+ * }} [options] `ownerEmails` names the deployment's own addresses on the
+ * synced calendars (bound mailbox plus aliases): the lead resolver skips
+ * them, so an owner alias the wire cannot tell from a guest never becomes
+ * its own lead. `appointmentBook` is the created `appointment-book@1`
  * capability object — the same handover shape appointments uses for work's
  * `follow-up@1`, so the reminder-style name resolution happens once, at
  * the provider. `provider` is the Google Calendar binding (fake-backed
@@ -101,6 +105,7 @@ export function createCalendarSyncPackage(options = {}) {
         now: options.now,
         database: options.database ?? runtime.database,
         resolveSecret: options.resolveSecret,
+        ownerEmails: options.ownerEmails,
       });
       composedByRuntime.set(runtime, composed);
     }

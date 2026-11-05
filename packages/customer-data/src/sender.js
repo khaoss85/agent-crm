@@ -61,6 +61,20 @@ export const CHANNEL_SYSTEMS = Object.freeze([
 /** Provenance for identities and candidates this resolution writes: it runs outside any import run. */
 export const SENDER_RUN_ID = 'channel-sender';
 
+/**
+ * Where an automatic lead comes from (backlog:13c09f03): the only two syncs
+ * that invent contacts. Closed vocabulary — an unknown value refuses,
+ * never a silently unattributed customer.
+ */
+export const SENDER_ORIGINS = Object.freeze(['gmail', 'calendar']);
+
+/** The run recorded on identity and candidate rows: origin-scoped when the caller names one, the plain run otherwise. */
+export function runIdFor(sender) {
+  return sender?.origin === null || sender?.origin === undefined
+    ? SENDER_RUN_ID
+    : `${SENDER_RUN_ID}:${sender.origin}`;
+}
+
 /** Separators a phone handle may carry without changing who it names. The `+` prefix is kept. */
 const PHONE_SEPARATOR_RE = /[ .\-()/]/g;
 
@@ -164,6 +178,18 @@ export function normalizeChannelSender(request) {
     domain = shaped.value;
   }
 
+  // The sync that observed this sender (backlog:13c09f03). Absent on every
+  // older caller — the identity row keeps the plain run, exactly as
+  // before — and a value outside the closed vocabulary refuses, so a
+  // lead is never created without a known provenance.
+  let origin = null;
+  if (request.origin !== undefined && request.origin !== null && request.origin !== '') {
+    if (typeof request.origin !== 'string' || !SENDER_ORIGINS.includes(request.origin)) {
+      throw new ValidationError('sender origin must be one of gmail, calendar', { field: 'origin' });
+    }
+    origin = request.origin;
+  }
+
   return Object.freeze({
     system: /** @type {string} */ (channel),
     externalId,
@@ -172,6 +198,7 @@ export function normalizeChannelSender(request) {
     lastName: safeString(request.lastName, 'lastName'),
     companyName: safeString(request.companyName, 'companyName'),
     domain,
+    origin,
   });
 }
 
@@ -442,7 +469,7 @@ export function createChannelSenderResolution({
           pairs: distinctPairs([knownSubjectHere, emailSubject]),
           rule: 'external-identity',
           evidence: `channel handle ${sender.system} names one contact and the sender email names another`,
-          runId: SENDER_RUN_ID,
+          runId: runIdFor(sender),
           actor,
         }));
         return Object.freeze({
@@ -462,7 +489,7 @@ export function createChannelSenderResolution({
         const identity = await database.transactionAsync(async () => recordExternalIdentityRow({
           modules, names, system: sender.system, externalId: sender.externalId,
           subject: knownSubjectHere,
-          runId: SENDER_RUN_ID, actor,
+          runId: runIdFor(sender), actor,
         }));
         return Object.freeze({
           system: sender.system,
@@ -517,7 +544,7 @@ export function createChannelSenderResolution({
         try {
           const identity = await recordExternalIdentityRow({
             modules, names, system: sender.system, externalId: sender.externalId,
-            subject: winner, runId: SENDER_RUN_ID, actor,
+            subject: winner, runId: runIdFor(sender), actor,
           });
           return { identity, contactId: winner.id, wonByRace: Boolean(raced) };
         } catch (error) {
@@ -603,7 +630,7 @@ export function createChannelSenderResolution({
           resource: 'contact', id: contactId, owner: 'host', ownerPackage: null,
           label: sender.email,
         },
-        runId: SENDER_RUN_ID, actor,
+        runId: runIdFor(sender), actor,
       });
     }
 
@@ -647,7 +674,7 @@ export function createChannelSenderResolution({
           };
           await recordExternalIdentityRow({
             modules, names, system: sender.system, externalId: sender.externalId,
-            subject, runId: SENDER_RUN_ID, actor,
+            subject, runId: runIdFor(sender), actor,
           });
           return { replayed: false, contactId: contact.id };
         } catch (error) {
@@ -735,7 +762,7 @@ export function createChannelSenderResolution({
             ownerPackage: subject.ownerPackage,
             label: subject.label,
           },
-          runId: SENDER_RUN_ID,
+          runId: runIdFor(sender),
           actor,
         });
         return { replayed: false, contactId: subject.id };
@@ -784,7 +811,7 @@ export function createChannelSenderResolution({
       pairs,
       rule: input.rule,
       evidence: input.evidence,
-      runId: SENDER_RUN_ID,
+      runId: runIdFor(sender),
       actor,
     }));
     return Object.freeze({

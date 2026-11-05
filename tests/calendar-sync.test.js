@@ -1056,3 +1056,131 @@ test('a local move over an outstanding remote snapshot stays pending: Google unt
   assert.ok(ctx.linkRows()[0].pendingRemote, 'the snapshot is not hidden');
   assert.equal(ctx.linkRows()[0].conflictNote, note, 'the conflict note is preserved');
 });
+
+test('an endless weekly series reads only its occurrences inside the window (backlog:3a3a41b2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-endless-weekly',
+    summary: 'Session evt-endless-weekly',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY'],
+  });
+  const timeMin = '2026-10-01T00:00:00.000Z';
+  const timeMax = '2027-01-29T00:00:00.000Z';
+  const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin, timeMax });
+  assert.ok(listed.items.length >= 15 && listed.items.length <= 20, `120 days hold ~17 Wednesdays, got ${listed.items.length}`);
+  for (const item of listed.items) {
+    assert.equal(item.recurringEventId, 'evt-endless-weekly');
+    assert.ok(item.start.dateTime >= timeMin && item.start.dateTime < timeMax, `${item.start.dateTime} stays in the window`);
+    assert.equal(item.end.dateTime, new Date(Date.parse(item.start.dateTime) + 3600 * 1000).toISOString());
+  }
+  const unbounded = ctx.provider.listEvents({ calendarId: CAL });
+  assert.equal(unbounded.items.length, 1, 'without bounds the master reads as one row, never an expansion');
+  assert.equal(unbounded.items[0].id, 'evt-endless-weekly');
+});
+
+test('a bounded weekly series (COUNT/UNTIL) reads empty when exhausted, a BYDAY series reads as master', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-count-two',
+    summary: 'Session evt-count-two',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;COUNT=2'],
+  });
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-until-past',
+    summary: 'Session evt-until-past',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;UNTIL=20240110T090000Z'],
+  });
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-byday',
+    summary: 'Session evt-byday',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+  });
+  const timeMin = '2026-10-01T00:00:00.000Z';
+  const timeMax = '2027-01-29T00:00:00.000Z';
+  const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin, timeMax });
+  const byId = new Map(listed.items.map((item) => [item.id, item]));
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-count-two_')), 'COUNT exhausted in 2024 reads zero instances');
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-until-past_')), 'UNTIL in the past reads zero instances');
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-byday_')), 'an unsupported BYDAY series never expands into guessed instances');
+  const unbounded = ctx.provider.listEvents({ calendarId: CAL });
+  assert.ok(unbounded.items.some((item) => item.id === 'evt-byday'), 'without bounds the BYDAY master reads as one row');
+});
+
+test('the fake refuses time bounds beside a sync token, like the http provider', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt1',
+    summary: 'Session evt1',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' },
+    end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  const first = ctx.provider.listEvents({ calendarId: CAL });
+  assert.throws(
+    () => ctx.provider.listEvents({ calendarId: CAL, syncToken: first.nextSyncToken, timeMin: '2026-10-01T00:00:00.000Z' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  assert.throws(
+    () => ctx.provider.listEvents({ calendarId: CAL, syncToken: first.nextSyncToken, timeMax: '2027-01-29T00:00:00.000Z' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+});
+
+test('null, empty and invalid time bounds read the same on the fake (backlog:3a3a41b2)', async (t) => {
+  // Provider parity: a bound is present only as a readable non-empty
+  // string — undefined, null and '' all mean "no bound", and anything
+  // else refuses with the same code the HTTP provider raises.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt1',
+    summary: 'Session evt1',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' },
+    end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  for (const absent of [undefined, null, '']) {
+    const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin: absent, timeMax: absent });
+    assert.equal(listed.items.length, 1, `bound ${String(absent)} reads as absent`);
+    assert.equal(listed.truncated, undefined, 'a complete read carries no truncation flag');
+  }
+  for (const garbage of ['not-an-instant', 1729000000000, true]) {
+    assert.throws(
+      () => ctx.provider.listEvents({ calendarId: CAL, timeMin: garbage }),
+      (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+      `bound ${String(garbage)} refuses like the HTTP provider`,
+    );
+    assert.throws(
+      () => ctx.provider.listEvents({ calendarId: CAL, timeMax: garbage }),
+      (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+      `bound ${String(garbage)} refuses like the HTTP provider`,
+    );
+  }
+});
+
+test('an over-wide window reports the expansion cut instead of a silent short page (backlog:3a3a41b2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-endless-wide',
+    summary: 'Session evt-endless-wide',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY'],
+  });
+  // Thirty years hold ~1560 Wednesdays: the 1000-instance cap must cut.
+  const listed = ctx.provider.listEvents({
+    calendarId: CAL, timeMin: '2020-01-01T00:00:00.000Z', timeMax: '2050-01-01T00:00:00.000Z',
+  });
+  assert.equal(listed.items.length, 1000, 'the expansion stops at the cap');
+  assert.equal(listed.truncated, true, 'the cut is signalled, never mistaken for a complete window');
+});
