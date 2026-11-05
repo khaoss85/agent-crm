@@ -10,7 +10,13 @@
  *
  * Reads: GET /api/profile (the pilot serves it, backlog:0994cd18347e)
  *   { member: { name, email, role },
- *     connections: { available, reason, items: [{ connector, status, account }] } }
+ *     connections: { available, reason, items: [{ connector, status, account }],
+ *       meta?: { configured } } }
+ * The Meta rows (WhatsApp, Instagram, Messenger — backlog:92f993586110)
+ * appear only when the answer carries `connections.meta`: an older pilot
+ * that never reads the Meta surface shows no Meta group at all, and a
+ * space whose control plane has no Meta app shows the rows without an
+ * action, never a Collega that cannot complete.
  * Writes: none here. «Collega» is the pilot's own GET ../profile/collega
  * (the server turns the click into the Google consent), «Scollega» its
  * same-origin POST ../profile/scollega: both already exist and both come
@@ -31,12 +37,28 @@ export const PROFILO_CONNECTORS = Object.freeze([
     line: 'Conversazioni e invii dalla tua casella, nelle schede dei clienti.' }),
 ]);
 
+/** The three Meta connectors, in the order the control plane offers them. */
+export const META_CONNECTORS = Object.freeze([
+  Object.freeze({ connector: 'whatsapp', tile: 'WA', chip: 'ui-chip-wa', name: 'WhatsApp',
+    line: 'Messaggi dei clienti dal numero WhatsApp Business dello studio.' }),
+  Object.freeze({ connector: 'instagram', tile: 'IG', chip: 'ui-chip-ig', name: 'Instagram',
+    line: 'Messaggi diretti del profilo Instagram professionale.' }),
+  Object.freeze({ connector: 'messenger', tile: 'FB', chip: 'ui-chip-fb', name: 'Messenger',
+    line: 'Messaggi alla Pagina Facebook dello studio.' }),
+]);
+
+/** Google connectors only: a Meta account is a number or a page, not the person. */
+const GOOGLE_IDS = new Set(PROFILO_CONNECTORS.map((entry) => entry.connector));
+
 const STATUS_LABELS = Object.freeze({
   connected: { text: 'Collegato', tone: 'ok' },
   disconnected: { text: 'Da collegare', tone: 'muted' },
   revoked: { text: 'Scollegato', tone: 'muted' },
   error: { text: 'Da ricollegare', tone: 'warn' },
 });
+
+/** A Meta row on a space whose control plane has no Meta app yet. */
+const NOT_ACTIVE = Object.freeze({ text: 'Non ancora attivo', tone: 'muted' });
 
 /** @param {unknown} value */
 const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
@@ -64,18 +86,20 @@ export function profiloInitials(name, email) {
  * (Collega link or Scollega form). Shared by Profilo and the Connettori
  * screens, so the connection reads and acts the same everywhere.
  */
-function connectionRow(doc, list, entry, item, readable) {
+function connectionRow(doc, list, entry, item, readable, active = true) {
   const row = el(doc, 'div', 'bo-profilo-conn');
   row.setAttribute('data-connector', entry.connector);
   row.appendChild(el(doc, 'span', `ui-chip ${entry.chip} bo-profilo-tile`, entry.tile));
   const words = el(doc, 'div', 'bo-profilo-conn-words');
   words.appendChild(el(doc, 'span', 'bo-profilo-conn-name', entry.name));
-  const account = readable && item?.status === 'connected' ? text(item.account) : null;
+  const account = readable && active && item?.status === 'connected' ? text(item.account) : null;
   words.appendChild(el(doc, 'span', 'bo-profilo-conn-line', account !== null ? `Collegato come ${account}` : entry.line));
   row.appendChild(words);
   const side = el(doc, 'div', 'bo-profilo-conn-side');
   if (!readable) {
     side.appendChild(el(doc, 'span', 'bo-profilo-pill bo-profilo-pill-muted', 'Non disponibile'));
+  } else if (!active) {
+    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${NOT_ACTIVE.tone}`, NOT_ACTIVE.text));
   } else {
     // Own keys only: a prototype name (toString, __proto__) is an unknown
     // status, read as «Da collegare» like any other (Muse P2 on #453).
@@ -83,8 +107,8 @@ function connectionRow(doc, list, entry, item, readable) {
     const status = STATUS_LABELS[key];
     side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${status.tone}`, status.text));
     if (item?.status === 'connected') {
-      // Scollega revokes at Google: the pilot's same-origin POST, which
-      // checks the origin and comes back to this screen.
+      // Scollega revokes at the provider (Google or Meta): the pilot's
+      // same-origin POST, which checks the origin and comes back here.
       const form = el(doc, 'form', 'bo-profilo-form');
       form.setAttribute('method', 'post');
       form.setAttribute('action', '../profile/scollega');
@@ -98,7 +122,7 @@ function connectionRow(doc, list, entry, item, readable) {
       side.appendChild(form);
     } else {
       // Collega is a link, not a fetch: the pilot turns the click into the
-      // signed Google consent and the browser follows it.
+      // signed Google or Meta consent and the browser follows it.
       const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-profilo-collega', 'Collega');
       link.setAttribute('href', `../profile/collega?connector=${entry.connector}`);
       link.setAttribute('data-action', `collega-${entry.connector}`);
@@ -137,6 +161,45 @@ export function paintGoogleConnections(doc, card, answer, entries = PROFILO_CONN
 }
 
 /**
+ * Whether this /api/profile answer speaks about Meta at all, and whether
+ * the space's control plane can complete a Meta consent.
+ * @param {any} answer
+ * @returns {{ reported: boolean, configured: boolean }}
+ */
+export function metaState(answer) {
+  const connections = answer?.connections;
+  const readable = connections?.available === true && Array.isArray(connections.items);
+  const meta = connections?.meta;
+  const reported = readable && meta !== null && typeof meta === 'object';
+  return { reported, configured: reported && meta.configured === true };
+}
+
+/**
+ * Append the Meta rows for one /api/profile answer, or nothing when the
+ * answer does not report Meta. `configured` false keeps the rows named
+ * with «Non ancora attivo» and no action.
+ * @param {any} doc
+ * @param {any} card
+ * @param {any} answer
+ * @returns {boolean} whether rows were painted
+ */
+export function paintMetaConnections(doc, card, answer) {
+  const { reported, configured } = metaState(answer);
+  if (!reported) return false;
+  const list = el(doc, 'div', 'bo-profilo-conns bo-meta-conns');
+  card.appendChild(list);
+  for (const entry of META_CONNECTORS) {
+    const item = answer.connections.items.find((candidate) => candidate?.connector === entry.connector);
+    connectionRow(doc, list, entry, item ?? null, true, configured);
+  }
+  if (!configured) {
+    card.appendChild(el(doc, 'p', 'bo-profilo-note',
+      'Il collegamento con Meta non è ancora attivo per questo spazio: per ora niente da collegare qui.'));
+  }
+  return true;
+}
+
+/**
  * Read GET /api/profile; null when it cannot be read.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {(...args: any[]) => void} [log]
@@ -169,8 +232,31 @@ export function googleConnectionsCard({ doc, client, entries = PROFILO_CONNECTOR
     paintGoogleConnections(doc, card, answer, entries);
   };
   paint(undefined);
-  const ready = readProfile(client, log).then(paint);
-  return { node: card, ready };
+  const answer = readProfile(client, log);
+  const ready = answer.then(paint);
+  return { node: card, ready, answer };
+}
+
+/**
+ * The «Collegamenti Meta» card for the Connettori screen, filled from the
+ * same /api/profile answer as the Google card (`ready` is that card's read,
+ * so the screen reads the profile once). Hidden until the answer reports
+ * Meta: an older pilot leaves the screen exactly as it was.
+ * @param {{ doc: any, ready: Promise<any> }} deps
+ */
+export function metaConnectionsCard({ doc, ready }) {
+  const card = el(doc, 'section', 'panel bo-profilo-card bo-meta-card');
+  card.setAttribute('data-section', 'meta-connections');
+  card.setAttribute('hidden', '');
+  const done = Promise.resolve(ready).then((answer) => {
+    if (!metaState(answer).reported) return;
+    card.appendChild(el(doc, 'h3', 'bo-profilo-card-title', 'Collegamenti Meta'));
+    card.appendChild(el(doc, 'p', 'bo-profilo-card-lede',
+      'WhatsApp, Instagram e Messenger si collegano con il tuo account Facebook: un clic su Collega e dai il permesso.'));
+    paintMetaConnections(doc, card, answer);
+    card.removeAttribute('hidden');
+  });
+  return { node: card, ready: done };
 }
 
 /**
@@ -216,7 +302,8 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     // No readable email (the login carries only its provider subject): the
     // account a Google connection reports is the person's address.
     const linked = Array.isArray(answer?.connections?.items)
-      ? answer.connections.items.find((item) => item?.status === 'connected' && personText(item.account) !== null)
+      ? answer.connections.items.find((item) => GOOGLE_IDS.has(item?.connector) && item?.status === 'connected'
+        && personText(item.account) !== null)
       : null;
     const person = { ...session, ...fromServer };
     if (personText(person.email) === null && linked) person.email = personText(linked.account);
@@ -227,6 +314,10 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       'Collega una volta sola: Accordo legge e scrive solo con il tuo consenso, e puoi scollegare quando vuoi.'));
     page.appendChild(card);
     paintGoogleConnections(doc, card, answer);
+    if (metaState(answer).reported) {
+      card.appendChild(el(doc, 'p', 'bo-profilo-group', 'Canali Meta'));
+      paintMetaConnections(doc, card, answer);
+    }
   }
 
   async function render() {

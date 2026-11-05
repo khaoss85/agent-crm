@@ -667,3 +667,29 @@ test('Collega re-authorizes with the row adapter, not adapters[0]', async () => 
     'the pending row reactivates under its own adapter instead of conflicting under wa-a');
   assert.equal(authorized.body.adapterVersion, 1);
 });
+
+test('Collegamenti Meta: hidden without connections.meta, Collega rows when the space has Meta', async () => {
+  const run = async (profile) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ schema: { domains: {} }, profile });
+    await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+    await new Promise((resolve) => setImmediate(resolve));
+    const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'meta-connections');
+    return { card, calls: client.calls.filter((call) => call.path === '/api/profile').length };
+  };
+  const old = await run({ member: {}, connections: { available: true, reason: null, items: [] } });
+  assert.ok(old.card, 'the card node is mounted');
+  assert.equal(old.card.getAttribute('hidden'), '', 'an older pilot keeps it hidden');
+  assert.equal(old.card.textContent, '');
+  const live = await run({ member: {}, connections: { available: true, reason: null, meta: { configured: true },
+    items: [{ connector: 'messenger', status: 'connected', account: 'Pagina Presti' }] } });
+  assert.equal(live.card.getAttribute('hidden'), null);
+  assert.ok(live.card.textContent.includes('Collegamenti Meta'));
+  const hrefs = live.card.findAll('a').map((node) => node.getAttribute('href'));
+  assert.deepEqual(hrefs, ['../profile/collega?connector=whatsapp', '../profile/collega?connector=instagram']);
+  assert.ok(live.card.textContent.includes('Collegato come Pagina Presti'));
+  assert.equal(live.calls, 1, 'one profile read feeds both cards');
+  const down = await run(null);
+  assert.equal(down.card.getAttribute('hidden'), '', 'an unreadable profile keeps Meta hidden');
+});
