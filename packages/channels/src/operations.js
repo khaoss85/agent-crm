@@ -1518,6 +1518,10 @@ export function createChannelOperations(deps) {
     });
     const { updated, before } = committed;
     const after = countImportOutcomes(importKey);
+    // `skippedMessages` is page-observed, not row-derived (no outcome
+    // row is written for a provider-confirmed-gone message): it rides
+    // the answer as a diagnostic so a systematically-404 read stays
+    // visible, while the tallies above stay strictly row-derived.
     return {
       done: updated.status === 'done' ? true : done && updated.nextPageToken === checked.nextPageToken,
       state: importStateSummary(updated),
@@ -1529,6 +1533,7 @@ export function createChannelOperations(deps) {
         created: after.created - before.created,
         unresolved: after.unresolved - before.unresolved,
         withoutSender: after.withoutSender - before.withoutSender,
+        skippedMessages: checked.skippedMessages ?? 0,
       }),
     };
   }

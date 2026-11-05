@@ -154,7 +154,7 @@ test('a paged import stores one row per event, reconciles every sender, and repo
   const first = await harness.advanceImport(SPACE, { connectionKey: key, limit: 2 });
   assert.equal(first.done, false);
   assert.deepEqual(first.page, {
-    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0,
+    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   });
   const progress = harness.readImport(SPACE, { connectionKey: key });
   assert.equal(progress.status, 'running');
@@ -257,7 +257,7 @@ test('a webhook stored first is adopted by the later import, never doubled', asy
   // without this replay the common webhook-before-backfill flow would
   // leave the sender with no external identity and no contact.
   assert.deepEqual(advanced.page, {
-    imported: 0, duplicates: 1, failed: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 1, failed: 0, matched: 0, created: 1, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   });
   assert.ok(
     sender.calls.some((request) => request.handle === '+390200007001'),
@@ -289,10 +289,10 @@ test('two advances racing one import keep exactly one outcome per event', async 
   assert.equal(first.done, true);
   assert.equal(second.done, true);
   assert.deepEqual(first.page, {
-    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0,
+    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 2, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   });
   assert.deepEqual(second.page, {
-    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   }, 'the loser replays to kept outcomes: nothing recounted, nothing re-resolved');
   const state = harness.readImport(SPACE, { connectionKey: key });
   assert.equal(state.status, 'done');
@@ -326,7 +326,7 @@ test('a sender seen twice reconciles to one contact; ambiguity stays unresolved'
   const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(advanced.done, true);
   assert.deepEqual(advanced.page, {
-    imported: 5, duplicates: 0, failed: 0, matched: 1, created: 1, unresolved: 1, withoutSender: 1,
+    imported: 5, duplicates: 0, failed: 0, matched: 1, created: 1, unresolved: 1, withoutSender: 1, skippedMessages: 0,
   });
   // created once for the repeated handle, matched on its replay;
   // ambiguous evidence unresolved; malformed evidence kept without a
@@ -357,7 +357,7 @@ test('without customer-data the import stores everything and leaves senders pend
   const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(advanced.done, true);
   assert.deepEqual(advanced.page, {
-    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 2, withoutSender: 0,
+    imported: 2, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 2, withoutSender: 0, skippedMessages: 0,
   });
   const state = harness.readImport(SPACE, { connectionKey: key });
   assert.equal(state.status, 'done');
@@ -583,7 +583,7 @@ test('a mid-page sender failure replays to the same rows and the same counts as 
   // unresolved goes 1 → 0: the pending sender the failed attempt left
   // behind resolves now, so the honest delta reads -1 next to the +1 create.
   assert.deepEqual(retried.page, {
-    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 1, unresolved: -1, withoutSender: 0,
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 1, unresolved: -1, withoutSender: 0, skippedMessages: 0,
   }, 'the retry finishes only the pending sender: nothing already counted is tallied again');
   const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
   for (const field of CONVERGE_FIELDS) {
@@ -644,7 +644,7 @@ test('a mid-page row-store failure replays to the same rows and the same counts 
   // failed goes 1 → 0: the page answer reports honest before/after deltas,
   // so resolving a recorded failure reads as -1 next to the +1 import.
   assert.deepEqual(retried.page, {
-    imported: 1, duplicates: 0, failed: -1, matched: 0, created: 1, unresolved: 0, withoutSender: 0,
+    imported: 1, duplicates: 0, failed: -1, matched: 0, created: 1, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   }, 'the retry skips the recorded event and processes only the missing one');
   const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
   for (const field of CONVERGE_FIELDS) {
@@ -707,7 +707,7 @@ test('a dropped cursor commit replays to the same rows and counts', async (t) =>
   const retried = await scene.harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(retried.done, true);
   assert.deepEqual(retried.page, {
-    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   }, 'every outcome already final: the replay recounts nothing');
   const cleanState = clean.harness.readImport(SPACE, { connectionKey: clean.key });
   for (const field of CONVERGE_FIELDS) {
@@ -871,7 +871,7 @@ test('a webhook-first echo listed later with its provider instant is adopted, ne
   const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(advanced.done, true);
   assert.deepEqual(advanced.page, {
-    imported: 0, duplicates: 1, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0,
+    imported: 0, duplicates: 1, failed: 0, matched: 0, created: 0, unresolved: 0, withoutSender: 0, skippedMessages: 0,
   });
   assert.equal(harness.inbox(SPACE).length, 1, 'one message, one row, whichever path saw it first');
   const outcomes = harness.internals.modules.get('channel-import-outcome').service.listWhere({});
@@ -936,7 +936,7 @@ test('a deterministically failing event is recorded failed and skipped: the page
   const advanced = await harness.advanceImport(SPACE, { connectionKey: key });
   assert.equal(advanced.done, true, 'one poisoned event never bricks the page');
   assert.deepEqual(advanced.page, {
-    imported: 2, duplicates: 0, failed: 1, matched: 0, created: 2, unresolved: 1, withoutSender: 0,
+    imported: 2, duplicates: 0, failed: 1, matched: 0, created: 2, unresolved: 1, withoutSender: 0, skippedMessages: 0,
   });
   const state = harness.readImport(SPACE, { connectionKey: key });
   assert.equal(state.status, 'done');
@@ -983,7 +983,7 @@ test('a re-listed same event with conflicting sender evidence refines to unresol
   const second = await harness.advanceImport(SPACE, { connectionKey: key, limit: 1 });
   assert.equal(second.done, true);
   assert.deepEqual(second.page, {
-    imported: 0, duplicates: 0, failed: 0, matched: 0, created: -1, unresolved: 1, withoutSender: 0,
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: -1, unresolved: 1, withoutSender: 0, skippedMessages: 0,
   }, 'the conflict moves the sender to unresolved: nothing recounted, nothing doubled');
   assert.ok(
     sender.calls.some((request) => request.handle === '+390200009101')

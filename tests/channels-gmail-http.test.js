@@ -340,6 +340,12 @@ test('a quota 403 retries while an auth-shaped 403 still refuses (backlog:3a3a41
 });
 
 test('a message gone between list and get is skipped, the page still completes (backlog:3a3a41b2)', async () => {
+  // The skip needs Google's confirmed not-found envelope, the shape the
+  // real messages.get returns for a deleted message — a bare 404 without
+  // it aborts the page instead (next test), so a transient miss is
+  // retried, never silently dropped.
+  const goneEnvelope = { error: { code: 404, message: 'Not Found',
+    errors: [{ domain: 'global', reason: 'notFound', message: 'Not Found' }] } };
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url, 'https://gmail.googleapis.com');
     if (parsed.pathname === '/gmail/v1/users/me/messages') {
@@ -348,12 +354,48 @@ test('a message gone between list and get is skipped, the page still completes (
     if (url.includes('/messages/gmail-k1')) {
       return { ok: true, status: 200, json: async () => restMessage({ id: 'gmail-k1', threadId: 'thread-K' }) };
     }
-    return { ok: false, status: 404, json: async () => ({ error: { code: 404, message: 'not found' } }) };
+    return { ok: false, status: 404, json: async () => goneEnvelope };
   };
   const io = createGmailHttpIo({ fetchImpl, mailbox: MAILBOX });
   const page = await io.listHistory({ secret: GRANT, since: new Date(AT - HOUR).toISOString() });
   assert.equal(page.events.length, 1);
   assert.equal(page.events[0].providerEventId, 'gmail-k1');
+  assert.equal(page.skippedMessages, 1, 'the gone message is counted, not silently absorbed');
+});
+
+test('a list-level 404 aborts as transient 502, never as status 404 (backlog:3a3a41b2)', async () => {
+  // HTTP-mapping logic keyed on status reads 404 as "not found,
+  // non-retryable": the transient code must never ride with it.
+  const io = createGmailHttpIo({
+    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({ error: { code: 404, message: 'not found' } }) }),
+    mailbox: MAILBOX,
+  });
+  const failure = await io.listHistory({ secret: GRANT, since: new Date(AT - HOUR).toISOString() }).then(
+    () => { throw new Error('a list-level 404 should abort the page'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'CHANNEL_HISTORY_TRANSIENT');
+  assert.equal(failure.status, 502, 'retryable code, retryable status');
+});
+
+test('a get 404 without the not-found envelope aborts the page (backlog:3a3a41b2)', async () => {
+  // A transient 404 for a live message (frontend miss, proxy-mapped
+  // error) must not skip like a deleted one: the page aborts and the
+  // retry re-reads it.
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url, 'https://gmail.googleapis.com');
+    if (parsed.pathname === '/gmail/v1/users/me/messages') {
+      return { ok: true, status: 200, json: async () => ({ messages: [{ id: 'gmail-k1', threadId: 'thread-K' }] }) };
+    }
+    return { ok: false, status: 404, json: async () => ({ error: { code: 404, message: 'not found' } }) };
+  };
+  const io = createGmailHttpIo({ fetchImpl, mailbox: MAILBOX });
+  const failure = await io.listHistory({ secret: GRANT, since: new Date(AT - HOUR).toISOString() }).then(
+    () => { throw new Error('an unconfirmed get 404 should abort the page'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'CHANNEL_HISTORY_TRANSIENT');
+  assert.equal(failure.status, 502);
 });
 
 test('a refused Gmail history carries Google machine reason, never the token or the mailbox', async () => {
@@ -430,4 +472,44 @@ test('a Gmail refusal reason that is not a code carries nothing', async () => {
     assert.ok(!JSON.stringify(failure.details ?? {}).includes(GRANT), 'no token in details');
     assert.ok(!JSON.stringify(failure.details ?? {}).includes(MAILBOX), 'no mailbox in details');
   }
+});
+
+test('a gone message is counted in the advance answer, not silently absorbed (backlog:3a3a41b2)', async (t) => {
+  // End to end: the skip count rides the page through validation into
+  // the advance answer, so a systematically-404 read is a visible
+  // number on the import outcome, never a silently shorter page.
+  const goneEnvelope = { error: { code: 404, message: 'Not Found',
+    errors: [{ domain: 'global', reason: 'notFound', message: 'Not Found' }] } };
+  const fetchImpl = async (url, init = {}) => {
+    if (init.headers?.Authorization !== `Bearer ${GRANT}`) {
+      return { ok: false, status: 401, json: async () => ({ error: { code: 401, message: 'login required' } }) };
+    }
+    const parsed = new URL(url, 'https://gmail.googleapis.com');
+    if (parsed.pathname === '/gmail/v1/users/me/messages') {
+      return { ok: true, status: 200, json: async () => ({ messages: [{ id: 'gmail-s1', threadId: 'thread-A' }, { id: 'gmail-gone', threadId: 'thread-A' }] }) };
+    }
+    if (url.includes('/messages/gmail-s1')) {
+      return { ok: true, status: 200, json: async () => restMessage({ id: 'gmail-s1', threadId: 'thread-A' }) };
+    }
+    return { ok: false, status: 404, json: async () => goneEnvelope };
+  };
+  const { definition, api } = httpAdapter({ fetch: fetchImpl });
+  const harness = createChannelsHarness({
+    adapterDefinition: definition,
+    fixtureApi: api,
+    secretRef: SECRET_REF,
+    secretValue: GRANT,
+    tenantId: 'channel-kit-gmail-http-skip',
+  });
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE, {
+    channel: 'email', account: MAILBOX, adapter: GMAIL_ADAPTER_NAME,
+    adapterVersion: GMAIL_ADAPTER_VERSION, secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE, reg.connection.sourceKey);
+  await harness.startImport(SPACE, { connectionKey: reg.connection.sourceKey });
+  const advanced = await harness.advanceImport(SPACE, { connectionKey: reg.connection.sourceKey });
+  assert.equal(advanced.page?.imported, 1, 'the live message imports');
+  assert.equal(advanced.page?.skippedMessages, 1, 'the gone message is counted on the answer');
+  assert.equal(advanced.page?.failed, 0, 'a gone message is neither imported nor failed');
 });

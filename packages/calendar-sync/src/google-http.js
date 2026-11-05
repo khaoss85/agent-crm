@@ -109,8 +109,17 @@ export function toEngineEvent(wire) {
     const person = toEnginePerson(raw);
     if (person !== null) attendees.push(person);
   }
+  // An expanded occurrence carries its series identity
+  // (`recurringEventId`, backlog:3a3a41b2): the fake emits it, so the
+  // HTTP read carries the same shape — grouping by series works on
+  // production exactly as proven against the fake. A missing or
+  // unbounded value stays absent, never a guessed link.
+  const recurring = typeof wire.recurringEventId === 'string' && EVENT_ID_RE.test(wire.recurringEventId)
+    ? { recurringEventId: wire.recurringEventId }
+    : {};
   return Object.freeze({
     id,
+    ...recurring,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
     description: typeof wire.description === 'string' ? wire.description : '',
     start: wire.start ?? null,
@@ -234,27 +243,30 @@ export function createHttpGoogleCalendar(options = {}) {
       assertSecret(secret, 'listEvents');
       const id = assertCalendarId(calendarId);
       const params = new URLSearchParams();
+      // A bound is present only as a non-empty string: undefined, null
+      // and '' all mean "no bound" on both providers (backlog:3a3a41b2),
+      // so an optional field forwarded as null never 422s. Anything else
+      // must read as an instant, or the call refuses on both providers.
+      const boundOrAbsent = (value, name) => {
+        if (value === undefined || value === null || value === '') return undefined;
+        if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, `google listEvents needs a readable ${name} instant when bounding`);
+        }
+        return value;
+      };
+      const from = boundOrAbsent(timeMin, 'timeMin');
+      const to = boundOrAbsent(timeMax, 'timeMax');
       if (syncToken !== undefined) {
         if (typeof syncToken !== 'string' || syncToken === '') {
           throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a bounded syncToken when resuming');
         }
-        if (timeMin !== undefined || timeMax !== undefined) {
+        if (from !== undefined || to !== undefined) {
           throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents refuses time bounds beside a syncToken: resume without bounds');
         }
         params.set('syncToken', syncToken);
       } else {
-        if (timeMin !== undefined) {
-          if (typeof timeMin !== 'string' || timeMin === '' || !Number.isFinite(Date.parse(timeMin))) {
-            throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a readable timeMin instant when bounding');
-          }
-          params.set('timeMin', timeMin);
-        }
-        if (timeMax !== undefined) {
-          if (typeof timeMax !== 'string' || timeMax === '' || !Number.isFinite(Date.parse(timeMax))) {
-            throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a readable timeMax instant when bounding');
-          }
-          params.set('timeMax', timeMax);
-        }
+        if (from !== undefined) params.set('timeMin', from);
+        if (to !== undefined) params.set('timeMax', to);
         params.set('singleEvents', 'true');
         params.set('maxResults', '2500');
       }

@@ -59,6 +59,21 @@ function snapshot(event) {
  */
 const WEEKLY_EXPANSION_MAX = 1000;
 
+/**
+ * One read bound, or absent. The same contract as the HTTP provider
+ * (backlog:3a3a41b2): undefined, null and '' all mean "no bound", a
+ * non-empty string must read as an instant, and anything else refuses
+ * with the same code — so a test written against the fake never passes
+ * a bound production would 422, and never 422s on one it would accept.
+ */
+function boundOrAbsent(raw, what) {
+  if (raw === undefined || raw === null || raw === '') return NaN;
+  if (typeof raw !== 'string' || !Number.isFinite(Date.parse(raw))) {
+    throw fakeError('GOOGLE_CALL_MALFORMED', 422, `google listEvents needs a readable ${what} instant when bounding`);
+  }
+  return Date.parse(raw);
+}
+
 function parseUntilInstant(raw) {
   if (typeof raw !== 'string' || raw === '') return NaN;
   const direct = Date.parse(raw);
@@ -116,9 +131,18 @@ function expandWeeklySeries(event, minMs, maxMs) {
   // The skip counts toward COUNT, so an exhausted series reads empty.
   const skip = firstStart < minMs - duration ? Math.floor((minMs - duration - firstStart) / step) : 0;
   const instances = [];
+  let cut = false;
   for (let index = skip, at = firstStart + skip * step;
-    at < maxMs && instances.length < WEEKLY_EXPANSION_MAX;
+    at < maxMs;
     index += 1, at += step) {
+    if (instances.length >= WEEKLY_EXPANSION_MAX) {
+      // The cap cuts the window instead of paging it: report the cut so
+      // the caller never mistakes 1000 rows for a complete window
+      // (backlog:3a3a41b2). The -30/+90-day production window stays far
+      // below the cap; anything wider must page or narrow the window.
+      cut = true;
+      break;
+    }
     if (count !== null && index >= count) break;
     if (untilMs !== null && at > untilMs) break;
     const end = at + duration;
@@ -133,7 +157,7 @@ function expandWeeklySeries(event, minMs, maxMs) {
       recurrence: undefined,
     }));
   }
-  return instances;
+  return { instances, truncated: cut };
 }
 
 /**
@@ -244,16 +268,23 @@ export function createFakeGoogleCalendar(options = {}) {
      * List events. With `syncToken`: only what changed since, plus
      * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it to
      * events ending after the instant, `timeMax` to events starting
-     * before it; `showDeleted` adds tombstones). A seeded endless weekly
-     * series expands to its single occurrences inside the window only
-     * (backlog:3a3a41b2) — without both bounds the master reads as one
-     * row, the way an unbounded Google query would.
+     * before it; `showDeleted` adds tombstones). A bound reads as absent
+     * when undefined, null or '' — the same contract as the HTTP
+     * provider — and a non-empty bound must read as an instant, or the
+     * read refuses with `GOOGLE_CALL_MALFORMED` on both providers. A
+     * seeded endless weekly series expands to its single occurrences
+     * inside the window only (backlog:3a3a41b2) — without both bounds
+     * the master reads as one row, the way an unbounded Google query
+     * would. When the expansion cap cuts the window the answer carries
+     * `truncated: true` instead of a silent short page.
      */
     listEvents({ calendarId, syncToken, timeMin, timeMax, showDeleted = false, secret } = {}) {
       requireGrant({ secret }, 'listEvents');
       const cal = calendar(calendarId);
+      const minMs = boundOrAbsent(timeMin, 'timeMin');
+      const maxMs = boundOrAbsent(timeMax, 'timeMax');
       if (syncToken !== undefined) {
-        if (timeMin !== undefined || timeMax !== undefined) {
+        if (Number.isFinite(minMs) || Number.isFinite(maxMs)) {
           throw fakeError('GOOGLE_CALL_MALFORMED', 422,
             'google listEvents refuses time bounds beside a syncToken: resume without bounds');
         }
@@ -271,14 +302,14 @@ export function createFakeGoogleCalendar(options = {}) {
         }
         return Object.freeze({ items: Object.freeze(changed), nextSyncToken: tokenFor(cal) });
       }
-      const minMs = typeof timeMin === 'string' && timeMin !== '' ? Date.parse(timeMin) : NaN;
-      const maxMs = typeof timeMax === 'string' && timeMax !== '' ? Date.parse(timeMax) : NaN;
       const items = [];
+      let truncated = false;
       for (const event of cal.events.values()) {
         if (event.status === 'cancelled' && !showDeleted) continue;
         const expanded = expandWeeklySeries(event, minMs, maxMs);
         if (expanded !== null) {
-          for (const instance of expanded) items.push(instance);
+          for (const instance of expanded.instances) items.push(instance);
+          if (expanded.truncated) truncated = true;
           continue;
         }
         if (Number.isFinite(minMs)) {
@@ -291,7 +322,11 @@ export function createFakeGoogleCalendar(options = {}) {
         }
         items.push(snapshot(event));
       }
-      return Object.freeze({ items: Object.freeze(items), nextSyncToken: tokenFor(cal) });
+      return Object.freeze({
+        items: Object.freeze(items),
+        nextSyncToken: tokenFor(cal),
+        ...(truncated ? { truncated: true } : {}),
+      });
     },
 
     /**

@@ -1135,3 +1135,52 @@ test('the fake refuses time bounds beside a sync token, like the http provider',
     (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
   );
 });
+
+test('null, empty and invalid time bounds read the same on the fake (backlog:3a3a41b2)', async (t) => {
+  // Provider parity: a bound is present only as a readable non-empty
+  // string — undefined, null and '' all mean "no bound", and anything
+  // else refuses with the same code the HTTP provider raises.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt1',
+    summary: 'Session evt1',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' },
+    end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  for (const absent of [undefined, null, '']) {
+    const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin: absent, timeMax: absent });
+    assert.equal(listed.items.length, 1, `bound ${String(absent)} reads as absent`);
+    assert.equal(listed.truncated, undefined, 'a complete read carries no truncation flag');
+  }
+  for (const garbage of ['not-an-instant', 1729000000000, true]) {
+    assert.throws(
+      () => ctx.provider.listEvents({ calendarId: CAL, timeMin: garbage }),
+      (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+      `bound ${String(garbage)} refuses like the HTTP provider`,
+    );
+    assert.throws(
+      () => ctx.provider.listEvents({ calendarId: CAL, timeMax: garbage }),
+      (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+      `bound ${String(garbage)} refuses like the HTTP provider`,
+    );
+  }
+});
+
+test('an over-wide window reports the expansion cut instead of a silent short page (backlog:3a3a41b2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-endless-wide',
+    summary: 'Session evt-endless-wide',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY'],
+  });
+  // Thirty years hold ~1560 Wednesdays: the 1000-instance cap must cut.
+  const listed = ctx.provider.listEvents({
+    calendarId: CAL, timeMin: '2020-01-01T00:00:00.000Z', timeMax: '2050-01-01T00:00:00.000Z',
+  });
+  assert.equal(listed.items.length, 1000, 'the expansion stops at the cap');
+  assert.equal(listed.truncated, true, 'the cut is signalled, never mistaken for a complete window');
+});
