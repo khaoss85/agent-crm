@@ -124,3 +124,58 @@ test('without a readable email the connected Google account names the person', a
   assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'dan@presti.it');
   assert.equal(byClass(mount, 'span', 'bo-profilo-avatar')[0].textContent, 'DA');
 });
+
+// Meta rows (backlog:92f993586110): WhatsApp, Instagram and Messenger connect
+// through the pilot's Meta consent, on the same /api/profile answer.
+test('an answer without connections.meta shows no Meta rows at all', async () => {
+  const mount = await render({ member: {}, connections: { available: true, reason: null, items: [] } });
+  const ids = byClass(mount, 'div', 'bo-profilo-conn').map((row) => row.getAttribute('data-connector'));
+  assert.deepEqual(ids, ['calendar', 'gmail']);
+  assert.ok(!mount.textContent.includes('Canali Meta'));
+});
+
+test('Meta configured: WhatsApp, Instagram and Messenger offer Collega and Scollega on the pilot routes', async () => {
+  const mount = await render({ member: {}, connections: { available: true, reason: null, meta: { configured: true }, items: [
+    { connector: 'calendar', status: 'connected', account: 'elena@studioaurora.it' },
+    { connector: 'whatsapp', status: 'connected', account: '+39 333 0000000' },
+    { connector: 'instagram', status: 'disconnected', account: null },
+  ] } });
+  const rows = byClass(mount, 'div', 'bo-profilo-conn');
+  assert.deepEqual(rows.map((row) => row.getAttribute('data-connector')),
+    ['calendar', 'gmail', 'whatsapp', 'instagram', 'messenger']);
+  assert.equal(byClass(mount, 'p', 'bo-profilo-group')[0].textContent, 'Canali Meta');
+  const wa = rows[2];
+  assert.ok(wa.textContent.includes('Collegato come +39 333 0000000'));
+  const form = wa.findAll('form')[0];
+  assert.equal(form.getAttribute('action'), '../profile/scollega');
+  assert.equal(form.findAll('input')[0].getAttribute('value'), 'whatsapp');
+  for (const [index, connector] of [[3, 'instagram'], [4, 'messenger']]) {
+    const link = rows[index].findAll('a')[0];
+    assert.equal(link.textContent, 'Collega');
+    assert.equal(link.getAttribute('href'), `../profile/collega?connector=${connector}`);
+  }
+  assert.ok(!mount.textContent.includes('non è ancora attivo'));
+});
+
+test('Meta reported but not configured: rows named, «Non ancora attivo», no action', async () => {
+  const mount = await render({ member: {}, connections: { available: true, reason: null, meta: { configured: false }, items: [
+    { connector: 'whatsapp', status: 'connected', account: '+39 333 0000000' },
+  ] } });
+  assert.ok(!mount.textContent.includes('Collegato come +39'), 'an inactive Meta never claims a connection');
+  const metaRows = byClass(mount, 'div', 'bo-profilo-conn').filter((row) =>
+    ['whatsapp', 'instagram', 'messenger'].includes(row.getAttribute('data-connector')));
+  assert.equal(metaRows.length, 3);
+  for (const row of metaRows) {
+    assert.ok(row.textContent.includes('Non ancora attivo'));
+    assert.deepEqual(row.findAll('a'), []);
+    assert.deepEqual(row.findAll('form'), []);
+  }
+  assert.match(mount.textContent, /Meta non è ancora attivo per questo spazio/);
+});
+
+test('a connected Meta account never stands in for the person email', async () => {
+  const mount = await render({ member: {}, connections: { available: true, reason: null, meta: { configured: true }, items: [
+    { connector: 'whatsapp', status: 'connected', account: 'Studio Presti' },
+  ] } }, { name: 'Dan', email: 'google|123', role: 'owner' });
+  assert.deepEqual(byClass(mount, 'span', 'bo-profilo-email'), [], 'no email shown from a Meta account');
+});

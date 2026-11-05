@@ -46,6 +46,11 @@ class FakeNode {
     return name in this.attributes ? this.attributes[name] : null;
   }
 
+  removeAttribute(name) {
+    delete this.attributes[name];
+    if (name === 'class') this.classList._set = new Set();
+  }
+
   get className() {
     return [...this.classList._set].join(' ');
   }
