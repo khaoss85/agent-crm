@@ -50,9 +50,11 @@
  *   verdict depends on files they never relatively import — repo-wide
  *   `grep` scans and recursive walks of `packages/`, `apps/`, `tests/`
  *   or `scripts/` — so the import mapping above never selects them.
- *   Twice `main` turned red after green-alone PRs for exactly
- *   this: #222 against #221 (`tests/isolated-git.test.js`) and #234
- *   (`tests/actor-fails-closed.test.js:251`). The guards never substitute
+ *   Three times `main` turned red after green-alone PRs for exactly
+ *   this: #222 against #221 (`tests/isolated-git.test.js`), #234
+ *   (`tests/actor-fails-closed.test.js:251`), and the nightly main run
+ *   41956161675 (`tests/admin-authority-tokens.test.js`, cure in #593).
+ *   The guards never substitute
  *   for missing coverage: the warned fallback is decided on the
  *   mapped selection alone, before the guards join it.
  *
@@ -157,7 +159,8 @@ const STEP_BUDGET_SEC = 300;
  * scenario-document ~1.4 s, signed-terms-consumption-guard ~0.3 s,
  * spine-v2-m2-final-raw-boundary ~9.8 s,
  * agent-tool-selection-contract ~0.7 s, spine-v2-m2f-entry-wiring ~6.5 s,
- * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s — about 25 s
+ * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s,
+ * admin-authority-tokens ~0.3 s — about 25 s
  * added to the fast step in total. Deliberately NOT always-run: the three
  * characterization suites (~80 s together) join conditionally instead —
  * when the diff touches a file their baseline digests, or adds a source
@@ -220,6 +223,11 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // them with a green fast and a red full suite the night after.
   'tests/jtbd-portfolio-gate.test.js',
   'tests/implementation-evidence.test.js',
+  // Reads apps/admin/public/styles.css with readFileSync, never importing
+  // it: a CSS-only change selects nothing through the import mapping, so
+  // the fast gate stayed green while the nightly full suite failed on
+  // «no literal colour outside :root» (main run 41956161675, cure in #593).
+  'tests/admin-authority-tokens.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
