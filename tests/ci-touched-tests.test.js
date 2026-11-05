@@ -676,11 +676,14 @@ test('an oversized synthetic selection falls back to the changed tests', () => {
 
 // ------------------------------------------------------------------ repo-wide guards
 //
-// Twice `main` turned red after green-alone PRs (#222 against #221 through
-// tests/isolated-git.test.js, #234 through tests/actor-fails-closed.test.js)
-// because the guards below scan the whole repository while importing almost
-// none of it, so the import mapping never selects them. They always run on
-// top of the selection (see `withRepoWideGuards`); these tests hold that.
+// Three times `main` turned red after green-alone PRs (#222 against #221
+// through tests/isolated-git.test.js, #234 through
+// tests/actor-fails-closed.test.js, and the nightly main run 41956161675
+// through tests/admin-authority-tokens.test.js, which reads styles.css
+// without importing it) because the guards below scan repository files
+// they never relatively import, so the import mapping never selects them.
+// They always run on top of the selection (see `withRepoWideGuards`);
+// these tests hold that.
 
 test('the declared list holds the acceptance guards', () => {
   assert.ok(
@@ -690,6 +693,10 @@ test('the declared list holds the acceptance guards', () => {
   assert.ok(
     REPO_WIDE_GUARDS.includes('tests/isolated-git.test.js'),
     'a payments-only PR must run tests/isolated-git.test.js',
+  );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-authority-tokens.test.js'),
+    'a CSS-only admin PR must run tests/admin-authority-tokens.test.js',
   );
   assert.ok(
     REPO_WIDE_GUARDS.includes('tests/module-manifest-revision-guard.test.js'),
@@ -713,6 +720,29 @@ test('a payments-only change runs the guards on top of its selection', () => {
     'tests/isolated-git.test.js',
     'tests/payments-checkout.test.js',
   ]);
+});
+
+test('a CSS-only admin change runs the authority-token guard on top of its selection', () => {
+  // styles.css is CSS, not JS: the import mapping selects nothing from it,
+  // and tests/admin-authority-tokens.test.js reads it with readFileSync
+  // instead of importing it — so without the guard list the fast gate
+  // would run nothing while the full suite fails (nightly main run
+  // 41956161675, cure in agent-crm#593).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/styles.css'],
+    contents({
+      'tests/admin-authority-tokens.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/styles.css']);
+  assert.ok(
+    guarded.includes('tests/admin-authority-tokens.test.js'),
+    'a styles.css-only change must run tests/admin-authority-tokens.test.js',
+  );
 });
 
 test('guards join docs-only diffs but an empty diff stays empty', () => {
