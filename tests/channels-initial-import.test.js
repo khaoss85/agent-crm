@@ -983,7 +983,7 @@ test('a re-listed same event with conflicting sender evidence refines to unresol
   const second = await harness.advanceImport(SPACE, { connectionKey: key, limit: 1 });
   assert.equal(second.done, true);
   assert.deepEqual(second.page, {
-    imported: 0, duplicates: 0, failed: 0, matched: 0, created: -1, unresolved: 1, withoutSender: 0, skippedMessages: 0,
+    imported: 0, duplicates: 0, failed: 0, matched: 0, created: 0, unresolved: 1, withoutSender: 0, skippedMessages: 0,
   }, 'the conflict moves the sender to unresolved: nothing recounted, nothing doubled');
   assert.ok(
     sender.calls.some((request) => request.handle === '+390200009101')
