@@ -1057,7 +1057,12 @@ select.bo-spazi-input { flex: none; }
 .bo-tile-tiktok { background: var(--surface-soft); color: var(--ink); }
 .bo-clienti-pill { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--surface-soft); color: var(--ink); }
 .bo-pill-cliente { background: var(--accent-soft); color: var(--accent); }
-.bo-clienti-when { font-size: 13px; }
+.bo-clienti-when { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+/* Ultimo contatto: riga meta (marchio + «canale · quando») sopra l'estratto, mai incollati. */
+.bo-clienti-last { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.bo-clienti-last-meta { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bo-clienti-last-meta .bo-clienti-tile { width: 20px; height: 20px; border-radius: 6px; font-size: 8px; flex: none; }
+.bo-clienti-last-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13px; line-height: 1.4; color: var(--ink); overflow-wrap: anywhere; }
 .bo-clienti-chevron { color: var(--dim); font-size: 18px; }
 .bo-clienti-pager { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
 .bo-clienti-range { font-size: 13px; color: var(--muted); }
