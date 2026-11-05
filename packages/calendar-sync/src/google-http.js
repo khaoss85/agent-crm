@@ -109,8 +109,17 @@ export function toEngineEvent(wire) {
     const person = toEnginePerson(raw);
     if (person !== null) attendees.push(person);
   }
+  // An expanded occurrence carries its series identity
+  // (`recurringEventId`, backlog:3a3a41b2): the fake emits it, so the
+  // HTTP read carries the same shape — grouping by series works on
+  // production exactly as proven against the fake. A missing or
+  // unbounded value stays absent, never a guessed link.
+  const recurring = typeof wire.recurringEventId === 'string' && EVENT_ID_RE.test(wire.recurringEventId)
+    ? { recurringEventId: wire.recurringEventId }
+    : {};
   return Object.freeze({
     id,
+    ...recurring,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
     description: typeof wire.description === 'string' ? wire.description : '',
     start: wire.start ?? null,
@@ -223,20 +232,41 @@ export function createHttpGoogleCalendar(options = {}) {
   return {
     /**
      * List events. With `syncToken`: only what changed since, plus
-     * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it,
+     * `nextSyncToken` (Google refuses time bounds beside a sync token).
+     * Without: the full snapshot (`timeMin`/`timeMax` bound it,
      * `showDeleted` adds tombstones) — the same page shape as the fake.
+     * Both bounds together keep an endless recurrence readable: with
+     * `singleEvents` Google expands only the occurrences inside the
+     * window instead of the whole infinite series (backlog:3a3a41b2).
      */
-    async listEvents({ calendarId, syncToken, timeMin, showDeleted = false, secret } = {}) {
+    async listEvents({ calendarId, syncToken, timeMin, timeMax, showDeleted = false, secret } = {}) {
       assertSecret(secret, 'listEvents');
       const id = assertCalendarId(calendarId);
       const params = new URLSearchParams();
+      // A bound is present only as a non-empty string: undefined, null
+      // and '' all mean "no bound" on both providers (backlog:3a3a41b2),
+      // so an optional field forwarded as null never 422s. Anything else
+      // must read as an instant, or the call refuses on both providers.
+      const boundOrAbsent = (value, name) => {
+        if (value === undefined || value === null || value === '') return undefined;
+        if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, `google listEvents needs a readable ${name} instant when bounding`);
+        }
+        return value;
+      };
+      const from = boundOrAbsent(timeMin, 'timeMin');
+      const to = boundOrAbsent(timeMax, 'timeMax');
       if (syncToken !== undefined) {
         if (typeof syncToken !== 'string' || syncToken === '') {
           throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a bounded syncToken when resuming');
         }
+        if (from !== undefined || to !== undefined) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents refuses time bounds beside a syncToken: resume without bounds');
+        }
         params.set('syncToken', syncToken);
       } else {
-        if (typeof timeMin === 'string' && timeMin !== '') params.set('timeMin', timeMin);
+        if (from !== undefined) params.set('timeMin', from);
+        if (to !== undefined) params.set('timeMax', to);
         params.set('singleEvents', 'true');
         params.set('maxResults', '2500');
       }

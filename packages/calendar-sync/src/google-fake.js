@@ -50,6 +50,117 @@ function snapshot(event) {
 }
 
 /**
+ * Expand one seeded endless weekly series into its single occurrences
+ * inside the read window (backlog:3a3a41b2) — the fake half of Google's
+ * `singleEvents=true`. Returns null when the event is no weekly series
+ * or a bound is missing, so the caller reads the master row as before.
+ * Only `FREQ=WEEKLY` (with an optional `INTERVAL`) expands; anything
+ * else stays a master row rather than a guessed schedule.
+ */
+const WEEKLY_EXPANSION_MAX = 1000;
+
+/**
+ * One read bound, or absent. The same contract as the HTTP provider
+ * (backlog:3a3a41b2): undefined, null and '' all mean "no bound", a
+ * non-empty string must read as an instant, and anything else refuses
+ * with the same code — so a test written against the fake never passes
+ * a bound production would 422, and never 422s on one it would accept.
+ */
+function boundOrAbsent(raw, what) {
+  if (raw === undefined || raw === null || raw === '') return NaN;
+  if (typeof raw !== 'string' || !Number.isFinite(Date.parse(raw))) {
+    throw fakeError('GOOGLE_CALL_MALFORMED', 422, `google listEvents needs a readable ${what} instant when bounding`);
+  }
+  return Date.parse(raw);
+}
+
+function parseUntilInstant(raw) {
+  if (typeof raw !== 'string' || raw === '') return NaN;
+  const direct = Date.parse(raw);
+  if (Number.isFinite(direct)) return direct;
+  const basic = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/.exec(raw);
+  if (!basic) return NaN;
+  return Date.parse(`${basic[1]}-${basic[2]}-${basic[3]}T${basic[4]}:${basic[5]}:${basic[6]}Z`);
+}
+
+function expandWeeklySeries(event, minMs, maxMs) {
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs) return null;
+  const lines = Array.isArray(event?.recurrence) ? event.recurrence : null;
+  if (!lines) return null;
+  let weekly = false;
+  let interval = 1;
+  let count = null;
+  let untilMs = null;
+  for (const line of lines) {
+    if (typeof line !== 'string') return null;
+    if (!line.startsWith('RRULE:')) return null;
+    const rule = line.slice('RRULE:'.length);
+    const parts = Object.fromEntries(rule.split(';').map((pair) => {
+      const at = pair.indexOf('=');
+      return at < 0 ? [pair, ''] : [pair.slice(0, at), pair.slice(at + 1)];
+    }));
+    if (parts.FREQ !== 'WEEKLY') return null;
+    weekly = true;
+    if (parts.INTERVAL !== undefined) {
+      const n = Number.parseInt(parts.INTERVAL, 10);
+      if (!Number.isSafeInteger(n) || n < 1 || n > 52) return null;
+      interval = n;
+    }
+    if (parts.COUNT !== undefined) {
+      const n = Number.parseInt(parts.COUNT, 10);
+      if (!Number.isSafeInteger(n) || n < 1) return null;
+      count = n;
+    }
+    if (parts.UNTIL !== undefined) {
+      const parsed = parseUntilInstant(parts.UNTIL);
+      if (!Number.isFinite(parsed)) return null;
+      untilMs = parsed;
+    }
+    for (const key of Object.keys(parts)) {
+      if (key !== 'FREQ' && key !== 'INTERVAL' && key !== 'COUNT' && key !== 'UNTIL') return null;
+    }
+  }
+  if (!weekly) return null;
+  const firstStart = Date.parse(event?.start?.dateTime ?? '');
+  const firstEnd = Date.parse(event?.end?.dateTime ?? '');
+  if (!Number.isFinite(firstStart) || !Number.isFinite(firstEnd) || firstEnd <= firstStart) return null;
+  const duration = firstEnd - firstStart;
+  const step = interval * 7 * 24 * 3600 * 1000;
+  // Skip whole years before the window without iterating them: an
+  // endless series starting decades back still answers in one pass.
+  // The skip counts toward COUNT, so an exhausted series reads empty.
+  const skip = firstStart < minMs - duration ? Math.floor((minMs - duration - firstStart) / step) : 0;
+  const instances = [];
+  let cut = false;
+  for (let index = skip, at = firstStart + skip * step;
+    at < maxMs;
+    index += 1, at += step) {
+    if (instances.length >= WEEKLY_EXPANSION_MAX) {
+      // The cap cuts the window instead of paging it: report the cut so
+      // the caller never mistakes 1000 rows for a complete window
+      // (backlog:3a3a41b2). The -30/+90-day production window stays far
+      // below the cap; anything wider must page or narrow the window.
+      cut = true;
+      break;
+    }
+    if (count !== null && index >= count) break;
+    if (untilMs !== null && at > untilMs) break;
+    const end = at + duration;
+    if (end <= minMs) continue;
+    const startIso = new Date(at).toISOString();
+    instances.push(snapshot({
+      ...event,
+      id: `${event.id}_${startIso.replace(/[-:.]/g, '')}`,
+      recurringEventId: event.id,
+      start: { ...(event.start ?? {}), dateTime: startIso },
+      end: { ...(event.end ?? {}), dateTime: new Date(end).toISOString() },
+      recurrence: undefined,
+    }));
+  }
+  return { instances, truncated: cut };
+}
+
+/**
  * @param {{ nowMs?: () => number, secret?: string, expectedSecret?: string }} [options]
  * `expectedSecret` binds the fake to the space grant: every engine call
  * must then carry it as its call-time `secret`, or the call refuses.
@@ -134,6 +245,13 @@ export function createFakeGoogleCalendar(options = {}) {
         status: 'confirmed',
         updated: typeof event?.updated === 'string' ? event.updated : nowIso(),
         extendedProperties: { ...(event?.extendedProperties ?? {}) },
+        // A weekly RRULE without end (backlog:3a3a41b2): the full snapshot
+        // expands it into single occurrences inside the read window, the
+        // way Google answers `singleEvents=true` — so a series without
+        // end never reads as one infinite row.
+        ...(Array.isArray(event?.recurrence)
+          && event.recurrence.every((line) => typeof line === 'string' && line.length <= 256)
+          ? { recurrence: Object.freeze([...event.recurrence]) } : {}),
       };
       cal.events.set(id, stored);
       touch(cal, id);
@@ -149,12 +267,27 @@ export function createFakeGoogleCalendar(options = {}) {
     /**
      * List events. With `syncToken`: only what changed since, plus
      * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it to
-     * events ending after the instant; `showDeleted` adds tombstones).
+     * events ending after the instant, `timeMax` to events starting
+     * before it; `showDeleted` adds tombstones). A bound reads as absent
+     * when undefined, null or '' — the same contract as the HTTP
+     * provider — and a non-empty bound must read as an instant, or the
+     * read refuses with `GOOGLE_CALL_MALFORMED` on both providers. A
+     * seeded endless weekly series expands to its single occurrences
+     * inside the window only (backlog:3a3a41b2) — without both bounds
+     * the master reads as one row, the way an unbounded Google query
+     * would. When the expansion cap cuts the window the answer carries
+     * `truncated: true` instead of a silent short page.
      */
-    listEvents({ calendarId, syncToken, timeMin, showDeleted = false, secret } = {}) {
+    listEvents({ calendarId, syncToken, timeMin, timeMax, showDeleted = false, secret } = {}) {
       requireGrant({ secret }, 'listEvents');
       const cal = calendar(calendarId);
+      const minMs = boundOrAbsent(timeMin, 'timeMin');
+      const maxMs = boundOrAbsent(timeMax, 'timeMax');
       if (syncToken !== undefined) {
+        if (Number.isFinite(minMs) || Number.isFinite(maxMs)) {
+          throw fakeError('GOOGLE_CALL_MALFORMED', 422,
+            'google listEvents refuses time bounds beside a syncToken: resume without bounds');
+        }
         const since = parseToken(cal, syncToken);
         const changed = [];
         for (const { eventId } of cal.log) {
@@ -169,17 +302,31 @@ export function createFakeGoogleCalendar(options = {}) {
         }
         return Object.freeze({ items: Object.freeze(changed), nextSyncToken: tokenFor(cal) });
       }
-      const minMs = typeof timeMin === 'string' && timeMin !== '' ? Date.parse(timeMin) : NaN;
       const items = [];
+      let truncated = false;
       for (const event of cal.events.values()) {
         if (event.status === 'cancelled' && !showDeleted) continue;
+        const expanded = expandWeeklySeries(event, minMs, maxMs);
+        if (expanded !== null) {
+          for (const instance of expanded.instances) items.push(instance);
+          if (expanded.truncated) truncated = true;
+          continue;
+        }
         if (Number.isFinite(minMs)) {
           const endMs = Date.parse(event?.end?.dateTime ?? '');
           if (Number.isFinite(endMs) && endMs <= minMs) continue;
         }
+        if (Number.isFinite(maxMs)) {
+          const startMs = Date.parse(event?.start?.dateTime ?? '');
+          if (Number.isFinite(startMs) && startMs >= maxMs) continue;
+        }
         items.push(snapshot(event));
       }
-      return Object.freeze({ items: Object.freeze(items), nextSyncToken: tokenFor(cal) });
+      return Object.freeze({
+        items: Object.freeze(items),
+        nextSyncToken: tokenFor(cal),
+        ...(truncated ? { truncated: true } : {}),
+      });
     },
 
     /**

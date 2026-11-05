@@ -371,6 +371,70 @@ test('without the grant the provider refuses and the status says unbound', async
   );
 });
 
+test('listEvents bounds the snapshot with timeMax, never beside a sync token', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, json: async () => ({ items: [] }) };
+  };
+  const provider = createHttpGoogleCalendar({ fetchImpl });
+  const TIME_MAX = '2027-01-18T00:00:00.000Z';
+  await provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: TIME_MIN, timeMax: TIME_MAX });
+  const params = new URL(calls[0], 'https://www.googleapis.com').searchParams;
+  assert.equal(params.get('timeMin'), TIME_MIN);
+  assert.equal(params.get('timeMax'), TIME_MAX);
+  assert.equal(params.get('singleEvents'), 'true', 'recurrences expand inside the window only');
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, syncToken: 'rest-0-1', timeMax: TIME_MAX }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+    'Google refuses time bounds beside a sync token',
+  );
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, syncToken: 'rest-0-1', timeMin: TIME_MIN }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+    'timeMin beside a sync token refuses too',
+  );
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, timeMax: 'not-an-instant' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: 'not-an-instant' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  // Null and the empty string mean "no bound" on both providers, so an
+  // optional field forwarded as null never 422s.
+  await provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: null, timeMax: '' });
+  const unbounded = new URL(calls[calls.length - 1], 'https://www.googleapis.com').searchParams;
+  assert.equal(unbounded.get('timeMin'), null, 'null timeMin is absent, not a param');
+  assert.equal(unbounded.get('timeMax'), null, 'empty timeMax is absent, not a param');
+  await provider.listEvents({ calendarId: CAL, secret: GRANT, syncToken: 'rest-0-1', timeMin: null, timeMax: '' });
+});
+
+test('the windowed read keeps the occurrence identity the fake emits', async () => {
+  // Fake/HTTP parity (backlog:3a3a41b2): an expanded instance carries
+  // recurringEventId on both providers, so grouping by series works on
+  // production exactly as proven against the fake.
+  const wire = (id, recurringEventId) => ({
+    id, status: 'confirmed', updated: '2026-10-21T09:00:00.000Z',
+    ...(recurringEventId === undefined ? {} : { recurringEventId }),
+  });
+  const fetchImpl = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ items: [
+      wire('evt-series_20261021T090000Z', 'evt-series'),
+      wire('evt-single'),
+      wire('evt-bad', 'not an id!!'),
+    ] }),
+  });
+  const provider = createHttpGoogleCalendar({ fetchImpl });
+  const listed = await provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: TIME_MIN, timeMax: '2026-11-21T00:00:00.000Z' });
+  const byId = new Map(listed.items.map((event) => [event.id, event]));
+  assert.equal(byId.get('evt-series_20261021T090000Z').recurringEventId, 'evt-series');
+  assert.equal(byId.get('evt-single').recurringEventId, undefined, 'a master carries no series identity');
+  assert.equal(byId.get('evt-bad').recurringEventId, undefined, 'an unbounded identity stays absent, never guessed');
+});
+
 test('listEvents follows every result page and keeps the final sync token', async () => {
   const calls = [];
   const wire = (id) => ({ id, status: 'confirmed', updated: '2026-10-21T09:00:00.000Z' });

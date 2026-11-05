@@ -148,7 +148,25 @@ function googleRefusalReason(body) {
   return null;
 }
 
+/**
+ * Gmail answers quota exhaustion with 403, not 429: after hundreds of
+ * `messages.get` calls in one import the provider refuses with
+ * `rateLimitExceeded`, which used to read as a revoked grant
+ * (CHANNEL_HISTORY_REFUSED, backlog:3a3a41b2). The body's machine reason
+ * tells the two apart — a quota reason retries, only an auth-shaped
+ * refusal (or no reason at all, fail-closed) keeps the refused code.
+ * The reason itself never lands in a message, a row or a rethrow.
+ */
+const GMAIL_QUOTA_REASONS = new Set([
+  'rateLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded',
+  'dailyLimitExceeded', 'dailyLimitExceededUnreg',
+]);
+
 function mapHistoryFailure(status, what, body) {
+  if (status === 403 && GMAIL_QUOTA_REASONS.has(googleRefusalReason(body))) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
   if (status === 401 || status === 403) {
     const reason = googleRefusalReason(body);
     throw httpError(`Gmail ${what} refused: the grant is missing, expired or revoked`,
@@ -157,6 +175,44 @@ function mapHistoryFailure(status, what, body) {
   if (status === 429) {
     throw httpError(`Gmail ${what} is rate limited: retry the import later`,
       'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
+  // The list-level read always aborts the page with a retryable code:
+  // a status that names "not found" (HTTP 404) is still a provider
+  // failure here — the per-message get below is the only path that may
+  // skip one message gone between list and get, and only on Google's
+  // confirmed not-found envelope. Keeping 404 out of the transient
+  // pair stops retry, alerting and HTTP mapping keyed on status from
+  // reading "not found" for a retryable condition (backlog:3a3a41b2).
+  throw httpError(`Gmail ${what} failed without provider detail: retry the import later`,
+    'CHANNEL_HISTORY_TRANSIENT', 502);
+}
+
+/**
+ * One `messages.get` failure, mapped beside the list-level mapper. Quota
+ * and outage map exactly like the list read (retryable); a 404 carrying
+ * Google's confirmed not-found envelope (`reason: 'notFound'`) becomes
+ * the gone marker the loop skips — one deleted message never aborts the
+ * hundreds already read. Any other 404 (transient miss, mapped proxy
+ * error) still aborts the page as transient, so a live message is
+ * retried instead of silently dropped (backlog:3a3a41b2). The marker
+ * carries a fixed message and no body: no provider text travels.
+ */
+function mapHistoryGetFailure(status, what, body) {
+  if (status === 403 && GMAIL_QUOTA_REASONS.has(googleRefusalReason(body))) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
+  if (status === 401 || status === 403) {
+    const reason = googleRefusalReason(body);
+    throw httpError(`Gmail ${what} refused: the grant is missing, expired or revoked`,
+      'CHANNEL_HISTORY_REFUSED', 403, reason === null ? undefined : { reason });
+  }
+  if (status === 429) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
+  if (status === 404 && googleRefusalReason(body) === 'notFound') {
+    throw httpError('Gmail message gone between list and get: skipped', 'CHANNEL_HISTORY_MESSAGE_GONE', 404);
   }
   throw httpError(`Gmail ${what} failed without provider detail: retry the import later`,
     'CHANNEL_HISTORY_TRANSIENT', 502);
@@ -235,7 +291,9 @@ export function createGmailHttpIo(options = {}) {
     /**
      * Page the mailbox oldest-first: threads since the instant, one
      * normalized event per message with its sender attached — the same
-     * page shape the fake serves, so the import converges identically.
+     * page shape the fake serves, so the import converges identically —
+     * plus `skippedMessages`, the count of provider-confirmed-gone
+     * messages skipped on this page.
      */
     async listHistory({ secret, since, pageToken, limit }) {
       assertSecret(secret, 'history');
@@ -255,15 +313,32 @@ export function createGmailHttpIo(options = {}) {
       );
       const messages = Array.isArray(listed.messages) ? listed.messages : [];
       const events = [];
+      // Messages Google confirms gone between list and get: skipped, and
+      // counted on the page so a systematically-404 read is visible as a
+      // number instead of a silently shorter page (backlog:3a3a41b2).
+      let skippedMessages = 0;
       for (const entry of messages) {
         if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || entry.id === '') continue;
-        const full = await call(
-          `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}`
-          + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject',
-          { method: 'GET', headers: headers(secret) },
-          'history',
-          mapHistoryFailure,
-        );
+        let full;
+        try {
+          full = await call(
+            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}`
+            + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject',
+            { method: 'GET', headers: headers(secret) },
+            'history',
+            mapHistoryGetFailure,
+          );
+        } catch (error) {
+          // Only the confirmed-gone marker skips: one deleted message
+          // must not abort the hundreds already read. Anything else —
+          // quota, refusal, an unconfirmed 404 — still aborts the page
+          // and the retry re-reads it.
+          if (error?.code === 'CHANNEL_HISTORY_MESSAGE_GONE') {
+            skippedMessages += 1;
+            continue;
+          }
+          throw error;
+        }
         const normalized = normalizeGmailRestMessage(full, mailbox);
         if (normalized.subject === '') {
           // Our own sent copy looping back: quarantined as evidence with
@@ -282,7 +357,7 @@ export function createGmailHttpIo(options = {}) {
         if (atA !== atB) return atA < atB ? -1 : 1;
         return a.providerEventId < b.providerEventId ? -1 : 1;
       });
-      return { events, nextPageToken: next };
+      return { events, nextPageToken: next, skippedMessages };
     },
 
     /**

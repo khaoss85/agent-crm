@@ -33,12 +33,15 @@ import { AppError, ValidationError, computeDefinitionFingerprint, createDefiniti
  * `CHANNEL_HISTORY_UNAVAILABLE`.
  *
  * `listHistory({ secret, account, since, pageToken, limit })` resolves to
- * `{ events, nextPageToken }`: `events` are channel events in the
+ * `{ events, nextPageToken, skippedMessages? }`: `events` are channel events in the
  * `normalizeInbound` shape (an event may carry an optional `sender`
  * `{ handle, email?, firstName?, lastName? }` the import reconciles);
  * `nextPageToken` is an opaque bounded cursor, or null when the past is
  * exhausted. The same token replays the same page — that determinism is
  * what makes an interrupted import resume instead of restart.
+ * `skippedMessages` is an optional non-negative integer counting the
+ * provider-confirmed-gone messages skipped on this page (absent means
+ * none), so a silently shorter page stays visible.
  *
  * An adapter whose provider restricts free text to a service window (Meta's
  * 24-hour customer-service window) additionally declares the optional
@@ -191,13 +194,21 @@ export function assertHistoryPage(page, limit) {
   if (!page || typeof page !== 'object' || Array.isArray(page)) {
     throw new ValidationError('channel history page must be a plain object', { field: 'historyPage' });
   }
-  const { events, nextPageToken } = /** @type {{events?: unknown, nextPageToken?: unknown}} */ (page);
+  const { events, nextPageToken, skippedMessages } = /** @type {{events?: unknown, nextPageToken?: unknown, skippedMessages?: unknown}} */ (page);
   if (!Array.isArray(events) || events.length > limit) {
     throw new ValidationError(`channel history page carries 0-${limit} events`, { field: 'historyPage.events' });
   }
   if (nextPageToken !== null
     && (typeof nextPageToken !== 'string' || nextPageToken === '' || nextPageToken.length > CHANNEL_HISTORY_TOKEN_MAX)) {
     throw new ValidationError('channel history nextPageToken must be null or bounded opaque text', { field: 'historyPage.nextPageToken' });
+  }
+  // Pages may report how many provider-confirmed-gone messages they
+  // skipped (backlog:3a3a41b2): absent means none. Anything else refuses
+  // — a count is a bounded integer, never text, never negative — so a
+  // systematically-404 read stays visible instead of a silently shorter
+  // page.
+  if (skippedMessages !== undefined && (!Number.isSafeInteger(skippedMessages) || skippedMessages < 0)) {
+    throw new ValidationError('channel history skippedMessages must be a non-negative integer when present', { field: 'historyPage.skippedMessages' });
   }
   const checked = events.map((event, index) => {
     const field = `historyPage.events[${index}]`;
@@ -225,7 +236,11 @@ export function assertHistoryPage(page, limit) {
       sender: assertHistorySender(entry.sender),
     });
   });
-  return Object.freeze({ events: Object.freeze(checked), nextPageToken: nextPageToken ?? null });
+  return Object.freeze({
+    events: Object.freeze(checked),
+    nextPageToken: nextPageToken ?? null,
+    skippedMessages: skippedMessages ?? 0,
+  });
 }
 
 /**
