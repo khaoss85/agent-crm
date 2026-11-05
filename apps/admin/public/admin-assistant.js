@@ -158,6 +158,42 @@ const FALLBACK_SUGGESTIONS = Object.freeze([
  * @param {unknown} screenId
  * @returns {ReadonlyArray<Suggestion>}
  */
+/**
+ * The suggestion closest to a question typed in the top bar (Dan 05/11):
+ * free questions are off in the MVP, so «chi devo ricontattare oggi?»
+ * runs «Chi devo ricontattare?» instead of being dropped. Plain word
+ * overlap on title and detail (words of 4+ letters, accents folded);
+ * null when nothing overlaps.
+ * @param {string} screenId
+ * @param {unknown} question
+ */
+export function closestSuggestion(screenId, question) {
+  if (typeof question !== 'string' || question.trim() === '') return null;
+  const words = (text) => new Set(String(text ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/).filter((word) => word.length >= 4));
+  const asked = words(question);
+  let best = null;
+  let bestScore = 0;
+  for (const suggestion of suggestionsFor(screenId)) {
+    const own = words(`${suggestion.title} ${suggestion.detail ?? ''}`);
+    let score = 0;
+    for (const word of asked) if (own.has(word)) score += 1;
+    if (score > bestScore) { best = suggestion; bestScore = score; }
+  }
+  return best;
+}
+
+const CHANNEL_NAMES = Object.freeze({
+  phone: 'Telefono', email: 'Email', whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Facebook',
+  messenger: 'Messenger', tiktok: 'TikTok', sms: 'SMS', telegram: 'Telegram', web: 'Form sito', webform: 'Form sito',
+});
+
+/** Channel ids read in Italian in the answers (Dan 05/11: «(phone)» → «Telefono»). */
+export function channelName(channel) {
+  const key = String(channel ?? '').toLowerCase();
+  return CHANNEL_NAMES[key] ?? shortText(String(channel ?? ''), 20);
+}
+
 export function suggestionsFor(screenId) {
   if (typeof screenId === 'string' && Object.hasOwn(SUGGESTION_CATALOG, screenId)) {
     return SUGGESTION_CATALOG[screenId];
@@ -328,7 +364,7 @@ async function answerUrgenti(client) {
     const open = conversations.filter((row) => row?.status === 'open');
     answer.lines.push(`${open.length} thread aperti${conversations.length !== open.length ? ` su ${conversations.length} letti` : ''}.`);
     for (const row of newestFirst(open).slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${shortText(row.channel, 20)})` : ''}`);
+      answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
     }
     answer.sources.push(...takeSources(newestFirst(open), 'conversation', conversationLabel));
   }
@@ -1520,8 +1556,16 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // suggestions as chips, history and errors under it; the question box
     // stays pinned at the bottom like a chat.
     const scroll = el(doc, 'div', 'bo-assistant-scroll');
+    if (state.asked && typeof state.asked.text === 'string') {
+      const asked = el(doc, 'div', 'bo-assistant-asked');
+      asked.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.asked.text, 140)}»`));
+      asked.appendChild(el(doc, 'p', 'bo-assistant-asked-note', state.asked.matched
+        ? `Le domande libere non sono ancora attive: rispondo con «${state.asked.matched}».`
+        : 'Le domande libere non sono ancora attive: scegli una delle domande qui sotto.'));
+      scroll.appendChild(asked);
+    }
     const answer = renderAnswer();
-    if (!answer && !state.busy) {
+    if (!answer && !state.busy && !state.asked) {
       const hello = el(doc, 'div', 'bo-assistant-hello');
       hello.appendChild(el(doc, 'p', 'bo-assistant-hello-title', 'Cosa vuoi sapere?'));
       hello.appendChild(el(doc, 'p', 'bo-assistant-hello-text', 'Rispondo leggendo i dati di questo spazio e ti porto alla scheda giusta.'));
@@ -1561,13 +1605,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       const notice = typeof state.status?.notice === 'string' && state.status.notice !== ''
         ? state.status.notice
         : ASSISTANT_SUGGEST_ONLY_NOTICE;
-      panel.appendChild(el(doc, 'p', 'bo-assistant-notice', notice));
+      panel.appendChild(el(doc, 'p', 'bo-assistant-notice bo-assistant-foot', notice));
       // BO-F5-01 draft handoff ("+ Nuovo modulo" -> assistant): with no live
       // backend there is no free-question field, but the caller's draft must
       // not vanish silently — show it as inert read-only text (text only via
       // el(), never markup, never a submit) next to the honest notice.
       if (typeof state.draft === 'string' && state.draft !== '') {
-        panel.appendChild(el(doc, 'p', 'bo-assistant-draft', state.draft));
+        panel.appendChild(el(doc, 'p', 'bo-assistant-draft bo-assistant-foot', state.draft));
       }
       mount.appendChild(panel);
       return;
@@ -1608,12 +1652,31 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
      * (`{ resource, id }`, validated like every record identity); anything
      * else clears the context, so a later screen never reuses a stale one.
      */
-    async open(screenId, draft, customer) {
+    async open(screenId, draft, customer, question) {
       state.open = true;
       if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
       state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
       state.customerCtx = schedaCustomer(customer);
+      state.asked = null;
       state.status = await probeAssistantBackend(client);
+      const typed = typeof question === 'string' ? question.trim() : '';
+      if (typed === '') {
+        render();
+        return;
+      }
+      // A question typed in the top bar (Dan 05/11): live → the free
+      // question; otherwise the closest suggestion runs, and the panel says
+      // which one — the words are never silently dropped.
+      if (state.status?.mode === 'live') {
+        await submitFreeQuestion(typed);
+        return;
+      }
+      const match = closestSuggestion(state.screenId, typed);
+      state.asked = { text: typed, matched: match ? match.title : null };
+      if (match) {
+        await runSuggestionById(match.id);
+        return;
+      }
       render();
     },
     close() {
