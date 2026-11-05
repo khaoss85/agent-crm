@@ -371,6 +371,30 @@ test('without the grant the provider refuses and the status says unbound', async
   );
 });
 
+test('listEvents bounds the snapshot with timeMax, never beside a sync token', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, json: async () => ({ items: [] }) };
+  };
+  const provider = createHttpGoogleCalendar({ fetchImpl });
+  const TIME_MAX = '2027-01-18T00:00:00.000Z';
+  await provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: TIME_MIN, timeMax: TIME_MAX });
+  const params = new URL(calls[0], 'https://www.googleapis.com').searchParams;
+  assert.equal(params.get('timeMin'), TIME_MIN);
+  assert.equal(params.get('timeMax'), TIME_MAX);
+  assert.equal(params.get('singleEvents'), 'true', 'recurrences expand inside the window only');
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, syncToken: 'rest-0-1', timeMax: TIME_MAX }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+    'Google refuses time bounds beside a sync token',
+  );
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, timeMax: 'not-an-instant' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+});
+
 test('listEvents follows every result page and keeps the final sync token', async () => {
   const calls = [];
   const wire = (id) => ({ id, status: 'confirmed', updated: '2026-10-21T09:00:00.000Z' });

@@ -50,6 +50,63 @@ function snapshot(event) {
 }
 
 /**
+ * Expand one seeded endless weekly series into its single occurrences
+ * inside the read window (backlog:3a3a41b2) — the fake half of Google's
+ * `singleEvents=true`. Returns null when the event is no weekly series
+ * or a bound is missing, so the caller reads the master row as before.
+ * Only `FREQ=WEEKLY` (with an optional `INTERVAL`) expands; anything
+ * else stays a master row rather than a guessed schedule.
+ */
+const WEEKLY_EXPANSION_MAX = 1000;
+
+function expandWeeklySeries(event, minMs, maxMs) {
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs) return null;
+  const lines = Array.isArray(event?.recurrence) ? event.recurrence : null;
+  if (!lines) return null;
+  let weekly = false;
+  let interval = 1;
+  for (const line of lines) {
+    const rule = typeof line === 'string' && line.startsWith('RRULE:') ? line.slice('RRULE:'.length) : null;
+    if (rule === null) continue;
+    const parts = Object.fromEntries(rule.split(';').map((pair) => {
+      const at = pair.indexOf('=');
+      return at < 0 ? [pair, ''] : [pair.slice(0, at), pair.slice(at + 1)];
+    }));
+    if (parts.FREQ !== 'WEEKLY') return null;
+    weekly = true;
+    if (parts.INTERVAL !== undefined) {
+      const n = Number.parseInt(parts.INTERVAL, 10);
+      if (!Number.isSafeInteger(n) || n < 1 || n > 52) return null;
+      interval = n;
+    }
+  }
+  if (!weekly) return null;
+  const firstStart = Date.parse(event?.start?.dateTime ?? '');
+  const firstEnd = Date.parse(event?.end?.dateTime ?? '');
+  if (!Number.isFinite(firstStart) || !Number.isFinite(firstEnd) || firstEnd <= firstStart) return null;
+  const duration = firstEnd - firstStart;
+  const step = interval * 7 * 24 * 3600 * 1000;
+  // Skip whole years before the window without iterating them: an
+  // endless series starting decades back still answers in one pass.
+  const skip = firstStart < minMs - duration ? Math.floor((minMs - duration - firstStart) / step) : 0;
+  const instances = [];
+  for (let at = firstStart + skip * step; at < maxMs && instances.length < WEEKLY_EXPANSION_MAX; at += step) {
+    const end = at + duration;
+    if (end <= minMs) continue;
+    const startIso = new Date(at).toISOString();
+    instances.push(snapshot({
+      ...event,
+      id: `${event.id}_${startIso.replace(/[-:.]/g, '')}`,
+      recurringEventId: event.id,
+      start: { ...(event.start ?? {}), dateTime: startIso },
+      end: { ...(event.end ?? {}), dateTime: new Date(end).toISOString() },
+      recurrence: undefined,
+    }));
+  }
+  return instances;
+}
+
+/**
  * @param {{ nowMs?: () => number, secret?: string, expectedSecret?: string }} [options]
  * `expectedSecret` binds the fake to the space grant: every engine call
  * must then carry it as its call-time `secret`, or the call refuses.
@@ -134,6 +191,13 @@ export function createFakeGoogleCalendar(options = {}) {
         status: 'confirmed',
         updated: typeof event?.updated === 'string' ? event.updated : nowIso(),
         extendedProperties: { ...(event?.extendedProperties ?? {}) },
+        // A weekly RRULE without end (backlog:3a3a41b2): the full snapshot
+        // expands it into single occurrences inside the read window, the
+        // way Google answers `singleEvents=true` — so a series without
+        // end never reads as one infinite row.
+        ...(Array.isArray(event?.recurrence)
+          && event.recurrence.every((line) => typeof line === 'string' && line.length <= 256)
+          ? { recurrence: Object.freeze([...event.recurrence]) } : {}),
       };
       cal.events.set(id, stored);
       touch(cal, id);
@@ -149,9 +213,13 @@ export function createFakeGoogleCalendar(options = {}) {
     /**
      * List events. With `syncToken`: only what changed since, plus
      * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it to
-     * events ending after the instant; `showDeleted` adds tombstones).
+     * events ending after the instant, `timeMax` to events starting
+     * before it; `showDeleted` adds tombstones). A seeded endless weekly
+     * series expands to its single occurrences inside the window only
+     * (backlog:3a3a41b2) — without both bounds the master reads as one
+     * row, the way an unbounded Google query would.
      */
-    listEvents({ calendarId, syncToken, timeMin, showDeleted = false, secret } = {}) {
+    listEvents({ calendarId, syncToken, timeMin, timeMax, showDeleted = false, secret } = {}) {
       requireGrant({ secret }, 'listEvents');
       const cal = calendar(calendarId);
       if (syncToken !== undefined) {
@@ -170,12 +238,22 @@ export function createFakeGoogleCalendar(options = {}) {
         return Object.freeze({ items: Object.freeze(changed), nextSyncToken: tokenFor(cal) });
       }
       const minMs = typeof timeMin === 'string' && timeMin !== '' ? Date.parse(timeMin) : NaN;
+      const maxMs = typeof timeMax === 'string' && timeMax !== '' ? Date.parse(timeMax) : NaN;
       const items = [];
       for (const event of cal.events.values()) {
         if (event.status === 'cancelled' && !showDeleted) continue;
+        const expanded = expandWeeklySeries(event, minMs, maxMs);
+        if (expanded !== null) {
+          for (const instance of expanded) items.push(instance);
+          continue;
+        }
         if (Number.isFinite(minMs)) {
           const endMs = Date.parse(event?.end?.dateTime ?? '');
           if (Number.isFinite(endMs) && endMs <= minMs) continue;
+        }
+        if (Number.isFinite(maxMs)) {
+          const startMs = Date.parse(event?.start?.dateTime ?? '');
+          if (Number.isFinite(startMs) && startMs >= maxMs) continue;
         }
         items.push(snapshot(event));
       }

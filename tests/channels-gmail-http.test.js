@@ -281,3 +281,77 @@ test('a 503 from messages.send is transient, a 422 stays a refusal', async () =>
   );
   assert.equal(refused.code, 'CHANNEL_SEND_REFUSED');
 });
+
+test('two history pages carry the call-time secret on every call (backlog:3a3a41b2)', async () => {
+  const double = createGmailRestDouble({
+    messages: [
+      restMessage({ id: 'gmail-p1', threadId: 'thread-A', at: AT }),
+      restMessage({ id: 'gmail-p2', threadId: 'thread-B', from: 'cliente-b@example.com', at: AT + 1000 }),
+    ],
+    pageSize: 1,
+  });
+  const io = createGmailHttpIo({ fetchImpl: (...args) => double.fetch(...args), mailbox: MAILBOX });
+  const since = new Date(AT - HOUR).toISOString();
+  const first = await io.listHistory({ secret: GRANT, since });
+  assert.ok(typeof first.nextPageToken === 'string' && first.nextPageToken !== '', 'a second page exists');
+  const second = await io.listHistory({ secret: GRANT, since, pageToken: first.nextPageToken });
+  assert.equal(first.events.length + second.events.length, 2);
+  assert.ok(double.requests.length >= 4, `list + get on each page, saw ${double.requests.length}`);
+  assert.ok(double.requests.every((r) => r.auth === `Bearer ${GRANT}`), 'the secret rides on every call, later pages included');
+});
+
+test('a quota 403 retries while an auth-shaped 403 still refuses (backlog:3a3a41b2)', async () => {
+  const listed = { messages: [{ id: 'gmail-q1', threadId: 'thread-Q' }] };
+  const quotaBody = { error: { code: 403, message: 'Quota exceeded for quota metric', errors: [{ reason: 'rateLimitExceeded' }] } };
+  const noAuth = (url, init = {}) => (init.headers?.Authorization !== `Bearer ${GRANT}`
+    ? { ok: false, status: 401, json: async () => ({ error: { code: 401, message: 'login required' } }) }
+    : null);
+  let listCalls = 0;
+  const fetchImpl = async (url, init = {}) => {
+    const refused = noAuth(url, init);
+    if (refused) return refused;
+    const parsed = new URL(url, 'https://gmail.googleapis.com');
+    if (parsed.pathname === '/gmail/v1/users/me/messages') {
+      listCalls += 1;
+      if (listCalls === 1) return { ok: true, status: 200, json: async () => ({ ...listed, nextPageToken: 'next' }) };
+      return { ok: false, status: 403, json: async () => quotaBody };
+    }
+    return { ok: true, status: 200, json: async () => restMessage({ id: 'gmail-q1', threadId: 'thread-Q' }) };
+  };
+  const io = createGmailHttpIo({ fetchImpl, mailbox: MAILBOX });
+  const since = new Date(AT - HOUR).toISOString();
+  const first = await io.listHistory({ secret: GRANT, since });
+  assert.equal(first.events.length, 1, 'the first page still reads');
+  const quota = await io.listHistory({ secret: GRANT, since, pageToken: 'next' }).then(
+    () => { throw new Error('quota should have failed the page'); },
+    (error) => error,
+  );
+  assert.equal(quota.code, 'CHANNEL_HISTORY_TRANSIENT', 'quota exhaustion retries, never a grant refusal');
+  assert.ok(!String(quota.message).includes(GRANT));
+  const bare = createGmailHttpIo({
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({ error: { code: 403, message: 'forbidden' } }) }),
+    mailbox: MAILBOX,
+  });
+  const refused = await bare.listHistory({ secret: GRANT, since }).then(
+    () => { throw new Error('a reason-less 403 should have refused'); },
+    (error) => error,
+  );
+  assert.equal(refused.code, 'CHANNEL_HISTORY_REFUSED', 'fail-closed without a quota reason');
+});
+
+test('a message gone between list and get is skipped, the page still completes (backlog:3a3a41b2)', async () => {
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url, 'https://gmail.googleapis.com');
+    if (parsed.pathname === '/gmail/v1/users/me/messages') {
+      return { ok: true, status: 200, json: async () => ({ messages: [{ id: 'gmail-k1', threadId: 'thread-K' }, { id: 'gmail-gone', threadId: 'thread-K' }] }) };
+    }
+    if (url.includes('/messages/gmail-k1')) {
+      return { ok: true, status: 200, json: async () => restMessage({ id: 'gmail-k1', threadId: 'thread-K' }) };
+    }
+    return { ok: false, status: 404, json: async () => ({ error: { code: 404, message: 'not found' } }) };
+  };
+  const io = createGmailHttpIo({ fetchImpl, mailbox: MAILBOX });
+  const page = await io.listHistory({ secret: GRANT, since: new Date(AT - HOUR).toISOString() });
+  assert.equal(page.events.length, 1);
+  assert.equal(page.events[0].providerEventId, 'gmail-k1');
+});

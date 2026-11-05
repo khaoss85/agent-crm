@@ -223,10 +223,14 @@ export function createHttpGoogleCalendar(options = {}) {
   return {
     /**
      * List events. With `syncToken`: only what changed since, plus
-     * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it,
+     * `nextSyncToken` (Google refuses time bounds beside a sync token).
+     * Without: the full snapshot (`timeMin`/`timeMax` bound it,
      * `showDeleted` adds tombstones) — the same page shape as the fake.
+     * Both bounds together keep an endless recurrence readable: with
+     * `singleEvents` Google expands only the occurrences inside the
+     * window instead of the whole infinite series (backlog:3a3a41b2).
      */
-    async listEvents({ calendarId, syncToken, timeMin, showDeleted = false, secret } = {}) {
+    async listEvents({ calendarId, syncToken, timeMin, timeMax, showDeleted = false, secret } = {}) {
       assertSecret(secret, 'listEvents');
       const id = assertCalendarId(calendarId);
       const params = new URLSearchParams();
@@ -234,9 +238,18 @@ export function createHttpGoogleCalendar(options = {}) {
         if (typeof syncToken !== 'string' || syncToken === '') {
           throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a bounded syncToken when resuming');
         }
+        if (timeMax !== undefined) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents refuses timeMax beside a syncToken: resume without bounds');
+        }
         params.set('syncToken', syncToken);
       } else {
         if (typeof timeMin === 'string' && timeMin !== '') params.set('timeMin', timeMin);
+        if (timeMax !== undefined) {
+          if (typeof timeMax !== 'string' || timeMax === '' || !Number.isFinite(Date.parse(timeMax))) {
+            throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a readable timeMax instant when bounding');
+          }
+          params.set('timeMax', timeMax);
+        }
         params.set('singleEvents', 'true');
         params.set('maxResults', '2500');
       }

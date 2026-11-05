@@ -1056,3 +1056,27 @@ test('a local move over an outstanding remote snapshot stays pending: Google unt
   assert.ok(ctx.linkRows()[0].pendingRemote, 'the snapshot is not hidden');
   assert.equal(ctx.linkRows()[0].conflictNote, note, 'the conflict note is preserved');
 });
+
+test('an endless weekly series reads only its occurrences inside the window (backlog:3a3a41b2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-endless-weekly',
+    summary: 'Session evt-endless-weekly',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY'],
+  });
+  const timeMin = '2026-10-01T00:00:00.000Z';
+  const timeMax = '2027-01-29T00:00:00.000Z';
+  const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin, timeMax });
+  assert.ok(listed.items.length >= 15 && listed.items.length <= 20, `120 days hold ~17 Wednesdays, got ${listed.items.length}`);
+  for (const item of listed.items) {
+    assert.equal(item.recurringEventId, 'evt-endless-weekly');
+    assert.ok(item.start.dateTime >= timeMin && item.start.dateTime < timeMax, `${item.start.dateTime} stays in the window`);
+    assert.equal(item.end.dateTime, new Date(Date.parse(item.start.dateTime) + 3600 * 1000).toISOString());
+  }
+  const unbounded = ctx.provider.listEvents({ calendarId: CAL });
+  assert.equal(unbounded.items.length, 1, 'without bounds the master reads as one row, never an expansion');
+  assert.equal(unbounded.items[0].id, 'evt-endless-weekly');
+});

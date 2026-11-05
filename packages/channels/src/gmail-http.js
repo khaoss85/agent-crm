@@ -125,7 +125,25 @@ async function readJson(response, what) {
   throw httpError(`Gmail ${what} returned an unreadable response`, 'CHANNEL_HISTORY_MALFORMED', 502);
 }
 
-function mapHistoryFailure(status, what) {
+/**
+ * Gmail answers quota exhaustion with 403, not 429: after hundreds of
+ * `messages.get` calls in one import the provider refuses with
+ * `rateLimitExceeded`, which used to read as a revoked grant
+ * (CHANNEL_HISTORY_REFUSED, backlog:3a3a41b2). The body's machine reason
+ * tells the two apart — a quota reason retries, only an auth-shaped
+ * refusal (or no reason at all, fail-closed) keeps the refused code.
+ * The reason itself never lands in a message, a row or a rethrow.
+ */
+const GMAIL_QUOTA_REASONS = new Set([
+  'rateLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded',
+  'dailyLimitExceeded', 'dailyLimitExceededUnreg',
+]);
+
+function mapHistoryFailure(status, what, reason = null) {
+  if (status === 403 && typeof reason === 'string' && GMAIL_QUOTA_REASONS.has(reason)) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
   if (status === 401 || status === 403) {
     throw httpError(`Gmail ${what} refused: the grant is missing, expired or revoked`,
       'CHANNEL_HISTORY_REFUSED', 403);
@@ -134,8 +152,11 @@ function mapHistoryFailure(status, what) {
     throw httpError(`Gmail ${what} is rate limited: retry the import later`,
       'CHANNEL_HISTORY_TRANSIENT', 503);
   }
+  // A 404 keeps its status under the transient code: the history loop
+  // skips one message gone between list and get, while the list-level
+  // call still aborts the page with the same retryable code.
   throw httpError(`Gmail ${what} failed without provider detail: retry the import later`,
-    'CHANNEL_HISTORY_TRANSIENT', 502);
+    'CHANNEL_HISTORY_TRANSIENT', status === 404 ? 404 : 502);
 }
 
 function mapSendFailure(status) {
@@ -184,6 +205,18 @@ export function createGmailHttpIo(options = {}) {
     return { Authorization: `Bearer ${secret}`, Accept: 'application/json' };
   }
 
+  /** The provider's machine refusal reason (`error.errors[0].reason`), or null. */
+  async function refusalReason(response) {
+    try {
+      const body = await response.json();
+      const errors = body?.error?.errors;
+      const reason = Array.isArray(errors) ? errors[0]?.reason : null;
+      return typeof reason === 'string' && reason !== '' ? reason : null;
+    } catch {
+      return null;
+    }
+  }
+
   async function call(url, init, what, mapFailure) {
     let response;
     try {
@@ -192,7 +225,8 @@ export function createGmailHttpIo(options = {}) {
       throw httpError(`Gmail ${what} is unreachable: retry later`, 'CHANNEL_HISTORY_TRANSIENT', 503);
     }
     if (!response || response.ok !== true) {
-      mapFailure(Number.isSafeInteger(response?.status) ? response.status : 502, what);
+      const reason = response && typeof response.json === 'function' ? await refusalReason(response) : null;
+      mapFailure(Number.isSafeInteger(response?.status) ? response.status : 502, what, reason);
     }
     return readJson(response, what);
   }
@@ -224,13 +258,22 @@ export function createGmailHttpIo(options = {}) {
       const events = [];
       for (const entry of messages) {
         if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || entry.id === '') continue;
-        const full = await call(
-          `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}`
-          + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject',
-          { method: 'GET', headers: headers(secret) },
-          'history',
-          mapHistoryFailure,
-        );
+        let full;
+        try {
+          full = await call(
+            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}`
+            + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject',
+            { method: 'GET', headers: headers(secret) },
+            'history',
+            mapHistoryFailure,
+          );
+        } catch (error) {
+          // A message gone between list and get (404) is skipped, never
+          // fatal: one deleted message must not abort the hundreds
+          // already read (backlog:3a3a41b2). Anything else still aborts.
+          if (error?.status === 404) continue;
+          throw error;
+        }
         const normalized = normalizeGmailRestMessage(full, mailbox);
         if (normalized.subject === '') {
           // Our own sent copy looping back: quarantined as evidence with
