@@ -59,15 +59,27 @@ function snapshot(event) {
  */
 const WEEKLY_EXPANSION_MAX = 1000;
 
+function parseUntilInstant(raw) {
+  if (typeof raw !== 'string' || raw === '') return NaN;
+  const direct = Date.parse(raw);
+  if (Number.isFinite(direct)) return direct;
+  const basic = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/.exec(raw);
+  if (!basic) return NaN;
+  return Date.parse(`${basic[1]}-${basic[2]}-${basic[3]}T${basic[4]}:${basic[5]}:${basic[6]}Z`);
+}
+
 function expandWeeklySeries(event, minMs, maxMs) {
   if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs) return null;
   const lines = Array.isArray(event?.recurrence) ? event.recurrence : null;
   if (!lines) return null;
   let weekly = false;
   let interval = 1;
+  let count = null;
+  let untilMs = null;
   for (const line of lines) {
-    const rule = typeof line === 'string' && line.startsWith('RRULE:') ? line.slice('RRULE:'.length) : null;
-    if (rule === null) continue;
+    if (typeof line !== 'string') return null;
+    if (!line.startsWith('RRULE:')) return null;
+    const rule = line.slice('RRULE:'.length);
     const parts = Object.fromEntries(rule.split(';').map((pair) => {
       const at = pair.indexOf('=');
       return at < 0 ? [pair, ''] : [pair.slice(0, at), pair.slice(at + 1)];
@@ -79,6 +91,19 @@ function expandWeeklySeries(event, minMs, maxMs) {
       if (!Number.isSafeInteger(n) || n < 1 || n > 52) return null;
       interval = n;
     }
+    if (parts.COUNT !== undefined) {
+      const n = Number.parseInt(parts.COUNT, 10);
+      if (!Number.isSafeInteger(n) || n < 1) return null;
+      count = n;
+    }
+    if (parts.UNTIL !== undefined) {
+      const parsed = parseUntilInstant(parts.UNTIL);
+      if (!Number.isFinite(parsed)) return null;
+      untilMs = parsed;
+    }
+    for (const key of Object.keys(parts)) {
+      if (key !== 'FREQ' && key !== 'INTERVAL' && key !== 'COUNT' && key !== 'UNTIL') return null;
+    }
   }
   if (!weekly) return null;
   const firstStart = Date.parse(event?.start?.dateTime ?? '');
@@ -88,9 +113,14 @@ function expandWeeklySeries(event, minMs, maxMs) {
   const step = interval * 7 * 24 * 3600 * 1000;
   // Skip whole years before the window without iterating them: an
   // endless series starting decades back still answers in one pass.
+  // The skip counts toward COUNT, so an exhausted series reads empty.
   const skip = firstStart < minMs - duration ? Math.floor((minMs - duration - firstStart) / step) : 0;
   const instances = [];
-  for (let at = firstStart + skip * step; at < maxMs && instances.length < WEEKLY_EXPANSION_MAX; at += step) {
+  for (let index = skip, at = firstStart + skip * step;
+    at < maxMs && instances.length < WEEKLY_EXPANSION_MAX;
+    index += 1, at += step) {
+    if (count !== null && index >= count) break;
+    if (untilMs !== null && at > untilMs) break;
     const end = at + duration;
     if (end <= minMs) continue;
     const startIso = new Date(at).toISOString();
@@ -223,6 +253,10 @@ export function createFakeGoogleCalendar(options = {}) {
       requireGrant({ secret }, 'listEvents');
       const cal = calendar(calendarId);
       if (syncToken !== undefined) {
+        if (timeMin !== undefined || timeMax !== undefined) {
+          throw fakeError('GOOGLE_CALL_MALFORMED', 422,
+            'google listEvents refuses time bounds beside a syncToken: resume without bounds');
+        }
         const since = parseToken(cal, syncToken);
         const changed = [];
         for (const { eventId } of cal.log) {

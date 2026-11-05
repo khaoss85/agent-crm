@@ -390,7 +390,16 @@ test('listEvents bounds the snapshot with timeMax, never beside a sync token', a
     'Google refuses time bounds beside a sync token',
   );
   await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, syncToken: 'rest-0-1', timeMin: TIME_MIN }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+    'timeMin beside a sync token refuses too',
+  );
+  await assert.rejects(
     provider.listEvents({ calendarId: CAL, secret: GRANT, timeMax: 'not-an-instant' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  await assert.rejects(
+    provider.listEvents({ calendarId: CAL, secret: GRANT, timeMin: 'not-an-instant' }),
     (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
   );
 });

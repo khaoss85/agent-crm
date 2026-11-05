@@ -238,12 +238,17 @@ export function createHttpGoogleCalendar(options = {}) {
         if (typeof syncToken !== 'string' || syncToken === '') {
           throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a bounded syncToken when resuming');
         }
-        if (timeMax !== undefined) {
-          throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents refuses timeMax beside a syncToken: resume without bounds');
+        if (timeMin !== undefined || timeMax !== undefined) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents refuses time bounds beside a syncToken: resume without bounds');
         }
         params.set('syncToken', syncToken);
       } else {
-        if (typeof timeMin === 'string' && timeMin !== '') params.set('timeMin', timeMin);
+        if (timeMin !== undefined) {
+          if (typeof timeMin !== 'string' || timeMin === '' || !Number.isFinite(Date.parse(timeMin))) {
+            throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a readable timeMin instant when bounding');
+          }
+          params.set('timeMin', timeMin);
+        }
         if (timeMax !== undefined) {
           if (typeof timeMax !== 'string' || timeMax === '' || !Number.isFinite(Date.parse(timeMax))) {
             throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a readable timeMax instant when bounding');

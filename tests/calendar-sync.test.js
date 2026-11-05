@@ -1080,3 +1080,58 @@ test('an endless weekly series reads only its occurrences inside the window (bac
   assert.equal(unbounded.items.length, 1, 'without bounds the master reads as one row, never an expansion');
   assert.equal(unbounded.items[0].id, 'evt-endless-weekly');
 });
+
+test('a bounded weekly series (COUNT/UNTIL) reads empty when exhausted, a BYDAY series reads as master', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-count-two',
+    summary: 'Session evt-count-two',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;COUNT=2'],
+  });
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-until-past',
+    summary: 'Session evt-until-past',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;UNTIL=20240110T090000Z'],
+  });
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-byday',
+    summary: 'Session evt-byday',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+  });
+  const timeMin = '2026-10-01T00:00:00.000Z';
+  const timeMax = '2027-01-29T00:00:00.000Z';
+  const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin, timeMax });
+  const byId = new Map(listed.items.map((item) => [item.id, item]));
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-count-two_')), 'COUNT exhausted in 2024 reads zero instances');
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-until-past_')), 'UNTIL in the past reads zero instances');
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-byday_')), 'an unsupported BYDAY series never expands into guessed instances');
+  const unbounded = ctx.provider.listEvents({ calendarId: CAL });
+  assert.ok(unbounded.items.some((item) => item.id === 'evt-byday'), 'without bounds the BYDAY master reads as one row');
+});
+
+test('the fake refuses time bounds beside a sync token, like the http provider', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt1',
+    summary: 'Session evt1',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' },
+    end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  const first = ctx.provider.listEvents({ calendarId: CAL });
+  assert.throws(
+    () => ctx.provider.listEvents({ calendarId: CAL, syncToken: first.nextSyncToken, timeMin: '2026-10-01T00:00:00.000Z' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  assert.throws(
+    () => ctx.provider.listEvents({ calendarId: CAL, syncToken: first.nextSyncToken, timeMax: '2027-01-29T00:00:00.000Z' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+});
