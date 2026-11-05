@@ -28,8 +28,8 @@ import {
 
 export const GMAIL_API_BASE = 'https://gmail.googleapis.com';
 
-function httpError(message, code, status) {
-  return new AppError(message, { code, status });
+function httpError(message, code, status, details) {
+  return new AppError(message, { code, status, ...(details === undefined ? {} : { details }) });
 }
 
 function assertSecret(secret, what) {
@@ -125,10 +125,34 @@ async function readJson(response, what) {
   throw httpError(`Gmail ${what} returned an unreadable response`, 'CHANNEL_HISTORY_MALFORMED', 502);
 }
 
-function mapHistoryFailure(status, what) {
+/**
+ * Google's machine reason for a refused call, or null. The shape is the
+ * documented error envelope (`{ error: { errors: [{ reason }], status } }`):
+ * `errors[0].reason` first (`insufficientPermissions` for a missing scope,
+ * `accessNotConfigured` for a disabled Gmail API, `authError` for a dead
+ * grant), then the envelope `status` (`PERMISSION_DENIED`,
+ * `UNAUTHENTICATED`). Only those two code fields travel — never the
+ * envelope message (it can echo the request), never the token, never an
+ * address: anything else falls back to the closed-vocabulary refusal.
+ */
+function googleRefusalReason(body) {
+  const envelope = body && typeof body === 'object' && !Array.isArray(body) ? body.error : null;
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return null;
+  const errors = Array.isArray(envelope.errors) ? envelope.errors : [];
+  const first = errors.length > 0 && errors[0] && typeof errors[0] === 'object' && !Array.isArray(errors[0])
+    ? errors[0]
+    : null;
+  for (const candidate of [first?.reason, envelope.status]) {
+    if (typeof candidate === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+function mapHistoryFailure(status, what, body) {
   if (status === 401 || status === 403) {
+    const reason = googleRefusalReason(body);
     throw httpError(`Gmail ${what} refused: the grant is missing, expired or revoked`,
-      'CHANNEL_HISTORY_REFUSED', 403);
+      'CHANNEL_HISTORY_REFUSED', 403, reason === null ? undefined : { reason });
   }
   if (status === 429) {
     throw httpError(`Gmail ${what} is rate limited: retry the import later`,
@@ -192,7 +216,16 @@ export function createGmailHttpIo(options = {}) {
       throw httpError(`Gmail ${what} is unreachable: retry later`, 'CHANNEL_HISTORY_TRANSIENT', 503);
     }
     if (!response || response.ok !== true) {
-      mapFailure(Number.isSafeInteger(response?.status) ? response.status : 502, what);
+      // The refusal mapper reads the provider envelope (reason codes only,
+      // never text): consume the body once here, since the mapper throws.
+      let failureBody = null;
+      try {
+        const parsed = await response?.json();
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) failureBody = parsed;
+      } catch {
+        // Unreadable refusal body: the mapper falls back to the bare code.
+      }
+      mapFailure(Number.isSafeInteger(response?.status) ? response.status : 502, what, failureBody);
     }
     return readJson(response, what);
   }

@@ -281,3 +281,79 @@ test('a 503 from messages.send is transient, a 422 stays a refusal', async () =>
   );
   assert.equal(refused.code, 'CHANNEL_SEND_REFUSED');
 });
+
+test('a refused Gmail history carries Google machine reason, never the token or the mailbox', async () => {
+  // Production 05/11 (backlog:92bcb74c): with the control-plane-minted
+  // token, every Gmail round of the space ended in
+  // CHANNEL_HISTORY_REFUSED with the 401/403 reduced to one sentence.
+  // The io now keeps Google's reason (`errors[0].reason`, else the
+  // envelope `status`) on `details.reason`: missing scope, disabled API
+  // and dead grant read differently, while token and mailbox stay out.
+  const envelope = (error) => ({ error });
+  const refusingFetch = (status, body) => async () => ({ ok: false, status, json: async () => body });
+  const cases = [
+    {
+      name: 'missing gmail.readonly scope',
+      status: 403,
+      body: envelope({ code: 403, message: 'Request had insufficient authentication scopes.', status: 'PERMISSION_DENIED',
+        errors: [{ message: 'Insufficient Permission', domain: 'global', reason: 'insufficientPermissions' }] }),
+      reason: 'insufficientPermissions',
+    },
+    {
+      name: 'Gmail API disabled in the Google Cloud project',
+      status: 403,
+      body: envelope({ code: 403, message: 'Access Not Configured. Gmail API has not been used before.', status: 'PERMISSION_DENIED',
+        errors: [{ message: 'Access Not Configured', domain: 'usageLimits', reason: 'accessNotConfigured',
+          extendedHelp: 'https://console.developers.google.com' }] }),
+      reason: 'accessNotConfigured',
+    },
+    {
+      name: 'revoked grant',
+      status: 401,
+      body: envelope({ code: 401, message: 'Request had invalid credentials.', status: 'UNAUTHENTICATED',
+        errors: [{ message: 'Invalid Credentials', domain: 'global', reason: 'authError',
+          locationType: 'header', location: 'Authorization' }] }),
+      reason: 'authError',
+    },
+    {
+      name: 'envelope without a machine reason',
+      status: 403,
+      body: envelope({ code: 403, message: 'The caller does not have permission' }),
+      reason: undefined,
+    },
+  ];
+  for (const { name, status, body, reason } of cases) {
+    const io = createGmailHttpIo({ fetchImpl: refusingFetch(status, body), mailbox: MAILBOX });
+    const failure = await io.listHistory({ secret: GRANT, since: new Date(AT).toISOString() }).then(
+      () => { throw new Error(`history should have refused (${name})`); },
+      (error) => error,
+    );
+    assert.equal(failure.code, 'CHANNEL_HISTORY_REFUSED', name);
+    assert.equal(failure.status, 403, name);
+    assert.equal(failure.details?.reason ?? undefined, reason, name);
+    assert.ok(!String(failure.message).includes(GRANT), `${name}: no token in the message`);
+    assert.ok(!String(failure.message).includes(MAILBOX), `${name}: no mailbox in the message`);
+    assert.ok(!JSON.stringify(failure.details ?? {}).includes(GRANT), `${name}: no token in details`);
+  }
+});
+
+test('a Gmail refusal reason that is not a code carries nothing', async () => {
+  // A stuffed reason (token-shaped, mailbox-shaped, free text) is not a
+  // Google code: the io drops it instead of logging a secret or a person.
+  for (const hostile of [`Bearer ${GRANT}`, MAILBOX, 'not a code!!', 'x'.repeat(65)]) {
+    const io = createGmailHttpIo({
+      fetchImpl: async () => ({ ok: false, status: 403,
+        json: async () => ({ error: { code: 403,
+          errors: [{ domain: 'global', reason: hostile }] } }) }),
+      mailbox: MAILBOX,
+    });
+    const failure = await io.listHistory({ secret: GRANT, since: new Date(AT).toISOString() }).then(
+      () => { throw new Error('history should have refused'); },
+      (error) => error,
+    );
+    assert.equal(failure.code, 'CHANNEL_HISTORY_REFUSED');
+    assert.equal(failure.details?.reason ?? undefined, undefined, `hostile reason dropped: ${hostile.slice(0, 20)}`);
+    assert.ok(!JSON.stringify(failure.details ?? {}).includes(GRANT), 'no token in details');
+    assert.ok(!JSON.stringify(failure.details ?? {}).includes(MAILBOX), 'no mailbox in details');
+  }
+});
