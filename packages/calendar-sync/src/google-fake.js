@@ -237,9 +237,9 @@ export function createFakeGoogleCalendar(options = {}) {
       const cal = calendar(calendarId);
       const id = checkEventId(event?.id);
       // Attendees and the organizer ride the engine shape (backlog:13c09f03):
-      // `{ email, displayName?, responseStatus? }`, bounded like the HTTP
-      // provider reads them — other wire fields stay out, so a seeded
-      // event proves what production reconciles.
+      // `{ email, displayName?, responseStatus?, self? }`, bounded like
+      // the HTTP provider reads them — other wire fields stay out, so a
+      // seeded event proves what production reconciles.
       const seedPerson = (raw) => {
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
         const person = {};
@@ -252,6 +252,9 @@ export function createFakeGoogleCalendar(options = {}) {
         if (typeof raw.responseStatus === 'string'
           && ['needsAction', 'declined', 'tentative', 'accepted'].includes(raw.responseStatus)) {
           person.responseStatus = raw.responseStatus;
+        }
+        if (raw.self === true && typeof person.email === 'string') {
+          person.self = true;
         }
         return Object.keys(person).length === 0 ? null : Object.freeze(person);
       };

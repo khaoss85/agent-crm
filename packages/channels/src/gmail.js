@@ -271,8 +271,48 @@ export function readGmailBulkHeaders(raw) {
 }
 
 /**
+ * Split one address header value into its individual mailboxes
+ * (backlog:13c09f03): Gmail REST carries each `To`/`Cc` header as a
+ * string that may hold several comma-separated mailboxes, and a quoted
+ * display name may itself contain a comma (`"Rossi, Guido" <...>`).
+ * Commas inside double quotes — or escaped with a backslash — never
+ * split, so every mailbox reaches the single-address parser whole.
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function splitGmailAddressList(value) {
+  if (typeof value !== 'string') return [];
+  const parts = [];
+  let current = '';
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === '\\' && quoted && index + 1 < value.length) {
+      current += char + value[index + 1];
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      current += char;
+      continue;
+    }
+    if (char === ',' && !quoted) {
+      if (current.trim() !== '') parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim() !== '') parts.push(current.trim());
+  return parts;
+}
+
+/**
  * Parse the recipient headers (`To`, `Cc`) into sender evidence (backlog:13c09f03):
  * the owner's sent mail imports its recipients, so they become leads too.
+ * Each header value may hold several comma-separated mailboxes, so it is
+ * split first — a whole `To` line never goes to the single-address parser.
  * A malformed recipient is skipped, never fatal — one bad address must not
  * drop the good ones beside it. The bound mailbox is always excluded: our
  * own address is evidence of sending, never a customer.
@@ -284,19 +324,21 @@ export function parseGmailRecipients(rawTo, rawCc, mailbox) {
   const rawList = [...(Array.isArray(rawTo) ? rawTo : [rawTo]), ...(Array.isArray(rawCc) ? rawCc : [rawCc])];
   for (const raw of rawList) {
     if (raw === undefined || raw === null || raw === '') continue;
-    let parsed;
-    try {
-      parsed = parseGmailAddressHeader(raw);
-    } catch {
-      continue;
+    for (const piece of splitGmailAddressList(raw)) {
+      let parsed;
+      try {
+        parsed = parseGmailAddressHeader(piece);
+      } catch {
+        continue;
+      }
+      if (parsed.address === mailbox || seen.has(parsed.address)) continue;
+      seen.add(parsed.address);
+      recipients.push({
+        handle: parsed.address,
+        ...(parsed.firstName === null ? {} : { firstName: parsed.firstName }),
+        ...(parsed.lastName === null ? {} : { lastName: parsed.lastName }),
+      });
     }
-    if (parsed.address === mailbox || seen.has(parsed.address)) continue;
-    seen.add(parsed.address);
-    recipients.push({
-      handle: parsed.address,
-      ...(parsed.firstName === null ? {} : { firstName: parsed.firstName }),
-      ...(parsed.lastName === null ? {} : { lastName: parsed.lastName }),
-    });
   }
   return recipients;
 }

@@ -13,6 +13,7 @@ import {
   isBulkGmailMessage,
   parseGmailAddressHeader,
   parseGmailRecipients,
+  splitGmailAddressList,
   splitGmailDisplayName,
 } from '../packages/channels/src/gmail.js';
 import { normalizeGmailRestMessage } from '../packages/channels/src/gmail-http.js';
@@ -90,6 +91,25 @@ test('address headers parse display names and recipients exclude the mailbox', (
   assert.deepEqual(recipients, [
     { handle: 'uno@example.com', firstName: 'Amico', lastName: 'Uno' },
     { handle: 'due@example.com' },
+  ]);
+});
+
+test('comma-separated recipient headers split before parsing', () => {
+  assert.deepEqual(
+    splitGmailAddressList('"Rossi, Guido" <guido@example.com>, amica@example.com'),
+    ['"Rossi, Guido" <guido@example.com>', 'amica@example.com'],
+  );
+  assert.deepEqual(splitGmailAddressList('  , , '), []);
+  assert.deepEqual(splitGmailAddressList(42), []);
+  const recipients = parseGmailRecipients(
+    'Alice <alice@example.com>, Bob <bob@example.com>',
+    `"Rossi, Guido" <Guido@Example.com>, alice@example.com, not-an-address, ${MAILBOX}`,
+    MAILBOX,
+  );
+  assert.deepEqual(recipients, [
+    { handle: 'alice@example.com', firstName: 'Alice' },
+    { handle: 'bob@example.com', firstName: 'Bob' },
+    { handle: 'guido@example.com', firstName: 'Rossi,', lastName: 'Guido' },
   ]);
 });
 
@@ -441,6 +461,34 @@ test('events without external invitees stay skipped', async (t) => {
   assert.ok(result.entries.every((entry) => entry.status === 'skipped'));
   assert.equal(sender.calls.length, 0, 'the organizer alone is not an invitee');
   assert.equal(ctx.appointmentRows().length, 0);
+});
+
+test('the calendar owner never becomes their own lead', async (t) => {
+  const sender = calendarSender();
+  const provider = createFakeGoogleCalendar();
+  const ctx = calendarScene({ provider, subjectForEvent: () => null, resolveSender: sender.resolveSender });
+  t.after(() => ctx.close());
+  provider.seedEvent(CAL, {
+    id: 'evt-self', summary: 'Solo titolare', ...slot('21', '13:00', '14:00'),
+    organizer: { email: 'titolare@example.com', displayName: 'Titolare' },
+    attendees: [{ email: 'titolare@example.com', displayName: 'Titolare', self: true }],
+  });
+  provider.seedEvent(CAL, {
+    id: 'evt-owner-first', summary: 'Con ospite', ...slot('21', '15:00', '16:00'),
+    organizer: { email: 'titolare@example.com', displayName: 'Titolare' },
+    attendees: [
+      { email: 'TITOLARE@example.com', displayName: 'Titolare', self: true },
+      { email: 'ospite@example.com', displayName: 'Ospite Rossi' },
+    ],
+  });
+  const result = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(result.entries.length, 2);
+  const byId = Object.fromEntries(result.entries.map((entry) => [entry.eventId, entry]));
+  assert.equal(byId['evt-self'].status, 'skipped', 'an owner-only event stays skipped');
+  assert.equal(byId['evt-owner-first'].status, 'imported');
+  assert.equal(byId['evt-owner-first'].leadCreated, true);
+  assert.deepEqual(sender.calls.map((call) => call.handle), ['ospite@example.com']);
+  assert.equal(ctx.appointmentRows().length, 1, 'one appointment, linked to the guest');
 });
 
 test('an unwired calendar composition keeps skipping unmapped events', async (t) => {

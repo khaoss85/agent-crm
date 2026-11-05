@@ -629,10 +629,14 @@ export function createCalendarSyncOperations(options = {}) {
 
   /**
    * Resolve an unmapped event's external invitees to a lead
-   * (backlog:13c09f03): the attendees — never the organizer, who is
-   * usually the owner's own address — resolve in order through the
-   * composed `channel-sender@1` capability with the email channel, so
-   * the same person Gmail named stays one profile. The first matched or
+   * (backlog:13c09f03): the attendees — never the calendar owner —
+   * resolve in order through the composed `channel-sender@1` capability
+   * with the email channel, so the same person Gmail named stays one
+   * profile. The owner's own entries are excluded before any resolution:
+   * an attendee Google flags `self`, or whose address is the organizer's,
+   * is the owner reading their own calendar — resolving it would book
+   * the owner as their own customer, or link a real guest's appointment
+   * to the owner when the owner is listed first. The first matched or
    * created contact wins; an ambiguous or malformed candidate yields to
    * the next, and when none resolves the event stays skipped. An event
    * with no external invitees never reaches the capability: it stays
@@ -643,11 +647,16 @@ export function createCalendarSyncOperations(options = {}) {
    */
   async function resolveAttendeeSubject(event, actor) {
     if (resolveSender === null) return null;
+    const organizerEmail = typeof event?.organizer?.email === 'string'
+      ? event.organizer.email.trim().toLowerCase()
+      : null;
     const attendees = Array.isArray(event?.attendees) ? event.attendees : [];
     for (const attendee of attendees) {
       if (!attendee || typeof attendee !== 'object' || Array.isArray(attendee)) continue;
+      if (attendee.self === true) continue;
       const email = attendeeEmail(attendee.email);
       if (email === null) continue;
+      if (organizerEmail !== null && email.toLowerCase() === organizerEmail) continue;
       const names = splitAttendeeName(attendee.displayName);
       let answer;
       try {
