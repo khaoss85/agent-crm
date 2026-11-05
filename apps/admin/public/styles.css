@@ -648,7 +648,7 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 /* Da rispondere (MVP Presti, 04/11): the inbox is people waiting, not the AI —
    ink heading, the advisor's purple stays the AI's colour; the waiting count
    stays the mono meta of the advisor progress. */
-.bo-oggi-inbox .bo-oggi-head h3 { color: var(--ink, #1b1a17); }
+.bo-oggi-inbox .bo-oggi-head h3 { color: var(--ink); }
 .bo-oggi-inbox .bo-oggi-head { justify-content: space-between; }
 .bo-oggi-inbox-row .bo-oggi-why { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 .bo-oggi-bar { flex: 1; height: 6px; border-radius: 99px; background: var(--line-soft); overflow: hidden; }
