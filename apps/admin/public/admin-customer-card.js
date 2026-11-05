@@ -1076,6 +1076,129 @@ export function createCustomerCardView(deps) {
     });
   }
 
+  /**
+   * «Chiedi all'AI» (Dan 05/11: the composer is agentic — a prompt writes
+   * the text, as an alternative to writing it from scratch). The prompt goes
+   * to `POST /api/customer-hub/messages/draft` { spaceId, contactId, channel,
+   * prompt } → { subject?, body }: the server drafts from the customer's
+   * own history through the space LLM gate and never sends. The draft lands
+   * in the message field, editable; the previous text can be restored once
+   * with «Annulla»; Invia stays the person's click. AI off (503
+   * LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without the
+   * route (404/405) turns the row into one honest line, never a dead button.
+   */
+  const COMPOSER_PROMPT_MAX = 500;
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, changed }) {
+    const row = el('div', 'bo-composer-ai');
+    const mark = el('span', 'bo-composer-ai-mark', '✦');
+    mark.setAttribute('aria-hidden', 'true');
+    const prompt = el('input', 'bo-composer-ai-input');
+    prompt.setAttribute('type', 'text');
+    prompt.setAttribute('aria-label', 'Chiedi all’AI di scrivere il messaggio');
+    prompt.setAttribute('placeholder', 'Chiedi all’AI: «conferma la prova di giovedì, tono amichevole»');
+    prompt.setAttribute('maxlength', String(COMPOSER_PROMPT_MAX));
+    const go = el('button', 'bo-composer-ai-go', 'Genera');
+    go.setAttribute('type', 'button');
+    go.setAttribute('data-action', 'composer-ai-generate');
+    const line = el('p', 'bo-composer-ai-line', '');
+    line.setAttribute('aria-live', 'polite');
+    const field = el('div', 'bo-composer-ai-field');
+    field.appendChild(mark);
+    field.appendChild(prompt);
+    field.appendChild(go);
+    row.appendChild(field);
+    row.appendChild(line);
+    let busy = false;
+    let before = null;
+    const off = (sentence) => {
+      while (row.firstChild) row.removeChild(row.firstChild);
+      row.setAttribute('data-off', 'true');
+      row.appendChild(el('p', 'bo-composer-ai-off', sentence));
+    };
+    const say = (sentence, undo = false) => {
+      while (line.firstChild) line.removeChild(line.firstChild);
+      line.textContent = '';
+      if (sentence === '') return;
+      line.appendChild(el('span', undefined, sentence));
+      if (undo) {
+        const back = el('button', 'bo-composer-ai-undo', 'Annulla');
+        back.setAttribute('type', 'button');
+        back.setAttribute('data-action', 'composer-ai-undo');
+        back.addEventListener('click', () => {
+          if (before === null) return;
+          text.value = before;
+          before = null;
+          changed();
+          say('Testo di prima ripristinato.');
+        });
+        line.appendChild(el('span', undefined, ' · '));
+        line.appendChild(back);
+      }
+    };
+    async function generate() {
+      if (busy) return;
+      const words = prompt.value.trim();
+      const picked = channel();
+      if (words === '') {
+        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
+        return;
+      }
+      if (picked === null) {
+        say('Nessun canale collegato: l’AI scrive per il canale scelto.');
+        return;
+      }
+      busy = true;
+      go.setAttribute('disabled', 'disabled');
+      go.textContent = 'Scrivo…';
+      say('');
+      try {
+        const answer = await client.request('/api/customer-hub/messages/draft', {
+          method: 'POST',
+          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+        });
+        const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
+        if (drafted === '') {
+          say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
+          return;
+        }
+        before = text.value;
+        text.value = drafted.slice(0, 2000);
+        const subjectField = subject();
+        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
+        if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
+        changed();
+        go.textContent = 'Rigenera';
+        say('Bozza dell’AI: rileggila e modificala prima di inviare.', before.trim() !== '');
+        if (typeof text.focus === 'function') text.focus();
+      } catch (error) {
+        const code = error?.code ?? null;
+        const status = error?.status ?? null;
+        if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
+        else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
+        else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');
+        else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
+        else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
+      } finally {
+        busy = false;
+        if (row.getAttribute('data-off') !== 'true') {
+          go.removeAttribute?.('disabled');
+          if (go.textContent === 'Scrivo…') go.textContent = before === null ? 'Genera' : 'Rigenera';
+        }
+      }
+    }
+    go.addEventListener('click', () => { void generate(); });
+    prompt.addEventListener?.('keydown', (event) => {
+      if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
+        event.preventDefault?.();
+        // The composer's Cmd/Ctrl+Invio still means Invia; plain Invio in
+        // the prompt means Genera, never a send.
+        event.stopPropagation?.();
+        void generate();
+      }
+    });
+    return row;
+  }
+
   // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
   // close the window, the typed text and subject stay here and come back
   // when the composer reopens on the same customer. Cleared only by a send
@@ -1199,6 +1322,13 @@ export function createCustomerCardView(deps) {
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
+    const ai = composerAiRow({
+      spaceId, navCtx, text,
+      channel: () => (selected !== null ? selected.channel : null),
+      subject: () => subjectInput,
+      changed: keepDraft,
+    });
+    body.appendChild(ai);
     body.appendChild(text);
     body.appendChild(err);
     foot.appendChild(send);

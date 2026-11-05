@@ -2003,6 +2003,20 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
 .bo-composer-subject-row[data-empty="true"] { display: none; }
 .bo-scheda-composer-subject { width: 100%; padding: 10px 0; border: 0; border-bottom: 1px solid var(--line-faint); border-radius: 0; background: transparent; font: inherit; font-size: 14px; color: var(--ink); outline: none; }
+/* Composer agentico (Dan 05/11): «Chiedi all'AI» sopra il messaggio, nel viola agente come «Fissa con una frase». */
+.bo-composer-ai { padding: 10px 0 2px; }
+.bo-composer-ai-field { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; border: 1px solid var(--agent-soft); border-radius: 12px; background: var(--agent-soft); transition: border-color .12s; }
+.bo-composer-ai-field:focus-within { border-color: var(--agent); }
+.bo-composer-ai-mark { color: var(--agent); font-size: 13px; line-height: 1; }
+.bo-scheda-composer .bo-composer-ai-input { flex: 1; min-width: 0; min-height: 0; padding: 7px 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 13.5px; color: var(--agent-ink); outline: none; }
+.bo-scheda-composer .bo-composer-ai-input::placeholder { color: var(--agent-ink); opacity: .6; }
+.bo-scheda-composer .bo-composer-ai-go { flex: none; min-height: 0; padding: 7px 14px; border: 0; border-radius: 9px; background: var(--agent); color: var(--surface); font-size: 13px; font-weight: 650; cursor: pointer; }
+.bo-scheda-composer .bo-composer-ai-go:hover { background: var(--agent-ink); }
+.bo-scheda-composer .bo-composer-ai-go[disabled] { opacity: .6; cursor: progress; }
+.bo-composer-ai-line { margin: 6px 2px 0; font-size: 12.5px; color: var(--agent-ink); }
+.bo-composer-ai-line:empty { display: none; }
+.bo-scheda-composer .bo-composer-ai-undo { min-height: 0; padding: 0; border: 0; background: none; color: var(--agent-ink); font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
+.bo-composer-ai-off { margin: 0; font-size: 12.5px; color: var(--muted); }
 .bo-scheda-composer-text { flex: 1; width: 100%; min-height: 180px; padding: 12px 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--ink); resize: none; outline: none; }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }
 .bo-composer-body .field-error:empty { display: none; }
