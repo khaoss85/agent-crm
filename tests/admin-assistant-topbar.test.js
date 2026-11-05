@@ -23,3 +23,51 @@ test('channel ids read in Italian, unknown ids stay short and as they are', () =
   assert.equal(channelName('WhatsApp'), 'WhatsApp');
   assert.equal(channelName('carrier-pigeon'), 'carrier-pigeon');
 });
+
+import { createAssistantPanel } from '../apps/admin/public/admin-assistant.js';
+import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+
+const CONVS = { items: [
+  { id: 'conv-1', status: 'open', channel: 'phone', subjectResource: 'contact', subjectId: 'contact-1', subjectLabel: 'Gia Brezzi', updatedAt: '2026-11-04T10:00:00.000Z' },
+  { id: 'conv-2', status: 'open', channel: 'facebook', subjectResource: 'contact', subjectId: 'contact-2', subjectLabel: 'Ida Rosa', updatedAt: '2026-11-04T09:00:00.000Z' },
+] };
+
+function panelWith() {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/conversation/records')) return CONVS;
+      const error = new Error(`no such module (${path})`);
+      Object.assign(error, { status: 404, code: 'MODULE_NOT_FOUND' });
+      throw error;
+    },
+  };
+  return { mount, panel: createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {} }) };
+}
+
+test('open(question): the top-bar words run «Chi devo ricontattare?» and its channels read in Italian', async () => {
+  const { mount, panel } = panelWith();
+  await panel.open('clienti', undefined, undefined, 'chi devo ricontattare oggi?');
+  const text = mount.textContent;
+  assert.ok(text.includes('«chi devo ricontattare oggi?»'), 'the typed words are echoed');
+  assert.ok(text.includes('rispondo con «Chi devo ricontattare?»'), 'the panel names the suggestion it ran');
+  assert.ok(text.includes('(Telefono)') && text.includes('(Facebook)'), 'channels read in Italian on the real path');
+  assert.ok(!text.includes('(phone)') && !text.includes('(facebook)'));
+});
+
+test('open(question) with no match clears the previous answer instead of showing it', async () => {
+  const { mount, panel } = panelWith();
+  await panel.open('clienti', undefined, undefined, 'chi devo ricontattare oggi?');
+  assert.ok(mount.textContent.includes('Gia Brezzi'));
+  await panel.open('clienti', undefined, undefined, 'meteo a Milano');
+  const text = mount.textContent;
+  assert.ok(text.includes('scegli una delle domande qui sotto'));
+  assert.ok(!text.includes('Gia Brezzi'), 'the old answer is gone');
+});
+
+test('a tie on the best overlap runs nothing (ambiguous)', () => {
+  assert.equal(closestSuggestion('cliente', 'cosa'), null, '«cosa» opens two suggestions on the scheda');
+});

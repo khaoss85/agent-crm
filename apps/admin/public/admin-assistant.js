@@ -172,20 +172,26 @@ export function closestSuggestion(screenId, question) {
   const words = (text) => new Set(String(text ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .split(/[^a-z0-9]+/).filter((word) => word.length >= 4));
   const asked = words(question);
+  // Highest overlap wins; a tie on the best score is ambiguous and runs
+  // nothing — the panel then asks the operator to pick (review #596 P3).
   let best = null;
   let bestScore = 0;
+  let tied = false;
   for (const suggestion of suggestionsFor(screenId)) {
     const own = words(`${suggestion.title} ${suggestion.detail ?? ''}`);
     let score = 0;
     for (const word of asked) if (own.has(word)) score += 1;
-    if (score > bestScore) { best = suggestion; bestScore = score; }
+    if (score > bestScore) { best = suggestion; bestScore = score; tied = false; }
+    else if (score > 0 && score === bestScore) tied = true;
   }
-  return best;
+  return tied ? null : best;
 }
 
 const CHANNEL_NAMES = Object.freeze({
   phone: 'Telefono', email: 'Email', whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Facebook',
-  messenger: 'Messenger', tiktok: 'TikTok', sms: 'SMS', telegram: 'Telegram', web: 'Form sito', webform: 'Form sito',
+  messenger: 'Messenger', tiktok: 'TikTok', sms: 'SMS', telegram: 'Telegram',
+  // One channel under three ids across packages: the site form reads the same everywhere.
+  web: 'Form sito', webform: 'Form sito', 'website-form': 'Form sito',
 });
 
 /** Channel ids read in Italian in the answers (Dan 05/11: «(phone)» → «Telefono»). */
@@ -431,7 +437,7 @@ async function answerRicontattare(client) {
   }
   answer.lines.push(`${openAll.length} thread aperti da ricontattare${conversations.length !== openAll.length ? ` (tra ${conversations.length} letti)` : ''}:`);
   for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${shortText(row.channel, 20)})` : ''}`);
+    answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
   }
   answer.sources.push(...takeSources(open, 'conversation', conversationLabel));
   const first = open[0];
@@ -1660,6 +1666,12 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       state.asked = null;
       state.status = await probeAssistantBackend(client);
       const typed = typeof question === 'string' ? question.trim() : '';
+      // A new question never shows the previous answer (review #596 P1).
+      if (typed !== '') {
+        state.answer = null;
+        state.error = '';
+        state.pendingConfirmId = null;
+      }
       if (typed === '') {
         render();
         return;
