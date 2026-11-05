@@ -746,10 +746,12 @@ export function createGmailChannelAdapter(options = {}) {
         windowMs: GMAIL_HISTORY_WINDOW_MS,
         /**
          * Page the seeded mailbox oldest-first: threads of the last 90
-         * days, one normalized event per message with its sender attached.
-         * The fake serves its single bound mailbox; production lists the
-         * OAuth mailbox the call-time secret names, through the same
-         * `resolveSecret` edge the import uses.
+         * days, one normalized event per message with the sender,
+         * recipients and bulk evidence `normalizeGmailMessage` attached —
+         * the same envelope the push path normalizes, so both reconcile
+         * identically. The fake serves its single bound mailbox;
+         * production lists the OAuth mailbox the call-time secret names,
+         * through the same `resolveSecret` edge the import uses.
          */
         async listHistory({ secret, since, pageToken, limit }) {
           if (httpIo) return httpIo.listHistory({ secret, since, pageToken, limit });
@@ -770,7 +772,7 @@ export function createGmailChannelAdapter(options = {}) {
           const slice = past.slice(start, start + size);
           const next = start + size < past.length ? encodeHistoryToken(start + size) : null;
           return {
-            events: slice.map((entry) => ({ ...entry.normalized, sender: { handle: entry.from } })),
+            events: slice.map((entry) => entry.normalized),
             nextPageToken: next,
           };
         },
