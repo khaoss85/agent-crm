@@ -35,7 +35,10 @@ import { AppError, ValidationError, computeDefinitionFingerprint, createDefiniti
  * `listHistory({ secret, account, since, pageToken, limit })` resolves to
  * `{ events, nextPageToken, skippedMessages? }`: `events` are channel events in the
  * `normalizeInbound` shape (an event may carry an optional `sender`
- * `{ handle, email?, firstName?, lastName? }` the import reconciles);
+ * `{ handle, email?, firstName?, lastName? }` the import reconciles, plus an
+ * optional `recipients` list of the same shape — the people the sender
+ * wrote to, reconciled like the sender so they become leads too
+ * (backlog:13c09f03; Gmail carries them from the To/Cc headers));
  * `nextPageToken` is an opaque bounded cursor, or null when the past is
  * exhausted. The same token replays the same page — that determinism is
  * what makes an interrupted import resume instead of restart.
@@ -182,11 +185,35 @@ function assertHistorySender(sender) {
   };
 }
 
+/** Recipients an event may name besides its sender (backlog:13c09f03): at most 50, each in the sender shape. */
+const HISTORY_RECIPIENTS_MAX = 50;
+
+function assertHistoryRecipients(recipients, field) {
+  if (recipients === undefined) return undefined;
+  if (!Array.isArray(recipients) || recipients.length > HISTORY_RECIPIENTS_MAX) {
+    throw new ValidationError(
+      `channel history event recipients must be a list of 0-${HISTORY_RECIPIENTS_MAX} sender-shaped entries when present`,
+      { field: `${field}.recipients` },
+    );
+  }
+  return Object.freeze(recipients.map((entry, index) => {
+    const checked = assertHistorySender(entry);
+    if (checked === undefined) {
+      throw new ValidationError('channel history event recipient must be a sender-shaped object', {
+        field: `${field}.recipients[${index}]`,
+      });
+    }
+    return checked;
+  }));
+}
+
 /**
  * Validate one history page against the channel-event contract both the
  * import engine and the adapter kit enforce: the same four fields the
- * webhook ingest requires, plus the optional sender evidence. Throws
- * fail-closed; returns the frozen page the engine stores and reconciles.
+ * webhook ingest requires, plus the optional sender evidence (and the
+ * optional recipients list, same shape, reconciled like the sender).
+ * Throws fail-closed; returns the frozen page the engine stores and
+ * reconciles.
  *
  * @param {unknown} page @param {number} limit
  */
@@ -234,6 +261,7 @@ export function assertHistoryPage(page, limit) {
       sequence: Number.isSafeInteger(entry.sequence) ? entry.sequence : null,
       occurredAt: isCanonicalInstant(entry.occurredAt) ? entry.occurredAt : null,
       sender: assertHistorySender(entry.sender),
+      recipients: assertHistoryRecipients(entry.recipients, field),
     });
   });
   return Object.freeze({

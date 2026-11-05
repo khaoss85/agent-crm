@@ -5,8 +5,11 @@ import {
   GMAIL_MAX_TEXT,
   buildGmailSendRequest,
   canonicalGmailAddress,
-  gmailThreadIdForSubject,
+  isBulkGmailMessage,
   isGmailThreadId,
+  gmailThreadIdForSubject,
+  parseGmailAddressHeader,
+  parseGmailRecipients,
 } from './gmail.js';
 
 /**
@@ -55,6 +58,47 @@ function restHeader(payload, name) {
   return null;
 }
 
+/** Every value one header name carries on a REST payload (To/Cc may repeat). */
+function restHeaderAll(payload, name) {
+  const headers = payload && typeof payload === 'object' && Array.isArray(payload.headers)
+    ? payload.headers
+    : [];
+  const want = String(name).toLowerCase();
+  const values = [];
+  for (const entry of headers) {
+    if (entry && typeof entry === 'object'
+      && typeof entry.name === 'string' && entry.name.toLowerCase() === want
+      && typeof entry.value === 'string') {
+      values.push(entry.value);
+    }
+  }
+  return values;
+}
+
+/**
+ * The two bulk headers off a REST payload, in the plain shape
+ * `isBulkGmailMessage` reads (backlog:13c09f03): same two names the fake
+ * path reads, same closed-vocabulary verdict.
+ */
+function restBulkHeaders(payload) {
+  const list = restHeaderAll(payload, 'List-Unsubscribe');
+  const precedence = restHeaderAll(payload, 'Precedence');
+  return {
+    listUnsubscribe: list.length > 0 ? list[0] : null,
+    precedence: precedence.length > 0 ? precedence[0] : null,
+  };
+}
+
+/** One sender-shaped evidence off a REST address header: address plus display name, never a throw past the caller. */
+function restAddressEvidence(raw) {
+  const parsed = parseGmailAddressHeader(raw);
+  return {
+    handle: parsed.address,
+    ...(parsed.firstName === null ? {} : { firstName: parsed.firstName }),
+    ...(parsed.lastName === null ? {} : { lastName: parsed.lastName }),
+  };
+}
+
 /**
  * Normalize one Gmail REST message (`messages.get` with
  * `format=metadata`) onto the channel event shape the inbox path reads:
@@ -64,8 +108,11 @@ function restHeader(payload, name) {
  * otherwise — a message id never lands in the `email:` namespace.
  *
  * A delivery off our own mailbox (a sent copy looping back) normalizes
- * to an empty subject, exactly like the push path: the operations layer
- * quarantines it as evidence, never as a customer.
+ * to an empty subject with its recipients attached, exactly like the
+ * push path: the operations layer reconciles the recipients into leads
+ * and quarantines a loopback with nobody else as evidence, never as a
+ * customer. Mass mail normalizes to an empty subject with no sender at
+ * all: no contact is ever invented from it.
  */
 export function normalizeGmailRestMessage(wire, mailbox) {
   if (!wire || typeof wire !== 'object' || Array.isArray(wire)) {
@@ -84,22 +131,35 @@ export function normalizeGmailRestMessage(wire, mailbox) {
   }
   let from;
   try {
-    const rawFrom = restHeader(wire.payload, 'From') ?? '';
-    const bare = rawFrom.includes('<')
-      ? (/<([^<>]*)>/.exec(rawFrom)?.[1] ?? '')
-      : rawFrom.trim();
-    from = canonicalGmailAddress(bare);
+    from = restAddressEvidence(restHeader(wire.payload, 'From') ?? '');
   } catch {
     throw httpError('Gmail message needs a valid sender address', 'CHANNEL_EVENT_MALFORMED', 422);
-  }
-  if (from === mailbox) {
-    return { providerEventId: id, subject: '', sequence: null, occurredAt: null };
   }
   const atMs = typeof wire.internalDate === 'string'
     ? Number.parseInt(wire.internalDate, 10)
     : wire.internalDate;
   if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > 4102444800000) {
     throw httpError('Gmail message needs a valid internalDate', 'CHANNEL_EVENT_MALFORMED', 422);
+  }
+  const atIso = new Date(atMs).toISOString();
+  if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
+    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
+  }
+  if (from.handle === mailbox) {
+    const recipients = parseGmailRecipients(
+      restHeaderAll(wire.payload, 'To'), restHeaderAll(wire.payload, 'Cc'), mailbox,
+    );
+    if (recipients.length === 0) {
+      return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
+    }
+    return {
+      providerEventId: id,
+      subject: `email:${threadId}`,
+      sequence: atMs,
+      occurredAt: atIso,
+      text: '',
+      recipients,
+    };
   }
   const snippet = typeof wire.snippet === 'string' ? wire.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) {
@@ -109,9 +169,10 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     providerEventId: id,
     subject: `email:${threadId}`,
     sequence: atMs,
-    occurredAt: new Date(atMs).toISOString(),
+    occurredAt: atIso,
     text: snippet,
     attachment: null,
+    sender: from,
   };
 }
 
@@ -321,9 +382,16 @@ export function createGmailHttpIo(options = {}) {
         if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || entry.id === '') continue;
         let full;
         try {
+          // To/Cc name the recipients the owner wrote to (backlog:13c09f03)
+          // and List-Unsubscribe/Precedence mark mass mail: requested like
+          // From, so the fake and the REST reader reconcile identically.
+          const meta = new URLSearchParams();
+          meta.set('format', 'metadata');
+          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence']) {
+            meta.append('metadataHeaders', name);
+          }
           full = await call(
-            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}`
-            + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject',
+            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}?${meta.toString()}`,
             { method: 'GET', headers: headers(secret) },
             'history',
             mapHistoryGetFailure,
@@ -339,14 +407,10 @@ export function createGmailHttpIo(options = {}) {
           }
           throw error;
         }
-        const normalized = normalizeGmailRestMessage(full, mailbox);
-        if (normalized.subject === '') {
-          // Our own sent copy looping back: quarantined as evidence with
-          // its provider time, the same way the push path treats it.
-          events.push({ ...normalized, sender: { handle: mailbox } });
-          continue;
-        }
-        events.push({ ...normalized, sender: { handle: senderOf(full) } });
+        // The normalizer already carries sender, recipients, bulk and
+        // loopback evidence in the same shape the fake serves — pushed
+        // unchanged, so the import converges identically on both readers.
+        events.push(normalizeGmailRestMessage(full, mailbox));
       }
       const next = typeof listed.nextPageToken === 'string' && listed.nextPageToken !== ''
         ? listed.nextPageToken
@@ -401,11 +465,4 @@ export function createGmailHttpIo(options = {}) {
       };
     },
   };
-
-  /** The sender behind one REST message: already validated by the normalizer. */
-  function senderOf(full) {
-    const raw = restHeader(full?.payload, 'From') ?? '';
-    const bare = raw.includes('<') ? (/<([^<>]*)>/.exec(raw)?.[1] ?? '') : raw.trim();
-    return canonicalGmailAddress(bare);
-  }
 }
