@@ -1169,10 +1169,11 @@ export function createChannelOperations(deps) {
   /**
    * Resolve every recipient the event names (backlog:13c09f03): the people
    * the owner wrote to become leads through the same capability as the
-   * sender. A malformed recipient is skipped, never fatal — one bad
-   * address must not drop the good ones beside it. Without the capability
-   * every recipient stays `pending`, like the sender.
-   * @returns {Promise<Array<'created'|'matched'|'unresolved'|'none'>>}
+   * sender. A malformed recipient names nobody (`none`), never fatal —
+   * one bad address must not drop the good ones beside it, and the fold
+   * below ignores it beside a real outcome. Without the capability every
+   * recipient stays `pending`, like the sender.
+   * @returns {Promise<Array<'created'|'matched'|'unresolved'|'none'|'pending'>>}
    */
   async function resolveImportRecipients(event, adapter, actor) {
     const list = Array.isArray(event?.recipients) ? event.recipients : [];
