@@ -53,9 +53,41 @@ function assertCalendarId(calendarId) {
 /**
  * Flatten Google's namespaced extended properties onto the flat shape the
  * sync engine reads (`extendedProperties.accordoSourceKey`): private first,
- * then shared, neither mutating the other. Anything else on the wire is
- * not carried — the engine decides on the documented fields only.
+ * then shared, neither mutating the other.
+ *
+ * Attendees and the organizer ARE carried (backlog:1f15c248fc05): the
+ * deployment mapping (`mapping.subjectForEvent`) links each imported event
+ * to the customer whose email appears among them, so dropping them skips
+ * every real event in production. Only the matching fields travel —
+ * `email`, `displayName`, `responseStatus` — each bounded and frozen;
+ * everything else on the wire (creator, htmlLink, reminders, per-attendee
+ * flags like `self` or `resource`) stays out. The copy is faithful, never
+ * normalized: lowercasing and phone matching belong to the consumer.
+ * Beyond ATTENDEES_MAX entries the list stops: the excess degrades to a
+ * skip, never to a link against the wrong customer.
  */
+
+const ATTENDEE_EMAIL_MAX = 320;
+const ATTENDEE_NAME_MAX = 256;
+const ATTENDEES_MAX = 200;
+const ATTENDEE_RESPONSE_STATUSES = Object.freeze(new Set(['needsAction', 'declined', 'tentative', 'accepted']));
+
+/** One Google attendee/organizer entry reduced to the matching fields the engine reads. Null when unusable. */
+function toEnginePerson(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const person = {};
+  if (typeof raw.email === 'string' && raw.email !== '' && raw.email.length <= ATTENDEE_EMAIL_MAX) {
+    person.email = raw.email;
+  }
+  if (typeof raw.displayName === 'string' && raw.displayName !== '' && raw.displayName.length <= ATTENDEE_NAME_MAX) {
+    person.displayName = raw.displayName;
+  }
+  if (typeof raw.responseStatus === 'string' && ATTENDEE_RESPONSE_STATUSES.has(raw.responseStatus)) {
+    person.responseStatus = raw.responseStatus;
+  }
+  return Object.keys(person).length === 0 ? null : Object.freeze(person);
+}
+
 export function toEngineEvent(wire) {
   if (!wire || typeof wire !== 'object' || Array.isArray(wire)) {
     throw httpError('GOOGLE_EVENT_MALFORMED', 502, 'google returned an unreadable event');
@@ -71,6 +103,12 @@ export function toEngineEvent(wire) {
     ...((extended && typeof extended === 'object' && !Array.isArray(extended) && extended.private
       && typeof extended.private === 'object' && !Array.isArray(extended.private)) ? extended.private : {}),
   };
+  const rawAttendees = Array.isArray(wire.attendees) ? wire.attendees.slice(0, ATTENDEES_MAX) : [];
+  const attendees = [];
+  for (const raw of rawAttendees) {
+    const person = toEnginePerson(raw);
+    if (person !== null) attendees.push(person);
+  }
   return Object.freeze({
     id,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
@@ -80,6 +118,8 @@ export function toEngineEvent(wire) {
     status: wire.status === 'cancelled' ? 'cancelled' : 'confirmed',
     updated: typeof wire.updated === 'string' ? wire.updated : new Date().toISOString(),
     extendedProperties: Object.freeze({ ...flat }),
+    organizer: toEnginePerson(wire.organizer),
+    attendees: Object.freeze(attendees),
   });
 }
 
