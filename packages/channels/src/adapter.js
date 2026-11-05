@@ -186,7 +186,7 @@ function assertHistorySender(sender) {
 }
 
 /** Recipients an event may name besides its sender (backlog:13c09f03): at most 50, each in the sender shape. */
-const HISTORY_RECIPIENTS_MAX = 50;
+export const HISTORY_RECIPIENTS_MAX = 50;
 
 function assertHistoryRecipients(recipients, field) {
   if (recipients === undefined) return undefined;

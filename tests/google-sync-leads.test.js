@@ -383,6 +383,7 @@ function calendarScene(options = {}) {
   const sync = createCalendarSyncOperations({
     modules, appointmentBook, provider, mapping, database,
     resolveSender: options.resolveSender ?? null,
+    ownerEmails: options.ownerEmails,
     actor: ACTOR, now: () => new Date().toISOString(),
   });
   return {
@@ -502,4 +503,119 @@ test('an unwired calendar composition keeps skipping unmapped events', async (t)
   const result = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
   assert.equal(result.entries[0].status, 'skipped');
   assert.equal(ctx.appointmentRows().length, 0);
+});
+
+test('a large To/Cc degrades to the first 50 recipients instead of bricking the import', async (t) => {
+  const { harness, api, sender } = gmailScene();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = Date.now() - HOUR;
+  const crowd = Array.from({ length: 55 }, (_, index) => `persona${index}@example.com`);
+  const parsed = parseGmailRecipients(crowd.join(', '), undefined, MAILBOX);
+  assert.equal(parsed.length, 50, 'the parse stops at the history-page bound');
+  assert.deepEqual(parsed.map((entry) => entry.handle), crowd.slice(0, 50));
+  api.seedMailbox([
+    { id: 'sent-many', threadId: 'thread-many', from: MAILBOX, to: crowd.join(', '), internalDateMs: at },
+  ]);
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const { result: page, lines } = await captureInfo(
+    () => harness.advanceImport(SPACE, { connectionKey: key, limit: 10 }),
+  );
+  assert.equal(page.page.created, 50, 'every invented lead is counted');
+  assert.ok(lines.includes('[accordo] google-sync created=50 source=gmail'));
+  assert.equal(sender.seen.size, 50);
+});
+
+test('one mail to two new people reports two leads, not one row', async (t) => {
+  const { harness, api, sender } = gmailScene();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = Date.now() - HOUR;
+  api.seedMailbox([
+    {
+      id: 'sent-two', threadId: 'thread-two', from: MAILBOX,
+      to: 'Alice <alice@example.com>, bob@example.com', internalDateMs: at,
+    },
+  ]);
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const { result: page, lines } = await captureInfo(
+    () => harness.advanceImport(SPACE, { connectionKey: key, limit: 10 }),
+  );
+  assert.equal(page.page.created, 2);
+  assert.ok(lines.includes('[accordo] google-sync created=2 source=gmail'));
+  assert.equal(sender.seen.size, 2);
+  const rows = outcomeRows(harness);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sender, 'created', 'the row keeps its single folded outcome');
+});
+
+test('a meeting room is never a lead: a resource-only event stays skipped', async (t) => {
+  const sender = calendarSender();
+  const provider = createFakeGoogleCalendar();
+  const ctx = calendarScene({ provider, subjectForEvent: () => null, resolveSender: sender.resolveSender });
+  t.after(() => ctx.close());
+  provider.seedEvent(CAL, {
+    id: 'evt-room', summary: 'Sala', ...slot('21', '09:00', '10:00'),
+    attendees: [{ email: 'sala@example.com', displayName: 'Sala Rossa', resource: true }],
+  });
+  const result = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].status, 'skipped');
+  assert.equal(sender.calls.length, 0, 'no room ever reaches the resolution');
+  assert.equal(ctx.appointmentRows().length, 0);
+});
+
+test('an owner alias the wire cannot tell from a guest stays skipped when configured', async (t) => {
+  const sender = calendarSender();
+  const provider = createFakeGoogleCalendar();
+  const ctx = calendarScene({
+    provider,
+    subjectForEvent: () => null,
+    resolveSender: sender.resolveSender,
+    ownerEmails: ['Titolare.Alias@Example.com'],
+  });
+  t.after(() => ctx.close());
+  provider.seedEvent(CAL, {
+    id: 'evt-alias', summary: 'Solo titolare', ...slot('21', '13:00', '14:00'),
+    organizer: { email: 'titolare@example.com', displayName: 'Titolare' },
+    attendees: [{ email: 'titolare.alias@example.com', displayName: 'Titolare' }],
+  });
+  const result = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].status, 'skipped', 'the alias is not its own lead');
+  assert.equal(sender.calls.length, 0);
+  assert.equal(ctx.appointmentRows().length, 0);
+});
+
+test('a reschedule keeps the linked customer when the guest list changes', async (t) => {
+  const sender = calendarSender();
+  const provider = createFakeGoogleCalendar();
+  const ctx = calendarScene({ provider, subjectForEvent: () => null, resolveSender: sender.resolveSender });
+  t.after(() => ctx.close());
+  provider.seedEvent(CAL, {
+    id: 'evt-move', summary: 'Sessione', ...slot('21', '09:00', '10:00'),
+    attendees: [{ email: 'ospite-a@example.com', displayName: 'Ospite A' }],
+  });
+  const first = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(first.entries[0].status, 'imported');
+  assert.equal(sender.calls.length, 1);
+  const booked = ctx.appointmentRows().find((row) => row.status !== 'cancelled');
+  assert.equal(booked.subjectId, 'contact-cal-1');
+  provider.patchEvent({
+    calendarId: CAL,
+    eventId: 'evt-move',
+    patch: {
+      ...slot('21', '14:00', '15:00'),
+      attendees: [{ email: 'ospite-b@example.com', displayName: 'Ospite B' }],
+    },
+  });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const moved = pull.entries.find((entry) => entry.eventId === 'evt-move');
+  assert.equal(moved.status, 'applied');
+  assert.equal(moved.change, 'rescheduled');
+  assert.equal(moved.leadCreated, undefined, 'no new lead on a tracked move');
+  assert.equal(sender.calls.length, 1, 'the new guest list is never re-resolved');
+  const fresh = ctx.appointmentRows().find((row) => row.status !== 'cancelled');
+  assert.equal(fresh.subjectId, 'contact-cal-1', 'the appointment stays with its customer');
+  assert.equal(fresh.startsAt, '2026-10-21T14:00:00.000Z');
 });

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { HISTORY_RECIPIENTS_MAX } from './adapter.js';
 import { verifyHmacWebhook } from './crypto.js';
 import { createGmailHttpIo } from './gmail-http.js';
 import { assertChannelAttachment } from './meta-webhook.js';
@@ -315,7 +316,11 @@ export function splitGmailAddressList(value) {
  * split first — a whole `To` line never goes to the single-address parser.
  * A malformed recipient is skipped, never fatal — one bad address must not
  * drop the good ones beside it. The bound mailbox is always excluded: our
- * own address is evidence of sending, never a customer.
+ * own address is evidence of sending, never a customer. The list stops at
+ * `HISTORY_RECIPIENTS_MAX` (the same bound `assertHistoryPage` enforces):
+ * an unbounded To/Cc would fail the page on every retry and brick the
+ * import past that message, so a large To/Cc degrades to the first entries,
+ * never to a stuck page.
  * @param {unknown} rawTo @param {unknown} rawCc @param {string} mailbox
  */
 export function parseGmailRecipients(rawTo, rawCc, mailbox) {
@@ -323,8 +328,10 @@ export function parseGmailRecipients(rawTo, rawCc, mailbox) {
   const recipients = [];
   const rawList = [...(Array.isArray(rawTo) ? rawTo : [rawTo]), ...(Array.isArray(rawCc) ? rawCc : [rawCc])];
   for (const raw of rawList) {
+    if (recipients.length >= HISTORY_RECIPIENTS_MAX) break;
     if (raw === undefined || raw === null || raw === '') continue;
     for (const piece of splitGmailAddressList(raw)) {
+      if (recipients.length >= HISTORY_RECIPIENTS_MAX) break;
       let parsed;
       try {
         parsed = parseGmailAddressHeader(piece);

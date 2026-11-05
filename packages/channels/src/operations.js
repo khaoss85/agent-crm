@@ -1199,6 +1199,9 @@ export function createChannelOperations(deps) {
    * at all — or nothing but malformed evidence — stays `none`.
    */
   function foldImportOutcomes(outcomes) {
+    // The fold decides the single sender the row records; the log and the
+    // page tally count every `created` evidence separately (backlog:13c09f03),
+    // so one mail to two new people reports two leads, not one row.
     for (const want of ['created', 'matched', 'unresolved', 'pending']) {
       if (outcomes.includes(want)) return want;
     }
@@ -1377,6 +1380,12 @@ export function createChannelOperations(deps) {
     const done = checked.nextPageToken === null;
     const commitKey = importSourceKey(spaceId, connection.sourceKey);
     const importKey = row.sourceKey;
+    // Leads this advance actually invented (backlog:13c09f03): one counter
+    // per `created` evidence, not per row — a mail to two new people
+    // reports two. Retry-safe by construction: events with a final outcome
+    // return before resolving, so a replay recounts nothing; a re-resolved
+    // replay answers `matched`, never `created` again.
+    let createdLeads = 0;
 
     const knownOutcome = (providerEventId) => outcomeService.listWhere({
       sourceKey: outcomeSourceKey(importKey, providerEventId),
@@ -1501,9 +1510,13 @@ export function createChannelOperations(deps) {
         // The sender first, then every recipient (backlog:13c09f03): the
         // people the owner wrote to become leads through the same
         // capability. One folded outcome lands on the row — a creation
-        // anywhere wins, so the log counts every automatic lead.
+        // anywhere wins — while every `created` evidence lands in the
+        // page tally, so the log counts every automatic lead.
         if (event.sender) outcomes.push(await resolveImportSender(event, adapter, actor));
         for (const outcome of await resolveImportRecipients(event, adapter, actor)) outcomes.push(outcome);
+        for (const outcome of outcomes) {
+          if (outcome === 'created') createdLeads += 1;
+        }
       } catch (error) {
         // A deterministically refused sender fails whatever the attempt:
         // record it failed and skip like a poisoned event. A transient
@@ -1585,8 +1598,10 @@ export function createChannelOperations(deps) {
     const after = countImportOutcomes(importKey);
     // Every automatic lead lands in the log (backlog:13c09f03): counts
     // only, never an address — the outcome rows carry no sender text by
-    // design, and neither does this line.
-    const created = after.created - before.created;
+    // design, and neither does this line. Counted per evidence resolved
+    // above, not per row: a multi-recipient mail reports every lead it
+    // invented, while the row keeps its single folded outcome.
+    const created = createdLeads;
     if (adapter.channel === 'email' && created > 0) {
       console.info(`[accordo] ${formatGoogleSyncLog({ created, source: 'gmail' })}`);
     }

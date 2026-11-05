@@ -87,9 +87,16 @@ test('toEngineEvent keeps attendees and organizer from a real events.list payloa
   for (const person of [...lesson.attendees, lesson.organizer]) {
     assert.ok(Object.isFrozen(person), 'attendee entries are frozen');
     for (const key of Object.keys(person)) {
-      assert.ok(['email', 'displayName', 'responseStatus', 'self'].includes(key), `only matching keys travel (got ${key})`);
+      assert.ok(['email', 'displayName', 'responseStatus', 'self', 'resource'].includes(key), `only matching keys travel (got ${key})`);
     }
   }
+  const room = toEngineEvent({
+    id: 'evt-sala-1', status: 'confirmed', updated: '2026-11-04T10:00:00.000Z',
+    start: { dateTime: '2026-11-06T10:00:00+01:00' }, end: { dateTime: '2026-11-06T11:00:00+01:00' },
+    attendees: [{ email: 'sala@example.com', displayName: 'Sala Rossa', resource: true }],
+  });
+  assert.deepEqual(room.attendees, [{ email: 'sala@example.com', displayName: 'Sala Rossa', resource: true }],
+    'a room carries its resource flag so the resolver can skip it');
   assert.ok(Object.isFrozen(lesson.attendees), 'the attendees list is frozen');
   assert.equal(lesson.extendedProperties.accordoSourceKey, 'gcal:primary:evt-lezione-1');
 

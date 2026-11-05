@@ -207,6 +207,31 @@ const linkKeyFor = (calendarId, eventId) => `${calendarId}:${eventId}`;
 const stateKeyFor = (calendarId) => `calendar:${calendarId}`;
 
 /**
+ * The deployment's own addresses (backlog:13c09f03): the bound mailbox
+ * plus its aliases. Trimmed and lowercased, deduped, frozen — fail-closed
+ * on anything that is not a bounded address, because a misconfigured
+ * exclusion must refuse, never silently stop excluding.
+ */
+function normalizeOwnerEmails(value) {
+  if (value === undefined || value === null) return Object.freeze([]);
+  if (!Array.isArray(value)) {
+    throw new ValidationError('calendar-sync ownerEmails must be an array of addresses', { field: 'ownerEmails' });
+  }
+  const seen = new Set();
+  for (const entry of value) {
+    if (typeof entry !== 'string') {
+      throw new ValidationError('calendar-sync ownerEmails must be an array of addresses', { field: 'ownerEmails' });
+    }
+    const address = entry.trim().toLowerCase();
+    if (address === '' || address.length > 320 || !address.includes('@')) {
+      throw new ValidationError('calendar-sync ownerEmails holds bounded email addresses', { field: 'ownerEmails' });
+    }
+    seen.add(address);
+  }
+  return Object.freeze([...seen]);
+}
+
+/**
  * Newest-wins comparison for the pending-snapshot rule: an in-hand Google
  * event supersedes a pending snapshot only when its `updated` stamp is
  * strictly newer. Missing or unparseable stamps never supersede —
@@ -269,6 +294,7 @@ function isLinkConflict(error) {
  *   modules: any, moduleNames?: Record<string, string>,
  *   appointmentBook: any, provider: any, mapping: any,
  *   actor?: unknown, now?: () => string, database?: any, resolveSender?: any,
+ *   ownerEmails?: string[],
  * }} options `appointmentBook` is the created `appointment-book@1`
  * capability definition (it carries `.create`); the deployment hands the
  * created object over, the way appointments receives work's `follow-up@1`.
@@ -323,6 +349,12 @@ export function createCalendarSyncOperations(options = {}) {
       field: 'resolveSender',
     });
   }
+  // The deployment's own addresses on this calendar (backlog:13c09f03):
+  // the bound mailbox plus its aliases, lowercased. Wire signals (`self`,
+  // the organizer address) miss an owner alias, so the deployment names
+  // its addresses here instead of letting an alias become its own lead.
+  // Absent means no alias is known — only the wire signals exclude.
+  const ownerEmails = normalizeOwnerEmails(options.ownerEmails);
   const defaultActor = options.actor ?? { type: 'system', id: 'calendar-sync' };
   const now = typeof options.now === 'function' ? options.now : () => new Date().toISOString();
   // Process-local run ledger behind readSyncStatus (backlog:d1da1ed51e9c):
@@ -587,6 +619,25 @@ export function createCalendarSyncOperations(options = {}) {
     return buildBookingRequest(subject, event, calendarId, sourceKey);
   }
 
+  /**
+   * The linked row's customer as a booking subject (backlog:13c09f03): the
+   * rebook of a tracked reschedule carries the same envelope the import
+   * booked, rebuilt from the row's stored columns — never re-resolved
+   * from the new guest list. Conditional spreads keep the envelope the
+   * appointments validator accepts (no ownerPackage on a host subject,
+   * no label when the row stores none).
+   */
+  function linkedSubjectFromRow(row) {
+    return {
+      resource: row.subjectResource,
+      id: row.subjectId,
+      owner: row.subjectOwner,
+      ...(row.subjectOwnerPackage === null || row.subjectOwnerPackage === undefined
+        ? {} : { ownerPackage: row.subjectOwnerPackage }),
+      ...(row.subjectLabel === null || row.subjectLabel === undefined ? {} : { label: row.subjectLabel }),
+    };
+  }
+
   function buildBookingRequest(subject, event, calendarId, sourceKey) {
     const service = mapping.serviceForEvent(event, calendarId) ?? {};
     return {
@@ -642,7 +693,10 @@ export function createCalendarSyncOperations(options = {}) {
    * with no external invitees never reaches the capability: it stays
    * skipped, exactly as on main. Idempotent across runs — the resolution
    * replays its winner instead of doubling — and the contact carries
-   * the `calendar` origin, so the operator can find and delete it.
+   * the `calendar` origin, so the operator can find and delete it. Meeting
+   * rooms (`resource`) never resolve, and neither do the deployment's
+   * configured owner addresses — an owner alias the wire cannot tell from
+   * a guest stays skipped unless the deployment names it in `ownerEmails`.
    * @returns {Promise<{subject: any, created: boolean} | null>}
    */
   async function resolveAttendeeSubject(event, actor) {
@@ -653,10 +707,17 @@ export function createCalendarSyncOperations(options = {}) {
     const attendees = Array.isArray(event?.attendees) ? event.attendees : [];
     for (const attendee of attendees) {
       if (!attendee || typeof attendee !== 'object' || Array.isArray(attendee)) continue;
+      // A meeting room is a place, never a person: resolving it would book
+      // the room as its own customer.
+      if (attendee.resource === true) continue;
       if (attendee.self === true) continue;
       const email = attendeeEmail(attendee.email);
       if (email === null) continue;
       if (organizerEmail !== null && email.toLowerCase() === organizerEmail) continue;
+      // An owner alias carries no `self` flag and differs from the
+      // organizer address: only the deployment's configured addresses
+      // tell it apart from a guest, so it never resolves to a lead.
+      if (ownerEmails.includes(email.toLowerCase())) continue;
       const names = splitAttendeeName(attendee.displayName);
       let answer;
       try {
@@ -1049,11 +1110,29 @@ export function createCalendarSyncOperations(options = {}) {
   async function moveBooking(handle, actor, calendarId, event, link, row) {
     const eventId = event?.id;
     const revision = (link.revision ?? 0) + 1;
-    const mapped = await mapEventToBookingWithLead(event, calendarId, sourceKeyFor(calendarId, eventId, revision), actor);
-    if (mapped === null) {
-      return { status: 'skipped', eventId, reason: 'no customer mapping for this event (mapping.subjectForEvent returned null)' };
+    const sourceKey = sourceKeyFor(calendarId, eventId, revision);
+    // A tracked reschedule moves the linked appointment, never re-resolves
+    // its customer (backlog:13c09f03): re-resolving the new guest list
+    // would silently transfer a live appointment to a different contact.
+    // The deployment mapping still wins when it names someone; otherwise
+    // the rebook carries the linked row's subject, unchanged. Only a row
+    // without a stored subject resolves fresh — a healed import with a
+    // lost row has no linked subject left to reuse.
+    const mappedSubject = mapping.subjectForEvent(event, calendarId);
+    let request;
+    let leadCreated = false;
+    if (mappedSubject !== null && mappedSubject !== undefined) {
+      request = buildBookingRequest(mappedSubject, event, calendarId, sourceKey);
+    } else if (row && typeof row.subjectResource === 'string' && typeof row.subjectId === 'string') {
+      request = buildBookingRequest(linkedSubjectFromRow(row), event, calendarId, sourceKey);
+    } else {
+      const mapped = await mapEventToBookingWithLead(event, calendarId, sourceKey, actor);
+      if (mapped === null) {
+        return { status: 'skipped', eventId, reason: 'no customer mapping for this event (mapping.subjectForEvent returned null)' };
+      }
+      request = mapped.request;
+      leadCreated = mapped.leadCreated;
     }
-    const request = mapped.request;
     const live = await readLocal(handle, link);
     if (!live || live.status !== row.status) {
       // The row moved under us (a local cancel, a terminal advance, or a
@@ -1084,7 +1163,7 @@ export function createCalendarSyncOperations(options = {}) {
     }
     return {
       status: 'applied', eventId, direction: 'google-to-local', change: 'rescheduled', revision,
-      ...(mapped.leadCreated === true ? { leadCreated: true } : {}),
+      ...(leadCreated === true ? { leadCreated: true } : {}),
     };
   }
 

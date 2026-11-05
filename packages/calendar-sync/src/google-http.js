@@ -62,8 +62,10 @@ function assertCalendarId(calendarId) {
  * `email`, `displayName`, `responseStatus` — each bounded and frozen, plus
  * Google's `self` flag when true (backlog:13c09f03): it marks the calendar
  * owner's own attendee entry, so the lead resolver can exclude it instead
- * of booking the owner as their own customer. Everything else on the wire
- * (creator, htmlLink, reminders, `resource`) stays out. The copy is
+ * of booking the owner as their own customer. A room's `resource` flag
+ * rides along too, so the resolver can tell a meeting room (never a lead)
+ * apart from a guest. Everything else on the wire
+ * (creator, htmlLink, reminders) stays out. The copy is
  * faithful, never normalized: lowercasing and phone matching belong to
  * the consumer. Beyond ATTENDEES_MAX entries the list stops: the excess
  * degrades to a skip, never to a link against the wrong customer.
@@ -89,6 +91,9 @@ function toEnginePerson(raw) {
   }
   if (raw.self === true && typeof person.email === 'string') {
     person.self = true;
+  }
+  if (raw.resource === true) {
+    person.resource = true;
   }
   return Object.keys(person).length === 0 ? null : Object.freeze(person);
 }
