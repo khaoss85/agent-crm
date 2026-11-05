@@ -268,7 +268,7 @@ function isLinkConflict(error) {
  * @param {{
  *   modules: any, moduleNames?: Record<string, string>,
  *   appointmentBook: any, provider: any, mapping: any,
- *   actor?: unknown, now?: () => string, database?: any,
+ *   actor?: unknown, now?: () => string, database?: any, resolveSender?: any,
  * }} options `appointmentBook` is the created `appointment-book@1`
  * capability definition (it carries `.create`); the deployment hands the
  * created object over, the way appointments receives work's `follow-up@1`.
@@ -311,6 +311,18 @@ export function createCalendarSyncOperations(options = {}) {
   if (resolveSecret !== null && typeof resolveSecret !== 'function') {
     throw new ValidationError('calendar-sync resolveSecret must be a function', { field: 'resolveSecret' });
   }
+  // The opened `channel-sender@1` resolve function the composition hands
+  // over (backlog:13c09f03, the same hand-over shape the channels package
+  // takes): unknown external invitees become leads through it. Optional
+  // at composition so validation and conformance compose empty — an
+  // unwired composition keeps skipping unmapped events, exactly as
+  // before, never inventing a contact.
+  const resolveSender = options.resolveSender ?? null;
+  if (resolveSender !== null && typeof resolveSender !== 'function') {
+    throw new ValidationError('calendar-sync resolveSender must be a function opening the composed channel-sender@1 capability', {
+      field: 'resolveSender',
+    });
+  }
   const defaultActor = options.actor ?? { type: 'system', id: 'calendar-sync' };
   const now = typeof options.now === 'function' ? options.now : () => new Date().toISOString();
   // Process-local run ledger behind readSyncStatus (backlog:d1da1ed51e9c):
@@ -328,13 +340,27 @@ export function createCalendarSyncOperations(options = {}) {
     let applied = 0;
     let conflicts = 0;
     let pushed = 0;
+    let created = 0;
     for (const entry of entries) {
       if (!entry || typeof entry !== 'object') continue;
       if (entry.status === 'conflict' || entry.pending === true) conflicts += 1;
       else if (entry.status === 'applied' || entry.status === 'imported') applied += 1;
       else if (entry.status === 'exported' || entry.status === 'linked' || entry.status === 'pushed') pushed += 1;
+      // Every automatic lead lands in the ledger (backlog:13c09f03): the
+      // count rides beside the run, never an address.
+      if (entry.leadCreated === true) created += 1;
     }
-    return { decided: entries.length, applied, conflicts, pushed, error: null };
+    return { decided: entries.length, applied, conflicts, pushed, created, error: null };
+  }
+
+  /**
+   * The `google-sync` log line (backlog:13c09f03): counts only, never an
+   * address — the same shape the channels import logs, with the calendar
+   * source. Emitted when a run created leads, so a quiet run stays quiet.
+   */
+  function logCreatedLeads(entries) {
+    const created = Array.isArray(entries) ? entries.filter((entry) => entry?.leadCreated === true).length : 0;
+    if (created > 0) console.info(`[accordo] google-sync created=${created} source=calendar`);
   }
 
   function recordRun(calendarId, patch) {
@@ -346,6 +372,7 @@ export function createCalendarSyncOperations(options = {}) {
       applied: patch.applied ?? 0,
       conflicts: patch.conflicts ?? 0,
       pushed: patch.pushed ?? 0,
+      created: patch.created ?? 0,
       error: patch.error ?? null,
     }));
   }
@@ -557,6 +584,10 @@ export function createCalendarSyncOperations(options = {}) {
   function mapEventToBooking(event, calendarId, sourceKey) {
     const subject = mapping.subjectForEvent(event, calendarId);
     if (subject === null || subject === undefined) return null;
+    return buildBookingRequest(subject, event, calendarId, sourceKey);
+  }
+
+  function buildBookingRequest(subject, event, calendarId, sourceKey) {
     const service = mapping.serviceForEvent(event, calendarId) ?? {};
     return {
       sourceKey,
@@ -574,6 +605,95 @@ export function createCalendarSyncOperations(options = {}) {
   }
 
   /**
+   * Split an attendee display name into first/last (backlog:13c09f03): the
+   * first token names, the rest describes. Local to this package on
+   * purpose — domain packages reach each other only through declared
+   * capabilities, so the channels splitter is not imported; the rule is
+   * restated here in six lines.
+   */
+  function splitAttendeeName(name) {
+    const tokens = String(name ?? '').trim().replace(/^"|"$/g, '').trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return { firstName: null, lastName: null };
+    const clip = (text) => text.slice(0, 128) === '' ? null : text.slice(0, 128);
+    if (tokens.length === 1) return { firstName: clip(tokens[0]), lastName: null };
+    return { firstName: clip(tokens[0]), lastName: clip(tokens.slice(1).join(' ')) };
+  }
+
+  /** An attendee email is evidence only when bounded and shaped like an address; anything else is not a person. */
+  function attendeeEmail(value) {
+    if (typeof value !== 'string') return null;
+    const text = value.trim();
+    if (text === '' || text.length > 320 || !text.includes('@')) return null;
+    return text;
+  }
+
+  /**
+   * Resolve an unmapped event's external invitees to a lead
+   * (backlog:13c09f03): the attendees — never the organizer, who is
+   * usually the owner's own address — resolve in order through the
+   * composed `channel-sender@1` capability with the email channel, so
+   * the same person Gmail named stays one profile. The first matched or
+   * created contact wins; an ambiguous or malformed candidate yields to
+   * the next, and when none resolves the event stays skipped. An event
+   * with no external invitees never reaches the capability: it stays
+   * skipped, exactly as on main. Idempotent across runs — the resolution
+   * replays its winner instead of doubling — and the contact carries
+   * the `calendar` origin, so the operator can find and delete it.
+   * @returns {Promise<{subject: any, created: boolean} | null>}
+   */
+  async function resolveAttendeeSubject(event, actor) {
+    if (resolveSender === null) return null;
+    const attendees = Array.isArray(event?.attendees) ? event.attendees : [];
+    for (const attendee of attendees) {
+      if (!attendee || typeof attendee !== 'object' || Array.isArray(attendee)) continue;
+      const email = attendeeEmail(attendee.email);
+      if (email === null) continue;
+      const names = splitAttendeeName(attendee.displayName);
+      let answer;
+      try {
+        answer = await resolveSender({
+          channel: 'email',
+          handle: email,
+          ...(names.firstName === null ? {} : { firstName: names.firstName }),
+          ...(names.lastName === null ? {} : { lastName: names.lastName }),
+          origin: 'calendar',
+          actor,
+        });
+      } catch (error) {
+        if (error instanceof ValidationError) continue;
+        throw error;
+      }
+      if (!answer || typeof answer !== 'object') continue;
+      if (answer.outcome !== 'created' && answer.outcome !== 'matched') continue;
+      const id = answer.contact?.id;
+      if (typeof id !== 'string' || id === '') continue;
+      return {
+        subject: {
+          resource: 'contact', id, owner: 'host', ownerPackage: null, label: email,
+        },
+        created: answer.outcome === 'created',
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Map one Google event to its booking request, creating the lead when
+   * the deployment mapping names nobody and external invitees resolve
+   * (backlog:13c09f03). Returns the request plus whether its subject is
+   * a fresh lead, or null when the event stays skipped.
+   */
+  async function mapEventToBookingWithLead(event, calendarId, sourceKey, actor) {
+    const subject = mapping.subjectForEvent(event, calendarId);
+    if (subject !== null && subject !== undefined) {
+      return { request: buildBookingRequest(subject, event, calendarId, sourceKey), leadCreated: false };
+    }
+    const lead = await resolveAttendeeSubject(event, actor);
+    if (lead === null) return null;
+    return { request: buildBookingRequest(lead.subject, event, calendarId, sourceKey), leadCreated: lead.created };
+  }
+
+  /**
    * Book one imported event, folding every expected refusal into a result
    * entry: an overlap or a divergent replay is the operator's conflict to
    * resolve in Accordo, never a row booked over a held slot and never a
@@ -585,10 +705,13 @@ export function createCalendarSyncOperations(options = {}) {
   async function importSingle(handle, actor, calendarId, event, revision, priorLink, prebuilt = null) {
     const eventId = event?.id;
     const sourceKey = sourceKeyFor(calendarId, eventId, revision);
-    const request = prebuilt ?? mapEventToBooking(event, calendarId, sourceKey);
-    if (request === null) {
+    const mapped = prebuilt === null
+      ? await mapEventToBookingWithLead(event, calendarId, sourceKey, actor)
+      : { request: prebuilt, leadCreated: false };
+    if (mapped === null) {
       return { status: 'skipped', eventId, reason: 'no customer mapping for this event (mapping.subjectForEvent returned null)' };
     }
+    const request = mapped.request;
     let booked;
     try {
       booked = await handle.bookAppointment(request);
@@ -616,7 +739,10 @@ export function createCalendarSyncOperations(options = {}) {
     } else {
       await storeLink(link, actor);
     }
-    return { status: 'imported', eventId, appointmentId: row.id, replayed: booked.replayed ?? false };
+    return {
+      status: 'imported', eventId, appointmentId: row.id, replayed: booked.replayed ?? false,
+      ...(mapped.leadCreated === true ? { leadCreated: true } : {}),
+    };
   }
 
   /**
@@ -914,10 +1040,11 @@ export function createCalendarSyncOperations(options = {}) {
   async function moveBooking(handle, actor, calendarId, event, link, row) {
     const eventId = event?.id;
     const revision = (link.revision ?? 0) + 1;
-    const request = mapEventToBooking(event, calendarId, sourceKeyFor(calendarId, eventId, revision));
-    if (request === null) {
+    const mapped = await mapEventToBookingWithLead(event, calendarId, sourceKeyFor(calendarId, eventId, revision), actor);
+    if (mapped === null) {
       return { status: 'skipped', eventId, reason: 'no customer mapping for this event (mapping.subjectForEvent returned null)' };
     }
+    const request = mapped.request;
     const live = await readLocal(handle, link);
     if (!live || live.status !== row.status) {
       // The row moved under us (a local cancel, a terminal advance, or a
@@ -946,7 +1073,10 @@ export function createCalendarSyncOperations(options = {}) {
       }
       throw error;
     }
-    return { status: 'applied', eventId, direction: 'google-to-local', change: 'rescheduled', revision };
+    return {
+      status: 'applied', eventId, direction: 'google-to-local', change: 'rescheduled', revision,
+      ...(mapped.leadCreated === true ? { leadCreated: true } : {}),
+    };
   }
 
   async function reconcileFull(handle, actor, calendarId, timeMin) {
@@ -1048,6 +1178,7 @@ export function createCalendarSyncOperations(options = {}) {
           : entry);
       }
       await writeState(calendarId, { syncToken: page.nextSyncToken }, who);
+      logCreatedLeads(entries);
       return { calendarId, entries, nextSyncToken: page.nextSyncToken };
     },
 
@@ -1071,6 +1202,7 @@ export function createCalendarSyncOperations(options = {}) {
       } catch (error) {
         if (error?.code === 'GOOGLE_SYNC_TOKEN_INVALID') {
           const recovered = await reconcileFull(handle, who, calendarId);
+          logCreatedLeads(recovered.entries);
           return { calendarId, retried, ...recovered, pendingConflicts: await pendingConflicts(calendarId) };
         }
         throw error;
@@ -1080,6 +1212,7 @@ export function createCalendarSyncOperations(options = {}) {
         entries.push(await applyRemoteChange(handle, who, calendarId, event));
       }
       await writeState(calendarId, { syncToken: page.nextSyncToken }, who);
+      logCreatedLeads(entries);
       return { calendarId, entries, nextSyncToken: page.nextSyncToken, pendingConflicts: await pendingConflicts(calendarId) };
     },
 

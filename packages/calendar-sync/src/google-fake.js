@@ -236,6 +236,36 @@ export function createFakeGoogleCalendar(options = {}) {
     seedEvent(calendarId, event) {
       const cal = calendar(calendarId);
       const id = checkEventId(event?.id);
+      // Attendees and the organizer ride the engine shape (backlog:13c09f03):
+      // `{ email, displayName?, responseStatus? }`, bounded like the HTTP
+      // provider reads them — other wire fields stay out, so a seeded
+      // event proves what production reconciles.
+      const seedPerson = (raw) => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+        const person = {};
+        if (typeof raw.email === 'string' && raw.email !== '' && raw.email.length <= 320) {
+          person.email = raw.email;
+        }
+        if (typeof raw.displayName === 'string' && raw.displayName !== '' && raw.displayName.length <= 256) {
+          person.displayName = raw.displayName;
+        }
+        if (typeof raw.responseStatus === 'string'
+          && ['needsAction', 'declined', 'tentative', 'accepted'].includes(raw.responseStatus)) {
+          person.responseStatus = raw.responseStatus;
+        }
+        return Object.keys(person).length === 0 ? null : Object.freeze(person);
+      };
+      const seedPeople = (raw) => {
+        if (!Array.isArray(raw)) return undefined;
+        const people = [];
+        for (const entry of raw.slice(0, 200)) {
+          const person = seedPerson(entry);
+          if (person !== null) people.push(person);
+        }
+        return Object.freeze(people);
+      };
+      const attendees = seedPeople(event?.attendees);
+      const organizer = seedPerson(event?.organizer);
       const stored = {
         id,
         summary: typeof event?.summary === 'string' ? event.summary : '',
@@ -245,6 +275,8 @@ export function createFakeGoogleCalendar(options = {}) {
         status: 'confirmed',
         updated: typeof event?.updated === 'string' ? event.updated : nowIso(),
         extendedProperties: { ...(event?.extendedProperties ?? {}) },
+        ...(attendees === undefined ? {} : { attendees }),
+        ...(organizer === null ? {} : { organizer }),
         // A weekly RRULE without end (backlog:3a3a41b2): the full snapshot
         // expands it into single occurrences inside the read window, the
         // way Google answers `singleEvents=true` — so a series without
