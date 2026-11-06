@@ -140,12 +140,9 @@ const moduleClient = {
       payload = undefined;
     }
     if (!response.ok) {
-      const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
-      Object.assign(error, {
-        status: response.status,
-        code: payload?.error?.code ?? 'UNKNOWN',
-        details: payload?.error?.details ?? null,
-      });
+      // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
+      // and claimId on the error, so the composer reads it back.
+      const error = apiFailure(response.status, payload);
       if (MOUNTED && !followedLogin) {
         leaveForSpaceLogin(sessionLostTarget({
           status: response.status,
@@ -441,7 +438,7 @@ import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
+import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 

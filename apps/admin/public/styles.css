@@ -2007,6 +2007,20 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }
 .bo-composer-body .field-error:empty { display: none; }
 .bo-composer-body .field-error { margin: 0 0 8px; }
+.bo-composer-body .field-error[data-tone="pending"] {
+  color: var(--muted);
+  display: flex; align-items: center; gap: 8px;
+}
+.bo-composer-body .field-error[data-tone="pending"]::before {
+  content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  animation: bo-composer-pending 1.4s ease-in-out infinite;
+}
+@keyframes bo-composer-pending { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .bo-composer-body .field-error[data-tone="pending"]::before { animation: none; }
+}
+.bo-composer-foot button[aria-busy="true"] { cursor: progress; opacity: .7; }
 .bo-composer-foot { display: flex; align-items: center; gap: 14px; padding: 12px 18px 14px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-composer-foot [data-action="composer-send"] { min-width: 96px; border-radius: 999px; }
 .bo-composer-limit { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--dim); }
