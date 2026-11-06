@@ -72,6 +72,21 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
+/**
+ * Grid track per column id: [minimum px, flexible share]. Optional and custom
+ * columns get a readable 120px minimum (review #600 P2: never a 0px track).
+ */
+const COLUMN_TRACKS = Object.freeze({
+  canali: [56, '.5fr'],
+  stato: [88, '.6fr'],
+  ultimo: [200, '2.4fr'],
+  prossimo: [110, '1fr'],
+});
+const OTHER_TRACK = [120, '1fr'];
+const CLIENT_TRACK = [170, '1.4fr'];
+const ROW_GAP = 16;
+const ROW_PADDING = 40;
+const CHEVRON = 16;
 
 // The prototype's channel tiles: a short mono mark, the full name in the title.
 const CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', email: '@', tiktok: 'TT', phone: 'TEL', sms: 'SMS', web: 'WEB' });
@@ -654,19 +669,26 @@ export function createCustomerListView(deps) {
         // Prototype "04 Clienti": the channel mark, the message excerpt, then
         // the mono line «<canale> · <quando>». Calls carry no text, so the
         // excerpt stays out there; every value travels as text, never HTML.
+        // Two lines that never run together (Dan 05/11: «giovedì.WhatsApp»):
+        // the meta line — mark and mono «canale · quando» — then the excerpt,
+        // clamped to two lines so every row keeps the same rhythm.
         if (!row.lastContactAt) return el('span', 'bo-muted', 'mai');
-        const wrap = el('span');
+        const wrap = el('span', 'bo-clienti-last');
+        const meta = el('span', 'bo-clienti-last-meta');
         const channel = String(row.lastContactChannel ?? '');
         if (channel !== '') {
           const mark = el('span', `bo-clienti-tile bo-tile-${channel.toLowerCase()}`, channelMark(channel));
           mark.setAttribute('title', channelLabel(channel));
           mark.setAttribute('aria-label', channelLabel(channel));
-          wrap.appendChild(mark);
+          meta.appendChild(mark);
         }
+        meta.appendChild(el('span', 'bo-clienti-when', `${channelLabel(channel)} · ${contactWhen(row.lastContactAt)}`));
+        wrap.appendChild(meta);
         if (typeof row.lastContactText === 'string' && row.lastContactText !== '') {
-          wrap.appendChild(el('span', undefined, row.lastContactText));
+          const excerpt = el('span', 'bo-clienti-last-text', row.lastContactText);
+          excerpt.setAttribute('title', row.lastContactText);
+          wrap.appendChild(excerpt);
         }
-        wrap.appendChild(el('span', 'bo-clienti-when', `${channelLabel(channel)} · ${contactWhen(row.lastContactAt)}`));
         return wrap;
       }
       case 'prossimo': {
@@ -724,10 +746,17 @@ export function createCustomerListView(deps) {
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }
     const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] === true);
-    const grid = `minmax(200px, 1.6fr) ${visible.map(() => 'minmax(0, 1fr)').join(' ')} 16px`;
+    // Each column gets the room its content needs: the excerpt is the widest
+    // read, channel marks and the status pill are narrow.
+    const tracks = [CLIENT_TRACK, ...visible.map((column) => COLUMN_TRACKS[column.id] ?? OTHER_TRACK)];
+    const grid = `${tracks.map(([min, share]) => `minmax(${min}px, ${share})`).join(' ')} ${CHEVRON}px`;
+    // The row floor follows the visible columns: the four defaults keep the
+    // usual 760px, every extra column widens the scrolling table instead of
+    // squeezing a track to nothing.
+    const floor = Math.max(760, tracks.reduce((sum, [min]) => sum + min, 0) + CHEVRON + ROW_GAP * tracks.length + ROW_PADDING);
     const table = el('div', 'bo-clienti-table');
     const head = el('div', 'bo-clienti-thead');
-    head.setAttribute('style', `grid-template-columns: ${grid}`);
+    head.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
     head.setAttribute('role', 'row');
     head.appendChild(el('span', 'bo-clienti-th', 'Cliente'));
     for (const column of visible) head.appendChild(el('span', 'bo-clienti-th', column.label));
@@ -737,7 +766,7 @@ export function createCustomerListView(deps) {
     for (const row of items) {
       const card = el('article', 'bo-clienti-row');
       card.setAttribute('data-customer', `${row.resource}:${row.id}`);
-      card.setAttribute('style', `grid-template-columns: ${grid}`);
+      card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
       head.appendChild(el('span', 'bo-clienti-avatar', initialsOf(name)));
