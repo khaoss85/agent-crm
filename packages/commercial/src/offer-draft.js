@@ -357,10 +357,10 @@ export async function suggestOfferDraft({
   // emitted when every accepted line shares one currency that the space
   // policy does not contradict: mixed or relabelled currencies leave both
   // valueCents and currency out rather than sending a mislabelled total.
-  const currencies = new Set(
-    accepted.map(({ offer: id }) => offerById.get(id)?.currency).filter((currency) => currency !== null),
-  );
-  const unanimousCurrency = currencies.size === 1 ? [...currencies][0] : null;
+  const acceptedCurrencies = accepted.map(({ offer: id }) => offerById.get(id)?.currency ?? null);
+  const unanimousCurrency = acceptedCurrencies.length > 0 && acceptedCurrencies.every((currency) => currency !== null && currency === acceptedCurrencies[0])
+    ? /** @type {string} */ (acceptedCurrencies[0])
+    : null;
   const currencySupported = unanimousCurrency !== null
     && (spacePolicy.currency === null || spacePolicy.currency === unanimousCurrency);
   let valueCents = null;
@@ -378,7 +378,8 @@ export async function suggestOfferDraft({
     }
   }
   const currency = currencySupported ? unanimousCurrency : null;
-  const expectedCloseDate = accepted.length === 0 ? null : normalizeCloseDate(parsed.expectedCloseDate);
+  const validatedCloseDate = normalizeCloseDate(parsed.expectedCloseDate);
+  const expectedCloseDate = accepted.length === 0 ? null : validatedCloseDate;
   const title = accepted.length === 0 ? null : normalizeTitle(parsed.title);
   const draft = {
     ...(title === null ? {} : { title }),

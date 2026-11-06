@@ -219,6 +219,45 @@ test('offer draft: the draft total truncates like the domain, never rounds up', 
   assert.equal(result.draft.valueCents, 0, 'truncated (1 * 5000) / 10000, like applyDiscount, not rounded to 1');
 });
 
+test('offer draft: a priced line without a currency never joins a single-currency total', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: [
+      { offerId: 'offer:a', priceCents: 1000, currency: 'EUR' },
+      { offerId: 'offer:b', priceCents: 2000 },
+    ],
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:a' }, { offerId: 'offer:b' }] }),
+  });
+  assert.ok(!('valueCents' in result.draft), 'a null currency breaks unanimity, so no total is labelled EUR');
+  assert.ok(!('currency' in result.draft), 'no currency is emitted without unanimity');
+  assert.deepEqual(result.draft.catalogOfferIds, ['offer:a', 'offer:b'], 'both lines still draft');
+});
+
+test('offer draft: a misshapen closing date refuses even with zero accepted lines', async () => {
+  await assert.rejects(
+    suggestOfferDraft({
+      prompt: 'offerta',
+      offers: OFFERS,
+      complete: async () => validAnswer({
+        lines: [{ offerId: 'offer:fantasma' }],
+        expectedCloseDate: '31-12-2026',
+      }),
+    }),
+    (error) => error?.code === 'OFFER_DRAFT_DATE_INVALID',
+    'the date is validated before the empty draft is returned',
+  );
+  const validEmpty = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: OFFERS,
+    policy: { maxDiscountBps: 1000, currency: 'EUR' },
+    complete: async () => validAnswer({
+      lines: [{ offerId: 'offer:mensile', quantity: 1, discountBps: 5000 }],
+      expectedCloseDate: '2026-12-31',
+    }),
+  });
+  assert.ok(!('expectedCloseDate' in validEmpty.draft), 'a valid date still stays out of an empty draft');
+});
+
 test('offer draft: a 100% line with no ceiling refuses without an approval flow', async () => {
   const result = await suggestOfferDraft({
     prompt: 'offerta',
