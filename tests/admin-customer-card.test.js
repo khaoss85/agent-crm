@@ -258,7 +258,11 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   // The grid holds exactly three columns.
   const grid = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-grid');
   assert.ok(grid, 'the three-column grid exists');
-  assert.equal(grid.findAll('div').filter((node) => node.getAttribute('class') === 'bo-scheda-col').length, 3);
+  const cols = grid.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-col'));
+  assert.equal(cols.length, 3);
+  assert.deepEqual(cols.map((node) => node.getAttribute('class')),
+    ['bo-scheda-col bo-scheda-col-side', 'bo-scheda-col bo-scheda-col-main', 'bo-scheda-col bo-scheda-col-side'],
+    'the side columns stay put while the conversation scrolls (Dan 06/11)');
 
   // Center: every passage with channel, direction and sync state.
   assert.ok(text.includes('WhatsApp'), 'channel label');
@@ -2399,4 +2403,53 @@ test('composer gmail: a keyboard change of channel moves the recipient too', asy
     const chip = radio.parentNode;
     assert.equal(chip.getAttribute('data-selected'), 'true', 'the pill follows the keyboard choice');
   }
+});
+
+
+// Dan 06/11: a long conversation reads newest first, a page at a time, with
+// readable text, and Annulla on Dettagli puts the card back without a reload.
+test('the timeline shows the newest 20 first and opens older ones on demand', async () => {
+  const items = Array.from({ length: 45 }, (_, index) => ({
+    entry: 'message', id: `m${index}`, channel: 'email', direction: 'inbound', sync: 'received',
+    body: `Messaggio ${index}`, remoteHandle: 'a@b.it',
+    occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
+  }));
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items } } }));
+  const shown = () => mount.findAll('div').filter((node) => node.getAttribute('class') === 'bo-scheda-entry').map((node) => node.getAttribute('data-entry'));
+  assert.equal(shown().length, 20, 'one page');
+  assert.equal(shown()[0], 'm44', 'newest first');
+  const older = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'timeline-older');
+  assert.equal(older().textContent, 'Mostra precedenti · 20 di 25');
+  older().dispatch('click');
+  assert.equal(shown().length, 40);
+  older().dispatch('click');
+  assert.equal(shown().length, 45);
+  assert.equal(older(), undefined, 'no button when everything shows');
+});
+
+test('message text reads cleanly and a long one folds behind «Mostra tutto»', async () => {
+  const long = `We&#39;ve got news &amp; more \u034f \u034f \u034f ${'parola '.repeat(80)}`;
+  const items = [{ entry: 'message', id: 'x1', channel: 'email', direction: 'inbound', sync: 'received', body: long, remoteHandle: 'a@b.it', occurredAt: '2026-11-05T10:00:00.000Z' }];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 1, truncated: false, items } } }));
+  const body = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-entry-body');
+  assert.ok(body.textContent.startsWith("We've got news & more parola"), body.textContent.slice(0, 40));
+  assert.ok(!/&#39;|&amp;|\u034f/.test(body.textContent), 'no entity or padding left');
+  assert.equal(body.getAttribute('data-folded'), 'true');
+  const more = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'entry-expand');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'false');
+  assert.equal(more.textContent, 'Mostra meno');
+});
+
+test('Annulla on Dettagli restores the card in place, without re-reading the scheda', async () => {
+  const client = stubClient();
+  const mount = await renderCard(client);
+  const before = client.calls ? client.calls.length : null;
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'cancel-details'));
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details').dispatch('click');
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'edit-details'), 'Modifica is back');
+  assert.ok(mount.textContent.includes('Tutti i contatti'), 'the scheda never blanks');
+  if (before !== null) assert.equal(client.calls.length, before, 'no re-read of the card');
 });
