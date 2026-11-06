@@ -441,7 +441,36 @@ test('the 51st passage marks the entries truncated with its exact count', () => 
   assert.equal(timeline.entries.count, 51);
   assert.equal(timeline.entries.items.length, 50);
   assert.equal(timeline.entries.truncated, true, 'the rows left out mark the section truncated, like the sibling sections');
-  assert.equal(timeline.entries.items[0].id, 'm0', 'the first page keeps the oldest passages first');
+  assert.equal(timeline.entries.items[0].id, 'm1', 'the cut drops the oldest passage');
+  assert.equal(timeline.entries.items.at(-1).id, 'm50', 'the newest passage is always kept, still oldest first');
+});
+
+test('prod 06/11: past the cap the note just added and today\'s mail stay in the cronologia', () => {
+  const entries = Array.from({ length: 101 }, (_, index) => ({
+    entry: 'message', id: `m${index}`, conversationId: 't1', channel: 'email',
+    direction: 'inbound', status: 'received', body: `mail ${index}`,
+    teamAuthorId: null, remoteHandle: 'onboarding@esempio.invalid', errorCode: null,
+    occurredAt: new Date(Date.UTC(2026, 10, 5, 6, index)).toISOString(),
+  }));
+  entries.push({
+    entry: 'work-note', kind: 'note', id: 'n1', body: 'Richiamare lunedì', actorId: 'dan',
+    occurredAt: '2026-11-06T19:00:00.000Z',
+  });
+  const timeline = shapeCustomerTimeline({
+    profile: {
+      identity: { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null },
+      externalIdentities: [],
+    },
+    threads: [], history: { entries }, schedule: [],
+    subject: { resource: 'contact', id: 'c1' },
+  });
+  assert.equal(timeline.entries.count, 102);
+  assert.equal(timeline.entries.truncated, true);
+  const last = timeline.entries.items.at(-1);
+  assert.equal(last.entry, 'note', 'the note added last is on the page');
+  assert.equal(last.body, 'Richiamare lunedì');
+  assert.ok(timeline.entries.items.some((item) => item.id === 'm100'), 'the newest mail is on the page');
+  assert.ok(!timeline.entries.items.some((item) => item.id === 'm0'), 'the oldest mail is the one cut');
 });
 
 test('the schedule read refuses a bad subject and a missing store', async () => {
