@@ -10,6 +10,7 @@ import {
   createGmailChannelAdapter,
   formatGoogleSyncLog,
   gmailPushBody,
+  isAutomatedGmailSender,
   isBulkGmailMessage,
   parseGmailAddressHeader,
   parseGmailRecipients,
@@ -72,6 +73,60 @@ test('bulk mail is recognized by headers, sender locals and notification domains
   assert.equal(isBulkGmailMessage({ from: 'guido@example.com', precedence: 'normal' }), false);
   assert.equal(isBulkGmailMessage({}), false);
   assert.equal(isBulkGmailMessage({ from: 'not-an-address', precedence: 'bulk' }), true, 'precedence alone still marks bulk');
+});
+
+test('the 06/11 proof senders never become customers (backlog:1a4d9b30)', () => {
+  // The eight addresses of the supervisor proof on Presti, plus the
+  // onboarding case: every one is automated, never a person.
+  for (const from of [
+    'noreply-it@klarna.com',
+    'order-update@amazon.it',
+    'alerts@mail.zapier.com',
+    'invoice+statements@mail.anthropic.com',
+    'renewals@godaddy.com',
+    'hello@notify.railway.app',
+    'support@contabo.com',
+    'onboarding@help.example.com',
+  ]) {
+    assert.equal(isAutomatedGmailSender(from), true, `${from} is automated`);
+    assert.equal(isBulkGmailMessage({ from }), true, `${from} is bulk`);
+  }
+  // The acceptance vocabulary, one by one.
+  for (const local of ['alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
+    'renewals', 'support', 'onboarding', 'notify', 'notifications']) {
+    assert.equal(isAutomatedGmailSender(`${local}@example.com`), true, `${local} is automated`);
+  }
+  // Sending subdomains: the first label decides, whatever the local part.
+  for (const label of ['mail', 'notify', 'em', 'news', 'bounce']) {
+    assert.equal(isAutomatedGmailSender(`hello@${label}.railway.example`), true, `${label}. is a sending subdomain`);
+  }
+  // Boundaries a person still passes: tags, lookalike stems and domains.
+  assert.equal(isAutomatedGmailSender('guido+tag@example.com'), false, 'a tagged person address stays a person');
+  assert.equal(isAutomatedGmailSender('notification2@example.com'), false, 'a stem without separator stays a person');
+  assert.equal(isAutomatedGmailSender('marco@mailaziende.example'), false, 'a domain merely containing mail stays a person');
+  assert.equal(isAutomatedGmailSender('marco@email.example.com'), false, 'email. is not a sending subdomain');
+  assert.equal(isAutomatedGmailSender('not-an-address'), false, 'an unreadable address is simply not automated');
+  assert.equal(isAutomatedGmailSender(null), false, 'a missing address is simply not automated');
+});
+
+test('Auto-Submitted other than no marks bulk, and the question splits by reason', () => {
+  for (const value of ['auto-replied', 'auto-generated', 'AUTO-REPLIED']) {
+    assert.equal(isBulkGmailMessage({ from: 'guido@example.com', autoSubmitted: value }), true, value);
+  }
+  assert.equal(isBulkGmailMessage({ from: 'guido@example.com', autoSubmitted: 'no' }), false);
+  assert.equal(isBulkGmailMessage({ from: 'guido@example.com', autoSubmitted: 'NO' }), false);
+  assert.equal(isBulkGmailMessage({ from: 'guido@example.com', autoSubmitted: '' }), false);
+  // The split the sync round logs by: from-only asks automated-sender,
+  // headers-only asks bulk-header.
+  assert.equal(isBulkGmailMessage({ from: 'support@contabo.com' }), true, 'from alone answers automated-sender');
+  assert.equal(
+    isBulkGmailMessage({ listUnsubscribe: '<https://example.com/unsub>' }),
+    true, 'headers alone answer bulk-header',
+  );
+  assert.equal(
+    isBulkGmailMessage({ from: 'guido@example.com', listUnsubscribe: null, precedence: null, autoSubmitted: null }),
+    false, 'a real person with quiet headers stays a lead',
+  );
 });
 
 test('address headers parse display names and recipients exclude the mailbox', () => {
@@ -155,6 +210,25 @@ test('the REST reader carries sender names, recipients and bulk like the fake', 
   );
   assert.equal(bulk.subject, '');
   assert.equal(bulk.sender, undefined);
+
+  const auto = normalizeGmailRestMessage(
+    wire([
+      { name: 'From', value: 'guido@example.com' },
+      { name: 'Auto-Submitted', value: 'auto-replied' },
+    ]),
+    MAILBOX,
+  );
+  assert.equal(auto.subject, '', 'Auto-Submitted other than no quarantines like bulk');
+  assert.equal(auto.sender, undefined);
+
+  const manual = normalizeGmailRestMessage(
+    wire([
+      { name: 'From', value: 'Guido Rossi <guido@example.com>' },
+      { name: 'Auto-Submitted', value: 'no' },
+    ]),
+    MAILBOX,
+  );
+  assert.equal(manual.sender.handle, 'guido@example.com', 'Auto-Submitted: no stays a person');
 });
 
 /** Emulates the resolution contract: first sighting creates, repeats match. */

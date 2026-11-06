@@ -57,12 +57,36 @@ export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
  * table below is closed vocabulary — an unknown value is simply not bulk.
  */
 
-/** Local parts that mark a sender as automated, never a person. */
+/**
+ * Local parts that mark a sender as automated, never a person
+ * (backlog:1a4d9b30: the 06/11 proof on Presti turned nine automated
+ * senders into customers). A local part matches exactly or as the stem of
+ * a separator-suffixed variant (`noreply-it`), after the `+` tag is
+ * stripped (`invoice+statements` is `invoice`). Closed vocabulary — an
+ * unknown local part is a person until proven otherwise.
+ */
 export const GMAIL_BULK_SENDER_LOCALS = Object.freeze([
   'no-reply', 'noreply', 'donotreply', 'do-not-reply',
   'notifications', 'notification', 'notify',
+  'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
+  'renewals', 'support', 'onboarding',
   'mailer-daemon', 'postmaster',
 ]);
+
+/**
+ * First DNS labels that mark a sender domain as sending infrastructure,
+ * never a person (backlog:1a4d9b30): `hello@notify.railway.app` is
+ * platform traffic even with a human-looking local part. Only the first
+ * label counts, so `notify.example.com` matches but `example-notify.com`
+ * does not. Closed vocabulary — any other domain is a person until
+ * proven otherwise.
+ */
+export const GMAIL_SENDING_SUBDOMAINS = Object.freeze([
+  'mail', 'notify', 'em', 'news', 'bounce',
+]);
+
+/** Separator that may follow an automated local-part stem (`noreply-it`). */
+const AUTOMATED_LOCAL_SEPARATORS = Object.freeze(['-', '_', '.']);
 
 /** Precedence header values that mark a message as mass mail. */
 export const GMAIL_BULK_PRECEDENCE = Object.freeze(['bulk', 'list', 'junk']);
@@ -88,21 +112,47 @@ export const GMAIL_NOTIFICATION_DOMAINS = Object.freeze([
 ]);
 
 /**
+ * Whether one sender address is automated, never a person
+ * (backlog:1a4d9b30): the local-part rule or the sending-subdomain rule.
+ * Pure and total — an unreadable address is simply not automated. The sync
+ * round calls this first so its log can count `automated-sender` apart
+ * from `bulk-header`; the verdict below stays the single rule both the
+ * door and the round call.
+ * @param {unknown} from
+ */
+export function isAutomatedGmailSender(from) {
+  const address = typeof from === 'string' ? from.trim().toLowerCase() : '';
+  const at = address.lastIndexOf('@');
+  if (at <= 0 || at === address.length - 1) return false;
+  const base = address.slice(0, at).split('+')[0] ?? '';
+  if (GMAIL_BULK_SENDER_LOCALS.includes(base)) return true;
+  if (GMAIL_BULK_SENDER_LOCALS.some((stem) => AUTOMATED_LOCAL_SEPARATORS.some((sep) => base.startsWith(`${stem}${sep}`)))) {
+    return true;
+  }
+  const labels = address.slice(at + 1).split('.');
+  if (labels.length < 2) return false;
+  return GMAIL_SENDING_SUBDOMAINS.includes(labels[0] ?? '');
+}
+
+/**
  * Whether one Gmail message is mass mail. Pure and total: every signal is
  * optional, an unreadable signal is simply not bulk, and no address ever
- * leaves this function — the caller keeps only the boolean.
- * @param {{from?: unknown, listUnsubscribe?: unknown, precedence?: unknown}} input
+ * leaves this function — the caller keeps only the boolean. A caller that
+ * passes only `from` asks the automated-sender question; one that passes
+ * only headers asks the bulk-header question.
+ * @param {{from?: unknown, listUnsubscribe?: unknown, precedence?: unknown, autoSubmitted?: unknown}} input
  */
 export function isBulkGmailMessage(input = {}) {
   const listUnsubscribe = typeof input?.listUnsubscribe === 'string' ? input.listUnsubscribe.trim() : '';
   if (listUnsubscribe !== '') return true;
   const precedence = typeof input?.precedence === 'string' ? input.precedence.trim().toLowerCase() : '';
   if (GMAIL_BULK_PRECEDENCE.includes(precedence)) return true;
+  const autoSubmitted = typeof input?.autoSubmitted === 'string' ? input.autoSubmitted.trim().toLowerCase() : '';
+  if (autoSubmitted !== '' && autoSubmitted !== 'no') return true;
+  if (isAutomatedGmailSender(input?.from)) return true;
   const from = typeof input?.from === 'string' ? input.from.trim().toLowerCase() : '';
   const at = from.lastIndexOf('@');
   if (at <= 0 || at === from.length - 1) return false;
-  const local = from.slice(0, at);
-  if (GMAIL_BULK_SENDER_LOCALS.includes(local)) return true;
   const domain = from.slice(at + 1);
   return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
 }
@@ -259,16 +309,20 @@ function fromBase64Url(value) {
 }
 
 /**
- * Read the bulk headers off one message (`List-Unsubscribe`, `Precedence`):
- * the fake payload carries them as a plain `headers` object, the REST path
- * reads the same two names out of `payload.headers`.
+ * Read the bulk headers off one message (`List-Unsubscribe`, `Precedence`,
+ * `Auto-Submitted`): the fake payload carries them as a plain `headers`
+ * object, the REST path reads the same three names out of
+ * `payload.headers`. `Auto-Submitted` travels under both its wire name and
+ * the camel-case key the fake already uses for the other two.
  * @param {unknown} raw
  */
 export function readGmailBulkHeaders(raw) {
   const headers = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const listUnsubscribe = typeof headers.listUnsubscribe === 'string' ? headers.listUnsubscribe : null;
   const precedence = typeof headers.precedence === 'string' ? headers.precedence : null;
-  return { listUnsubscribe, precedence };
+  const autoSubmitted = typeof headers.autoSubmitted === 'string' ? headers.autoSubmitted
+    : typeof headers['Auto-Submitted'] === 'string' ? headers['Auto-Submitted'] : null;
+  return { listUnsubscribe, precedence, autoSubmitted };
 }
 
 /**

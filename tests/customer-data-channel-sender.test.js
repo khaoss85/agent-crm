@@ -407,3 +407,46 @@ test('malformed sender requests are refused before anything is read or written',
   }
   assert.equal(contactsCount(app), 0, 'refused requests write nothing');
 });
+
+test('a nameless email sender becomes a lead named from its address, never Unknown (backlog:1a4d9b30)', async (t) => {
+  const { app } = await scene(t, 'sender-nameless-lead');
+
+  // A dotted local part names first and last; the company is the domain.
+  const dotted = await app.resolveChannelSender({
+    channel: 'email', handle: 'marco.rossi@azienda.example', actor: ACTOR,
+  });
+  assert.equal(dotted.outcome, 'created');
+  const marco = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(dotted.contact.id);
+  assert.equal(marco.first_name, 'Marco');
+  assert.equal(marco.last_name, 'Rossi');
+  const marcoCompany = app.database.raw.prepare('SELECT * FROM companies WHERE id = ?').get(marco.company_id);
+  assert.equal(marcoCompany.name, 'azienda.example');
+
+  // A single-token local part still creates its lead, with no English placeholder.
+  const single = await app.resolveChannelSender({
+    channel: 'email', handle: 'guido@example.com', actor: ACTOR,
+  });
+  assert.equal(single.outcome, 'created');
+  const guido = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(single.contact.id);
+  assert.equal(guido.first_name, 'Guido');
+  assert.equal(guido.last_name, '—');
+
+  // A display name still wins over the address.
+  const named = await app.resolveChannelSender({
+    channel: 'email', handle: 'paola.bianchi@azienda.example',
+    firstName: 'Paola', lastName: 'Bianchi', actor: ACTOR,
+  });
+  assert.equal(named.outcome, 'created');
+  const paola = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(named.contact.id);
+  assert.equal(paola.first_name, 'Paola');
+  assert.equal(paola.last_name, 'Bianchi');
+
+  const names = app.database.raw.prepare('SELECT first_name, last_name FROM contacts').all();
+  for (const row of names) {
+    assert.doesNotMatch(`${row.first_name} ${row.last_name}`, /Unknown/);
+  }
+  const companies = app.database.raw.prepare('SELECT name FROM companies').all();
+  for (const row of companies) {
+    assert.doesNotMatch(row.name, /Unknown/);
+  }
+});

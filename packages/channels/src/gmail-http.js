@@ -76,16 +76,18 @@ function restHeaderAll(payload, name) {
 }
 
 /**
- * The two bulk headers off a REST payload, in the plain shape
- * `isBulkGmailMessage` reads (backlog:13c09f03): same two names the fake
- * path reads, same closed-vocabulary verdict.
+ * The three bulk headers off a REST payload, in the plain shape
+ * `isBulkGmailMessage` reads (backlog:13c09f03, backlog:1a4d9b30):
+ * same three names the fake path reads, same closed-vocabulary verdict.
  */
 function restBulkHeaders(payload) {
   const list = restHeaderAll(payload, 'List-Unsubscribe');
   const precedence = restHeaderAll(payload, 'Precedence');
+  const auto = restHeaderAll(payload, 'Auto-Submitted');
   return {
     listUnsubscribe: list.length > 0 ? list[0] : null,
     precedence: precedence.length > 0 ? precedence[0] : null,
+    autoSubmitted: auto.length > 0 ? auto[0] : null,
   };
 }
 
@@ -383,11 +385,12 @@ export function createGmailHttpIo(options = {}) {
         let full;
         try {
           // To/Cc name the recipients the owner wrote to (backlog:13c09f03)
-          // and List-Unsubscribe/Precedence mark mass mail: requested like
-          // From, so the fake and the REST reader reconcile identically.
+          // and List-Unsubscribe/Precedence/Auto-Submitted mark mass mail
+          // (backlog:1a4d9b30): requested like From, so the fake and the
+          // REST reader reconcile identically.
           const meta = new URLSearchParams();
           meta.set('format', 'metadata');
-          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence']) {
+          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted']) {
             meta.append('metadataHeaders', name);
           }
           full = await call(
