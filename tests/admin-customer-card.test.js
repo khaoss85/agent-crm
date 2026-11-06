@@ -2453,3 +2453,23 @@ test('Annulla on Dettagli restores the card in place, without re-reading the sch
   assert.ok(mount.textContent.includes('Tutti i contatti'), 'the scheda never blanks');
   if (before !== null) assert.equal(client.calls.length, before, 'no re-read of the card');
 });
+
+test('the composer window hangs off the view, never inside a scheda column (prod 06/11)', async () => {
+  // A sticky column is its own stacking layer: a fixed window inside the
+  // left column sat under the right one, and Offerta / Prossimo
+  // appuntamento covered the text field on production.
+  const { mount, panel } = await openComposerMount();
+  assert.equal(panel.parentNode, mount, 'the composer is a direct child of the view mount');
+  let node = panel.parentNode;
+  while (node) {
+    const cls = String(node.getAttribute?.('class') ?? '');
+    assert.ok(!/\bbo-scheda-col/.test(cls), `the composer is not inside a column (${cls})`);
+    node = node.parentNode ?? null;
+  }
+  // Reopening reuses the same window instead of stacking a second one.
+  const write = mount.findAll('button').find((n) => n.getAttribute('data-action') === 'compose-message');
+  write.dispatch('click');
+  await flushComposer();
+  const open = mount.findAll('div').filter((n) => n.getAttribute('data-composer') === 'open');
+  assert.equal(open.length, 1);
+});

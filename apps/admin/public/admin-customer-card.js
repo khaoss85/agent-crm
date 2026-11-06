@@ -716,7 +716,7 @@ export function createCustomerCardView(deps) {
       write.setAttribute('data-action', 'compose-message');
       write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
       write.addEventListener('click', () => {
-        openComposer(box, card, navCtx);
+        openComposer(card, navCtx);
       });
       row.appendChild(write);
     }
@@ -957,9 +957,13 @@ export function createCustomerCardView(deps) {
   // stale callbacks return without touching the panel.
   let composerGeneration = 0;
 
-  function openComposer(box, card, navCtx) {
+  function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
-    const old = box.querySelector('div[data-composer="open"]');
+    // The window hangs off the view, not off the Azioni column (prod 06/11,
+    // #605): a sticky column is its own stacking layer painted in page
+    // order, so a fixed window inside the left column sat under the right
+    // one and Offerta / Prossimo appuntamento covered the text field.
+    const old = mount.querySelector('div[data-composer="open"]');
     if (old) {
       while (old.firstChild) old.removeChild(old.firstChild);
     }
@@ -968,7 +972,7 @@ export function createCustomerCardView(deps) {
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-label', 'Scrivi al cliente');
     panel.removeAttribute?.('data-minimized');
-    if (!old) box.appendChild(panel);
+    if (!old) mount.appendChild(panel);
     // Gmail-style window (Dan 04/11): a header bar with the purpose and the
     // customer, minimize and close; the form lives in the body below.
     const head = el('div', 'bo-composer-head');
