@@ -496,5 +496,5 @@ export {
 } from './quote-suggest.js';
 export {
   OFFER_DRAFT_PURPOSE, MAX_OFFER_DRAFT_PROMPT_CHARS, MAX_OFFER_DRAFT_TITLE_CHARS,
-  MAX_OFFER_DRAFT_LINES, buildOfferDraftMessages, suggestOfferDraft,
+  MAX_OFFER_DRAFT_LINES, buildOfferDraftMessages, effectiveDiscountCeiling, suggestOfferDraft,
 } from './offer-draft.js';

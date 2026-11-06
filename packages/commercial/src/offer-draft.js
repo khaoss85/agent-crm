@@ -104,7 +104,8 @@ function normalizeOffers(offers) {
  * enforces. A line above the ceiling refuses with
  * `OFFER_DRAFT_DISCOUNT_ABOVE_POLICY` instead of entering the draft at a
  * discount nobody approved. Null means the space sets no ceiling beyond the
- * per-offer ones (a 100% line still refuses as invalid).
+ * per-offer ones (a 100% line with no ceiling at all still refuses as
+ * needing an approval flow the draft does not carry).
  */
 function normalizePolicy(policy) {
   if (policy === undefined || policy === null) return { maxDiscountBps: null, currency: null };
@@ -143,14 +144,25 @@ function normalizePrompt(prompt) {
  * answers with one JSON object only. It names lines, never money: the total
  * is computed here, so the model cannot invent an amount.
  */
+/**
+ * The effective discount ceiling for one offer under a space policy: the
+ * tightest bound wins, so a per-offer allowance can never loosen the space
+ * ceiling (and vice versa). Null when neither side sets one.
+ */
+export function effectiveDiscountCeiling(offerMaxDiscountBps, policyMaxDiscountBps) {
+  const caps = [offerMaxDiscountBps, policyMaxDiscountBps]
+    .filter((cap) => cap !== null && cap !== undefined);
+  return caps.length === 0 ? null : Math.min(...caps);
+}
+
 export function buildOfferDraftMessages({ prompt, offers, policy }) {
   const caps = offers
-    .map((offer) => offer.maxDiscountBps ?? policy.maxDiscountBps)
+    .map((offer) => effectiveDiscountCeiling(offer.maxDiscountBps, policy.maxDiscountBps))
     .filter((cap) => cap !== null && cap !== undefined);
   const ceiling = caps.length === 0 ? null : Math.min(...caps);
   const offerLines = offers.map((offer) => {
     const price = offer.priceCents === null ? 'prezzo a listino' : `${offer.priceCents} cent`;
-    const cap = offer.maxDiscountBps ?? policy.maxDiscountBps;
+    const cap = effectiveDiscountCeiling(offer.maxDiscountBps, policy.maxDiscountBps);
     return `- ${offer.offerId}${offer.name ? ` — ${offer.name}` : ''} (${price}`
       + `${cap === null || cap === undefined ? '' : `, sconto massimo ${cap / 100}%`})`;
   }).join('\n');
@@ -321,9 +333,13 @@ export async function suggestOfferDraft({
       }
       discountBps = item.discountBps;
     }
-    const ceiling = offer.maxDiscountBps ?? spacePolicy.maxDiscountBps;
+    const ceiling = effectiveDiscountCeiling(offer.maxDiscountBps, spacePolicy.maxDiscountBps);
     if (ceiling !== null && discountBps > ceiling) {
       refuse('OFFER_DRAFT_DISCOUNT_ABOVE_POLICY', `discountBps ${discountBps} exceeds the ${ceiling} ceiling`);
+      continue;
+    }
+    if (ceiling === null && discountBps >= 10_000) {
+      refuse('OFFER_DRAFT_DISCOUNT_ABOVE_POLICY', 'a 100% line needs an approval flow the draft does not carry');
       continue;
     }
     if (accepted.length >= MAX_OFFER_DRAFT_LINES) {
@@ -335,26 +351,35 @@ export async function suggestOfferDraft({
   // The money is computed here from catalog prices, never taken from the
   // model: a line without a catalog price keeps the draft honest by
   // leaving the total out rather than guessing it. Integer arithmetic all
-  // the way down (basis points in, cents out): money never travels as a
-  // float, and an overflow keeps the total out rather than emitting a
-  // rounded-up lie.
+  // the way down (basis points in, cents out), truncated like the domain
+  // applyDiscount(): money never travels as a float, and an overflow keeps
+  // the total out rather than emitting a rounded-up lie. A total is only
+  // emitted when every accepted line shares one currency that the space
+  // policy does not contradict: mixed or relabelled currencies leave both
+  // valueCents and currency out rather than sending a mislabelled total.
+  const currencies = new Set(
+    accepted.map(({ offer: id }) => offerById.get(id)?.currency).filter((currency) => currency !== null),
+  );
+  const unanimousCurrency = currencies.size === 1 ? [...currencies][0] : null;
+  const currencySupported = unanimousCurrency !== null
+    && (spacePolicy.currency === null || spacePolicy.currency === unanimousCurrency);
   let valueCents = null;
-  if (accepted.length > 0 && accepted.every(({ offer: id }) => offerById.get(id)?.priceCents !== null)) {
+  if (
+    accepted.length > 0
+    && currencySupported
+    && accepted.every(({ offer: id }) => offerById.get(id)?.priceCents !== null)
+  ) {
     const scaled = accepted.reduce((total, { offer: id, quantity, discountBps }) => {
       const price = BigInt(/** @type {number} */ (offerById.get(id)?.priceCents));
-      return total + ((price * BigInt(quantity) * BigInt(10_000 - discountBps) + 5_000n) / 10_000n);
+      return total + ((price * BigInt(quantity) * BigInt(10_000 - discountBps)) / 10_000n);
     }, 0n);
     if (scaled <= BigInt(Number.MAX_SAFE_INTEGER)) {
       valueCents = Number(scaled);
     }
   }
-  const currencies = new Set(
-    accepted.map(({ offer: id }) => offerById.get(id)?.currency).filter((currency) => currency !== null),
-  );
-  const currency = spacePolicy.currency
-    ?? (currencies.size === 1 ? [...currencies][0] : null);
-  const expectedCloseDate = normalizeCloseDate(parsed.expectedCloseDate);
-  const title = normalizeTitle(parsed.title);
+  const currency = currencySupported ? unanimousCurrency : null;
+  const expectedCloseDate = accepted.length === 0 ? null : normalizeCloseDate(parsed.expectedCloseDate);
+  const title = accepted.length === 0 ? null : normalizeTitle(parsed.title);
   const draft = {
     ...(title === null ? {} : { title }),
     ...(valueCents === null ? {} : { valueCents }),

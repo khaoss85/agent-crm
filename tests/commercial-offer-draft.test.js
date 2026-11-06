@@ -75,6 +75,9 @@ test('offer draft: a discount above the policy stays out of the draft', async ()
   assert.equal(result.status, 'ok', 'the call still answers');
   assert.deepEqual(result.draft.catalogOfferIds, [], 'the over-policy line stays out');
   assert.ok(!('valueCents' in result.draft), 'no total without an accepted line');
+  assert.ok(!('currency' in result.draft), 'no currency without an accepted line');
+  assert.ok(!('title' in result.draft), 'no title without an accepted line');
+  assert.ok(!('expectedCloseDate' in result.draft), 'no closing date without an accepted line');
   assert.deepEqual(
     result.refused.map(({ code }) => code),
     ['OFFER_DRAFT_DISCOUNT_ABOVE_POLICY'],
@@ -160,8 +163,16 @@ test('offer draft: money stays honest when prices or currencies disagree', async
     ],
     complete: async () => validAnswer({ lines: [{ offerId: 'offer:a' }, { offerId: 'offer:b' }] }),
   });
-  assert.equal(mixed.draft.valueCents, 3000, 'the total still sums mixed currencies');
+  assert.ok(!('valueCents' in mixed.draft), 'mixed currencies never sum into one total');
   assert.ok(!('currency' in mixed.draft), 'a mixed currency never travels as one');
+  const relabelled = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: [{ offerId: 'offer:a', priceCents: 1000, currency: 'EUR' }],
+    policy: { currency: 'USD' },
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:a' }] }),
+  });
+  assert.ok(!('valueCents' in relabelled.draft), 'a policy currency never relabels another currency total');
+  assert.ok(!('currency' in relabelled.draft), 'a contradicting policy currency never travels');
   const messages = buildOfferDraftMessages({
     prompt: 'offerta 10 ingressi con sconto 10%',
     offers: OFFERS,
@@ -170,4 +181,54 @@ test('offer draft: money stays honest when prices or currencies disagree', async
   assert.equal(messages.length, 2, 'the model gets system plus user messages');
   assert.match(messages[1].content, /offer:ingressi-10/, 'the catalog travels in the prompt');
   assert.match(messages[1].content, /offerta 10 ingressi/, 'the member sentence travels in the prompt');
+});
+
+test('offer draft: the tighter ceiling wins on both sides', async () => {
+  const offers = [{ offerId: 'offer:x', priceCents: 10000, currency: 'EUR', maxDiscountBps: 2000 }];
+  const looseLine = async (policy) => suggestOfferDraft({
+    prompt: 'offerta',
+    offers,
+    policy,
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:x', quantity: 1, discountBps: 1500 }] }),
+  });
+  const overSpace = await looseLine({ maxDiscountBps: 1000 });
+  assert.deepEqual(
+    overSpace.refused.map(({ code }) => code),
+    ['OFFER_DRAFT_DISCOUNT_ABOVE_POLICY'],
+    'a per-offer allowance never loosens the space ceiling',
+  );
+  const overOffer = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: [{ offerId: 'offer:x', priceCents: 10000, currency: 'EUR', maxDiscountBps: 500 }],
+    policy: { maxDiscountBps: 2000 },
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:x', quantity: 1, discountBps: 1500 }] }),
+  });
+  assert.deepEqual(
+    overOffer.refused.map(({ code }) => code),
+    ['OFFER_DRAFT_DISCOUNT_ABOVE_POLICY'],
+    'the space ceiling never loosens the per-offer ceiling',
+  );
+});
+
+test('offer draft: the draft total truncates like the domain, never rounds up', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: [{ offerId: 'offer:penny', priceCents: 1, currency: 'EUR' }],
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:penny', quantity: 1, discountBps: 5000 }] }),
+  });
+  assert.equal(result.draft.valueCents, 0, 'truncated (1 * 5000) / 10000, like applyDiscount, not rounded to 1');
+});
+
+test('offer draft: a 100% line with no ceiling refuses without an approval flow', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: [{ offerId: 'offer:free', priceCents: 1000, currency: 'EUR' }],
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:free', quantity: 1, discountBps: 10000 }] }),
+  });
+  assert.deepEqual(
+    result.refused.map(({ code }) => code),
+    ['OFFER_DRAFT_DISCOUNT_ABOVE_POLICY'],
+    'a free line stays out when nobody set a ceiling',
+  );
+  assert.deepEqual(result.draft.catalogOfferIds, [], 'nothing drafts from the refused line');
 });
