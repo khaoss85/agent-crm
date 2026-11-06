@@ -211,6 +211,39 @@ async function withApprovalLock(key, fn) {
   }
 }
 
+/**
+ * Same-process serialization for one capped agent's sweep work, one FIFO
+ * chain per agent (`spaceId:agentSourceKey`): the whole per-assignment
+ * section — cap gate, slot claim, execute, finalize — runs while holding
+ * the agent's chain, so two concurrent sweeps covering different
+ * assignments of one capped agent cannot both pass the gate on the same
+ * stale `spent` snapshot and execute past the monthly cap. The second
+ * sweep waits, then re-reads the ledger with the first sweep's finalized
+ * cost already counted. Assignments of different agents (or spaces) use
+ * different keys and still run independently. Cross-process writers do
+ * NOT serialize here — the UNIQUE slot claim plus the post-execution
+ * allowance gate stay as the storage-level guard for those.
+ */
+const agentCapChains = new Map();
+
+/**
+ * @param {string} key @param {() => Promise<any>} fn
+ */
+async function withAgentCapLock(key, fn) {
+  const previous = agentCapChains.get(key) ?? Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const chained = previous.then(() => gate);
+  agentCapChains.set(key, chained);
+  try {
+    await previous.catch(() => {});
+    return await fn();
+  } finally {
+    release();
+    if (agentCapChains.get(key) === chained) agentCapChains.delete(key);
+  }
+}
+
 /** @param {string} token @param {number} nowMs */
 function approvalClaimNote(token, nowMs) {
   return `approval-claim ${String(token).replace(/\s+/g, '_')} ${nowMs}`;
@@ -452,6 +485,9 @@ export function createAgentOperations(options = {}) {
    * The cap is checked before `execute` runs (estimate gate) and enforced
    * again after it returns (actual-cost gate); a capped or failed execution
    * is still recorded with agent, assignment, cost and outcome.
+   * Per-assignment work for one agent holds that agent's same-process
+   * chain, so concurrent sweeps cannot both pass the gate on a stale
+   * `spent` snapshot and execute past the monthly cap.
    */
   async function runDue(request) {
     const record = request && typeof request === 'object' ? request : {};
@@ -471,9 +507,17 @@ export function createAgentOperations(options = {}) {
       advanced: 0, proposed: 0, applied: 0, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [],
     };
     for (const assignment of due) {
+      // P1 monthly-cap race: the cap gate, slot claim, execute and finalize
+      // for one agent hold that agent's chain, so two concurrent sweeps
+      // covering different assignments of one capped agent cannot both pass
+      // the gate on the same stale `spent` snapshot and execute past the
+      // cap. The loser waits, then re-reads the ledger with the winner's
+      // finalized cost already counted. Assignments of different agents (or
+      // spaces) use different keys and proceed independently.
+      await withAgentCapLock(`${assignment.spaceId}:${assignment.agentSourceKey}`, async () => {
       const spaceId = assignment.spaceId;
       const agent = await loadAgent(spaceId, assignment.agentSourceKey);
-      if (agent.status !== 'active') continue;
+      if (agent.status !== 'active') return;
       const { startedAt, runKey } = slotOf(assignment, at);
       const base = {
         spaceId,
@@ -508,7 +552,7 @@ export function createAgentOperations(options = {}) {
             // winner (or take over its stale started claim) instead of
             // crashing runDue.
             const lost = await replayLostRace(spaceId, runKey, assignment, startedAt, summary, actor);
-            if (lost.handled) continue;
+            if (lost.handled) return;
             cappedClaim = lost.claim;
             // A stolen stale claim finalizes conditionally: if its sweep
             // woke up and recorded first, the winner stands and this sweep
@@ -520,12 +564,12 @@ export function createAgentOperations(options = {}) {
             }, 'capped', assignment, startedAt, summary, actor);
             // finalizeClaim already counted and advanced: never fall
             // through to the outer capped/advanced increment below.
-            continue;
+            return;
           }
           summary.capped += 1;
           summary.advanced += 1;
           await advanceAssignment(assignment, startedAt);
-          continue;
+          return;
         }
       }
       // 2. Claim the slot before executing: overlapping sweeps serialize on
@@ -542,7 +586,7 @@ export function createAgentOperations(options = {}) {
       } catch (error) {
         if (!isWinnerConflict(error)) throw error;
         const lost = await replayLostRace(spaceId, runKey, assignment, startedAt, summary, actor);
-        if (lost.handled) continue;
+        if (lost.handled) return;
         claim = lost.claim;
       }
       // 3. Execute, then finalize the claimed row. A crash between the
@@ -563,7 +607,7 @@ export function createAgentOperations(options = {}) {
           spaceId,
           code: error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN',
         });
-        continue;
+        return;
       }
       const costCents = checkCostCents(checked.costCents, 'result.costCents') ?? 0;
       const capped = agent.spendingCapCents !== null && agent.spendingCapCents !== undefined;
@@ -583,7 +627,7 @@ export function createAgentOperations(options = {}) {
             outcome: 'capped',
             note: `Monthly cap stopped this run after execution: actual cost ${costCents}c exceeds the remaining allowance ${allowance}c of ${agent.spendingCapCents}c (estimate was ${estimate}c). Proposals/artifact not stored.`,
           }, 'capped', assignment, startedAt, summary, actor);
-          continue;
+          return;
         }
       }
       const overrun = capped && costCents > estimate
@@ -596,7 +640,7 @@ export function createAgentOperations(options = {}) {
           proposals: JSON.stringify(checked.proposals),
           note: `${checked.proposals.length} action proposal(s) waiting for human approval.${overrun}`,
         }, 'proposed', assignment, startedAt, summary, actor);
-        continue;
+        return;
       }
       const previous = await runs().listWhere({ spaceId, assignmentSourceKey: assignment.sourceKey });
       let version = 1;
@@ -612,6 +656,7 @@ export function createAgentOperations(options = {}) {
         artifactVersion: version,
         ...(overrun === '' ? {} : { note: overrun.trim() }),
       }, 'artifacts', assignment, startedAt, summary, actor);
+      });
     }
     return summary;
   }

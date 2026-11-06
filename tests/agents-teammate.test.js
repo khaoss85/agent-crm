@@ -367,8 +367,10 @@ test('two overlapping sweeps execute once: the loser never re-executes', async (
     ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
   ]);
   assert.equal(executions, 1, 'one execution for one due slot');
-  assert.equal(first.artifacts + second.artifacts, 1);
-  assert.equal(first.skipped + second.skipped, 1);
+  // Per-agent serialization: the loser waits for the winner's finalize,
+  // then replays its terminal row instead of skipping a live claim.
+  assert.equal(first.artifacts + second.artifacts, 2);
+  assert.equal(first.skipped + second.skipped, 0);
 });
 
 test('a retry at the same instant replays every terminal outcome with the exact summary shape', async () => {
@@ -478,8 +480,10 @@ test('two sweeps at different milliseconds contend one slot key: one executes', 
     ops.runDue({ actor: SYSTEM, at: '2026-11-02T08:01:00.200Z', execute }),
   ]);
   assert.equal(executions, 1, 'different sweep clocks still share one slot');
-  assert.equal(first.artifacts + second.artifacts, 1);
-  assert.equal(first.skipped + second.skipped, 1);
+  // Per-agent serialization: the loser waits for the winner's finalize,
+  // then replays its terminal row instead of skipping a live claim.
+  assert.equal(first.artifacts + second.artifacts, 2);
+  assert.equal(first.skipped + second.skipped, 0);
   const rows = await modules.get('teammate-run').service
     .listWhere({ spaceId: SPACE, assignmentSourceKey: 'as-ms-race' });
   assert.equal(rows.length, 1, 'one row per slot');
@@ -719,6 +723,41 @@ test('a stale approval claim is taken over, a live one refuses', async () => {
     (error) => error.code === 'AGENT_APPROVAL_IN_PROGRESS',
   );
   assert.equal(liveApplied, 0);
+});
+
+test('two concurrent sweeps over two assignments never execute past the monthly cap', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'ag-two-slots', spendingCapCents: 100 });
+  for (const sourceKey of ['as-cap-a', 'as-cap-b']) {
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey,
+      agentSourceKey: 'ag-two-slots',
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+      costPerRunCents: 60,
+    });
+  }
+  let executions = 0;
+  const execute = async () => {
+    executions += 1;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    return { kind: 'artifact', costCents: 60, artifact: { n: executions } };
+  };
+  const [first, second] = await Promise.all([
+    ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
+    ops.runDue({ actor: SYSTEM, at: MON_0801, execute }),
+  ]);
+  assert.equal(executions, 1, 'the second sweep waits for the first and sees its finalized cost');
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, agentSourceKey: 'ag-two-slots' });
+  assert.equal(rows.length, 2, 'one row per slot, never two executions');
+  assert.deepEqual(rows.map((row) => row.outcome).sort(), ['artifact', 'capped']);
+  const spent = rows.reduce((total, row) => total + row.costCents, 0);
+  assert.ok(spent <= 100, `ledger holds ${spent}c against a 100c cap`);
+  assert.equal(first.capped + second.capped, 2, 'winner records capped, loser replays capped');
+  assert.equal(first.artifacts + second.artifacts, 2, 'winner records the artifact, loser replays it');
 });
 
 test('a failed execution keeps a sanitized diagnostic with code and space', async () => {
