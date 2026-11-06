@@ -460,6 +460,10 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
 
   return {
     packageContract: accepted.packageContract,
+    // The same action-eligible core allow-list the synchronous factory
+    // publishes (backlog:c202d787): the generic single-record GET resolves
+    // through it on every composition, portable ones included.
+    actionEligibleCoreModules: Object.freeze([...ACTION_ELIGIBLE_CORE_MODULES].sort()),
     services: Object.freeze({
       companies: portableService(companyModule.service),
       contacts: portableService(contactModule.service),
@@ -779,6 +783,7 @@ export async function startPortableSqliteApp(options = {}) {
   return Object.freeze({
     storage: Object.freeze({ adapter: 'sqlite', available: true }),
     packageContract: graph.packageContract,
+    actionEligibleCoreModules: graph.actionEligibleCoreModules,
     health: graph.health,
     metrics: graph.metrics,
     services: graph.services,
@@ -882,6 +887,7 @@ export async function startPortablePostgresqlApp(options) {
   );
   const facade = Object.freeze({
     storage: Object.freeze({ adapter: 'postgresql', available: true }),
+    actionEligibleCoreModules: graph.actionEligibleCoreModules,
     listenMode: options.listenMode ?? 'local-development',
     tenantBinding: describePortableTenantBinding({
       adapter: 'postgresql',
@@ -1001,6 +1007,7 @@ export async function startPortablePostgresqlReaderApp(options) {
   };
   return Object.freeze({
     storage: Object.freeze({ adapter: 'postgresql', available: true, mode: 'read-only' }),
+    actionEligibleCoreModules: graph.actionEligibleCoreModules,
     listenMode: options.listenMode ?? 'local-development',
     tenantBinding: describePortableTenantBinding({
       adapter: 'postgresql',
