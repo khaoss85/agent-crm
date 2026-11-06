@@ -475,6 +475,14 @@ export function createCustomerCardView(deps) {
   };
 
   let channelFilter = 'all';
+  // How far the conversation is opened (Mostra precedenti). Kept with the
+  // channel filter when the same scheda re-reads itself, reset on a new one.
+  let timelineShown = TIMELINE_PAGE;
+  // The scheda on screen, so a re-read of the same customer (after Invia,
+  // a note, an edit) redraws in place instead of blanking the page.
+  let shownKey = null;
+  let shownSides = [];
+  let renderSeq = 0;
 
   // Voce 908f2eb9bbfb: one slow or failing read must never fail the whole
   // scheda. Every read settles on its own: the card stays the identity
@@ -1995,7 +2003,7 @@ export function createCustomerCardView(deps) {
         if (channelFilter === key) chip.setAttribute('data-active', 'true');
         chip.addEventListener('click', () => {
           channelFilter = key;
-          shownCount = TIMELINE_PAGE;
+          timelineShown = TIMELINE_PAGE;
           drawChips();
           drawList();
         });
@@ -2041,7 +2049,7 @@ export function createCustomerCardView(deps) {
       // a 5.600px page. «Mostra precedenti» opens the next page below.
       const filtered = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
       const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
-      const visible = ordered.slice(0, shownCount);
+      const visible = ordered.slice(0, timelineShown);
       if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
@@ -2140,13 +2148,12 @@ export function createCustomerCardView(deps) {
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
-          shownCount += TIMELINE_PAGE;
+          timelineShown += TIMELINE_PAGE;
           drawList();
         });
         list.appendChild(older);
       }
     };
-    let shownCount = TIMELINE_PAGE;
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -2507,9 +2514,37 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
-  async function renderCard(resource, id) {
+  /**
+   * Puts the new scheda on screen in one step. A re-read of the scheda already
+   * shown (after Invia, a note, an edit) keeps the old one up while it loads
+   * and swaps in the same tick: no blank flash, the page and the side columns
+   * keep their scroll, the conversation keeps its filter and its open pages.
+   */
+  function show(node, key, sides = []) {
+    const page = doc.scrollingElement ?? null;
+    const pageTop = key === shownKey && page ? page.scrollTop : null;
+    const sideTops = key === shownKey ? shownSides.map((side) => side.scrollTop ?? 0) : [];
     while (mount.firstChild) mount.removeChild(mount.firstChild);
-    channelFilter = 'all';
+    mount.appendChild(node);
+    sides.forEach((side, index) => {
+      if (sideTops[index]) side.scrollTop = sideTops[index];
+    });
+    if (pageTop !== null && page.scrollTop !== pageTop) page.scrollTop = pageTop;
+    shownKey = key;
+    shownSides = sides;
+  }
+
+  async function renderCard(resource, id) {
+    const key = `${resource}/${id}`;
+    const seq = ++renderSeq;
+    if (key !== shownKey) {
+      // Another customer: clear at once, never leave the previous one up.
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+      shownKey = null;
+      shownSides = [];
+      channelFilter = 'all';
+      timelineShown = TIMELINE_PAGE;
+    }
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
     // id) used to blank the scheda with neither the card nor the error panel.
@@ -2519,13 +2554,15 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    // A newer render started while this one loaded: it owns the screen.
+    if (seq !== renderSeq) return;
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
-      mount.appendChild(panel);
+      show(panel, null);
       return;
     }
     const {
@@ -2592,7 +2629,7 @@ export function createCustomerCardView(deps) {
     grid.appendChild(center);
     grid.appendChild(right);
     panel.appendChild(grid);
-    mount.appendChild(panel);
+    show(panel, key, [left, right]);
     markRead(resource, id, timeline);
   }
 

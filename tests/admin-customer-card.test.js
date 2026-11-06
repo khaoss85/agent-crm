@@ -2982,3 +2982,106 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
   assert.match(panel.textContent, /Nessun canale collegato/);
 });
+
+// Supervisor 06/11 sera: after Invia the scheda went blank for about a
+// second while it re-read itself. A re-read of the scheda already on screen
+// keeps it up and swaps in place: no blank, same scroll, same filter.
+function gatedClient(options = {}) {
+  const base = stubClient(options);
+  const gated = {
+    gate: null,
+    calls: base.calls,
+    writes: base.writes,
+    async request(path, opts) {
+      if (gated.gate) await gated.gate;
+      return base.request(path, opts);
+    },
+  };
+  return gated;
+}
+
+const hold = (client) => {
+  let open;
+  client.gate = new Promise((resolve) => { open = resolve; });
+  return () => { client.gate = null; open(); };
+};
+
+test('re-reading the same scheda keeps it on screen while it loads, never blank', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  const before = mount.firstChild;
+  assert.ok(mount.textContent.includes('Guido Presti'));
+
+  const release = hold(client);
+  const again = view.renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mount.firstChild, before, 'the old scheda stays up during the re-read');
+  assert.ok(mount.textContent.includes('Guido Presti'), 'never blank while loading');
+
+  release();
+  await again;
+  assert.notEqual(mount.firstChild, before, 'the fresh scheda replaced it');
+  assert.equal(mount.childNodes.length, 1, 'one scheda, swapped in one step');
+});
+
+test('re-reading the same scheda keeps the channel filter, the open pages and the side columns scroll', async () => {
+  const items = Array.from({ length: 45 }, (_, i) => ({
+    entry: 'message', id: `e${i}`, conversationId: 't1', channel: i % 2 ? 'whatsapp' : 'instagram',
+    direction: 'inbound', sync: 'received', body: `messaggio ${i}`, teamAuthorId: null,
+    remoteHandle: 'x', errorCode: null, occurredAt: new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString(),
+  }));
+  const timeline = { ...TIMELINE, entries: { available: true, count: items.length, truncated: false, items } };
+  const client = gatedClient({ timeline });
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'whatsapp').dispatch('click');
+  mount.querySelector('button[data-action="timeline-older"]').dispatch('click');
+  const shownBefore = mount.textContent.match(/messaggio \d+/g).length;
+  assert.ok(shownBefore > 20, 'a second page is open');
+  mount.querySelector('.bo-scheda-col-side').scrollTop = 140;
+
+  await view.renderCard('contact', 'c1');
+
+  const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
+  assert.equal(active.getAttribute('data-channel'), 'whatsapp', 'the filter stays');
+  assert.equal(mount.textContent.match(/messaggio \d+/g).length, shownBefore, 'the open pages stay');
+  assert.ok(!mount.textContent.includes('messaggio 44 ') && !/messaggio (0|2|4)\b/.test(mount.textContent), 'still WhatsApp only');
+  assert.equal(mount.querySelector('.bo-scheda-col-side').scrollTop, 140, 'the side column keeps its scroll');
+});
+
+test('another customer clears at once and starts from Tutti', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'instagram').dispatch('click');
+
+  const release = hold(client);
+  const other = view.renderCard('contact', 'c2');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mount.childNodes.length, 0, 'the previous customer never stays up under another id');
+  release();
+  await other;
+  const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
+  assert.equal(active.getAttribute('data-channel'), 'all', 'a new scheda starts from Tutti');
+});
+
+test('a slower older re-read never overwrites a newer one', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+
+  const release = hold(client);
+  const older = view.renderCard('contact', 'c1');
+  release();
+  const newer = view.renderCard('contact', 'c1');
+  await newer;
+  const shown = mount.firstChild;
+  await older;
+  assert.equal(mount.firstChild, shown, 'the newer scheda stays');
+});
