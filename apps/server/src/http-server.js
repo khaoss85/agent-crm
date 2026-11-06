@@ -1339,7 +1339,25 @@ export function buildRouter(app) {
   });
   router.add('GET', '/api/modules/:module/records/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
-    const module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
+    let module;
+    try {
+      module = requireCapability(resolveGeneratedModule(app, params.module), 'get');
+    } catch (resolutionError) {
+      if (!(resolutionError instanceof NotFoundError)) throw resolutionError;
+      // The Pipeline detail reads the board's offer through this path
+      // (backlog:c202d787): a handwritten core module the application
+      // declares action-eligible (app.actionEligibleCoreModules, the same
+      // allow-list the action route and the pipeline registry resolve
+      // through) serves single-record reads from its own service. A missing
+      // row still 404s from the service; writes and collection reads stay on
+      // the dedicated endpoints, never here.
+      const eligible = Array.isArray(app.actionEligibleCoreModules)
+        && app.actionEligibleCoreModules.includes(params.module);
+      if (!eligible) throw resolutionError;
+      const core = app.modules.get(params.module); // 404 when the name is unknown
+      if (isExposableGeneratedModule(core) || typeof core?.service?.get !== 'function') throw resolutionError;
+      module = core;
+    }
     return await module.service.get(params.id);
   });
   router.add('PATCH', '/api/modules/:module/records/:id', async ({ params, body, actor, identity, organizationId, headers }) => {
@@ -1353,9 +1371,11 @@ export function buildRouter(app) {
   // to the database directly. Eligible targets are exposable generated
   // modules, plus handwritten core modules that have at least one action
   // registered (registration in checked-in source IS the explicit eligibility
-  // declaration — core CRUD stays on its dedicated routes and is never served
-  // by the generic records surface). Anything else is a 404; unknown action
-  // 404; bad input 400; invalid transition a stable 409.
+  // declaration — core writes and collection reads stay on their dedicated
+  // routes and are never served by the generic records surface; only the
+  // single-record GET above shares this eligibility, backlog:c202d787).
+  // Anything else is a 404; unknown action 404; bad input 400; invalid
+  // transition a stable 409.
   router.add('POST', '/api/modules/:module/records/:id/actions/:action', async ({ params, body, actor, identity, organizationId, headers }) => {
     resolveActionableModule(app, params.module); // 404 for unknown/ineligible modules
     const context = writeContext(app, { actor, identity, organizationId, headers });

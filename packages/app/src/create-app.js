@@ -245,10 +245,12 @@ export function createAccordoApp(options = {}) {
 
   // Code-first action registry (ADR-011/014). Actions target generated modules
   // or handwritten core modules EXPLICITLY declared action-eligible below —
-  // registering an action is the eligibility declaration for the generic
-  // action route, while core CRUD stays on its dedicated endpoints and is
-  // never exposed through the generic records surface. A malformed action
-  // definition throws here and stops startup rather than exposing a
+  // the allow-list below is the eligibility declaration the generic action
+  // route resolves through (with a registered action), and (backlog:c202d787)
+  // the generic single-record GET resolves through (with the service read),
+  // while core writes and collection reads stay on their dedicated endpoints
+  // and are never exposed through the generic records surface. A malformed
+  // action definition throws here and stops startup rather than exposing a
   // half-working action.
   const generatedModuleNames = new Set(generatedModules.map((generated) => generated.name));
   const ACTION_ELIGIBLE_CORE_MODULES = new Set(['opportunity']);

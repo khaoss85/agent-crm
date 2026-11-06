@@ -125,7 +125,7 @@ These are real inconsistencies in the current tree. None of them is "already uni
 
 | Asymmetry | Reality today |
 |---|---|
-| Action eligibility | Generated modules are action-eligible by construction; **core** modules only when a checked-in action registers against an explicitly allow-listed name (`opportunity`). Core CRUD is never served by the generic records surface. |
+| Action eligibility | Generated modules are action-eligible by construction; **core** modules only when a checked-in action registers against an explicitly allow-listed name (`opportunity`). Core writes and collection reads are never served by the generic records surface; the generic single-record GET shares the action eligibility (backlog:c202d787), so the Pipeline detail reads the board's offer. |
 | Approval | Two implementations (core `Approval`, `quote-approval`) with a shared discipline and no shared primitive. |
 | Core adapters | Actions reach core Company/Contact/Opportunity only through declared adapters (ADR-013) — a deliberate narrow bridge, not a general capability. |
 | References | Generated → generated references are validated by the resolver (ADR-010); generated → **core** references are not a manifest feature, and generated modules store core ids as plain strings. |
