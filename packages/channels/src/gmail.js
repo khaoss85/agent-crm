@@ -175,6 +175,22 @@ export function isAutomatedGmailRecipient(handle) {
 }
 
 /**
+ * Why one Gmail message was excluded from leads (backlog:1a4d9b30, AC-5):
+ * the closed vocabulary the sync round counts (`automated-sender`,
+ * `bulk-header`), never an address. The REST door attaches it to the
+ * quarantined event it returns, so the sync round can count by reason
+ * what it must never log by address. (The fake adapter keeps its
+ * minimal shape: no production reader quarantines through it.) Pure
+ * and total: anything unreadable or not bulk is simply not excluded.
+ * @param {{from?: unknown, listUnsubscribe?: unknown, precedence?: unknown, autoSubmitted?: unknown}} input
+ * @returns {'automated-sender'|'bulk-header'|null}
+ */
+export function gmailBulkExclusionReason(input = {}) {
+  if (!isBulkGmailMessage(input)) return null;
+  return isAutomatedGmailSender(input?.from) ? 'automated-sender' : 'bulk-header';
+}
+
+/**
  * The `google-sync` log line both readers share the shape of: counts only,
  * never an address — a contact created from mail must not leak into logs.
  * @param {{source?: unknown, created?: unknown}} input

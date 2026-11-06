@@ -5,6 +5,7 @@ import {
   GMAIL_MAX_TEXT,
   buildGmailSendRequest,
   canonicalGmailAddress,
+  gmailBulkExclusionReason,
   isAutomatedGmailRecipient,
   isBulkGmailMessage,
   isGmailThreadId,
@@ -170,7 +171,10 @@ export function normalizeGmailRestMessage(wire, mailbox) {
   // Bulk quarantines inbound only: the mailbox branch above already took
   // the owner's sent mail (backlog:1a4d9b30).
   if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
-    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
+    return {
+      providerEventId: id, subject: '', sequence: null, occurredAt: atIso,
+      excluded: gmailBulkExclusionReason({ from: from.handle, ...restBulkHeaders(wire.payload) }),
+    };
   }
   const snippet = typeof wire.snippet === 'string' ? wire.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) {
