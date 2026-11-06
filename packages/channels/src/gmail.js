@@ -144,6 +144,15 @@ const MAX_ADDRESS = 256;
 const MAX_SUBJECT_LINE = 256;
 /** Email bodies run longer than chat bubbles but stay under the 32 KiB outbox bound. */
 export const GMAIL_MAX_TEXT = 30000;
+/**
+ * A received email subject stays a display snapshot (backlog:3055d50330b5):
+ * bounded single-line text. Longer text truncates instead of refusing the
+ * whole message over a cosmetic field — the same rule `splitGmailDisplayName`
+ * already applies to sender names.
+ */
+export const GMAIL_MAX_MAIL_SUBJECT = 500;
+/** Attachment descriptors per message stay bounded: metadata only, never content. */
+export const GMAIL_MAX_ATTACHMENTS = 20;
 const ADDRESS = /^[a-z0-9._%+-]{1,64}@[a-z0-9](?:[a-z0-9.-]{0,253}[a-z0-9])?\.[a-z]{2,}$/;
 const THREAD = /^[^\s\x00-\x1f\x7f:]{1,128}$/;
 
@@ -157,6 +166,103 @@ function malformedMessage(reason) {
   throw new AppError(`Gmail message is not well-formed: ${reason}`, {
     code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
   });
+}
+
+/**
+ * Padding invisibles some Gmail payloads carry (backlog:3055d50330b5):
+ * preheader padding and copy-pasted text arrive with zero-width and soft
+ * characters that no card should paint. Stripped, never stored. The range
+ * is exactly U+034F, U+200B-U+200D, U+FEFF and U+00AD — U+00A0 (non-breaking
+ * space) stays, so newsletter preheader spacing survives.
+ */
+const GMAIL_INVISIBLE_RE = /[\u034F\u200B-\u200D\uFEFF\u00AD]/g;
+
+/** The named entities the Gmail snippet and HTML bodies escape. */
+const GMAIL_NAMED_ENTITIES = Object.freeze({
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+});
+
+/** One HTML entity to its character, or the raw match when out of range. */
+function decodeGmailEntity(match, body) {
+  if (body[0] === '#') {
+    const hex = body[1] === 'x' || body[1] === 'X';
+    const code = Number.parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
+    if (!Number.isSafeInteger(code) || code < 0 || code > 0x10FFFF) return match;
+    try {
+      return String.fromCodePoint(code);
+    } catch {
+      return match;
+    }
+  }
+  const named = GMAIL_NAMED_ENTITIES[body.toLowerCase()];
+  return named === undefined ? match : named;
+}
+
+/**
+ * Decode one layer of HTML entities (`&amp; &lt; &gt; &quot; &#39;` and
+ * numeric forms). Single pass on purpose: `&amp;#39;` decodes to the
+ * literal `&#39;`, never to `'`, so a sender-provided entity cannot smuggle
+ * a second decoding round past this function.
+ */
+function decodeGmailEntities(text) {
+  return String(text).replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);/g, decodeGmailEntity);
+}
+
+/**
+ * Provider text to storable text (backlog:3055d50330b5): entities decoded,
+ * padding invisibles stripped, ends trimmed. Line breaks inside survive —
+ * the message-body fence (`safeMessageBody` in `packages/interactions`)
+ * stays the authority on what a row may hold.
+ * @param {unknown} value
+ */
+export function sanitizeGmailText(value) {
+  if (typeof value !== 'string') return '';
+  return decodeGmailEntities(value).replace(GMAIL_INVISIBLE_RE, '').trim();
+}
+
+/**
+ * One RFC 2047 encoded word to text, or the raw word when its charset or
+ * encoding is outside the two the subjects in the wild use (UTF-8 and
+ * ISO-8859-1, Q and B). Best-effort on purpose: an unknown charset stays
+ * readable as the encoded word instead of decoding to mojibake.
+ */
+const RFC2047_WORD_RE = /=\?([^?\s]+)\?([bBqQ])\?([^?]*)?\?=/g;
+
+function decodeRfc2047Word(match, charset, encoding, data) {
+  try {
+    const upper = String(encoding).toUpperCase();
+    const bytes = upper === 'B'
+      ? Buffer.from(String(data ?? ''), 'base64')
+      : Buffer.from(
+        String(data ?? '').replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16))),
+        'binary',
+      );
+    const cs = String(charset).toUpperCase();
+    if (cs === 'UTF-8' || cs === 'UTF8') return bytes.toString('utf8');
+    if (cs === 'ISO-8859-1' || cs === 'LATIN1' || cs === 'LATIN-1') return bytes.toString('latin1');
+  } catch {
+    // Falls through to the raw word below.
+  }
+  return match;
+}
+
+/**
+ * A received `Subject` header to display text (backlog:3055d50330b5): RFC
+ * 2047 words decoded, folded lines joined, entities decoded, invisibles
+ * stripped, truncated to `GMAIL_MAX_MAIL_SUBJECT`. Null when nothing
+ * displayable remains — a missing subject stores nothing, never an
+ * invented placeholder.
+ * @param {unknown} value
+ */
+export function decodeGmailSubject(value) {
+  if (typeof value !== 'string') return null;
+  const unfolded = value.replace(/[\r\n]+/g, ' ');
+  const decoded = unfolded.includes('=?')
+    ? unfolded.replace(RFC2047_WORD_RE, decodeRfc2047Word)
+    : unfolded;
+  const clean = sanitizeGmailText(decoded);
+  if (clean === '') return null;
+  return clean.length > GMAIL_MAX_MAIL_SUBJECT ? clean.slice(0, GMAIL_MAX_MAIL_SUBJECT) : clean;
 }
 
 /**
@@ -478,7 +584,9 @@ function normalizeGmailMessage(decoded, config) {
   const snippet = typeof item.snippet === 'string' ? item.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) malformedEvent('message snippet exceeds the bound');
   const attachments = normalizeGmailAttachments(item.attachments);
-  const text = snippet;
+  // Snippets escape entities and padding invisibles (backlog:3055d50330b5),
+  // same as the REST path — sanitize both, one helper.
+  const text = sanitizeGmailText(snippet);
   // The sender IS the From header (backlog:13c09f03): an unknown sender
   // becomes a lead through the composed channel-sender capability, with
   // the display name as the contact name.
