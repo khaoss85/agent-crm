@@ -2072,3 +2072,40 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-clienti-view.ui-tab[data-attention="true"]::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .bo-scheda-timeline .bo-scheda-entry[data-unread="true"] > :not(.bo-scheda-chan) { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
 .bo-scheda-new { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 99px; background: var(--accent); color: var(--paper); font-size: 10.5px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px; }
+
+/* ---- Nuova offerta in a window over the scheda (Dan 06/11) ------------- */
+/* Same frame as the composer; the body is a short form: four facts in a
+   two-column grid, the catalog as chips, one primary action. */
+.bo-offer-panel .bo-offer-body { padding-bottom: 6px; }
+.bo-offer-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; padding: 6px 0 4px; }
+.bo-offer-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 0 6px; border-bottom: 1px solid var(--line-faint); }
+.bo-offer-field-wide { grid-column: 1 / -1; }
+.bo-offer-field:focus-within { border-bottom-color: var(--ink); }
+.bo-offer-label { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
+.bo-scheda-composer .bo-offer-input { width: 100%; min-height: 0; padding: 4px 0 2px; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
+.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); }
+.bo-scheda-composer .bo-offer-input[name="offer-title"] { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+.bo-scheda-composer .bo-offer-input[name="offer-title"]::placeholder { font-weight: 450; }
+.bo-scheda-composer .bo-offer-input[name="offer-value"] { font-variant-numeric: tabular-nums; }
+.bo-offer-field .field-error { margin: 2px 0 0; font-size: 12px; }
+.bo-offer-field .field-error:empty { display: none; }
+.bo-offer-catalog { padding: 12px 0 4px; }
+.bo-offer-catalog[data-empty="true"] { display: none; }
+.bo-offer-catalog-title { margin: 0 0 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.bo-offer-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bo-offer-pick { display: inline-flex; align-items: center; gap: 4px; }
+.bo-scheda-composer .bo-offer-chip { display: inline-flex; align-items: baseline; gap: 8px; min-height: 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+.bo-scheda-composer .bo-offer-chip:hover { border-color: var(--ink); }
+.bo-scheda-composer .bo-offer-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bo-scheda-composer .bo-offer-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.bo-scheda-composer .bo-offer-chip[aria-pressed="true"]::before { content: "✓"; font-size: 11px; margin-right: -2px; }
+.bo-offer-chip-price { font-family: var(--mono); font-size: 11.5px; font-weight: 450; opacity: .7; font-variant-numeric: tabular-nums; }
+.bo-scheda-composer .bo-offer-qty { width: 54px; min-height: 0; padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: inherit; font-size: 13px; text-align: center; }
+.bo-offer-pick[data-on="false"] .bo-offer-qty { display: none; }
+.bo-offer-total { margin: 10px 0 0; font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-offer-total:empty { display: none; }
+.bo-offer-blocked { margin: 0; padding: 18px 0; font-size: 14px; color: var(--muted); }
+.bo-offer-panel .bo-composer-foot [data-action="offer-create"] { min-width: 132px; border-radius: 999px; }
+@media (max-width: 560px) {
+  .bo-offer-fields { grid-template-columns: 1fr; }
+}

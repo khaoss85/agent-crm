@@ -60,7 +60,7 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  * manual. Amounts are integer cents, quantities positive integers.
  * @param {any} offer
  */
-function isPricedOffer(offer) {
+export function isPricedOffer(offer) {
   if (offer === null || typeof offer !== 'object') return false;
   if (offer.active !== true) return false;
   if (typeof offer.currency !== 'string' || offer.currency === '') return false;
@@ -81,7 +81,7 @@ function componentPriceText(component, currency) {
 }
 
 /** @param {{components: Array<any>, currency: string}} offer */
-function offerPriceText(offer) {
+export function offerPriceText(offer) {
   return offer.components.map((component) => componentPriceText(component, offer.currency)).join(' + ');
 }
 
@@ -91,7 +91,7 @@ function offerPriceText(offer) {
  * error when the selection cannot total honestly.
  * @param {Array<Record<string, any>>} picks
  */
-function selectedProductTotal(picks) {
+export function selectedProductTotal(picks) {
   const chosen = picks.filter((pickRow) => pickRow.checkbox?.checked === true);
   if (chosen.length === 0) return null;
   const currencies = new Set(chosen.map((pickRow) => String(pickRow.offer.currency ?? '').toUpperCase()));

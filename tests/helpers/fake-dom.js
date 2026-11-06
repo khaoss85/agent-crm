@@ -63,6 +63,8 @@ class FakeNode {
 
   removeChild(child) {
     this.childNodes = this.childNodes.filter((node) => node !== child);
+    // Like the real Node.removeChild: a removed node is detached.
+    if (child && child.parentNode === this) child.parentNode = null;
     return child;
   }
 

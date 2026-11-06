@@ -6,6 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { openOfferPanel } from './admin-offer-panel.js';
 import {
   addFieldForm,
   defineField,
@@ -446,7 +447,7 @@ export function createCustomerCardView(deps) {
   // submission-owned Idempotency-Key before any request leaves, so in
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
-  const { client } = bindAdminMutations(deps.client, deps);
+  const { client, submissions } = bindAdminMutations(deps.client, deps);
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
@@ -1004,6 +1005,8 @@ export function createCustomerCardView(deps) {
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
+    const offerWindow = mount.querySelector('div[data-offer-panel="open"]');
+    if (offerWindow && offerWindow.parentNode) offerWindow.parentNode.removeChild(offerWindow);
     // The window hangs off the view, not off the Azioni column: a sticky
     // column is its own stacking layer painted in page order, so a fixed
     // window inside the left column sat under the right one (#605).
@@ -1542,9 +1545,28 @@ export function createCustomerCardView(deps) {
     const offer = el('button', 'bo-scheda-tile', 'Nuova offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
+    // Dan 06/11: the offer is written where the customer is — a window
+    // over the scheda like «Scrivi», never a jump to another page. Only one
+    // window at a time: the composer steps aside (its draft is kept).
     offer.addEventListener('click', () => {
-      if (pick !== null) writePendingCustomerPick(storage, 'offer', pick);
-      navigate('#/modules/opportunity/new');
+      if (pick === null) {
+        navigate('#/modules/opportunity/new');
+        return;
+      }
+      const composer = mount.querySelector('div[data-composer="open"]');
+      if (composer && composer.parentNode) composer.parentNode.removeChild(composer);
+      openOfferPanel({
+        doc,
+        host: mount,
+        client,
+        issueKey: () => submissions.issueKey(),
+        card,
+        navCtx,
+        company: pick.company,
+        spaceId: activeSpaceId(),
+        toast,
+        onCreated: () => { renderCard(navCtx.resource, navCtx.id); },
+      });
     });
     row.appendChild(offer);
     const appointment = el('button', 'bo-scheda-tile', 'Nuovo appuntamento');
