@@ -1837,17 +1837,17 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   }).renderCard('contact', 'c1');
 
   const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+  // Dan 06/11: Nuova offerta opens its window over the scheda (see
+  // tests/admin-offer-panel.test.js) — no navigation, no stash.
   byAction('new-offer').dispatch('click');
-  assert.deepEqual(navs, ['#/modules/opportunity/new'], 'Nuova offerta opens the offer creation screen');
-  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.offer')), {
-    resource: 'contact', id: 'c1', name: 'Guido Presti',
-    company: { id: 'co1', name: 'Palestra Esempio' },
-  }, 'the offer pick names the record and its company');
+  assert.deepEqual(navs, [], 'Nuova offerta stays on the scheda');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'), 'the offer window opens');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.offer'), null, 'no page handoff is needed');
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'no appointment pick leaks from the offer voice');
 
   byAction('new-appointment').dispatch('click');
-  assert.deepEqual(navs, ['#/modules/opportunity/new', '#/calendario'],
+  assert.deepEqual(navs, ['#/calendario'],
     'Nuovo appuntamento opens the calendar manual booking');
   assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
     resource: 'contact', id: 'c1', name: 'Guido Presti',
