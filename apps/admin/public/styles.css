@@ -341,6 +341,58 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-fact { margin: 0; font-size: 13px; }
 .quote-line, .quote-version-row, .quote-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; overflow-wrap: anywhere; }
 .quote-approved { margin: 12px 0; padding: 10px 12px; background: var(--accent-soft); border-radius: 6px; font-size: 13px; }
+/* Dettaglio offerta (Dan 06/11): stessa lingua visiva del preventivo — scheda con chi, fase e valore, fatti in una striscia, preventivi come schede, cronologia a timeline. */
+.bo-offer { display: flex; flex-direction: column; gap: 18px; max-width: 960px; }
+.bo-offer-sheet { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 20px; padding: 28px 30px 22px; box-shadow: var(--shadow-pop); overflow: hidden; }
+.bo-offer-sheet::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--agent); }
+.bo-offer-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+.bo-offer-hero-words { min-width: 0; }
+.bo-offer-hero .kicker { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--agent-ink); }
+.bo-offer-title { margin: 0; font-size: 32px; line-height: 1.08; font-weight: 800; letter-spacing: -.02em; color: var(--ink); overflow-wrap: anywhere; }
+.bo-offer-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 0; font-size: 13px; }
+.bo-offer-for { color: var(--ink); font-weight: 600; }
+.bo-offer-stage { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--agent-soft); color: var(--agent-ink); }
+.bo-offer-value { display: flex; flex-direction: column; align-items: flex-end; text-align: right; flex: none; }
+.bo-offer-amount { font-size: 40px; line-height: 1; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-offer-amount-note { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.bo-offer .offer-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 22px 0 0; padding: 16px 0 0; border-top: 1px solid var(--line-soft); }
+.bo-offer .offer-fact { display: flex; flex-direction: column; gap: 3px; margin: 0; min-width: 0; }
+.bo-offer .offer-fact-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-offer .offer-fact-value { font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.bo-offer .offer-edit { margin-top: 16px; }
+.bo-offer .offer-edit-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 12px 14px; background: var(--paper); border-radius: 12px; }
+.bo-offer .offer-edit-form .field-row { display: flex; flex-direction: column; gap: 4px; }
+.bo-offer .offer-edit-form label { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+.bo-offer .offer-quotes, .bo-offer .offer-history { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; padding: 18px 22px; }
+.bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
+.bo-offer .offer-quote:first-of-type { border-top: 0; }
+.bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
+.bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.bo-offer .offer-quote-open::after { content: " →"; }
+.bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
+.bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
+.bo-offer .quote-status-pending_approval { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-offer .quote-status-rejected { background: var(--human-soft); color: var(--human-ink); }
+.bo-offer .quote-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name amount" "meta amount"; column-gap: 16px; align-items: center; margin: 10px 0 0; padding: 10px 0; border: 0; border-bottom: 1px solid var(--line-faint); }
+.bo-offer .quote-line-name { grid-area: name; font-size: 15px; font-weight: 700; color: var(--ink); }
+.bo-offer .quote-line-meta { grid-area: meta; font-size: 12.5px; color: var(--muted); }
+.bo-offer .quote-line-amount { grid-area: amount; font-size: 15px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-offer .quote-version { margin: 8px 0 4px; font-size: 12.5px; color: var(--muted); }
+.bo-offer .history-event { position: relative; display: flex; gap: 14px; margin: 0; padding: 8px 0 8px 18px; font-size: 13px; }
+.bo-offer .history-event::before { content: ""; position: absolute; left: 2px; top: 14px; width: 7px; height: 7px; border-radius: 50%; background: var(--agent); }
+.bo-offer .history-when { flex: none; width: 96px; font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 1px; }
+.bo-offer .history-what { color: var(--ink); }
+@media (max-width: 720px) {
+  .bo-offer-sheet { padding: 22px 18px 18px; border-radius: 16px; }
+  .bo-offer-hero { flex-direction: column; align-items: flex-start; }
+  .bo-offer-value { align-items: flex-start; text-align: left; }
+  .bo-offer-title { font-size: 26px; }
+  .bo-offer-amount { font-size: 34px; }
+  .bo-offer .offer-quotes, .bo-offer .offer-history { padding: 16px; }
+  .bo-offer .offer-quote-open { flex-basis: 100%; }
+}
 
 /*
  * Backoffice shell (BO-F0-02): sidebar on every screen plus topbar with the
