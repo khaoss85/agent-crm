@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { normalizeGmailRestMessage } from '../packages/channels/src/gmail-http.js';
+import { createGmailChannelAdapter, gmailPushBody } from '../packages/channels/src/gmail.js';
 import {
   logMessage,
   readTimeline,
@@ -191,6 +192,59 @@ test('a mail without attachments stores nothing and reads the empty list', () =>
   assert.equal(validated.mailAttachmentsJson, null);
   assert.deepEqual(shapeMailAttachments({ mailAttachmentsJson: null }), []);
   assert.deepEqual(shapeMailAttachments({}), [], 'pre-rev3 rows read the empty list');
+});
+
+test('a body longer than the record fence still stores, truncated to 2000', () => {
+  // P1 backlog:3055d50330b5 — a 2500-character plain part used to normalize
+  // to a 2500-character text that validateMessageRequest refused (MAX_BODY
+  // 2000), so the message was never stored. Both readers truncate first.
+  const long = `Le offerte di novembre.\n\n${'n'.repeat(2500)}`;
+  const wire = newsletterFullMessage();
+  wire.payload.parts[0].body = { data: b64url(long), size: long.length };
+  const rest = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.ok(rest.text.length <= 2000, `REST text fits the record fence, got ${rest.text.length}`);
+  assert.ok(rest.text.startsWith('Le offerte di novembre.'), 'the preheader stays on top after truncation');
+  const validated = validateMessageRequest({
+    sourceKey: 'gmail:long:1', conversationId: 'email:thread-news-1', direction: 'inbound',
+    channel: 'email', body: rest.text, mailSubject: rest.mailSubject,
+    mailAttachments: rest.attachments, subject: SUBJECT, occurredAt: '2026-11-05T09:00:00.000Z',
+    source: SOURCE,
+  });
+  assert.equal(validated.body, rest.text, 'the truncated body passes the record fence');
+
+  const definition = createGmailChannelAdapter({ mailbox: MAILBOX, secret: 'gmail-test-secret' }).definition;
+  const [push] = definition.normalizeInbound(gmailPushBody({
+    id: 'gmail-long-1', threadId: 'thread-news-1',
+    from: 'Novità Esempio <novita@example-news.com>', to: MAILBOX,
+    subject: 'Novità di novembre', snippet: long, internalDateMs: AT,
+  }));
+  assert.ok(push.text.length <= 2000, `push text fits the record fence, got ${push.text.length}`);
+  assert.ok(push.text.startsWith('Le offerte di novembre.'), 'push keeps the preheader on top after truncation');
+});
+
+test('push and history readers agree on the mail subject and attachments', () => {
+  // P1 backlog:3055d50330b5 — the same message arriving via Pub/Sub push and
+  // via history (format=full) must expose the same mailSubject and the same
+  // attachment descriptors, or the timeline depends on the ingress path.
+  const wire = receiptFullMessage();
+  const { htmlBody, ...rest } = wire;
+  rest.payload.parts[0].body = { data: b64url(htmlBody), size: htmlBody.length };
+  const history = normalizeGmailRestMessage(rest, MAILBOX);
+
+  const definition = createGmailChannelAdapter({ mailbox: MAILBOX, secret: 'gmail-test-secret' }).definition;
+  const [push] = definition.normalizeInbound(gmailPushBody({
+    id: 'gmail-receipt-1', threadId: 'thread-receipt-1',
+    from: 'Ricevute Esempio <ricevute@example-billing.com>', to: MAILBOX,
+    subject: 'La tua ricevuta n. 1234', snippet: 'Grazie per il tuo acquisto.',
+    internalDateMs: AT,
+    attachments: [{ filename: 'ricevuta-1234.pdf', mimeType: 'application/pdf', size: 48210, attachmentId: 'gmail-att-receipt-1' }],
+  }));
+  assert.equal(push.mailSubject, history.mailSubject, 'same decoded Subject on both paths');
+  assert.equal(push.mailSubject, 'La tua ricevuta n. 1234');
+  assert.deepEqual(push.attachments, history.attachments, 'same descriptors on both paths');
+  assert.deepEqual(push.attachments, [{
+    name: 'ricevuta-1234.pdf', mimeType: 'application/pdf', sizeBytes: 48210,
+  }]);
 });
 
 test('mail extras are email-only and fail closed', () => {

@@ -3,7 +3,7 @@
 import { AppError, ValidationError } from '../../core/index.js';
 import { HISTORY_RECIPIENTS_MAX } from './adapter.js';
 import { verifyHmacWebhook } from './crypto.js';
-import { createGmailHttpIo } from './gmail-http.js';
+import { GMAIL_MAX_STORED_TEXT, createGmailHttpIo } from './gmail-http.js';
 import { assertChannelAttachment } from './meta-webhook.js';
 
 /**
@@ -526,7 +526,45 @@ function normalizeGmailAttachments(raw) {
   return attachments;
 }
 
-/** Normalize one Gmail message (the fake push payload) to the channel event shape. */
+/**
+ * Attachment descriptors of one push payload (backlog:3055d50330b5): the same
+ * `{ name, mimeType, sizeBytes }` metadata list the REST reader builds, from
+ * the same raw entries with the same rules (fetch id required, names clipped
+ * to 200 chars, MIME to 128, `GMAIL_MAX_ATTACHMENTS` at most — the REST twin
+ * in `gmail-http.js` owns those numbers, this one mirrors them). The legacy
+ * singular `attachment` below keeps its own contract; this list is what the
+ * timeline reads, so push and history readers agree on it.
+ * @param {unknown} raw
+ */
+function gmailPushMailDescriptors(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const candidate of list) {
+    if (out.length >= GMAIL_MAX_ATTACHMENTS) break;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    const filename = typeof candidate.filename === 'string' ? candidate.filename : '';
+    if (filename === '') continue;
+    if (typeof candidate.attachmentId !== 'string' || candidate.attachmentId === '') continue;
+    const mime = typeof candidate.mimeType === 'string' && candidate.mimeType !== ''
+      ? candidate.mimeType : 'application/octet-stream';
+    const size = Number.isSafeInteger(candidate.size) && candidate.size >= 0 ? candidate.size : 0;
+    out.push(Object.freeze({
+      name: filename.slice(0, 200),
+      mimeType: mime.slice(0, 128),
+      sizeBytes: size,
+    }));
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * Normalize one Gmail message (the fake push payload) to the channel event
+ * shape. Beyond the thread key the event carries the same mail content the
+ * REST reader extracts (backlog:3055d50330b5): `mailSubject` (the decoded
+ * `Subject`, same helper and bound as the REST path) and `attachments` (the
+ * descriptor list above) — so the timeline output never depends on which
+ * ingress path delivered the message.
+ */
 function normalizeGmailMessage(decoded, config) {
   const item = decoded && typeof decoded === 'object' && !Array.isArray(decoded)
     ? decoded.message && typeof decoded.message === 'object' ? decoded.message : null
@@ -571,6 +609,8 @@ function normalizeGmailMessage(decoded, config) {
       occurredAt: atIso,
       text: '',
       recipients,
+      mailSubject: decodeGmailSubject(item.subject ?? null),
+      attachments: gmailPushMailDescriptors(item.attachments),
     };
   }
   // No skew check here on purpose: the provider instant travels through
@@ -585,8 +625,15 @@ function normalizeGmailMessage(decoded, config) {
   if (snippet.length > GMAIL_MAX_TEXT) malformedEvent('message snippet exceeds the bound');
   const attachments = normalizeGmailAttachments(item.attachments);
   // Snippets escape entities and padding invisibles (backlog:3055d50330b5),
-  // same as the REST path — sanitize both, one helper.
-  const text = sanitizeGmailText(snippet);
+  // same as the REST path — sanitize both, one helper — and truncate to the
+  // stored-text fence the record enforces, so push and history readers store
+  // the same text and neither is refused downstream.
+  const cleanSnippet = sanitizeGmailText(snippet);
+  const text = cleanSnippet.length > GMAIL_MAX_STORED_TEXT
+    ? cleanSnippet.slice(0, GMAIL_MAX_STORED_TEXT)
+    : cleanSnippet;
+  const mailSubject = decodeGmailSubject(item.subject ?? null);
+  const mailAttachments = gmailPushMailDescriptors(item.attachments);
   // The sender IS the From header (backlog:13c09f03): an unknown sender
   // becomes a lead through the composed channel-sender capability, with
   // the display name as the contact name.
@@ -600,6 +647,8 @@ function normalizeGmailMessage(decoded, config) {
     sequence: atMs,
     occurredAt: new Date(atMs).toISOString(),
     text,
+    mailSubject,
+    attachments: mailAttachments,
     sender,
   };
   if (attachments.length <= 1) {

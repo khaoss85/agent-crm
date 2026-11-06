@@ -823,10 +823,24 @@ export function createChannelOperations(deps) {
     const attachment = event && typeof event === 'object' && event.attachment !== undefined && event.attachment !== null
       ? event.attachment
       : null;
-    if (text === null && attachment === null) return null;
+    // Mail extras (backlog:3055d50330b5): the Gmail normalizers (push and
+    // REST) extract the decoded Subject as `mailSubject` and the attachment
+    // descriptors as `attachments`, and the content carries them to the host
+    // under the `logMessage` names — otherwise the only production path
+    // that logs a pushed delivery (ingest result content into
+    // interaction-log `logMessage`) would store text without its subject.
+    // Only the Gmail normalizers emit `attachments` (same descriptor shape
+    // on both readers); other adapters keep the singular `attachment`.
+    // Bounds stay the normalizers' own: anything malformed never reaches
+    // here shaped, and `logMessage` refuses the rest fail-closed.
+    const mailSubject = typeof event?.mailSubject === 'string' ? event.mailSubject : null;
+    const mailAttachments = Array.isArray(event?.attachments) ? event.attachments : null;
+    if (text === null && attachment === null && mailSubject === null && mailAttachments === null) return null;
     return Object.freeze({
       text,
       attachment: attachment === null ? null : Object.freeze({ ...attachment }),
+      ...(mailSubject === null ? {} : { mailSubject }),
+      ...(mailAttachments === null ? {} : { mailAttachments: Object.freeze([...mailAttachments]) }),
     });
   }
 

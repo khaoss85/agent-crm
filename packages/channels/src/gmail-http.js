@@ -34,6 +34,17 @@ import {
 
 export const GMAIL_API_BASE = 'https://gmail.googleapis.com';
 
+/**
+ * The readable body a stored row may hold (backlog:3055d50330b5): the
+ * interactions record refuses bodies past its own `bounds.body` (2000), so
+ * the reader truncates here instead of letting a long newsletter be refused
+ * downstream and never stored. Mirrors that bound — each package owns its
+ * boundary validation and never file-imports another domain package, so the
+ * two fences stay equal by this comment, and the interactions suite owns
+ * the refusal this one never re-checks.
+ */
+export const GMAIL_MAX_STORED_TEXT = 2000;
+
 function httpError(message, code, status, details) {
   return new AppError(message, { code, status, ...(details === undefined ? {} : { details }) });
 }
@@ -150,9 +161,11 @@ function stripHtmlToText(html) {
  * The readable body of one `format=full` payload (backlog:3055d50330b5):
  * the first `text/plain` part wins, then the first `text/html` part
  * stripped to text, then the snippet. Sanitized either way (entities
- * decoded, padding invisibles stripped). Longer than `GMAIL_MAX_TEXT`
- * truncates instead of refusing the message — a newsletter stays saved
- * with its preheader at the top, never skipped over a long tail.
+ * decoded, padding invisibles stripped). Longer than
+ * `GMAIL_MAX_STORED_TEXT` truncates instead of refusing the message — a
+ * newsletter stays saved with its preheader at the top, never skipped over
+ * a long tail, and the stored text always fits the interactions body fence
+ * the record enforces downstream.
  */
 function readMailBodyText(payload, snippet) {
   const found = [];
@@ -161,7 +174,7 @@ function readMailBodyText(payload, snippet) {
   const html = found.find((entry) => entry.kind === 'html');
   const raw = plain !== undefined ? plain.text : html !== undefined ? stripHtmlToText(html.text) : snippet;
   const clean = sanitizeGmailText(raw);
-  return clean.length > GMAIL_MAX_TEXT ? clean.slice(0, GMAIL_MAX_TEXT) : clean;
+  return clean.length > GMAIL_MAX_STORED_TEXT ? clean.slice(0, GMAIL_MAX_STORED_TEXT) : clean;
 }
 
 /**
