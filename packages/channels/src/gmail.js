@@ -59,7 +59,7 @@ export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
 
 /**
  * Local parts that mark a sender as automated, never a person
- * (backlog:1a4d9b30: the 06/11 proof on Presti turned nine automated
+ * (backlog:1a4d9b30: the 06/11 pilot-space proof turned nine automated
  * senders into customers). A local part matches exactly or as the stem of
  * a separator-suffixed variant (`noreply-it`), after the `+` tag is
  * stripped (`invoice+statements` is `invoice`). Closed vocabulary — an
