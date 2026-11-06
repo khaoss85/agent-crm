@@ -102,6 +102,7 @@ const MAX_ID = 200;
 const MAX_CALL_SECONDS = 86400;
 const MAX_MEMBER = 64;
 const MAX_NOTE = 500;
+const MAX_ATTACHMENT_BYTES = 134217728;
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
@@ -118,6 +119,7 @@ export const bounds = Object.freeze({
   callSeconds: MAX_CALL_SECONDS,
   member: MAX_MEMBER,
   note: MAX_NOTE,
+  attachmentBytes: MAX_ATTACHMENT_BYTES,
 });
 
 /** @param {unknown} value @param {string} field @param {number} max */
@@ -177,8 +179,6 @@ export const ATTACHMENT_KINDS = Object.freeze(['photo', 'video', 'audio', 'docum
 
 const MAX_ATTACHMENT_NAME = 200;
 const MAX_ATTACHMENT_REF = 500;
-const MAX_ATTACHMENT_BYTES = 134217728;
-
 /** @param {unknown} handle @param {string} field */
 function safeAttachmentHandle(handle, field) {
   if (typeof handle !== 'string' || handle === '' || handle.length > MAX_ATTACHMENT_REF
@@ -293,7 +293,12 @@ function cleanMailAttachment(entry) {
   if (typeof raw.mimeType !== 'string') return null;
   const mimeType = raw.mimeType.trim();
   if (mimeType === '' || mimeType.length > MAX_MAIL_ATTACHMENT_MIME || CONTROL_RE.test(mimeType)) return null;
-  if (!Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0 || raw.sizeBytes > MAX_ATTACHMENT_BYTES) return null;
+  // An over-cap provider size arrives as null (backlog:3055d50330b5): the
+  // readers degrade it there, so a cosmetic size never refuses the whole
+  // mail here — the descriptor stays with an unknown size. A missing or
+  // malformed size is still a writer bug and refuses the entry.
+  if (raw.sizeBytes !== null
+    && (!Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0 || raw.sizeBytes > MAX_ATTACHMENT_BYTES)) return null;
   return { name, mimeType, sizeBytes: raw.sizeBytes };
 }
 

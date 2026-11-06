@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { GMAIL_MAX_STORED_TEXT, normalizeGmailRestMessage } from '../packages/channels/src/gmail-http.js';
-import { createGmailChannelAdapter, gmailPushBody } from '../packages/channels/src/gmail.js';
+import { GMAIL_MAX_ATTACHMENT_BYTES, createGmailChannelAdapter, gmailPushBody } from '../packages/channels/src/gmail.js';
 import { bounds } from '../packages/interactions/src/interactions.js';
 import {
   logMessage,
@@ -505,6 +505,140 @@ test('the reader fence mirrors the record fence', () => {
   // packages by convention, so this test pins them equal instead of a
   // shared import: a drift would truncate wrong or refuse downstream.
   assert.equal(GMAIL_MAX_STORED_TEXT, bounds.body);
+});
+
+test('a pushed mail with three attachments stores one row with three descriptors', async () => {
+  // P1 backlog:3055d50330b5 — push fanned out one event per legacy
+  // attachment while each sibling carried the full list, so push stored N
+  // rows x N descriptors where history stores 1 row x N descriptors.
+  const definition = createGmailChannelAdapter({ mailbox: MAILBOX, secret: 'gmail-test-secret' }).definition;
+  const events = definition.normalizeInbound(gmailPushBody({
+    id: 'gmail-tri-1', threadId: 'thread-tri-1',
+    from: 'Ricevute Esempio <ricevute@example-billing.com>', to: MAILBOX,
+    subject: 'Tre allegati', snippet: 'Ecco i tre file.', internalDateMs: AT,
+    attachments: [
+      { filename: 'a.pdf', mimeType: 'application/pdf', size: 100, attachmentId: 'gmail-att-tri-1' },
+      { filename: 'b.pdf', mimeType: 'application/pdf', size: 200, attachmentId: 'gmail-att-tri-2' },
+      { filename: 'c.pdf', mimeType: 'application/pdf', size: 300, attachmentId: 'gmail-att-tri-3' },
+    ],
+  }));
+  assert.equal(events.length, 1, 'one message is one event, never one per attachment');
+  const [push] = events;
+  assert.deepEqual(push.attachments, [
+    { name: 'a.pdf', mimeType: 'application/pdf', sizeBytes: 100 },
+    { name: 'b.pdf', mimeType: 'application/pdf', sizeBytes: 200 },
+    { name: 'c.pdf', mimeType: 'application/pdf', sizeBytes: 300 },
+  ]);
+  const wire = {
+    id: 'gmail-tri-1',
+    threadId: 'thread-tri-1',
+    snippet: 'Ecco i tre file.',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Ricevute Esempio <ricevute@example-billing.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Tre allegati' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/plain', filename: '', body: { data: b64url('Ecco i tre file.'), size: 17 } },
+        { mimeType: 'application/pdf', filename: 'a.pdf', body: { attachmentId: 'gmail-att-tri-1', size: 100 } },
+        { mimeType: 'application/pdf', filename: 'b.pdf', body: { attachmentId: 'gmail-att-tri-2', size: 200 } },
+        { mimeType: 'application/pdf', filename: 'c.pdf', body: { attachmentId: 'gmail-att-tri-3', size: 300 } },
+      ],
+    },
+  };
+  const history = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.deepEqual(push.attachments, history.attachments, 'push and history agree on the descriptor set');
+  assert.equal(push.mailSubject, history.mailSubject);
+
+  const { stored } = await hostLogsMail(push, 'gmail:tri:1');
+  assert.deepEqual(JSON.parse(stored.mailAttachmentsJson), push.attachments, 'one stored row carries all three descriptors');
+});
+
+test('a padding-only plain part does not shadow the real HTML body', () => {
+  // P2 backlog:3055d50330b5 — the reader picked the first text/plain part
+  // before cleaning, so a part that cleans to nothing (padding invisibles)
+  // shadowed the real HTML body and the row stored an empty text.
+  const padding = '  \u200B\uFEFF\u00AD\u034F  ';
+  const html = '<p>Ricevuta di pagamento: totale &euro;42, grazie.</p>';
+  const wire = {
+    id: 'gmail-pad-1',
+    threadId: 'thread-pad-1',
+    snippet: 'Ricevuta di pagamento',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Ricevuta' },
+      ],
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', filename: '', body: { data: b64url(padding), size: padding.length } },
+        { mimeType: 'text/html', filename: '', body: { data: b64url(html), size: html.length } },
+      ],
+    },
+  };
+  const event = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.ok(event.text.includes('Ricevuta di pagamento'), `the HTML body wins, got ${JSON.stringify(event.text)}`);
+  assert.ok(event.text.includes('€42'), 'entities decode on the HTML path');
+});
+
+test('an over-cap attachment size stores with an unknown size, never a refused mail', () => {
+  // P2 backlog:3055d50330b5 — a provider size past the record cap refused
+  // the whole mail over a cosmetic field. Both readers degrade it to null.
+  const huge = 200 * 1024 * 1024;
+  const wire = {
+    id: 'gmail-huge-1',
+    threadId: 'thread-huge-1',
+    snippet: 'File grande in arrivo.',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'File grande' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/plain', filename: '', body: { data: b64url('File grande in arrivo.'), size: 23 } },
+        {
+          mimeType: 'application/pdf',
+          filename: 'grande.pdf',
+          body: { attachmentId: 'gmail-att-huge-1', size: huge },
+        },
+      ],
+    },
+  };
+  const rest = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.deepEqual(rest.attachments, [
+    { name: 'grande.pdf', mimeType: 'application/pdf', sizeBytes: null },
+  ], 'the over-cap size degrades to null on history');
+
+  const definition = createGmailChannelAdapter({ mailbox: MAILBOX, secret: 'gmail-test-secret' }).definition;
+  const [push] = definition.normalizeInbound(gmailPushBody({
+    id: 'gmail-huge-1', threadId: 'thread-huge-1',
+    from: 'Esempio <mittente@example.com>', to: MAILBOX,
+    subject: 'File grande', snippet: 'File grande in arrivo.', internalDateMs: AT,
+    attachments: [
+      { filename: 'grande.pdf', mimeType: 'application/pdf', size: huge, attachmentId: 'gmail-att-huge-1' },
+    ],
+  }));
+  assert.deepEqual(push.attachments, rest.attachments, 'push degrades exactly like history');
+
+  const validated = validateMessageRequest({
+    sourceKey: 'gmail:huge:1', conversationId: 'email:thread-huge-1', direction: 'inbound',
+    channel: 'email', body: rest.text, mailSubject: rest.mailSubject,
+    mailAttachments: rest.attachments, subject: SUBJECT, occurredAt: '2026-11-05T09:00:00.000Z',
+    source: SOURCE,
+  });
+  assert.deepEqual(JSON.parse(validated.mailAttachmentsJson), rest.attachments, 'the null-size descriptor stores');
+  assert.equal(GMAIL_MAX_ATTACHMENT_BYTES, bounds.attachmentBytes, 'the two size fences stay equal');
 });
 
 test('a newline decoded inside the Subject stays on one line', () => {

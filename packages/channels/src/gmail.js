@@ -220,6 +220,15 @@ export const GMAIL_MAX_TEXT = 30000;
 export const GMAIL_MAX_MAIL_SUBJECT = 500;
 /** Attachment descriptors per message stay bounded: metadata only, never content. */
 export const GMAIL_MAX_ATTACHMENTS = 20;
+/**
+ * An attachment byte size the record refuses past its own cap
+ * (backlog:3055d50330b5): the readers degrade an over-cap size to a null
+ * sizeBytes instead of refusing the whole mail over a cosmetic field.
+ * Mirrors the interactions cap — each package owns its boundary validation
+ * and never file-imports another domain package, so the two fences stay
+ * equal by this comment, and a pin test owns the equality.
+ */
+export const GMAIL_MAX_ATTACHMENT_BYTES = 134217728;
 const ADDRESS = /^[a-z0-9._%+-]{1,64}@[a-z0-9](?:[a-z0-9.-]{0,253}[a-z0-9])?\.[a-z]{2,}$/;
 const THREAD = /^[^\s\x00-\x1f\x7f:]{1,128}$/;
 
@@ -628,6 +637,20 @@ export function sanitizeMailDescriptorText(value, max) {
 }
 
 /**
+ * One provider attachment byte size to storable sizeBytes, or null when the
+ * provider reports past the record cap (backlog:3055d50330b5): a cosmetic
+ * size field never refuses the whole mail — the descriptor stays with an
+ * unknown size. The REST twin in `gmail-http.js` imports this helper, so both
+ * readers bound identically and their descriptor lists agree.
+ * @param {unknown} size
+ */
+export function boundMailAttachmentSize(size) {
+  if (!Number.isSafeInteger(size) || size < 0) return 0;
+  if (size > GMAIL_MAX_ATTACHMENT_BYTES) return null;
+  return size;
+}
+
+/**
  * Attachment descriptors of one push payload (backlog:3055d50330b5): the same
  * `{ name, mimeType, sizeBytes }` metadata list the REST reader builds, from
  * the same raw entries with the same rules (fetch id required, names
@@ -649,11 +672,11 @@ function gmailPushMailDescriptors(raw) {
       ? sanitizeMailDescriptorText(candidate.mimeType, 128)
       : 'application/octet-stream';
     if (mime === null) continue;
-    const size = Number.isSafeInteger(candidate.size) && candidate.size >= 0 ? candidate.size : 0;
+    const sizeBytes = boundMailAttachmentSize(candidate.size);
     out.push(Object.freeze({
       name,
       mimeType: mime,
-      sizeBytes: size,
+      sizeBytes,
     }));
   }
   return Object.freeze(out);
@@ -764,17 +787,14 @@ function normalizeGmailMessage(decoded, config) {
     attachments: mailAttachments,
     sender,
   };
-  if (attachments.length <= 1) {
-    return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
-  }
-  // The first sibling keeps the bare message id (backlog:32820692): the
-  // same stable identity the Meta adapters use, so a redelivery of a
-  // previously ingested message replays or conflicts instead of doubling.
-  return attachments.map((attachment, index) => ({
-    providerEventId: index === 0 ? item.id : `${item.id}:a${index}`,
-    ...base,
-    attachment,
-  }));
+  // One message is one event (backlog:3055d50330b5): the mail descriptors
+  // ride once as the `attachments` list, exactly like the history reader, so
+  // push stores one row with N descriptors where REST stores one row — never
+  // N rows each carrying the full list. The bare message id stays the stable
+  // identity, so a redelivery replays or conflicts instead of doubling. The
+  // legacy singular `attachment` keeps the first entry for its own contract;
+  // the timeline reads the list.
+  return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
 }
 
 /** The kit's signed minimal dialect (test compositions only). */

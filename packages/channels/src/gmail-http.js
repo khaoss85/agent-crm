@@ -4,6 +4,7 @@ import { AppError } from '../../core/index.js';
 import {
   GMAIL_MAX_ATTACHMENTS,
   GMAIL_MAX_TEXT,
+  boundMailAttachmentSize,
   buildGmailSendRequest,
   canonicalGmailAddress,
   decodeGmailSubject,
@@ -179,11 +180,25 @@ function stripHtmlToText(html) {
 function readMailBodyText(payload, snippet) {
   const found = [];
   collectPartTexts(payload, found);
-  const plain = found.find((entry) => entry.kind === 'text');
-  const html = found.find((entry) => entry.kind === 'html');
-  const raw = plain !== undefined ? plain.text : html !== undefined ? stripHtmlToText(html.text) : snippet;
-  const clean = sanitizeGmailText(raw);
-  return clean.length > GMAIL_MAX_STORED_TEXT ? clean.slice(0, GMAIL_MAX_STORED_TEXT) : clean;
+  // Select AFTER cleaning (backlog:3055d50330b5): a text/plain part that is
+  // only padding invisibles or entities cleaning to nothing must not shadow
+  // a real HTML body — the first non-empty cleaned candidate wins, then the
+  // cleaned snippet. Truncation stays after the pick, same fence as before.
+  const clean = (text) => {
+    const out = sanitizeGmailText(text);
+    return out.length > GMAIL_MAX_STORED_TEXT ? out.slice(0, GMAIL_MAX_STORED_TEXT) : out;
+  };
+  for (const entry of found) {
+    if (entry.kind !== 'text') continue;
+    const text = clean(entry.text);
+    if (text !== '') return text;
+  }
+  for (const entry of found) {
+    if (entry.kind !== 'html') continue;
+    const text = clean(stripHtmlToText(entry.text));
+    if (text !== '') return text;
+  }
+  return clean(snippet);
 }
 
 /**
@@ -213,11 +228,13 @@ function readMailAttachments(payload) {
       ? sanitizeMailDescriptorText(part.mimeType, 128)
       : 'application/octet-stream';
     if (mime === null) return;
-    const size = Number.isSafeInteger(body.size) && body.size >= 0 ? body.size : 0;
+    // Same shared bound as the push reader: an over-cap provider size
+    // degrades to a null sizeBytes, never a refused message.
+    const sizeBytes = boundMailAttachmentSize(body.size);
     out.push(Object.freeze({
       name,
       mimeType: mime,
-      sizeBytes: size,
+      sizeBytes,
     }));
   };
   walk(payload);
