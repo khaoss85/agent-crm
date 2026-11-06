@@ -139,6 +139,10 @@ function collectPartTexts(part, out) {
   if (children.length > 0) return;
   const mime = typeof part.mimeType === 'string' ? part.mimeType.toLowerCase().split(';')[0].trim() : '';
   if (mime !== 'text/plain' && mime !== 'text/html') return;
+  // Parts with a filename are attachments (descriptors only, read by
+  // `readMailAttachments`): their bytes never become the readable body,
+  // mirroring that reader's `filename === ''` guard.
+  if (typeof part.filename === 'string' && part.filename !== '') return;
   const body = part.body && typeof part.body === 'object' && !Array.isArray(part.body) ? part.body : null;
   const text = decodePartBodyData(body?.data);
   if (text === null || text === '') return;
@@ -150,7 +154,8 @@ function stripHtmlToText(html) {
   return String(html)
     .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
     .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
-    .replace(/<(br|p|div|li|tr|h[1-6])[\s>]/gi, '\n<$1>')
+    .replace(/<br(?:\s[^>]*)?\/?>/gi, '\n')
+    .replace(/<(p|div|li|tr|h[1-6])[\s>]/gi, '\n<$1>')
     .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, '\n')
     .replace(/<[^>]*>/g, '')
     .replace(/[ \t]+\n/g, '\n')

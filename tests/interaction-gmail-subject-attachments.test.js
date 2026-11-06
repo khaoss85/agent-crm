@@ -247,6 +247,130 @@ test('push and history readers agree on the mail subject and attachments', () =>
   }]);
 });
 
+test('self-closing breaks keep their line break instead of joining words', () => {
+  // P1 backlog:3055d50330b5 — `<br/>` never matched the block-break regex,
+  // so it was stripped silently and words joined in the stored body.
+  const html = '<p>Grazie<br/>di oggi</p><p>A domani<br />alle nove.</p>';
+  const wire = {
+    id: 'gmail-br-1',
+    threadId: 'thread-br-1',
+    snippet: 'Grazie di oggi',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'A capo' },
+      ],
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/html', filename: '', body: { data: b64url(html), size: html.length } },
+      ],
+    },
+  };
+  const event = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.ok(event.text.includes('Grazie\ndi oggi'), `br/ becomes a line break, got ${JSON.stringify(event.text)}`);
+  assert.ok(event.text.includes('A domani\nalle nove.'), `br / becomes a line break, got ${JSON.stringify(event.text)}`);
+});
+
+test('a text part with a filename is a descriptor, never the stored body', () => {
+  // P1 backlog:3055d50330b5 — `collectPartTexts` read every text/* part, so
+  // a small text attachment became the message body and leaked into the row.
+  const html = '<p>Il corpo vero della mail.</p>';
+  const wire = {
+    id: 'gmail-att-text-1',
+    threadId: 'thread-att-text-1',
+    snippet: 'Il corpo vero',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Nota allegata' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/html', filename: '', body: { data: b64url(html), size: html.length } },
+        {
+          mimeType: 'text/plain',
+          filename: 'note.txt',
+          body: { data: b64url('QUESTO E UN ALLEGATO'), attachmentId: 'gmail-att-note-1', size: 20 },
+        },
+      ],
+    },
+  };
+  const event = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.ok(event.text.includes('Il corpo vero della mail.'), 'the HTML body wins');
+  assert.ok(!event.text.includes('QUESTO E UN ALLEGATO'), 'attachment bytes never land in the body');
+  assert.deepEqual(event.attachments, [{
+    name: 'note.txt', mimeType: 'text/plain', sizeBytes: 20,
+  }], 'the filename part is still listed as a descriptor');
+});
+
+test('tabs and folded subjects store instead of refusing the message', () => {
+  // P1 backlog:3055d50330b5 — a tab in the body or a CRLF+TAB folded
+  // Subject survived the reader, then `validateMessageRequest` refused the
+  // whole message over a cosmetic field and the mail was lost.
+  const plain = 'colonna1\tcolonna2 e poi continua';
+  const wire = {
+    id: 'gmail-tab-1',
+    threadId: 'thread-tab-1',
+    snippet: 'colonna1 colonna2',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Lunga\r\n\tsuite di novembre' },
+      ],
+      mimeType: 'multipart/alternative',
+      parts: [
+        { mimeType: 'text/plain', filename: '', body: { data: b64url(plain), size: plain.length } },
+      ],
+    },
+  };
+  const event = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.equal(event.mailSubject, 'Lunga suite di novembre', 'folded lines join with one space');
+  assert.ok(!event.text.includes('\t'), 'no tab survives in the stored body');
+  const validated = validateMessageRequest({
+    sourceKey: 'gmail:tab:1', conversationId: 'email:thread-tab-1', direction: 'inbound',
+    channel: 'email', body: event.text, mailSubject: event.mailSubject,
+    mailAttachments: event.attachments, subject: SUBJECT, occurredAt: '2026-11-05T09:00:00.000Z',
+    source: SOURCE,
+  });
+  assert.equal(validated.body, event.text, 'the cleaned body passes the record fence');
+});
+
+test('a snippet-only message decodes the wider entity table', () => {
+  // P2 backlog:3055d50330b5 — the snippet fallback decoded only 6 named
+  // entities, so `&hellip;` and friends were stored raw; the old assertion
+  // read the plain-part path and could never fail.
+  const wire = {
+    id: 'gmail-snippet-1',
+    threadId: 'thread-snippet-1',
+    snippet: 'Le offerte&hellip; da &euro;10 &mdash; per te &rsquo;amico&rsquo; &laquo;ciao&raquo;',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Offerte' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [],
+    },
+  };
+  const event = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.ok(!event.text.includes('&'), `no raw entity survives, got ${JSON.stringify(event.text)}`);
+  assert.ok(event.text.includes('…'), 'hellip decodes on the snippet path');
+  assert.ok(event.text.includes('—'), 'mdash decodes on the snippet path');
+  assert.ok(event.text.includes('€10'), 'euro decodes on the snippet path');
+});
+
 test('mail extras are email-only and fail closed', () => {
   assert.throws(
     () => validateMessageRequest({

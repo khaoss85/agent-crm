@@ -180,6 +180,9 @@ const GMAIL_INVISIBLE_RE = /[\u034F\u200B-\u200D\uFEFF\u00AD]/g;
 /** The named entities the Gmail snippet and HTML bodies escape. */
 const GMAIL_NAMED_ENTITIES = Object.freeze({
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  hellip: '…', mdash: '—', ndash: '–',
+  rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”',
+  laquo: '«', raquo: '»', euro: '€',
 });
 
 /** One HTML entity to its character, or the raw match when out of range. */
@@ -210,14 +213,20 @@ function decodeGmailEntities(text) {
 
 /**
  * Provider text to storable text (backlog:3055d50330b5): entities decoded,
- * padding invisibles stripped, ends trimmed. Line breaks inside survive —
- * the message-body fence (`safeMessageBody` in `packages/interactions`)
- * stays the authority on what a row may hold.
+ * padding invisibles stripped, ends trimmed. Line feeds inside survive —
+ * every other control the record refuses (tabs, U+2028/U+2029 and the
+ * rest of CONTROL_RE in `packages/interactions`) becomes a space, so the
+ * reader output always fits the message-body fence (`safeMessageBody`).
+ * CRLF arrives as LF.
  * @param {unknown} value
  */
 export function sanitizeGmailText(value) {
   if (typeof value !== 'string') return '';
-  return decodeGmailEntities(value).replace(GMAIL_INVISIBLE_RE, '').trim();
+  return decodeGmailEntities(value)
+    .replace(GMAIL_INVISIBLE_RE, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
+    .trim();
 }
 
 /**
@@ -256,7 +265,7 @@ function decodeRfc2047Word(match, charset, encoding, data) {
  */
 export function decodeGmailSubject(value) {
   if (typeof value !== 'string') return null;
-  const unfolded = value.replace(/[\r\n]+/g, ' ');
+  const unfolded = value.replace(/[\r\n]+[ \t]*/g, ' ');
   const decoded = unfolded.includes('=?')
     ? unfolded.replace(RFC2047_WORD_RE, decodeRfc2047Word)
     : unfolded;
