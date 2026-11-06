@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
+import { createQuoteView, percentReason } from '../apps/admin/public/admin-quotes.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -304,7 +304,7 @@ test('cf340b571e98: a quote without a resolvable customer still renders without 
       `${variant.name}: no back link`);
     assert.ok(mount.textContent.includes('Preventivo'), `${variant.name}: the detail still renders`);
     assert.ok(!/Quote q1/.test(mount.textContent), `${variant.name}: no technical id in the heading`);
-    assert.ok(mount.textContent.includes('Totali per periodo commerciale'), `${variant.name}: the totals still render`);
+    assert.ok(mount.textContent.includes('Totale'), `${variant.name}: the totals still render`);
   }
 });
 
@@ -377,4 +377,35 @@ test('ef92f728: the quote detail shows no English and no technical id, amounts i
   assert.ok(text.includes('5.000 €'), 'thousands use the dot separator');
   assert.ok(text.includes('7.790 €'), 'line totals use the dot separator');
   assert.ok(text.includes('5,00%'), 'percentages use the comma');
+});
+
+// Dan 05/11: the quote page speaks to the owner — no draft revision, no SKU
+// or offer revision, no zero discount, no basis points in the reasons.
+test('owner reading: status only, plain line, single-component breakdown hidden, reasons in percent', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const single = {
+    ...LINE,
+    discountBps: 0,
+    discountAmountCents: 0,
+    breakdownJson: JSON.stringify([{ componentKey: 'fee', label: 'Prezzo del pacchetto', pricingModel: 'flat', chargeType: 'one_time', listAmountCents: 35_000, netAmountCents: 35_000, tierBreakdown: [] }]),
+  };
+  const versions = [{ id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'presti-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: 'sconto massimo 0bps entro il limite 1000bps', totalsJson: JSON.stringify(TOTALS), currency: 'EUR' }];
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: quote({ status: 'approved' }), lines: [single], versions }) }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Revisione bozza'), 'no draft revision');
+  assert.ok(!text.includes('Valuta'), 'no currency code fact');
+  assert.ok(!text.includes('(rev.'), 'no offer revision');
+  assert.ok(!text.includes(single.sku + ' ·'), 'no SKU in the line');
+  assert.ok(!text.includes('sconto 0,00%'), 'no zero discount on the line');
+  assert.ok(!/bps/.test(text), 'no basis points anywhere on the approved quote');
+  assert.ok(text.includes('sconto massimo 0% entro il limite 10%'), 'the reason reads in percent');
+  const components = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-components');
+  assert.equal(components.getAttribute('hidden'), '', 'a single fixed component is not repeated');
+});
+
+test('percentReason turns basis points into Italian percentages and keeps other text', () => {
+  assert.equal(percentReason('max line discount 2000bps exceeds limit'), 'max line discount 20% exceeds limit');
+  assert.equal(percentReason('sconto 1250 bps'), 'sconto 12,5%');
+  assert.equal(percentReason(null), '');
 });

@@ -63,6 +63,16 @@ const parseBreakdown = (text) => {
 };
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
+/**
+ * The policy reason the server writes speaks basis points («sconto massimo
+ * 0bps entro il limite 1000bps»): the owner reads percentages.
+ * @param {unknown} reason
+ */
+export function percentReason(reason) {
+  return String(reason ?? '').replace(/(\d+)\s?bps\b/g, (_, bps) =>
+    `${(Number(bps) / 100).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}%`);
+}
+
 export function createQuoteView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
@@ -288,18 +298,15 @@ export function createQuoteView(deps) {
       mount.appendChild(status);
     }
 
+    // Dan 05/11: the owner reads the status, not the draft revision or the
+    // currency code (amounts already carry €). The revision stays in the
+    // payloads below, where optimistic concurrency needs it.
     const summary = el('div', 'quote-summary');
     summary.setAttribute('data-status', quote.status);
-    for (const [label, value] of [
-      ['Stato', quoteStatusLabel(quote.status)],
-      ['Valuta', quote.currency],
-      ['Revisione bozza', quote.draftRevision],
-    ]) {
-      const row = el('p', 'quote-fact');
-      row.appendChild(el('strong', undefined, `${label}: `));
-      row.appendChild(el('span', undefined, value ?? '—'));
-      summary.appendChild(row);
-    }
+    const row = el('p', 'quote-fact');
+    row.appendChild(el('strong', undefined, 'Stato: '));
+    row.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status) ?? '—'));
+    summary.appendChild(row);
     mount.appendChild(summary);
 
     // Grouped totals: the one-time group and each recurring period are shown
@@ -308,13 +315,19 @@ export function createQuoteView(deps) {
     const totals = parseTotals(quote.totalsJson);
     const totalsPanel = el('div', 'quote-totals');
     totalsPanel.setAttribute('data-recurring-groups', String(totals.recurringTotals.length));
-    totalsPanel.appendChild(el('h3', undefined, 'Totali per periodo commerciale'));
+    totalsPanel.appendChild(el('h3', undefined, 'Totale'));
     const totalRow = (label, group, vatEntry) => {
       const row = el('p', 'quote-total-row');
       row.setAttribute('data-total', label);
       row.appendChild(el('strong', undefined, `${label}: `));
+      const currency = group.currency ?? quote.currency;
+      // List price and discount only when a discount exists: «sconto 0 €»
+      // told the owner nothing.
+      const discounted = Number(group.discountAmountCents ?? 0) > 0
+        ? ` (listino ${money(group.listAmountCents, currency)}, sconto ${money(group.discountAmountCents, currency)})`
+        : '';
       row.appendChild(el('span', undefined,
-        `${money(group.netAmountCents, group.currency ?? quote.currency)} netto (listino ${money(group.listAmountCents, group.currency ?? quote.currency)}, sconto ${money(group.discountAmountCents, group.currency ?? quote.currency)})${vatText(vatEntry, group.currency ?? quote.currency, totals.vatRateBps)}`));
+        `${money(group.netAmountCents, currency)} netto${discounted}${vatText(vatEntry, currency, totals.vatRateBps)}`));
       totalsPanel.appendChild(row);
     };
     if (totals.oneTimeTotal) totalRow('Una tantum', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
@@ -324,7 +337,7 @@ export function createQuoteView(deps) {
     if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
       totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
-    totalsPanel.appendChild(el('p', 'muted', 'Tutti gli importi sono calcolati dal server (centesimi, due decimali). I periodi non si sommano mai in un unico totale e non si ricava nessuna cifra annualizzata o di contratto (la durata del contratto non è modellata).'));
+    totalsPanel.appendChild(el('p', 'muted', 'Importi calcolati dal server di Accordo. I periodi non si sommano mai: una tantum e ricorrenti restano separati, senza totali annui.'));
     mount.appendChild(totalsPanel);
 
     const errorLine = el('small', 'field-error', '');
@@ -353,11 +366,18 @@ export function createQuoteView(deps) {
     for (const line of lines) {
       const row = el('div', 'quote-line');
       row.setAttribute('data-line', line.id);
+      // The owner reads the package, the quantity, a discount only when one
+      // applies, and the net: SKU and offer revision stay in the records.
+      const lineDiscount = (line.discountBps ?? 0) > 0
+        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%`
+        : '';
       row.appendChild(el('span', 'quote-line-head',
-        `${line.sku} · ${line.offerName} (rev. ${line.offerRevision}) · quantità ${line.quantity} · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}% · netto ${money(line.netAmountCents, quote.currency)}`));
-      // Every price component of the offer, with its tier breakdown.
+        `${line.offerName} · quantità ${line.quantity}${lineDiscount} · netto ${money(line.netAmountCents, quote.currency)}`));
+      // The price components only for a composite offer or a tiered one: a
+      // single fixed price repeated the line above word for word.
       const breakdown = parseBreakdown(line.breakdownJson);
       const componentList = el('div', 'quote-components');
+      if (breakdown.length <= 1 && !(breakdown[0]?.tierBreakdown ?? []).length) componentList.setAttribute('hidden', '');
       for (const component of breakdown) {
         const recurrence = component.chargeType === 'one_time'
           ? 'una tantum'
@@ -500,7 +520,7 @@ export function createQuoteView(deps) {
     }
 
     if (quote.status === 'approved') {
-      mount.appendChild(el('p', 'quote-approved', 'Approvato — il contenuto commerciale di questo preventivo è in sola lettura.'));
+      mount.appendChild(el('p', 'quote-approved', 'Approvato: righe e prezzi sono in sola lettura.'));
       await renderSignature({ quote, schema, mount, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel });
     }
 
@@ -518,7 +538,7 @@ export function createQuoteView(deps) {
         `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
-      if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${version.decisionReason}`));
+      if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${percentReason(version.decisionReason)}`));
       versionsPanel.appendChild(row);
     }
     mount.appendChild(versionsPanel);
