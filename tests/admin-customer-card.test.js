@@ -2853,3 +2853,55 @@ test('review #599 P2: an AI draft that lands after close and reopen never overwr
   const third = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   assert.equal(third.findAll('textarea')[0].value, 'IBAN per il bonifico', 'the shared draft kept the new typing, not the stale AI text');
 });
+
+test('review #599 P2: Annulla restores the subject the AI filled, and the shared draft drops it', async () => {
+  const client = draftClient({ subject: 'S-AI', body: 'B' });
+  const { mount, panel } = await openComposerMount({ client });
+  const { input, go, area, subject } = aiParts(panel);
+  area.value = 'A';
+  area.dispatch?.('input');
+  input.value = 'più cortese';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(subject.value, 'S-AI');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo').dispatch('click');
+  assert.equal(area.value, 'A');
+  assert.equal(subject.value, '', 'the AI subject is undone too');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const again = aiParts(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'));
+  assert.equal(again.area.value, 'A');
+  assert.equal(again.subject.value, '', 'the shared draft kept the undo');
+});
+
+test('review #599 P2: closing after Genera keeps the way back to the person’s text across reopen', async () => {
+  const client = draftClient({ body: 'Testo AI' });
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.area.value = 'Il mio testo';
+  first.area.dispatch?.('input');
+  first.input.value = 'riscrivi';
+  first.go.dispatch('click');
+  await flushComposer();
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const parts = aiParts(reopened);
+  assert.equal(parts.area.value, 'Testo AI', 'the AI draft comes back');
+  const undo = reopened.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla is still offered after reopen');
+  undo.dispatch('click');
+  assert.equal(parts.area.value, 'Il mio testo', 'the original text is never lost');
+});
+
+test('review #599 P3: the prompt is cut to 500 characters before it leaves', async () => {
+  const client = draftClient({ body: 'ok' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'x'.repeat(800);
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts[0].prompt.length, 500);
+});
