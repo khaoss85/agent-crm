@@ -2,15 +2,20 @@
 
 import { AppError } from '../../core/index.js';
 import {
+  GMAIL_MAX_ATTACHMENTS,
   GMAIL_MAX_TEXT,
+  boundMailAttachmentSize,
   buildGmailSendRequest,
   canonicalGmailAddress,
+  decodeGmailSubject,
   isAutomatedGmailRecipient,
   isBulkGmailMessage,
   isGmailThreadId,
   gmailThreadIdForSubject,
   parseGmailAddressHeader,
   parseGmailRecipients,
+  sanitizeGmailText,
+  sanitizeMailDescriptorText,
 } from './gmail.js';
 
 /**
@@ -31,6 +36,17 @@ import {
  */
 
 export const GMAIL_API_BASE = 'https://gmail.googleapis.com';
+
+/**
+ * The readable body a stored row may hold (backlog:3055d50330b5): the
+ * interactions record refuses bodies past its own `bounds.body` (2000), so
+ * the reader truncates here instead of letting a long newsletter be refused
+ * downstream and never stored. Mirrors that bound — each package owns its
+ * boundary validation and never file-imports another domain package, so the
+ * two fences stay equal by this comment, and the interactions suite owns
+ * the refusal this one never re-checks.
+ */
+export const GMAIL_MAX_STORED_TEXT = 2000;
 
 function httpError(message, code, status, details) {
   return new AppError(message, { code, status, ...(details === undefined ? {} : { details }) });
@@ -103,12 +119,143 @@ function restAddressEvidence(raw) {
 }
 
 /**
- * Normalize one Gmail REST message (`messages.get` with
- * `format=metadata`) onto the channel event shape the inbox path reads:
- * the conversation IS the thread (`email:<threadId>`), the order IS the
- * provider instant (`internalDate`), the sender IS the From header.
- * Provider text stays provider text until `isGmailThreadId` says
- * otherwise — a message id never lands in the `email:` namespace.
+ * One MIME part body to text, or null. Bodies arrive base64url-encoded;
+ * anything undecodable or absurdly large is simply not text — the caller
+ * falls back to the snippet instead of refusing the message.
+ */
+function decodePartBodyData(data) {
+  if (typeof data !== 'string' || data === '' || data.length > 1024 * 1024) return null;
+  try {
+    return Buffer.from(data, 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Walk one payload part depth-first, collecting readable texts in order:
+ * `{ kind: 'text'|'html', text }`. Container parts (`multipart/*`) carry
+ * no body of their own — their children do.
+ */
+function collectPartTexts(part, out) {
+  if (!part || typeof part !== 'object' || Array.isArray(part)) return;
+  const children = Array.isArray(part.parts) ? part.parts : [];
+  for (const child of children) collectPartTexts(child, out);
+  if (children.length > 0) return;
+  const mime = typeof part.mimeType === 'string' ? part.mimeType.toLowerCase().split(';')[0].trim() : '';
+  if (mime !== 'text/plain' && mime !== 'text/html') return;
+  // Parts with a filename are attachments (descriptors only, read by
+  // `readMailAttachments`): their bytes never become the readable body,
+  // mirroring that reader's `filename === ''` guard.
+  if (typeof part.filename === 'string' && part.filename !== '') return;
+  const body = part.body && typeof part.body === 'object' && !Array.isArray(part.body) ? part.body : null;
+  const text = decodePartBodyData(body?.data);
+  if (text === null || text === '') return;
+  out.push({ kind: mime === 'text/html' ? 'html' : 'text', text });
+}
+
+/** An HTML part to readable text: scripts gone, blocks broken, tags stripped. */
+function stripHtmlToText(html) {
+  return String(html)
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+    .replace(/<br(?:\s[^>]*)?\/?>/gi, '\n')
+    .replace(/<(p|div|li|tr|h[1-6])[\s>]/gi, '\n<$1>')
+    .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
+/**
+ * The readable body of one `format=full` payload (backlog:3055d50330b5):
+ * the first `text/plain` part wins, then the first `text/html` part
+ * stripped to text, then the snippet. Sanitized either way (entities
+ * decoded, padding invisibles stripped). Longer than
+ * `GMAIL_MAX_STORED_TEXT` truncates instead of refusing the message — a
+ * newsletter stays saved with its preheader at the top, never skipped over
+ * a long tail, and the stored text always fits the interactions body fence
+ * the record enforces downstream.
+ */
+function readMailBodyText(payload, snippet) {
+  const found = [];
+  collectPartTexts(payload, found);
+  // Select AFTER cleaning (backlog:3055d50330b5): a text/plain part that is
+  // only padding invisibles or entities cleaning to nothing must not shadow
+  // a real HTML body — the first non-empty cleaned candidate wins, then the
+  // cleaned snippet. Truncation stays after the pick, same fence as before.
+  const clean = (text) => {
+    const out = sanitizeGmailText(text);
+    return out.length > GMAIL_MAX_STORED_TEXT ? out.slice(0, GMAIL_MAX_STORED_TEXT) : out;
+  };
+  for (const entry of found) {
+    if (entry.kind !== 'text') continue;
+    const text = clean(entry.text);
+    if (text !== '') return text;
+  }
+  for (const entry of found) {
+    if (entry.kind !== 'html') continue;
+    const text = clean(stripHtmlToText(entry.text));
+    if (text !== '') return text;
+  }
+  return clean(snippet);
+}
+
+/**
+ * The attachment descriptors of one `format=full` payload
+ * (backlog:3055d50330b5): every part with a filename, in wire order —
+ * `{ name, mimeType, sizeBytes }`, metadata only, never the content (no
+ * `messages.attachments.get` call happens here). Bounded to
+ * `GMAIL_MAX_ATTACHMENTS`: a message with more parts keeps the first ones.
+ * Parts without a filename (inline bodies the text extraction already
+ * covers) are not attachments.
+ */
+function readMailAttachments(payload) {
+  const out = [];
+  const walk = (part) => {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) return;
+    const children = Array.isArray(part.parts) ? part.parts : [];
+    for (const child of children) walk(child);
+    if (out.length >= GMAIL_MAX_ATTACHMENTS) return;
+    const body = part.body && typeof part.body === 'object' && !Array.isArray(part.body) ? part.body : null;
+    if (!body || typeof body.attachmentId !== 'string' || body.attachmentId === '') return;
+    // A dirty provider name degrades to a skipped descriptor, never a
+    // refused message: the same shared helper the push reader uses, so both
+    // paths sanitize identically.
+    const name = sanitizeMailDescriptorText(part.filename, 200);
+    if (name === null) return;
+    const mime = typeof part.mimeType === 'string' && part.mimeType !== ''
+      ? sanitizeMailDescriptorText(part.mimeType, 128)
+      : 'application/octet-stream';
+    if (mime === null) return;
+    // Same shared bound as the push reader: an over-cap provider size
+    // degrades to a null sizeBytes, never a refused message.
+    const sizeBytes = boundMailAttachmentSize(body.size);
+    out.push(Object.freeze({
+      name,
+      mimeType: mime,
+      sizeBytes,
+    }));
+  };
+  walk(payload);
+  return Object.freeze(out);
+}
+
+/**
+ * Normalize one Gmail REST message (`messages.get` with `format=full`)
+ * onto the channel event shape the inbox path reads: the conversation IS
+ * the thread (`email:<threadId>`), the order IS the provider instant
+ * (`internalDate`), the sender IS the From header. Provider text stays
+ * provider text until `isGmailThreadId` says otherwise — a message id
+ * never lands in the `email:` namespace.
+ *
+ * Beyond the thread key the event carries the mail content the card reads
+ * (backlog:3055d50330b5): `mailSubject` (the decoded `Subject` header, or
+ * null), `text` (readable body, entities decoded and padding invisibles
+ * stripped) and `attachments` (filename, MIME type and byte size per part —
+ * metadata only, the content is never fetched). The legacy singular
+ * `attachment` stays null on this path: email attachments travel as the
+ * list, and the timeline exposes that list.
  *
  * A delivery off our own mailbox (a sent copy looping back) normalizes
  * to an empty subject with its recipients attached, exactly like the
@@ -165,6 +312,8 @@ export function normalizeGmailRestMessage(wire, mailbox) {
       occurredAt: atIso,
       text: '',
       recipients,
+      mailSubject: decodeGmailSubject(restHeader(wire.payload, 'Subject')),
+      attachments: readMailAttachments(wire.payload),
     };
   }
   // Bulk quarantines inbound only: the mailbox branch above already took
@@ -181,7 +330,9 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     subject: `email:${threadId}`,
     sequence: atMs,
     occurredAt: atIso,
-    text: snippet,
+    text: readMailBodyText(wire.payload, snippet),
+    mailSubject: decodeGmailSubject(restHeader(wire.payload, 'Subject')),
+    attachments: readMailAttachments(wire.payload),
     attachment: null,
     sender: from,
   };
@@ -393,17 +544,19 @@ export function createGmailHttpIo(options = {}) {
         if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || entry.id === '') continue;
         let full;
         try {
-          // To/Cc name the recipients the owner wrote to (backlog:13c09f03)
-          // and List-Unsubscribe/Precedence/Auto-Submitted mark mass mail
-          // (backlog:1a4d9b30): requested like From, so the fake and the
-          // REST reader reconcile identically.
-          const meta = new URLSearchParams();
-          meta.set('format', 'metadata');
-          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted']) {
-            meta.append('metadataHeaders', name);
-          }
+          // Full payloads (backlog:3055d50330b5): the card reads the decoded
+          // Subject, the readable body and the attachment descriptors, so
+          // the get returns the whole MIME tree — headers, bodies and part
+          // metadata — instead of the header subset. Same call count,
+          // larger responses; the content itself (`messages.attachments.get`)
+          // is never fetched. From/To/Cc name the recipients, and
+          // List-Unsubscribe, Precedence and Auto-Submitted still mark mass
+          // mail (backlog:13c09f03, backlog:1a4d9b30): a full payload
+          // carries every header, so no metadataHeaders subset is needed.
+          const params = new URLSearchParams();
+          params.set('format', 'full');
           full = await call(
-            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}?${meta.toString()}`,
+            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}?${params.toString()}`,
             { method: 'GET', headers: headers(secret) },
             'history',
             mapHistoryGetFailure,

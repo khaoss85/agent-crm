@@ -3,7 +3,7 @@
 import { AppError, ValidationError } from '../../core/index.js';
 import { HISTORY_RECIPIENTS_MAX } from './adapter.js';
 import { verifyHmacWebhook } from './crypto.js';
-import { createGmailHttpIo } from './gmail-http.js';
+import { GMAIL_MAX_STORED_TEXT, createGmailHttpIo } from './gmail-http.js';
 import { assertChannelAttachment } from './meta-webhook.js';
 
 /**
@@ -211,6 +211,24 @@ const MAX_ADDRESS = 256;
 const MAX_SUBJECT_LINE = 256;
 /** Email bodies run longer than chat bubbles but stay under the 32 KiB outbox bound. */
 export const GMAIL_MAX_TEXT = 30000;
+/**
+ * A received email subject stays a display snapshot (backlog:3055d50330b5):
+ * bounded single-line text. Longer text truncates instead of refusing the
+ * whole message over a cosmetic field — the same rule `splitGmailDisplayName`
+ * already applies to sender names.
+ */
+export const GMAIL_MAX_MAIL_SUBJECT = 500;
+/** Attachment descriptors per message stay bounded: metadata only, never content. */
+export const GMAIL_MAX_ATTACHMENTS = 20;
+/**
+ * An attachment byte size the record refuses past its own cap
+ * (backlog:3055d50330b5): the readers degrade an over-cap size to a null
+ * sizeBytes instead of refusing the whole mail over a cosmetic field.
+ * Mirrors the interactions cap — each package owns its boundary validation
+ * and never file-imports another domain package, so the two fences stay
+ * equal by this comment, and a pin test owns the equality.
+ */
+export const GMAIL_MAX_ATTACHMENT_BYTES = 134217728;
 const ADDRESS = /^[a-z0-9._%+-]{1,64}@[a-z0-9](?:[a-z0-9.-]{0,253}[a-z0-9])?\.[a-z]{2,}$/;
 const THREAD = /^[^\s\x00-\x1f\x7f:]{1,128}$/;
 
@@ -224,6 +242,115 @@ function malformedMessage(reason) {
   throw new AppError(`Gmail message is not well-formed: ${reason}`, {
     code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
   });
+}
+
+/**
+ * Padding invisibles some Gmail payloads carry (backlog:3055d50330b5):
+ * preheader padding and copy-pasted text arrive with zero-width and soft
+ * characters that no card should paint. Stripped, never stored. The range
+ * is exactly U+034F, U+200B-U+200D, U+FEFF and U+00AD — U+00A0 (non-breaking
+ * space) stays, so newsletter preheader spacing survives.
+ */
+const GMAIL_INVISIBLE_RE = /[\u034F\u200B-\u200D\uFEFF\u00AD]/g;
+
+/** The named entities the Gmail snippet and HTML bodies escape. */
+const GMAIL_NAMED_ENTITIES = Object.freeze({
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  hellip: '…', mdash: '—', ndash: '–',
+  rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”',
+  laquo: '«', raquo: '»', euro: '€',
+});
+
+/** One HTML entity to its character, or the raw match when out of range. */
+function decodeGmailEntity(match, body) {
+  if (body[0] === '#') {
+    const hex = body[1] === 'x' || body[1] === 'X';
+    const code = Number.parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10);
+    if (!Number.isSafeInteger(code) || code < 0 || code > 0x10FFFF) return match;
+    try {
+      return String.fromCodePoint(code);
+    } catch {
+      return match;
+    }
+  }
+  const named = GMAIL_NAMED_ENTITIES[body.toLowerCase()];
+  return named === undefined ? match : named;
+}
+
+/**
+ * Decode one layer of HTML entities (`&amp; &lt; &gt; &quot; &#39;` and
+ * numeric forms). Single pass on purpose: `&amp;#39;` decodes to the
+ * literal `&#39;`, never to `'`, so a sender-provided entity cannot smuggle
+ * a second decoding round past this function.
+ */
+function decodeGmailEntities(text) {
+  return String(text).replace(/&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);/g, decodeGmailEntity);
+}
+
+/**
+ * Provider text to storable text (backlog:3055d50330b5): entities decoded,
+ * padding invisibles stripped, ends trimmed. Line feeds inside survive —
+ * every other control the record refuses (tabs, U+2028/U+2029 and the
+ * rest of CONTROL_RE in `packages/interactions`) becomes a space, so the
+ * reader output always fits the message-body fence (`safeMessageBody`).
+ * CRLF arrives as LF.
+ * @param {unknown} value
+ */
+export function sanitizeGmailText(value) {
+  if (typeof value !== 'string') return '';
+  return decodeGmailEntities(value)
+    .replace(GMAIL_INVISIBLE_RE, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')
+    .trim();
+}
+
+/**
+ * One RFC 2047 encoded word to text, or the raw word when its charset or
+ * encoding is outside the two the subjects in the wild use (UTF-8 and
+ * ISO-8859-1, Q and B). Best-effort on purpose: an unknown charset stays
+ * readable as the encoded word instead of decoding to mojibake.
+ */
+const RFC2047_WORD_RE = /=\?([^?\s]+)\?([bBqQ])\?([^?]*)?\?=/g;
+
+function decodeRfc2047Word(match, charset, encoding, data) {
+  try {
+    const upper = String(encoding).toUpperCase();
+    const bytes = upper === 'B'
+      ? Buffer.from(String(data ?? ''), 'base64')
+      : Buffer.from(
+        String(data ?? '').replace(/_/g, ' ').replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16))),
+        'binary',
+      );
+    const cs = String(charset).toUpperCase();
+    if (cs === 'UTF-8' || cs === 'UTF8') return bytes.toString('utf8');
+    if (cs === 'ISO-8859-1' || cs === 'LATIN1' || cs === 'LATIN-1') return bytes.toString('latin1');
+  } catch {
+    // Falls through to the raw word below.
+  }
+  return match;
+}
+
+/**
+ * A received `Subject` header to display text (backlog:3055d50330b5): RFC
+ * 2047 words decoded, folded lines joined, entities decoded, invisibles
+ * stripped, truncated to `GMAIL_MAX_MAIL_SUBJECT`. Always a single line:
+ * a newline decoded from an entity (`&#10;`) or an RFC 2047 Q-word
+ * (`=0A`) becomes a space, so the record fence (no line breaks in the
+ * subject) never refuses a synced mail over a cosmetic subject.
+ * Null when nothing displayable remains — a missing subject stores
+ * nothing, never an invented placeholder.
+ * @param {unknown} value
+ */
+export function decodeGmailSubject(value) {
+  if (typeof value !== 'string') return null;
+  const unfolded = value.replace(/[\r\n]+[ \t]*/g, ' ');
+  const decoded = unfolded.includes('=?')
+    ? unfolded.replace(RFC2047_WORD_RE, decodeRfc2047Word)
+    : unfolded;
+  const clean = sanitizeGmailText(decoded).replace(/[\r\n]+[ \t]*/g, ' ').trim();
+  if (clean === '') return null;
+  return clean.length > GMAIL_MAX_MAIL_SUBJECT ? clean.slice(0, GMAIL_MAX_MAIL_SUBJECT) : clean;
 }
 
 /**
@@ -491,7 +618,78 @@ function normalizeGmailAttachments(raw) {
   return attachments;
 }
 
-/** Normalize one Gmail message (the fake push payload) to the channel event shape. */
+/**
+ * One provider descriptor text (filename, MIME type) to storable text, or
+ * null when nothing displayable remains (backlog:3055d50330b5). Provider
+ * controls (newlines, tabs) become spaces and the result trims, so a
+ * cosmetic field never refuses the whole message downstream in
+ * `cleanMailAttachment` — a dirty name degrades to a skipped descriptor.
+ * The REST twin in `gmail-http.js` imports this helper, so both readers
+ * sanitize identically and their descriptor lists agree.
+ * @param {unknown} value
+ * @param {number} max
+ */
+export function sanitizeMailDescriptorText(value, max) {
+  if (typeof value !== 'string') return null;
+  const text = sanitizeGmailText(value).replace(/\n/g, ' ').trim();
+  if (text === '') return null;
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+/**
+ * One provider attachment byte size to storable sizeBytes, or null when the
+ * provider reports past the record cap (backlog:3055d50330b5): a cosmetic
+ * size field never refuses the whole mail — the descriptor stays with an
+ * unknown size. The REST twin in `gmail-http.js` imports this helper, so both
+ * readers bound identically and their descriptor lists agree.
+ * @param {unknown} size
+ */
+export function boundMailAttachmentSize(size) {
+  if (!Number.isSafeInteger(size) || size < 0) return 0;
+  if (size > GMAIL_MAX_ATTACHMENT_BYTES) return null;
+  return size;
+}
+
+/**
+ * Attachment descriptors of one push payload (backlog:3055d50330b5): the same
+ * `{ name, mimeType, sizeBytes }` metadata list the REST reader builds, from
+ * the same raw entries with the same rules (fetch id required, names
+ * sanitized to 200 chars, MIME to 128, `GMAIL_MAX_ATTACHMENTS` at most).
+ * The legacy singular `attachment` below keeps its own contract; this list
+ * is what the timeline reads, so push and history readers agree on it.
+ * @param {unknown} raw
+ */
+function gmailPushMailDescriptors(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const candidate of list) {
+    if (out.length >= GMAIL_MAX_ATTACHMENTS) break;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
+    if (typeof candidate.attachmentId !== 'string' || candidate.attachmentId === '') continue;
+    const name = sanitizeMailDescriptorText(candidate.filename, 200);
+    if (name === null) continue;
+    const mime = typeof candidate.mimeType === 'string' && candidate.mimeType !== ''
+      ? sanitizeMailDescriptorText(candidate.mimeType, 128)
+      : 'application/octet-stream';
+    if (mime === null) continue;
+    const sizeBytes = boundMailAttachmentSize(candidate.size);
+    out.push(Object.freeze({
+      name,
+      mimeType: mime,
+      sizeBytes,
+    }));
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * Normalize one Gmail message (the fake push payload) to the channel event
+ * shape. Beyond the thread key the event carries the same mail content the
+ * REST reader extracts (backlog:3055d50330b5): `mailSubject` (the decoded
+ * `Subject`, same helper and bound as the REST path) and `attachments` (the
+ * descriptor list above) — so the timeline output never depends on which
+ * ingress path delivered the message.
+ */
 function normalizeGmailMessage(decoded, config) {
   const item = decoded && typeof decoded === 'object' && !Array.isArray(decoded)
     ? decoded.message && typeof decoded.message === 'object' ? decoded.message : null
@@ -540,6 +738,8 @@ function normalizeGmailMessage(decoded, config) {
       occurredAt: atIso,
       text: '',
       recipients,
+      mailSubject: decodeGmailSubject(item.subject ?? null),
+      attachments: gmailPushMailDescriptors(item.attachments),
     };
   }
   // Mass mail never names a customer (backlog:13c09f03): no subject, so
@@ -560,7 +760,16 @@ function normalizeGmailMessage(decoded, config) {
   const snippet = typeof item.snippet === 'string' ? item.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) malformedEvent('message snippet exceeds the bound');
   const attachments = normalizeGmailAttachments(item.attachments);
-  const text = snippet;
+  // Snippets escape entities and padding invisibles (backlog:3055d50330b5),
+  // same as the REST path — sanitize both, one helper — and truncate to the
+  // stored-text fence the record enforces, so push and history readers store
+  // the same text and neither is refused downstream.
+  const cleanSnippet = sanitizeGmailText(snippet);
+  const text = cleanSnippet.length > GMAIL_MAX_STORED_TEXT
+    ? cleanSnippet.slice(0, GMAIL_MAX_STORED_TEXT)
+    : cleanSnippet;
+  const mailSubject = decodeGmailSubject(item.subject ?? null);
+  const mailAttachments = gmailPushMailDescriptors(item.attachments);
   // The sender IS the From header (backlog:13c09f03): an unknown sender
   // becomes a lead through the composed channel-sender capability, with
   // the display name as the contact name.
@@ -574,19 +783,18 @@ function normalizeGmailMessage(decoded, config) {
     sequence: atMs,
     occurredAt: new Date(atMs).toISOString(),
     text,
+    mailSubject,
+    attachments: mailAttachments,
     sender,
   };
-  if (attachments.length <= 1) {
-    return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
-  }
-  // The first sibling keeps the bare message id (backlog:32820692): the
-  // same stable identity the Meta adapters use, so a redelivery of a
-  // previously ingested message replays or conflicts instead of doubling.
-  return attachments.map((attachment, index) => ({
-    providerEventId: index === 0 ? item.id : `${item.id}:a${index}`,
-    ...base,
-    attachment,
-  }));
+  // One message is one event (backlog:3055d50330b5): the mail descriptors
+  // ride once as the `attachments` list, exactly like the history reader, so
+  // push stores one row with N descriptors where REST stores one row — never
+  // N rows each carrying the full list. The bare message id stays the stable
+  // identity, so a redelivery replays or conflicts instead of doubling. The
+  // legacy singular `attachment` keeps the first entry for its own contract;
+  // the timeline reads the list.
+  return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
 }
 
 /** The kit's signed minimal dialect (test compositions only). */
