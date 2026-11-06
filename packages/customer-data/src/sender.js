@@ -266,7 +266,10 @@ export async function createSubjectForRow(core, row, actor) {
 /**
  * A lead's names from its email address (backlog:1a4d9b30): the first
  * token of the local part names, the rest describes
- * (`mario.rossi@azienda.it` becomes Mario Rossi). The company the contact
+ * (`mario.rossi@azienda.it` becomes Mario Rossi). With no tokens the
+ * trimmed local part itself names (`guido+tag@example.com` becomes
+ * Guido); with no local part at all there is nobody to name, so the
+ * helper refuses and no lead is created. The company the contact
  * needs is the sender domain when no company was named — an honest
  * placeholder, never an invented `Unknown (…)`. Both company and contact
  * names are required non-empty by their services, so a single-token
@@ -277,10 +280,13 @@ export async function createSubjectForRow(core, row, actor) {
 export function leadNamesForEmail(email) {
   const text = typeof email === 'string' ? email : '';
   const at = text.lastIndexOf('@');
-  const local = (at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '';
+  const local = ((at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '').trim();
   const tokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean)
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1, 64)).slice(0, 8);
-  const firstName = tokens[0] ?? text.slice(0, 64);
+  const firstName = tokens[0] ?? local.slice(0, 64);
+  if (firstName === '' || !/[\p{L}\p{N}]/u.test(firstName)) {
+    throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
+  }
   const lastName = tokens.length > 1 ? tokens.slice(1).join(' ').slice(0, 128) : '—';
   return { firstName, lastName };
 }

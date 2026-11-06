@@ -465,6 +465,55 @@ test('sent mail to automated recipients creates nothing (backlog:1a4d9b30)', asy
   assert.deepEqual(byEvent, { 'sent-auto': 'none', 'sent-mixed': 'created' });
 });
 
+test('an automated-local mailbox still imports its sent-mail recipients (arbitration 06/11, P1)', async (t) => {
+  const autoMailbox = 'support@azienda.it';
+  const sender = stubSender();
+  const { definition, api } = createGmailChannelAdapter({ mailbox: autoMailbox, secret: SECRET });
+  const harness = createChannelsHarness({
+    adapterDefinition: definition, fixtureApi: api, secretRef: SECRET_REF, secretValue: SECRET,
+    tenantId: 'google-sync-leads', resolveSender: sender.resolveSender,
+  });
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE, {
+    channel: 'email', account: autoMailbox, adapter: GMAIL_ADAPTER_NAME, adapterVersion: GMAIL_ADAPTER_VERSION,
+    secretRef: SECRET_REF,
+  });
+  await harness.activate(SPACE, reg.connection.sourceKey);
+  const at = Date.now() - HOUR;
+  api.seedMailbox([
+    {
+      id: 'sent-mbox-1', threadId: 'thread-sent-mbox', from: autoMailbox,
+      to: '"Amico" <amico@example.com>', internalDateMs: at,
+    },
+  ]);
+  await harness.startImport(SPACE, { connectionKey: reg.connection.sourceKey, actor: ACTOR });
+  const { result: page } = await captureInfo(
+    () => harness.advanceImport(SPACE, { connectionKey: reg.connection.sourceKey, limit: 10 }),
+  );
+  assert.equal(page.page.created, 1, 'the human recipient of an automated-local mailbox became a lead');
+  assert.deepEqual(sender.calls.map((call) => call.handle), ['amico@example.com']);
+  const byEvent = Object.fromEntries(outcomeRows(harness).map((row) => [row.providerEventId, row.sender]));
+  assert.deepEqual(byEvent, { 'sent-mbox-1': 'created' });
+
+  // The REST path reads the same way: the linked mailbox first, bulk after.
+  const rest = normalizeGmailRestMessage(
+    {
+      id: 'rest-mbox-1',
+      threadId: 'thread-rest-mbox',
+      snippet: 'Ciao',
+      internalDate: String(at),
+      payload: {
+        headers: [
+          { name: 'From', value: autoMailbox },
+          { name: 'To', value: '"Amica" <amica@example.com>' },
+        ],
+      },
+    },
+    autoMailbox,
+  );
+  assert.deepEqual(rest.recipients, [{ handle: 'amica@example.com', firstName: 'Amica' }]);
+});
+
 test('a second mail from the same person reuses the one profile', async (t) => {
   const { harness, api, sender } = gmailScene();
   t.after(() => harness.close());

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { boot, project } from './helpers/customer-data-project.js';
+import { leadNamesForEmail } from '../packages/customer-data/src/sender.js';
 
 /**
  * **Channel sender resolution (backlog:a4f40325).**
@@ -448,5 +449,15 @@ test('a nameless email sender becomes a lead named from its address, never Unkno
   const companies = app.database.raw.prepare('SELECT name FROM companies').all();
   for (const row of companies) {
     assert.doesNotMatch(row.name, /Unknown/);
+  }
+});
+
+test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {
+  assert.deepEqual(leadNamesForEmail('mario.rossi@azienda.it'), { firstName: 'Mario', lastName: 'Rossi' });
+  assert.deepEqual(leadNamesForEmail('guido@example.com'), { firstName: 'Guido', lastName: '—' });
+  assert.deepEqual(leadNamesForEmail('info+tag@example.com'), { firstName: 'Info', lastName: '—' });
+  assert.deepEqual(leadNamesForEmail('  spaced@example.com  '), { firstName: 'Spaced', lastName: '—' });
+  for (const empty of ['', '   ', null, undefined, '@', '---@example.com', '+tag@example.com']) {
+    assert.throws(() => leadNamesForEmail(empty), /local part/, 'no local part names nobody: no lead');
   }
 });

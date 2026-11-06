@@ -515,15 +515,13 @@ function normalizeGmailMessage(decoded, config) {
     malformedEvent('message needs a valid internalDateMs');
   }
   const atIso = new Date(atMs).toISOString();
-  // Mass mail never names a customer (backlog:13c09f03): no subject, so
-  // the operations layer quarantines it as evidence — no contact, no
-  // timeline identity, exactly like our own sent copy looping back.
-  if (isBulkGmailMessage({ from: from.address, ...bulkHeaders })) {
-    return { providerEventId: item.id, subject: '', sequence: null, occurredAt: atIso };
-  }
   // Our own sent mail imports its recipients (backlog:13c09f03): the people
-  // the owner wrote to become leads too. A loopback with nobody else stays
-  // evidence, never a customer — same quarantine as before.
+  // the owner wrote to become leads too. The mailbox reads first
+  // (backlog:1a4d9b30, arbitration 06/11): mail the owner sent from the
+  // linked mailbox — even an automated-looking one like support@ or
+  // info@ — is never bulk-quarantined for its From alone. A loopback
+  // with nobody else stays evidence, never a customer — same quarantine
+  // as before.
   if (from.address === config.mailbox) {
     // The recipient door reads recipients too (backlog:1a4d9b30):
     // writing to `support@contabo.com` must not mint the customer the
@@ -543,6 +541,13 @@ function normalizeGmailMessage(decoded, config) {
       text: '',
       recipients,
     };
+  }
+  // Mass mail never names a customer (backlog:13c09f03): no subject, so
+  // the operations layer quarantines it as evidence — no contact, no
+  // timeline identity. Inbound only from here: the mailbox branch above
+  // already took the owner's sent mail.
+  if (isBulkGmailMessage({ from: from.address, ...bulkHeaders })) {
+    return { providerEventId: item.id, subject: '', sequence: null, occurredAt: atIso };
   }
   // No skew check here on purpose: the provider instant travels through
   // as `occurredAt` and `operations.js` quarantines a future-dated one

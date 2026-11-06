@@ -145,9 +145,9 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     throw httpError('Gmail message needs a valid internalDate', 'CHANNEL_EVENT_MALFORMED', 422);
   }
   const atIso = new Date(atMs).toISOString();
-  if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
-    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
-  }
+  // The linked mailbox reads first (backlog:1a4d9b30, arbitration 06/11):
+  // mail the owner sent — even from an automated-looking mailbox like
+  // support@ — is never bulk-quarantined for its From alone.
   if (from.handle === mailbox) {
     // Same recipient door as the fake path (backlog:1a4d9b30): an
     // automated To/Cc never becomes a lead, and an all-automated To/Cc
@@ -166,6 +166,11 @@ export function normalizeGmailRestMessage(wire, mailbox) {
       text: '',
       recipients,
     };
+  }
+  // Bulk quarantines inbound only: the mailbox branch above already took
+  // the owner's sent mail (backlog:1a4d9b30).
+  if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
+    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
   }
   const snippet = typeof wire.snippet === 'string' ? wire.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) {
