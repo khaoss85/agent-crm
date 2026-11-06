@@ -1037,6 +1037,8 @@ export function createCustomerCardView(deps) {
     close.setAttribute('aria-label', 'Chiudi');
     close.setAttribute('data-action', 'composer-close');
     close.addEventListener('click', () => {
+      // Closing supersedes this composer: pending loads and AI drafts stop.
+      composerGeneration += 1;
       if (panel.parentNode) panel.parentNode.removeChild(panel);
     });
     head.appendChild(minimize);
@@ -1090,6 +1092,10 @@ export function createCustomerCardView(deps) {
   const COMPOSER_PROMPT_MAX = 500;
   function composerAiRow({ spaceId, navCtx, text, channel, subject, changed }) {
     const row = el('div', 'bo-composer-ai');
+    // The composer generation this row was built in: Scrivi again, ✕ or Esc
+    // supersede it (openComposer bumps the counter on every opening).
+    const born = composerGeneration;
+    const stale = () => born !== composerGeneration || row.isConnected === false;
     const mark = el('span', 'bo-composer-ai-mark', '✦');
     mark.setAttribute('aria-hidden', 'true');
     const prompt = el('input', 'bo-composer-ai-input');
@@ -1156,6 +1162,10 @@ export function createCustomerCardView(deps) {
           method: 'POST',
           body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
         });
+        // Review #599 P2: the composer may have been closed or reopened while
+        // the AI wrote. A stale answer never touches a detached form nor the
+        // shared per-customer draft.
+        if (stale()) return;
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
@@ -1171,6 +1181,7 @@ export function createCustomerCardView(deps) {
         say('Bozza dell’AI: rileggila e modificala prima di inviare.', before.trim() !== '');
         if (typeof text.focus === 'function') text.focus();
       } catch (error) {
+        if (stale()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
         if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
@@ -1351,6 +1362,7 @@ export function createCustomerCardView(deps) {
       panel.__composerKeys = true;
       panel.addEventListener?.('keydown', (event) => {
         if (event.key === 'Escape') {
+          composerGeneration += 1;
           if (panel.parentNode) panel.parentNode.removeChild(panel);
         } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault?.();

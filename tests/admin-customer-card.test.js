@@ -2816,3 +2816,40 @@ test('composer AI: AI off or route missing turns the row into one honest line', 
     assert.ok(!panel.textContent.includes(error.code ?? 'LLM_'), 'no code on screen');
   }
 });
+
+test('review #599 P2: an AI draft that lands after close and reopen never overwrites the new typing', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const inner = composerClient();
+  const client = {
+    posts: inner.posts,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages/draft') {
+        enforceAdminWriteGate(path, options);
+        await pending;
+        return { body: 'Testo vecchio dell’AI' };
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.input.value = 'scrivi tu';
+  first.go.dispatch('click');
+  await flushComposer(2);
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const area = reopened.findAll('textarea')[0];
+  area.value = 'IBAN per il bonifico';
+  area.dispatch?.('input');
+  release();
+  await flushComposer();
+  assert.equal(area.value, 'IBAN per il bonifico', 'the visible text keeps the new typing');
+  reopened.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const third = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.equal(third.findAll('textarea')[0].value, 'IBAN per il bonifico', 'the shared draft kept the new typing, not the stale AI text');
+});
