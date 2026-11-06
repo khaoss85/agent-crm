@@ -2065,6 +2065,61 @@ test('send pending: a trailing space or newline keeps the same key', async () =>
   assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, 'whitespace around the text is the same message');
 });
 
+test('send pending: a transient miss of the read-back keeps waiting, never «non inviato»', async () => {
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: (round) => {
+      if (round === 1) throw Object.assign(new Error('status'), { status: 502, code: 'BO_SEND_STATUS_FAILED' });
+      if (round === 2) throw new TypeError('Failed to fetch');
+      if (round === 3) throw Object.assign(new Error('slow'), { status: 429, code: 'UNKNOWN' });
+      return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+    },
+  });
+  const { panel, toasts } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  await flushComposer(40);
+  assert.equal(client.resumes.length, 4, 'gateway, network and rate limit do not stop the read-back');
+  assert.deepEqual(toasts, ['Messaggio in consegna']);
+  assert.equal(client.posts.length, 1);
+});
+
+test('send pending: the worker verdict failed ends the wait with an error and a fresh key', async () => {
+  const client = composerClient({
+    onPost: (n) => { if (n === 1) throw pendingSend(); return { channel: 'email', jobId: 'job-2' }; },
+    onResume: () => { throw Object.assign(new Error('failed'), { status: 502, code: 'BO_SEND_FAILED' }); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Stesso testo');
+  await flushComposer(12);
+  assert.equal(client.resumes.length, 1);
+  assert.ok(panel.textContent.includes('non inviato') || panel.textContent.includes('non è partito') || panel.textContent.includes('Riprova'),
+    'a failed send says so');
+  await typeAndSend(panel, 'Stesso testo');
+  assert.notEqual(client.posts[1].messageKey, client.posts[0].messageKey, 'a failed send is retried as a new request');
+});
+
+test('send: 408, 425, 429 and 503 keep the key and read as uncertain, not «non inviato»', async () => {
+  for (const status of [408, 425, 429, 503]) {
+    const client = composerClient({ onPost: () => { throw Object.assign(new Error('later'), { status, code: 'UNKNOWN' }); } });
+    const { panel } = await openComposerMount({ client });
+    await typeAndSend(panel, 'Testo');
+    assert.ok(panel.textContent.includes('Non sappiamo ancora se è partito'), `${status} reads as uncertain`);
+    assert.ok(!panel.textContent.includes('non inviato'), `${status} never reads as not sent`);
+    await typeAndSend(panel, 'Testo');
+    assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, `${status} keeps the key`);
+  }
+});
+
+test('send: a second message while the first is pending keeps the first key', async () => {
+  const client = composerClient({ onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); } });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Primo messaggio');
+  await typeAndSend(panel, 'Secondo messaggio');
+  await typeAndSend(panel, 'Primo messaggio');
+  assert.notEqual(client.posts[1].messageKey, client.posts[0].messageKey);
+  assert.equal(client.posts[2].messageKey, client.posts[0].messageKey, 'the first message still finds its own request');
+});
+
 test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled', async () => {
   const { panel } = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] } }),

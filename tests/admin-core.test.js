@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  apiFailure,
   humanizeLabel,
   fieldControl,
   editableFields,
@@ -252,4 +253,30 @@ test('shellNavInput on a bare envelope disables everything honestly', () => {
     assert.deepEqual(fallback.customModules, []);
     assert.equal(fallback.customerDataAvailable, false);
   }
+});
+
+// The pilot's 504 on POST /bo/api/customer-hub/messages (accordo-arvo-pilot
+// src/shared/bo-message-send.js): the queued request's ids sit beside the
+// error, at the top level. They must survive onto the thrown error, or the
+// composer never reads back and says «non inviato» while the worker sends.
+test('apiFailure keeps requestId and claimId of a 504 BO_SEND_PENDING', () => {
+  const error = apiFailure(504, {
+    error: { code: 'BO_SEND_PENDING', message: 'Invio in attesa: attendi, non inviare di nuovo' },
+    requestId: 'req-9', claimId: 'claim-9',
+  });
+  assert.equal(error.status, 504);
+  assert.equal(error.code, 'BO_SEND_PENDING');
+  assert.equal(error.message, 'Invio in attesa: attendi, non inviare di nuovo');
+  assert.equal(error.requestId, 'req-9');
+  assert.equal(error.claimId, 'claim-9');
+});
+
+test('apiFailure without ids, or with a non-JSON body, carries none', () => {
+  const bare = apiFailure(504, { error: { code: 'BO_SEND_PENDING', message: 'x' } });
+  assert.equal('requestId' in bare, false);
+  assert.equal('claimId' in bare, false);
+  const html = apiFailure(502, undefined);
+  assert.equal(html.code, 'UNKNOWN');
+  assert.equal(html.message, 'Request failed (502)');
+  assert.equal(apiFailure(504, { requestId: '', claimId: 7 }).requestId, undefined);
 });

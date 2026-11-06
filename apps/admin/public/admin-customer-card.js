@@ -78,6 +78,20 @@ const COMPOSER_CHANNEL_ORDER = Object.freeze(['email', 'whatsapp', 'instagram', 
 // BO_SEND_PENDING) is read back every 4 s for about two and a half minutes:
 // production 06/11 measured 2.5 min from tap to Gmail.
 const SEND_RESUME_EVERY_MS = 4000;
+/** An unknown send outcome: never «non inviato», and a re-tap is safe. */
+const SEND_UNCERTAIN = 'Non sappiamo ancora se è partito: controlla la cronologia tra poco. Se lo invii di nuovo non parte due volte.';
+/** Statuses that say «try later», never «refused». */
+const TRANSIENT_STATUSES = new Set([408, 425, 429]);
+/**
+ * A 4xx that refuses the request itself (validation, not connected,
+ * refused body). 408/425/429, 5xx, network errors and a missing status
+ * leave the outcome unknown.
+ * @param {any} error
+ */
+export function isDefinitiveRefusal(error) {
+  const status = typeof error?.status === 'number' ? error.status : 0;
+  return status >= 400 && status < 500 && !TRANSIENT_STATUSES.has(status);
+}
 const SEND_RESUME_ROUNDS = 40;
 
 /** Delivery/sync state, inbound or outbound, in the operator's words. */
@@ -1054,8 +1068,8 @@ export function createCustomerCardView(deps) {
   // the server accepted. In memory: a reload still drops them, like any
   // unsent form.
   const composerDrafts = new Map();
-  // The idempotency key of a send whose outcome is not yet known, by draft
-  // and by what is being sent. A re-tap of the same message reuses it, so
+  // The idempotency key of a send whose outcome is not yet known, keyed by
+  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
   // the server finds its own request instead of mailing twice (production
   // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
   // A changed text, subject or channel is a new message with a new key; a
@@ -1246,13 +1260,14 @@ export function createCustomerCardView(deps) {
       // Trimmed like the empty check above: a trailing space or newline
       // added after a pending send is still the same message.
       const sendKey = `${draftKey}\0${payload.channel}\0${payload.connectionKey ?? ''}\0${payload.subject ?? ''}\0${payload.text.trim()}`;
-      const known = composerSendKeys.get(draftKey);
-      const messageKey = known && known.sendKey === sendKey ? known.messageKey : freshMessageKey();
-      composerSendKeys.set(draftKey, { sendKey, messageKey });
+      // One key per message, never one slot per customer: a second message
+      // sent while the first is still queued must not evict its key.
+      const messageKey = composerSendKeys.get(sendKey) ?? freshMessageKey();
+      composerSendKeys.set(sendKey, messageKey);
       payload.messageKey = messageKey;
       const sent = async () => {
         if (stale()) return;
-        composerSendKeys.delete(draftKey);
+        composerSendKeys.delete(sendKey);
         composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
         await renderCard(navCtx.resource, navCtx.id);
@@ -1264,7 +1279,7 @@ export function createCustomerCardView(deps) {
       } catch (error) {
         if (stale()) return;
         if (!isSendPending(error)) {
-          failSend(error);
+          failSend(error, sendKey);
           return;
         }
         // The worker holds the message: say so and read the same request
@@ -1287,11 +1302,24 @@ export function createCustomerCardView(deps) {
             return;
           } catch (next) {
             if (stale()) return;
-            if (!isSendPending(next)) {
-              failSend(next);
+            if (isSendPending(next)) {
+              pending = next;
+              continue;
+            }
+            // The worker's verdict on the original send: failed or
+            // cancelled. Only this ends the wait with an error.
+            if (next?.code === 'BO_SEND_FAILED' || next?.code === 'BO_SEND_CANCELLED') {
+              failSend(next, sendKey);
               return;
             }
-            pending = next;
+            // A transient miss of the read itself (gateway, network, rate
+            // limit, unreadable status): the message is still queued, keep
+            // reading the same request.
+            if (!isDefinitiveRefusal(next)) continue;
+            // The read was refused outright: the send's outcome is unknown,
+            // never «non inviato». The key stays for a safe re-tap.
+            showStatus(SEND_UNCERTAIN);
+            return;
           }
         }
         // Still queued: the key stays, so a re-tap finds the same request.
@@ -1301,16 +1329,18 @@ export function createCustomerCardView(deps) {
         if (!stale()) setBusy(false);
       }
     }
-    function failSend(error) {
-      const status = typeof error?.status === 'number' ? error.status : 0;
-      // A definitive answer drops the key: a failed or refused request
-      // replayed under the same key would answer the same failure forever.
-      // An unknown outcome (gateway timeout, network, unreadable status)
-      // keeps it, so a re-tap cannot mail twice.
-      if ((status >= 400 && status < 500) || status === 503
-        || error?.code === 'BO_SEND_FAILED' || error?.code === 'BO_SEND_CANCELLED') {
-        composerSendKeys.delete(draftKey);
+    function failSend(error, sendKey) {
+      // Only a definitive answer drops the key and reads «non inviato»: a
+      // refused request replayed under the same key would answer the same
+      // refusal forever. An unknown outcome (gateway timeout, 5xx, 408/425/
+      // 429, network) keeps the key — the first request may still be queued,
+      // and a re-tap under the same key cannot mail twice.
+      if (!isDefinitiveRefusal(error) && error?.code !== 'BO_SEND_FAILED' && error?.code !== 'BO_SEND_CANCELLED') {
+        humanReadError(error, { failed: SEND_UNCERTAIN });
+        showStatus(SEND_UNCERTAIN);
+        return;
       }
+      composerSendKeys.delete(sendKey);
       const logged = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
       const formErrors = apiErrorToFormErrors(error);
       showError(formErrors.fields.text ?? logged);
