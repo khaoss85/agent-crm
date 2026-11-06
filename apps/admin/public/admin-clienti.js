@@ -72,13 +72,21 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
-/** Grid track per column id; unknown and custom columns share the rest. */
+/**
+ * Grid track per column id: [minimum px, flexible share]. Optional and custom
+ * columns get a readable 120px minimum (review #600 P2: never a 0px track).
+ */
 const COLUMN_TRACKS = Object.freeze({
-  canali: 'minmax(56px, .5fr)',
-  stato: 'minmax(88px, .6fr)',
-  ultimo: 'minmax(200px, 2.4fr)',
-  prossimo: 'minmax(110px, 1fr)',
+  canali: [56, '.5fr'],
+  stato: [88, '.6fr'],
+  ultimo: [200, '2.4fr'],
+  prossimo: [110, '1fr'],
 });
+const OTHER_TRACK = [120, '1fr'];
+const CLIENT_TRACK = [170, '1.4fr'];
+const ROW_GAP = 16;
+const ROW_PADDING = 40;
+const CHEVRON = 16;
 
 // The prototype's channel tiles: a short mono mark, the full name in the title.
 const CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', email: '@', tiktok: 'TT', phone: 'TEL', sms: 'SMS', web: 'WEB' });
@@ -739,13 +747,16 @@ export function createCustomerListView(deps) {
     }
     const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] === true);
     // Each column gets the room its content needs: the excerpt is the widest
-    // read, channel marks and the status pill are narrow. The minimums of the
-    // default four columns fit the row's 760px floor (gaps and padding
-    // included), so the grid never spills past the scrolling table.
-    const grid = `minmax(170px, 1.4fr) ${visible.map((column) => COLUMN_TRACKS[column.id] ?? 'minmax(0, 1fr)').join(' ')} 16px`;
+    // read, channel marks and the status pill are narrow.
+    const tracks = [CLIENT_TRACK, ...visible.map((column) => COLUMN_TRACKS[column.id] ?? OTHER_TRACK)];
+    const grid = `${tracks.map(([min, share]) => `minmax(${min}px, ${share})`).join(' ')} ${CHEVRON}px`;
+    // The row floor follows the visible columns: the four defaults keep the
+    // usual 760px, every extra column widens the scrolling table instead of
+    // squeezing a track to nothing.
+    const floor = Math.max(760, tracks.reduce((sum, [min]) => sum + min, 0) + CHEVRON + ROW_GAP * tracks.length + ROW_PADDING);
     const table = el('div', 'bo-clienti-table');
     const head = el('div', 'bo-clienti-thead');
-    head.setAttribute('style', `grid-template-columns: ${grid}`);
+    head.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
     head.setAttribute('role', 'row');
     head.appendChild(el('span', 'bo-clienti-th', 'Cliente'));
     for (const column of visible) head.appendChild(el('span', 'bo-clienti-th', column.label));
@@ -755,7 +766,7 @@ export function createCustomerListView(deps) {
     for (const row of items) {
       const card = el('article', 'bo-clienti-row');
       card.setAttribute('data-customer', `${row.resource}:${row.id}`);
-      card.setAttribute('style', `grid-template-columns: ${grid}`);
+      card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
       head.appendChild(el('span', 'bo-clienti-avatar', initialsOf(name)));

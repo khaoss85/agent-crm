@@ -821,3 +821,28 @@ test('434cc39a: the campo filter reaches the server and clears with its ×', asy
   const cleared = client.calls[client.calls.length - 1];
   assert.ok(!cleared.includes('campo='), `the filter is gone: ${cleared}`);
 });
+
+test('review #600 P2: an extra column keeps a readable minimum and widens the row floor', async () => {
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  const card = mount.findAll('article')[0];
+  const style = card.getAttribute('style');
+  assert.ok(style.includes('minmax(120px, 1fr)'), `the Email track has a 120px minimum (${style})`);
+  assert.ok(!style.includes('minmax(0'), 'no column collapses to zero');
+  const floor = Number(/min-width: (\d+)px/.exec(style)?.[1]);
+  assert.equal(floor, 170 + 56 + 88 + 200 + 110 + 120 + 16 + 16 * 6 + 40, 'the floor counts every visible minimum, gap and padding');
+  assert.ok(card.textContent.includes('marco@palestra-esempio.it'), 'the email reads');
+});
+
+test('the four default columns keep the 760px floor', async () => {
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [ROW_MARCO], total: 1, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  assert.match(mount.findAll('article')[0].getAttribute('style'), /min-width: 760px/);
+});
