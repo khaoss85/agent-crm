@@ -148,9 +148,12 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
   }
   if (from.handle === mailbox) {
+    // Same recipient door as the fake path (backlog:1a4d9b30, review on
+    // #606, P1): an automated To/Cc never becomes a lead, and an
+    // all-automated To/Cc quarantines as evidence below.
     const recipients = parseGmailRecipients(
       restHeaderAll(wire.payload, 'To'), restHeaderAll(wire.payload, 'Cc'), mailbox,
-    );
+    ).filter((recipient) => !isBulkGmailMessage({ from: recipient.handle }));
     if (recipients.length === 0) {
       return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
     }
