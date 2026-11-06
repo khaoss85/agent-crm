@@ -1815,11 +1815,13 @@ const COMPOSER_CONNECTORS = {
   ],
 };
 
-function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null } = {}) {
+function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null, onPost = null, onResume = null } = {}) {
   const base = stubClient();
   const posts = [];
+  const resumes = [];
   return {
     posts,
+    resumes,
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/connectors')) return connectors;
@@ -1830,6 +1832,12 @@ function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null } = {
       }
       if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') {
         posts.push(JSON.parse(options.body));
+        if (onPost) return onPost(posts.length);
+        return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+      }
+      if (path.startsWith('/api/customer-hub/messages?')) {
+        resumes.push(path);
+        if (onResume) return onResume(resumes.length);
         return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
       }
       return base.request(path, options);
@@ -1863,6 +1871,7 @@ async function openComposerMount({ client = composerClient(), spaceId = 'presti'
   const mount = createMount();
   await createCustomerCardView({
     doc, mount, client, spaceId, toast: toast ?? ((message) => toasts.push(message)),
+    wait: () => Promise.resolve(),
   }).renderCard('contact', 'c1');
   const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
   assert.ok(write, 'a Scrivi action exists');
@@ -1910,6 +1919,90 @@ test('e9b4fc2f: Invia posts the preselected recipient through the outbox route',
   assert.equal(post.id, 'c1');
   assert.ok(!('to' in post), 'the recipient stays server-derived: the panel never sends one');
   assert.deepEqual(toasts, ['Messaggio in consegna'], 'the operator reads the queued confirmation');
+});
+
+// Production 06/11: the web answered 504 BO_SEND_PENDING after 51 s, the
+// worker mailed at +2.5 min, and the panel said «non inviato» — a re-tap
+// minted a new key and would have mailed twice.
+const pendingSend = () => Object.assign(new Error('Invio in attesa'), {
+  status: 504, code: 'BO_SEND_PENDING', requestId: 'req-1', claimId: 'claim-1',
+});
+const composerSendButton = (panel) => panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+const typeAndSend = async (panel, value = 'Certo, domani alle 18.') => {
+  panel.findAll('textarea')[0].value = value;
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+};
+
+test('send pending: a 504 BO_SEND_PENDING reads the same request back, never a second POST', async () => {
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: (round) => {
+      if (round < 3) throw pendingSend();
+      return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+    },
+  });
+  const { panel, toasts } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  await flushComposer(24);
+  assert.equal(client.posts.length, 1, 'exactly one POST');
+  assert.equal(client.resumes.length, 3, 'the queued request is read back until it settles');
+  assert.ok(client.resumes.every((path) => path.includes('requestId=req-1') && path.includes('claimId=claim-1')),
+    'the read-back names the 504 request and its claim');
+  assert.deepEqual(toasts, ['Messaggio in consegna'], 'the settled send reads as delivered');
+});
+
+test('send pending: while queued the panel says so and Invia is busy, not «non inviato»', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: async () => { await gate; throw pendingSend(); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  const send = composerSendButton(panel);
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'Invia is off while the message is queued');
+  assert.equal(send.textContent, 'Invio…');
+  assert.ok(panel.textContent.includes('In consegna'), 'the panel says the message is on its way');
+  assert.ok(!panel.textContent.includes('non inviato'), 'a queued message never reads as not sent');
+  release();
+});
+
+test('send pending: still queued after the wait, a re-tap reuses the same key', async () => {
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: () => { throw pendingSend(); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  await flushComposer(200);
+  assert.ok(panel.textContent.includes('Ancora in coda'), 'the panel says the message is still queued');
+  assert.equal(composerSendButton(panel).getAttribute('disabled'), null, 'Invia comes back after the wait');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  assert.equal(client.posts.length, 2);
+  assert.equal(client.posts[1].messageKey, client.posts[0].messageKey,
+    'the same message re-tapped carries the same key: the server finds its own request');
+});
+
+test('send pending: an edited message or a definitive failure gets a fresh key', async () => {
+  const client = composerClient({
+    onPost: (n) => {
+      if (n === 1) throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' });
+      if (n === 3) throw Object.assign(new Error('rifiutato'), { status: 400, code: 'BO_SEND_BODY_REFUSED' });
+      throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' });
+    },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Primo testo');
+  await typeAndSend(panel, 'Primo testo');
+  assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, 'an unknown outcome keeps the key');
+  await typeAndSend(panel, 'Primo testo');
+  await typeAndSend(panel, 'Primo testo');
+  assert.notEqual(client.posts[3].messageKey, client.posts[2].messageKey, 'a refused send drops the key');
+  await typeAndSend(panel, 'Testo cambiato');
+  assert.notEqual(client.posts[4].messageKey, client.posts[3].messageKey, 'an edited message is a new message');
 });
 
 test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled', async () => {

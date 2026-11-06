@@ -146,6 +146,10 @@ const moduleClient = {
         code: payload?.error?.code ?? 'UNKNOWN',
         details: payload?.error?.details ?? null,
       });
+      // A 504 BO_SEND_PENDING names the queued request beside the error,
+      // so the composer reads it back instead of sending again.
+      if (typeof payload?.requestId === 'string') Object.assign(error, { requestId: payload.requestId });
+      if (typeof payload?.claimId === 'string') Object.assign(error, { claimId: payload.claimId });
       if (MOUNTED && !followedLogin) {
         leaveForSpaceLogin(sessionLostTarget({
           status: response.status,

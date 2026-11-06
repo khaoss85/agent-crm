@@ -74,6 +74,11 @@ const CHANNEL_LABELS = Object.freeze({
 
 /** The composer channel order (backlog:e9b4fc2f): Email first, like the prototype's quick actions. */
 const COMPOSER_CHANNEL_ORDER = Object.freeze(['email', 'whatsapp', 'instagram', 'facebook', 'sms']);
+// A send the worker has not settled within the web's own wait (504
+// BO_SEND_PENDING) is read back every 4 s for about two and a half minutes:
+// production 06/11 measured 2.5 min from tap to Gmail.
+const SEND_RESUME_EVERY_MS = 4000;
+const SEND_RESUME_ROUNDS = 40;
 
 /** Delivery/sync state, inbound or outbound, in the operator's words. */
 const SYNC_LABELS = Object.freeze({
@@ -421,6 +426,11 @@ export function createCustomerCardView(deps) {
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
+  // The composer's poll-back pause (BO_SEND_PENDING): injectable so tests
+  // run the wait loop without real time.
+  const wait = typeof deps.wait === 'function'
+    ? deps.wait
+    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
@@ -657,6 +667,13 @@ export function createCustomerCardView(deps) {
         sender: gmailLinked ? gmailSender : null,
       });
     });
+  }
+
+  /** The worker still holds the send: a 504 naming its request to read back. */
+  function isSendPending(error) {
+    return error?.code === 'BO_SEND_PENDING'
+      && typeof error.requestId === 'string' && error.requestId !== ''
+      && typeof error.claimId === 'string' && error.claimId !== '';
   }
 
   /** One fresh idempotency key per send: retries reuse it, two sends never share it. */
@@ -1034,6 +1051,13 @@ export function createCustomerCardView(deps) {
   // the server accepted. In memory: a reload still drops them, like any
   // unsent form.
   const composerDrafts = new Map();
+  // The idempotency key of a send whose outcome is not yet known, by draft
+  // and by what is being sent. A re-tap of the same message reuses it, so
+  // the server finds its own request instead of mailing twice (production
+  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
+  // A changed text, subject or channel is a new message with a new key; a
+  // definitive answer (sent, refused, failed) drops the key.
+  const composerSendKeys = new Map();
 
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
     // Keyed by space too: a draft never crosses into another workspace
@@ -1176,38 +1200,101 @@ export function createCustomerCardView(deps) {
     if (typeof text.focus === 'function' && selected !== null) text.focus();
     let busy = false;
     send.addEventListener('click', () => { void doSend(); });
+    const setBusy = (on) => {
+      busy = on;
+      send.textContent = on ? 'Invio…' : 'Invia';
+      if (on) send.setAttribute('disabled', 'disabled');
+      else send.removeAttribute?.('disabled');
+      send.setAttribute('aria-busy', on ? 'true' : 'false');
+    };
+    const showStatus = (message) => {
+      err.textContent = message;
+      err.setAttribute('data-tone', message === '' ? '' : 'pending');
+    };
+    const showError = (message) => {
+      err.textContent = message;
+      err.setAttribute('data-tone', 'error');
+    };
     async function doSend() {
       if (busy || selected === null) return;
       if (text.value.trim() === '') {
-        err.textContent = 'Scrivi il messaggio prima di inviarlo.';
+        showError('Scrivi il messaggio prima di inviarlo.');
         return;
       }
-      busy = true;
-      err.textContent = '';
-      try {
-        const payload = {
-          spaceId,
-          resource: navCtx.resource,
-          id: navCtx.id,
-          channel: selected.channel,
-          text: text.value,
-          messageKey: freshMessageKey(),
-        };
-        if (selected.connectionKey !== null) payload.connectionKey = selected.connectionKey;
-        if (selected.channel === 'email' && subjectInput !== null && subjectInput.value.trim() !== '') {
-          payload.subject = subjectInput.value.trim();
-        }
-        await client.request('/api/customer-hub/messages', { method: 'POST', body: JSON.stringify(payload) });
+      setBusy(true);
+      showStatus('');
+      const payload = {
+        spaceId,
+        resource: navCtx.resource,
+        id: navCtx.id,
+        channel: selected.channel,
+        text: text.value,
+      };
+      if (selected.connectionKey !== null) payload.connectionKey = selected.connectionKey;
+      if (selected.channel === 'email' && subjectInput !== null && subjectInput.value.trim() !== '') {
+        payload.subject = subjectInput.value.trim();
+      }
+      const sendKey = `${draftKey}\0${payload.channel}\0${payload.connectionKey ?? ''}\0${payload.subject ?? ''}\0${payload.text}`;
+      const known = composerSendKeys.get(draftKey);
+      const messageKey = known && known.sendKey === sendKey ? known.messageKey : freshMessageKey();
+      composerSendKeys.set(draftKey, { sendKey, messageKey });
+      payload.messageKey = messageKey;
+      const sent = async () => {
+        composerSendKeys.delete(draftKey);
         composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
         await renderCard(navCtx.resource, navCtx.id);
+      };
+      try {
+        await client.request('/api/customer-hub/messages', { method: 'POST', body: JSON.stringify(payload) });
+        await sent();
+        return;
       } catch (error) {
-        const logged = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
-        const formErrors = apiErrorToFormErrors(error);
-        err.textContent = formErrors.fields.text ?? logged;
+        if (!isSendPending(error)) {
+          failSend(error);
+          return;
+        }
+        // The worker holds the message: say so and read the same request
+        // back, never a second POST.
+        showStatus('In consegna: il messaggio è in coda. Non serve inviarlo di nuovo.');
+        let pending = error;
+        for (let round = 0; round < SEND_RESUME_ROUNDS; round += 1) {
+          await wait(SEND_RESUME_EVERY_MS);
+          // The panel was closed: stop reading back. The key stays, so a
+          // re-tap after reopening still finds the same request.
+          if (panel.parentNode == null) return;
+          try {
+            const query = `requestId=${encodeURIComponent(pending.requestId)}&claimId=${encodeURIComponent(pending.claimId)}`;
+            await client.request(`/api/customer-hub/messages?${query}`);
+            await sent();
+            return;
+          } catch (next) {
+            if (!isSendPending(next)) {
+              failSend(next);
+              return;
+            }
+            pending = next;
+          }
+        }
+        // Still queued: the key stays, so a re-tap finds the same request.
+        showStatus('Ancora in coda: comparirà nella cronologia appena parte. Non serve inviarlo di nuovo.');
       } finally {
-        busy = false;
+        setBusy(false);
       }
+    }
+    function failSend(error) {
+      const status = typeof error?.status === 'number' ? error.status : 0;
+      // A definitive answer drops the key: a failed or refused request
+      // replayed under the same key would answer the same failure forever.
+      // An unknown outcome (gateway timeout, network, unreadable status)
+      // keeps it, so a re-tap cannot mail twice.
+      if ((status >= 400 && status < 500) || status === 503
+        || error?.code === 'BO_SEND_FAILED' || error?.code === 'BO_SEND_CANCELLED') {
+        composerSendKeys.delete(draftKey);
+      }
+      const logged = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
+      const formErrors = apiErrorToFormErrors(error);
+      showError(formErrors.fields.text ?? logged);
     }
   }
     // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
