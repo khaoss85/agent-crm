@@ -20,7 +20,7 @@ import {
  * filters, free-text search with channel-word detection, sorting and
  * server-side pagination over exact page sizes.
  *
- * What it must prove: the five quick views are saved filter descriptors (no
+ * What it must prove: the six quick views are saved filter descriptors (no
  * row snapshots); filters combine and clear to `all`; unknown query values
  * refuse fail-closed; pages slice server-side with an exact total; the
  * shared status rule promotes only on signed business; the AI budget column
@@ -137,10 +137,10 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 
 /* ----------------------------------------------------------------- views */
 
-test('the five quick views are saved filter descriptors, not row snapshots', () => {
-  assert.equal(CUSTOMER_VIEWS.length, 5);
+test('the six quick views are saved filter descriptors, not row snapshots', () => {
+  assert.equal(CUSTOMER_VIEWS.length, 6);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);
@@ -155,6 +155,31 @@ test('the five quick views are saved filter descriptors, not row snapshots', () 
   assert.equal(applyCustomerListQuery([contatto, cliente], parseCustomerListQuery({ vista: 'nuovi-lead' })).total, 1);
   assert.equal(applyCustomerListQuery([contatto, cliente], parseCustomerListQuery({ vista: 'clienti-attivi' })).total, 1);
   assert.equal(applyCustomerListQuery([contatto, cliente], parseCustomerListQuery({ vista: 'tutti' })).total, 2);
+  // da-leggere is the same kind of live cut: only rows with unread inbound
+  // messages match, most recent unread first. Rows without read state
+  // (unreadCount null) never match.
+  const unread = rowOf({}, {
+    ...baseReads(),
+    unreadBySubject: new Map([['contact:c1', { unread: 2, lastUnreadAt: '2026-10-21T08:00:00.000Z' }]]),
+  });
+  const read = rowOf({}, {
+    ...baseReads(),
+    unreadBySubject: new Map([['contact:c1', { unread: 0, lastUnreadAt: '2026-10-21T07:00:00.000Z' }]]),
+  });
+  const unknown = rowOf({}, baseReads());
+  assert.equal(applyCustomerListQuery([unread, read, unknown], parseCustomerListQuery({ vista: 'da-leggere' })).total, 1);
+});
+
+test('da-leggere sorts by newest unread first, rows without unread last', () => {
+  const row = (firstName, unread) => rowOf({ contact: { firstName } }, {
+    ...baseReads(),
+    unreadBySubject: unread === null ? new Map() : new Map([['contact:c1', unread]]),
+  });
+  const older = row('Anna', { unread: 1, lastUnreadAt: '2026-10-20T08:00:00.000Z' });
+  const newer = row('Bruno', { unread: 3, lastUnreadAt: '2026-10-21T08:00:00.000Z' });
+  const none = row('Carlo', null);
+  const page = applyCustomerListQuery([none, older, newer], parseCustomerListQuery({ vista: 'da-leggere' }));
+  assert.deepEqual(page.items.map((item) => item.name), ['Bruno Presti', 'Anna Presti']);
 });
 
 test('ricontattare-oggi matches open tasks due today or overdue, nothing else', () => {
@@ -282,7 +307,7 @@ const matchShape = (rows, filters) => rows.filter((row) => Object.entries(filter
 }));
 
 /** A module map with exact-match reads and no writes: any write attempt throws. */
-function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], omit = [] }) {
+function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], reads = [], omit = [] }) {
   const exact = (rows) => ({
     listWhere: async (filters) => matchShape(rows, filters),
     createManaged: async () => { throw new Error('the list writes nothing'); },
@@ -297,6 +322,7 @@ function fakeModules({ contacts, companies, identities = [], orders = [], opport
     ['call-signal', { service: exact(signals) }],
     ['interaction-message', { service: exact(messages) }],
     ['interaction-call', { service: exact(calls) }],
+    ['conversation-read', { service: exact(reads) }],
   ]);
   for (const name of omit) map.delete(name);
   return {

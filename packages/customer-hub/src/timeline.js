@@ -72,12 +72,27 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
   // it), but the three provider reads are independent of each other, so
   // they run together instead of stacking three waits.
   const profile = await readProfile({ core, subject: { resource, id } });
-  const [threads, history, schedule] = await Promise.all([
+  // The watermarks ride along: they depend on nothing the providers return,
+  // only on the member.
+  const [threads, history, schedule, watermarks] = await Promise.all([
     readConversations(envelope),
     readTimeline(envelope),
     readSchedule(envelope),
+    readWatermarksFor(memberId, readWatermarks),
   ]);
-  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id } });
+  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id }, watermarks });
+}
+
+/**
+ * One member's read watermarks, or null when there is no read state to
+ * answer for. Null member, no reader, or a null table behind the reader —
+ * every one of those reads null, never an invented all-unread map: without
+ * read state the entries below carry `read: null` instead of lighting up.
+ */
+async function readWatermarksFor(memberId, readWatermarks) {
+  if (typeof memberId !== 'string' || memberId === '') return null;
+  if (typeof readWatermarks !== 'function') return null;
+  return readWatermarks(memberId);
 }
 
 /**
@@ -86,9 +101,11 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
  * over fabricated provider reads, while the database tests prove reuse and
  * no-write.
  *
- * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}}} input
+ * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}, watermarks?: Map<string, unknown>|null}} input
+ *   watermarks is the member's conversation id to `lastReadAt` map, or null
+ *   when there is no read state to answer for (backlog:9e003582).
  */
-export function shapeCustomerTimeline({ profile, threads, history, schedule, subject }) {
+export function shapeCustomerTimeline({ profile, threads, history, schedule, subject, watermarks = null }) {
   // Like the card: a missing canonical record is NOT_FOUND, never an empty
   // timeline that reads as "this customer never spoke to us".
   const contact = profile.identity?.contact ?? null;
@@ -98,7 +115,7 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
   }
   const contactPoints = shapeContactPoints(profile);
   const conversations = shapeConversations(threads ?? [], history?.entries ?? []);
-  const entries = shapeEntries(history?.entries ?? []);
+  const entries = shapeEntries(history?.entries ?? [], watermarks ?? null);
   const appointments = shapeAppointments(schedule ?? []);
 
   return Object.freeze({
@@ -108,6 +125,9 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
     entries,
     appointments,
     contactPoints,
+    // Whether the `read` flags below answer for somebody: false means every
+    // one of them is null, never an invented flag.
+    readState: Object.freeze({ available: watermarks !== null && watermarks !== undefined }),
     timelineNote:
       'Accordo-managed threads and bookings only: marketing, analytics and external systems are not represented. '
       + 'Threads are listed from their rows, so threads with no message or call logged yet are listed too.',
@@ -197,7 +217,25 @@ function shapeConversations(threads, entries) {
  * evidence — but the scheda cronologia is where the operator who wrote it
  * reads it back.
  */
-function shapeEntries(entries) {
+/**
+ * The `read` flag on one message row: the core's one unread rule
+ * (`isInboundUnread`), the same rule the customer list counts with, so the
+ * scheda badge and the list badge can never disagree about the same message
+ * (backlog:9e003582). Only inbound messages carry a verdict — the team does
+ * not unread its own words — and only when read state is available: without
+ * watermarks every flag is null, never an invented all-unread page. A
+ * message outside any conversation has no watermark to move, so it reads
+ * null too, or it would light up forever: no mark can ever clear it.
+ */
+function readFlag(row, watermarks) {
+  if (row?.direction !== 'inbound') return null;
+  if (watermarks === null || watermarks === undefined) return null;
+  if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') return null;
+  const watermark = watermarks.get(String(row.conversationId)) ?? null;
+  return !isInboundUnread(row, watermark);
+}
+
+function shapeEntries(entries, watermarks = null) {
   const shaped = [];
   for (const row of entries ?? []) {
     if (row?.entry === 'message') {
@@ -208,6 +246,7 @@ function shapeEntries(entries) {
         channel: row.channel ?? null,
         direction: row.direction ?? null,
         sync: row.status ?? null,
+        read: readFlag(row, watermarks),
         body: row.body ?? null,
         attachment: row.attachment ?? null,
         teamAuthorId: row.teamAuthorId ?? null,

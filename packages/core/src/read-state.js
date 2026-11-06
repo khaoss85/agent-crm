@@ -1,5 +1,7 @@
 // @ts-check
 
+import { ANONYMOUS_ACTOR } from './actor.js';
+
 /**
  * **Team read state: the one rule for "unread".**
  *
@@ -86,5 +88,10 @@ export function actorMemberId(actor) {
   // Map key they are harmless, but a watermark read under one would silently
   // match nothing and light every row up — no member, no read state.
   if (id === '__proto__' || id === 'constructor' || id === 'prototype') return null;
+  // The anonymous actor fits the vocabulary but names nobody: without this
+  // branch an unauthenticated read would answer read state for a phantom
+  // member instead of omitting it. A member literally called `anonymous`
+  // gets no read state either — documented, and the safer direction.
+  if (id === ANONYMOUS_ACTOR.id) return null;
   return id;
 }

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, definePackage, selectPackageGraph } from '../../core/index.js';
+import { AppError, actorMemberId, definePackage, selectPackageGraph } from '../../core/index.js';
 // No import from any other domain package — not even customer-data's public
 // entry. What the card reads (the consolidated profile) arrives as the
 // provider's own created `customer-profile@1` capability object, handed to
@@ -212,6 +212,16 @@ export function createCustomerHubPackage(options = {}) {
           };
           return async (request) => {
             const { profile, threads, schedule } = await open();
+            // «Da leggere» (backlog:9e003582): the `read` flags answer for
+            // the signed-in member, always derived from the request actor —
+            // the query names no member, so nobody reads another member's
+            // state. Without one (or without the timeline capability's
+            // watermark reader) the entries still read, with every `read`
+            // null: no read state, never an invented flag.
+            const memberId = actorMemberId(request?.actor);
+            const readWatermarks = memberId !== null && typeof threads.watermarks === 'function'
+              ? (member) => threads.watermarks(member)
+              : null;
             return readCustomerTimeline({
               core: runtime.core,
               subject: { resource: request?.resource, id: request?.id },
@@ -219,6 +229,8 @@ export function createCustomerHubPackage(options = {}) {
               readConversations: (subject) => threads.conversations(subject),
               readTimeline: (subject) => threads.timeline(subject),
               readSchedule: (subject) => schedule.scheduleFor(subject),
+              memberId,
+              readWatermarks,
             });
           };
         },
