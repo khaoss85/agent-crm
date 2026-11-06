@@ -2726,6 +2726,8 @@ test('da leggere: badge and mark-read share one rule — no direction or no date
   const lit = mount.findAll('div').filter((node) => node.getAttribute('data-unread') === 'true').map((node) => node.getAttribute('data-entry'));
   assert.deepEqual(lit, ['ok'], 'only what mark-read can reach lights up');
   assert.deepEqual(marks.map((mark) => mark.upTo), ['2026-11-06T09:00:00.000Z']);
+});
+
 // Composer agentico (Dan 05/11): «Chiedi all'AI» writes the text from a
 // prompt through POST /api/customer-hub/messages/draft; it never sends.
 function draftClient(answer) {
@@ -2904,4 +2906,66 @@ test('review #599 P3: the prompt is cut to 500 characters before it leaves', asy
   go.dispatch('click');
   await flushComposer();
   assert.equal(client.drafts[0].prompt.length, 500);
+});
+
+const chooseChannel = (panel, channel) => {
+  const radio = panel.findAll('input').find((node) => node.getAttribute('name') === 'composer-channel'
+    && (node.getAttribute('value') ?? node.value) === channel);
+  assert.ok(radio, `the ${channel} chip exists`);
+  assert.equal(radio.getAttribute('disabled'), null, `${channel} is usable`);
+  radio.checked = true;
+  radio.dispatch('change');
+};
+
+test('review #599 P2 (round 3): Annulla on another channel still drops the AI subject for Email', async () => {
+  const client = draftClient({ subject: 'S-AI', body: 'B' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  area.value = 'A';
+  input.value = 'più cortese';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(aiParts(panel).subject.value, 'S-AI');
+  chooseChannel(panel, 'instagram');
+  assert.equal(aiParts(panel).subject, undefined, 'Instagram has no subject field');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo').dispatch('click');
+  assert.equal(aiParts(panel).area.value, 'A');
+  chooseChannel(panel, 'email');
+  assert.equal(aiParts(panel).subject.value, '', 'the undone AI subject never comes back');
+});
+
+test('review #599 P3: a 400 says to write the prompt shorter and Genera stays', async () => {
+  const client = draftClient(Object.assign(new Error('bad'), { status: 400, code: 'BO_DRAFT_REFUSED' }));
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.match(panel.textContent, /scrivila più breve e con parole tue/);
+  assert.ok(aiParts(panel).go, 'Genera stays for another try');
+  assert.ok(!panel.textContent.includes('BO_DRAFT_REFUSED'), 'no code on screen');
+});
+
+test('review #599 P3: with no connected channel Genera asks no draft and says why', async () => {
+  const inner = draftClient({ body: 'x' });
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return { connectors: [] };
+      if (path === '/api/profile') return { member: {}, connections: { available: true, reason: null, items: [] } };
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  if (!go) {
+    assert.match(panel.textContent, /Nessun canale collegato/, 'without channels the composer says so');
+    return;
+  }
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
+  assert.match(panel.textContent, /Nessun canale collegato/);
 });

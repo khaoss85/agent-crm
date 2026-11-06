@@ -1090,7 +1090,7 @@ export function createCustomerCardView(deps) {
    * route (404/405) turns the row into one honest line, never a dead button.
    */
   const COMPOSER_PROMPT_MAX = 500;
-  function composerAiRow({ spaceId, navCtx, text, channel, subject, changed, baseline, setBaseline }) {
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
     const row = el('div', 'bo-composer-ai');
     // The composer generation this row was built in: Scrivi again, ✕ or Esc
     // supersede it (openComposer bumps the counter on every opening).
@@ -1136,8 +1136,10 @@ export function createCustomerCardView(deps) {
           const kept = baseline();
           if (kept === null) return;
           text.value = kept.text;
-          const subjectField = subject();
-          if (subjectField !== null) subjectField.value = kept.subject;
+          // Muse P2 on #599: with no subject field mounted (channel switched
+          // to WhatsApp) the undone subject goes to the shared draft, so the
+          // AI subject never comes back when Email returns.
+          restoreSubject(kept.subject);
           setBaseline(null);
           changed();
           go.textContent = 'Genera';
@@ -1352,6 +1354,10 @@ export function createCustomerCardView(deps) {
       spaceId, navCtx, text,
       channel: () => (selected !== null ? selected.channel : null),
       subject: () => subjectInput,
+      restoreSubject: (value) => {
+        if (subjectInput !== null) subjectInput.value = value;
+        else draft.subject = value;
+      },
       changed: keepDraft,
       baseline: () => draft.aiBefore ?? null,
       setBaseline: (value) => { draft.aiBefore = value; keepDraft(); },
