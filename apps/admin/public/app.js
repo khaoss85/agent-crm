@@ -514,6 +514,7 @@ const quoteView = createQuoteView({
   mount: moduleView,
   client: moduleClient,
   submissions,
+  spaceName: () => currentSpaceName(),
   navigate: (hash) => { window.location.hash = hash; },
 });
 
