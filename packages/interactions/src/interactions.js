@@ -261,6 +261,96 @@ export function shapeAttachment(row) {
 }
 
 /**
+ * The email extras a message row can carry (backlog:3055d50330b5): the
+ * decoded `Subject` line and the attachment descriptors. Email-only on
+ * purpose — a chat message naming a mail subject is a confused writer, so
+ * validation refuses it instead of storing it. The decoding (RFC 2047,
+ * entities, padding invisibles) already happened in the channels reader;
+ * what is checked here is the shape, and the reader proved the content.
+ */
+export const GMAIL_MESSAGE_SUBJECT_MAX = 500;
+export const GMAIL_MESSAGE_ATTACHMENTS_MAX = 20;
+const MAX_MAIL_ATTACHMENT_NAME = 200;
+const MAX_MAIL_ATTACHMENT_MIME = 128;
+
+/** @param {unknown} value */
+function validateMailSubject(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return safeText(value, 'mailSubject', GMAIL_MESSAGE_SUBJECT_MAX);
+}
+
+/**
+ * One validated attachment descriptor to its storable form, or null when
+ * the entry is not one. Null marks a writer bug, never a stored row.
+ * @param {unknown} entry
+ */
+function cleanMailAttachment(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const raw = /** @type {any} */ (entry);
+  if (typeof raw.name !== 'string') return null;
+  const name = raw.name.trim();
+  if (name === '' || name.length > MAX_MAIL_ATTACHMENT_NAME || CONTROL_RE.test(name)) return null;
+  if (typeof raw.mimeType !== 'string') return null;
+  const mimeType = raw.mimeType.trim();
+  if (mimeType === '' || mimeType.length > MAX_MAIL_ATTACHMENT_MIME || CONTROL_RE.test(mimeType)) return null;
+  if (!Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0 || raw.sizeBytes > MAX_ATTACHMENT_BYTES) return null;
+  return { name, mimeType, sizeBytes: raw.sizeBytes };
+}
+
+/**
+ * The validated attachment list to its storable JSON, or null when no
+ * descriptor rides along. Anything malformed is refused (fail-closed): a
+ * stored list is always parseable by `shapeMailAttachments` below.
+ * @param {unknown} value
+ */
+function validateMailAttachments(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) {
+    throw new ValidationError('mailAttachments must be a list when present', { field: 'mailAttachments' });
+  }
+  if (value.length === 0) return null;
+  if (value.length > GMAIL_MESSAGE_ATTACHMENTS_MAX) {
+    throw new ValidationError(`mailAttachments must hold at most ${GMAIL_MESSAGE_ATTACHMENTS_MAX} entries`, { field: 'mailAttachments' });
+  }
+  const cleaned = [];
+  for (const entry of value) {
+    const clean = cleanMailAttachment(entry);
+    if (clean === null) {
+      throw new ValidationError('mailAttachments entries need a bounded name, MIME type and byte size', { field: 'mailAttachments' });
+    }
+    cleaned.push(clean);
+  }
+  return JSON.stringify(cleaned);
+}
+
+/**
+ * The shape the card reads for email attachments: the frozen descriptor
+ * list, or the empty list for messages without any. Every reader (timeline,
+ * thread, hub) goes through here, so no path invents its own projection.
+ * Anything malformed degrades to the empty list (a pre-rev3 row stores
+ * null), never throws: a timeline read is not where a writer bug surfaces.
+ * @param {any} row
+ */
+export function shapeMailAttachments(row) {
+  const stored = row?.mailAttachmentsJson;
+  if (typeof stored !== 'string' || stored === '') return Object.freeze([]);
+  let parsed;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    return Object.freeze([]);
+  }
+  if (!Array.isArray(parsed)) return Object.freeze([]);
+  const cleaned = [];
+  for (const entry of parsed) {
+    const clean = cleanMailAttachment(entry);
+    if (clean === null) return Object.freeze([]);
+    cleaned.push(Object.freeze(clean));
+  }
+  return Object.freeze(cleaned);
+}
+
+/**
  * The ADR-030 opaque subject envelope, same shape `packages/work` stores.
  * SQLite cannot enforce a foreign key whose target table varies per row; what
  * is checked is the shape, and the existence was proven by the caller — the
@@ -794,20 +884,33 @@ export function validateMessageRequest(request) {
   // stores as null and the card renders the attachment instead of a blank
   // bubble. Text-only messages keep the old contract exactly.
   const attachment = validateAttachment(value.attachment);
+  const channel = validateChannel(value.channel, 'channel');
+  // Email-only extras (backlog:3055d50330b5): a chat message naming a mail
+  // subject or mail attachments is a confused writer, refused here rather
+  // than stored where no card looks.
+  const mailExtrasPresent = value.mailSubject !== undefined && value.mailSubject !== null && value.mailSubject !== ''
+    || value.mailAttachments !== undefined && value.mailAttachments !== null;
+  if (channel !== 'email' && mailExtrasPresent) {
+    throw new ValidationError('mailSubject and mailAttachments are email-only', { field: 'mailSubject' });
+  }
+  const mailSubject = channel === 'email' ? validateMailSubject(value.mailSubject) : null;
+  const mailAttachmentsJson = channel === 'email' ? validateMailAttachments(value.mailAttachments) : null;
   const bodyAbsent = value.body === undefined || value.body === null
     || (typeof value.body === 'string' && value.body.replace(/\r\n/g, '\n').trim() === '');
   // A wrong-typed body is still refused (fail-closed): only an absent or
   // blank body may ride along with an attachment, stored as null.
-  const body = bodyAbsent && attachment !== null
+  const body = bodyAbsent && (attachment !== null || mailAttachmentsJson !== null)
     ? null
     : safeMessageBody(value.body, 'body', MAX_BODY);
   return {
     sourceKey: validateSourceKey(value.sourceKey, 'sourceKey'),
     conversationId: safeText(value.conversationId, 'conversationId', MAX_ID),
     direction,
-    channel: validateChannel(value.channel, 'channel'),
+    channel,
     body,
     attachment,
+    mailSubject,
+    mailAttachmentsJson,
     teamAuthorId,
     remoteHandle: optionalSafeText(value.remoteHandle, 'remoteHandle', MAX_HANDLE),
     subject: validateSubject(value.subject),
@@ -842,6 +945,8 @@ export async function logMessage(context, request) {
     attachmentSize: input.attachment?.size ?? null,
     attachmentRef: input.attachment?.ref ?? null,
     attachmentPreview: input.attachment?.preview ?? null,
+    mailSubject: input.mailSubject,
+    mailAttachmentsJson: input.mailAttachmentsJson,
     teamAuthorId: input.teamAuthorId,
     remoteHandle: input.remoteHandle,
     subjectResource: input.subject.resource,
@@ -1580,6 +1685,8 @@ export async function readTimeline({ modules, moduleNames }, subject) {
       status: row.status,
       body: row.body,
       attachment: shapeAttachment(row),
+      subject: row.mailSubject ?? null,
+      attachments: shapeMailAttachments(row),
       teamAuthorId: row.teamAuthorId ?? null,
       remoteHandle: row.remoteHandle ?? null,
       errorCode: row.errorCode ?? null,
@@ -1672,6 +1779,7 @@ export async function readConversationThread({ modules, moduleNames }, conversat
     ...(await messages.listWhere({ conversationId: id })).map((row) => Object.freeze({
       entry: 'message', id: row.id, direction: row.direction, channel: row.channel,
       status: row.status, body: row.body, attachment: shapeAttachment(row),
+      subject: row.mailSubject ?? null, attachments: shapeMailAttachments(row),
       teamAuthorId: row.teamAuthorId ?? null,
       remoteHandle: row.remoteHandle ?? null, errorCode: row.errorCode ?? null,
       occurredAt: row.occurredAt, createdAt: row.createdAt ?? null,
