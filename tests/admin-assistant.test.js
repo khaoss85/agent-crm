@@ -1371,6 +1371,45 @@ test('voce 34fd687c: «chi è il primo?» senza contesto guida in italiano', asy
   assert.deepEqual(outcome.answer.sources, []);
 });
 
+test('voce 34fd687c: ieri vuoto poi «chi è il primo?» non riusa il giorno prima', async () => {
+  const dry = { mode: 'dry-run' };
+  const todayOnly = stubClient({
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+      ],
+    },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const first = await askFreeQuestion(todayOnly, dry, 'quanti lead oggi?');
+  assert.equal(first.ok, true);
+  assert.ok(first.answer.context && first.answer.context.ids.length === 1);
+  const second = await askFreeQuestion(todayOnly, dry, 'e ieri?', first.answer.context);
+  assert.equal(second.ok, true);
+  assert.ok(second.answer.lines.some((line) => line.includes('Nessun lead nuovo ieri')), JSON.stringify(second.answer.lines));
+  assert.ok(second.answer.context && second.answer.context.day === LEAD_YESTERDAY, 'empty yesterday carries context');
+  assert.deepEqual(second.answer.context.ids, []);
+  const third = await askFreeQuestion(todayOnly, dry, 'chi è il primo?', second.answer.context);
+  assert.equal(third.ok, true);
+  const text = shownText(third.answer);
+  assert.ok(!text.includes('Marco Rossi'), `stale name leaked: ${text}`);
+  assert.ok(third.answer.lines.some((line) => line.includes('Nessun lead')), JSON.stringify(third.answer.lines));
+});
+
+test('voce 34fd687c: moduli illeggibili portano contesto vuoto invece di tenere il giorno prima', async () => {
+  const failing = stubClient({
+    '/api/modules/contact/records?limit=50': new Error('forbidden'),
+    '/api/modules/company/records?limit=50': new Error('forbidden'),
+  });
+  const outcome = await askFreeQuestion(failing, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.context && outcome.answer.context.kind === 'lead-day');
+  assert.deepEqual(outcome.answer.context.ids, []);
+  const primo = await askFreeQuestion(failing, { mode: 'dry-run' }, 'chi è il primo?', outcome.answer.context);
+  assert.ok(!shownText(primo.answer).includes('Dimmi prima'), 'a day context answers for that day');
+  assert.ok(primo.answer.lines.some((line) => line.includes('Nessun lead')), JSON.stringify(primo.answer.lines));
+});
+
 test('voce 34fd687c: thread senza nomi non mostrano mai UUID', async () => {
   const uuid = '712e1f90-1111-2222-3333-444455556666';
   const client = stubClient({

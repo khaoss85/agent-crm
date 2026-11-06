@@ -1106,10 +1106,12 @@ async function answerLeadDay(client, title, day, dayWord) {
   const bound = capped ? ' (prime 50 lette)' : '';
   if (readable.length === 0) {
     answer.lines.push(`I lead ${when} non sono leggibili in questo spazio${bound}.`);
+    answer.context = { kind: 'lead-day', day, dayWord, ids: [] };
     return answer;
   }
   if (entries.length === 0) {
     answer.lines.push(`Nessun lead nuovo ${when}${bound}.`);
+    answer.context = { kind: 'lead-day', day, dayWord, ids: [] };
     return answer;
   }
   answer.lines.push(entries.length === 1
@@ -1149,7 +1151,15 @@ function answerPrimo(title, context) {
   const ids = Array.isArray(context?.ids) ? context.ids.filter((entry) => entry !== null && typeof entry === 'object'
     && isSafeModule(entry.module) && isSafeRecordId(entry.id) && typeof entry.label === 'string' && entry.label !== '') : [];
   if (ids.length === 0) {
-    answer.lines.push('Dimmi prima «quanti lead oggi?»: poi ti dico chi è il primo.');
+    const day = typeof context?.day === 'string' ? context.day : null;
+    const word = typeof context?.dayWord === 'string' ? context.dayWord : null;
+    if (day !== null && day !== '') {
+      const when = word !== null && word !== '' ? ` ${word} (${italianDay(day)})` : ` del ${italianDay(day)}`;
+      answer.lines.push(`Nessun lead${when}: non c'è un primo da mostrare.`);
+    } else {
+      answer.lines.push('Dimmi prima «quanti lead oggi?»: poi ti dico chi è il primo.');
+    }
+    answer.context = { kind: 'lead-day', day, dayWord: word, ids: [] };
     return answer;
   }
   const first = ids[0];
@@ -1746,7 +1756,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         state.error = outcome.notice;
       } else if (outcome.answer) {
         state.answer = outcome.answer;
-        if (outcome.answer.context !== undefined) state.freeContext = outcome.answer.context;
+        state.freeContext = outcome.answer.context ?? null;
         pushHistory(state.answer);
       }
     } catch (error) {
@@ -1845,7 +1855,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     }
     if (local !== null) {
       state.answer = local;
-      if (local.context !== undefined) state.freeContext = local.context;
+      state.freeContext = local.context ?? null;
       pushHistory(local);
       state.asked = null;
       releaseBusy();
