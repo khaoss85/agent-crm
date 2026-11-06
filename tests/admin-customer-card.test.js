@@ -1934,6 +1934,11 @@ const typeAndSend = async (panel, value = 'Certo, domani alle 18.') => {
   await flushComposer(12);
 };
 
+test('composer window hangs off the view, outside the sticky side columns', async () => {
+  const { mount, panel } = await openComposerMount();
+  assert.equal(panel.parentNode, mount, 'a fixed window inside a sticky column would sit under the next column');
+});
+
 test('send pending: a 504 BO_SEND_PENDING reads the same request back, never a second POST', async () => {
   const client = composerClient({
     onPost: () => { throw pendingSend(); },
