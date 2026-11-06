@@ -244,13 +244,16 @@ export async function createSubjectForRow(core, row, actor) {
     });
   }
   if (row.email) {
+    // The fallback names before any write (backlog:1a4d9b30): it refuses
+    // an email that names nobody, so computing it first leaves no company
+    // row behind when the lead cannot be created.
+    const fallback = leadNamesForEmail(row.email);
     // A contact needs a company: reuse the named one when it exists, else
     // create it. Both go through the adapters, never through raw SQL.
     const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
     const company = companies.length === 1
       ? companies[0]
       : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
-    const fallback = leadNamesForEmail(row.email);
     const contact = await core.createContact({
       companyId: company.id,
       firstName: row.firstName ?? fallback.firstName,
@@ -679,6 +682,20 @@ export function createChannelSenderResolution({
           evidence: 'the sender evidence reaches a company but carries no email, so no contact can be created or confirmed',
         });
       }
+      if (sender.firstName == null || sender.lastName == null) {
+        // The fallback names before any write (backlog:1a4d9b30): an email
+        // that names nobody refuses here, so the transaction below never
+        // opens and no contact — and no company — is written.
+        try {
+          leadNamesForEmail(sender.email);
+        } catch {
+          return senderUnresolved(sender, actor, {
+            rule: result.rule,
+            candidates: [],
+            evidence: 'the sender email carries no nameable local part, so no contact is created; a human decides',
+          });
+        }
+      }
       const created = await database.transactionAsync(async () => {
         const raced = await reader.externalIdentity(sender.system, sender.externalId);
         if (raced && raced.subjectResource !== 'contact') return { replayed: false, nonContact: true };
@@ -765,6 +782,21 @@ export function createChannelSenderResolution({
         identity: null,
         evidence: 'unknown sender with no linkable identity and no email: no contact created and nothing merged; a human decides',
       });
+    }
+
+    if (sender.firstName == null || sender.lastName == null) {
+      // Same no-write guard as the company path (backlog:1a4d9b30): an
+      // email that names nobody stays unresolved with no writes, instead
+      // of refusing inside the creation transaction.
+      try {
+        leadNamesForEmail(sender.email);
+      } catch {
+        return senderUnresolved(sender, actor, {
+          rule: 'none',
+          candidates: [],
+          evidence: 'the sender email carries no nameable local part, so no contact is created; a human decides',
+        });
+      }
     }
 
     const created = await database.transactionAsync(async () => {

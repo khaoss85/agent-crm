@@ -421,7 +421,7 @@ test('a real person stays a lead, with the display name (backlog:1a4d9b30)', asy
   assert.equal(sender.calls[0].firstName, 'Mario');
 });
 
-test('the recipient door is the same verdict as the inbound door (arbitration 06/11, P2)', () => {
+test('the recipient door verdict stays put per address (arbitration 06/11, P2)', () => {
   for (const handle of [
     'support@contabo.com',
     'noreply-it@klarna.com',
@@ -430,14 +430,48 @@ test('the recipient door is the same verdict as the inbound door (arbitration 06
     'support@piccola-azienda.it',
     'support-team@azienda.it',
   ]) {
-    assert.equal(
-      isAutomatedGmailRecipient(handle), isBulkGmailMessage({ from: handle }),
-      `${handle} reads the same inbound and outbound`,
-    );
     assert.equal(isAutomatedGmailRecipient(handle), true, `${handle} is automated outbound`);
   }
   assert.equal(isAutomatedGmailRecipient('amico@example.com'), false, 'a person stays a person outbound');
   assert.equal(isAutomatedGmailRecipient('not-an-address'), false, 'an unreadable address is simply not automated');
+});
+
+test('the recipient door reads the same on the fake and REST paths (rev-agent-crm-606, P2)', async (t) => {
+  // One sent-mail fixture per case, normalized on both paths: the fake
+  // push shape through the harness seedMailbox, the same To through the
+  // REST normalizer. Both must name the same recipients or quarantine —
+  // the verdict never depends on which path read the message.
+  const { harness, api, sender } = gmailScene();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = Date.now() - HOUR;
+  const toAuto = 'support@contabo.com, noreply-it@klarna.com';
+  const toMixed = '"Amico" <amico@example.com>, support@contabo.com';
+  api.seedMailbox([
+    { id: 'par-auto', threadId: 'thread-par-auto', from: MAILBOX, to: toAuto, internalDateMs: at },
+    { id: 'par-mixed', threadId: 'thread-par-mixed', from: MAILBOX, to: toMixed, internalDateMs: at + 1000 },
+  ]);
+  await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
+  const { result: page } = await captureInfo(
+    () => harness.advanceImport(SPACE, { connectionKey: key, limit: 10 }),
+  );
+  assert.equal(page.page.created, 1, 'only the human recipient became a lead on the fake path');
+  assert.deepEqual(sender.calls.map((call) => call.handle), ['amico@example.com']);
+
+  const wire = (id, threadId, to) => ({
+    id, threadId, snippet: '', internalDate: String(at),
+    payload: { headers: [{ name: 'From', value: MAILBOX }, { name: 'To', value: to }] },
+  });
+  const restAuto = normalizeGmailRestMessage(wire('par-auto', 'thread-par-auto', toAuto), MAILBOX);
+  assert.equal(restAuto.subject, '', 'an all-automated To quarantines on the REST path too');
+  assert.equal(restAuto.sender, undefined);
+  assert.equal(restAuto.recipients, undefined);
+  const restMixed = normalizeGmailRestMessage(wire('par-mixed', 'thread-par-mixed', toMixed), MAILBOX);
+  assert.deepEqual(
+    (restMixed.recipients ?? []).map((recipient) => recipient.handle),
+    sender.calls.map((call) => call.handle),
+    'both paths name the same recipients',
+  );
 });
 
 test('sent mail to automated recipients creates nothing (backlog:1a4d9b30)', async (t) => {

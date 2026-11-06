@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { boot, project } from './helpers/customer-data-project.js';
-import { leadNamesForEmail } from '../packages/customer-data/src/sender.js';
+import { createSubjectForRow, leadNamesForEmail } from '../packages/customer-data/src/sender.js';
 
 /**
  * **Channel sender resolution (backlog:a4f40325).**
@@ -450,6 +450,54 @@ test('a nameless email sender becomes a lead named from its address, never Unkno
   for (const row of companies) {
     assert.doesNotMatch(row.name, /Unknown/);
   }
+});
+
+test('a refused fallback name writes nothing, not even the company (rev-agent-crm-606, P2)', async (t) => {
+  const { app } = await scene(t, 'sender-unnameable-email');
+
+  // A named lead first, so the refused senders below reach a company the
+  // policy matches: the company path must refuse with no writes too.
+  const first = await app.resolveChannelSender({
+    channel: 'email', handle: 'named@example.com', firstName: 'Named', lastName: 'Person',
+    companyName: 'Example', domain: 'example.com', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  for (const request of [
+    { channel: 'email', handle: '+tag@example.com', actor: ACTOR },
+    { channel: 'email', handle: '---@example.com', actor: ACTOR },
+    {
+      channel: 'email', handle: '+tag@example.com',
+      companyName: 'Example', domain: 'example.com', actor: ACTOR,
+    },
+  ]) {
+    const answer = await app.resolveChannelSender(request);
+    assert.equal(answer.outcome, 'unresolved', `${request.handle} names nobody: no lead`);
+    assert.equal(answer.contact, null);
+    assert.deepEqual(answer.candidates, []);
+  }
+  assert.equal(contactsCount(app), 1, 'only the named lead exists');
+  assert.equal(
+    app.database.raw.prepare('SELECT COUNT(*) AS n FROM companies').get().n,
+    1,
+    'a refused fallback left no company behind',
+  );
+});
+
+test('createSubjectForRow names before writing the company (rev-agent-crm-606, P2)', async () => {
+  const calls = [];
+  const core = {
+    findCompaniesByNormalizedName: async () => [],
+    createCompany: async (row) => { calls.push(['company', row]); return { id: 'c1', ...row }; },
+    createContact: async (row) => { calls.push(['contact', row]); return { id: 'p1', ...row }; },
+  };
+  await assert.rejects(
+    () => createSubjectForRow(core, {
+      email: '+tag@example.com', firstName: null, lastName: null, companyName: null, domain: 'example.com',
+    }, ACTOR),
+    /local part/,
+  );
+  assert.deepEqual(calls, [], 'the refused name wrote nothing, not even the company');
 });
 
 test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {
