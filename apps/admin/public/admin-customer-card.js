@@ -378,6 +378,33 @@ export function mergeLinkedIdentities(timeline) {
   });
 }
 
+/** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
+const TIMELINE_PAGE = 20;
+/** A message longer than this folds behind «Mostra tutto». */
+const ENTRY_FOLD_CHARS = 280;
+const NAMED_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
+/**
+ * Message text as a person reads it: HTML entities the mail provider left in
+ * the snippet are decoded (as text — nothing is ever parsed as markup), the
+ * invisible preheader padding (U+034F, zero-widths, BOM, soft hyphen) is
+ * dropped and runs of blanks collapse. The stored value stays untouched.
+ * @param {string} value
+ */
+export function readableText(value) {
+  return String(value ?? '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
+      if (name[0] === '#') {
+        const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+        return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+      }
+      return Object.hasOwn(NAMED_ENTITIES, name.toLowerCase()) ? NAMED_ENTITIES[name.toLowerCase()] : whole;
+    })
+    .replace(/[\u034f\u200b-\u200d\u2060\ufeff\u00ad]/g, '')
+    .replace(/[ \t\u00a0]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -1374,7 +1401,13 @@ export function createCustomerCardView(deps) {
       const edit = el('button', undefined, 'Modifica');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', 'edit-details');
-      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx));
+      // Dan 06/11: Annulla puts this card back as it was — no reload of the
+      // whole scheda (it used to blank for seconds and jump to the top).
+      const restore = () => {
+        while (box.firstChild) box.removeChild(box.firstChild);
+        details(box, card, profile, editCtx, profileError);
+      };
+      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
       box.appendChild(edit);
     }
     // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
@@ -1407,7 +1440,7 @@ export function createCustomerCardView(deps) {
    * refused save keeps the form with the server's Italian error, never a
    * blank card.
    */
-  function renderDetailsForm(box, card, contact, editCtx) {
+  function renderDetailsForm(box, card, contact, editCtx, restore = null) {
     while (box.firstChild) box.removeChild(box.firstChild);
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const field = (label, name, value) => {
@@ -1462,6 +1495,10 @@ export function createCustomerCardView(deps) {
       }
     });
     cancel.addEventListener('click', async () => {
+      if (typeof restore === 'function') {
+        restore();
+        return;
+      }
       await renderCard(editCtx.resource, editCtx.id);
     });
     void card;
@@ -1638,6 +1675,7 @@ export function createCustomerCardView(deps) {
         if (channelFilter === key) chip.setAttribute('data-active', 'true');
         chip.addEventListener('click', () => {
           channelFilter = key;
+          shownCount = TIMELINE_PAGE;
           drawChips();
           drawList();
         });
@@ -1679,8 +1717,12 @@ export function createCustomerCardView(deps) {
       while (list.firstChild) list.removeChild(list.firstChild);
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
-      const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
-      if (visible.length === 0) {
+      // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
+      // a 5.600px page. «Mostra precedenti» opens the next page below.
+      const filtered = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
+      const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+      const visible = ordered.slice(0, shownCount);
+      if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
@@ -1739,7 +1781,21 @@ export function createCustomerCardView(deps) {
           row.appendChild(el('p', undefined,
             dur ? `chiamata ${isOutbound ? 'in uscita' : 'in entrata'} · ${dur}` : `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`));
         } else if (typeof item?.body === 'string' && item.body !== '') {
-          row.appendChild(el('p', undefined, item.body));
+          const text = readableText(item.body);
+          const bodyNode = el('p', 'bo-scheda-entry-body', text);
+          row.appendChild(bodyNode);
+          if (text.length > ENTRY_FOLD_CHARS) {
+            bodyNode.setAttribute('data-folded', 'true');
+            const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
+            more.setAttribute('type', 'button');
+            more.setAttribute('data-action', 'entry-expand');
+            more.addEventListener('click', () => {
+              const folded = bodyNode.getAttribute('data-folded') === 'true';
+              bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
+              more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
+            });
+            row.appendChild(more);
+          }
         }
         const attachment = attachmentNode(item?.attachment);
         if (attachment) row.appendChild(attachment);
@@ -1749,7 +1805,19 @@ export function createCustomerCardView(deps) {
           `${syncArrow(item?.direction)}${channelLabel(item?.channel)} · ${syncLabel(item?.sync)}`));
         list.appendChild(row);
       }
+      if (ordered.length > visible.length) {
+        const rest = ordered.length - visible.length;
+        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${Math.min(rest, TIMELINE_PAGE)} di ${rest}`);
+        older.setAttribute('type', 'button');
+        older.setAttribute('data-action', 'timeline-older');
+        older.addEventListener('click', () => {
+          shownCount += TIMELINE_PAGE;
+          drawList();
+        });
+        list.appendChild(older);
+      }
     };
+    let shownCount = TIMELINE_PAGE;
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -2147,9 +2215,10 @@ export function createCustomerCardView(deps) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
-    const left = el('div', 'bo-scheda-col');
-    const center = el('div', 'bo-scheda-col');
-    const right = el('div', 'bo-scheda-col');
+    // Dan 06/11: the side columns stay put while the conversation scrolls.
+    const left = el('div', 'bo-scheda-col bo-scheda-col-side');
+    const center = el('div', 'bo-scheda-col bo-scheda-col-main');
+    const right = el('div', 'bo-scheda-col bo-scheda-col-side');
     // Supervisor design pass: every section is its own card, like the
     // prototype; a section that hides itself (returns false) leaves no card.
     const section = (col, cls, fn, ...args) => {

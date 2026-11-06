@@ -514,6 +514,7 @@ const quoteView = createQuoteView({
   mount: moduleView,
   client: moduleClient,
   submissions,
+  spaceName: () => currentSpaceName(),
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -852,8 +853,10 @@ if (boSidebar && boTopbar) {
       window.location.hash = '#/';
       toast('Spazio locale reimpostato.');
     },
-    onAiSubmit: () => {
-      if (assistantPanel) void assistantPanel.open(currentScreenId);
+    // The words typed in the top bar travel to the panel (Dan 05/11):
+    // they run the closest suggestion instead of being dropped.
+    onAiSubmit: (text) => {
+      if (assistantPanel) void assistantPanel.open(currentScreenId, undefined, undefined, text);
     },
     onPickSpace: (id) => {
       shellActiveSpace = id;
