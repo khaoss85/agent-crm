@@ -506,3 +506,45 @@ test('the reader fence mirrors the record fence', () => {
   // shared import: a drift would truncate wrong or refuse downstream.
   assert.equal(GMAIL_MAX_STORED_TEXT, bounds.body);
 });
+
+test('a newline decoded inside the Subject stays on one line', () => {
+  // P1 backlog:3055d50330b5 — an entity (`&#10;`) or an RFC 2047 Q-word
+  // (`=0A`) decodes to a line feed after unfolding, and the record fence
+  // refuses it, so the whole synced mail was lost over a cosmetic subject.
+  const wire = {
+    id: 'gmail-subject-nl-1',
+    threadId: 'thread-subject-nl-1',
+    snippet: 'Corpo vero.',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Ciao&#10;Mondo' },
+      ],
+      mimeType: 'text/plain',
+      parts: [],
+    },
+  };
+  const rest = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.equal(rest.mailSubject, 'Ciao Mondo', 'the entity newline becomes a space on history');
+
+  const definition = createGmailChannelAdapter({ mailbox: MAILBOX, secret: 'gmail-test-secret' }).definition;
+  const [push] = definition.normalizeInbound(gmailPushBody({
+    id: 'gmail-subject-nl-1', threadId: 'thread-subject-nl-1',
+    from: 'Esempio <mittente@example.com>', to: MAILBOX,
+    subject: '=?UTF-8?Q?Ciao=0AMondo?=', snippet: 'Corpo vero.', internalDateMs: AT,
+  }));
+  assert.equal(push.mailSubject, 'Ciao Mondo', 'the Q-encoded newline becomes a space on push');
+
+  for (const [path, mailSubject] of [['history', rest.mailSubject], ['push', push.mailSubject]]) {
+    const validated = validateMessageRequest({
+      sourceKey: `gmail:subject-nl:${path}`, conversationId: 'email:thread-subject-nl-1', direction: 'inbound',
+      channel: 'email', body: 'Corpo vero.', mailSubject,
+      subject: SUBJECT, occurredAt: '2026-11-05T09:00:00.000Z',
+      source: SOURCE,
+    });
+    assert.equal(validated.mailSubject, 'Ciao Mondo', `the single-line subject stores on ${path}`);
+  }
+});

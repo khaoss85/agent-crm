@@ -325,9 +325,12 @@ function decodeRfc2047Word(match, charset, encoding, data) {
 /**
  * A received `Subject` header to display text (backlog:3055d50330b5): RFC
  * 2047 words decoded, folded lines joined, entities decoded, invisibles
- * stripped, truncated to `GMAIL_MAX_MAIL_SUBJECT`. Null when nothing
- * displayable remains — a missing subject stores nothing, never an
- * invented placeholder.
+ * stripped, truncated to `GMAIL_MAX_MAIL_SUBJECT`. Always a single line:
+ * a newline decoded from an entity (`&#10;`) or an RFC 2047 Q-word
+ * (`=0A`) becomes a space, so the record fence (no line breaks in the
+ * subject) never refuses a synced mail over a cosmetic subject.
+ * Null when nothing displayable remains — a missing subject stores
+ * nothing, never an invented placeholder.
  * @param {unknown} value
  */
 export function decodeGmailSubject(value) {
@@ -336,7 +339,7 @@ export function decodeGmailSubject(value) {
   const decoded = unfolded.includes('=?')
     ? unfolded.replace(RFC2047_WORD_RE, decodeRfc2047Word)
     : unfolded;
-  const clean = sanitizeGmailText(decoded);
+  const clean = sanitizeGmailText(decoded).replace(/[\r\n]+[ \t]*/g, ' ').trim();
   if (clean === '') return null;
   return clean.length > GMAIL_MAX_MAIL_SUBJECT ? clean.slice(0, GMAIL_MAX_MAIL_SUBJECT) : clean;
 }
