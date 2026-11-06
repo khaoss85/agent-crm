@@ -159,6 +159,10 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // proposed from the conversations and which refuse, so the module is
   // behaviour-bearing by definition.
   'packages/commercial/src/quote-suggest.js',
+  // AI-suggested offer draft from one operator sentence (backlog:7847b4cf):
+  // it decides which catalog offers get proposed, which refuse and how the
+  // total is priced, so the module is behaviour-bearing by definition.
+  'packages/commercial/src/offer-draft.js',
   // Catalog price rules (BO-F2-04): they decide which submits auto-approve,
   // which wait for the owner and which stay a draft, so the module is
   // behaviour-bearing by definition.
