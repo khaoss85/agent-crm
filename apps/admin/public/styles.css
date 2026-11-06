@@ -392,6 +392,8 @@ button[aria-busy="true"] { opacity: .6; }
   .bo-offer-amount { font-size: 34px; }
   .bo-offer .offer-quotes, .bo-offer .offer-history { padding: 16px; }
   .bo-offer .offer-quote-open { flex-basis: 100%; }
+}
+
 /* Preventivo (Dan 06/11): un piccolo documento curato a sinistra, il flusso (approvazione, firma, storico) a destra. */
 .quote-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
 .quote-back:hover { color: var(--ink); }
