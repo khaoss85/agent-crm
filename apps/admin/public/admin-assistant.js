@@ -1501,8 +1501,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Azione fallita.';
     } finally {
-      state.busy = false;
-      render();
+      releaseBusy();
     }
   }
 
@@ -1518,9 +1517,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Suggerimento fallito.';
     } finally {
-      state.busy = false;
-      render();
-      drainQueued();
+      releaseBusy();
     }
   }
 
@@ -1541,15 +1538,24 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Domanda fallita.';
     } finally {
-      state.busy = false;
-      render();
-      drainQueued();
+      releaseBusy();
     }
+  }
+
+  /**
+   * The one way out of «busy» (review #596 P1): every busy owner — a
+   * suggestion, a free question, a confirmed action — ends here, so a
+   * question queued meanwhile always starts.
+   */
+  function releaseBusy() {
+    state.busy = false;
+    render();
+    drainQueued();
   }
 
   /** Start the question that waited for the running answer, if any. */
   function drainQueued() {
-    if (state.queued === null) return;
+    if (state.queued === null || !state.open) return;
     const next = state.queued;
     state.queued = null;
     void openPanel(next.screenId, next.draft, next.customer, next.question);
@@ -1566,13 +1572,21 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return;
     }
     const generation = (openGeneration += 1);
+    // Review #596 P2: nothing shared changes before the probe answers — a
+    // run started meanwhile keeps its screen, draft and asked header.
+    const status = await probeAssistantBackend(client);
+    if (generation !== openGeneration) return;
+    if (state.busy && typed !== '') {
+      state.open = true;
+      state.queued = { screenId, draft, customer, question: typed };
+      render();
+      return;
+    }
     state.open = true;
     if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
     state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
     state.customerCtx = schedaCustomer(customer);
     state.asked = null;
-    const status = await probeAssistantBackend(client);
-    if (generation !== openGeneration) return;
     state.status = status;
     // A new question never shows the previous answer (review #596 P1).
     if (typed !== '') {
@@ -1581,12 +1595,6 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       state.pendingConfirmId = null;
     }
     if (typed === '') {
-      render();
-      return;
-    }
-    if (state.busy) {
-      // An answer started while the probe ran: queue instead of dropping.
-      state.queued = { screenId, draft, customer, question: typed };
       render();
       return;
     }
@@ -1736,7 +1744,11 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return openPanel(screenId, draft, customer, question);
     },
     close() {
+      // Review #596 P2: an explicit close cancels what waits — no queued
+      // question and no slow probe may reopen the panel afterwards.
       state.open = false;
+      state.queued = null;
+      openGeneration += 1;
       render();
     },
     getState() {

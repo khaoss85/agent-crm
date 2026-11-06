@@ -1220,3 +1220,50 @@ test('scheda-cliente: un nome ostile resta testo e non entra negli href', async 
     assert.ok(!action.href.includes(nasty));
   }
 });
+
+test('review #596 P1: a top-bar question asked during a confirmed action waits and then runs', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({ '/api/modules/conversation/records?limit=50': CONVS });
+  const panel = createAssistantPanel({ doc, mount, client, navigate: (href) => navigated.push(href), notify: () => {} });
+  await panel.open('clienti');
+  mount.findByText('button', 'Chi devo ricontattare?').dispatch('click', {});
+  await tick();
+  await tick();
+  mount.findByText('button', 'Contatta il cliente').dispatch('click', {});
+  await tick();
+  mount.findByText('button', 'Conferma:').dispatch('click', {});
+  // The action is busy right now: the new question must wait, not vanish.
+  const queued = panel.open('clienti', undefined, undefined, 'meteo a Milano');
+  assert.ok(mount.textContent.includes('Finisco la risposta in corso'), 'the question waits visibly');
+  await queued;
+  for (let i = 0; i < 8; i += 1) await tick();
+  assert.deepEqual(navigated, ['#/modules/conversation/conv-2'], 'the confirmed action ran');
+  assert.ok(mount.textContent.includes('«meteo a Milano»'), 'the waiting question started after the action');
+  assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'nothing is left stranded');
+});
+
+test('review #596 P2: closing the panel cancels a waiting question; it never reopens by itself', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({ '/api/modules/conversation/records?limit=50': CONVS });
+  const client = {
+    async request(path, options) {
+      if (path.startsWith('/api/modules/conversation/records')) await gate;
+      return base.request(path, options);
+    },
+  };
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {} });
+  const first = panel.open('clienti', undefined, undefined, 'chi devo ricontattare oggi?');
+  for (let i = 0; i < 6; i += 1) await tick();
+  await panel.open('clienti', undefined, undefined, 'meteo a Milano');
+  panel.close();
+  release();
+  await first;
+  for (let i = 0; i < 8; i += 1) await tick();
+  assert.equal(panel.getState().open, false, 'an explicit close stays closed');
+  assert.equal(mount.textContent, '', 'nothing paints after close');
+});
