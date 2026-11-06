@@ -505,3 +505,54 @@ test('the conversations read refuses a store without its records', async () => {
     'a store without the conversation record fails closed, never an empty thread list',
   );
 });
+
+test('9e003582: ogni voce messaggio porta read, con la stessa regola della lista', () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  const history = {
+    entries: [
+      { entry: 'message', id: 'm1', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ciao', occurredAt: '2026-11-06T10:01:00.000Z' },
+      { entry: 'message', id: 'm2', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ci siete?', occurredAt: '2026-11-06T10:02:00.000Z' },
+      { entry: 'message', id: 'm3', conversationId: 'wa:1', channel: 'whatsapp', direction: 'outbound', status: 'sent', body: 'sì, dica', teamAuthorId: 'guido', occurredAt: '2026-11-06T10:03:00.000Z' },
+      { entry: 'call', id: 'v1', conversationId: 'wa:1', channel: 'phone', direction: 'inbound', outcome: 'completed', durationSec: 60, occurredAt: '2026-11-06T10:04:00.000Z' },
+    ],
+  };
+  const timeline = shapeCustomerTimeline({
+    profile, threads: [], history, schedule: [],
+    subject: { resource: 'contact', id: 'c1' },
+    watermarks: new Map([['wa:1', '2026-11-06T10:01:30.000Z']]),
+  });
+  assert.equal(timeline.readState.available, true);
+  const byId = Object.fromEntries(timeline.entries.items.map((row) => [row.id, row]));
+  assert.equal(byId.m1.read, true, 'arrived before the watermark: already seen');
+  assert.equal(byId.m2.read, false, 'arrived after the watermark: still unread');
+  assert.equal(byId.m3.read, null, 'our own words never badge');
+  assert.ok(!('read' in byId.v1), 'a call carries no read verdict');
+});
+
+test('9e003582: senza stato di lettura ogni flag è null, mai una pagina tutta da leggere', () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  const history = {
+    entries: [
+      { entry: 'message', id: 'm1', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ciao', occurredAt: '2026-11-06T10:01:00.000Z' },
+      { entry: 'message', id: 'm2', conversationId: null, channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'senza filo', occurredAt: '2026-11-06T10:02:00.000Z' },
+    ],
+  };
+  const shaped = (watermarks) => shapeCustomerTimeline({
+    profile, threads: [], history, schedule: [],
+    subject: { resource: 'contact', id: 'c1' }, watermarks,
+  });
+  for (const timeline of [shaped(null), shaped(undefined)]) {
+    assert.equal(timeline.readState.available, false);
+    assert.deepEqual(timeline.entries.items.map((row) => row.read), [null, null]);
+  }
+  const withMarks = shaped(new Map());
+  assert.equal(withMarks.readState.available, true);
+  assert.equal(withMarks.entries.items[0].read, false, 'no watermark: still unread');
+  assert.equal(withMarks.entries.items[1].read, null, 'outside any conversation no mark can ever clear it');
+});
