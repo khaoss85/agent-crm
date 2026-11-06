@@ -9,6 +9,7 @@ import {
   GMAIL_ADAPTER_VERSION,
   createGmailChannelAdapter,
   formatGoogleSyncLog,
+  gmailBulkExclusionReason,
   gmailPushBody,
   isAutomatedGmailRecipient,
   isAutomatedGmailSender,
@@ -154,6 +155,33 @@ test('Auto-Submitted other than no marks bulk, and the question splits by reason
   );
 });
 
+test('the exclusion reason splits automated-sender from bulk-header, else nothing', () => {
+  for (const from of [
+    'noreply-it@klarna.com',
+    'support@contabo.com',
+    'hello@notify.railway.app',
+    'invoice+statements@mail.anthropic.com',
+  ]) {
+    assert.equal(gmailBulkExclusionReason({ from }), 'automated-sender', `${from} is automated-sender`);
+  }
+  assert.equal(
+    gmailBulkExclusionReason({ from: 'team@example.com', listUnsubscribe: '<mailto:unsub@example.com>' }),
+    'bulk-header', 'an unlisted local with bulk headers is bulk-header',
+  );
+  assert.equal(
+    gmailBulkExclusionReason({ listUnsubscribe: '<https://example.com/unsub>' }),
+    'bulk-header', 'headers alone are bulk-header',
+  );
+  assert.equal(
+    gmailBulkExclusionReason({ from: 'guido@example.com', autoSubmitted: 'auto-replied' }),
+    'bulk-header', 'Auto-Submitted alone is bulk-header',
+  );
+  assert.equal(gmailBulkExclusionReason({ from: 'guido@example.com' }), null, 'a real person has no reason');
+  assert.equal(gmailBulkExclusionReason({}), null, 'an empty question has no reason');
+  assert.equal(gmailBulkExclusionReason({ from: 'not-an-address' }), null, 'an unreadable sender has no reason');
+  assert.equal(gmailBulkExclusionReason(null), null, 'a missing question has no reason');
+});
+
 test('address headers parse display names and recipients exclude the mailbox', () => {
   assert.deepEqual(parseGmailAddressHeader('"Rossi, Guido" <Guido@Example.com>'), {
     address: 'guido@example.com', firstName: 'Rossi,', lastName: 'Guido',
@@ -237,6 +265,7 @@ test('the REST reader carries sender names, recipients and bulk like the fake', 
   );
   assert.equal(loopbackAuto.subject, '', 'an all-automated To quarantines as evidence');
   assert.equal(loopbackAuto.sender, undefined);
+  assert.equal(loopbackAuto.excluded, undefined, 'owner-sent mail keeps no bulk reason: it was never bulk');
   const loopbackMixed = normalizeGmailRestMessage(
     wire([
       { name: 'From', value: MAILBOX },
@@ -255,6 +284,7 @@ test('the REST reader carries sender names, recipients and bulk like the fake', 
   );
   assert.equal(bulk.subject, '');
   assert.equal(bulk.sender, undefined);
+  assert.equal(bulk.excluded, 'bulk-header', 'headers-only bulk names its reason');
 
   const auto = normalizeGmailRestMessage(
     wire([
@@ -265,6 +295,29 @@ test('the REST reader carries sender names, recipients and bulk like the fake', 
   );
   assert.equal(auto.subject, '', 'Auto-Submitted other than no quarantines like bulk');
   assert.equal(auto.sender, undefined);
+  assert.equal(auto.excluded, 'bulk-header', 'a normal sender with bulk headers is bulk-header');
+
+  // The 06/11 proof senders through the real REST path, bare From and no
+  // headers (arbitration 06/11): each quarantines with its reason, so the
+  // sync round counts automated-sender on the live shape.
+  for (const from of [
+    'noreply-it@klarna.com',
+    'order-update@amazon.it',
+    'alerts@mail.zapier.com',
+    'invoice+statements@mail.anthropic.com',
+    'renewals@godaddy.com',
+    'hello@notify.railway.app',
+    'support@contabo.com',
+    'onboarding@help.example.com',
+  ]) {
+    const quarantined = normalizeGmailRestMessage(
+      wire([{ name: 'From', value: from }]),
+      MAILBOX,
+    );
+    assert.equal(quarantined.subject, '', `${from} quarantines on the REST path`);
+    assert.equal(quarantined.sender, undefined);
+    assert.equal(quarantined.excluded, 'automated-sender', `${from} counts as automated-sender`);
+  }
 
   const manual = normalizeGmailRestMessage(
     wire([
