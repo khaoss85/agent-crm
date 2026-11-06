@@ -1954,6 +1954,8 @@ test('send pending: a 504 BO_SEND_PENDING reads the same request back, never a s
   assert.equal(client.resumes.length, 3, 'the queued request is read back until it settles');
   assert.ok(client.resumes.every((path) => path.includes('requestId=req-1') && path.includes('claimId=claim-1')),
     'the read-back names the 504 request and its claim');
+  assert.ok(client.resumes.every((path) => path.includes('spaceId=presti')),
+    'the read-back names the space, like every other customer-hub read');
   assert.deepEqual(toasts, ['Messaggio in consegna'], 'the settled send reads as delivered');
 });
 
@@ -2008,6 +2010,59 @@ test('send pending: an edited message or a definitive failure gets a fresh key',
   assert.notEqual(client.posts[3].messageKey, client.posts[2].messageKey, 'a refused send drops the key');
   await typeAndSend(panel, 'Testo cambiato');
   assert.notEqual(client.posts[4].messageKey, client.posts[3].messageKey, 'an edited message is a new message');
+});
+
+test('send pending: reopening Scrivi stops the old read-back, which never touches the new form', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: async () => { await gate; return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' }; },
+  });
+  const { mount, panel, toasts } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  assert.equal(client.resumes.length, 1, 'the first read-back is in flight');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  release();
+  await flushComposer(24);
+  assert.equal(client.resumes.length, 1, 'the stale send reads back no more');
+  assert.deepEqual(toasts, [], 'the stale send neither toasts nor re-renders');
+  const send = composerSendButton(panel);
+  assert.equal(send.getAttribute('disabled'), null, 'the new form Invia is not held busy by the old send');
+  assert.ok(!panel.textContent.includes('In consegna'), 'the new form shows no status of the old send');
+});
+
+test('send pending: the log names code, status and request, never the claim or the text', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const client = composerClient({
+      onPost: () => { throw pendingSend(); },
+      onResume: () => ({ channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' }),
+    });
+    const { panel } = await openComposerMount({ client });
+    await typeAndSend(panel, 'Testo riservato');
+    await flushComposer(12);
+  } finally {
+    console.error = original;
+  }
+  const pending = logged.filter(([label]) => label === '[bo] invio in attesa');
+  assert.equal(pending.length, 1, 'the pending send is logged once');
+  assert.deepEqual(pending[0][1], { code: 'BO_SEND_PENDING', status: 504, requestId: 'req-1' });
+  assert.ok(!JSON.stringify(logged).includes('claim-1'), 'the claim id never reaches the log');
+  assert.ok(!JSON.stringify(logged).includes('Testo riservato'), 'the message text never reaches the log');
+});
+
+test('send pending: a trailing space or newline keeps the same key', async () => {
+  const client = composerClient({
+    onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Primo testo');
+  await typeAndSend(panel, 'Primo testo  \n');
+  assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, 'whitespace around the text is the same message');
 });
 
 test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled', async () => {

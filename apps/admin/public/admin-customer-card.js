@@ -1220,6 +1220,12 @@ export function createCustomerCardView(deps) {
     };
     async function doSend() {
       if (busy || selected === null) return;
+      // The window this send belongs to. Reopening «Scrivi» rebuilds the
+      // form in the same panel and bumps the generation: from then on this
+      // send is stale and never touches the UI (the key stays, so the same
+      // text sent again from the new form reads back the same request).
+      const generation = composerGeneration;
+      const stale = () => generation !== composerGeneration || panel.parentNode == null;
       if (text.value.trim() === '') {
         showError('Scrivi il messaggio prima di inviarlo.');
         return;
@@ -1237,12 +1243,15 @@ export function createCustomerCardView(deps) {
       if (selected.channel === 'email' && subjectInput !== null && subjectInput.value.trim() !== '') {
         payload.subject = subjectInput.value.trim();
       }
-      const sendKey = `${draftKey}\0${payload.channel}\0${payload.connectionKey ?? ''}\0${payload.subject ?? ''}\0${payload.text}`;
+      // Trimmed like the empty check above: a trailing space or newline
+      // added after a pending send is still the same message.
+      const sendKey = `${draftKey}\0${payload.channel}\0${payload.connectionKey ?? ''}\0${payload.subject ?? ''}\0${payload.text.trim()}`;
       const known = composerSendKeys.get(draftKey);
       const messageKey = known && known.sendKey === sendKey ? known.messageKey : freshMessageKey();
       composerSendKeys.set(draftKey, { sendKey, messageKey });
       payload.messageKey = messageKey;
       const sent = async () => {
+        if (stale()) return;
         composerSendKeys.delete(draftKey);
         composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
@@ -1253,25 +1262,31 @@ export function createCustomerCardView(deps) {
         await sent();
         return;
       } catch (error) {
+        if (stale()) return;
         if (!isSendPending(error)) {
           failSend(error);
           return;
         }
         // The worker holds the message: say so and read the same request
-        // back, never a second POST.
+        // back, never a second POST. The log carries the ids to trace it,
+        // never the claim or the text.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] invio in attesa', { code: error.code, status: typeof error.status === 'number' ? error.status : null, requestId: error.requestId });
+        }
         showStatus('In consegna: il messaggio è in coda. Non serve inviarlo di nuovo.');
         let pending = error;
         for (let round = 0; round < SEND_RESUME_ROUNDS; round += 1) {
           await wait(SEND_RESUME_EVERY_MS);
-          // The panel was closed: stop reading back. The key stays, so a
-          // re-tap after reopening still finds the same request.
-          if (panel.parentNode == null) return;
+          // The panel was closed or reopened: stop reading back. The key
+          // stays, so a re-tap after reopening still finds the same request.
+          if (stale()) return;
           try {
-            const query = `requestId=${encodeURIComponent(pending.requestId)}&claimId=${encodeURIComponent(pending.claimId)}`;
+            const query = `spaceId=${encodeURIComponent(spaceId)}&requestId=${encodeURIComponent(pending.requestId)}&claimId=${encodeURIComponent(pending.claimId)}`;
             await client.request(`/api/customer-hub/messages?${query}`);
             await sent();
             return;
           } catch (next) {
+            if (stale()) return;
             if (!isSendPending(next)) {
               failSend(next);
               return;
@@ -1280,9 +1295,10 @@ export function createCustomerCardView(deps) {
           }
         }
         // Still queued: the key stays, so a re-tap finds the same request.
+        if (stale()) return;
         showStatus('Ancora in coda: comparirà nella cronologia appena parte. Non serve inviarlo di nuovo.');
       } finally {
-        setBusy(false);
+        if (!stale()) setBusy(false);
       }
     }
     function failSend(error) {
