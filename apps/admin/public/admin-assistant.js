@@ -1553,6 +1553,18 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     drainQueued();
   }
 
+  /**
+   * The one close (review #596 P2): the header ✕ and the public close()
+   * both cancel what waits — no queued question and no slow probe may
+   * reopen the panel afterwards.
+   */
+  function doClose() {
+    state.open = false;
+    state.queued = null;
+    openGeneration += 1;
+    render();
+  }
+
   /** Start the question that waited for the running answer, if any. */
   function drainQueued() {
     if (state.queued === null || !state.open) return;
@@ -1626,10 +1638,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     const close = el(doc, 'button', 'bo-assistant-close', '✕');
     close.setAttribute('type', 'button');
     close.setAttribute('aria-label', 'Chiudi assistente');
-    close.addEventListener('click', () => {
-      state.open = false;
-      render();
-    });
+    close.addEventListener('click', () => doClose());
     header.appendChild(close);
     panel.appendChild(header);
 
@@ -1744,12 +1753,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return openPanel(screenId, draft, customer, question);
     },
     close() {
-      // Review #596 P2: an explicit close cancels what waits — no queued
-      // question and no slow probe may reopen the panel afterwards.
-      state.open = false;
-      state.queued = null;
-      openGeneration += 1;
-      render();
+      doClose();
     },
     getState() {
       return {

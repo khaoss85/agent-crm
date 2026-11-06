@@ -1267,3 +1267,29 @@ test('review #596 P2: closing the panel cancels a waiting question; it never reo
   assert.equal(panel.getState().open, false, 'an explicit close stays closed');
   assert.equal(mount.textContent, '', 'nothing paints after close');
 });
+
+test('review #596 P2: the header ✕ cancels a waiting question and a slow probe like close()', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({ '/api/modules/conversation/records?limit=50': CONVS });
+  const client = {
+    async request(path, options) {
+      if (path.startsWith('/api/modules/conversation/records')) await gate;
+      return base.request(path, options);
+    },
+  };
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {} });
+  const first = panel.open('clienti', undefined, undefined, 'chi devo ricontattare oggi?');
+  for (let i = 0; i < 6; i += 1) await tick();
+  await panel.open('clienti', undefined, undefined, 'meteo a Milano');
+  mount.findAll('button').find((node) => String(node.getAttribute('class') ?? '').includes('bo-assistant-close')).dispatch('click', {});
+  release();
+  await first;
+  for (let i = 0; i < 8; i += 1) await tick();
+  assert.equal(panel.getState().open, false, 'the ✕ close stays closed');
+  await panel.open('clienti');
+  assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'no ghost waiting bubble on the next open');
+  assert.ok(!mount.textContent.includes('«meteo a Milano»'), 'the cancelled question never runs');
+});
