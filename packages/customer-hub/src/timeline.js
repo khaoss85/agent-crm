@@ -1,6 +1,6 @@
 // @ts-check
 
-import { NotFoundError, ValidationError } from '../../core/index.js';
+import { NotFoundError, ValidationError, isInboundUnread } from '../../core/index.js';
 import { PHONE_SYSTEMS, SOCIAL_SYSTEMS, toDialablePhone } from './card.js';
 // This module imports nothing from any other domain package — not even the
 // entries of the packages it reads. Conversations, messages, calls and
@@ -36,9 +36,14 @@ const APPOINTMENT_LIMIT = 50;
 const ENTRY_LIMIT = 50;
 
 /**
- * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>}} input
+ * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>, memberId?: string|null, readWatermarks?: ((memberId: string) => Promise<Map<string, unknown>|null>)|null}} input
+ *   memberId names the signed-in team member the `read` flags answer for
+ *   (backlog:9e003582); readWatermarks fetches that member's watermarks.
+ *   Both absent (or a null table behind the reader) the entries still read,
+ *   with every `read` null and `readState.available` false — no read state,
+ *   never an invented flag.
  */
-export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule }) {
+export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, memberId = null, readWatermarks = null }) {
   const resource = subject?.resource;
   const id = subject?.id;
   if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {

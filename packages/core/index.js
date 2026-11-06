@@ -166,7 +166,7 @@ export { normalizeEmail, normalizeCompanyName } from './src/core-adapters.js';
 // and the `da-leggere` view must agree on every message. Published here so
 // no package re-implements it, with the same ADR-018 justification as the
 // normalization above: one rule, every caller.
-export { actorMemberId, isInboundUnread } from './src/read-state.js';
+export { actorMemberId, countUnreadForSubject, isInboundUnread } from './src/read-state.js';
 
 // ---- declared-definition fingerprints (ADR-015) ----
 // A package that publishes versioned policies uses the same mechanism every

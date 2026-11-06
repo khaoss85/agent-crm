@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, actorMemberId, countUnreadForSubject, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
@@ -694,6 +694,28 @@ export async function listCustomerRecords({ modules, core, names }, request) {
   const tasks = await batched('work-task');
   const messages = await batched('interaction-message');
   const calls = await batched('interaction-call');
+  // «Da leggere» (backlog:9e003582): one member's read watermarks over
+  // every conversation, read once for the whole page. The member is always
+  // the request actor — the query names no member — and without one (or
+  // without the watermark table composed) every row below carries nulls:
+  // no read state, never an invented count. The table lives in the
+  // interactions package, but this read goes straight at the record module
+  // (like the message and call reads above), never through that package's
+  // code — a domain package reaches another only through requires plus
+  // capability, and this list has no edge to add for a display column.
+  const watermarks = await (async () => {
+    const member = actorMemberId(normalizeActor(request?.actor));
+    if (member === null) return null;
+    const reads = optional(modules, 'conversation-read');
+    if (!reads || typeof reads.listWhere !== 'function') return null;
+    const byConversation = new Map();
+    const marks = await reads.listWhere({ memberId: member });
+    for (const row of marks ?? []) {
+      if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
+      byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
+    }
+    return byConversation;
+  })();
   let signals = { rows: [], readable: false };
   if (query.spaceId) {
     const signalSvc = optional(modules, 'call-signal');
@@ -876,6 +898,10 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    // The row's unread badge, from the message rows already in hand — no new
+    // query. Calls never count (only what the scheda badges counts), and a
+    // null here (no member, no watermark table) shapes nulls downstream.
+    const myUnread = countUnreadForSubject(messages.rows.filter(mine), watermarks);
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only
     // on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
@@ -914,6 +940,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       identitiesBySubject,
       observedChannelsBySubject: new Map(observedChannels.length === 0 ? [] : [[key, observedChannels]]),
       observedComplete,
+      unreadBySubject: new Map(myUnread === null ? [] : [[key, myUnread]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {

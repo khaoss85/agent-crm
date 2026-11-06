@@ -1518,32 +1518,11 @@ export async function watermarksForMember({ modules, moduleNames }, memberId) {
   return byConversation;
 }
 
-/**
- * Count one subject's unread inbound messages from rows already in hand,
- * against one member's watermarks. Pure: the caller did the batched reads
- * (the list already holds every message), so this never touches storage.
- * The rule is the core's `isInboundUnread`, the same one the timeline's
- * `read` flag answers — a row's `unreadCount` is exactly the number of its
- * entries the scheda would badge.
- * @param {Array<any>} messages the subject's message rows (calls carry no direction and never count)
- * @param {Map<string, unknown>|null} watermarks conversation id to `lastReadAt`, or null when unreadable
- */
-export function countUnreadForSubject(messages, watermarks) {
-  if (watermarks === null || watermarks === undefined) return null;
-  let unread = 0;
-  let lastUnreadAt = null;
-  for (const row of messages ?? []) {
-    if (row?.direction !== 'inbound') continue;
-    const watermark = row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === ''
-      ? null
-      : (watermarks.get(String(row.conversationId)) ?? null);
-    if (!isInboundUnread(row, watermark)) continue;
-    unread += 1;
-    const at = typeof row?.occurredAt === 'string' ? row.occurredAt : '';
-    if (at !== '' && (lastUnreadAt === null || at > lastUnreadAt)) lastUnreadAt = at;
-  }
-  return Object.freeze({ unread, lastUnreadAt });
-}
+// The subject-level unread count lives in the core beside the one unread
+// rule (`isInboundUnread`): the customer list counts with it without
+// importing this package, and this package re-exports it so existing
+// callers keep one import. One rule, one counter, every caller.
+export { countUnreadForSubject } from '../../core/index.js';
 
 /**
  * Mark one customer's inbound messages read up to an instant: every open or
@@ -1929,7 +1908,7 @@ export function createInteractionTimelineCapability(moduleNames) {
     description:
       'Read one subject\'s interaction history — its messages and calls plus the work-activity entries on the same '
       + 'subject, oldest first — every thread row naming the subject, one thread with its ownership trail, '
-      + 'and one member\'s unread on a thread. '
+      + 'one member\'s unread on a thread, and one member\'s read watermarks over every conversation. '
       + 'Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
@@ -1962,6 +1941,11 @@ export function createInteractionTimelineCapability(moduleNames) {
         assignment: (conversationId) => readConversationAssignment(fullScope, conversationId),
         /** @param {string} conversationId @param {string} memberId */
         unread: (conversationId, memberId) => unreadCount(fullScope, conversationId, memberId),
+        // One member's watermarks for readers that shape read state without
+        // owning the table (the customer list, the scheda timeline): null
+        // when the record is not composed, so callers omit read state.
+        /** @param {string} memberId */
+        watermarks: (memberId) => watermarksForMember(fullScope, memberId),
       });
     },
   };
