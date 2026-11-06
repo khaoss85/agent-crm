@@ -378,6 +378,20 @@ export function mergeLinkedIdentities(timeline) {
   });
 }
 
+/**
+ * «Da leggere»: the one rule for an unread passage, shared by the «Nuovo»
+ * badge and by mark-read so the two never disagree — an inbound message the
+ * server names unread, with a date mark-read can reach (`upTo`). A passage
+ * outside it never lights up, so it can never stay lit forever.
+ * @param {any} item a timeline entry
+ * @returns {number | null} its time in ms when unread, null otherwise
+ */
+export function unreadInboundAt(item) {
+  if (String(item?.direction ?? '') !== 'inbound' || item?.read !== false) return null;
+  const ms = Date.parse(String(item?.occurredAt ?? ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
 /** A message longer than this folds behind «Mostra tutto». */
@@ -1773,10 +1787,10 @@ export function createCustomerCardView(deps) {
         // card shows the hour only (`<hh:mm>`) beside channel and direction.
         const when = timeParts(item?.occurredAt);
         const entryHead = el('p', 'bo-scheda-entry-head');
-        // «Da leggere»: an inbound passage the server names unread
-        // (`read: false`) lights up with «Nuovo» for this visit. Without the
+        // «Da leggere»: an unread passage (unreadInboundAt, the same rule
+        // mark-read uses) lights up with «Nuovo» for this visit. Without the
         // field nothing changes — the server may not serve read state yet.
-        if (!isOutbound && item?.read === false) {
+        if (unreadInboundAt(item) !== null) {
           row.setAttribute('data-unread', 'true');
           entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
         }
@@ -2288,9 +2302,8 @@ export function createCustomerCardView(deps) {
     let upTo = null;
     let upToMs = -Infinity;
     for (const item of items) {
-      if (String(item?.direction ?? '') !== 'inbound' || item?.read !== false) continue;
-      const ms = Date.parse(String(item?.occurredAt ?? ''));
-      if (Number.isFinite(ms) && ms > upToMs) {
+      const ms = unreadInboundAt(item);
+      if (ms !== null && ms > upToMs) {
         upToMs = ms;
         upTo = String(item.occurredAt);
       }

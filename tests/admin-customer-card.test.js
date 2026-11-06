@@ -2507,3 +2507,15 @@ test('da leggere: nothing unread or no read state sends no mark, and a refused m
   assert.equal(refused.marks.length, 1);
   assert.ok(refused.mount.textContent.includes('testo m1'), 'the scheda stays whole');
 });
+
+test('da leggere: badge and mark-read share one rule — no direction or no date never lights up', async () => {
+  const { mount, marks } = await unreadCard({ items: [
+    { ...inbound('nodir', '2026-11-06T12:00:00.000Z', false), direction: undefined },
+    inbound('nodate', null, false),
+    inbound('bad', 'ieri', false),
+    inbound('ok', '2026-11-06T09:00:00.000Z', false),
+  ] });
+  const lit = mount.findAll('div').filter((node) => node.getAttribute('data-unread') === 'true').map((node) => node.getAttribute('data-entry'));
+  assert.deepEqual(lit, ['ok'], 'only what mark-read can reach lights up');
+  assert.deepEqual(marks.map((mark) => mark.upTo), ['2026-11-06T09:00:00.000Z']);
+});
