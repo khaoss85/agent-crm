@@ -58,33 +58,21 @@ export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
  */
 
 /**
- * Local parts that are never a person writing (backlog:1a4d9b30: the
- * 06/11 pilot-space proof turned nine automated senders into customers).
- * Nobody operates a mailbox called `noreply`, so the bare address decides
- * alone. A local part matches exactly or as the stem of a
- * separator-suffixed variant (`noreply-it`), after the `+` tag is
- * stripped. Closed vocabulary — an unknown local part is a person until
- * proven otherwise.
+ * Local parts that are never a person writing (backlog:1a4d9b30,
+ * supervisor arbitration 06/11 on #606: these local-parts alone are
+ * automated, never leads, even without headers — no "team alone is a
+ * person" rule). The bare address decides alone. A local
+ * part matches exactly or as the stem of a separator-suffixed variant
+ * (`noreply-it`, `order-update-2`), after the `+` tag is stripped.
+ * Closed vocabulary — an unknown local part is a person until proven
+ * otherwise.
  */
 export const GMAIL_AUTOMATED_SENDER_LOCALS = Object.freeze([
   'no-reply', 'noreply', 'donotreply', 'do-not-reply',
-  'mailer-daemon', 'postmaster',
-]);
-
-/**
- * Local parts of human-operated team mailboxes (backlog:1a4d9b30, review
- * on #606: a real person can write from `support@piccola-azienda.it`).
- * Alone they name a person — a small business monitors its own support
- * mailbox. They mark an automated sender only with a corroborating bulk
- * signal: a sending subdomain, a bulk-infrastructure domain, or a bulk
- * header (the verdict below reads all three). Same exact-or-stem match
- * as the automated table, but `support-team@azienda.it` stays a person
- * while `alerts@mail.zapier.com` does not.
- */
-export const GMAIL_TEAM_SENDER_LOCALS = Object.freeze([
-  'notifications', 'notification', 'notify',
+  'notify', 'notification', 'notifications',
   'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
   'renewals', 'support', 'onboarding',
+  'mailer-daemon', 'postmaster',
 ]);
 
 /**
@@ -140,22 +128,15 @@ export function isAutomatedGmailSender(from) {
   if (at <= 0 || at === address.length - 1) return false;
   const base = address.slice(0, at).split('+')[0] ?? '';
   if (GMAIL_AUTOMATED_SENDER_LOCALS.includes(base)) return true;
-  // The stem rule covers only never-human stems: `noreply-it` is
-  // automated, `support-team` stays a person (review on #606, P2).
   if (GMAIL_AUTOMATED_SENDER_LOCALS.some((stem) => AUTOMATED_LOCAL_SEPARATORS.some((sep) => base.startsWith(`${stem}${sep}`)))) {
     return true;
   }
-  // A team local alone names a person (review on #606, P1): it marks an
-  // automated sender only beside a sending subdomain or a
-  // bulk-infrastructure domain. Headers corroborate one level up, in
-  // `isBulkGmailMessage`, which is the verdict every reader calls.
-  const team = GMAIL_TEAM_SENDER_LOCALS.includes(base)
-    || GMAIL_TEAM_SENDER_LOCALS.some((stem) => AUTOMATED_LOCAL_SEPARATORS.some((sep) => base.startsWith(`${stem}${sep}`)));
-  if (!team) return false;
+  // A sending-subdomain first label automates regardless of local part
+  // (arbitration 06/11, P2): `hello@notify.railway.app` is platform
+  // traffic even with a human-looking local part.
   const domain = address.slice(at + 1);
   const labels = domain.split('.');
-  if (labels.length < 2) return false;
-  if (GMAIL_SENDING_SUBDOMAINS.includes(labels[0] ?? '')) return true;
+  if (labels.length >= 2 && GMAIL_SENDING_SUBDOMAINS.includes(labels[0] ?? '')) return true;
   return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
 }
 
@@ -167,29 +148,6 @@ export function isAutomatedGmailSender(from) {
  * only headers asks the bulk-header question.
  * @param {{from?: unknown, listUnsubscribe?: unknown, precedence?: unknown, autoSubmitted?: unknown}} input
  */
-/**
- * Whether one sent-mail recipient address is automated, never a customer
- * (backlog:1a4d9b30, review on #606, P1 — the recipient door). It calls the
- * sender door (`isBulkGmailMessage`) first, then excludes team locals
- * outright: on the outbound path no message from the recipient exists, so
- * no bulk header can ever corroborate, and writing to a vendor desk
- * (`support@contabo.com`) or a no-reply box must not mint the customer
- * the inbound door quarantines. Inbound keeps the corroborated door (a
- * team mailbox writing to the owner stays a lead); stem variants stay a
- * person on both paths (P2: `support-team@` is a person, `noreply-it@`
- * stays automated through the sender door above).
- * DECISION (to be confirmed): recipient door broader than sender door — why above.
- * @param {unknown} handle
- */
-export function isAutomatedGmailRecipient(handle) {
-  if (isBulkGmailMessage({ from: handle })) return true;
-  const address = typeof handle === 'string' ? handle.trim().toLowerCase() : '';
-  const at = address.lastIndexOf('@');
-  if (at <= 0 || at === address.length - 1) return false;
-  const base = address.slice(0, at).split('+')[0] ?? '';
-  return GMAIL_TEAM_SENDER_LOCALS.includes(base);
-}
-
 export function isBulkGmailMessage(input = {}) {
   const listUnsubscribe = typeof input?.listUnsubscribe === 'string' ? input.listUnsubscribe.trim() : '';
   if (listUnsubscribe !== '') return true;
@@ -203,6 +161,17 @@ export function isBulkGmailMessage(input = {}) {
   if (at <= 0 || at === from.length - 1) return false;
   const domain = from.slice(at + 1);
   return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+}
+
+/**
+ * Whether one sent-mail recipient address is automated, never a customer
+ * (backlog:1a4d9b30, arbitration 06/11, P2 recipient door): the same
+ * verdict as the inbound door — `isBulkGmailMessage({ from: handle })` —
+ * no broader exclusion. One address reads the same in both directions.
+ * @param {unknown} handle
+ */
+export function isAutomatedGmailRecipient(handle) {
+  return isBulkGmailMessage({ from: handle });
 }
 
 /**
@@ -556,11 +525,11 @@ function normalizeGmailMessage(decoded, config) {
   // the owner wrote to become leads too. A loopback with nobody else stays
   // evidence, never a customer — same quarantine as before.
   if (from.address === config.mailbox) {
-    // The recipient door reads recipients too (backlog:1a4d9b30, review
-    // on #606, P1): writing to `support@contabo.com` must not mint the
-    // customer the inbound door quarantines. Automated recipients drop
-    // out here, so an all-automated To/Cc quarantines as evidence
-    // through the empty-recipients branch below.
+    // The recipient door reads recipients too (backlog:1a4d9b30):
+    // writing to `support@contabo.com` must not mint the customer the
+    // inbound door quarantines. Automated recipients drop out here, so
+    // an all-automated To/Cc quarantines as evidence through the
+    // empty-recipients branch below.
     const recipients = parseGmailRecipients(item.to, item.cc, config.mailbox)
       .filter((recipient) => !isAutomatedGmailRecipient(recipient.handle));
     if (recipients.length === 0) {

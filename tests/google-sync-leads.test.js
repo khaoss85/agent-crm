@@ -63,12 +63,13 @@ test('bulk mail is recognized by headers, sender locals and notification domains
     assert.equal(isBulkGmailMessage({ from: 'team@example.com', precedence }), true);
     assert.equal(isBulkGmailMessage({ from: 'team@example.com', precedence: precedence.toUpperCase() }), true);
   }
-  // Never-human locals decide alone; a team local alone names a person
-  // (review on #606, P1) and needs a header to read as bulk.
-  for (const local of ['no-reply', 'noreply', 'donotreply', 'do-not-reply', 'mailer-daemon', 'postmaster']) {
+  // Never-human locals decide alone (arbitration 06/11): no local part
+  // needs a header to read as bulk.
+  for (const local of ['no-reply', 'noreply', 'donotreply', 'do-not-reply', 'mailer-daemon', 'postmaster',
+    'notify', 'notification', 'notifications', 'alerts', 'order', 'order-update', 'invoice',
+    'billing', 'statements', 'renewals', 'support', 'onboarding']) {
     assert.equal(isBulkGmailMessage({ from: `${local}@example.com` }), true, `${local} is bulk`);
   }
-  assert.equal(isBulkGmailMessage({ from: 'notifications@example.com' }), false, 'a team local alone is not bulk');
   assert.equal(
     isBulkGmailMessage({ from: 'notifications@example.com', listUnsubscribe: '<mailto:unsub@example.com>' }),
     true, 'a team local with a bulk header is bulk',
@@ -84,56 +85,43 @@ test('bulk mail is recognized by headers, sender locals and notification domains
 });
 
 test('the 06/11 proof senders never become customers (backlog:1a4d9b30)', () => {
-  // The eight addresses of the supervisor proof on Presti, each with the
-  // signal the real message carries: never-human locals and team locals
-  // on sending subdomains decide alone, the rest decide with the bulk
-  // headers real transactional mail carries. None becomes a lead.
+  // The eight addresses of the supervisor proof on Presti, each with NO
+  // headers (arbitration 06/11): the bare address decides alone. None
+  // becomes a lead.
   for (const from of [
     'noreply-it@klarna.com',
+    'order-update@amazon.it',
     'alerts@mail.zapier.com',
     'invoice+statements@mail.anthropic.com',
-  ]) {
-    assert.equal(isAutomatedGmailSender(from), true, `${from} is automated`);
-    assert.equal(isBulkGmailMessage({ from }), true, `${from} is bulk`);
-  }
-  const unsub = '<mailto:unsub@example.com>';
-  for (const from of [
-    'order-update@amazon.it',
     'renewals@godaddy.com',
     'hello@notify.railway.app',
     'support@contabo.com',
     'onboarding@help.example.com',
   ]) {
-    assert.equal(isBulkGmailMessage({ from, listUnsubscribe: unsub }), true, `${from} with bulk headers is bulk`);
+    assert.equal(isAutomatedGmailSender(from), true, `${from} is automated`);
+    assert.equal(isBulkGmailMessage({ from }), true, `${from} is bulk`);
+    assert.equal(isAutomatedGmailRecipient(from), true, `${from} is automated outbound too`);
   }
-  // The acceptance vocabulary, one by one: a team local alone names a
-  // person (review on #606, P1) — it reads as bulk only with a header or
-  // on a sending subdomain.
-  for (const local of ['alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
-    'renewals', 'support', 'onboarding', 'notify', 'notifications']) {
-    assert.equal(isAutomatedGmailSender(`${local}@example.com`), false, `${local} alone is a person`);
-    assert.equal(isBulkGmailMessage({ from: `${local}@example.com` }), false, `${local} alone is not bulk`);
-    assert.equal(
-      isBulkGmailMessage({ from: `${local}@example.com`, listUnsubscribe: unsub }),
-      true, `${local} with bulk headers is bulk`,
-    );
-    assert.equal(
-      isAutomatedGmailSender(`${local}@mail.example.com`), true, `${local} on a sending subdomain is automated`,
-    );
+  // The acceptance vocabulary, one by one: every listed local-part alone
+  // is automated, even on a plain domain with quiet headers.
+  for (const local of ['noreply', 'no-reply', 'donotreply', 'notify', 'notification', 'notifications',
+    'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
+    'renewals', 'support', 'onboarding', 'mailer-daemon', 'postmaster']) {
+    assert.equal(isAutomatedGmailSender(`${local}@example.com`), true, `${local} alone is automated`);
+    assert.equal(isBulkGmailMessage({ from: `${local}@example.com` }), true, `${local} alone is bulk`);
+    assert.equal(isAutomatedGmailRecipient(`${local}@example.com`), true, `${local} alone is automated outbound too`);
   }
-  // Sending subdomains corroborate a team local, never any local part:
-  // `info@mail.azienda.it` is a corporate mailbox, not platform traffic.
+  // Sending subdomains automate regardless of local part (arbitration 06/11,
+  // P2): any sender on a listed first label is platform traffic.
   for (const label of ['mail', 'notify', 'em', 'news', 'bounce']) {
-    assert.equal(isAutomatedGmailSender(`alerts@${label}.railway.example`), true, `${label}. corroborates a team local`);
-    assert.equal(isAutomatedGmailSender(`hello@${label}.railway.example`), false, `${label}. alone does not automate a person`);
+    assert.equal(isAutomatedGmailSender(`alerts@${label}.railway.example`), true, `${label}. with a listed local is automated`);
+    assert.equal(isAutomatedGmailSender(`hello@${label}.railway.example`), true, `${label}. automates a human-looking local too`);
   }
-  assert.equal(isAutomatedGmailSender('info@mail.azienda.it'), false, 'a corporate mailbox on a mail. subdomain stays a person');
-  assert.equal(isAutomatedGmailSender('hello@em.azienda.it'), false, 'a person on an em. subdomain stays a person');
   // Boundaries a person still passes: tags, lookalike stems and domains.
   assert.equal(isAutomatedGmailSender('guido+tag@example.com'), false, 'a tagged person address stays a person');
   assert.equal(isAutomatedGmailSender('notification2@example.com'), false, 'a stem without separator stays a person');
-  assert.equal(isAutomatedGmailSender('support-team@example.com'), false, 'a suffixed team mailbox stays a person');
-  assert.equal(isAutomatedGmailSender('noreply-italia@example.com'), true, 'a suffixed never-human stem stays automated');
+  assert.equal(isAutomatedGmailSender('noreply-italia@example.com'), true, 'a suffixed automated stem stays automated');
+  assert.equal(isAutomatedGmailSender('support-team@example.com'), true, 'a suffixed automated stem stays automated');
   assert.equal(isAutomatedGmailSender('marco@mailaziende.example'), false, 'a domain merely containing mail stays a person');
   assert.equal(isAutomatedGmailSender('marco@email.example.com'), false, 'email. is not a sending subdomain');
   assert.equal(isAutomatedGmailSender('not-an-address'), false, 'an unreadable address is simply not automated');
@@ -148,13 +136,13 @@ test('Auto-Submitted other than no marks bulk, and the question splits by reason
   assert.equal(isBulkGmailMessage({ from: 'guido@example.com', autoSubmitted: 'NO' }), false);
   assert.equal(isBulkGmailMessage({ from: 'guido@example.com', autoSubmitted: '' }), false);
   // The split the sync round logs by: from-only asks automated-sender,
-  // headers-only asks bulk-header. A team local alone is a person — the
-  // header corroborates it into bulk (review on #606, P1).
+  // headers-only asks bulk-header. A listed local alone is automated
+  // (arbitration 06/11), so both reasons still get exercised below.
   assert.equal(isBulkGmailMessage({ from: 'noreply@example.com' }), true, 'from alone answers automated-sender');
-  assert.equal(isBulkGmailMessage({ from: 'support@contabo.com' }), false, 'a team local alone is a person');
+  assert.equal(isBulkGmailMessage({ from: 'support@contabo.com' }), true, 'a listed local alone answers automated-sender');
   assert.equal(
-    isBulkGmailMessage({ from: 'support@contabo.com', listUnsubscribe: '<mailto:unsub@example.com>' }),
-    true, 'a team local with bulk headers answers bulk-header',
+    isBulkGmailMessage({ from: 'team@example.com', listUnsubscribe: '<mailto:unsub@example.com>' }),
+    true, 'an unlisted local with bulk headers answers bulk-header',
   );
   assert.equal(
     isBulkGmailMessage({ listUnsubscribe: '<https://example.com/unsub>' }),
@@ -238,8 +226,8 @@ test('the REST reader carries sender names, recipients and bulk like the fake', 
   );
   assert.deepEqual(loopback.recipients, [{ handle: 'amico@example.com', firstName: 'Amico' }]);
 
-  // The recipient door on the REST path too (review on #606, P1): mail
-  // the owner sent to automated addresses names nobody.
+  // The recipient door on the REST path too: mail the owner sent to
+  // automated addresses names nobody.
   const loopbackAuto = normalizeGmailRestMessage(
     wire([
       { name: 'From', value: MAILBOX },
@@ -412,38 +400,47 @@ test('sent mail imports its recipients: a new person becomes a lead', async (t) 
   assert.deepEqual(byEvent, { 'sent-1': 'created', 'sent-2': 'none' });
 });
 
-test('a human team mailbox stays a lead, with the display name (review on #606, P1)', async (t) => {
+test('a real person stays a lead, with the display name (backlog:1a4d9b30)', async (t) => {
   const { harness, api, sender } = gmailScene();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
   const at = Date.now() - HOUR;
   api.seedMailbox([
-    { id: 'human-1', threadId: 'thread-human-A', from: '"Assistenza" <support@piccola-azienda.it>', internalDateMs: at },
-    { id: 'human-2', threadId: 'thread-human-B', from: 'info@mail.azienda.it', internalDateMs: at + 1000 },
+    { id: 'human-1', threadId: 'thread-human-A', from: '"Mario Rossi" <mario.rossi@piccola-azienda.it>', internalDateMs: at },
+    { id: 'human-2', threadId: 'thread-human-B', from: 'guido@example.com', internalDateMs: at + 1000 },
   ]);
   await harness.startImport(SPACE, { connectionKey: key, actor: ACTOR });
   const { result: page } = await captureInfo(
     () => harness.advanceImport(SPACE, { connectionKey: key, limit: 10 }),
   );
-  assert.equal(page.page.created, 2, 'two human team mailboxes, two leads');
+  assert.equal(page.page.created, 2, 'two real people, two leads');
   assert.deepEqual(
     sender.calls.map((call) => call.handle),
-    ['support@piccola-azienda.it', 'info@mail.azienda.it'],
+    ['mario.rossi@piccola-azienda.it', 'guido@example.com'],
   );
-  assert.equal(sender.calls[0].firstName, 'Assistenza');
+  assert.equal(sender.calls[0].firstName, 'Mario');
 });
 
-test('the recipient door needs no corroboration (review on #606, P1)', () => {
-  assert.equal(isAutomatedGmailRecipient('support@contabo.com'), true, 'a team local is automated outbound');
-  assert.equal(isAutomatedGmailRecipient('noreply-it@klarna.com'), true, 'a never-human stem stays automated outbound');
-  assert.equal(isAutomatedGmailRecipient('alerts@mail.zapier.com'), true, 'a corroborated team local stays automated outbound');
+test('the recipient door is the same verdict as the inbound door (arbitration 06/11, P2)', () => {
+  for (const handle of [
+    'support@contabo.com',
+    'noreply-it@klarna.com',
+    'alerts@mail.zapier.com',
+    'hello@notify.railway.app',
+    'support@piccola-azienda.it',
+    'support-team@azienda.it',
+  ]) {
+    assert.equal(
+      isAutomatedGmailRecipient(handle), isBulkGmailMessage({ from: handle }),
+      `${handle} reads the same inbound and outbound`,
+    );
+    assert.equal(isAutomatedGmailRecipient(handle), true, `${handle} is automated outbound`);
+  }
   assert.equal(isAutomatedGmailRecipient('amico@example.com'), false, 'a person stays a person outbound');
-  assert.equal(isAutomatedGmailRecipient('support@piccola-azienda.it'), true, 'a team local is automated outbound even on a plain domain');
-  assert.equal(isAutomatedGmailRecipient('support-team@azienda.it'), false, 'a suffixed team mailbox stays a person outbound');
   assert.equal(isAutomatedGmailRecipient('not-an-address'), false, 'an unreadable address is simply not automated');
 });
 
-test('sent mail to automated recipients creates nothing (review on #606, P1)', async (t) => {
+test('sent mail to automated recipients creates nothing (backlog:1a4d9b30)', async (t) => {
   const { harness, api, sender } = gmailScene();
   t.after(() => harness.close());
   const key = await registeredActive(harness);
