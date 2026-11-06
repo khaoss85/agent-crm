@@ -2,7 +2,7 @@
 
 import {
   AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
-  requireActor, optionalIsoDate,
+  requireActor, optionalIsoDate, isInboundUnread,
 } from '../../core/index.js';
 
 /**
@@ -1490,10 +1490,156 @@ export async function unreadCount({ modules, moduleNames }, conversationId, memb
   if (!found) throw new NotFoundError('conversation', id);
   const watermark = (await reads.listWhere({ conversationId: id, memberId: member }))[0]?.lastReadAt ?? null;
   const inbound = await messages.listWhere({ conversationId: id, direction: 'inbound' });
-  const unread = watermark === null
-    ? inbound.length
-    : inbound.filter((row) => String(row.occurredAt ?? '') > String(watermark)).length;
+  // The one unread rule (core `isInboundUnread`): every caller of the
+  // watermark counts the same messages, never a local copy of the compare.
+  const unread = inbound.filter((row) => isInboundUnread(row, watermark)).length;
   return Object.freeze({ conversationId: id, memberId: member, unread, lastReadAt: watermark });
+}
+
+/**
+ * One member's watermarks over every conversation: conversation id to the
+ * `lastReadAt` instant, for the readers that shape unread state without
+ * owning the table (the customer list, the timeline). Returns null when the
+ * `conversation-read` record is not composed: callers then omit read state
+ * instead of inventing it — without the table every inbound message would
+ * read unread and every row would light up.
+ */
+export async function watermarksForMember({ modules, moduleNames }, memberId) {
+  const names = resolvedNames(moduleNames);
+  const member = validateMemberId(memberId, 'memberId');
+  const reads = resolveModule(modules, names.read)?.service;
+  if (!reads?.listWhere) return null;
+  const rows = await reads.listWhere({ memberId: member });
+  const byConversation = new Map();
+  for (const row of rows ?? []) {
+    if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
+    byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
+  }
+  return byConversation;
+}
+
+/**
+ * Count one subject's unread inbound messages from rows already in hand,
+ * against one member's watermarks. Pure: the caller did the batched reads
+ * (the list already holds every message), so this never touches storage.
+ * The rule is the core's `isInboundUnread`, the same one the timeline's
+ * `read` flag answers — a row's `unreadCount` is exactly the number of its
+ * entries the scheda would badge.
+ * @param {Array<any>} messages the subject's message rows (calls carry no direction and never count)
+ * @param {Map<string, unknown>|null} watermarks conversation id to `lastReadAt`, or null when unreadable
+ */
+export function countUnreadForSubject(messages, watermarks) {
+  if (watermarks === null || watermarks === undefined) return null;
+  let unread = 0;
+  let lastUnreadAt = null;
+  for (const row of messages ?? []) {
+    if (row?.direction !== 'inbound') continue;
+    const watermark = row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === ''
+      ? null
+      : (watermarks.get(String(row.conversationId)) ?? null);
+    if (!isInboundUnread(row, watermark)) continue;
+    unread += 1;
+    const at = typeof row?.occurredAt === 'string' ? row.occurredAt : '';
+    if (at !== '' && (lastUnreadAt === null || at > lastUnreadAt)) lastUnreadAt = at;
+  }
+  return Object.freeze({ unread, lastUnreadAt });
+}
+
+/**
+ * Mark one customer's inbound messages read up to an instant: every open or
+ * closed thread of the subject gets the acting member's watermark moved to
+ * the later of its current value and `upTo`. Idempotent — a second mark
+ * with the same instant moves nothing and answers the same outcome — and
+ * scoped to the subject's own threads, never a stranger's.
+ *
+ * The member is always the actor: the request never names one, so nobody
+ * marks another member read, and a browser never writes the table directly
+ * — the write happens only here, through the managed watermark rows, called
+ * by the door route or by the worker with the session's actor.
+ */
+export async function markCustomerRead(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const { conversations } = interactionServices({ modules: context.modules, names });
+  const { reads } = readStateServices({ modules: context.modules, names });
+  const actor = context.actor;
+  // A read watermark without a reader would store that somebody saw the
+  // customer's words with nobody saying who.
+  const who = requireActor(actor);
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new ValidationError('a mark-read request object is required', { field: 'request' });
+  }
+  const value = /** @type {any} */ (request);
+  // Contacts and companies are host-owned records (the timeline reads them
+  // under the same envelope), so the subject here names only the kind and
+  // the id — never an owner a caller could point at another package's rows.
+  const resource = value?.subject?.resource;
+  if (resource !== 'contact' && resource !== 'company') {
+    throw new ValidationError('a customer mark-read needs subject resource contact or company', { field: 'subject.resource' });
+  }
+  const id = safeText(value?.subject?.id, 'subject.id', MAX_ID);
+  const subject = { resource, id, owner: 'host', ownerPackage: null };
+  bindSourcePackage(validateSource(value.source), context.consumer);
+  const upTo = realIsoDate(value.upTo, 'upTo');
+  const memberId = validateMemberId(who.id, 'memberId');
+
+  const threads = await conversations.listWhere({
+    subjectResource: subject.resource,
+    subjectId: subject.id,
+  });
+  const marked = [];
+  let touched = 0;
+  for (const thread of threads ?? []) {
+    const conversationId = thread?.id;
+    if (typeof conversationId !== 'string' || conversationId === '') continue;
+    const sourceKey = `read:${conversationId}:${memberId}`;
+    const existing = (await reads.listWhere({ sourceKey }))[0];
+    const current = typeof existing?.lastReadAt === 'string' ? existing.lastReadAt : null;
+    const next = current !== null && current > upTo ? current : upTo;
+    if (existing) {
+      if (existing.lastReadAt !== next) {
+        await reads.applyManaged(existing.id, {
+          lastReadAt: next,
+          updatedByType: who.type,
+          updatedById: who.id,
+        }, { actor });
+        touched += 1;
+      }
+    } else {
+      try {
+        await reads.createManaged({
+          sourceKey,
+          conversationId,
+          memberId,
+          lastReadAt: next,
+          updatedByType: who.type,
+          updatedById: who.id,
+        }, { actor });
+        touched += 1;
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+        const raced = (await reads.listWhere({ sourceKey }))[0];
+        if (!raced) throw error;
+        const racedCurrent = typeof raced?.lastReadAt === 'string' ? raced.lastReadAt : null;
+        const racedNext = racedCurrent !== null && racedCurrent > upTo ? racedCurrent : upTo;
+        if (raced.lastReadAt !== racedNext) {
+          await reads.applyManaged(raced.id, {
+            lastReadAt: racedNext,
+            updatedByType: who.type,
+            updatedById: who.id,
+          }, { actor });
+          touched += 1;
+        }
+      }
+    }
+    marked.push(conversationId);
+  }
+  return Object.freeze({
+    subject: Object.freeze({ resource: subject.resource, id: subject.id }),
+    memberId,
+    upTo,
+    conversations: Object.freeze(marked),
+    touched,
+  });
 }
 
 /**
@@ -1762,6 +1908,8 @@ export function createInteractionLogCapability(moduleNames) {
         assignConversation: (request) => assignConversation(scope, request),
         /** @param {unknown} request */
         markConversationRead: (request) => markConversationRead(scope, request),
+        /** @param {unknown} request */
+        markCustomerRead: (request) => markCustomerRead(scope, request),
       });
     },
   };

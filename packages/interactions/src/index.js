@@ -29,9 +29,11 @@ import {
   buildOpenOpportunityAction,
   createInteractionLogCapability,
   createInteractionTimelineCapability,
+  countUnreadForSubject,
   logCall,
   logMessage,
   markConversationRead,
+  markCustomerRead,
   openConversation,
   readConversationAssignment,
   readConversationThread,
@@ -46,6 +48,7 @@ import {
   validateMemberId,
   validateMessageRequest,
   validateSubject,
+  watermarksForMember,
 } from './interactions.js';
 
 /**
@@ -108,9 +111,11 @@ export {
   THREAD_KEY_MODULE,
   advanceMessage,
   assignConversation,
+  countUnreadForSubject,
   logCall,
   logMessage,
   markConversationRead,
+  markCustomerRead,
   openConversation,
   readConversationAssignment,
   readConversationThread,
@@ -119,6 +124,7 @@ export {
   shapeAttachment,
   sortEntries,
   unreadCount,
+  watermarksForMember,
   validateAssignRequest,
   validateCallRequest,
   validateConversationRequest,
@@ -209,6 +215,61 @@ export function buildLogSubjectCallOperation(moduleNames) {
   };
 }
 
+/**
+ * `mark-customer-read` — the scheda cliente marks its inbound messages read
+ * on open, and the `da-leggere` view only lists customers whose `unreadCount`
+ * is above zero (backlog:9e003582).
+ *
+ * One call moves the acting member's watermark on every thread of the
+ * subject to the later of its current value and `upTo`, so reopening the
+ * scheda or retrying the call changes nothing (idempotent) and a newer mark
+ * is never dragged back by an older instant. The member is always the actor
+ * — the request names no member — and the watermark rows are the only write:
+ * no client writes the table directly, only this operation through the door
+ * route or the worker with the session's actor.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildMarkCustomerReadOperation(moduleNames) {
+  const capability = createInteractionLogCapability(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'mark-customer-read',
+    appMethod: 'markCustomerRead',
+    label: 'Mark one customer\'s inbound messages read up to an instant',
+    description:
+      'Move the acting member\'s read watermark on every conversation of one contact or company to the given instant, '
+      + 'so the customer list and the timeline stop counting those inbound messages as unread. '
+      + 'Idempotent: the same instant twice moves nothing the second time. Creates no business record. '
+      + 'A human decision: the actor must be a user.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'upTo', type: 'string', hint: 'Mark read everything arrived up to this ISO instant (the newest unread entry).' },
+    ],
+    create(runtime) {
+      return async (request) => {
+        const actor = request?.actor;
+        if (!actor || typeof actor !== 'object' || actor.type !== 'user'
+          || typeof actor.id !== 'string' || actor.id.trim() === '') {
+          throw new AppError('Marking a customer read is a human decision', {
+            code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+          });
+        }
+        // The capability resolves the composed module names once, so a
+        // composition that remaps a record still marks the right table —
+        // the same handle `log-subject-call` writes through.
+        const log = capability.create({ modules: runtime.modules, actor, consumer: 'host' });
+        return log.markCustomerRead({
+          subject: { resource: request?.resource, id: request?.id },
+          upTo: request?.upTo,
+          source: { package: 'host', action: 'mark-customer-read' },
+        });
+      };
+    },
+  };
+}
+
 /** @param {{config?: Record<string, string>}} [options] */
 export function createInteractionsPackage(options = {}) {
   const config = options.config;
@@ -234,7 +295,7 @@ export function createInteractionsPackage(options = {}) {
     capabilities: [createInteractionLogCapability(config), createInteractionTimelineCapability(config)],
     actions: [buildAdvanceMessageAction(config), buildCloseConversationAction(config), buildOpenOpportunityAction(config),
       buildAssignConversationAction(config), buildMarkReadConversationAction(config)],
-    operations: [buildLogSubjectCallOperation(options.modules)],
+    operations: [buildLogSubjectCallOperation(options.modules), buildMarkCustomerReadOperation(options.modules)],
 
     // None. A versioned policy earns its fingerprint when two consumers share
     // a rule; the channel vocabulary and the transition tables are published

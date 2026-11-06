@@ -160,6 +160,14 @@ export {
 // the drift this repository refuses everywhere else.
 export { normalizeEmail, normalizeCompanyName } from './src/core-adapters.js';
 
+// ---- team read state (the one unread rule, published) ----
+// The watermark table lives in the interactions package, but the rule that
+// reads it is shared: the timeline's `read` flag, the list's `unreadCount`
+// and the `da-leggere` view must agree on every message. Published here so
+// no package re-implements it, with the same ADR-018 justification as the
+// normalization above: one rule, every caller.
+export { actorMemberId, isInboundUnread } from './src/read-state.js';
+
 // ---- declared-definition fingerprints (ADR-015) ----
 // A package that publishes versioned policies uses the same mechanism every
 // first-party definition uses: declared JSON-safe config, canonical source.
