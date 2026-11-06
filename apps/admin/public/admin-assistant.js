@@ -1307,7 +1307,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     pendingConfirmId: null,
     error: '',
     draft: null,
+    // Review #596 P2: a top-bar question asked while an answer is still
+    // running waits here (only the newest one) and starts when it ends.
+    queued: null,
   };
+  // Every open() takes a generation: a slow status probe never lets an older
+  // opening overwrite a newer question.
+  let openGeneration = 0;
 
   // Keep every finished answer for the session (BO-F4-04): conserved, newest
   // last, capped so a long shift never grows the panel without bounds.
@@ -1514,6 +1520,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } finally {
       state.busy = false;
       render();
+      drainQueued();
     }
   }
 
@@ -1536,7 +1543,67 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } finally {
       state.busy = false;
       render();
+      drainQueued();
     }
+  }
+
+  /** Start the question that waited for the running answer, if any. */
+  function drainQueued() {
+    if (state.queued === null) return;
+    const next = state.queued;
+    state.queued = null;
+    void openPanel(next.screenId, next.draft, next.customer, next.question);
+  }
+
+  async function openPanel(screenId, draft, customer, question) {
+    const typed = typeof question === 'string' ? question.trim() : '';
+    // Busy with an answer: the new question waits (newest wins) and the panel
+    // says so — the running answer never lands under the wrong question.
+    if (state.busy && typed !== '') {
+      state.open = true;
+      state.queued = { screenId, draft, customer, question: typed };
+      render();
+      return;
+    }
+    const generation = (openGeneration += 1);
+    state.open = true;
+    if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
+    state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
+    state.customerCtx = schedaCustomer(customer);
+    state.asked = null;
+    const status = await probeAssistantBackend(client);
+    if (generation !== openGeneration) return;
+    state.status = status;
+    // A new question never shows the previous answer (review #596 P1).
+    if (typed !== '') {
+      state.answer = null;
+      state.error = '';
+      state.pendingConfirmId = null;
+    }
+    if (typed === '') {
+      render();
+      return;
+    }
+    if (state.busy) {
+      // An answer started while the probe ran: queue instead of dropping.
+      state.queued = { screenId, draft, customer, question: typed };
+      render();
+      return;
+    }
+    // A question typed in the top bar (Dan 05/11): live → the free
+    // question; otherwise the closest suggestion runs, and the panel says
+    // which one — the words are never silently dropped.
+    if (state.status?.mode === 'live') {
+      await submitFreeQuestion(typed);
+      return;
+    }
+    const match = closestSuggestion(state.screenId, typed);
+    state.asked = { text: typed, matched: match ? match.title : null };
+    if (match) {
+      await runSuggestionById(match.id);
+      return;
+    }
+    render();
   }
 
   function render() {
@@ -1569,6 +1636,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         ? `Le domande libere non sono ancora attive: rispondo con «${state.asked.matched}».`
         : 'Le domande libere non sono ancora attive: scegli una delle domande qui sotto.'));
       scroll.appendChild(asked);
+    }
+    if (state.queued !== null) {
+      const waiting = el(doc, 'div', 'bo-assistant-asked');
+      waiting.setAttribute('data-queued', 'true');
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.queued.question, 140)}»`));
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-note', 'Finisco la risposta in corso, poi rispondo a questa.'));
+      scroll.appendChild(waiting);
     }
     const answer = renderAnswer();
     if (!answer && !state.busy && !state.asked) {
@@ -1658,38 +1732,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
      * (`{ resource, id }`, validated like every record identity); anything
      * else clears the context, so a later screen never reuses a stale one.
      */
-    async open(screenId, draft, customer, question) {
-      state.open = true;
-      if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
-      state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
-      state.customerCtx = schedaCustomer(customer);
-      state.asked = null;
-      state.status = await probeAssistantBackend(client);
-      const typed = typeof question === 'string' ? question.trim() : '';
-      // A new question never shows the previous answer (review #596 P1).
-      if (typed !== '') {
-        state.answer = null;
-        state.error = '';
-        state.pendingConfirmId = null;
-      }
-      if (typed === '') {
-        render();
-        return;
-      }
-      // A question typed in the top bar (Dan 05/11): live → the free
-      // question; otherwise the closest suggestion runs, and the panel says
-      // which one — the words are never silently dropped.
-      if (state.status?.mode === 'live') {
-        await submitFreeQuestion(typed);
-        return;
-      }
-      const match = closestSuggestion(state.screenId, typed);
-      state.asked = { text: typed, matched: match ? match.title : null };
-      if (match) {
-        await runSuggestionById(match.id);
-        return;
-      }
-      render();
+    open(screenId, draft, customer, question) {
+      return openPanel(screenId, draft, customer, question);
     },
     close() {
       state.open = false;

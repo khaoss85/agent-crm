@@ -71,3 +71,38 @@ test('open(question) with no match clears the previous answer instead of showing
 test('a tie on the best overlap runs nothing (ambiguous)', () => {
   assert.equal(closestSuggestion('cliente', 'cosa'), null, '«cosa» opens two suggestions on the scheda');
 });
+
+test('review #596 P2: a second top-bar question while the first runs waits, then runs; no mismatched pair', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/conversation/records')) {
+        calls += 1;
+        if (calls === 1) await gate;
+        return CONVS;
+      }
+      const error = new Error(`no such module (${path})`);
+      Object.assign(error, { status: 404, code: 'MODULE_NOT_FOUND' });
+      throw error;
+    },
+  };
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {} });
+  const first = panel.open('clienti', undefined, undefined, 'chi devo ricontattare oggi?');
+  for (let i = 0; i < 6; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  await panel.open('clienti', undefined, undefined, 'meteo a Milano');
+  assert.ok(mount.textContent.includes('«meteo a Milano»'), 'the waiting question is on screen');
+  assert.ok(mount.textContent.includes('Finisco la risposta in corso'), 'the panel says it waits');
+  release();
+  await first;
+  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  const text = mount.textContent;
+  assert.ok(text.includes('«meteo a Milano»'), 'the newest question is the one shown');
+  assert.ok(text.includes('scegli una delle domande qui sotto'), 'and it ran (no match → the honest line)');
+  assert.ok(!text.includes('Gia Brezzi'), 'the first answer never sits under the second question');
+  assert.ok(!text.includes('Finisco la risposta in corso'), 'the queue drained');
+});
