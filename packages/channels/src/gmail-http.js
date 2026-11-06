@@ -5,6 +5,7 @@ import {
   GMAIL_MAX_TEXT,
   buildGmailSendRequest,
   canonicalGmailAddress,
+  isAutomatedGmailRecipient,
   isBulkGmailMessage,
   isGmailThreadId,
   gmailThreadIdForSubject,
@@ -76,16 +77,18 @@ function restHeaderAll(payload, name) {
 }
 
 /**
- * The two bulk headers off a REST payload, in the plain shape
- * `isBulkGmailMessage` reads (backlog:13c09f03): same two names the fake
- * path reads, same closed-vocabulary verdict.
+ * The three bulk headers off a REST payload, in the plain shape
+ * `isBulkGmailMessage` reads (backlog:13c09f03, backlog:1a4d9b30):
+ * same three names the fake path reads, same closed-vocabulary verdict.
  */
 function restBulkHeaders(payload) {
   const list = restHeaderAll(payload, 'List-Unsubscribe');
   const precedence = restHeaderAll(payload, 'Precedence');
+  const auto = restHeaderAll(payload, 'Auto-Submitted');
   return {
     listUnsubscribe: list.length > 0 ? list[0] : null,
     precedence: precedence.length > 0 ? precedence[0] : null,
+    autoSubmitted: auto.length > 0 ? auto[0] : null,
   };
 }
 
@@ -142,13 +145,16 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     throw httpError('Gmail message needs a valid internalDate', 'CHANNEL_EVENT_MALFORMED', 422);
   }
   const atIso = new Date(atMs).toISOString();
-  if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
-    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
-  }
+  // The linked mailbox reads first (backlog:1a4d9b30, arbitration 06/11):
+  // mail the owner sent — even from an automated-looking mailbox like
+  // support@ — is never bulk-quarantined for its From alone.
   if (from.handle === mailbox) {
+    // Same recipient door as the fake path (backlog:1a4d9b30): an
+    // automated To/Cc never becomes a lead, and an all-automated To/Cc
+    // quarantines as evidence below.
     const recipients = parseGmailRecipients(
       restHeaderAll(wire.payload, 'To'), restHeaderAll(wire.payload, 'Cc'), mailbox,
-    );
+    ).filter((recipient) => !isAutomatedGmailRecipient(recipient.handle));
     if (recipients.length === 0) {
       return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
     }
@@ -160,6 +166,11 @@ export function normalizeGmailRestMessage(wire, mailbox) {
       text: '',
       recipients,
     };
+  }
+  // Bulk quarantines inbound only: the mailbox branch above already took
+  // the owner's sent mail (backlog:1a4d9b30).
+  if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
+    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
   }
   const snippet = typeof wire.snippet === 'string' ? wire.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) {
@@ -383,11 +394,12 @@ export function createGmailHttpIo(options = {}) {
         let full;
         try {
           // To/Cc name the recipients the owner wrote to (backlog:13c09f03)
-          // and List-Unsubscribe/Precedence mark mass mail: requested like
-          // From, so the fake and the REST reader reconcile identically.
+          // and List-Unsubscribe/Precedence/Auto-Submitted mark mass mail
+          // (backlog:1a4d9b30): requested like From, so the fake and the
+          // REST reader reconcile identically.
           const meta = new URLSearchParams();
           meta.set('format', 'metadata');
-          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence']) {
+          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted']) {
             meta.append('metadataHeaders', name);
           }
           full = await call(

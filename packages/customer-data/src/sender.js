@@ -250,10 +250,11 @@ export async function createSubjectForRow(core, row, actor) {
     const company = companies.length === 1
       ? companies[0]
       : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
+    const fallback = leadNamesForEmail(row.email);
     const contact = await core.createContact({
       companyId: company.id,
-      firstName: row.firstName ?? 'Unknown',
-      lastName: row.lastName ?? 'Unknown',
+      firstName: row.firstName ?? fallback.firstName,
+      lastName: row.lastName ?? fallback.lastName,
       email: row.email,
     }, { actor });
     return { resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null, label: contact.email ?? row.email };
@@ -263,11 +264,41 @@ export async function createSubjectForRow(core, row, actor) {
 }
 
 /**
+ * A lead's names from its email address (backlog:1a4d9b30): the first
+ * token of the local part names, the rest describes
+ * (`mario.rossi@azienda.it` becomes Mario Rossi). With no tokens the
+ * trimmed local part itself names (`guido+tag@example.com` becomes
+ * Guido); with no local part at all there is nobody to name, so the
+ * helper refuses and no lead is created. The company the contact
+ * needs is the sender domain when no company was named — an honest
+ * placeholder, never an invented `Unknown (…)`. Both company and contact
+ * names are required non-empty by their services, so a single-token
+ * local part (`guido@example.com`) carries `—` as its last name instead
+ * of an English placeholder.
+ * @param {unknown} email
+ */
+export function leadNamesForEmail(email) {
+  const text = typeof email === 'string' ? email : '';
+  const at = text.lastIndexOf('@');
+  const local = ((at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '').trim();
+  const tokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1, 64)).slice(0, 8);
+  const firstName = tokens[0] ?? local.slice(0, 64);
+  if (firstName === '' || !/[\p{L}\p{N}]/u.test(firstName)) {
+    throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
+  }
+  const lastName = tokens.length > 1 ? tokens.slice(1).join(' ').slice(0, 128) : '—';
+  return { firstName, lastName };
+}
+
+/**
  * @param {{email: string|null, domain: string|null}} row
  */
 function deriveCompanyName(row) {
-  const domain = row.domain;
-  return domain ? domain : `Unknown (${row.email})`;
+  if (row.domain) return row.domain;
+  const email = typeof row.email === 'string' ? row.email : '';
+  const domain = email.slice(email.lastIndexOf('@') + 1).trim().toLowerCase();
+  return domain !== '' ? domain : email;
 }
 
 /**
@@ -662,10 +693,11 @@ export function createChannelSenderResolution({
         const emailReplay = await replayEmailWinner();
         if (emailReplay) return emailReplay;
         try {
+          const fallback = leadNamesForEmail(sender.email);
           const contact = await core.createContact({
             companyId: result.subject.id,
-            firstName: sender.firstName ?? 'Unknown',
-            lastName: sender.lastName ?? 'Unknown',
+            firstName: sender.firstName ?? fallback.firstName,
+            lastName: sender.lastName ?? fallback.lastName,
             email: sender.email,
           }, { actor });
           const subject = {
