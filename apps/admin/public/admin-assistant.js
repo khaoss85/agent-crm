@@ -210,7 +210,7 @@ export function suggestionsFor(screenId) {
 /**
  * @typedef {{ kind: 'record', module: string, id: string, label: string, href: string }} Source
  * @typedef {{ id: string, label: string, kind: 'navigate' | 'api', href?: string, request?: { path: string, method: string, body?: unknown }, customerFacing: boolean, confirmLabel?: string }} AssistantAction
- * @typedef {{ suggestionId: string, title: string, lines: string[], sources: Source[], actions: AssistantAction[], unavailable: string[], trace: AnswerTrace }} Answer
+ * @typedef {{ suggestionId: string, title: string, lines: string[], sources: Source[], actions: AssistantAction[], unavailable: string[], trace: AnswerTrace, context?: { kind: string, day?: string | null, dayWord?: string | null, ids: Array<{ module: string, id: string, label: string }> } | null }} Answer
  * A single read behind an answer: which surface was hit, with which bound,
  * and how many rows it returned. `status` is 'missing' when the module is
  * not composed or the read fails — the answer names it in `unavailable`
@@ -261,11 +261,19 @@ function subjectHref(row, fallbackId) {
   return null;
 }
 
-/** @param {unknown} row */
+/**
+ * The display name of one thread. Names the customer (the subject snapshot,
+ * else the channel handle), never a raw record id: a thread without a name
+ * is «Thread whatsapp», never its UUID (voce 34fd687c: «Chiudi il thread di
+ * 712e1f90-…» non deve più comparire). Ids travel only in hrefs, never in
+ * lines, labels or buttons.
+ * @param {unknown} row
+ */
 function conversationLabel(row) {
-  return shortText(row?.subjectLabel, 80)
-    || shortText(row?.remoteHandle, 80)
-    || shortText(row?.id, 80);
+  const named = shortText(row?.subjectLabel, 80) || shortText(row?.remoteHandle, 80);
+  if (named !== '') return named;
+  const channel = shortText(row?.channel, 20);
+  return channel !== '' ? `Thread ${channel}` : 'Conversazione';
 }
 
 /**
@@ -1006,6 +1014,196 @@ async function answerSchedaNota(client, customer) {
   return answer;
 }
 
+/**
+ * Deterministic free data questions (voce 34fd687c, ownerTitle: domande
+ * libere su più turni con i nomi dei clienti). No key, no backend, no
+ * spend: pure reads over records the panel already renders, so «quanti
+ * lead oggi?» is answered even in dry-run. Anything this parser does not
+ * recognize returns null and the caller falls back to the backend-or-notice
+ * path — never a silent call, never an invented number.
+ *
+ * Multi-turn context is the previous answer's `context` (kept in the panel
+ * session, never persisted): «e ieri?» shifts the last lead-day question,
+ * «chi è il primo?» names the first entry of its list.
+ */
+const FREE_DATA_READ_LIMIT = 50;
+
+/** Folded lowercase words of a question: accents and punctuation never matter. */
+function freeWords(question) {
+  return String(question ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Operator-local calendar day of an Instant, `YYYY-MM-DD`. NaN-safe. */
+function localDayOf(instant) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** `YYYY-MM-DD` shifted by whole days, for «e ieri?». */
+function shiftDay(day, delta) {
+  const date = new Date(`${day}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Italian `06/11/2026` for a `YYYY-MM-DD` day. */
+function italianDay(day) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day ?? '');
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+}
+
+/** Display name of a contact row: never an id. */
+function contactDisplayName(row) {
+  const full = `${shortText(row?.firstName, 40)} ${shortText(row?.lastName, 40)}`.trim();
+  return full !== '' ? full : shortText(row?.email, 60) || '';
+}
+
+/** Display name of a company row: never an id. */
+function companyDisplayName(row) {
+  return shortText(row?.name, 80) || '';
+}
+
+/**
+ * One lead-day answer: contacts and companies created on one local day,
+ * oldest first, named (never UUIDs) and linked to their customer card.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string} title the original question, shown on the card
+ * @param {string} day `YYYY-MM-DD`, operator-local
+ * @param {string} dayWord 'oggi' or 'ieri'
+ */
+async function answerLeadDay(client, title, day, dayWord) {
+  const answer = emptyAnswer('bo04:domanda-libera', title);
+  const [contacts, companies] = await Promise.all([
+    readRecords(client, 'contact', FREE_DATA_READ_LIMIT, answer.trace.reads),
+    readRecords(client, 'company', FREE_DATA_READ_LIMIT, answer.trace.reads),
+  ]);
+  const readable = [];
+  if (contacts !== null) readable.push(['contact', contacts]);
+  else answer.unavailable.push('Lead: modulo contact non leggibile in questo spazio.');
+  if (companies !== null) readable.push(['company', companies]);
+  else answer.unavailable.push('Aziende: modulo company non leggibile in questo spazio.');
+  /** @type {Array<{ module: string, id: string, label: string, at: number }>} */
+  const entries = [];
+  for (const [module, rows] of readable) {
+    const labelOf = module === 'contact' ? contactDisplayName : companyDisplayName;
+    for (const row of rows) {
+      const at = Date.parse(row?.createdAt);
+      if (Number.isNaN(at) || localDayOf(at) !== day) continue;
+      if (!isSafeRecordId(row?.id)) continue;
+      const label = labelOf(row);
+      if (label === '') continue;
+      entries.push({ module, id: row.id, label, at });
+    }
+  }
+  entries.sort((a, b) => a.at - b.at);
+  const when = `${dayWord} (${italianDay(day)})`;
+  const capped = readable.some(([, rows]) => rows.length >= FREE_DATA_READ_LIMIT);
+  const bound = capped ? ' (prime 50 lette)' : '';
+  if (readable.length === 0) {
+    answer.lines.push(`I lead ${when} non sono leggibili in questo spazio${bound}.`);
+    return answer;
+  }
+  if (entries.length === 0) {
+    answer.lines.push(`Nessun lead nuovo ${when}${bound}.`);
+    return answer;
+  }
+  answer.lines.push(entries.length === 1
+    ? `1 lead nuovo ${when}${bound}:`
+    : `${entries.length} lead nuovi ${when}${bound}:`);
+  for (const entry of entries.slice(0, SUGGESTION_MAX_LISTED)) {
+    answer.lines.push(`• ${entry.label}`);
+  }
+  for (const entry of entries.slice(0, SUGGESTION_MAX_SOURCES)) {
+    answer.sources.push({
+      kind: 'record', module: entry.module, id: entry.id, label: entry.label,
+      href: `#/customer-card/${entry.module}/${encodeURIComponent(entry.id)}`,
+    });
+  }
+  const first = entries[0];
+  answer.actions.push({
+    id: `bo04:lead:apri:${first.id}`, label: `Apri la scheda di ${first.label}`,
+    kind: 'navigate', href: `#/customer-card/${first.module}/${encodeURIComponent(first.id)}`,
+    customerFacing: false,
+  });
+  answer.context = {
+    kind: 'lead-day', day, dayWord,
+    ids: entries.map((entry) => ({ module: entry.module, id: entry.id, label: entry.label })),
+  };
+  return answer;
+}
+
+/**
+ * «Chi è il primo?»: the first entry of the last lead-day list, named and
+ * linked. Without that context the panel says which question to ask first —
+ * in Italian, never a refusal code.
+ * @param {string} title the original question, shown on the card
+ * @param {unknown} context the previous free answer's context
+ */
+function answerPrimo(title, context) {
+  const answer = emptyAnswer('bo04:domanda-libera', title);
+  const ids = Array.isArray(context?.ids) ? context.ids.filter((entry) => entry !== null && typeof entry === 'object'
+    && isSafeModule(entry.module) && isSafeRecordId(entry.id) && typeof entry.label === 'string' && entry.label !== '') : [];
+  if (ids.length === 0) {
+    answer.lines.push('Dimmi prima «quanti lead oggi?»: poi ti dico chi è il primo.');
+    return answer;
+  }
+  const first = ids[0];
+  const when = typeof context?.day === 'string' && context.day !== '' ? ` del ${italianDay(context.day)}` : '';
+  answer.lines.push(`Il primo${when} è ${first.label}.`);
+  answer.sources.push({
+    kind: 'record', module: first.module, id: first.id, label: first.label,
+    href: `#/customer-card/${first.module}/${encodeURIComponent(first.id)}`,
+  });
+  answer.actions.push({
+    id: `bo04:lead:apri:${first.id}`, label: `Apri la scheda di ${first.label}`,
+    kind: 'navigate', href: `#/customer-card/${first.module}/${encodeURIComponent(first.id)}`,
+    customerFacing: false,
+  });
+  answer.context = { kind: 'lead-day', day: context.day ?? null, dayWord: context.dayWord ?? null, ids };
+  return answer;
+}
+
+/**
+ * Try one free question locally. An Answer when the question is a data
+ * question over space records (lead-day, day shift, primo), null when it is
+ * not — the caller then uses the backend-or-notice path.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string} title the validated question text
+ * @param {unknown} context the previous free answer's context
+ * @returns {Promise<Answer | null>}
+ */
+export async function answerFreeLocal(client, title, context = null) {
+  if (client === null || typeof client !== 'object' || typeof client.request !== 'function') return null;
+  const folded = freeWords(title);
+  if (folded === '') return null;
+  const hasLead = /\blead\b/.test(folded)
+    || (/\bnuov[oi]\b/.test(folded) && (/\bclient/.test(folded) || /\bcontatt/.test(folded) || /\baziend/.test(folded)));
+  const wantsPrimo = /\bprim[oi]\b/.test(folded);
+  const dayWord = /\bieri\b/.test(folded) ? 'ieri' : 'oggi';
+  const today = localDayOf(Date.now());
+  const isShiftOnly = /^(e|ed)\s+(ieri|oggi)\??$/.test(folded);
+  if (isShiftOnly) {
+    if (context?.kind !== 'lead-day' || typeof context?.day !== 'string' || context.day === '') return null;
+    // «e ieri?» after «quanti lead oggi?» reads yesterday; after a
+    // yesterday list it stays there. «e oggi?» always reads today.
+    const target = dayWord === 'ieri'
+      ? (context.day === today ? shiftDay(today, -1) : context.day)
+      : today;
+    return answerLeadDay(client, title, target, dayWord);
+  }
+  if (hasLead) {
+    const day = dayWord === 'ieri' ? shiftDay(today, -1) : today;
+    return answerLeadDay(client, title, day, dayWord);
+  }
+  if (wantsPrimo) return answerPrimo(title, context);
+  return null;
+}
+
 export async function runSuggestion(client, suggestionId, customer = null) {
   if (client === null || typeof client !== 'object' || typeof client.request !== 'function') {
     throw new Error('L’assistente ha bisogno del client API per leggere i record.');
@@ -1077,18 +1275,29 @@ export async function probeAssistantBackend(client) {
 }
 
 /**
- * One free question. In dry-run the question is refused with the status
- * notice (or the suggest-only line when the status carries none) before
- * any request leaves the panel — zero requests, never a silent call.
+ * One free question. Data questions over space records («quanti lead
+ * oggi?», «e ieri?», «chi è il primo?») are answered locally first — pure
+ * reads, no key, no backend, no spend — in live and in dry-run alike. In
+ * dry-run anything else is refused with the status notice (or the
+ * suggest-only line when the status carries none) before any request
+ * leaves the panel — zero requests, never a silent call.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ mode: string, endpoint?: string | null }} status
  * @param {unknown} question
+ * @param {unknown} [context] the previous free answer's context, for follow-ups
  */
-export async function askFreeQuestion(client, status, question) {
+export async function askFreeQuestion(client, status, question, context = null) {
   const text = typeof question === 'string' ? question.trim().replace(/\s+/g, ' ') : '';
   if (text === '') throw new Error('Scrivi una domanda prima di inviarla.');
   if (text.length > FREE_QUESTION_MAX_LENGTH) {
     throw new Error(`La domanda è troppo lunga (massimo ${FREE_QUESTION_MAX_LENGTH} caratteri).`);
+  }
+  // Voce 34fd687c: deterministic data answers need no backend — Dan's
+  // «quanti lead oggi??» is answered from the space's own records even
+  // while free questions stay off, with named sources and buttons.
+  const local = await answerFreeLocal(client, text, context);
+  if (local !== null) {
+    return { ok: true, disabled: false, answer: local };
   }
   const refusal = typeof status?.notice === 'string' && status.notice !== ''
     ? status.notice
@@ -1310,6 +1519,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // Review #596 P2: a top-bar question asked while an answer is still
     // running waits here (only the newest one) and starts when it ends.
     queued: null,
+    // Voce 34fd687c: the last free data answer's context (lead-day list),
+    // so «e ieri?» and «chi è il primo?» keep the thread. In-session only,
+    // like the history — never persisted.
+    freeContext: null,
   };
   // Every open() takes a generation: a slow status probe never lets an older
   // opening overwrite a newer question.
@@ -1528,11 +1741,12 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.draft = null;
     render();
     try {
-      const outcome = await askFreeQuestion(client, state.status ?? { mode: 'dry-run' }, question);
+      const outcome = await askFreeQuestion(client, state.status ?? { mode: 'dry-run' }, question, state.freeContext);
       if (outcome.disabled === true) {
         state.error = outcome.notice;
       } else if (outcome.answer) {
         state.answer = outcome.answer;
+        if (outcome.answer.context !== undefined) state.freeContext = outcome.answer.context;
         pushHistory(state.answer);
       }
     } catch (error) {
@@ -1617,6 +1831,28 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       await submitFreeQuestion(typed);
       return;
     }
+    // Voce 34fd687c: data questions («quanti lead oggi?») are answered
+    // from the space's own records even in dry-run — named customers,
+    // never UUIDs. Anything else falls through to the closest suggestion.
+    state.busy = true;
+    state.error = '';
+    render();
+    let local = null;
+    try {
+      local = await answerFreeLocal(client, typed, state.freeContext);
+    } catch {
+      local = null;
+    }
+    if (local !== null) {
+      state.answer = local;
+      if (local.context !== undefined) state.freeContext = local.context;
+      pushHistory(local);
+      state.asked = null;
+      releaseBusy();
+      return;
+    }
+    state.busy = false;
+    render();
     const match = closestSuggestion(state.screenId, typed);
     state.asked = { text: typed, matched: match ? match.title : null };
     if (match) {

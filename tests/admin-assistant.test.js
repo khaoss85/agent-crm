@@ -6,6 +6,7 @@ import {
   ASSISTANT_SUGGEST_ONLY_NOTICE,
   FREE_QUESTION_DISABLED_NOTICE,
   SUGGESTION_CATALOG,
+  answerFreeLocal,
   askFreeQuestion,
   assistantDisabledNotice,
   createAssistantPanel,
@@ -1292,4 +1293,114 @@ test('review #596 P2: the header ✕ cancels a waiting question and a slow probe
   await panel.open('clienti');
   assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'no ghost waiting bubble on the next open');
   assert.ok(!mount.textContent.includes('«meteo a Milano»'), 'the cancelled question never runs');
+});
+
+// Voce 34fd687c: domande libere sui dati, con i nomi dei clienti e il
+// contesto su più turni. Date locali a mezzogiorno: mai sul confine.
+
+const pad2 = (part) => String(part).padStart(2, '0');
+const localYmd = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+const LEAD_TODAY = localYmd(new Date());
+const LEAD_YESTERDAY = localYmd(new Date(Date.now() - 86400000));
+const atHour = (day, hour) => `${day}T${pad2(hour)}:00:00`;
+
+const LEAD_CLIENT = {
+  '/api/modules/contact/records?limit=50': {
+    items: [
+      { id: 'c-sara', firstName: 'Sara', lastName: 'Bianchi', email: 'sara@example.it', createdAt: atHour(LEAD_TODAY, 9) },
+      { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+      { id: 'c-ada', firstName: 'Ada', lastName: 'Neri', email: 'ada@example.it', createdAt: atHour(LEAD_YESTERDAY, 15) },
+      { id: 'c-vecchio', firstName: 'Vecchio', lastName: 'Lead', createdAt: '2025-01-01T10:00:00' },
+    ],
+  },
+  '/api/modules/company/records?limit=50': {
+    items: [
+      { id: 'co-olimpia', name: 'Palestra Olimpia', createdAt: atHour(LEAD_TODAY, 10) },
+    ],
+  },
+};
+
+function shownText(answer) {
+  return [...answer.lines, ...answer.sources.map((source) => source.label),
+    ...answer.actions.map((action) => `${action.label} ${action.confirmLabel ?? ''}`)].join('\n');
+}
+
+test('voce 34fd687c: «quanti lead oggi?» nomina i clienti, mai UUID', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi??');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.disabled, false);
+  const text = shownText(outcome.answer);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('3 lead nuovi oggi')), JSON.stringify(outcome.answer.lines));
+  assert.ok(text.includes('Marco Rossi'));
+  assert.ok(text.includes('Sara Bianchi'));
+  assert.ok(text.includes('Palestra Olimpia'));
+  assert.ok(!text.includes('Ada Neri'), 'yesterday stays out of today');
+  for (const raw of ['c-marco', 'c-sara', 'co-olimpia', 'c-ada']) {
+    assert.ok(!text.includes(raw), `raw id leaked: ${raw}`);
+  }
+  assert.ok(outcome.answer.sources.length > 0);
+  for (const source of outcome.answer.sources) {
+    assert.ok(source.href.startsWith('#/customer-card/'), source.href);
+  }
+  const action = outcome.answer.actions[0];
+  assert.ok(action.label.includes('Marco Rossi'), 'the button names the first customer');
+  assert.ok(action.href.includes('c-marco'));
+});
+
+test('voce 34fd687c: tre turni tengono il contesto (oggi, e ieri, chi è il primo)', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const dry = { mode: 'dry-run' };
+  const first = await askFreeQuestion(client, dry, 'quanti lead oggi?');
+  assert.equal(first.ok, true);
+  assert.ok(first.answer.context && first.answer.context.kind === 'lead-day');
+  const second = await askFreeQuestion(client, dry, 'e ieri?', first.answer.context);
+  assert.equal(second.ok, true);
+  assert.ok(shownText(second.answer).includes('Ada Neri'));
+  assert.ok(!shownText(second.answer).includes('Marco Rossi'));
+  const third = await askFreeQuestion(client, dry, 'chi è il primo?', second.answer.context);
+  assert.equal(third.ok, true);
+  assert.ok(third.answer.lines.some((line) => line.includes('Ada Neri')), JSON.stringify(third.answer.lines));
+  assert.ok(third.answer.actions[0].label.includes('Ada Neri'));
+});
+
+test('voce 34fd687c: «chi è il primo?» senza contesto guida in italiano', async () => {
+  const outcome = await askFreeQuestion(stubClient(LEAD_CLIENT), { mode: 'dry-run' }, 'chi è il primo?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('quanti lead oggi')), JSON.stringify(outcome.answer.lines));
+  assert.deepEqual(outcome.answer.sources, []);
+});
+
+test('voce 34fd687c: thread senza nomi non mostrano mai UUID', async () => {
+  const uuid = '712e1f90-1111-2222-3333-444455556666';
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': {
+      items: [{ id: uuid, status: 'open', channel: 'whatsapp' }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const text = [...answer.lines, ...answer.sources.map((s) => s.label), ...answer.actions.map((a) => a.label)].join('\n');
+  assert.ok(!text.includes(uuid), `UUID leaked: ${text}`);
+  assert.ok(text.includes('Thread whatsapp') || text.includes('Conversazione'), text);
+  const close = answer.actions.find((action) => action.id.startsWith('bo04:chiudi'));
+  assert.ok(close && !close.label.includes(uuid) && !close.confirmLabel.includes(uuid));
+});
+
+test('voce 34fd687c: domanda non dati in dry-run resta avviso chiaro in italiano', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'che tempo fa?');
+  assert.equal(outcome.disabled, true);
+  assert.equal(outcome.notice, ASSISTANT_SUGGEST_ONLY_NOTICE);
+  assert.equal(await answerFreeLocal(client, 'che tempo fa?'), null);
+});
+
+test('voce 34fd687c: la barra AI risponde sui dati anche senza backend', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const panel = createAssistantPanel({ doc, mount, client: stubClient(LEAD_CLIENT), navigate: () => {}, notify: () => {} });
+  await panel.open('clienti', undefined, undefined, 'quanti lead oggi?');
+  for (let i = 0; i < 6; i += 1) await tick();
+  assert.ok(mount.textContent.includes('Marco Rossi'), mount.textContent.slice(0, 400));
+  assert.ok(!mount.textContent.includes('non ancora attive'), 'no stale notice on a data answer');
+  assert.ok(!mount.textContent.includes('c-marco'), 'no raw id on screen');
 });
