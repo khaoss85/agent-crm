@@ -1772,8 +1772,17 @@ export function createCustomerCardView(deps) {
         // Voce 59def6cb805d (C17): the day already heads the group, so the
         // card shows the hour only (`<hh:mm>`) beside channel and direction.
         const when = timeParts(item?.occurredAt);
-        row.appendChild(el('p', 'bo-scheda-entry-head',
+        const entryHead = el('p', 'bo-scheda-entry-head');
+        // «Da leggere»: an inbound passage the server names unread
+        // (`read: false`) lights up with «Nuovo» for this visit. Without the
+        // field nothing changes — the server may not serve read state yet.
+        if (!isOutbound && item?.read === false) {
+          row.setAttribute('data-unread', 'true');
+          entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
+        }
+        entryHead.appendChild(el('span', undefined,
           when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
+        row.appendChild(entryHead);
         if (item?.entry === 'call') {
           // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
           // audio URL in the data no player is rendered (never a dead one).
@@ -2264,6 +2273,42 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     mount.appendChild(panel);
+    markRead(resource, id, timeline);
+  }
+
+  /**
+   * «Da leggere»: opening the scheda marks its inbound messages read, up to
+   * the newest unread one. The highlights stay for this visit — the operator
+   * still sees what was new — and the list loses the badge on its next read.
+   * Without read state (no `read: false` anywhere) or without a space nothing
+   * is sent; a refused mark is silent, the badge simply stays.
+   */
+  function markRead(resource, id, timeline) {
+    const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+    let upTo = null;
+    let upToMs = -Infinity;
+    for (const item of items) {
+      if (String(item?.direction ?? '') !== 'inbound' || item?.read !== false) continue;
+      const ms = Date.parse(String(item?.occurredAt ?? ''));
+      if (Number.isFinite(ms) && ms > upToMs) {
+        upToMs = ms;
+        upTo = String(item.occurredAt);
+      }
+    }
+    if (upTo === null) return;
+    let spaceId = null;
+    try {
+      spaceId = activeSpaceId();
+    } catch {
+      return;
+    }
+    if (spaceId === null) return;
+    Promise.resolve()
+      .then(() => client.request('/api/customer-hub/mark-read', {
+        method: 'POST',
+        body: JSON.stringify({ spaceId, resource, id, upTo }),
+      }))
+      .catch(() => {});
   }
 
   return { renderCard };

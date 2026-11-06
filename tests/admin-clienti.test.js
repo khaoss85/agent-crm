@@ -846,3 +846,76 @@ test('the four default columns keep the 760px floor', async () => {
   const { mount } = await render(client);
   assert.match(mount.findAll('article')[0].getAttribute('style'), /min-width: 760px/);
 });
+
+// «Da leggere» (Dan 06/11): a customer with new messages lights up in the
+// list; without read state from the server the list reads as before.
+function unreadClient({ answers }) {
+  const calls = [];
+  let n = 0;
+  return {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      const answer = answers[Math.min(n, answers.length - 1)];
+      n += 1;
+      return {
+        customerListContract: 1, total: answer.items.length, page: 1, pageSize: 10, pages: 1, totalIsExact: true,
+        ...MENUS,
+        views: [...MENUS.views, { id: 'da-leggere', label: 'Da leggere', count: answer.unreadRows ?? 0 }],
+        items: answer.items,
+      };
+    },
+  };
+}
+
+test('da leggere: an unread row lights up with «N nuovi», the view gets its dot', async () => {
+  const client = unreadClient({ answers: [{ unreadRows: 1, items: [{ ...ROW_MARCO, unreadCount: 3 }, { ...ROW_ANNA, unreadCount: 0 }] }] });
+  const { mount } = await render(client, { schedule: () => {} });
+  const marco = mount.findAll('article').find((node) => node.getAttribute('data-customer') === 'contact:c1');
+  const anna = mount.findAll('article').find((node) => node.getAttribute('data-customer') === 'contact:c2');
+  assert.equal(marco.getAttribute('data-unread'), '3');
+  assert.ok(marco.textContent.includes('3 nuovi'), 'the count reads beside the name');
+  assert.equal(anna.getAttribute('data-unread'), null, 'a read row stays quiet');
+  assert.ok(!anna.textContent.includes('nuov'));
+  const list = mount.findAll('div').find((node) => String(node.getAttribute('class')).includes('bo-clienti-list'));
+  assert.equal(list.getAttribute('data-read-state'), 'on');
+  const view = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'da-leggere');
+  assert.equal(view.getAttribute('data-attention'), 'true', 'the Da leggere view carries the dot while it counts');
+  const one = await render(unreadClient({ answers: [{ unreadRows: 1, items: [{ ...ROW_MARCO, unreadCount: 1 }] }] }), { schedule: () => {} });
+  assert.ok(one.mount.textContent.includes('1 nuovo'), 'singular for one message');
+});
+
+test('da leggere: without unreadCount nothing lights up and nothing polls', async () => {
+  const scheduled = [];
+  const { mount } = await render(stubClient(), { schedule: (fn, ms) => scheduled.push(ms) });
+  assert.equal(mount.findAll('article').filter((node) => node.getAttribute('data-unread') !== null).length, 0);
+  const list = mount.findAll('div').find((node) => String(node.getAttribute('class')).includes('bo-clienti-list'));
+  assert.equal(list.getAttribute('data-read-state'), null);
+  assert.deepEqual(scheduled, [], 'no quiet re-read without read state');
+});
+
+test('da leggere: a new message lights the row up on the quiet re-read, no reload', async () => {
+  const pending = [];
+  const client = unreadClient({
+    answers: [
+      { unreadRows: 0, items: [{ ...ROW_MARCO, unreadCount: 0 }] },
+      { unreadRows: 1, items: [{ ...ROW_MARCO, unreadCount: 1, lastContactAt: '2026-11-06T15:00:00.000Z' }] },
+    ],
+  });
+  const { mount, view } = await render(client, { schedule: (fn, ms) => pending.push({ fn, ms }) });
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].ms, 60_000);
+  assert.equal(mount.findAll('article')[0].getAttribute('data-unread'), null);
+  pending.shift().fn();
+  await flush();
+  assert.equal(client.calls.length, 2, 'one quiet re-read');
+  assert.equal(mount.findAll('article')[0].getAttribute('data-unread'), '1', 'the row lights up');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no loading flash on a quiet re-read');
+  // Leaving the list stops the re-reads.
+  assert.equal(pending.length, 1, 'the next round is armed');
+  view.invalidate();
+  pending.shift().fn();
+  await flush();
+  assert.equal(client.calls.length, 2, 'an invalidated list never re-reads');
+});
