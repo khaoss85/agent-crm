@@ -378,6 +378,20 @@ export function mergeLinkedIdentities(timeline) {
   });
 }
 
+/**
+ * «Da leggere»: the one rule for an unread passage, shared by the «Nuovo»
+ * badge and by mark-read so the two never disagree — an inbound message the
+ * server names unread, with a date mark-read can reach (`upTo`). A passage
+ * outside it never lights up, so it can never stay lit forever.
+ * @param {any} item a timeline entry
+ * @returns {number | null} its time in ms when unread, null otherwise
+ */
+export function unreadInboundAt(item) {
+  if (String(item?.direction ?? '') !== 'inbound' || item?.read !== false) return null;
+  const ms = Date.parse(String(item?.occurredAt ?? ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
 /** A message longer than this folds behind «Mostra tutto». */
@@ -1772,8 +1786,17 @@ export function createCustomerCardView(deps) {
         // Voce 59def6cb805d (C17): the day already heads the group, so the
         // card shows the hour only (`<hh:mm>`) beside channel and direction.
         const when = timeParts(item?.occurredAt);
-        row.appendChild(el('p', 'bo-scheda-entry-head',
+        const entryHead = el('p', 'bo-scheda-entry-head');
+        // «Da leggere»: an unread passage (unreadInboundAt, the same rule
+        // mark-read uses) lights up with «Nuovo» for this visit. Without the
+        // field nothing changes — the server may not serve read state yet.
+        if (unreadInboundAt(item) !== null) {
+          row.setAttribute('data-unread', 'true');
+          entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
+        }
+        entryHead.appendChild(el('span', undefined,
           when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
+        row.appendChild(entryHead);
         if (item?.entry === 'call') {
           // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
           // audio URL in the data no player is rendered (never a dead one).
@@ -2264,6 +2287,41 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     mount.appendChild(panel);
+    markRead(resource, id, timeline);
+  }
+
+  /**
+   * «Da leggere»: opening the scheda marks its inbound messages read, up to
+   * the newest unread one. The highlights stay for this visit — the operator
+   * still sees what was new — and the list loses the badge on its next read.
+   * Without read state (no `read: false` anywhere) or without a space nothing
+   * is sent; a refused mark is silent, the badge simply stays.
+   */
+  function markRead(resource, id, timeline) {
+    const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+    let upTo = null;
+    let upToMs = -Infinity;
+    for (const item of items) {
+      const ms = unreadInboundAt(item);
+      if (ms !== null && ms > upToMs) {
+        upToMs = ms;
+        upTo = String(item.occurredAt);
+      }
+    }
+    if (upTo === null) return;
+    let spaceId = null;
+    try {
+      spaceId = activeSpaceId();
+    } catch {
+      return;
+    }
+    if (spaceId === null) return;
+    Promise.resolve()
+      .then(() => client.request('/api/customer-hub/mark-read', {
+        method: 'POST',
+        body: JSON.stringify({ spaceId, resource, id, upTo }),
+      }))
+      .catch(() => {});
   }
 
   return { renderCard };

@@ -2453,3 +2453,69 @@ test('Annulla on Dettagli restores the card in place, without re-reading the sch
   assert.ok(mount.textContent.includes('Tutti i contatti'), 'the scheda never blanks');
   if (before !== null) assert.equal(client.calls.length, before, 'no re-read of the card');
 });
+
+// «Da leggere» (Dan 06/11): the unread inbound messages read «Nuovo» and
+// opening the scheda marks them read, up to the newest one.
+async function unreadCard({ items, spaceId = 'presti', onMark = null }) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const marks = [];
+  const base = stubClient();
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/customer-hub/timeline/')) {
+        return { entries: { available: true, count: items.length, truncated: false, items }, appointments: { available: true, items: [] } };
+      }
+      if (path === '/api/customer-hub/mark-read') {
+        marks.push(JSON.parse(options.body));
+        if (onMark) return onMark();
+        return { ok: true };
+      }
+      return base.request(path, options);
+    },
+  };
+  await createCustomerCardView({ doc, mount, client, spaceId }).renderCard('contact', 'c1');
+  await flushComposer(6);
+  return { mount, marks };
+}
+const inbound = (id, at, read) => ({ entry: 'message', id, conversationId: 't1', channel: 'email', direction: 'inbound', sync: 'received', body: `testo ${id}`, remoteHandle: 'guido@palestra-esempio.it', occurredAt: at, read });
+
+test('da leggere: unread inbound messages read «Nuovo» and the scheda marks them read up to the newest', async () => {
+  const { mount, marks } = await unreadCard({ items: [
+    inbound('m1', '2026-11-06T08:00:00.000Z', true),
+    inbound('m2', '2026-11-06T09:00:00.000Z', false),
+    inbound('m3', '2026-11-06T10:00:00.000Z', false),
+    { ...inbound('o1', '2026-11-06T11:00:00.000Z', false), direction: 'outbound', remoteHandle: null },
+  ] });
+  const unread = mount.findAll('div').filter((node) => node.getAttribute('data-unread') === 'true').map((node) => node.getAttribute('data-entry'));
+  assert.deepEqual(unread.sort(), ['m2', 'm3'], 'only unread inbound messages light up, never an outbound one');
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Nuovo').length, 2);
+  assert.deepEqual(marks, [{ spaceId: 'presti', resource: 'contact', id: 'c1', upTo: '2026-11-06T10:00:00.000Z' }]);
+});
+
+test('da leggere: nothing unread or no read state sends no mark, and a refused mark stays silent', async () => {
+  const none = await unreadCard({ items: [inbound('m1', '2026-11-06T08:00:00.000Z', true)] });
+  assert.deepEqual(none.marks, []);
+  const legacy = await unreadCard({ items: [inbound('m1', '2026-11-06T08:00:00.000Z', undefined)] });
+  assert.deepEqual(legacy.marks, [], 'an older server without read state is never asked');
+  assert.equal(legacy.mount.findAll('div').filter((node) => node.getAttribute('data-unread') !== null).length, 0);
+  const refused = await unreadCard({
+    items: [inbound('m1', '2026-11-06T08:00:00.000Z', false)],
+    onMark: () => { throw Object.assign(new Error('nope'), { status: 404 }); },
+  });
+  assert.equal(refused.marks.length, 1);
+  assert.ok(refused.mount.textContent.includes('testo m1'), 'the scheda stays whole');
+});
+
+test('da leggere: badge and mark-read share one rule — no direction or no date never lights up', async () => {
+  const { mount, marks } = await unreadCard({ items: [
+    { ...inbound('nodir', '2026-11-06T12:00:00.000Z', false), direction: undefined },
+    inbound('nodate', null, false),
+    inbound('bad', 'ieri', false),
+    inbound('ok', '2026-11-06T09:00:00.000Z', false),
+  ] });
+  const lit = mount.findAll('div').filter((node) => node.getAttribute('data-unread') === 'true').map((node) => node.getAttribute('data-entry'));
+  assert.deepEqual(lit, ['ok'], 'only what mark-read can reach lights up');
+  assert.deepEqual(marks.map((mark) => mark.upTo), ['2026-11-06T09:00:00.000Z']);
+});
