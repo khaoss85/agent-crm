@@ -167,6 +167,29 @@ export function isAutomatedGmailSender(from) {
  * only headers asks the bulk-header question.
  * @param {{from?: unknown, listUnsubscribe?: unknown, precedence?: unknown, autoSubmitted?: unknown}} input
  */
+/**
+ * Whether one sent-mail recipient address is automated, never a customer
+ * (backlog:1a4d9b30, review on #606, P1 — the recipient door). It calls the
+ * sender door (`isBulkGmailMessage`) first, then excludes team locals
+ * outright: on the outbound path no message from the recipient exists, so
+ * no bulk header can ever corroborate, and writing to a vendor desk
+ * (`support@contabo.com`) or a no-reply box must not mint the customer
+ * the inbound door quarantines. Inbound keeps the corroborated door (a
+ * team mailbox writing to the owner stays a lead); stem variants stay a
+ * person on both paths (P2: `support-team@` is a person, `noreply-it@`
+ * stays automated through the sender door above).
+ * DECISION (to be confirmed): recipient door broader than sender door — why above.
+ * @param {unknown} handle
+ */
+export function isAutomatedGmailRecipient(handle) {
+  if (isBulkGmailMessage({ from: handle })) return true;
+  const address = typeof handle === 'string' ? handle.trim().toLowerCase() : '';
+  const at = address.lastIndexOf('@');
+  if (at <= 0 || at === address.length - 1) return false;
+  const base = address.slice(0, at).split('+')[0] ?? '';
+  return GMAIL_TEAM_SENDER_LOCALS.includes(base);
+}
+
 export function isBulkGmailMessage(input = {}) {
   const listUnsubscribe = typeof input?.listUnsubscribe === 'string' ? input.listUnsubscribe.trim() : '';
   if (listUnsubscribe !== '') return true;
@@ -533,13 +556,13 @@ function normalizeGmailMessage(decoded, config) {
   // the owner wrote to become leads too. A loopback with nobody else stays
   // evidence, never a customer — same quarantine as before.
   if (from.address === config.mailbox) {
-    // The door reads recipients too (backlog:1a4d9b30, review on #606,
-    // P1): writing to `support@contabo.com` must not mint the exact
-    // automated contact the inbound door quarantines. Automated
-    // recipients drop out here, so an all-automated To/Cc quarantines as
-    // evidence through the empty-recipients branch below.
+    // The recipient door reads recipients too (backlog:1a4d9b30, review
+    // on #606, P1): writing to `support@contabo.com` must not mint the
+    // customer the inbound door quarantines. Automated recipients drop
+    // out here, so an all-automated To/Cc quarantines as evidence
+    // through the empty-recipients branch below.
     const recipients = parseGmailRecipients(item.to, item.cc, config.mailbox)
-      .filter((recipient) => !isBulkGmailMessage({ from: recipient.handle }));
+      .filter((recipient) => !isAutomatedGmailRecipient(recipient.handle));
     if (recipients.length === 0) {
       return { providerEventId: item.id, subject: '', sequence: null, occurredAt: atIso };
     }

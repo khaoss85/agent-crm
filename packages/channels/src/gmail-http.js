@@ -5,6 +5,7 @@ import {
   GMAIL_MAX_TEXT,
   buildGmailSendRequest,
   canonicalGmailAddress,
+  isAutomatedGmailRecipient,
   isBulkGmailMessage,
   isGmailThreadId,
   gmailThreadIdForSubject,
@@ -153,7 +154,7 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     // all-automated To/Cc quarantines as evidence below.
     const recipients = parseGmailRecipients(
       restHeaderAll(wire.payload, 'To'), restHeaderAll(wire.payload, 'Cc'), mailbox,
-    ).filter((recipient) => !isBulkGmailMessage({ from: recipient.handle }));
+    ).filter((recipient) => !isAutomatedGmailRecipient(recipient.handle));
     if (recipients.length === 0) {
       return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
     }

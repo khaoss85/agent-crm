@@ -10,6 +10,7 @@ import {
   createGmailChannelAdapter,
   formatGoogleSyncLog,
   gmailPushBody,
+  isAutomatedGmailRecipient,
   isAutomatedGmailSender,
   isBulkGmailMessage,
   parseGmailAddressHeader,
@@ -430,6 +431,16 @@ test('a human team mailbox stays a lead, with the display name (review on #606, 
     ['support@piccola-azienda.it', 'info@mail.azienda.it'],
   );
   assert.equal(sender.calls[0].firstName, 'Assistenza');
+});
+
+test('the recipient door needs no corroboration (review on #606, P1)', () => {
+  assert.equal(isAutomatedGmailRecipient('support@contabo.com'), true, 'a team local is automated outbound');
+  assert.equal(isAutomatedGmailRecipient('noreply-it@klarna.com'), true, 'a never-human stem stays automated outbound');
+  assert.equal(isAutomatedGmailRecipient('alerts@mail.zapier.com'), true, 'a corroborated team local stays automated outbound');
+  assert.equal(isAutomatedGmailRecipient('amico@example.com'), false, 'a person stays a person outbound');
+  assert.equal(isAutomatedGmailRecipient('support@piccola-azienda.it'), true, 'a team local is automated outbound even on a plain domain');
+  assert.equal(isAutomatedGmailRecipient('support-team@azienda.it'), false, 'a suffixed team mailbox stays a person outbound');
+  assert.equal(isAutomatedGmailRecipient('not-an-address'), false, 'an unreadable address is simply not automated');
 });
 
 test('sent mail to automated recipients creates nothing (review on #606, P1)', async (t) => {
