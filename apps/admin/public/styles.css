@@ -1937,3 +1937,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer .bo-scheda-composer-subject, .bo-scheda-composer .bo-scheda-composer-subject:focus { border-color: transparent; border-bottom-color: var(--line-faint); box-shadow: none; outline: none; }
 .bo-scheda-composer .bo-scheda-composer-text, .bo-scheda-composer .bo-scheda-composer-text:focus { border-bottom-color: transparent; resize: none; }
 .bo-scheda-composer > .bo-muted, .bo-scheda-composer > .field-error { margin: 0; padding: 16px 18px; }
+
+/* Assistente (05/11): domanda della barra in testa alla colonna, nota di fondo con margine. */
+.bo-assistant-asked { display: flex; flex-direction: column; gap: 4px; align-self: flex-end; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: var(--surface); }
+.bo-assistant-asked-text { margin: 0; font-size: 14px; line-height: 1.45; }
+.bo-assistant-asked-note { margin: 0; font-size: 11.5px; line-height: 1.4; opacity: .75; }
+.bo-assistant .bo-assistant-foot { margin: 0; padding: 12px 20px 16px; border-top: 1px solid var(--line-faint); background: var(--surface); }
+.bo-assistant-draft.bo-assistant-foot { padding-top: 0; border-top: 0; color: var(--ink); font-size: 13px; }
