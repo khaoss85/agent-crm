@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { HISTORY_RECIPIENTS_MAX } from './adapter.js';
 import { verifyHmacWebhook } from './crypto.js';
 import { createGmailHttpIo } from './gmail-http.js';
 import { assertChannelAttachment } from './meta-webhook.js';
@@ -50,6 +51,140 @@ export const GMAIL_ADAPTER_VERSION = 1;
 /** The initial import window: threads of the last 90 days. */
 export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
 
+/**
+ * Bulk-mail signals (backlog:13c09f03): mass mail never names a customer,
+ * so it quarantines as evidence instead of resolving a contact. Every
+ * table below is closed vocabulary — an unknown value is simply not bulk.
+ */
+
+/**
+ * Local parts that are never a person writing (backlog:1a4d9b30,
+ * supervisor arbitration 06/11 on #606: these local-parts alone are
+ * automated, never leads, even without headers — no "team alone is a
+ * person" rule). The bare address decides alone. A local
+ * part matches exactly or as the stem of a separator-suffixed variant
+ * (`noreply-it`, `order-update-2`), after the `+` tag is stripped.
+ * Closed vocabulary — an unknown local part is a person until proven
+ * otherwise.
+ */
+export const GMAIL_AUTOMATED_SENDER_LOCALS = Object.freeze([
+  'no-reply', 'noreply', 'donotreply', 'do-not-reply',
+  'notify', 'notification', 'notifications',
+  'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
+  'renewals', 'support', 'onboarding',
+  'mailer-daemon', 'postmaster',
+]);
+
+/**
+ * First DNS labels that mark a sender domain as sending infrastructure,
+ * never a person (backlog:1a4d9b30): `hello@notify.railway.app` is
+ * platform traffic even with a human-looking local part. Only the first
+ * label counts, so `notify.example.com` matches but `example-notify.com`
+ * does not. Closed vocabulary — any other domain is a person until
+ * proven otherwise.
+ */
+export const GMAIL_SENDING_SUBDOMAINS = Object.freeze([
+  'mail', 'notify', 'em', 'news', 'bounce',
+]);
+
+/** Separator that may follow an automated local-part stem (`noreply-it`). */
+const AUTOMATED_LOCAL_SEPARATORS = Object.freeze(['-', '_', '.']);
+
+/** Precedence header values that mark a message as mass mail. */
+export const GMAIL_BULK_PRECEDENCE = Object.freeze(['bulk', 'list', 'junk']);
+
+/**
+ * Bulk-infrastructure domains: mail from these is platform traffic, never
+ * a person writing. Bare domains match their subdomains too
+ * (`newsletter.example` covers `a.newsletter.example`). Kept tight on
+ * purpose — an unknown sender domain is a person until proven otherwise.
+ */
+export const GMAIL_NOTIFICATION_DOMAINS = Object.freeze([
+  'amazonses.com',
+  'sendgrid.net',
+  'mandrillapp.com',
+  'mailchimp.com',
+  'list-manage.com',
+  'campaign-archive.com',
+  'constantcontact.com',
+  'mailgun.org',
+  'hubspotemail.net',
+  'mktomail.com',
+  'cmail20.com',
+]);
+
+/**
+ * Whether one sender address is automated, never a person
+ * (backlog:1a4d9b30): the local-part rule or the sending-subdomain rule.
+ * Pure and total — an unreadable address is simply not automated. The sync
+ * round calls this first so its log can count `automated-sender` apart
+ * from `bulk-header`; the verdict below stays the single rule both the
+ * door and the round call.
+ * @param {unknown} from
+ */
+export function isAutomatedGmailSender(from) {
+  const address = typeof from === 'string' ? from.trim().toLowerCase() : '';
+  const at = address.lastIndexOf('@');
+  if (at <= 0 || at === address.length - 1) return false;
+  const base = address.slice(0, at).split('+')[0] ?? '';
+  if (GMAIL_AUTOMATED_SENDER_LOCALS.includes(base)) return true;
+  if (GMAIL_AUTOMATED_SENDER_LOCALS.some((stem) => AUTOMATED_LOCAL_SEPARATORS.some((sep) => base.startsWith(`${stem}${sep}`)))) {
+    return true;
+  }
+  // A sending-subdomain first label automates regardless of local part
+  // (arbitration 06/11, P2): `hello@notify.railway.app` is platform
+  // traffic even with a human-looking local part.
+  const domain = address.slice(at + 1);
+  const labels = domain.split('.');
+  if (labels.length >= 2 && GMAIL_SENDING_SUBDOMAINS.includes(labels[0] ?? '')) return true;
+  return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+}
+
+/**
+ * Whether one Gmail message is mass mail. Pure and total: every signal is
+ * optional, an unreadable signal is simply not bulk, and no address ever
+ * leaves this function — the caller keeps only the boolean. A caller that
+ * passes only `from` asks the automated-sender question; one that passes
+ * only headers asks the bulk-header question.
+ * @param {{from?: unknown, listUnsubscribe?: unknown, precedence?: unknown, autoSubmitted?: unknown}} input
+ */
+export function isBulkGmailMessage(input = {}) {
+  const listUnsubscribe = typeof input?.listUnsubscribe === 'string' ? input.listUnsubscribe.trim() : '';
+  if (listUnsubscribe !== '') return true;
+  const precedence = typeof input?.precedence === 'string' ? input.precedence.trim().toLowerCase() : '';
+  if (GMAIL_BULK_PRECEDENCE.includes(precedence)) return true;
+  const autoSubmitted = typeof input?.autoSubmitted === 'string' ? input.autoSubmitted.trim().toLowerCase() : '';
+  if (autoSubmitted !== '' && autoSubmitted !== 'no') return true;
+  if (isAutomatedGmailSender(input?.from)) return true;
+  const from = typeof input?.from === 'string' ? input.from.trim().toLowerCase() : '';
+  const at = from.lastIndexOf('@');
+  if (at <= 0 || at === from.length - 1) return false;
+  const domain = from.slice(at + 1);
+  return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+}
+
+/**
+ * Whether one sent-mail recipient address is automated, never a customer
+ * (backlog:1a4d9b30, arbitration 06/11, P2 recipient door): the same
+ * verdict as the inbound door — `isBulkGmailMessage({ from: handle })` —
+ * no broader exclusion. One address reads the same in both directions.
+ * @param {unknown} handle
+ */
+export function isAutomatedGmailRecipient(handle) {
+  return isBulkGmailMessage({ from: handle });
+}
+
+/**
+ * The `google-sync` log line both readers share the shape of: counts only,
+ * never an address — a contact created from mail must not leak into logs.
+ * @param {{source?: unknown, created?: unknown}} input
+ */
+export function formatGoogleSyncLog(input = {}) {
+  const source = input?.source === 'calendar' ? 'calendar' : 'gmail';
+  const created = Number.isSafeInteger(input?.created) && input.created >= 0 ? input.created : 0;
+  return `google-sync created=${created} source=${source}`;
+}
+
 function encodeHistoryToken(index) {
   return Buffer.from(String(index), 'utf8').toString('base64url');
 }
@@ -89,6 +224,37 @@ function malformedMessage(reason) {
   throw new AppError(`Gmail message is not well-formed: ${reason}`, {
     code: 'CHANNEL_MESSAGE_MALFORMED', status: 422,
   });
+}
+
+/**
+ * Split a display name into first/last: the first token names, the rest
+ * describes. Bounded to the sender-evidence limits; longer text truncates
+ * instead of refusing the whole message over a cosmetic field.
+ * @param {string} name
+ */
+export function splitGmailDisplayName(name) {
+  const tokens = String(name ?? '').trim().replace(/^"|"$/g, '').trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return { firstName: null, lastName: null };
+  const clip = (text) => text.slice(0, 128) === '' ? null : text.slice(0, 128);
+  if (tokens.length === 1) return { firstName: clip(tokens[0]), lastName: null };
+  return { firstName: clip(tokens[0]), lastName: clip(tokens.slice(1).join(' ')) };
+}
+
+/**
+ * One address header (`From`, `To`, `Cc`) into address plus display name:
+ * `"John Doe" <john@example.com>` or a bare `john@example.com`. Throws
+ * fail-closed — a message without a readable sender names nobody.
+ * @param {unknown} value
+ */
+export function parseGmailAddressHeader(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (text === '' || text.length > 512) malformedEvent('message needs a readable address header');
+  const bracketed = /<([^<>]*)>/.exec(text);
+  const bare = bracketed ? bracketed[1].trim() : text;
+  const address = canonicalGmailAddress(bare);
+  const display = bracketed ? text.slice(0, bracketed.index).trim() : '';
+  const names = splitGmailDisplayName(display);
+  return { address, firstName: names.firstName, lastName: names.lastName };
 }
 
 /** Canonical lowercase address. Refuses anything that is not a bounded email address. */
@@ -159,11 +325,107 @@ function fromBase64Url(value) {
   return raw;
 }
 
+/**
+ * Read the bulk headers off one message (`List-Unsubscribe`, `Precedence`,
+ * `Auto-Submitted`): the fake payload carries them as a plain `headers`
+ * object, the REST path reads the same three names out of
+ * `payload.headers`. `Auto-Submitted` travels under both its wire name and
+ * the camel-case key the fake already uses for the other two.
+ * @param {unknown} raw
+ */
+export function readGmailBulkHeaders(raw) {
+  const headers = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const listUnsubscribe = typeof headers.listUnsubscribe === 'string' ? headers.listUnsubscribe : null;
+  const precedence = typeof headers.precedence === 'string' ? headers.precedence : null;
+  const autoSubmitted = typeof headers.autoSubmitted === 'string' ? headers.autoSubmitted
+    : typeof headers['Auto-Submitted'] === 'string' ? headers['Auto-Submitted'] : null;
+  return { listUnsubscribe, precedence, autoSubmitted };
+}
+
+/**
+ * Split one address header value into its individual mailboxes
+ * (backlog:13c09f03): Gmail REST carries each `To`/`Cc` header as a
+ * string that may hold several comma-separated mailboxes, and a quoted
+ * display name may itself contain a comma (`"Rossi, Guido" <...>`).
+ * Commas inside double quotes — or escaped with a backslash — never
+ * split, so every mailbox reaches the single-address parser whole.
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function splitGmailAddressList(value) {
+  if (typeof value !== 'string') return [];
+  const parts = [];
+  let current = '';
+  let quoted = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === '\\' && quoted && index + 1 < value.length) {
+      current += char + value[index + 1];
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      current += char;
+      continue;
+    }
+    if (char === ',' && !quoted) {
+      if (current.trim() !== '') parts.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim() !== '') parts.push(current.trim());
+  return parts;
+}
+
+/**
+ * Parse the recipient headers (`To`, `Cc`) into sender evidence (backlog:13c09f03):
+ * the owner's sent mail imports its recipients, so they become leads too.
+ * Each header value may hold several comma-separated mailboxes, so it is
+ * split first — a whole `To` line never goes to the single-address parser.
+ * A malformed recipient is skipped, never fatal — one bad address must not
+ * drop the good ones beside it. The bound mailbox is always excluded: our
+ * own address is evidence of sending, never a customer. The list stops at
+ * `HISTORY_RECIPIENTS_MAX` (the same bound `assertHistoryPage` enforces):
+ * an unbounded To/Cc would fail the page on every retry and brick the
+ * import past that message, so a large To/Cc degrades to the first entries,
+ * never to a stuck page.
+ * @param {unknown} rawTo @param {unknown} rawCc @param {string} mailbox
+ */
+export function parseGmailRecipients(rawTo, rawCc, mailbox) {
+  const seen = new Set();
+  const recipients = [];
+  const rawList = [...(Array.isArray(rawTo) ? rawTo : [rawTo]), ...(Array.isArray(rawCc) ? rawCc : [rawCc])];
+  for (const raw of rawList) {
+    if (recipients.length >= HISTORY_RECIPIENTS_MAX) break;
+    if (raw === undefined || raw === null || raw === '') continue;
+    for (const piece of splitGmailAddressList(raw)) {
+      if (recipients.length >= HISTORY_RECIPIENTS_MAX) break;
+      let parsed;
+      try {
+        parsed = parseGmailAddressHeader(piece);
+      } catch {
+        continue;
+      }
+      if (parsed.address === mailbox || seen.has(parsed.address)) continue;
+      seen.add(parsed.address);
+      recipients.push({
+        handle: parsed.address,
+        ...(parsed.firstName === null ? {} : { firstName: parsed.firstName }),
+        ...(parsed.lastName === null ? {} : { lastName: parsed.lastName }),
+      });
+    }
+  }
+  return recipients;
+}
+
 /** Build one provider-native Gmail push body (tests only). */
 export function gmailPushBody({
   id, threadId, from, to, subject = '', snippet = '',
   internalDateMs = null, historyId = 'history-fake-1', subscription = 'projects/example/subscriptions/accordo-gmail',
-  publishTime = null, attachments = undefined,
+  publishTime = null, attachments = undefined, cc = undefined, headers = undefined,
 }) {
   const at = internalDateMs ?? Date.now();
   const data = toBase64Url(JSON.stringify({
@@ -172,6 +434,8 @@ export function gmailPushBody({
     message: {
       id, threadId, from, to, subject, snippet, internalDateMs: at,
       ...(attachments === undefined ? {} : { attachments }),
+      ...(cc === undefined ? {} : { cc }),
+      ...(headers === undefined ? {} : { headers }),
     },
   }));
   return JSON.stringify({
@@ -240,21 +504,50 @@ function normalizeGmailMessage(decoded, config) {
     malformedEvent('message needs a bounded threadId');
   }
   let from;
-  let to;
   try {
-    from = canonicalGmailAddress(item.from);
-    to = canonicalGmailAddress(item.to);
+    from = parseGmailAddressHeader(item.from);
   } catch {
-    malformedEvent('message needs valid sender and recipient addresses');
+    malformedEvent('message needs a valid sender address');
   }
-  // Our own sent copy looping back is evidence, never a customer: no
-  // subject, so the operations layer quarantines it.
-  if (from === config.mailbox) {
-    return { providerEventId: item.id, subject: '', sequence: null, occurredAt: null };
-  }
+  const bulkHeaders = readGmailBulkHeaders(item.headers);
   const atMs = item.internalDateMs;
   if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > 4102444800000) {
     malformedEvent('message needs a valid internalDateMs');
+  }
+  const atIso = new Date(atMs).toISOString();
+  // Our own sent mail imports its recipients (backlog:13c09f03): the people
+  // the owner wrote to become leads too. The mailbox reads first
+  // (backlog:1a4d9b30, arbitration 06/11): mail the owner sent from the
+  // linked mailbox — even an automated-looking one like support@ or
+  // info@ — is never bulk-quarantined for its From alone. A loopback
+  // with nobody else stays evidence, never a customer — same quarantine
+  // as before.
+  if (from.address === config.mailbox) {
+    // The recipient door reads recipients too (backlog:1a4d9b30):
+    // writing to `support@contabo.com` must not mint the customer the
+    // inbound door quarantines. Automated recipients drop out here, so
+    // an all-automated To/Cc quarantines as evidence through the
+    // empty-recipients branch below.
+    const recipients = parseGmailRecipients(item.to, item.cc, config.mailbox)
+      .filter((recipient) => !isAutomatedGmailRecipient(recipient.handle));
+    if (recipients.length === 0) {
+      return { providerEventId: item.id, subject: '', sequence: null, occurredAt: atIso };
+    }
+    return {
+      providerEventId: item.id,
+      subject: `${GMAIL_SUBJECT_PREFIX}${item.threadId}`,
+      sequence: atMs,
+      occurredAt: atIso,
+      text: '',
+      recipients,
+    };
+  }
+  // Mass mail never names a customer (backlog:13c09f03): no subject, so
+  // the operations layer quarantines it as evidence — no contact, no
+  // timeline identity. Inbound only from here: the mailbox branch above
+  // already took the owner's sent mail.
+  if (isBulkGmailMessage({ from: from.address, ...bulkHeaders })) {
+    return { providerEventId: item.id, subject: '', sequence: null, occurredAt: atIso };
   }
   // No skew check here on purpose: the provider instant travels through
   // as `occurredAt` and `operations.js` quarantines a future-dated one
@@ -268,11 +561,20 @@ function normalizeGmailMessage(decoded, config) {
   if (snippet.length > GMAIL_MAX_TEXT) malformedEvent('message snippet exceeds the bound');
   const attachments = normalizeGmailAttachments(item.attachments);
   const text = snippet;
+  // The sender IS the From header (backlog:13c09f03): an unknown sender
+  // becomes a lead through the composed channel-sender capability, with
+  // the display name as the contact name.
+  const sender = {
+    handle: from.address,
+    ...(from.firstName === null ? {} : { firstName: from.firstName }),
+    ...(from.lastName === null ? {} : { lastName: from.lastName }),
+  };
   const base = {
     subject: `${GMAIL_SUBJECT_PREFIX}${item.threadId}`,
     sequence: atMs,
     occurredAt: new Date(atMs).toISOString(),
     text,
+    sender,
   };
   if (attachments.length <= 1) {
     return { providerEventId: item.id, ...base, attachment: attachments[0] ?? null };
@@ -476,9 +778,9 @@ export function createGmailChannelAdapter(options = {}) {
     },
     /**
      * Seed the fake mailbox the import pages through: provider messages
-     * (`{ id, threadId, from, to?, subject?, internalDateMs }`). Each seed
-     * normalizes through the same `normalizeGmailMessage` the push path
-     * uses, so a bad seed fails the test setup, never the import.
+     * (`{ id, threadId, from, to?, cc?, headers?, subject?, internalDateMs }`).
+     * Each seed normalizes through the same `normalizeGmailMessage` the
+     * push path uses, so a bad seed fails the test setup, never the import.
      * @param {Array<any>} messages
      */
     seedMailbox(messages) {
@@ -499,18 +801,13 @@ export function createGmailChannelAdapter(options = {}) {
             snippet: typeof item?.snippet === 'string' ? item.snippet : '',
             internalDateMs: atMs,
             ...(item?.attachments === undefined ? {} : { attachments: item.attachments }),
+            ...(item?.cc === undefined ? {} : { cc: item.cc }),
+            ...(item?.headers === undefined ? {} : { headers: item.headers }),
           },
         }, config);
-        // A sent copy looping back carries no subject, so the import
-        // quarantines it exactly like the push path does — with its
-        // provider time, so the window keeps it instead of dropping it.
-        const events = (Array.isArray(one) ? one : [one]).map((normalized) => (
-          normalized.subject === ''
-            ? { ...normalized, occurredAt: new Date(atMs).toISOString() }
-            : normalized
-        ));
+        const events = Array.isArray(one) ? one : [one];
         for (const event of events) {
-          state.mailboxHistory.push({ normalized: event, from: canonicalGmailAddress(item?.from) });
+          state.mailboxHistory.push({ normalized: event });
         }
       }
     },
@@ -580,10 +877,12 @@ export function createGmailChannelAdapter(options = {}) {
         windowMs: GMAIL_HISTORY_WINDOW_MS,
         /**
          * Page the seeded mailbox oldest-first: threads of the last 90
-         * days, one normalized event per message with its sender attached.
-         * The fake serves its single bound mailbox; production lists the
-         * OAuth mailbox the call-time secret names, through the same
-         * `resolveSecret` edge the import uses.
+         * days, one normalized event per message with the sender,
+         * recipients and bulk evidence `normalizeGmailMessage` attached —
+         * the same envelope the push path normalizes, so both reconcile
+         * identically. The fake serves its single bound mailbox;
+         * production lists the OAuth mailbox the call-time secret names,
+         * through the same `resolveSecret` edge the import uses.
          */
         async listHistory({ secret, since, pageToken, limit }) {
           if (httpIo) return httpIo.listHistory({ secret, since, pageToken, limit });
@@ -604,7 +903,7 @@ export function createGmailChannelAdapter(options = {}) {
           const slice = past.slice(start, start + size);
           const next = start + size < past.length ? encodeHistoryToken(start + size) : null;
           return {
-            events: slice.map((entry) => ({ ...entry.normalized, sender: { handle: entry.from } })),
+            events: slice.map((entry) => entry.normalized),
             nextPageToken: next,
           };
         },

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 import { createWorkView, sortTimelineRows } from '../apps/admin/public/admin-work.js';
 import { sortTimeline } from '../packages/work/src/index.js';
@@ -59,6 +60,7 @@ function stubClient(data, overrides = {}) {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body ?? null });
       if (overrides[path]) return overrides[path]();
       if (path === '/api/schema') return data.schema ?? SCHEMA;

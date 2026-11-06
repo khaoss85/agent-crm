@@ -1,12 +1,15 @@
 // @ts-check
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   channelOf,
   createCalendarioView,
   dayHead,
   displayKeys,
+  draftMinutes,
+  filterPhraseProposals,
   gridRowsFor,
   lanesFor,
   memberColorIndex,
@@ -15,6 +18,9 @@ import {
   openingWeekKeys,
   parseMemberFilter,
   personRows,
+  resolveDraftMemberIds,
+  personFreeSlots,
+  rankPhraseProposals,
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
@@ -24,6 +30,7 @@ import {
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { hasUnsavedWork, resetVersionWatchState } from '../apps/admin/public/admin-version.js';
 import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -84,7 +91,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -95,6 +102,7 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (failWith) throw failWith;
       if (path.startsWith('/api/customer-data/profile/')) {
@@ -125,6 +133,7 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
       }
       if (path.startsWith('/api/appointments/team-week')) return week;
       if (path.startsWith('/api/appointments/suggest-slots')) {
+        if (suggestGroups !== undefined) return { from: '', to: '', slotMinutes: 30, members: suggestGroups };
         return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots }] };
       }
       if (path === '/api/appointments/phrase') return { draft: phrase, dryRun: false, spaceId: 'locale' };
@@ -386,7 +395,9 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
+  // so the view clock must still see them as future — same Oct 19–25 week.
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   // The ghosts need the loaded week: name the member first.
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -447,7 +458,8 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     slots,
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
@@ -529,7 +541,8 @@ test('a failed Conferma names the manual form, never a code', async () => {
   };
   const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -735,7 +748,9 @@ test('a 19:00 proposal is named below the grid with its real time, never on the 
   };
   const slots = [{ startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e);
+  // the 19:00 Rome step stays future, so the honest out-of-hours line proves.
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -1248,7 +1263,8 @@ test('the WA badge is fail-closed on the row channel marker', async () => {
     mount,
     client: {
       calls,
-      async request(path) {
+      async request(path, options = {}) {
+        enforceAdminWriteGate(path, options);
         calls.push(path);
         if (path === '/api/spine/memberships' || path === '/api/profile') {
           // No roster on this double: the spine is uncomposed here, an
@@ -1443,7 +1459,8 @@ test('overlapping profile reads cache under their own keys', async () => {
   const calls = [];
   const client = {
     calls,
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       if (path.startsWith('/api/customer-data/profile/')) {
         await gate;
@@ -1545,7 +1562,8 @@ test('a late profile answer never repaints over the customer card', async () => 
   let releaseProfile = () => {};
   const gate = new Promise((resolve) => { releaseProfile = resolve; });
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) {
         await gate;
         return { identity: { contact: { id: 'c1', firstName: 'Ada', lastName: 'Rossi' }, company: null } };
@@ -1604,7 +1622,8 @@ test('a late profile answer never repaints over the customer card', async () => 
 test('an unexpected profile failure is logged with the space, never the message', async () => {
   const failure = { status: 500, code: 'UPSTREAM_BOOM', message: 'provider outage REF-123 involving Ada Rossi' };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
@@ -1658,7 +1677,8 @@ test('an unexpected profile failure is logged with the space, never the message'
 test('a missing profile stays silent while the card falls back', async () => {
   const failure = { status: 404, code: 'NOT_FOUND', message: 'no such customer' };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
@@ -1879,10 +1899,11 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
 });
 
-// backlog:df55cf25 (review P1 on #549): a shared display name alone never
-// merges — two email-less homonyms are two humans, two rows, two booking
-// identities. Toggling one row must never hide the other's blocks, and a
-// booking for the second human must never carry the first subject.
+// backlog:df55cf25 (review P1 on #549, owner 04/11): a shared display name
+// alone never merges — two email-less homonyms are two humans, two rows, two
+// booking identities, with ordinal labels in member-creation order. Toggling
+// one row must never hide the other's blocks, and a booking for the second
+// human must never carry the first subject.
 test('personRows keeps email-less homonyms as separate rows', () => {
   const members = [
     { subject: 'a1', role: 'member', displayName: 'Rossi' },
@@ -1892,9 +1913,92 @@ test('personRows keeps email-less homonyms as separate rows', () => {
   assert.equal(rows.length, 2, 'same name without a shared mailbox is two humans');
   assert.deepEqual(rows[0].ids, ['a1']);
   assert.deepEqual(rows[1].ids, ['a2']);
-  assert.equal(rows[0].label, 'Rossi');
-  assert.equal(rows[1].label, 'Rossi');
+  assert.equal(rows[0].label, 'Rossi (1)');
+  assert.equal(rows[1].label, 'Rossi (2)');
+  assert.ok(rows[0].label !== rows[1].label, 'the two toggles read differently');
   assert.ok(rows[0].id !== rows[1].id, 'toggling and booking keep distinct identities');
+});
+
+// backlog:df55cf25 (owner 04/11, single source of truth): one grouping table
+// holding every person-row case — the merged cures of #549 and this one. The
+// ordinal follows member creation (member.createdAt when the roster carries
+// it, else the roster's own order), never a technical id.
+test('personRows grouping table: merge, homonyms, ordinals', () => {
+  const cases = [
+    {
+      name: 'one human across subjects merges on the shared mailbox',
+      named: ['github|1', 'google|2', 'dan@example.com'],
+      members: [
+        { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'google|2', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'dan@example.com', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+      ],
+      want: [{ ids: ['github|1', 'google|2', 'dan@example.com'], label: 'Dan' }],
+    },
+    {
+      name: 'the mailbox merges case-insensitively',
+      named: ['x|1', 'x|2'],
+      members: [
+        { subject: 'x|1', role: 'member', displayName: 'Dan', email: 'Dan@Example.com' },
+        { subject: 'x|2', role: 'member', displayName: 'Dan', email: 'dan@example.com' },
+      ],
+      want: [{ ids: ['x|1', 'x|2'], label: 'Dan' }],
+    },
+    {
+      name: 'different mailboxes are different humans',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi', email: 'a@example.com' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi', email: 'b@example.com' },
+      ],
+      want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      name: 'email-less homonyms stay separate with ordinals',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi' },
+      ],
+      want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      name: 'three homonyms count up in roster order even when named reversed',
+      named: ['a3', 'a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi' },
+        { subject: 'a3', role: 'member', displayName: 'Rossi' },
+      ],
+      want: [{ ids: ['a3'], label: 'Rossi (3)' }, { ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      name: 'the ordinal follows member.createdAt when the roster carries it',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Rossi', createdAt: '2026-10-20T10:00:00.000Z' },
+        { subject: 'a2', role: 'member', displayName: 'Rossi', createdAt: '2026-10-18T10:00:00.000Z' },
+      ],
+      want: [{ ids: ['a1'], label: 'Rossi (2)' }, { ids: ['a2'], label: 'Rossi (1)' }],
+    },
+    {
+      name: 'a unique name keeps no ordinal',
+      named: ['github|1'],
+      members: [
+        { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'sara', role: 'operator', displayName: 'Sara', email: 'sara@example.com' },
+      ],
+      want: [{ ids: ['github|1'], label: 'Dan' }],
+    },
+  ];
+  for (const { name, named, members, want } of cases) {
+    const rows = personRows(named, [], members);
+    assert.deepEqual(
+      rows.filter((row) => row.listed).map((row) => ({ ids: row.ids, label: row.label })),
+      want,
+      name,
+    );
+  }
 });
 
 // backlog:df55cf25 (review P3 on #549): initials are unicode letters, so an
@@ -2041,6 +2145,7 @@ test('a partially-listed person hides with no reload', async () => {
   const client = {
     ...base,
     async request(path, options) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/memberships') {
         await membersGate;
         return { items: DAN_MEMBERS };
@@ -2098,6 +2203,125 @@ test('blocks and toggle share the tint on a two-subject person', async () => {
     assert.ok(tints.some((tint) => String(block.getAttribute('class')).includes(tint)),
       'every block matches the toggle tint');
   }
+});
+
+// backlog:df55cf25 (owner 04/11): two email-less homonyms paint two distinct
+// toggles; hiding one hides only its blocks, and the manual choice offers
+// two distinct labels booking the right human.
+test('email-less homonyms toggle and book the right human', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [
+      {
+        teamMemberId: 'a1',
+        appointments: [{
+          id: 'r1', status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'a1',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        }],
+      },
+      {
+        teamMemberId: 'a2',
+        appointments: [{
+          id: 'r2', status: 'booked',
+          startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z',
+          serviceKey: 'barba', teamMemberId: 'a2',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        }],
+      },
+    ],
+  };
+  const members = [
+    { subject: 'a1', role: 'member', displayName: 'Rossi' },
+    { subject: 'a2', role: 'member', displayName: 'Rossi' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    week,
+    memberships: members,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const toggles = teamToggles(mount);
+  assert.equal(toggles.length, 2, 'two humans are two toggles');
+  assert.ok(toggles.some((node) => node.textContent.includes('Rossi (1)')), 'the first human paints');
+  assert.ok(toggles.some((node) => node.textContent.includes('Rossi (2)')), 'the second human paints');
+  const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n');
+  assert.ok(!painted.includes('a1') && !painted.includes('a2'), 'no technical subject id on screen');
+  toggles.find((node) => node.textContent.includes('Rossi (1)')).dispatch('click');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'hiding the first hides only its blocks');
+  assert.ok(texts(mount, 'strong').includes('barba'), 'the second human stays');
+  const options = mount.querySelector('select[name="teamMemberId"]').findAll('option')
+    .map((node) => node.textContent);
+  assert.ok(options.includes('Rossi (1)') && options.includes('Rossi (2)'), 'the choice names both humans distinctly');
+  choosePerson(mount, 'a2');
+  await pickCustomerByName(mount, 'Ada');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  const form = byName();
+  form.serviceKey.value = 'taglio';
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'a2', 'the claim books the chosen human, not the first');
+});
+
+// backlog:df55cf25 (review P2 on #549): a partially-listed hide survives the
+// next reload, and the week is requested for every subject of each listed
+// person — never the filter subset only.
+test('a hidden partially-listed person stays hidden after a reload', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseMembers = () => {};
+  const membersGate = new Promise((resolve) => { releaseMembers = resolve; });
+  const base = stubClient({ week: DAN_WEEK, memberships: DAN_MEMBERS });
+  const client = {
+    ...base,
+    async request(path, options) {
+      if (path === '/api/spine/memberships') {
+        await membersGate;
+        return { items: DAN_MEMBERS };
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  assert.ok(filter, 'the typed filter stays while the roster is unread');
+  filter.value = 'github|1';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseMembers();
+  for (let round = 0; round < 6; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(teamToggles(mount).length, 1, 'Dan is one row');
+  teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the person blocks disappear');
+  clickButton(mount, 'Oggi');
+  for (let round = 0; round < 6; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const weekCalls = client.calls.filter((call) => String(call.path).startsWith('/api/appointments/team-week'));
+  const last = decodeURIComponent(String(weekCalls[weekCalls.length - 1]?.path ?? ''));
+  assert.ok(last.includes('github|1') && last.includes('google|2'), 'the reload asks for every subject of the listed person');
+  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the named identity stays hidden');
+  assert.ok(!texts(mount, 'strong').includes('barba'), 'the sibling identity stays hidden too');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
 });
 
 // backlog:df55cf25 (review P2 on #549): an explicitly chosen non-primary
@@ -2343,7 +2567,8 @@ test('a failed member-list reload repaints the fallback, never a stale roster', 
   const mount = createMount();
   let refused = false;
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/spine/memberships') {
         if (refused) {
           const forbidden = new Error('forbidden');
@@ -2677,4 +2902,253 @@ test('a plain click on an empty slot is half an hour', async () => {
   col.dispatch('pointerup', { target: col });
   const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   assert.equal(pick?.textContent, '16:30–17:00');
+});
+
+// backlog:49bd3657b0f8: the view keeps the typed phrase in module state
+// across re-renders, so after the shell routes away the DOM check would
+// read a clean page while the draft survives. Leaving mirrors it into the
+// bundle watch: the reload waits behind the notice instead of losing it.
+test('leaving Calendario with a typed phrase keeps a draft mark, so the bundle watch waits', async () => {
+  resetVersionWatchState();
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    const field = mount.querySelector('textarea[name="phrase"]');
+    assert.ok(field, 'the phrase field renders');
+    field.value = 'trova 45 minuti con marco';
+    field.dispatch('input');
+    view.invalidate();
+    assert.equal(hasUnsavedWork(createFakeDocument()), true, 'the retained phrase defers the reload on a clean screen');
+  } finally {
+    resetVersionWatchState();
+  }
+});
+
+test('clearing the phrase clears the draft mark, so the bundle reloads', async () => {
+  resetVersionWatchState();
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    const field = mount.querySelector('textarea[name="phrase"]');
+    assert.ok(field, 'the phrase field renders');
+    field.value = 'trova 45 minuti con marco';
+    field.dispatch('input');
+    field.value = '';
+    field.dispatch('input');
+    view.invalidate();
+    assert.equal(hasUnsavedWork(createFakeDocument()), false, 'no draft, no wait');
+  } finally {
+    resetVersionWatchState();
+  }
+});
+
+test('the auto-filled roster is not operator text: leaving with it alone sets no mark', async () => {
+  resetVersionWatchState();
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ memberships: [{ subject: 'marco' }] });
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    for (let round = 0; round < 4; round += 1) await new Promise((resolve) => setImmediate(resolve));
+    view.invalidate();
+    assert.equal(hasUnsavedWork(createFakeDocument()), false, 'an auto-filled roster never pins the notice');
+  } finally {
+    resetVersionWatchState();
+  }
+});
+
+test('draftMinutes prefers the pair, then the stated duration, then 30 (backlog:d1e4d90e)', () => {
+  assert.equal(
+    draftMinutes({ startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' }),
+    45,
+  );
+  assert.equal(draftMinutes({ durationMinutes: 45 }), 45, 'a 45 minuti sentence without a time searches 45');
+  assert.equal(draftMinutes({ durationMinutes: 7 }), 30, 'an unacceptable duration falls back');
+  assert.equal(draftMinutes({}), 30);
+  assert.equal(draftMinutes(null), 30);
+});
+
+test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d1e4d90e)', () => {
+  const members = [
+    { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+    { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    { subject: 'coach-sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('coach-sara', [], members), ['coach-sara'], 'exact identity wins');
+  assert.deepEqual(
+    resolveDraftMemberIds('marco', [], members),
+    ['coach-guido', 'google|g1'],
+    'one human across subjects resolves to every identity',
+  );
+  assert.deepEqual(resolveDraftMemberIds('MARCO ', [], members), ['coach-guido', 'google|g1'], 'case and spaces ignored');
+  const homonyms = [
+    { subject: 'a1', displayName: 'Marco' },
+    { subject: 'a2', displayName: 'Marco' },
+  ];
+  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
+  assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
+});
+
+// backlog:d1e4d90e — the server answers per booking identity, so one human
+// with two identities needs the intersection: a step held under coach-guido
+// must not be offered as free under google|g1.
+test('personFreeSlots offers a step only when every identity reports it free', () => {
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const other = { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' };
+  const held = [
+    { teamMemberId: 'coach-guido', slots: [other] },
+    { teamMemberId: 'google|g1', slots: [step, other] },
+  ];
+  assert.deepEqual(
+    personFreeSlots(held, ['coach-guido', 'google|g1'], 'coach-guido'),
+    [{ ...other, teamMemberId: 'coach-guido' }],
+    'the step held under one identity is not offered under the other',
+  );
+  const free = [
+    { teamMemberId: 'coach-guido', slots: [step, other] },
+    { teamMemberId: 'google|g1', slots: [step, other] },
+  ];
+  assert.deepEqual(
+    personFreeSlots(free, ['coach-guido', 'google|g1'], 'coach-guido'),
+    [
+      { ...step, teamMemberId: 'coach-guido' },
+      { ...other, teamMemberId: 'coach-guido' },
+    ],
+    'free under both means offered once, booked on the drafted identity',
+  );
+  assert.deepEqual(
+    personFreeSlots(free, ['coach-guido', 'google|g1'], 'Marco'),
+    [
+      { ...step, teamMemberId: 'coach-guido' },
+      { ...other, teamMemberId: 'coach-guido' },
+    ],
+    'a name match books the first searched identity, deterministically',
+  );
+  assert.deepEqual(
+    personFreeSlots([{ teamMemberId: 'coach-guido', slots: [step] }], ['coach-guido', 'google|g1'], 'coach-guido'),
+    [],
+    'a searched identity with no answer group proves nothing: fail closed',
+  );
+  assert.deepEqual(
+    personFreeSlots([{ teamMemberId: 'marco', slots: [step, { startsAt: '', endsAt: '' }] }], ['marco'], 'marco'),
+    [{ ...step, teamMemberId: 'marco' }],
+    'a single identity keeps the plain union, corrupt rows dropped',
+  );
+  assert.deepEqual(personFreeSlots('nope', ['marco'], 'marco'), [], 'non-lists stay empty');
+});
+
+test('a phrase step held under one identity is never proposed under the other', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const client = stubClient({
+    phrase: {
+      teamMemberId: 'coach-guido',
+      serviceKey: 'taglio',
+      startsAt: step.startsAt,
+      endsAt: step.endsAt,
+    },
+    memberships: [
+      { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+      { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    ],
+    suggestGroups: [
+      { teamMemberId: 'coach-guido', slots: [] },
+      { teamMemberId: 'google|g1', slots: [step] },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
+  assert.ok(suggest, 'the phrase feeds a slot search');
+  assert.ok(suggest.path.includes('google%7Cg1'), 'every identity the human holds is searched');
+  assert.ok(
+    texts(mount, 'p').includes('Nessuno slot libero questa settimana, prova con altri giorni.'),
+    'the step held under coach-guido is not offered as free under google|g1',
+  );
+  assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal rows, only the manual Conferma');
+});
+
+test('a phrase step free under every identity is proposed once on the drafted one', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const step = { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' };
+  const client = stubClient({
+    phrase: {
+      teamMemberId: 'coach-guido',
+      serviceKey: 'taglio',
+      startsAt: step.startsAt,
+      endsAt: step.endsAt,
+    },
+    memberships: [
+      { subject: 'coach-guido', displayName: 'Marco', email: 'guido@example.com' },
+      { subject: 'google|g1', displayName: 'Marco', email: 'guido@example.com' },
+    ],
+    suggestGroups: [
+      { teamMemberId: 'coach-guido', slots: [step] },
+      { teamMemberId: 'google|g1', slots: [step] },
+    ],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
+  clickButton(mount, 'Trova slot liberi');
+  for (let round = 0; round < 7; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const confirms = mount.querySelector('.cal-slots').findAll('button')
+    .filter((node) => node.textContent === 'Conferma');
+  assert.equal(confirms.length, 1, 'one row for the step free under both identities, never two');
+  await pickCustomerByName(mount, 'Ada');
+  confirms[0].dispatch('click');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const booked = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(booked.length, 1, 'Conferma calls confirmBooking');
+  assert.equal(payload(booked[0]).teamMemberId, 'coach-guido', 'the booking stays on the drafted identity');
+});
+
+test('filterPhraseProposals cuts begun steps, keeps named out-of-hours (backlog:d1e4d90e)', () => {
+  const nowMs = Date.parse('2026-11-04T08:00:00.000Z');
+  const slots = [
+    { startsAt: '2026-11-02T08:00:00.000Z', endsAt: '2026-11-02T08:30:00.000Z' },
+    { startsAt: '2026-11-04T05:00:00.000Z', endsAt: '2026-11-04T05:30:00.000Z' },
+    { startsAt: '2026-11-04T22:00:00.000Z', endsAt: '2026-11-04T22:30:00.000Z' },
+    { startsAt: '2026-11-04T08:00:00.000Z', endsAt: '2026-11-04T08:30:00.000Z' },
+    { startsAt: '2026-11-04T09:00:00.000Z', endsAt: '2026-11-04T09:30:00.000Z' },
+    { startsAt: 'not-a-time', endsAt: '2026-11-04T09:30:00.000Z' },
+  ];
+  assert.deepEqual(
+    filterPhraseProposals(slots, nowMs).map((slot) => slot.startsAt),
+    ['2026-11-04T22:00:00.000Z', '2026-11-04T08:00:00.000Z', '2026-11-04T09:00:00.000Z'],
+    'past Monday and corrupt rows go, future night steps stay for the honest lines',
+  );
+  assert.deepEqual(filterPhraseProposals('nope', nowMs), [], 'non-lists stay empty');
+});
+
+test('rankPhraseProposals puts the painted hours first, night stays behind (backlog:d1e4d90e)', () => {
+  // 2026-11-04: Rome is UTC+1, so 02:00Z is night and 08:00Z is 09:00 in Rome.
+  const night = { startsAt: '2026-11-04T02:00:00.000Z', endsAt: '2026-11-04T02:30:00.000Z' };
+  const morning = { startsAt: '2026-11-04T08:00:00.000Z', endsAt: '2026-11-04T08:30:00.000Z' };
+  const evening = { startsAt: '2026-11-04T17:30:00.000Z', endsAt: '2026-11-04T18:00:00.000Z' };
+  assert.deepEqual(
+    rankPhraseProposals([night, evening, morning]).map((slot) => slot.startsAt),
+    [morning.startsAt, night.startsAt, evening.startsAt],
+    'day steps first in time order, out-of-hours behind for the honest lines, never dropped',
+  );
+  assert.deepEqual(rankPhraseProposals([night]), [night], 'a night-only week still proposes honestly');
+  assert.deepEqual(rankPhraseProposals('nope'), [], 'non-lists stay empty');
 });

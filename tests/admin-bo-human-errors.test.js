@@ -16,6 +16,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { createCatalogView } from '../apps/admin/public/admin-catalog.js';
 import { createSpaziAccessiView } from '../apps/admin/public/admin-spazi-accessi.js';
@@ -65,12 +66,12 @@ function opFail(message = NASTY_MESSAGE, code = 'NOT_FOUND', status = 404) {
 
 /** Generic server failure: no 404, so no "not composed" branch may catch it. */
 function failingClient() {
-  return { async request() { throw opFail(NASTY_MESSAGE, 'BOOM', 500); } };
+  return { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw opFail(NASTY_MESSAGE, 'BOOM', 500); } };
 }
 
 /** The backend answers 404: the view must say "not composed", never the code. */
 function missingClient() {
-  return { async request() { throw opFail(); } };
+  return { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw opFail(); } };
 }
 
 async function flush(rounds = 30) {
@@ -154,7 +155,8 @@ test('personalizzazione: a failed catalog read renders a human error with retry,
 
 test('personalizzazione: a catalog outage never hides the connectors directory', async () => {
   const connectorsOk = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') throw opFail(NASTY_MESSAGE, 'BOOM', 500);
       if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
       if (path.startsWith('/api/connectors')) {
@@ -183,7 +185,8 @@ test('personalizzazione: a catalog outage never hides the connectors directory',
 test('personalizzazione: the retry reloads the catalog after a failure', async () => {
   let catalogCalls = 0;
   const flaky = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') {
         catalogCalls += 1;
         if (catalogCalls === 1) throw opFail(NASTY_MESSAGE, 'BOOM', 500);
@@ -261,7 +264,8 @@ test('customer-data: schema, list and profile failures never render the message'
   for (const failing of [
     failingClient(),
     {
-      async request(path) {
+      async request(path, options = {}) {
+        enforceAdminWriteGate(path, options);
         if (path === '/api/schema') return { modules: {} };
         throw opFail();
       },
@@ -296,7 +300,8 @@ test('customer-data: schema, list and profile failures never render the message'
   // The failing module rows carry their own retry, not just a note. The
   // schema composes here, so the section reaches rowsOf with failing rows.
   const rowsFail = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { domains: { 'customer-data': { metadata: {} } } };
       throw opFail();
     },
@@ -581,6 +586,7 @@ const listedSweepMeta = () => ({
 function listedSweepCustomerDataClient() {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') {
         return { domains: { 'customer-data': { metadata: listedSweepMeta() } } };
       }
@@ -610,6 +616,7 @@ function listedSweepCustomerDataClient() {
 function listedSweepSpineClient() {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (options.method === 'POST') return { ok: true };
       if (path === '/api/spine/context') {
         return {
@@ -668,10 +675,10 @@ test('le frasi elencate non appaiono in nessuna vista montata', async () => {
   // Nuovo modulo mounts healthy; the assistant guide answers as text.
   {
     const { doc, mount } = fresh();
-    createReportingView({ doc, mount, client: { request: async () => ({ items: [] }) }, navigate: () => {}, onAskAi: () => {} }).renderNuovoModulo();
+    createReportingView({ doc, mount, client: { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return { items: [] }; } }, navigate: () => {}, onAskAi: () => {} }).renderNuovoModulo();
     await flush();
     collect('nuovo modulo', mount.textContent);
-    const answer = await runSuggestion({ request: async () => ({}) }, 'bo05:nuovo-modulo:crea-ai');
+    const answer = await runSuggestion({ request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return {}; } }, 'bo05:nuovo-modulo:crea-ai');
     collect('assistente nuovo modulo', answer.lines.join(' '));
   }
 

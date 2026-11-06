@@ -267,7 +267,7 @@ test('createAccordoApp stays synchronous and does not import bundled v2 graphs',
     // (backlog:ed4bbd35883a): store-only, operations refuse until the
     // deployment wires its edges.
     assert.deepEqual([...app.domains.names()].sort(), [
-      'channels', 'customer-data', 'magic-link', 'sequences', 'space-permissions', 'work',
+      'channels', 'customer-data', 'magic-link', 'reengagement', 'sequences', 'space-permissions', 'work',
     ]);
     assert.deepEqual(app.services.companies.list(), []);
   } finally {

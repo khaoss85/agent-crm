@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
+import { createQuoteView, percentReason } from '../apps/admin/public/admin-quotes.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Quote builder renders from server state only — these tests drive it
@@ -65,6 +66,7 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
       if (options.method === 'POST') {
@@ -277,10 +279,10 @@ test('cf340b571e98: the detail links back to the customer scheda', async () => {
   assert.equal(back.textContent, '← Ada Rossi', 'the link names the customer');
   assert.equal(mount.childNodes[0], back, 'the back link paints above the detail');
   const text = mount.textContent;
-  assert.ok(text.includes('Righe (1)'), 'the detail still shows the lines');
+  assert.ok(text.includes('Cosa include'), 'the detail still shows the lines');
   assert.ok(text.includes('5.000 €'), 'the detail still shows the total');
-  assert.ok(text.includes('Stato'), 'the detail still shows the state');
-  assert.ok(text.includes('Versioni (0)'), 'the detail still shows the history');
+  assert.ok(mount.findAll('span').some((node) => String(node.getAttribute('class') ?? '').startsWith('quote-status ')), 'the detail still shows the state');
+  assert.ok(text.includes('Storico') && text.includes('Ancora nessuna versione'), 'the detail still shows the history');
 });
 
 test('cf340b571e98: a quote without a resolvable customer still renders without the way back', async () => {
@@ -302,7 +304,7 @@ test('cf340b571e98: a quote without a resolvable customer still renders without 
       `${variant.name}: no back link`);
     assert.ok(mount.textContent.includes('Preventivo'), `${variant.name}: the detail still renders`);
     assert.ok(!/Quote q1/.test(mount.textContent), `${variant.name}: no technical id in the heading`);
-    assert.ok(mount.textContent.includes('Totali per periodo commerciale'), `${variant.name}: the totals still render`);
+    assert.ok(mount.textContent.includes('Totale'), `${variant.name}: the totals still render`);
   }
 });
 
@@ -362,7 +364,10 @@ test('ef92f728: the quote detail shows no English and no technical id, amounts i
   });
   await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
   const text = mount.textContent;
-  assert.ok(text.includes('Preventivo · Proposta esempio — Pacchetto 10 PT'), 'the heading names the offer, never an id');
+  const title = mount.findAll('h2').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-title');
+  assert.equal(title?.textContent, 'Proposta esempio — Pacchetto 10 PT', 'the heading names the offer, never an id');
+  assert.ok(text.includes('Preventivo'), 'the kicker says it is a quote');
+  assert.ok(text.includes('Per Ada Rossi'), 'the quote names who it is for');
   for (const english of [
     'Quote ', 'Totals by', 'Loading', 'Status:', 'Currency', 'Draft revision',
     'Lines (', 'Versions (', 'Add line', 'Update', 'Remove', 'Submit', 'Approve',
@@ -375,4 +380,51 @@ test('ef92f728: the quote detail shows no English and no technical id, amounts i
   assert.ok(text.includes('5.000 €'), 'thousands use the dot separator');
   assert.ok(text.includes('7.790 €'), 'line totals use the dot separator');
   assert.ok(text.includes('5,00%'), 'percentages use the comma');
+});
+
+// Dan 05/11: the quote page speaks to the owner — no draft revision, no SKU
+// or offer revision, no zero discount, no basis points in the reasons.
+test('owner reading: status only, plain line, single-component breakdown hidden, reasons in percent', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const single = {
+    ...LINE,
+    discountBps: 0,
+    discountAmountCents: 0,
+    breakdownJson: JSON.stringify([{ componentKey: 'fee', label: 'Prezzo del pacchetto', pricingModel: 'flat', chargeType: 'one_time', listAmountCents: 35_000, netAmountCents: 35_000, tierBreakdown: [] }]),
+  };
+  const versions = [{ id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'presti-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: 'sconto massimo 0bps entro il limite 1000bps', totalsJson: JSON.stringify(TOTALS), currency: 'EUR' }];
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: quote({ status: 'approved' }), lines: [single], versions }) }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Revisione bozza'), 'no draft revision');
+  assert.ok(!text.includes('Valuta'), 'no currency code fact');
+  assert.ok(!text.includes('(rev.'), 'no offer revision');
+  assert.ok(!text.includes(single.sku + ' ·'), 'no SKU in the line');
+  assert.ok(!text.includes('sconto 0,00%'), 'no zero discount on the line');
+  assert.ok(!/bps/.test(text), 'no basis points anywhere on the approved quote');
+  assert.ok(text.includes('sconto massimo 0% entro il limite 10%'), 'the reason reads in percent');
+  const components = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-components');
+  assert.equal(components.getAttribute('hidden'), '', 'a single fixed component is not repeated');
+});
+
+test('percentReason turns basis points into Italian percentages and keeps other text', () => {
+  assert.equal(percentReason('max line discount 2000bps exceeds limit'), 'max line discount 20% exceeds limit');
+  assert.equal(percentReason('sconto 1250 bps'), 'sconto 12,5%');
+  assert.equal(percentReason(null), '');
+});
+
+test('Dan 06/11: the quote is issued by the space and reads as a document beside its workflow', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: quote({ status: 'approved' }), lines: [LINE] }), spaceName: () => 'Presti Group' }).renderQuoteDetail('q1');
+  const kicker = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-kicker');
+  assert.equal(kicker?.textContent, 'Preventivo · Presti Group', 'the issuing space personalises the quote');
+  const page = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote');
+  assert.ok(page, 'the detail renders inside the quote layout');
+  const sheet = page.findAll('article').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-sheet');
+  const side = page.findAll('aside').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-side');
+  assert.ok(sheet.textContent.includes('Cosa include') && sheet.textContent.includes('Totale'), 'lines and totals live in the document');
+  assert.ok(side.textContent.includes('in sola lettura'), 'the approval state lives in the side column');
+  const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-amount');
+  assert.equal(amount?.textContent, '5.000 €', 'the one-time total leads the document');
 });

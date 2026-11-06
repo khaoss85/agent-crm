@@ -14,6 +14,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -158,6 +159,7 @@ test('"skill che lo usano" shows only declared dependencies', () => {
 function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true, grants = [], renewed = [] } = {}) {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push(path);
       if (path === '/api/schema') {
         return channels ? { domains: { channels: { metadata: { channelsContract: 1, adapters } } } } : { domains: {} };
@@ -498,6 +500,7 @@ test('a channel-level renewal renews the binding the card named, not the first a
   const posts = [];
   const twoBindingsClient = {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') {
         return { domains: { channels: { metadata: { channelsContract: 1, adapters: [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }] } } } };
       }
@@ -554,6 +557,63 @@ test('a channel-level renewal renews the binding the card named, not the first a
   // An unknown binding never invents a row: it renews the first active one.
   await renewAs('presti:whatsapp:+390200000009');
   assert.ok(posts[0].path.includes('/records/rec-A/'), `an unknown binding falls back to the first active row (${posts[0].path})`);
+});
+
+test('a relaxed lookup answer never renews another binding', async () => {
+  // Backlog 3a3e6eaf (P1 review #539): the records endpoint ignores the
+  // filter and answers with another binding's row. The renewal must refuse
+  // with the Italian note and record nothing.
+  const keyA = 'presti:whatsapp:+390200000001';
+  const keyB = 'presti:whatsapp:+390200000002';
+  const connA = { ...CONNECTION, connectionKey: keyA, account: '+390200000001' };
+  const connB = { ...CONNECTION, connectionKey: keyB, account: '+390200000002' };
+  const now = Date.now();
+  const grants = [
+    { connectionKey: keyA, grantExpiresAt: new Date(now + 6 * 86400000).toISOString() },
+    { connectionKey: keyB, grantExpiresAt: new Date(now + 3 * 86400000).toISOString() },
+  ];
+  const posts = [];
+  const relaxedClient = {
+    async request(path, options = {}) {
+      if (path === '/api/schema') {
+        return { domains: { channels: { metadata: { channelsContract: 1, adapters: [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }] } } } };
+      }
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      if (path.startsWith('/api/connectors?')) return { connectors: [connA, connB] };
+      if (path.startsWith('/api/connectors/activity')) return { connections: grants };
+      if (path.startsWith('/api/modules/channel-connection/records') && !path.includes('/actions/')) {
+        return { items: [{ id: 'rec-A', sourceKey: keyA }] };
+      }
+      if (path.includes('/actions/renew-connection-grant')) {
+        posts.push({ path, body: options.body });
+        return { record: { id: 'ok' } };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const toasts = [];
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: relaxedClient,
+    storage: { getItem: () => 'presti', setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: (message, isError = false) => toasts.push({ message, isError }),
+  });
+  await view.render('whatsapp', keyB);
+  await flush();
+  const input = mount.findAll('input').find((node) => node.getAttribute('data-action') === 'renew-grant-expiry');
+  assert.ok(input, 'the renewal section renders for the selected binding');
+  input.value = new Date(now + 30 * 86400000).toISOString().slice(0, 16);
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'renew-grant').dispatch('click');
+  await flush(12);
+  assert.equal(posts.length, 0, 'no renew-connection-grant when the row names another binding');
+  assert.ok(
+    toasts.some((toast) => toast.isError && toast.message === 'Collegamento non trovato, ricarica la pagina.'),
+    'the refusal names the missing binding in Italian',
+  );
 });
 
 test('the observer watches the renewal without touching it', async () => {

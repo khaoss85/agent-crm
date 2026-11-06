@@ -852,3 +852,335 @@ test('a push-converged cancellation leaves the older move snapshot standing, nev
   assert.equal(ctx.provider.getEvent(CAL, 'evt1').status, 'cancelled');
   assert.equal(ctx.appointmentRows().filter((r) => r.status === 'booked').length, 1);
 });
+
+test('a local reschedule is visible on Google after one push (backlog:bdca2010d471)', async (t) => {
+  // The drag-move write, end to end against the fake provider: book, export,
+  // move the row through the governed reschedule with its calendar named,
+  // and the linked event carries the new times. No test dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:moved:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(exported.status, 'exported');
+  const moved = await handle.rescheduleAppointment({
+    id: appointment.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:30:00.000Z',
+    spaceId: 's-presti',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'pushed');
+  assert.equal(moved.push.change, 'rescheduled');
+  const live = ctx.provider.getEvent(CAL, exported.eventId);
+  assert.equal(live.start.dateTime, '2026-10-22T14:00:00.000Z');
+  assert.equal(live.end.dateTime, '2026-10-22T15:30:00.000Z');
+  const again = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
+});
+
+test('a local confirm never overwrites a remote move the pull has not applied yet (backlog:bdca2010d471)', async (t) => {
+  // P1 regression: export, move the event in Google, confirm locally, then
+  // push. The old code compared the live event against the row and patched
+  // Google with the stale local times. The push now decides against the
+  // stored fingerprint: a lifecycle-only advance writes nothing, the remote
+  // move survives, and the next pull applies it locally. No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:remote-wins:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(exported.status, 'exported');
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: exported.eventId, patch: { ...slot('21', '14:00', '15:00') } });
+  await handle.advanceAppointment(appointment, 'confirmed');
+  const push = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(push.status, 'acknowledged', 'a confirm without a local move writes nothing');
+  const live = ctx.provider.getEvent(CAL, exported.eventId);
+  assert.equal(live.start.dateTime, '2026-10-21T14:00:00.000Z', 'the remote move is not overwritten');
+  assert.equal(live.end.dateTime, '2026-10-21T15:00:00.000Z');
+  const pull = await ctx.sync.pullIncremental(CAL);
+  const applied = pull.entries.find((e) => e.eventId === exported.eventId);
+  assert.equal(applied?.status, 'applied');
+  assert.equal(applied?.change, 'rescheduled');
+});
+
+test('a rescheduled import patches its linked Google event (backlog:bdca2010d471)', async (t) => {
+  // P2 regression: an appointment imported from Google carries no
+  // export-only metadata, so the old provider lookup missed its event and
+  // the move was acknowledged while Google kept the old slot. The push now
+  // patches through the link's stored event identity. No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const row = ctx.appointmentRows()[0];
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const moved = await handle.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:00:00.000Z',
+    spaceId: 's-presti',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'pushed');
+  assert.equal(moved.push.change, 'rescheduled');
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-22T14:00:00.000Z');
+  assert.equal(live.end.dateTime, '2026-10-22T15:00:00.000Z');
+  const again = await ctx.sync.pushAppointment(CAL, row.sourceKey);
+  assert.equal(again.status, 'noop', 'a second push with nothing changed writes nothing');
+});
+
+test('a provider without patchEvent composes and syncs, failing closed only on a linked move', async (t) => {
+  // P1 regression (second round): requiring patchEvent at composition took
+  // down every pull, push and export on deployments whose provider never
+  // reschedules. patchEvent is required only where the move actually needs
+  // it — the reschedule branch fails closed there, everything else runs
+  // without it. No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const full = ctx.provider;
+  const withoutPatch = {
+    listEvents: full.listEvents.bind(full),
+    insertEvent: full.insertEvent.bind(full),
+    cancelEvent: full.cancelEvent.bind(full),
+    findByAccordoSourceKey: full.findByAccordoSourceKey.bind(full),
+  };
+  const sync = createCalendarSyncOperations({
+    modules: ctx.modules,
+    appointmentBook: createAppointmentBookCapability({}),
+    provider: withoutPatch,
+    mapping: ctx.mapping,
+    database: ctx.database,
+  });
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  const imported = await sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  assert.equal(imported.entries.filter((entry) => entry.status === 'imported').length, 1);
+  const row = ctx.appointmentRows()[0];
+  const noop = await sync.pushAppointment(CAL, row.sourceKey);
+  assert.equal(noop.status, 'noop', 'a push with nothing changed needs no patchEvent');
+  const fingerprint = ctx.linkRows()[0].localFingerprint;
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: sync,
+  });
+  const moved = await handle.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:00:00.000Z',
+    spaceId: 's-presti',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true, 'the local move still commits');
+  assert.equal(moved.push, null);
+  assert.equal(moved.pushError?.code, 'CALENDAR_SYNC_CONTEXT_INVALID');
+  const live = full.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-21T09:00:00.000Z', 'Google keeps the old slot');
+  assert.equal(live.end.dateTime, '2026-10-21T10:00:00.000Z');
+  assert.equal(ctx.linkRows()[0].localFingerprint, fingerprint, 'a refused push writes no link');
+});
+
+test('a local move over an outstanding remote snapshot stays pending: Google untouched, snapshot visible', async (t) => {
+  // P1 regression (second round): the reschedule push cleared conflictNote
+  // without deciding pendingRemote, hiding the outstanding remote conflict
+  // (pendingConflicts filters on the note) and blindly overwriting Google.
+  // The push now converges nothing while the snapshot stands: it answers
+  // pending with both fields preserved, and Google keeps the remote slot.
+  // No dials Google.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  await handle.bookAppointment({
+    sourceKey: 'gym:held:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T14:00:00.000Z',
+    endsAt: '2026-10-21T15:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  ctx.setNow(T0 + 60_000);
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  const pull = await ctx.sync.pullIncremental(CAL);
+  assert.equal(pull.entries.find((entry) => entry.eventId === 'evt1').status, 'conflict');
+  assert.ok(ctx.linkRows()[0].pendingRemote, 'the remote snapshot stands');
+  const note = ctx.linkRows()[0].conflictNote;
+  assert.ok(note, 'the conflict is visible');
+  const row = ctx.appointmentRows().find((candidate) => candidate.sourceKey === `gcal:${CAL}:evt1`);
+  const moving = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const moved = await moving.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-21T16:00:00.000Z',
+    endsAt: '2026-10-21T17:00:00.000Z',
+    spaceId: 's-presti',
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true, 'the local move still commits');
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'conflict', 'the push converges nothing while the snapshot stands');
+  assert.equal(moved.push.pending, true);
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-21T14:00:00.000Z', 'Google keeps the remote slot, not the local move');
+  assert.equal(live.end.dateTime, '2026-10-21T15:00:00.000Z');
+  assert.ok(ctx.linkRows()[0].pendingRemote, 'the snapshot is not hidden');
+  assert.equal(ctx.linkRows()[0].conflictNote, note, 'the conflict note is preserved');
+});
+
+test('an endless weekly series reads only its occurrences inside the window (backlog:3a3a41b2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-endless-weekly',
+    summary: 'Session evt-endless-weekly',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY'],
+  });
+  const timeMin = '2026-10-01T00:00:00.000Z';
+  const timeMax = '2027-01-29T00:00:00.000Z';
+  const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin, timeMax });
+  assert.ok(listed.items.length >= 15 && listed.items.length <= 20, `120 days hold ~17 Wednesdays, got ${listed.items.length}`);
+  for (const item of listed.items) {
+    assert.equal(item.recurringEventId, 'evt-endless-weekly');
+    assert.ok(item.start.dateTime >= timeMin && item.start.dateTime < timeMax, `${item.start.dateTime} stays in the window`);
+    assert.equal(item.end.dateTime, new Date(Date.parse(item.start.dateTime) + 3600 * 1000).toISOString());
+  }
+  const unbounded = ctx.provider.listEvents({ calendarId: CAL });
+  assert.equal(unbounded.items.length, 1, 'without bounds the master reads as one row, never an expansion');
+  assert.equal(unbounded.items[0].id, 'evt-endless-weekly');
+});
+
+test('a bounded weekly series (COUNT/UNTIL) reads empty when exhausted, a BYDAY series reads as master', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-count-two',
+    summary: 'Session evt-count-two',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;COUNT=2'],
+  });
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-until-past',
+    summary: 'Session evt-until-past',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;UNTIL=20240110T090000Z'],
+  });
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-byday',
+    summary: 'Session evt-byday',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+  });
+  const timeMin = '2026-10-01T00:00:00.000Z';
+  const timeMax = '2027-01-29T00:00:00.000Z';
+  const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin, timeMax });
+  const byId = new Map(listed.items.map((item) => [item.id, item]));
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-count-two_')), 'COUNT exhausted in 2024 reads zero instances');
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-until-past_')), 'UNTIL in the past reads zero instances');
+  assert.ok(![...byId.keys()].some((id) => id.startsWith('evt-byday_')), 'an unsupported BYDAY series never expands into guessed instances');
+  const unbounded = ctx.provider.listEvents({ calendarId: CAL });
+  assert.ok(unbounded.items.some((item) => item.id === 'evt-byday'), 'without bounds the BYDAY master reads as one row');
+});
+
+test('the fake refuses time bounds beside a sync token, like the http provider', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt1',
+    summary: 'Session evt1',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' },
+    end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  const first = ctx.provider.listEvents({ calendarId: CAL });
+  assert.throws(
+    () => ctx.provider.listEvents({ calendarId: CAL, syncToken: first.nextSyncToken, timeMin: '2026-10-01T00:00:00.000Z' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  assert.throws(
+    () => ctx.provider.listEvents({ calendarId: CAL, syncToken: first.nextSyncToken, timeMax: '2027-01-29T00:00:00.000Z' }),
+    (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+  );
+});
+
+test('null, empty and invalid time bounds read the same on the fake (backlog:3a3a41b2)', async (t) => {
+  // Provider parity: a bound is present only as a readable non-empty
+  // string — undefined, null and '' all mean "no bound", and anything
+  // else refuses with the same code the HTTP provider raises.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt1',
+    summary: 'Session evt1',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' },
+    end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  for (const absent of [undefined, null, '']) {
+    const listed = ctx.provider.listEvents({ calendarId: CAL, timeMin: absent, timeMax: absent });
+    assert.equal(listed.items.length, 1, `bound ${String(absent)} reads as absent`);
+    assert.equal(listed.truncated, undefined, 'a complete read carries no truncation flag');
+  }
+  for (const garbage of ['not-an-instant', 1729000000000, true]) {
+    assert.throws(
+      () => ctx.provider.listEvents({ calendarId: CAL, timeMin: garbage }),
+      (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+      `bound ${String(garbage)} refuses like the HTTP provider`,
+    );
+    assert.throws(
+      () => ctx.provider.listEvents({ calendarId: CAL, timeMax: garbage }),
+      (error) => error?.code === 'GOOGLE_CALL_MALFORMED',
+      `bound ${String(garbage)} refuses like the HTTP provider`,
+    );
+  }
+});
+
+test('an over-wide window reports the expansion cut instead of a silent short page (backlog:3a3a41b2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  ctx.provider.seedEvent(CAL, {
+    id: 'evt-endless-wide',
+    summary: 'Session evt-endless-wide',
+    start: { dateTime: '2024-01-03T09:00:00.000Z' },
+    end: { dateTime: '2024-01-03T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY'],
+  });
+  // Thirty years hold ~1560 Wednesdays: the 1000-instance cap must cut.
+  const listed = ctx.provider.listEvents({
+    calendarId: CAL, timeMin: '2020-01-01T00:00:00.000Z', timeMax: '2050-01-01T00:00:00.000Z',
+  });
+  assert.equal(listed.items.length, 1000, 'the expansion stops at the cap');
+  assert.equal(listed.truncated, true, 'the cut is signalled, never mistaken for a complete window');
+});

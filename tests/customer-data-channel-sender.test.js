@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { boot, project } from './helpers/customer-data-project.js';
+import { createSubjectForRow, leadNamesForEmail } from '../packages/customer-data/src/sender.js';
 
 /**
  * **Channel sender resolution (backlog:a4f40325).**
@@ -406,4 +407,105 @@ test('malformed sender requests are refused before anything is read or written',
       `must refuse ${JSON.stringify(request)}`);
   }
   assert.equal(contactsCount(app), 0, 'refused requests write nothing');
+});
+
+test('a nameless email sender becomes a lead named from its address, never Unknown (backlog:1a4d9b30)', async (t) => {
+  const { app } = await scene(t, 'sender-nameless-lead');
+
+  // A dotted local part names first and last; the company is the domain.
+  const dotted = await app.resolveChannelSender({
+    channel: 'email', handle: 'marco.rossi@azienda.example', actor: ACTOR,
+  });
+  assert.equal(dotted.outcome, 'created');
+  const marco = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(dotted.contact.id);
+  assert.equal(marco.first_name, 'Marco');
+  assert.equal(marco.last_name, 'Rossi');
+  const marcoCompany = app.database.raw.prepare('SELECT * FROM companies WHERE id = ?').get(marco.company_id);
+  assert.equal(marcoCompany.name, 'azienda.example');
+
+  // A single-token local part still creates its lead, with no English placeholder.
+  const single = await app.resolveChannelSender({
+    channel: 'email', handle: 'guido@example.com', actor: ACTOR,
+  });
+  assert.equal(single.outcome, 'created');
+  const guido = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(single.contact.id);
+  assert.equal(guido.first_name, 'Guido');
+  assert.equal(guido.last_name, '—');
+
+  // A display name still wins over the address.
+  const named = await app.resolveChannelSender({
+    channel: 'email', handle: 'paola.bianchi@azienda.example',
+    firstName: 'Paola', lastName: 'Bianchi', actor: ACTOR,
+  });
+  assert.equal(named.outcome, 'created');
+  const paola = app.database.raw.prepare('SELECT * FROM contacts WHERE id = ?').get(named.contact.id);
+  assert.equal(paola.first_name, 'Paola');
+  assert.equal(paola.last_name, 'Bianchi');
+
+  const names = app.database.raw.prepare('SELECT first_name, last_name FROM contacts').all();
+  for (const row of names) {
+    assert.doesNotMatch(`${row.first_name} ${row.last_name}`, /Unknown/);
+  }
+  const companies = app.database.raw.prepare('SELECT name FROM companies').all();
+  for (const row of companies) {
+    assert.doesNotMatch(row.name, /Unknown/);
+  }
+});
+
+test('a refused fallback name writes nothing, not even the company (rev-agent-crm-606, P2)', async (t) => {
+  const { app } = await scene(t, 'sender-unnameable-email');
+
+  // A named lead first, so the refused senders below reach a company the
+  // policy matches: the company path must refuse with no writes too.
+  const first = await app.resolveChannelSender({
+    channel: 'email', handle: 'named@example.com', firstName: 'Named', lastName: 'Person',
+    companyName: 'Example', domain: 'example.com', actor: ACTOR,
+  });
+  assert.equal(first.outcome, 'created');
+
+  for (const request of [
+    { channel: 'email', handle: '+tag@example.com', actor: ACTOR },
+    { channel: 'email', handle: '---@example.com', actor: ACTOR },
+    {
+      channel: 'email', handle: '+tag@example.com',
+      companyName: 'Example', domain: 'example.com', actor: ACTOR,
+    },
+  ]) {
+    const answer = await app.resolveChannelSender(request);
+    assert.equal(answer.outcome, 'unresolved', `${request.handle} names nobody: no lead`);
+    assert.equal(answer.contact, null);
+    assert.deepEqual(answer.candidates, []);
+  }
+  assert.equal(contactsCount(app), 1, 'only the named lead exists');
+  assert.equal(
+    app.database.raw.prepare('SELECT COUNT(*) AS n FROM companies').get().n,
+    1,
+    'a refused fallback left no company behind',
+  );
+});
+
+test('createSubjectForRow names before writing the company (rev-agent-crm-606, P2)', async () => {
+  const calls = [];
+  const core = {
+    findCompaniesByNormalizedName: async () => [],
+    createCompany: async (row) => { calls.push(['company', row]); return { id: 'c1', ...row }; },
+    createContact: async (row) => { calls.push(['contact', row]); return { id: 'p1', ...row }; },
+  };
+  await assert.rejects(
+    () => createSubjectForRow(core, {
+      email: '+tag@example.com', firstName: null, lastName: null, companyName: null, domain: 'example.com',
+    }, ACTOR),
+    /local part/,
+  );
+  assert.deepEqual(calls, [], 'the refused name wrote nothing, not even the company');
+});
+
+test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {
+  assert.deepEqual(leadNamesForEmail('mario.rossi@azienda.it'), { firstName: 'Mario', lastName: 'Rossi' });
+  assert.deepEqual(leadNamesForEmail('guido@example.com'), { firstName: 'Guido', lastName: '—' });
+  assert.deepEqual(leadNamesForEmail('info+tag@example.com'), { firstName: 'Info', lastName: '—' });
+  assert.deepEqual(leadNamesForEmail('  spaced@example.com  '), { firstName: 'Spaced', lastName: '—' });
+  for (const empty of ['', '   ', null, undefined, '@', '---@example.com', '+tag@example.com']) {
+    assert.throws(() => leadNamesForEmail(empty), /local part/, 'no local part names nobody: no lead');
+  }
 });

@@ -5,6 +5,7 @@ import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './ad
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
+import { bindAdminMutations } from './admin-submission.js';
 import {
   addFieldForm,
   defineField,
@@ -73,6 +74,25 @@ const CHANNEL_LABELS = Object.freeze({
 
 /** The composer channel order (backlog:e9b4fc2f): Email first, like the prototype's quick actions. */
 const COMPOSER_CHANNEL_ORDER = Object.freeze(['email', 'whatsapp', 'instagram', 'facebook', 'sms']);
+// A send the worker has not settled within the web's own wait (504
+// BO_SEND_PENDING) is read back every 4 s for about two and a half minutes:
+// production 06/11 measured 2.5 min from tap to Gmail.
+const SEND_RESUME_EVERY_MS = 4000;
+/** An unknown send outcome: never «non inviato», and a re-tap is safe. */
+const SEND_UNCERTAIN = 'Non sappiamo ancora se è partito: controlla la cronologia tra poco. Se lo invii di nuovo non parte due volte.';
+/** Statuses that say «try later», never «refused». */
+const TRANSIENT_STATUSES = new Set([408, 425, 429]);
+/**
+ * A 4xx that refuses the request itself (validation, not connected,
+ * refused body). 408/425/429, 5xx, network errors and a missing status
+ * leave the outcome unknown.
+ * @param {any} error
+ */
+export function isDefinitiveRefusal(error) {
+  const status = typeof error?.status === 'number' ? error.status : 0;
+  return status >= 400 && status < 500 && !TRANSIENT_STATUSES.has(status);
+}
+const SEND_RESUME_ROUNDS = 40;
 
 /** Delivery/sync state, inbound or outbound, in the operator's words. */
 const SYNC_LABELS = Object.freeze({
@@ -377,9 +397,56 @@ export function mergeLinkedIdentities(timeline) {
   });
 }
 
+/**
+ * «Da leggere»: the one rule for an unread passage, shared by the «Nuovo»
+ * badge and by mark-read so the two never disagree — an inbound message the
+ * server names unread, with a date mark-read can reach (`upTo`). A passage
+ * outside it never lights up, so it can never stay lit forever.
+ * @param {any} item a timeline entry
+ * @returns {number | null} its time in ms when unread, null otherwise
+ */
+export function unreadInboundAt(item) {
+  if (String(item?.direction ?? '') !== 'inbound' || item?.read !== false) return null;
+  const ms = Date.parse(String(item?.occurredAt ?? ''));
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
+const TIMELINE_PAGE = 20;
+/** A message longer than this folds behind «Mostra tutto». */
+const ENTRY_FOLD_CHARS = 280;
+const NAMED_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
+/**
+ * Message text as a person reads it: HTML entities the mail provider left in
+ * the snippet are decoded (as text — nothing is ever parsed as markup), the
+ * invisible preheader padding (U+034F, zero-widths, BOM, soft hyphen) is
+ * dropped and runs of blanks collapse. The stored value stays untouched.
+ * @param {string} value
+ */
+export function readableText(value) {
+  return String(value ?? '')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
+      if (name[0] === '#') {
+        const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+        return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+      }
+      return Object.hasOwn(NAMED_ENTITIES, name.toLowerCase()) ? NAMED_ENTITIES[name.toLowerCase()] : whole;
+    })
+    .replace(/[\u034f\u200b-\u200d\u2060\ufeff\u00ad]/g, '')
+    .replace(/[ \t\u00a0]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
-  const { client } = deps;
+  // Every write of the card (note, Dettagli, phone, call, message, stage)
+  // goes through the submission controller like every other view
+  // (bindAdminMutations, #567): the raw client refuses a mutation without a
+  // submission-owned Idempotency-Key before any request leaves, so in
+  // production «Aggiungi nota» answered «Nota non salvata» with no request
+  // at all (04/11).
+  const { client } = bindAdminMutations(deps.client, deps);
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
@@ -387,6 +454,11 @@ export function createCustomerCardView(deps) {
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
+  // The composer's poll-back pause (BO_SEND_PENDING): injectable so tests
+  // run the wait loop without real time.
+  const wait = typeof deps.wait === 'function'
+    ? deps.wait
+    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
@@ -625,6 +697,13 @@ export function createCustomerCardView(deps) {
     });
   }
 
+  /** The worker still holds the send: a 504 naming its request to read back. */
+  function isSendPending(error) {
+    return error?.code === 'BO_SEND_PENDING'
+      && typeof error.requestId === 'string' && error.requestId !== ''
+      && typeof error.claimId === 'string' && error.claimId !== '';
+  }
+
   /** One fresh idempotency key per send: retries reuse it, two sends never share it. */
   function freshMessageKey() {
     try {
@@ -682,7 +761,7 @@ export function createCustomerCardView(deps) {
       write.setAttribute('data-action', 'compose-message');
       write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
       write.addEventListener('click', () => {
-        openComposer(box, card, navCtx);
+        openComposer(card, navCtx);
       });
       row.appendChild(write);
     }
@@ -918,15 +997,51 @@ export function createCustomerCardView(deps) {
    * `POST /api/customer-hub/messages` — the recipient stays server-derived,
    * the panel only shows it.
    */
-  function openComposer(box, card, navCtx) {
-    const old = box.querySelector('div[data-composer="open"]');
+  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
+  // A slow first load never paints over (or crashes on) a newer opening:
+  // stale callbacks return without touching the panel.
+  let composerGeneration = 0;
+
+  function openComposer(card, navCtx) {
+    const generation = (composerGeneration += 1);
+    // The window hangs off the view, not off the Azioni column: a sticky
+    // column is its own stacking layer painted in page order, so a fixed
+    // window inside the left column sat under the right one (#605).
+    const old = mount.querySelector('div[data-composer="open"]');
     if (old) {
       while (old.firstChild) old.removeChild(old.firstChild);
     }
     const panel = old ?? el('div', 'bo-scheda-composer');
     panel.setAttribute('data-composer', 'open');
-    if (!old) box.appendChild(panel);
-    panel.appendChild(el('h4', undefined, 'Scrivi al cliente'));
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', 'Scrivi al cliente');
+    panel.removeAttribute?.('data-minimized');
+    if (!old) mount.appendChild(panel);
+    // Gmail-style window (Dan 04/11): a header bar with the purpose and the
+    // customer, minimize and close; the form lives in the body below.
+    const head = el('div', 'bo-composer-head');
+    const customer = typeof card?.name === 'string' ? card.name.trim() : '';
+    const title = el('h4', 'bo-composer-title', 'Scrivi al cliente');
+    if (customer !== '') title.appendChild(el('span', 'bo-composer-to-name', ` · ${customer}`));
+    head.appendChild(title);
+    const minimize = el('button', 'bo-composer-icon', '–');
+    minimize.setAttribute('type', 'button');
+    minimize.setAttribute('aria-label', 'Riduci');
+    minimize.setAttribute('data-action', 'composer-minimize');
+    minimize.addEventListener('click', () => {
+      if (panel.getAttribute('data-minimized') === 'true') panel.removeAttribute?.('data-minimized');
+      else panel.setAttribute('data-minimized', 'true');
+    });
+    const close = el('button', 'bo-composer-icon', '✕');
+    close.setAttribute('type', 'button');
+    close.setAttribute('aria-label', 'Chiudi');
+    close.setAttribute('data-action', 'composer-close');
+    close.addEventListener('click', () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+    });
+    head.appendChild(minimize);
+    head.appendChild(close);
+    panel.appendChild(head);
     const spaceId = activeSpaceId();
     if (spaceId === null) {
       panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per collegare i canali e inviare.'));
@@ -939,13 +1054,16 @@ export function createCustomerCardView(deps) {
     // resolves to null and changes nothing — the channel connections
     // decide alone, like before.
     readProfile(client).then((profile) => {
+      if (generation !== composerGeneration) return;
       client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
-        panel.removeChild(wait);
+        if (generation !== composerGeneration) return;
+        if (wait.parentNode === panel) panel.removeChild(wait);
         buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile);
       },
       (error) => {
-        panel.removeChild(wait);
+        if (generation !== composerGeneration) return;
+        if (wait.parentNode === panel) panel.removeChild(wait);
         if (isNotComposedFailure(error)) {
           buildComposerForm(panel, card, navCtx, spaceId, [], profile);
           return;
@@ -958,17 +1076,59 @@ export function createCustomerCardView(deps) {
     });
   }
 
+  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
+  // close the window, the typed text and subject stay here and come back
+  // when the composer reopens on the same customer. Cleared only by a send
+  // the server accepted. In memory: a reload still drops them, like any
+  // unsent form.
+  const composerDrafts = new Map();
+  // The idempotency key of a send whose outcome is not yet known, keyed by
+  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
+  // the server finds its own request instead of mailing twice (production
+  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
+  // A changed text, subject or channel is a new message with a new key; a
+  // definitive answer (sent, refused, failed) drops the key.
+  const composerSendKeys = new Map();
+
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
+    // Keyed by space too: a draft never crosses into another workspace
+    // (Muse P2 on #588), the same boundary the send payload keeps.
+    const draftKey = `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '' };
+    const keepDraft = () => {
+      const subject = subjectInput !== null ? subjectInput.value : draft.subject;
+      if (text.value === '' && subject === '') composerDrafts.delete(draftKey);
+      else composerDrafts.set(draftKey, { text: text.value, subject });
+      draft.subject = subject;
+    };
     const channels = composerChannelsFor(card, connections, profile);
+    const body = el('div', 'bo-composer-body');
+    // Channel chips: one radio per channel (kept for keyboard and tests),
+    // visually a pill row like Gmail's «Da/A» chips. Unusable channels stay
+    // visible but switched off, and say why in one line under the row.
     const list = el('div', 'bo-scheda-composer-channels');
-    const toLine = el('p', 'bo-muted', '');
-    const subjectHolder = el('div', undefined, '');
+    list.setAttribute('role', 'radiogroup');
+    list.setAttribute('aria-label', 'Canale');
+    const offLine = el('p', 'bo-composer-off', '');
+    const fromRow = el('div', 'bo-composer-row');
+    const toRow = el('div', 'bo-composer-row');
+    const toLine = el('span', 'bo-composer-value', '');
+    const fromValue = el('span', 'bo-composer-value', '');
+    fromRow.appendChild(el('span', 'bo-composer-label', 'Da'));
+    fromRow.appendChild(fromValue);
+    toRow.appendChild(el('span', 'bo-composer-label', 'A'));
+    toRow.appendChild(toLine);
+    const subjectHolder = el('div', 'bo-composer-subject-row', '');
     const text = el('textarea', 'bo-scheda-composer-text');
-    text.setAttribute('rows', '4');
+    text.setAttribute('rows', '8');
     text.setAttribute('placeholder', 'Scrivi il messaggio…');
-    const limitHint = el('p', 'bo-muted', 'Massimo 2000 caratteri: il testo entra nella cronologia.');
+    text.setAttribute('aria-label', 'Messaggio');
+    if (draft.text !== '') text.value = draft.text;
+    text.addEventListener?.('input', keepDraft);
+    const foot = el('div', 'bo-composer-foot');
+    const limitHint = el('span', 'bo-composer-limit', 'Massimo 2000 caratteri');
     const err = el('p', 'field-error', '');
-    const send = el('button', undefined, 'Invia');
+    const send = el('button', 'primary', 'Invia');
     send.setAttribute('type', 'button');
     send.setAttribute('data-action', 'composer-send');
     let selected = null;
@@ -976,92 +1136,229 @@ export function createCustomerCardView(deps) {
     const radios = [];
     const select = (entry) => {
       selected = entry;
-      for (const row of radios) row.radio.checked = row.entry === entry;
-      toLine.textContent = `A: ${entry.recipient}`;
+      for (const row of radios) {
+        row.radio.checked = row.entry === entry;
+        row.chip.setAttribute('data-selected', row.entry === entry ? 'true' : 'false');
+      }
+      toLine.textContent = entry.recipient;
+      const sender = typeof entry.sender === 'string' && entry.sender !== '' ? entry.sender : '';
+      fromValue.textContent = sender;
+      fromRow.setAttribute('data-empty', sender === '' ? 'true' : 'false');
       if (subjectInput !== null) {
         subjectHolder.removeChild(subjectInput);
         subjectInput = null;
       }
+      subjectHolder.setAttribute('data-empty', entry.channel === 'email' ? 'false' : 'true');
       if (entry.channel === 'email') {
         subjectInput = el('input', 'bo-scheda-composer-subject');
         subjectInput.setAttribute('type', 'text');
-        subjectInput.setAttribute('placeholder', 'Oggetto (facoltativo)');
+        subjectInput.setAttribute('placeholder', 'Oggetto');
+        subjectInput.setAttribute('aria-label', 'Oggetto');
         subjectInput.setAttribute('maxlength', '256');
+        if (draft.subject !== '') subjectInput.value = draft.subject;
+        subjectInput.addEventListener?.('input', keepDraft);
         subjectHolder.appendChild(subjectInput);
       }
     };
+    const offLinked = [];
     for (const entry of channels) {
-      const row = el('label', 'bo-scheda-composer-channel');
+      const chip = el('label', 'bo-scheda-composer-channel');
       const radio = el('input', undefined, '');
       radio.setAttribute('type', 'radio');
       radio.setAttribute('name', 'composer-channel');
       radio.setAttribute('value', entry.channel);
-      row.appendChild(radio);
-      row.appendChild(el('span', undefined, entry.label));
-      const usable = entry.recipient !== null && entry.connected;
+      chip.appendChild(radio);
+      chip.appendChild(el('span', undefined, entry.label));
       if (entry.recipient === null) {
         radio.setAttribute('disabled', 'disabled');
-        row.appendChild(el('span', 'bo-muted', ' — nessun indirizzo su questo canale'));
+        chip.setAttribute('data-off', 'true');
+        chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
-        row.appendChild(el('span', 'bo-muted', ` — ${entry.recipient}, non collegato `));
-        row.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+        chip.setAttribute('data-off', 'true');
+        chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
+        // Voce 8ce25b0f445f: the address reads in the line too, not only in
+        // the title — a phone has no hover.
+        offLinked.push(`${entry.label} (${entry.recipient})`);
       } else {
-        // Voce a935af6a6d19: a Gmail-linked Email names its sender — the
-        // operator sees which mailbox the message leaves from. `el` keeps
-        // the mailbox text, never markup.
-        const detail = typeof entry.sender === 'string' && entry.sender !== ''
-          ? ` — da ${entry.sender} a ${entry.recipient} (collegato)`
-          : ` — a ${entry.recipient} (collegato)`;
-        row.appendChild(el('span', 'bo-muted', detail));
+        chip.setAttribute('title', `${entry.label}: ${entry.recipient}`);
         radio.addEventListener('click', () => select(entry));
+        // Arrow keys move a radio with `change`, not `click` (Muse P2 on #588).
+        radio.addEventListener('change', () => select(entry));
         if (selected === null) selected = entry;
       }
-      list.appendChild(row);
-      radios.push({ entry, radio });
+      list.appendChild(chip);
+      radios.push({ entry, radio, chip });
     }
-    panel.appendChild(list);
-    panel.appendChild(toLine);
-    panel.appendChild(subjectHolder);
-    panel.appendChild(text);
-    panel.appendChild(limitHint);
-    panel.appendChild(send);
-    panel.appendChild(err);
+    if (offLinked.length > 0) {
+      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+    }
+    body.appendChild(list);
+    if (offLinked.length > 0) body.appendChild(offLine);
+    body.appendChild(fromRow);
+    body.appendChild(toRow);
+    body.appendChild(subjectHolder);
+    body.appendChild(text);
+    body.appendChild(err);
+    foot.appendChild(send);
+    foot.appendChild(limitHint);
+    panel.appendChild(body);
+    panel.appendChild(foot);
     if (selected !== null) select(selected);
-    else send.setAttribute('disabled', 'disabled');
+    else {
+      send.setAttribute('disabled', 'disabled');
+      toLine.textContent = 'Nessun canale collegato per questo cliente';
+      fromRow.setAttribute('data-empty', 'true');
+      subjectHolder.setAttribute('data-empty', 'true');
+    }
+    // Gmail habits: Esc closes, Cmd/Ctrl+Invio sends. openComposer reuses the
+    // panel across rebuilds, so the listener is added once per panel and
+    // always reaches the current form's send (Muse P1 on #588: one listener
+    // per rebuild queued one POST each).
+    panel.__composerSend = () => doSend();
+    if (panel.__composerKeys !== true) {
+      panel.__composerKeys = true;
+      panel.addEventListener?.('keydown', (event) => {
+        if (event.key === 'Escape') {
+          if (panel.parentNode) panel.parentNode.removeChild(panel);
+        } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault?.();
+          if (typeof panel.__composerSend === 'function') void panel.__composerSend();
+        }
+      });
+    }
+    if (typeof text.focus === 'function' && selected !== null) text.focus();
     let busy = false;
-    send.addEventListener('click', async () => {
+    send.addEventListener('click', () => { void doSend(); });
+    const setBusy = (on) => {
+      busy = on;
+      send.textContent = on ? 'Invio…' : 'Invia';
+      if (on) send.setAttribute('disabled', 'disabled');
+      else send.removeAttribute?.('disabled');
+      send.setAttribute('aria-busy', on ? 'true' : 'false');
+    };
+    const showStatus = (message) => {
+      err.textContent = message;
+      err.setAttribute('data-tone', message === '' ? '' : 'pending');
+    };
+    const showError = (message) => {
+      err.textContent = message;
+      err.setAttribute('data-tone', 'error');
+    };
+    async function doSend() {
       if (busy || selected === null) return;
+      // The window this send belongs to. Reopening «Scrivi» rebuilds the
+      // form in the same panel and bumps the generation: from then on this
+      // send is stale and never touches the UI (the key stays, so the same
+      // text sent again from the new form reads back the same request).
+      const generation = composerGeneration;
+      const stale = () => generation !== composerGeneration || panel.parentNode == null;
       if (text.value.trim() === '') {
-        err.textContent = 'Scrivi il messaggio prima di inviarlo.';
+        showError('Scrivi il messaggio prima di inviarlo.');
         return;
       }
-      busy = true;
-      err.textContent = '';
-      try {
-        const payload = {
-          spaceId,
-          resource: navCtx.resource,
-          id: navCtx.id,
-          channel: selected.channel,
-          text: text.value,
-          messageKey: freshMessageKey(),
-        };
-        if (selected.connectionKey !== null) payload.connectionKey = selected.connectionKey;
-        if (selected.channel === 'email' && subjectInput !== null && subjectInput.value.trim() !== '') {
-          payload.subject = subjectInput.value.trim();
-        }
-        await client.request('/api/customer-hub/messages', { method: 'POST', body: JSON.stringify(payload) });
+      setBusy(true);
+      showStatus('');
+      const payload = {
+        spaceId,
+        resource: navCtx.resource,
+        id: navCtx.id,
+        channel: selected.channel,
+        text: text.value,
+      };
+      if (selected.connectionKey !== null) payload.connectionKey = selected.connectionKey;
+      if (selected.channel === 'email' && subjectInput !== null && subjectInput.value.trim() !== '') {
+        payload.subject = subjectInput.value.trim();
+      }
+      // Trimmed like the empty check above: a trailing space or newline
+      // added after a pending send is still the same message.
+      const sendKey = `${draftKey}\0${payload.channel}\0${payload.connectionKey ?? ''}\0${payload.subject ?? ''}\0${payload.text.trim()}`;
+      // One key per message, never one slot per customer: a second message
+      // sent while the first is still queued must not evict its key.
+      const messageKey = composerSendKeys.get(sendKey) ?? freshMessageKey();
+      composerSendKeys.set(sendKey, messageKey);
+      payload.messageKey = messageKey;
+      const sent = async () => {
+        if (stale()) return;
+        composerSendKeys.delete(sendKey);
+        composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
         await renderCard(navCtx.resource, navCtx.id);
+      };
+      try {
+        await client.request('/api/customer-hub/messages', { method: 'POST', body: JSON.stringify(payload) });
+        await sent();
+        return;
       } catch (error) {
-        const logged = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
-        const formErrors = apiErrorToFormErrors(error);
-        err.textContent = formErrors.fields.text ?? logged;
+        if (stale()) return;
+        if (!isSendPending(error)) {
+          failSend(error, sendKey);
+          return;
+        }
+        // The worker holds the message: say so and read the same request
+        // back, never a second POST. The log carries the ids to trace it,
+        // never the claim or the text.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] invio in attesa', { code: error.code, status: typeof error.status === 'number' ? error.status : null, requestId: error.requestId });
+        }
+        showStatus('In consegna: il messaggio è in coda. Non serve inviarlo di nuovo.');
+        let pending = error;
+        for (let round = 0; round < SEND_RESUME_ROUNDS; round += 1) {
+          await wait(SEND_RESUME_EVERY_MS);
+          // The panel was closed or reopened: stop reading back. The key
+          // stays, so a re-tap after reopening still finds the same request.
+          if (stale()) return;
+          try {
+            const query = `spaceId=${encodeURIComponent(spaceId)}&requestId=${encodeURIComponent(pending.requestId)}&claimId=${encodeURIComponent(pending.claimId)}`;
+            await client.request(`/api/customer-hub/messages?${query}`);
+            await sent();
+            return;
+          } catch (next) {
+            if (stale()) return;
+            if (isSendPending(next)) {
+              pending = next;
+              continue;
+            }
+            // The worker's verdict on the original send: failed or
+            // cancelled. Only this ends the wait with an error.
+            if (next?.code === 'BO_SEND_FAILED' || next?.code === 'BO_SEND_CANCELLED') {
+              failSend(next, sendKey);
+              return;
+            }
+            // A transient miss of the read itself (gateway, network, rate
+            // limit, unreadable status): the message is still queued, keep
+            // reading the same request.
+            if (!isDefinitiveRefusal(next)) continue;
+            // The read was refused outright: the send's outcome is unknown,
+            // never «non inviato». The key stays for a safe re-tap.
+            showStatus(SEND_UNCERTAIN);
+            return;
+          }
+        }
+        // Still queued: the key stays, so a re-tap finds the same request.
+        if (stale()) return;
+        showStatus('Ancora in coda: comparirà nella cronologia appena parte. Non serve inviarlo di nuovo.');
       } finally {
-        busy = false;
+        if (!stale()) setBusy(false);
       }
-    });
+    }
+    function failSend(error, sendKey) {
+      // Only a definitive answer drops the key and reads «non inviato»: a
+      // refused request replayed under the same key would answer the same
+      // refusal forever. An unknown outcome (gateway timeout, 5xx, 408/425/
+      // 429, network) keeps the key — the first request may still be queued,
+      // and a re-tap under the same key cannot mail twice.
+      if (!isDefinitiveRefusal(error) && error?.code !== 'BO_SEND_FAILED' && error?.code !== 'BO_SEND_CANCELLED') {
+        humanReadError(error, { failed: SEND_UNCERTAIN });
+        showStatus(SEND_UNCERTAIN);
+        return;
+      }
+      composerSendKeys.delete(sendKey);
+      const logged = humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' });
+      const formErrors = apiErrorToFormErrors(error);
+      showError(formErrors.fields.text ?? logged);
+    }
   }
     // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
     // creation flows with this customer already chosen. The pick travels
@@ -1254,7 +1551,13 @@ export function createCustomerCardView(deps) {
       const edit = el('button', undefined, 'Modifica');
       edit.setAttribute('type', 'button');
       edit.setAttribute('data-action', 'edit-details');
-      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx));
+      // Dan 06/11: Annulla puts this card back as it was — no reload of the
+      // whole scheda (it used to blank for seconds and jump to the top).
+      const restore = () => {
+        while (box.firstChild) box.removeChild(box.firstChild);
+        details(box, card, profile, editCtx, profileError);
+      };
+      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
       box.appendChild(edit);
     }
     // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
@@ -1287,7 +1590,7 @@ export function createCustomerCardView(deps) {
    * refused save keeps the form with the server's Italian error, never a
    * blank card.
    */
-  function renderDetailsForm(box, card, contact, editCtx) {
+  function renderDetailsForm(box, card, contact, editCtx, restore = null) {
     while (box.firstChild) box.removeChild(box.firstChild);
     box.appendChild(el('h4', undefined, 'Dettagli'));
     const field = (label, name, value) => {
@@ -1342,6 +1645,10 @@ export function createCustomerCardView(deps) {
       }
     });
     cancel.addEventListener('click', async () => {
+      if (typeof restore === 'function') {
+        restore();
+        return;
+      }
       await renderCard(editCtx.resource, editCtx.id);
     });
     void card;
@@ -1518,6 +1825,7 @@ export function createCustomerCardView(deps) {
         if (channelFilter === key) chip.setAttribute('data-active', 'true');
         chip.addEventListener('click', () => {
           channelFilter = key;
+          shownCount = TIMELINE_PAGE;
           drawChips();
           drawList();
         });
@@ -1559,8 +1867,12 @@ export function createCustomerCardView(deps) {
       while (list.firstChild) list.removeChild(list.firstChild);
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
-      const visible = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
-      if (visible.length === 0) {
+      // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
+      // a 5.600px page. «Mostra precedenti» opens the next page below.
+      const filtered = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
+      const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+      const visible = ordered.slice(0, shownCount);
+      if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
@@ -1610,8 +1922,17 @@ export function createCustomerCardView(deps) {
         // Voce 59def6cb805d (C17): the day already heads the group, so the
         // card shows the hour only (`<hh:mm>`) beside channel and direction.
         const when = timeParts(item?.occurredAt);
-        row.appendChild(el('p', 'bo-scheda-entry-head',
+        const entryHead = el('p', 'bo-scheda-entry-head');
+        // «Da leggere»: an unread passage (unreadInboundAt, the same rule
+        // mark-read uses) lights up with «Nuovo» for this visit. Without the
+        // field nothing changes — the server may not serve read state yet.
+        if (unreadInboundAt(item) !== null) {
+          row.setAttribute('data-unread', 'true');
+          entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
+        }
+        entryHead.appendChild(el('span', undefined,
           when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
+        row.appendChild(entryHead);
         if (item?.entry === 'call') {
           // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
           // audio URL in the data no player is rendered (never a dead one).
@@ -1619,7 +1940,21 @@ export function createCustomerCardView(deps) {
           row.appendChild(el('p', undefined,
             dur ? `chiamata ${isOutbound ? 'in uscita' : 'in entrata'} · ${dur}` : `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`));
         } else if (typeof item?.body === 'string' && item.body !== '') {
-          row.appendChild(el('p', undefined, item.body));
+          const text = readableText(item.body);
+          const bodyNode = el('p', 'bo-scheda-entry-body', text);
+          row.appendChild(bodyNode);
+          if (text.length > ENTRY_FOLD_CHARS) {
+            bodyNode.setAttribute('data-folded', 'true');
+            const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
+            more.setAttribute('type', 'button');
+            more.setAttribute('data-action', 'entry-expand');
+            more.addEventListener('click', () => {
+              const folded = bodyNode.getAttribute('data-folded') === 'true';
+              bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
+              more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
+            });
+            row.appendChild(more);
+          }
         }
         const attachment = attachmentNode(item?.attachment);
         if (attachment) row.appendChild(attachment);
@@ -1629,7 +1964,19 @@ export function createCustomerCardView(deps) {
           `${syncArrow(item?.direction)}${channelLabel(item?.channel)} · ${syncLabel(item?.sync)}`));
         list.appendChild(row);
       }
+      if (ordered.length > visible.length) {
+        const rest = ordered.length - visible.length;
+        const older = el('button', 'bo-scheda-older', `Mostra precedenti · ${Math.min(rest, TIMELINE_PAGE)} di ${rest}`);
+        older.setAttribute('type', 'button');
+        older.setAttribute('data-action', 'timeline-older');
+        older.addEventListener('click', () => {
+          shownCount += TIMELINE_PAGE;
+          drawList();
+        });
+        list.appendChild(older);
+      }
     };
+    let shownCount = TIMELINE_PAGE;
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -2027,9 +2374,10 @@ export function createCustomerCardView(deps) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
-    const left = el('div', 'bo-scheda-col');
-    const center = el('div', 'bo-scheda-col');
-    const right = el('div', 'bo-scheda-col');
+    // Dan 06/11: the side columns stay put while the conversation scrolls.
+    const left = el('div', 'bo-scheda-col bo-scheda-col-side');
+    const center = el('div', 'bo-scheda-col bo-scheda-col-main');
+    const right = el('div', 'bo-scheda-col bo-scheda-col-side');
     // Supervisor design pass: every section is its own card, like the
     // prototype; a section that hides itself (returns false) leaves no card.
     const section = (col, cls, fn, ...args) => {
@@ -2075,6 +2423,41 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     mount.appendChild(panel);
+    markRead(resource, id, timeline);
+  }
+
+  /**
+   * «Da leggere»: opening the scheda marks its inbound messages read, up to
+   * the newest unread one. The highlights stay for this visit — the operator
+   * still sees what was new — and the list loses the badge on its next read.
+   * Without read state (no `read: false` anywhere) or without a space nothing
+   * is sent; a refused mark is silent, the badge simply stays.
+   */
+  function markRead(resource, id, timeline) {
+    const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+    let upTo = null;
+    let upToMs = -Infinity;
+    for (const item of items) {
+      const ms = unreadInboundAt(item);
+      if (ms !== null && ms > upToMs) {
+        upToMs = ms;
+        upTo = String(item.occurredAt);
+      }
+    }
+    if (upTo === null) return;
+    let spaceId = null;
+    try {
+      spaceId = activeSpaceId();
+    } catch {
+      return;
+    }
+    if (spaceId === null) return;
+    Promise.resolve()
+      .then(() => client.request('/api/customer-hub/mark-read', {
+        method: 'POST',
+        body: JSON.stringify({ spaceId, resource, id, upTo }),
+      }))
+      .catch(() => {});
   }
 
   return { renderCard };

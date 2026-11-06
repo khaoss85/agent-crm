@@ -13,6 +13,7 @@
  * channels package, or on a failed read.
  */
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SYNC_CHANNELS,
@@ -91,6 +92,7 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, options });
       if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
         if (path === '/api/connectors/sync-now') {
@@ -548,7 +550,15 @@ test('the view degrades honestly: no space, no channels, failed read', async () 
   const noChannels = renderView({ client: { schema: { domains: {} } } });
   await noChannels.view.render();
   await flush();
-  assert.ok(noChannels.mount.textContent.includes('non sono composti'));
+  assert.ok(noChannels.mount.textContent.includes('non è attiva in questo spazio'));
+
+  // The shared hosting composes the read-only Reader Channels domain, with
+  // no channelsContract: the activity is still read (production, 04/11).
+  const reader = renderView({ client: { schema: { domains: { channels: { packageContract: 2, version: 1, label: 'Reader Channels' } } } } });
+  await reader.view.render();
+  await flush();
+  assert.ok(!reader.mount.textContent.includes('non è attiva'), 'reader channels read the activity');
+  assert.ok(reader.client.calls.some((call) => call.path.startsWith('/api/connectors/activity')), 'the activity is requested');
 
   const failed = renderView({ client: { failActivity: new Error('giù') } });
   await failed.view.render();

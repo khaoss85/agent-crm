@@ -31,6 +31,7 @@ import {
   readAppointment,
   readSchedule,
   readTeamWeek,
+  rescheduleAppointment,
   reminderMessageKey,
   reminderSourceKey,
   reminderThreadKey,
@@ -268,12 +269,13 @@ export function createAppointmentsPackage(options = {}) {
         label: 'Suggest appointment slots',
         appMethod: 'suggestAppointmentSlots',
         description:
-          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking overlaps. Read-only: no row is written, no slot invented.',
+          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking overlaps. Read-only: no row is written, no slot invented. With nowIso named, a step already begun is cut too: a proposal must be bookable.',
         input: [
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
           { name: 'slotMinutes', type: 'integer', required: false, hint: 'Step granularity, one of 15 30 45 60 90 120 (default 30).' },
+          { name: 'nowIso', type: 'string', required: false, hint: 'Reference instant, ISO: steps already begun are cut (backlog:d1e4d90e).' },
         ],
         create(runtime) {
           // Read-only: the suggest path never touches the actor, so the book

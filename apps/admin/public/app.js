@@ -2,6 +2,8 @@ import { createSubmissionController, requireSubmissionContext } from './admin-su
 import { createAssistantPanel } from './admin-assistant.js';
 import { resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
+import { startBundleWatch } from './admin-version.js';
+import { withSchemaCache } from './admin-schema-cache.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -103,7 +105,11 @@ function leaveForSpaceLogin(target) {
 // NOT authentication; a local caller can set any actor. The Admin is
 // local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
-  async request(path, options = {}) {
+  // One schema read per open, shared by every view (admin-schema-cache.js).
+  request(path, options = {}) {
+    return schemaCachedRequest(path, options);
+  },
+  async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
     /** @type {Record<string, string>} */
     const requestHeaders = {
@@ -134,12 +140,9 @@ const moduleClient = {
       payload = undefined;
     }
     if (!response.ok) {
-      const error = new Error(payload?.error?.message || `Request failed (${response.status})`);
-      Object.assign(error, {
-        status: response.status,
-        code: payload?.error?.code ?? 'UNKNOWN',
-        details: payload?.error?.details ?? null,
-      });
+      // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
+      // and claimId on the error, so the composer reads it back.
+      const error = apiFailure(response.status, payload);
       if (MOUNTED && !followedLogin) {
         leaveForSpaceLogin(sessionLostTarget({
           status: response.status,
@@ -160,6 +163,7 @@ const moduleClient = {
     return payload;
   },
 };
+const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
 
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
@@ -434,7 +438,7 @@ import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
+import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -507,6 +511,7 @@ const quoteView = createQuoteView({
   mount: moduleView,
   client: moduleClient,
   submissions,
+  spaceName: () => currentSpaceName(),
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -845,8 +850,10 @@ if (boSidebar && boTopbar) {
       window.location.hash = '#/';
       toast('Spazio locale reimpostato.');
     },
-    onAiSubmit: () => {
-      if (assistantPanel) void assistantPanel.open(currentScreenId);
+    // The words typed in the top bar travel to the panel (Dan 05/11):
+    // they run the closest suggestion instead of being dropped.
+    onAiSubmit: (text) => {
+      if (assistantPanel) void assistantPanel.open(currentScreenId, undefined, undefined, text);
     },
     onPickSpace: (id) => {
       shellActiveSpace = id;
@@ -1223,6 +1230,13 @@ async function route() {
 window.addEventListener('hashchange', route);
 populateNav();
 route();
+// backlog:49bd3657b0f8: after a release the tab still runs the old bundle
+// in memory, so the shell polls the served bundle identity — once now, on
+// every navigation and every minute — and shows a persistent notice the
+// operator confirms (the shell never reloads on its own, so no text is
+// ever lost). The watch never breaks the shell: a failed poll only waits
+// for the next.
+startBundleWatch({ adminBase: ADMIN_BASE });
 // backlog:3f74a2f296ec: the shell frame (nav + view skeleton) is on screen
 // from here, so the branded loading splash leaves now; the views fill their
 // data in afterwards. If the boot above ever throws, the splash stays —

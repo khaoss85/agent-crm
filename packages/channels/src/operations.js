@@ -18,7 +18,7 @@ import { assertHistoryPage, CHANNEL_HISTORY_PAGE_MAX } from './adapter.js';
 import { composerTimelineRefusal } from './composer-text.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
-import { gmailThreadSubject, isGmailThreadId } from './gmail.js';
+import { formatGoogleSyncLog, gmailThreadSubject, isGmailThreadId } from './gmail.js';
 import { advanceLetter, assertJobTransition, jobSendState, transitionInbox } from './transitions.js';
 
 /**
@@ -1114,37 +1114,98 @@ export function createChannelOperations(deps) {
   }
 
   /**
-   * Resolve one imported sender through the composed `channel-sender@1`
-   * capability, or record it pending when the composition runs without
-   * customer-data. A null resolver never refuses the import: conversations
-   * and messages are stored either way, and the outcome stays `pending`
-   * ("reconciliation pending", counted as unresolved) until an advance
-   * with the capability resolves it. A genuine resolution failure throws
-   * for the caller to record: its text is never read here, because it may
-   * echo provider-controlled secrets or PII.
-   * @returns {Promise<'created'|'matched'|'unresolved'|'none'|'pending'>}
+   * The provenance a sender resolution carries (backlog:13c09f03): Gmail
+   * senders and recipients resolve with origin `gmail`, every other
+   * channel without one — the identity row keeps the default run either
+   * way, so unwired channels behave exactly as before.
    */
-  async function resolveImportSender(event, adapter, actor) {
-    if (!resolveSender) return 'pending';
+  function senderOrigin(adapter) {
+    return adapter?.channel === 'email' ? 'gmail' : undefined;
+  }
+
+  /**
+   * Resolve one sender-shaped evidence through the composed
+   * `channel-sender@1` capability. A malformed evidence names nobody
+   * (`none`): the message is kept, the contact is not invented. A genuine
+   * resolution failure throws for the caller to record: its text is never
+   * read here, because it may echo provider-controlled secrets or PII.
+   * @returns {Promise<'created'|'matched'|'unresolved'|'none'>}
+   */
+  async function resolveImportEvidence(evidence, adapter, actor) {
     let answer;
     try {
       answer = await resolveSender({
         channel: adapter.channel,
-        handle: event.sender.handle,
-        ...(event.sender.email === undefined ? {} : { email: event.sender.email }),
-        ...(event.sender.firstName === undefined ? {} : { firstName: event.sender.firstName }),
-        ...(event.sender.lastName === undefined ? {} : { lastName: event.sender.lastName }),
+        handle: evidence.handle,
+        ...(evidence.email === undefined ? {} : { email: evidence.email }),
+        ...(evidence.firstName === undefined ? {} : { firstName: evidence.firstName }),
+        ...(evidence.lastName === undefined ? {} : { lastName: evidence.lastName }),
+        ...(senderOrigin(adapter) === undefined ? {} : { origin: senderOrigin(adapter) }),
         actor,
       });
     } catch (error) {
-      // Malformed sender evidence names nobody: the message is kept, the
-      // contact is not invented.
       if (error instanceof ValidationError) return 'none';
       throw error;
     }
     if (answer.outcome === 'matched') return 'matched';
     if (answer.outcome === 'created') return 'created';
     return 'unresolved';
+  }
+
+  /**
+   * Resolve one imported sender through the composed `channel-sender@1`
+   * capability, or record it pending when the composition runs without
+   * customer-data. A null resolver never refuses the import: conversations
+   * and messages are stored either way, and the outcome stays `pending`
+   * ("reconciliation pending", counted as unresolved) until an advance
+   * with the capability resolves it.
+   * @returns {Promise<'created'|'matched'|'unresolved'|'none'|'pending'>}
+   */
+  async function resolveImportSender(event, adapter, actor) {
+    if (!resolveSender) return 'pending';
+    return resolveImportEvidence(event.sender, adapter, actor);
+  }
+
+  /**
+   * Resolve every recipient the event names (backlog:13c09f03): the people
+   * the owner wrote to become leads through the same capability as the
+   * sender. A malformed recipient names nobody (`none`), never fatal —
+   * one bad address must not drop the good ones beside it, and the fold
+   * below ignores it beside a real outcome. Without the capability every
+   * recipient stays `pending`, like the sender.
+   * @returns {Promise<Array<'created'|'matched'|'unresolved'|'none'|'pending'>>}
+   */
+  async function resolveImportRecipients(event, adapter, actor) {
+    const list = Array.isArray(event?.recipients) ? event.recipients : [];
+    const outcomes = [];
+    for (const recipient of list) {
+      if (!recipient || typeof recipient !== 'object' || Array.isArray(recipient)) continue;
+      if (!resolveSender) {
+        outcomes.push('pending');
+        continue;
+      }
+      // A transient failure propagates like the sender's: the caller
+      // records the page pending and aborts with the cursor unmoved, so
+      // the retry resolves only the recipients.
+      outcomes.push(await resolveImportEvidence(recipient, adapter, actor));
+    }
+    return outcomes;
+  }
+
+  /**
+   * Fold one event's sender and recipient outcomes into the single outcome
+   * the row records (backlog:13c09f03): a creation anywhere wins (the log
+   * counts it), then a match, then an ambiguity for a human. No evidence
+   * at all — or nothing but malformed evidence — stays `none`.
+   */
+  function foldImportOutcomes(outcomes) {
+    // The fold decides the single sender the row records; the log and the
+    // page tally count every `created` evidence separately (backlog:13c09f03),
+    // so one mail to two new people reports two leads, not one row.
+    for (const want of ['created', 'matched', 'unresolved', 'pending']) {
+      if (outcomes.includes(want)) return want;
+    }
+    return 'none';
   }
 
   /**
@@ -1319,6 +1380,12 @@ export function createChannelOperations(deps) {
     const done = checked.nextPageToken === null;
     const commitKey = importSourceKey(spaceId, connection.sourceKey);
     const importKey = row.sourceKey;
+    // Leads this advance actually invented (backlog:13c09f03): one counter
+    // per `created` evidence, not per row — a mail to two new people
+    // reports two. Retry-safe by construction: events with a final outcome
+    // return before resolving, so a replay recounts nothing; a re-resolved
+    // replay answers `matched`, never `created` again.
+    let createdLeads = 0;
 
     const knownOutcome = (providerEventId) => outcomeService.listWhere({
       sourceKey: outcomeSourceKey(importKey, providerEventId),
@@ -1425,25 +1492,36 @@ export function createChannelOperations(deps) {
         rowOutcome = current && current.importKey === importKey ? 'imported' : 'duplicate';
       }
       const appliedNow = stored.effect === 'applied';
-      // A replayed row keeps its evidence, but an applied row's sender is
+      // A replayed row keeps its evidence, but an applied row's senders are
       // still reconciled: the first store may have been a webhook — which
       // never resolves senders — or a crash may have landed between the
       // inbox write and the resolution. Resolution is idempotent, so the
       // replay converges instead of doubling.
       // Quarantined or set-aside items stay evidence: no contact is ever
       // invented from a row the package refused to apply.
-      if (!appliedNow || !event.sender) {
+      const hasEvidence = Boolean(event.sender)
+        || (Array.isArray(event.recipients) && event.recipients.length > 0);
+      if (!appliedNow || !hasEvidence) {
         await record(rowOutcome, 'none', appliedNow, note);
         return;
       }
-      let sender;
+      const outcomes = [];
       try {
-        sender = await resolveImportSender(event, adapter, actor);
+        // The sender first, then every recipient (backlog:13c09f03): the
+        // people the owner wrote to become leads through the same
+        // capability. One folded outcome lands on the row — a creation
+        // anywhere wins — while every `created` evidence lands in the
+        // page tally, so the log counts every automatic lead.
+        if (event.sender) outcomes.push(await resolveImportSender(event, adapter, actor));
+        for (const outcome of await resolveImportRecipients(event, adapter, actor)) outcomes.push(outcome);
+        for (const outcome of outcomes) {
+          if (outcome === 'created') createdLeads += 1;
+        }
       } catch (error) {
         // A deterministically refused sender fails whatever the attempt:
         // record it failed and skip like a poisoned event. A transient
         // outage still leaves the outcome pending and aborts the page, so
-        // the retry resolves only the sender — and the abort carries no
+        // the retry resolves only the senders — and the abort carries no
         // error text.
         if (isDeterministicImportEventError(error)) {
           await record('failed', 'unresolved', appliedNow, note
@@ -1454,7 +1532,7 @@ export function createChannelOperations(deps) {
         await record(rowOutcome, 'pending', appliedNow, note);
         throw error;
       }
-      await record(rowOutcome, sender, appliedNow, note);
+      await record(rowOutcome, foldImportOutcomes(outcomes), appliedNow, note);
     };
 
     const processPage = async () => {
@@ -1518,6 +1596,19 @@ export function createChannelOperations(deps) {
     });
     const { updated, before } = committed;
     const after = countImportOutcomes(importKey);
+    // Every automatic lead lands in the log (backlog:13c09f03): counts
+    // only, never an address — the outcome rows carry no sender text by
+    // design, and neither does this line. Counted per evidence resolved
+    // above, not per row: a multi-recipient mail reports every lead it
+    // invented, while the row keeps its single folded outcome.
+    const created = createdLeads;
+    if (adapter.channel === 'email' && created > 0) {
+      console.info(`[accordo] ${formatGoogleSyncLog({ created, source: 'gmail' })}`);
+    }
+    // `skippedMessages` is page-observed, not row-derived (no outcome
+    // row is written for a provider-confirmed-gone message): it rides
+    // the answer as a diagnostic so a systematically-404 read stays
+    // visible, while the tallies above stay strictly row-derived.
     return {
       done: updated.status === 'done' ? true : done && updated.nextPageToken === checked.nextPageToken,
       state: importStateSummary(updated),
@@ -1526,9 +1617,10 @@ export function createChannelOperations(deps) {
         duplicates: after.duplicates - before.duplicates,
         failed: after.failed - before.failed,
         matched: after.matched - before.matched,
-        created: after.created - before.created,
+        created,
         unresolved: after.unresolved - before.unresolved,
         withoutSender: after.withoutSender - before.withoutSender,
+        skippedMessages: checked.skippedMessages ?? 0,
       }),
     };
   }

@@ -470,3 +470,33 @@ test('the fake reconciles a positional lookup and refuses a malformed one loudly
     'a malformed lookup refuses instead of returning a silent null',
   );
 });
+
+test('a bound-calendar reschedule converges when the spaceId rides along (backlog:bdca2010d471)', async (t) => {
+  // P1 regression: reschedule dropped spaceId on the calendar push while
+  // confirm forwarded it, so bound calendars never converged — the push
+  // refused CALENDAR_GRANT_UNKNOWN after the row had already moved. The
+  // move now names the space and the linked event carries the new slot.
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
+  const row = ctx.rows().appointments[0];
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const moved = await handle.rescheduleAppointment({
+    id: row.id,
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T15:00:00.000Z',
+    spaceId: SPACE,
+    calendar: { calendarId: CAL },
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(moved.pushError, null);
+  assert.equal(moved.push.status, 'pushed');
+  assert.equal(moved.push.change, 'rescheduled');
+  const live = ctx.provider.getEvent(CAL, 'evt1');
+  assert.equal(live.start.dateTime, '2026-10-22T14:00:00.000Z');
+  assert.equal(live.end.dateTime, '2026-10-22T15:00:00.000Z');
+});

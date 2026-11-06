@@ -69,10 +69,12 @@ database.
 customer books online from the business link. All on `appointment-book@1`,
 all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps its contract with the re-read and the write serialized per appointment.
 
-- `suggestSlots({ teamMemberIds, from, to, slotMinutes })` reads free slots
-  from the same held rows the booking path overlap-checks against. Read
+- `suggestSlots({ teamMemberIds, from, to, slotMinutes, nowIso })` reads free
+  slots from the same held rows the booking path overlap-checks against. Read
   only: no row is written, no slot is invented; a held row whose slot cannot
-  be proven fails the suggestion closed.
+  be proven fails the suggestion closed. With `nowIso` named, a step already
+  begun is cut too: a proposal must be bookable, so the past is never
+  offered (backlog `d1e4d90e`).
 - `proposeBooking(request + spaceId)` validates, fails fast on a held slot,
   then reads the space `book-appointments` switch. Switch on: a draft is
   answered and nothing is written. Switch off: a `space-ai-proposal` is
@@ -101,7 +103,22 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
 - `parseBookingPhrase({ spaceId, phrase })` drafts parameters from one
   Italian sentence through `llm-complete@1` (purpose `suggest`). Without
   the handle it refuses with a named code; the model is strictly validated,
-  the price never comes from it.
+  the price never comes from it. A named weekday resolves to its next
+  occurrence, a stated duration rides `durationMinutes` even without a time,
+  and a draft at or before the reference instant is refused
+  `APPOINTMENTS_AI_DRAFT_IN_PAST` (backlog `d1e4d90e`).
+- `rescheduleAppointment({ id | sourceKey, startsAt, endsAt, spaceId?, calendar? })`
+  (backlog `bdca2010d471`) moves a `booked`/`confirmed` booking to a new
+  slot — the governed write behind dragging an event or stretching its
+  bottom edge. The member's other rows are overlap-checked with the row
+  itself excluded; a conflict refuses 409 `APPOINTMENTS_OVERLAP` with an
+  Italian message. A move that would strand the stored reminder at or after
+  the new slot refuses 409 `APPOINTMENTS_REMINDER_AFTER_SLOT`. A drop
+  without a move answers `moved: false` and writes nothing. With
+  `calendar: { calendarId }` named, `spaceId` is required (the push is
+  space-gated, like the confirm path) and the linked Google event is
+  converged after the commit through the calendar-sync push handle
+  (`push` / `pushError` as data, like the confirm path).
 
 `tests/appointments-booking-flow.test.js` proves the flow with fakes and no
 application boot, including the ten-racer link race. The backoffice UI

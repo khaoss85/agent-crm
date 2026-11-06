@@ -53,9 +53,51 @@ function assertCalendarId(calendarId) {
 /**
  * Flatten Google's namespaced extended properties onto the flat shape the
  * sync engine reads (`extendedProperties.accordoSourceKey`): private first,
- * then shared, neither mutating the other. Anything else on the wire is
- * not carried — the engine decides on the documented fields only.
+ * then shared, neither mutating the other.
+ *
+ * Attendees and the organizer ARE carried (backlog:1f15c248fc05): the
+ * deployment mapping (`mapping.subjectForEvent`) links each imported event
+ * to the customer whose email appears among them, so dropping them skips
+ * every real event in production. Only the matching fields travel —
+ * `email`, `displayName`, `responseStatus` — each bounded and frozen, plus
+ * Google's `self` flag when true (backlog:13c09f03): it marks the calendar
+ * owner's own attendee entry, so the lead resolver can exclude it instead
+ * of booking the owner as their own customer. A room's `resource` flag
+ * rides along too, so the resolver can tell a meeting room (never a lead)
+ * apart from a guest. Everything else on the wire
+ * (creator, htmlLink, reminders) stays out. The copy is
+ * faithful, never normalized: lowercasing and phone matching belong to
+ * the consumer. Beyond ATTENDEES_MAX entries the list stops: the excess
+ * degrades to a skip, never to a link against the wrong customer.
  */
+
+const ATTENDEE_EMAIL_MAX = 320;
+const ATTENDEE_NAME_MAX = 256;
+const ATTENDEES_MAX = 200;
+const ATTENDEE_RESPONSE_STATUSES = Object.freeze(new Set(['needsAction', 'declined', 'tentative', 'accepted']));
+
+/** One Google attendee/organizer entry reduced to the matching fields the engine reads. Null when unusable. */
+function toEnginePerson(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const person = {};
+  if (typeof raw.email === 'string' && raw.email !== '' && raw.email.length <= ATTENDEE_EMAIL_MAX) {
+    person.email = raw.email;
+  }
+  if (typeof raw.displayName === 'string' && raw.displayName !== '' && raw.displayName.length <= ATTENDEE_NAME_MAX) {
+    person.displayName = raw.displayName;
+  }
+  if (typeof raw.responseStatus === 'string' && ATTENDEE_RESPONSE_STATUSES.has(raw.responseStatus)) {
+    person.responseStatus = raw.responseStatus;
+  }
+  if (raw.self === true && typeof person.email === 'string') {
+    person.self = true;
+  }
+  if (raw.resource === true) {
+    person.resource = true;
+  }
+  return Object.keys(person).length === 0 ? null : Object.freeze(person);
+}
+
 export function toEngineEvent(wire) {
   if (!wire || typeof wire !== 'object' || Array.isArray(wire)) {
     throw httpError('GOOGLE_EVENT_MALFORMED', 502, 'google returned an unreadable event');
@@ -71,8 +113,23 @@ export function toEngineEvent(wire) {
     ...((extended && typeof extended === 'object' && !Array.isArray(extended) && extended.private
       && typeof extended.private === 'object' && !Array.isArray(extended.private)) ? extended.private : {}),
   };
+  const rawAttendees = Array.isArray(wire.attendees) ? wire.attendees.slice(0, ATTENDEES_MAX) : [];
+  const attendees = [];
+  for (const raw of rawAttendees) {
+    const person = toEnginePerson(raw);
+    if (person !== null) attendees.push(person);
+  }
+  // An expanded occurrence carries its series identity
+  // (`recurringEventId`, backlog:3a3a41b2): the fake emits it, so the
+  // HTTP read carries the same shape — grouping by series works on
+  // production exactly as proven against the fake. A missing or
+  // unbounded value stays absent, never a guessed link.
+  const recurring = typeof wire.recurringEventId === 'string' && EVENT_ID_RE.test(wire.recurringEventId)
+    ? { recurringEventId: wire.recurringEventId }
+    : {};
   return Object.freeze({
     id,
+    ...recurring,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
     description: typeof wire.description === 'string' ? wire.description : '',
     start: wire.start ?? null,
@@ -80,6 +137,8 @@ export function toEngineEvent(wire) {
     status: wire.status === 'cancelled' ? 'cancelled' : 'confirmed',
     updated: typeof wire.updated === 'string' ? wire.updated : new Date().toISOString(),
     extendedProperties: Object.freeze({ ...flat }),
+    organizer: toEnginePerson(wire.organizer),
+    attendees: Object.freeze(attendees),
   });
 }
 
@@ -183,20 +242,41 @@ export function createHttpGoogleCalendar(options = {}) {
   return {
     /**
      * List events. With `syncToken`: only what changed since, plus
-     * `nextSyncToken`. Without: the full snapshot (`timeMin` bounds it,
+     * `nextSyncToken` (Google refuses time bounds beside a sync token).
+     * Without: the full snapshot (`timeMin`/`timeMax` bound it,
      * `showDeleted` adds tombstones) — the same page shape as the fake.
+     * Both bounds together keep an endless recurrence readable: with
+     * `singleEvents` Google expands only the occurrences inside the
+     * window instead of the whole infinite series (backlog:3a3a41b2).
      */
-    async listEvents({ calendarId, syncToken, timeMin, showDeleted = false, secret } = {}) {
+    async listEvents({ calendarId, syncToken, timeMin, timeMax, showDeleted = false, secret } = {}) {
       assertSecret(secret, 'listEvents');
       const id = assertCalendarId(calendarId);
       const params = new URLSearchParams();
+      // A bound is present only as a non-empty string: undefined, null
+      // and '' all mean "no bound" on both providers (backlog:3a3a41b2),
+      // so an optional field forwarded as null never 422s. Anything else
+      // must read as an instant, or the call refuses on both providers.
+      const boundOrAbsent = (value, name) => {
+        if (value === undefined || value === null || value === '') return undefined;
+        if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, `google listEvents needs a readable ${name} instant when bounding`);
+        }
+        return value;
+      };
+      const from = boundOrAbsent(timeMin, 'timeMin');
+      const to = boundOrAbsent(timeMax, 'timeMax');
       if (syncToken !== undefined) {
         if (typeof syncToken !== 'string' || syncToken === '') {
           throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents needs a bounded syncToken when resuming');
         }
+        if (from !== undefined || to !== undefined) {
+          throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google listEvents refuses time bounds beside a syncToken: resume without bounds');
+        }
         params.set('syncToken', syncToken);
       } else {
-        if (typeof timeMin === 'string' && timeMin !== '') params.set('timeMin', timeMin);
+        if (from !== undefined) params.set('timeMin', from);
+        if (to !== undefined) params.set('timeMax', to);
         params.set('singleEvents', 'true');
         params.set('maxResults', '2500');
       }

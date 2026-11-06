@@ -50,9 +50,11 @@
  *   verdict depends on files they never relatively import — repo-wide
  *   `grep` scans and recursive walks of `packages/`, `apps/`, `tests/`
  *   or `scripts/` — so the import mapping above never selects them.
- *   Twice `main` turned red after green-alone PRs for exactly
- *   this: #222 against #221 (`tests/isolated-git.test.js`) and #234
- *   (`tests/actor-fails-closed.test.js:251`). The guards never substitute
+ *   Three times `main` turned red after green-alone PRs for exactly
+ *   this: #222 against #221 (`tests/isolated-git.test.js`), #234
+ *   (`tests/actor-fails-closed.test.js:251`), and the nightly main run
+ *   41956161675 (`tests/admin-authority-tokens.test.js`, cure in #593).
+ *   The guards never substitute
  *   for missing coverage: the warned fallback is decided on the
  *   mapped selection alone, before the guards join it.
  *
@@ -157,7 +159,8 @@ const STEP_BUDGET_SEC = 300;
  * scenario-document ~1.4 s, signed-terms-consumption-guard ~0.3 s,
  * spine-v2-m2-final-raw-boundary ~9.8 s,
  * agent-tool-selection-contract ~0.7 s, spine-v2-m2f-entry-wiring ~6.5 s,
- * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s — about 25 s
+ * agent-tool-selection-docs-ids ~1 s, ci-touched-tests ~1 s,
+ * admin-authority-tokens ~0.3 s — about 25 s
  * added to the fast step in total. Deliberately NOT always-run: the three
  * characterization suites (~80 s together) join conditionally instead —
  * when the diff touches a file their baseline digests, or adds a source
@@ -214,6 +217,17 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // so the unlisted-guard audit below does not see its shape — it is
   // listed here by audit, like the raw-driver boundary.
   'tests/framework-neutrality.test.js',
+  // Pinned digests of files anywhere in the repo: a JTBD row pins its test
+  // file's bytes, an evidence document pins its plan's fingerprint. #555
+  // (admin-quotes.test.js translated) and #570 (a composition change) moved
+  // them with a green fast and a red full suite the night after.
+  'tests/jtbd-portfolio-gate.test.js',
+  'tests/implementation-evidence.test.js',
+  // Reads apps/admin/public/styles.css with readFileSync, never importing
+  // it: a CSS-only change selects nothing through the import mapping, so
+  // the fast gate stayed green while the nightly full suite failed on
+  // «no literal colour outside :root» (main run 41956161675, cure in #593).
+  'tests/admin-authority-tokens.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
@@ -330,7 +344,27 @@ export function selectTouchedTests(
   /** @type {Map<string, string>} */ testContents,
   /** @type {Map<string, Set<string>>} */ fileImports = new Map(),
 ) {
-  const selected = new Set();
+  return [...touchedTestDistances(changedFiles, testContents, fileImports).keys()].sort();
+}
+
+/**
+ * The same reachability as `selectTouchedTests`, with each reached test's
+ * import distance from the nearest changed file (1 = imports a changed file
+ * directly). The set of reached tests is the same whatever the walk order,
+ * so `selectTouchedTests` reads its keys; the distances order an oversized
+ * selection (`nearestFirst`): past the file budget the closest tests still
+ * run instead of being dropped with the rest. #555 changed
+ * `admin-quotes.js`, `tests/admin-signature.test.js` imports it directly,
+ * and the oversized fallback dropped it with 39 others — the full suite on
+ * `main` went red a night later.
+ */
+export function touchedTestDistances(
+  /** @type {string[]} */ changedFiles,
+  /** @type {Map<string, string>} */ testContents,
+  /** @type {Map<string, Set<string>>} */ fileImports = new Map(),
+) {
+  /** @type {Map<string, number>} */
+  const selected = new Map();
   const changed = new Set(
     changedFiles.map((file) => stripSourceExtension(normalize(file).replace(/\\/g, '/'))),
   );
@@ -369,13 +403,16 @@ export function selectTouchedTests(
   // importing another test does not pull that test's importers in, so the
   // boundary is the trailing `.test`, the way the forward walk cut it.
   // Reached paths are extension-free throughout.
+  // Breadth-first, so the first time a test is reached is its shortest
+  // distance.
+  const depth = new Map([...changed].map((file) => [file, 0]));
   const visited = new Set(changed);
   const queue = [...changed];
   while (queue.length > 0) {
-    const next = queue.pop();
+    const next = queue.shift();
     if (/\.test$/.test(next ?? '')) {
       const testPath = next === undefined ? undefined : testByStripped.get(next);
-      if (testPath !== undefined) selected.add(testPath);
+      if (testPath !== undefined && !selected.has(testPath)) selected.set(testPath, depth.get(next ?? '') ?? 0);
       // A changed test file still contributes its importers (a test
       // importing a changed test runs too); any other test is a boundary.
       if (next === undefined || !changed.has(next)) continue;
@@ -383,11 +420,36 @@ export function selectTouchedTests(
     for (const importer of importersOf.get(next ?? '') ?? []) {
       if (!visited.has(importer)) {
         visited.add(importer);
+        depth.set(importer, (depth.get(next ?? '') ?? 0) + 1);
         queue.push(importer);
       }
     }
   }
-  return [...selected].sort();
+  return selected;
+}
+
+/**
+ * The selected tests ordered closest first (distance, then path), for
+ * filling what an oversized fallback leaves of the file budget. Pure.
+ */
+export function nearestFirst(/** @type {Map<string, number>} */ distances) {
+  return [...distances.entries()]
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([test]) => test);
+}
+
+/**
+ * Fill an oversized fallback up to the file budget with the nearest selected
+ * tests it would otherwise drop. Returns the tests to add. Pure.
+ */
+export function fillNearest(
+  /** @type {string[]} */ planned,
+  /** @type {string[]} */ ranked,
+  /** @type {number} */ maxSelected,
+) {
+  const room = maxSelected - planned.length;
+  if (room <= 0) return [];
+  return ranked.filter((test) => !planned.includes(test)).slice(0, room);
 }
 
 /**
@@ -1021,7 +1083,8 @@ async function main() {
   // deleted test file is absent from the corpus and so never selected.
   // Plans, fallbacks and warnings below keep using `changed` (no deleted
   // files): deleted files never run and never count as uncovered.
-  const mapped = selectTouchedTests([...changed, ...deleted], contents, buildFileImports(root));
+  const distances = touchedTestDistances([...changed, ...deleted], contents, buildFileImports(root));
+  const mapped = [...distances.keys()].sort();
   const selectionElapsedSec = (Date.now() - selectStarted) / 1000;
 
   // The skip-vs-warn-vs-refuse decision reads the reachability scope
@@ -1085,6 +1148,19 @@ async function main() {
     preGuardTests = plan.kind === 'refuse' ? [] : plan.tests;
     if (plan.kind !== 'refuse') {
       plan.tests = applyAlwaysRunGuards(preGuardTests);
+    }
+  }
+  // An oversized fallback runs the PR's own tests plus the guards, then
+  // fills what is left of the file budget with the nearest selected tests
+  // (`nearestFirst`) instead of dropping them all.
+  if (plan.kind === 'fallback' && plan.reason === 'oversized-selection') {
+    const nearest = fillNearest(plan.tests, nearestFirst(distances), options.maxSelected);
+    if (nearest.length > 0) {
+      process.stderr.write(
+        `ci-touched-tests: filling the budget with the ${nearest.length} nearest selected test(s): ${nearest.join(', ')}.\n`,
+      );
+      preGuardTests = [...preGuardTests, ...nearest];
+      plan.tests = [...plan.tests, ...nearest].sort();
     }
   }
   const addedGuards = plan.kind === 'refuse'

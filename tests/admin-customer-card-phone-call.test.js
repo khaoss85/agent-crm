@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Scheda cliente «Aggiungi telefono» e «Chiama» voice-aware (voce 105563eea902).
@@ -41,6 +42,7 @@ function stubClient({ card = CARD_NO_PHONE, connectors = [], connectorsError = n
     state,
     posts,
     async request(path, opts = {}) {
+      enforceAdminWriteGate(path, opts);
       if (opts.method === 'POST' && path === '/api/customer-hub/phone') {
         const body = JSON.parse(opts.body);
         posts.push({ path, body });

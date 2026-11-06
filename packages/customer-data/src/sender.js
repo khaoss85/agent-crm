@@ -61,6 +61,20 @@ export const CHANNEL_SYSTEMS = Object.freeze([
 /** Provenance for identities and candidates this resolution writes: it runs outside any import run. */
 export const SENDER_RUN_ID = 'channel-sender';
 
+/**
+ * Where an automatic lead comes from (backlog:13c09f03): the only two syncs
+ * that invent contacts. Closed vocabulary — an unknown value refuses,
+ * never a silently unattributed customer.
+ */
+export const SENDER_ORIGINS = Object.freeze(['gmail', 'calendar']);
+
+/** The run recorded on identity and candidate rows: origin-scoped when the caller names one, the plain run otherwise. */
+export function runIdFor(sender) {
+  return sender?.origin === null || sender?.origin === undefined
+    ? SENDER_RUN_ID
+    : `${SENDER_RUN_ID}:${sender.origin}`;
+}
+
 /** Separators a phone handle may carry without changing who it names. The `+` prefix is kept. */
 const PHONE_SEPARATOR_RE = /[ .\-()/]/g;
 
@@ -164,6 +178,18 @@ export function normalizeChannelSender(request) {
     domain = shaped.value;
   }
 
+  // The sync that observed this sender (backlog:13c09f03). Absent on every
+  // older caller — the identity row keeps the plain run, exactly as
+  // before — and a value outside the closed vocabulary refuses, so a
+  // lead is never created without a known provenance.
+  let origin = null;
+  if (request.origin !== undefined && request.origin !== null && request.origin !== '') {
+    if (typeof request.origin !== 'string' || !SENDER_ORIGINS.includes(request.origin)) {
+      throw new ValidationError('sender origin must be one of gmail, calendar', { field: 'origin' });
+    }
+    origin = request.origin;
+  }
+
   return Object.freeze({
     system: /** @type {string} */ (channel),
     externalId,
@@ -172,6 +198,7 @@ export function normalizeChannelSender(request) {
     lastName: safeString(request.lastName, 'lastName'),
     companyName: safeString(request.companyName, 'companyName'),
     domain,
+    origin,
   });
 }
 
@@ -217,6 +244,10 @@ export async function createSubjectForRow(core, row, actor) {
     });
   }
   if (row.email) {
+    // The fallback names before any write (backlog:1a4d9b30): it refuses
+    // an email that names nobody, so computing it first leaves no company
+    // row behind when the lead cannot be created.
+    const fallback = leadNamesForEmail(row.email);
     // A contact needs a company: reuse the named one when it exists, else
     // create it. Both go through the adapters, never through raw SQL.
     const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
@@ -225,8 +256,8 @@ export async function createSubjectForRow(core, row, actor) {
       : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
     const contact = await core.createContact({
       companyId: company.id,
-      firstName: row.firstName ?? 'Unknown',
-      lastName: row.lastName ?? 'Unknown',
+      firstName: row.firstName ?? fallback.firstName,
+      lastName: row.lastName ?? fallback.lastName,
       email: row.email,
     }, { actor });
     return { resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null, label: contact.email ?? row.email };
@@ -236,11 +267,41 @@ export async function createSubjectForRow(core, row, actor) {
 }
 
 /**
+ * A lead's names from its email address (backlog:1a4d9b30): the first
+ * token of the local part names, the rest describes
+ * (`mario.rossi@azienda.it` becomes Mario Rossi). With no tokens the
+ * trimmed local part itself names (`guido+tag@example.com` becomes
+ * Guido); with no local part at all there is nobody to name, so the
+ * helper refuses and no lead is created. The company the contact
+ * needs is the sender domain when no company was named — an honest
+ * placeholder, never an invented `Unknown (…)`. Both company and contact
+ * names are required non-empty by their services, so a single-token
+ * local part (`guido@example.com`) carries `—` as its last name instead
+ * of an English placeholder.
+ * @param {unknown} email
+ */
+export function leadNamesForEmail(email) {
+  const text = typeof email === 'string' ? email : '';
+  const at = text.lastIndexOf('@');
+  const local = ((at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '').trim();
+  const tokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean)
+    .map((token) => token.charAt(0).toUpperCase() + token.slice(1, 64)).slice(0, 8);
+  const firstName = tokens[0] ?? local.slice(0, 64);
+  if (firstName === '' || !/[\p{L}\p{N}]/u.test(firstName)) {
+    throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
+  }
+  const lastName = tokens.length > 1 ? tokens.slice(1).join(' ').slice(0, 128) : '—';
+  return { firstName, lastName };
+}
+
+/**
  * @param {{email: string|null, domain: string|null}} row
  */
 function deriveCompanyName(row) {
-  const domain = row.domain;
-  return domain ? domain : `Unknown (${row.email})`;
+  if (row.domain) return row.domain;
+  const email = typeof row.email === 'string' ? row.email : '';
+  const domain = email.slice(email.lastIndexOf('@') + 1).trim().toLowerCase();
+  return domain !== '' ? domain : email;
 }
 
 /**
@@ -442,7 +503,7 @@ export function createChannelSenderResolution({
           pairs: distinctPairs([knownSubjectHere, emailSubject]),
           rule: 'external-identity',
           evidence: `channel handle ${sender.system} names one contact and the sender email names another`,
-          runId: SENDER_RUN_ID,
+          runId: runIdFor(sender),
           actor,
         }));
         return Object.freeze({
@@ -462,7 +523,7 @@ export function createChannelSenderResolution({
         const identity = await database.transactionAsync(async () => recordExternalIdentityRow({
           modules, names, system: sender.system, externalId: sender.externalId,
           subject: knownSubjectHere,
-          runId: SENDER_RUN_ID, actor,
+          runId: runIdFor(sender), actor,
         }));
         return Object.freeze({
           system: sender.system,
@@ -517,7 +578,7 @@ export function createChannelSenderResolution({
         try {
           const identity = await recordExternalIdentityRow({
             modules, names, system: sender.system, externalId: sender.externalId,
-            subject: winner, runId: SENDER_RUN_ID, actor,
+            subject: winner, runId: runIdFor(sender), actor,
           });
           return { identity, contactId: winner.id, wonByRace: Boolean(raced) };
         } catch (error) {
@@ -603,7 +664,7 @@ export function createChannelSenderResolution({
           resource: 'contact', id: contactId, owner: 'host', ownerPackage: null,
           label: sender.email,
         },
-        runId: SENDER_RUN_ID, actor,
+        runId: runIdFor(sender), actor,
       });
     }
 
@@ -621,6 +682,20 @@ export function createChannelSenderResolution({
           evidence: 'the sender evidence reaches a company but carries no email, so no contact can be created or confirmed',
         });
       }
+      if (sender.firstName == null || sender.lastName == null) {
+        // The fallback names before any write (backlog:1a4d9b30): an email
+        // that names nobody refuses here, so the transaction below never
+        // opens and no contact — and no company — is written.
+        try {
+          leadNamesForEmail(sender.email);
+        } catch {
+          return senderUnresolved(sender, actor, {
+            rule: result.rule,
+            candidates: [],
+            evidence: 'the sender email carries no nameable local part, so no contact is created; a human decides',
+          });
+        }
+      }
       const created = await database.transactionAsync(async () => {
         const raced = await reader.externalIdentity(sender.system, sender.externalId);
         if (raced && raced.subjectResource !== 'contact') return { replayed: false, nonContact: true };
@@ -635,10 +710,11 @@ export function createChannelSenderResolution({
         const emailReplay = await replayEmailWinner();
         if (emailReplay) return emailReplay;
         try {
+          const fallback = leadNamesForEmail(sender.email);
           const contact = await core.createContact({
             companyId: result.subject.id,
-            firstName: sender.firstName ?? 'Unknown',
-            lastName: sender.lastName ?? 'Unknown',
+            firstName: sender.firstName ?? fallback.firstName,
+            lastName: sender.lastName ?? fallback.lastName,
             email: sender.email,
           }, { actor });
           const subject = {
@@ -647,7 +723,7 @@ export function createChannelSenderResolution({
           };
           await recordExternalIdentityRow({
             modules, names, system: sender.system, externalId: sender.externalId,
-            subject, runId: SENDER_RUN_ID, actor,
+            subject, runId: runIdFor(sender), actor,
           });
           return { replayed: false, contactId: contact.id };
         } catch (error) {
@@ -708,6 +784,21 @@ export function createChannelSenderResolution({
       });
     }
 
+    if (sender.firstName == null || sender.lastName == null) {
+      // Same no-write guard as the company path (backlog:1a4d9b30): an
+      // email that names nobody stays unresolved with no writes, instead
+      // of refusing inside the creation transaction.
+      try {
+        leadNamesForEmail(sender.email);
+      } catch {
+        return senderUnresolved(sender, actor, {
+          rule: 'none',
+          candidates: [],
+          evidence: 'the sender email carries no nameable local part, so no contact is created; a human decides',
+        });
+      }
+    }
+
     const created = await database.transactionAsync(async () => {
       const raced = await reader.externalIdentity(sender.system, sender.externalId);
       if (raced && raced.subjectResource !== 'contact') return { replayed: false, nonContact: true };
@@ -735,7 +826,7 @@ export function createChannelSenderResolution({
             ownerPackage: subject.ownerPackage,
             label: subject.label,
           },
-          runId: SENDER_RUN_ID,
+          runId: runIdFor(sender),
           actor,
         });
         return { replayed: false, contactId: subject.id };
@@ -784,7 +875,7 @@ export function createChannelSenderResolution({
       pairs,
       rule: input.rule,
       evidence: input.evidence,
-      runId: SENDER_RUN_ID,
+      runId: runIdFor(sender),
       actor,
     }));
     return Object.freeze({

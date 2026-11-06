@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
@@ -24,6 +25,7 @@ function stubClient({ context = {}, members = [], failMembers = false, noSpine =
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (options.method === 'POST') { onPost({ path, body: options.body }); return { ok: true }; }
       if (path === '/api/spine/context') {

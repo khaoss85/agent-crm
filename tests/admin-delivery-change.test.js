@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderDeliveryChangeAcceptance } from '../apps/admin/public/admin-delivery-change.js';
+import { bindAdminMutations } from '../apps/admin/public/admin-submission.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin Delivery Change & Acceptance section (Milestone 14b2).
@@ -67,6 +69,7 @@ async function render(data, { fail = null, truncated = false, actions = [] } = {
   // calling an API the Admin does not have — so the stub is the real shape.
   const client = {
     request: async (path, options) => {
+      enforceAdminWriteGate(path, options);
       const match = /^\/api\/modules\/([^/]+)\/records\/([^/]+)\/actions\/([^/]+)$/.exec(path);
       assert.ok(match, `the Admin posts to a real action route: ${path}`);
       const [, module, id, action] = match.map(decodeURIComponent);
@@ -96,7 +99,10 @@ async function render(data, { fail = null, truncated = false, actions = [] } = {
     }
   };
   await renderDeliveryChangeAcceptance({
-    project: PROJECT, schema: SCHEMA, mount, el, client, fetchRows,
+    // The section never binds itself: in production the quotes view binds
+    // once (through contracts and delivery) and hands the section its bound
+    // client (#567). The test wires the same.
+    project: PROJECT, schema: SCHEMA, mount, el, client: bindAdminMutations(client).client, fetchRows,
     money: (cents, currency) => `${currency} ${(cents / 100).toFixed(2)}`,
     withBusy,
     busy,
@@ -504,6 +510,9 @@ test('a control does not double-submit, and a refusal keeps the typed input', as
   reason.value = 'agreed with the customer on a call';
   const approve = buttonLabelled(mount, 'Approve');
   await approve.dispatch('click');
+  // The bound client settles through the submission controller (extra
+  // microtask hops): flush before asserting, like the tests above.
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calls.length, 1, 'one call');
   assert.equal(calls[0].input.reason, 'agreed with the customer on a call');
   assert.match(one(mount, 'field-error').textContent, /DELIVERY_TRANSITION_NOT_ALLOWED/,

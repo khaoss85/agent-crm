@@ -21,6 +21,7 @@ import {
 } from '../apps/admin/public/admin-connectors.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { SETTINGS_AREAS } from '../apps/admin/public/admin-shell.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -165,6 +166,7 @@ function stubClient({ schema = null, sync = null, calls = null, authorize = null
   return {
     calls: seen,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const body = stubBody(options);
       seen.push({ path, body });
       if (path === '/api/schema') {
@@ -407,13 +409,7 @@ test('mutations go through the submission controller, never raw', async () => {
   const enforcing = {
     calls: inner.calls,
     async request(path, options = {}) {
-      const method = String(options.method ?? 'GET').toUpperCase();
-      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-        && !(typeof options.idempotencyKey === 'string' && options.idempotencyKey !== '')) {
-        const error = new Error('Admin mutations require a submission-owned Idempotency-Key');
-        error.code = 'ADMIN_SUBMISSION_REQUIRED';
-        throw error;
-      }
+      enforceAdminWriteGate(path, options);
       return inner.request(path, options);
     },
   };
@@ -670,4 +666,30 @@ test('Collega re-authorizes with the row adapter, not adapters[0]', async () => 
   assert.equal(authorized.body.adapter, 'wa-b',
     'the pending row reactivates under its own adapter instead of conflicting under wa-a');
   assert.equal(authorized.body.adapterVersion, 1);
+});
+
+test('Collegamenti Meta: hidden without connections.meta, Collega rows when the space has Meta', async () => {
+  const run = async (profile) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ schema: { domains: {} }, profile });
+    await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
+    await new Promise((resolve) => setImmediate(resolve));
+    const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'meta-connections');
+    return { card, calls: client.calls.filter((call) => call.path === '/api/profile').length };
+  };
+  const old = await run({ member: {}, connections: { available: true, reason: null, items: [] } });
+  assert.ok(old.card, 'the card node is mounted');
+  assert.equal(old.card.getAttribute('hidden'), '', 'an older pilot keeps it hidden');
+  assert.equal(old.card.textContent, '');
+  const live = await run({ member: {}, connections: { available: true, reason: null, meta: { configured: true },
+    items: [{ connector: 'messenger', status: 'connected', account: 'Pagina Presti' }] } });
+  assert.equal(live.card.getAttribute('hidden'), null);
+  assert.ok(live.card.textContent.includes('Collegamenti Meta'));
+  const hrefs = live.card.findAll('a').map((node) => node.getAttribute('href'));
+  assert.deepEqual(hrefs, ['../profile/collega?connector=whatsapp', '../profile/collega?connector=instagram']);
+  assert.ok(live.card.textContent.includes('Collegato come Pagina Presti'));
+  assert.equal(live.calls, 1, 'one profile read feeds both cards');
+  const down = await run(null);
+  assert.equal(down.card.getAttribute('hidden'), '', 'an unreadable profile keeps Meta hidden');
 });

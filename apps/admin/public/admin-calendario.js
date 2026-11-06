@@ -20,6 +20,7 @@
 // Oggi helpers, never as UTC or ISO.
 
 import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
+import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
@@ -266,6 +267,21 @@ function personKeyOf(value) {
 }
 
 /**
+ * Member creation instant (epoch ms), or null when the roster carries none.
+ * The roster's own order is the fallback: it lists members oldest first.
+ * @param {any} member
+ */
+function memberBornAt(member) {
+  const raw = member?.createdAt ?? member?.created_at ?? null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const ms = Date.parse(raw);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  return null;
+}
+
+/**
  * backlog:df55cf25 — one Team row per PERSON, never a technical id on
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
@@ -273,7 +289,8 @@ function personKeyOf(value) {
  * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
  * mailbox (unique per person), so Dan is one row called Dan. A shared
  * display name alone never merges — two email-less homonyms are two humans,
- * two rows with the same label and distinct booking identities. A group
+ * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
+ * «Rossi (2)» in member-creation order, never a technical id). A group
  * with no roster name and no mailbox paints the
  * operator's own typed words, unless they look like a technical subject
  * (a pipe id never paints anywhere); such a row falls back to the generic
@@ -289,7 +306,7 @@ export function personRows(named, hidden, members) {
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
-  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null}>} */
+  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
   const groups = [];
   const bySubject = new Map();
   const byEmail = new Map();
@@ -304,11 +321,13 @@ export function personRows(named, hidden, members) {
     // merges — two email-less homonyms are two humans, two rows.
     let group = (email !== null && byEmail.get(email)) || null;
     if (!group) {
-      group = { subjects: [], displayName: null, email: null };
+      group = { subjects: [], displayName: null, email: null, born: null, bornIndex: groups.length };
       groups.push(group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
+    const born = memberBornAt(member);
+    if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
       byEmail.set(email, group);
@@ -334,11 +353,39 @@ export function personRows(named, hidden, members) {
       order.push(group);
     }
   }
-  return order.map((group) => {
+  const painted = order.map((group) => {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const label = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    const base = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    return { group, primary, name, listed, base };
+  });
+  // Same base label on two humans is unreadable: the operator could not tell
+  // which toggle hides whose blocks (owner 04/11: «Marco Rossi (1)»,
+  // «Marco Rossi (2)», in member-creation order, never a technical id).
+  // Numbering follows member creation — member.createdAt when the roster
+  // carries it, else the roster's own order — and stays in this one place,
+  // so Team, manual choice and booking lines read the same label.
+  const byBase = new Map();
+  for (const entry of painted) {
+    const list = byBase.get(entry.base) ?? [];
+    list.push(entry);
+    byBase.set(entry.base, list);
+  }
+  const ordinalOf = new Map();
+  for (const entries of byBase.values()) {
+    if (entries.length < 2) continue;
+    const dated = entries.every((entry) => entry.group.born !== null);
+    const ranked = [...entries].sort((left, right) => (
+      dated
+        ? (left.group.born - right.group.born || left.group.bornIndex - right.group.bornIndex)
+        : (left.group.bornIndex - right.group.bornIndex)
+    ));
+    ranked.forEach((entry, index) => ordinalOf.set(entry.group, index + 1));
+  }
+  return painted.map(({ group, primary, name, listed, base }) => {
+    const ordinal = ordinalOf.get(group);
+    const label = ordinal === undefined ? base : `${base} (${ordinal})`;
     return {
       ids: [...group.subjects],
       id: primary,
@@ -366,7 +413,10 @@ export function resolveMemberName(subject, named, members) {
   if (typeof subject !== 'string' || subject === '') return null;
   const rows = personRows(named, [], members);
   const group = rows.find((row) => row.ids.includes(subject));
-  if (group && group.name) return group.name;
+  // The painted person label, with the homonym ordinal when two humans share
+  // the base name — the same string the Team toggle and the manual choice
+  // show, so every line names the same human.
+  if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
   if (!subject.includes('|')) return subject;
@@ -440,6 +490,127 @@ export function slotInGrid(startsAt, endsAt) {
 }
 
 /**
+ * backlog:d1e4d90e — draft duration in whole minutes for the suggest path:
+ * the model's endsAt minus startsAt when the draft searched that size, else
+ * the stated durationMinutes when the search accepts it, else the default
+ * step. A «45 minuti» sentence without a time still searches 45, never 30.
+ * @param {any} draft
+ */
+export function draftMinutes(draft) {
+  const from = draft?.startsAt ? Date.parse(draft.startsAt) : NaN;
+  const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
+  const pair = Math.round((to - from) / 60000);
+  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
+  const stated = draft?.durationMinutes;
+  if (Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated)) return stated;
+  return 30;
+}
+
+/**
+ * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
+ * the model answers a name («Marco»), the search needs booking identities.
+ * An exact identity wins; then one display-name match (case-insensitive).
+ * Homonyms and strangers resolve to nothing — the caller keeps the drafted
+ * words on the outsider path instead of booking as the wrong human.
+ * @param {unknown} draftMember @param {unknown} named @param {unknown} members
+ */
+export function resolveDraftMemberIds(draftMember, named, members) {
+  if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
+  const rows = personRows(named, [], members);
+  const exact = rows.find((row) => row.ids.includes(draftMember));
+  if (exact) return [...exact.ids];
+  const wanted = draftMember.trim().toLowerCase();
+  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
+  if (byName.length === 1) return [...byName[0].ids];
+  return [];
+}
+
+/**
+ * backlog:d1e4d90e — keep phrase proposals bookable: begun steps are cut, so
+ * a «45 minuti con Marco» search never proposes the past. Out-of-hours steps
+ * stay, named below the grid by their honest lines (BO-F6-11 fetta 8, owner
+ * 29/10) — only the past is unbookable for everyone.
+ * @param {unknown} slots @param {number} [nowMs]
+ */
+export function filterPhraseProposals(slots, nowMs = Date.now()) {
+  if (!Array.isArray(slots)) return [];
+  return slots.filter((slot) => {
+    const startMs = Date.parse(String(slot?.startsAt ?? ''));
+    return Number.isFinite(startMs) && startMs >= nowMs;
+  });
+}
+
+/**
+ * backlog:d1e4d90e — rank phrase proposals so the painted hours win: the
+ * night is always free, so the first free steps of the week are night steps
+ * and a plain time order fills every proposal with the night. Steps inside
+ * the 09:00–18:00 grid come first (in time order), out-of-hours steps after
+ * (in time order, for the honest lines below the grid) — never dropped, only
+ * ordered, so fetta 8 still names them.
+ * @param {unknown} slots
+ */
+export function rankPhraseProposals(slots) {
+  if (!Array.isArray(slots)) return [];
+  return [...slots].sort((left, right) => {
+    const leftIn = slotInGrid(left?.startsAt, left?.endsAt) ? 0 : 1;
+    const rightIn = slotInGrid(right?.startsAt, right?.endsAt) ? 0 : 1;
+    if (leftIn !== rightIn) return leftIn - rightIn;
+    return String(left?.startsAt ?? '').localeCompare(String(right?.startsAt ?? ''));
+  });
+}
+
+/**
+ * backlog:d1e4d90e — one person's free steps across every booking identity
+ * they hold: the server answers per identity, so a step the human holds
+ * under one identity looks free under their other one. A step is offered
+ * only when every searched identity reports it free — otherwise Conferma
+ * would book the same human twice. A searched identity with no answer
+ * group proves nothing, so its steps stay unoffered (fail closed). A
+ * single searched identity keeps the plain union, exactly as before.
+ * The offered step books the drafted identity when the draft named one of
+ * the searched identities, else the first searched identity — deterministic,
+ * never invented.
+ * @param {unknown} groups @param {unknown} searchIds @param {unknown} member
+ */
+export function personFreeSlots(groups, searchIds, member) {
+  const list = Array.isArray(groups) ? groups : [];
+  const ids = Array.isArray(searchIds)
+    ? searchIds.filter((id) => typeof id === 'string' && id !== '')
+    : [];
+  const valid = (slot) => slot
+    && typeof slot.startsAt === 'string' && slot.startsAt !== ''
+    && typeof slot.endsAt === 'string' && slot.endsAt !== '';
+  const named = typeof member === 'string' && ids.includes(member) ? member : null;
+  if (ids.length <= 1) {
+    const kept = [];
+    for (const group of list) {
+      for (const slot of group?.slots ?? []) {
+        if (!slot?.startsAt || !slot?.endsAt) continue;
+        kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: group?.teamMemberId ?? member });
+      }
+    }
+    return kept;
+  }
+  const keyOf = (slot) => `${slot.startsAt} ${slot.endsAt}`;
+  let common = null;
+  for (const id of ids) {
+    const group = list.find((entry) => entry?.teamMemberId === id);
+    if (!group) return [];
+    const keys = new Set((group.slots ?? []).filter(valid).map(keyOf));
+    common = common === null ? keys : new Set([...common].filter((key) => keys.has(key)));
+    if (common.size === 0) return [];
+  }
+  const first = list.find((entry) => entry?.teamMemberId === ids[0]);
+  const bookAs = named ?? first?.teamMemberId ?? ids[0];
+  const kept = [];
+  for (const slot of first?.slots ?? []) {
+    if (!valid(slot) || !common.has(keyOf(slot))) continue;
+    kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: bookAs });
+  }
+  return kept;
+}
+
+/**
  * Overlap lanes per day column: events sharing Rome time split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
@@ -496,6 +667,29 @@ export function createCalendarioView(deps) {
   function invalidate() {
     renderToken += 1;
     memberToken += 1;
+    trackRetainedDraft();
+  }
+
+  /**
+   * Retained user text (backlog:49bd3657b0f8): the view keeps what the
+   * operator typed in module state across re-renders, so after the shell
+   * routes away the DOM check would read a clean page while the draft
+   * survives here. Mirror it into the bundle watch: a kept draft defers
+   * the reload behind the notice instead of losing the text. Runs on
+   * every repaint and on every route away, so the mark always matches
+   * the state — set or cleared, never stale. The auto-filled roster
+   * (autoTeam) is nobody's text and never counts; only what the operator
+   * typed does.
+   */
+  function trackRetainedDraft() {
+    const typedFilter = state.autoTeam === true ? '' : (state.memberFilter ?? '');
+    const manualText = Object.values(state.manual ?? {})
+      .some((value) => String(value ?? '') !== '');
+    markUnsaved('calendario-draft',
+      (state.phrase ?? '') !== ''
+      || String(typedFilter) !== ''
+      || (state.customerQuery ?? '') !== ''
+      || manualText);
   }
   installOutsideCloser(doc);
 
@@ -623,8 +817,17 @@ export function createCalendarioView(deps) {
       return;
     }
     try {
+      // One row per person, every identity of each listed person: the roster
+      // may name sibling subjects after the filter was set (or the filter
+      // names a subset), and the merged row must show the whole person's
+      // week — never the filter subset only. The typed filter stays
+      // untouched: only the request widens to the listed rows' subjects.
+      const listedIds = personRows(members, [], state.members)
+        .filter((row) => row.listed)
+        .flatMap((row) => row.ids);
+      const expanded = [...members, ...listedIds.filter((id) => !members.includes(id))];
       const week = await client.request(
-        `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(members.join(','))}`
+        `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(expanded.join(','))}`
         + `&from=${encodeURIComponent(window.from)}&to=${encodeURIComponent(window.to)}`,
       );
       if (token !== renderToken) return;
@@ -632,9 +835,11 @@ export function createCalendarioView(deps) {
       state.weekError = null;
       state.unavailable = false;
       // A reloaded week drops deselections nobody named anymore: toggling a
-      // ghost would filter nothing and confuse the next render. A selection
+      // ghost would filter nothing and confuse the next render. A hidden
+      // sibling of a listed person stays hidden with its row — pruning to
+      // the raw filter would resurrect half a hidden person. A selection
       // whose member stays hidden loses its detail card with the reload.
-      state.hiddenMembers = state.hiddenMembers.filter((id) => members.includes(id));
+      state.hiddenMembers = state.hiddenMembers.filter((id) => expanded.includes(id));
       if (state.selectedId !== null) {
         const reselected = selectedRow();
         if (reselected && state.hiddenMembers.includes(String(reselected.teamMemberId ?? ''))) state.selectedId = null;
@@ -770,6 +975,7 @@ export function createCalendarioView(deps) {
       }));
       wrap.appendChild(box);
       mount.appendChild(wrap);
+      trackRetainedDraft();
       return;
     }
     // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
@@ -807,6 +1013,7 @@ export function createCalendarioView(deps) {
     wrap.appendChild(layout);
     mount.appendChild(wrap);
     if (pop) placePopover(main, pop);
+    trackRetainedDraft();
   }
 
   /** Seats the popover beside the pick: right of it, or left on the last columns. */
@@ -1610,14 +1817,6 @@ export function createCalendarioView(deps) {
     return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
   }
 
-  /** Draft duration in whole minutes when the suggest path accepts it, else the default step. @param {any} draft */
-  function draftMinutes(draft) {
-    const from = draft?.startsAt ? Date.parse(draft.startsAt) : NaN;
-    const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
-    const minutes = Math.round((to - from) / 60000);
-    return [15, 30, 45, 60, 90, 120].includes(minutes) ? minutes : 30;
-  }
-
   /** Suggest window over the shown Rome week, with the day-margin idiom of the booking path. */
   function suggestBounds() {
     if (!Array.isArray(state.weekKeys) || state.weekKeys.length === 0) return null;
@@ -1670,37 +1869,59 @@ export function createCalendarioView(deps) {
         state.aiNote = 'Settimana non valida.';
         return;
       }
+      // backlog:d1e4d90e — the draft names a person («Marco»), the search
+      // needs booking identities: resolve against the known team, and search
+      // every identity the human holds. Unresolved words keep the outsider
+      // path below, never a booking as the wrong human.
+      const memberIds = resolveDraftMemberIds(member, parseMemberFilter(state.memberFilter), state.members);
+      const searchIds = memberIds.length > 0 ? memberIds : [member];
       const found = await client.request(
-        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(member)}`
+        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
         + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
         + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
       );
       const groups = Array.isArray(found?.members) ? found.members : [];
-      const kept = [];
-      for (const group of groups) {
-        for (const slot of group?.slots ?? []) {
-          if (!slot?.startsAt || !slot?.endsAt) continue;
-          kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: group.teamMemberId ?? member });
-        }
-      }
+      // backlog:d1e4d90e — the searched identities belong to one resolved
+      // person: offer a step only when every identity reports it free, so a
+      // booking under one identity never double-books their other one.
+      const kept = personFreeSlots(groups, searchIds, member);
       // One row and one ghost per slot, like the week grid caps its own
-      // columns: the first 24 carry the search, never an invented rest.
-      state.proposals = kept.slice(0, 24);
+      // columns: the first 24 carry the search, never an invented rest. Only
+      // future steps are proposed — cut against the view clock so tests pin
+      // it (backlog:d1e4d90e). Out-of-hours steps stay for the honest lines
+      // below the grid (fetta 8), never dropped.
+      // backlog:d1e4d90e — the night is always free, so rank the painted
+      // hours first: day steps fill the proposals, night steps stay behind
+      // for the honest lines, never dropped (fetta 8).
+      const proposals = rankPhraseProposals(filterPhraseProposals(kept, clock().getTime()));
+      state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
-      state.aiNote = kept.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
+      state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
     } catch (error) {
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
-      state.aiNote = humanReadError(error, {
-        failed: 'Ricerca non riuscita. Riprova più tardi.',
-        notComposed: 'Il calendario non è composto in questo spazio.',
-      });
+      const record = error !== null && typeof error === 'object' ? error : {};
+      state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
+        ? 'La frase indica un momento già passato: prova con un giorno futuro.'
+        : humanReadError(error, {
+          failed: 'Ricerca non riuscita. Riprova più tardi.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
     } finally {
       state.aiLoading = false;
       renderAll();
     }
-    if (state.draft) fillManual(state.draft);
+    // A resolved person prefills its single booking identity; with several
+    // (or none) the choice stays with the operator on the manual form.
+    if (state.draft) {
+      const ids = resolveDraftMemberIds(
+        typeof state.draft.teamMemberId === 'string' ? state.draft.teamMemberId : '',
+        parseMemberFilter(state.memberFilter),
+        state.members,
+      );
+      fillManual(ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft);
+    }
   }
 
   /** @param {any} draft */

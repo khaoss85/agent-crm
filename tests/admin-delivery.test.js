@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { renderDeliveryHandover } from '../apps/admin/public/admin-delivery.js';
+import { bindAdminMutations } from '../apps/admin/public/admin-submission.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin delivery handover section (Milestone 13). It proves the human path
@@ -101,6 +103,7 @@ function stubClient({ plans = [INTERNAL_PLAN], rows = {}, planError = null } = {
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (options.method === 'POST' && path.endsWith('/actions/plan-delivery-handover')) {
         if (planError) throw Object.assign(new Error(planError), { status: 409 });
@@ -127,7 +130,10 @@ async function render(client, { schema = SCHEMA } = {}) {
     return { rows: (result.items ?? []).filter(filter ?? (() => true)), truncated: false };
   };
   await renderDeliveryHandover({
-    contract: CONTRACT, schema, mount, el, client, fetchRows,
+    // The section never binds itself: in production the quotes view binds
+    // once and hands the section its bound client (#567). The test wires
+    // the same, so a raw write would fail here exactly as it would live.
+    contract: CONTRACT, schema, mount, el, client: bindAdminMutations(client).client, fetchRows,
     money: (cents, currency) => `${currency} ${(cents / 100).toFixed(2)}`,
     withBusy: async (fn) => { await fn(); },
     busy: [],

@@ -477,8 +477,9 @@ const memberBookingChains = new Map();
  * writers on real storage — SQLite `BEGIN IMMEDIATE` holds the second
  * connection until the winner commits, Postgres `SERIALIZABLE` refuses the
  * loser with a retryable conflict whose retry re-reads the winner. The two
- * chains never nest (a booking holds the member chain, an advance holds the
- * id chain, never both at once), so they cannot deadlock each other.
+ * chains nest only in one fixed order — a reschedule holds the member chain
+ * outside and the id chain inside, an advance holds only the id chain —
+ * so they cannot deadlock each other.
  */
 const appointmentAdvanceChains = new Map();
 
@@ -1053,6 +1054,201 @@ export async function advanceAppointment({ appointments, actor, now }, record, t
 }
 
 /**
+ * Move one booking to a new slot (backlog:bdca2010d471): the governed write
+ * behind dragging a calendar event to another day or hour, or stretching its
+ * bottom edge. The caller names the row by exactly one of `id` / `sourceKey`
+ * and the new `startsAt` / `endsAt`; the move commits only when:
+ *
+ * - the actor is present (an anonymous move holds nobody accountable, like
+ *   the booking path);
+ * - the row is still movable (`booked` or `confirmed` — terminal states
+ *   never regress: a repeated visit is a new booking, like everywhere else);
+ * - no other booking of the same team member holds the new slot. The row
+ *   itself is excluded, so a stretch over its own old slot is a longer
+ *   booking, not a conflict. A real conflict is refused 409 with
+ *   `APPOINTMENTS_OVERLAP` and an Italian message: it is the text the
+ *   operator's confirm dialog shows.
+ *
+ * The check and the write run serialized per team member (the same member
+ * chain the booking path holds) with a fresh re-read inside, and inside the
+ * storage handle's own transaction on a real database when one is available
+ * — so two concurrent moves onto one slot move once and the loser gets the
+ * 409, the way concurrent bookings do.
+ *
+ * A drop without a move (same instants) is a no-op answering the stored row
+ * with `moved: false`, never a second write. The stored reminder keeps its
+ * `dueAt` only when the new slot still starts after it: a move that would
+ * strand the reminder at or after the slot is refused, so the booking
+ * invariant (`remindAt` before `startsAt`) survives the drag. When the
+ * request names `calendar`, it also names the `spaceId` the push is gated
+ * on (required, like the confirm path), and the linked Google event is
+ * converged through the injected `calendarSync.pushAppointment` handle
+ * after the commit, exactly like the confirm path: validated before any
+ * row exists, answered as data (`push` / `pushError`) after it, never a
+ * throw past the commit.
+ */
+export async function rescheduleAppointment(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const appointments = appointmentService({ modules: context.modules, names });
+  // Evidence names its author: an anonymous move would hold a customer's
+  // slot with nobody accountable for it, so a missing actor is refused.
+  const who = requireActor(context.actor);
+  const record = request && typeof request === 'object' ? request : {};
+  const named = [record.id, record.sourceKey]
+    .filter((value) => value !== undefined && value !== null);
+  if (named.length !== 1) {
+    throw new ValidationError('reschedule needs exactly one of id or sourceKey', {
+      field: named.length === 0 ? 'id' : 'id/sourceKey',
+    });
+  }
+  const startsAt = realIsoInstant(record.startsAt, 'startsAt');
+  const endsAt = realIsoInstant(record.endsAt, 'endsAt');
+  if (endsAt.ms <= startsAt.ms) {
+    throw new ValidationError('endsAt must be after startsAt: a slot with no duration books nothing', { field: 'endsAt' });
+  }
+  if (endsAt.ms - startsAt.ms > MAX_SLOT_MS) {
+    throw new ValidationError('an appointment slot is at most 24 hours: a longer hold is not a booking', { field: 'endsAt' });
+  }
+  // A named calendar is validated before any row is touched: a statically
+  // preventable miscomposition fails here, never after a committed move the
+  // caller received an error for — the same order the confirm path keeps.
+  // The push is space-gated (a bound calendar syncs only for its owning
+  // space), so a calendar move also names the spaceId, exactly like the
+  // confirm path: without it a bound calendar would answer
+  // CALENDAR_GRANT_UNKNOWN after the row already moved.
+  let calendarId = null;
+  let spaceId = null;
+  let calendarPush = null;
+  if (record.calendar !== undefined && record.calendar !== null) {
+    if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+      throw new ValidationError('spaceId is required: a calendar move is gated on the space switch', { field: 'spaceId' });
+    }
+    spaceId = record.spaceId;
+    calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
+    const calendarSync = context?.calendarSync ?? null;
+    if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
+      throw new AppError(
+        'The reschedule names a calendar but the appointments package is composed without a calendar-sync push handle, '
+        + 'so the event cannot be moved: reschedule without a calendar, or compose the push handle.',
+        { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
+      );
+    }
+    calendarPush = calendarSync.pushAppointment.bind(calendarSync);
+  }
+  if (!appointments?.get || !appointments?.applyManaged || typeof appointments?.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without a managed "appointment" record module', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const lookup = async () => {
+    if (record.id !== undefined && record.id !== null) {
+      const rowId = safeText(record.id, 'id', MAX_ID);
+      try {
+        return await appointments.get(rowId);
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          throw new NotFoundError(`no appointment with id "${rowId}"`);
+        }
+        throw error;
+      }
+    }
+    const key = validateSourceKey(record.sourceKey, 'sourceKey');
+    const row = (await appointments.listWhere({ sourceKey: key }))[0] ?? null;
+    if (!row) throw new NotFoundError(`no appointment with sourceKey "${key}"`);
+    return row;
+  };
+  // The member is known only after the first read; the critical section
+  // re-reads inside the member chain, so the check and the write see the
+  // winner of any race that committed between the two reads.
+  const first = await lookup();
+  const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
+    ? first.teamMemberId
+    : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
+  const runInTransaction = bookingTransaction(appointments);
+  const critical = async () => {
+    const current = await lookup();
+    if (APPOINTMENT_TERMINAL.includes(current.status)) {
+      throw new AppError(
+        `An appointment in state "${current.status}" cannot be rescheduled; it is terminal and moves nowhere`,
+        { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: null } },
+      );
+    }
+    if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
+      return { appointment: current, moved: false };
+    }
+    // The booking invariant survives the drag: the stored reminder still
+    // fires before the slot. Re-read inside the critical section, so a
+    // reminder written between the two reads is seen too.
+    const dueAt = current.reminderDueAt ?? null;
+    if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
+      const dueMs = Date.parse(dueAt);
+      if (Number.isFinite(dueMs) && startsAt.ms <= dueMs) {
+        throw new AppError(
+          `The stored reminder is due at ${dueAt}: the new slot starts at ${startsAt.iso}, at or after the reminder, `
+          + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
+          { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
+        );
+      }
+    }
+    const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
+    const others = held.filter((row) => row && row.id !== current.id);
+    const conflict = findOverlap(
+      { teamMemberId: current.teamMemberId, startMs: startsAt.ms, endMs: endsAt.ms },
+      others,
+    );
+    if (conflict) {
+      throw new AppError(
+        `Il membro "${current.teamMemberId}" ha già un altro appuntamento in questa fascia oraria `
+        + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
+        + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+        { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+      );
+    }
+    return {
+      appointment: await appointments.applyManaged(
+        current.id,
+        { startsAt: startsAt.iso, endsAt: endsAt.iso },
+        { actor: who },
+      ),
+      moved: true,
+    };
+  };
+  // The move serializes on the appointment identity as well as the member:
+  // withMemberBooking outside, withAppointmentAdvance inside, always in
+  // this order. A move racing a cancel or a confirm on the same row can no
+  // longer commit from a stale read — the loser re-reads the winner inside
+  // critical (the terminal check above runs under both chains) and either
+  // refuses 409 or advances the winner's row, never a terminal row silently
+  // moved to a new slot.
+  const recordId = safeText(first.id, 'id', MAX_ID);
+  const { appointment, moved } = await withMemberBooking(
+    memberId,
+    () => withAppointmentAdvance(
+      recordId,
+      runInTransaction ? () => runInTransaction(critical) : critical,
+    ),
+  );
+  // The calendar edge was validated above, before any row was touched: the
+  // push rides the idempotent path. A runtime push failure must not throw —
+  // the moved row is already committed and the caller would observe a
+  // failure for a move that happened — so it is answered as data. Only the
+  // provider's code is surfaced, never its text.
+  let push = null;
+  let pushError = null;
+  if (calendarPush !== null) {
+    try {
+      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
+    }
+  }
+  return Object.freeze({ appointment, moved, push, pushError });
+}
+
+/**
  * Exact read of one appointment by row id — a primary-key lookup, never a
  * scan. Only the expected miss becomes absence: a storage or connection
  * failure is the caller's outage to see, never a quiet unknown appointment.
@@ -1290,7 +1486,9 @@ function flowAppointments(context, names) {
 
 /**
  * Validate the suggestion filter: named members (never a scan — there is no
- * roster to scan), a bounded window, a step from the fixed set.
+ * roster to scan), a bounded window, a step from the fixed set, and the
+ * optional reference instant past steps are cut against (backlog:d1e4d90e:
+ * a proposal must be bookable, so a step already begun is never offered).
  */
 function validateSuggestFilter(filter) {
   const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
@@ -1329,6 +1527,13 @@ function validateSuggestFilter(filter) {
   if (!Number.isSafeInteger(slotMinutes) || !SUGGEST_SLOT_MINUTES.includes(slotMinutes)) {
     throw new ValidationError(`slotMinutes must be one of ${SUGGEST_SLOT_MINUTES.join(', ')}`, { field: 'slotMinutes' });
   }
+  // The instant past steps are cut against: named by callers that propose to
+  // a human (the backoffice calendar passes its own now), absent for plain
+  // window reads, which keep every step exactly as before.
+  let nowMs = null;
+  if (value.nowIso !== undefined && value.nowIso !== null) {
+    nowMs = realIsoInstant(value.nowIso, 'nowIso').ms;
+  }
   const steps = Math.floor((to.ms - from.ms) / (slotMinutes * 60 * 1000));
   if (steps > MAX_SUGGEST_STEPS_PER_MEMBER) {
     throw new ValidationError(
@@ -1337,7 +1542,7 @@ function validateSuggestFilter(filter) {
     );
   }
   return {
-    members, fromMs: from.ms, toMs: to.ms, fromIso: from.iso, toIso: to.iso, slotMinutes,
+    members, fromMs: from.ms, toMs: to.ms, fromIso: from.iso, toIso: to.iso, slotMinutes, nowMs,
   };
 }
 
@@ -1347,7 +1552,9 @@ function validateSuggestFilter(filter) {
  * only: no row is written, no slot is invented. Cancelled bookings hold
  * nothing; every other state holds its slot — the same rule `findOverlap`
  * enforces, reused here so a suggestion never offers a slot the booking path
- * would refuse.
+ * would refuse. When the filter names `nowIso`, a step already begun is cut
+ * too: a proposal must be bookable, so the past is never offered
+ * (backlog:d1e4d90e).
  *
  * @param {{modules: any, moduleNames?: Record<string, string>}} storage
  */
@@ -1361,6 +1568,10 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
     const held = await appointments.listWhere({ teamMemberId });
     const slots = [];
     for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
+      // A proposal must be fully ahead: a step already begun cannot be
+      // booked whole, so with a reference instant named it is cut silently —
+      // an empty answer, never an invented one.
+      if (checked.nowMs !== null && start < checked.nowMs) continue;
       const candidate = { teamMemberId, startMs: start, endMs: start + slotMs };
       // findOverlap throws on a held row whose slot cannot be proven: a
       // corrupt witness fails the suggestion closed, never a silent free slot.
@@ -1718,14 +1929,38 @@ export async function bookFromLink(context, request) {
   });
 }
 
+/**
+ * The Rome weekday line beside the reference instant (backlog:d1e4d90e): the
+ * model resolves a named weekday against it, so «lunedì» past never answers
+ * a past Monday. Presentation only — an unparseable instant adds nothing and
+ * the parse still runs against the raw instant.
+ */
+function romeDayLine(nowIso) {
+  try {
+    const instant = new Date(String(nowIso));
+    if (Number.isNaN(instant.getTime())) return '';
+    const words = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    }).format(instant);
+    return ` (Europe/Rome: ${words})`;
+  } catch {
+    return '';
+  }
+}
+
 const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italian customer sentence. '
   + 'Reply with JSON only, no other text, with any of these keys: '
   + '{"teamMemberId": "opaque team identity, only when the sentence names a person", '
   + '"serviceKey": "lowercase listino slug, only when the sentence names a service", '
   + '"startsAt": "ISO instant the sentence asks for, resolved against the reference instant", '
   + '"endsAt": "ISO instant the appointment ends, when the sentence gives a duration or an end", '
+  + '"durationMinutes": "integer minutes the sentence states for the appointment, only when stated", '
   + '"notes": "anything else worth keeping, at most one line"}. '
-  + 'Omit every key the sentence does not state. Never invent a person, a service or a time.';
+  + 'Omit every key the sentence does not state. Never invent a person, a service or a time. '
+  + 'The reference instant also names the weekday: a weekday the sentence names means its NEXT occurrence after '
+  + 'the reference instant, never a past day. When the sentence states a day or a time, startsAt is required — '
+  + 'never drop it. When the sentence states a duration in minutes, endsAt is startsAt plus that duration; '
+  + 'when no day or time is stated, still record the stated durationMinutes so the caller can size the search.';
 
 /**
  * Parse "fissa con una frase" (BO-F3-02, AI option): turn the customer's
@@ -1754,6 +1989,7 @@ export async function parseBookingPhrase(context, request) {
   }
   const actor = requireActor(context?.actor);
   const now = typeof context?.now === 'function' ? context.now() : new Date().toISOString();
+  const nowMs = Date.parse(String(now));
   let completion;
   try {
     completion = await llm.complete({
@@ -1762,7 +1998,7 @@ export async function parseBookingPhrase(context, request) {
       purpose: 'suggest',
       messages: [
         { role: 'system', content: PHRASE_SYSTEM },
-        { role: 'user', content: `Reference instant: ${now}. Sentence: ${phrase}` },
+        { role: 'user', content: `Reference instant: ${now}${romeDayLine(now)}. Sentence: ${phrase}` },
       ],
       maxTokens: 512,
     });
@@ -1774,7 +2010,7 @@ export async function parseBookingPhrase(context, request) {
     });
   }
   const text = completion && typeof completion.text === 'string' ? completion.text : '';
-  const draft = extractPhraseDraft(text);
+  const draft = extractPhraseDraft(text, nowMs);
   return Object.freeze({
     draft,
     dryRun: completion?.dryRun === true,
@@ -1782,8 +2018,13 @@ export async function parseBookingPhrase(context, request) {
   });
 }
 
-/** Strictly validate the model's JSON: known keys only, every one proven. */
-function extractPhraseDraft(text) {
+/**
+ * Strictly validate the model's JSON: known keys only, every one proven. A
+ * draft naming a moment at or before the reference instant is refused with
+ * its own code (backlog:d1e4d90e): the caller tells the human to name a
+ * future day instead of proposing the past.
+ */
+function extractPhraseDraft(text, nowMs) {
   const fenced = String(text ?? '').replace(/```(?:json)?/gi, '').trim();
   let parsed;
   try {
@@ -1818,13 +2059,29 @@ function extractPhraseDraft(text) {
       && Date.parse(draft.endsAt) <= Date.parse(draft.startsAt)) {
       throw new ValidationError('draft.endsAt must be after draft.startsAt', { field: 'draft.endsAt' });
     }
+    if (draft.startsAt !== undefined && Number.isSafeInteger(nowMs)
+      && Date.parse(draft.startsAt) <= nowMs) {
+      throw new AppError(
+        'The workspace AI placed the booking at or before the reference instant: name a future day instead',
+        { code: 'APPOINTMENTS_AI_DRAFT_IN_PAST', status: 422, details: { field: 'draft.startsAt' } },
+      );
+    }
+    if (parsed.durationMinutes !== undefined) {
+      const minutes = parsed.durationMinutes;
+      if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
+        throw new ValidationError('draft.durationMinutes must be whole minutes from 1 to 1440', { field: 'draft.durationMinutes' });
+      }
+      draft.durationMinutes = minutes;
+    }
     if (parsed.notes !== undefined) {
       draft.notes = safeText(parsed.notes, 'draft.notes', MAX_NOTES);
     }
   } catch (error) {
     // A known key with an invalid value is an unusable draft, never a raw
-    // validation leak: the caller books with the manual option instead.
-    if (error instanceof AppError && error.code === 'APPOINTMENTS_AI_DRAFT_UNUSABLE') throw error;
+    // validation leak: the caller books with the manual option instead. A
+    // past draft keeps its own code so the caller can name the fix.
+    if (error instanceof AppError
+      && (error.code === 'APPOINTMENTS_AI_DRAFT_UNUSABLE' || error.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST')) throw error;
     throw new AppError(
       `The workspace AI returned an invalid booking draft (${error instanceof Error ? error.message : String(error)}): book with the manual option instead`,
       {
@@ -2058,7 +2315,8 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
     version: 1,
     description:
       'Book one appointment per call — validated, overlap-checked, stored as booked — '
-      + 'and advance it along the lifecycle. A booking with remindAt opens one work follow-up in the same transaction. '
+      + 'and advance it along the lifecycle or move its slot. '
+      + 'A booking with remindAt opens one work follow-up in the same transaction. '
       + 'BO-F3-02 adds suggestSlots, propose/confirmBooking, bookFromLink and parseBookingPhrase. '
       + 'Every write is idempotent by source key; reads exact only, no update and no delete.',
     /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string, followUps?: any, templateSend?: any, permissionGate?: any, phraseLlm?: any, calendarSync?: any}} context */
@@ -2089,6 +2347,8 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
         advanceAppointment: (record, to, reason) => advanceAppointment(
           { appointments: storage(), actor: scope.actor, now: scope.now }, record, to, reason,
         ),
+        /** @param {unknown} request */
+        rescheduleAppointment: (request) => rescheduleAppointment(scope, request),
         /** @param {unknown} id */
         appointment: (id) => readAppointment({ appointments: storage() }, id),
         /**

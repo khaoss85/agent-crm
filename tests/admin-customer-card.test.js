@@ -9,6 +9,7 @@ import {
 } from '../apps/admin/public/admin-customer-card.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
@@ -182,6 +183,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
     calls: requested,
     writes,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       let body = options?.body ?? {};
       if (typeof body === 'string') {
         try { body = body === '' ? {} : JSON.parse(body); } catch { /* keep raw */ }
@@ -256,7 +258,11 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   // The grid holds exactly three columns.
   const grid = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-grid');
   assert.ok(grid, 'the three-column grid exists');
-  assert.equal(grid.findAll('div').filter((node) => node.getAttribute('class') === 'bo-scheda-col').length, 3);
+  const cols = grid.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-col'));
+  assert.equal(cols.length, 3);
+  assert.deepEqual(cols.map((node) => node.getAttribute('class')),
+    ['bo-scheda-col bo-scheda-col-side', 'bo-scheda-col bo-scheda-col-main', 'bo-scheda-col bo-scheda-col-side'],
+    'the side columns stay put while the conversation scrolls (Dan 06/11)');
 
   // Center: every passage with channel, direction and sync state.
   assert.ok(text.includes('WhatsApp'), 'channel label');
@@ -520,7 +526,10 @@ test('voce 908f2eb9bbfb, review round 2: a 404 timeline or profile is not-compos
 
 test('voce 908f2eb9bbfb, review round 2: a synchronously-throwing read fails the card, never blanks it', async () => {
   const syncThrow = {
-    request() { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); },
+    request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+    },
   };
   const mount = await renderCard(syncThrow);
   const text = mount.textContent;
@@ -1089,9 +1098,10 @@ test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', a
     linked: false, optedOut: null, items: [],
   };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/enriched/')) return current;
-      return stubClient().request(path);
+      return stubClient().request(path, options);
     },
   };
   const doc = createFakeDocument();
@@ -1121,12 +1131,13 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
     items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
   };
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/enriched/')) {
         if (fail) throw Object.assign(new Error('boom'), { status: 500 });
         return enriched;
       }
-      return stubClient().request(path);
+      return stubClient().request(path, options);
     },
   };
   const doc = createFakeDocument();
@@ -1577,6 +1588,7 @@ const recordingClient = (base, onWrite = null) => {
   return {
     writes,
     async request(path, opts = {}) {
+      enforceAdminWriteGate(path, opts);
       const method = opts?.method ?? 'GET';
       if (method === 'GET') return base.request(path);
       const body = opts?.body === undefined ? undefined : JSON.parse(String(opts.body));
@@ -1803,12 +1815,15 @@ const COMPOSER_CONNECTORS = {
   ],
 };
 
-function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null } = {}) {
+function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null, onPost = null, onResume = null } = {}) {
   const base = stubClient();
   const posts = [];
+  const resumes = [];
   return {
     posts,
+    resumes,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/connectors')) return connectors;
       if (path === '/api/profile') {
         if (profile instanceof Error) throw profile;
@@ -1817,6 +1832,12 @@ function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null } = {
       }
       if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') {
         posts.push(JSON.parse(options.body));
+        if (onPost) return onPost(posts.length);
+        return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+      }
+      if (path.startsWith('/api/customer-hub/messages?')) {
+        resumes.push(path);
+        if (onResume) return onResume(resumes.length);
         return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
       }
       return base.request(path, options);
@@ -1850,6 +1871,7 @@ async function openComposerMount({ client = composerClient(), spaceId = 'presti'
   const mount = createMount();
   await createCustomerCardView({
     doc, mount, client, spaceId, toast: toast ?? ((message) => toasts.push(message)),
+    wait: () => Promise.resolve(),
   }).renderCard('contact', 'c1');
   const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
   assert.ok(write, 'a Scrivi action exists');
@@ -1897,6 +1919,205 @@ test('e9b4fc2f: Invia posts the preselected recipient through the outbox route',
   assert.equal(post.id, 'c1');
   assert.ok(!('to' in post), 'the recipient stays server-derived: the panel never sends one');
   assert.deepEqual(toasts, ['Messaggio in consegna'], 'the operator reads the queued confirmation');
+});
+
+// Production 06/11: the web answered 504 BO_SEND_PENDING after 51 s, the
+// worker mailed at +2.5 min, and the panel said «non inviato» — a re-tap
+// minted a new key and would have mailed twice.
+const pendingSend = () => Object.assign(new Error('Invio in attesa'), {
+  status: 504, code: 'BO_SEND_PENDING', requestId: 'req-1', claimId: 'claim-1',
+});
+const composerSendButton = (panel) => panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+const typeAndSend = async (panel, value = 'Certo, domani alle 18.') => {
+  panel.findAll('textarea')[0].value = value;
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+};
+
+test('composer window hangs off the view, outside the sticky side columns', async () => {
+  const { mount, panel } = await openComposerMount();
+  assert.equal(panel.parentNode, mount, 'a fixed window inside a sticky column would sit under the next column');
+});
+
+test('send pending: a 504 BO_SEND_PENDING reads the same request back, never a second POST', async () => {
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: (round) => {
+      if (round < 3) throw pendingSend();
+      return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+    },
+  });
+  const { panel, toasts } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  await flushComposer(24);
+  assert.equal(client.posts.length, 1, 'exactly one POST');
+  assert.equal(client.resumes.length, 3, 'the queued request is read back until it settles');
+  assert.ok(client.resumes.every((path) => path.includes('requestId=req-1') && path.includes('claimId=claim-1')),
+    'the read-back names the 504 request and its claim');
+  assert.ok(client.resumes.every((path) => path.includes('spaceId=presti')),
+    'the read-back names the space, like every other customer-hub read');
+  assert.deepEqual(toasts, ['Messaggio in consegna'], 'the settled send reads as delivered');
+});
+
+test('send pending: while queued the panel says so and Invia is busy, not «non inviato»', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: async () => { await gate; throw pendingSend(); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  const send = composerSendButton(panel);
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'Invia is off while the message is queued');
+  assert.equal(send.textContent, 'Invio…');
+  assert.ok(panel.textContent.includes('In consegna'), 'the panel says the message is on its way');
+  assert.ok(!panel.textContent.includes('non inviato'), 'a queued message never reads as not sent');
+  release();
+});
+
+test('send pending: still queued after the wait, a re-tap reuses the same key', async () => {
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: () => { throw pendingSend(); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  await flushComposer(200);
+  assert.ok(panel.textContent.includes('Ancora in coda'), 'the panel says the message is still queued');
+  assert.equal(composerSendButton(panel).getAttribute('disabled'), null, 'Invia comes back after the wait');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  assert.equal(client.posts.length, 2);
+  assert.equal(client.posts[1].messageKey, client.posts[0].messageKey,
+    'the same message re-tapped carries the same key: the server finds its own request');
+});
+
+test('send pending: an edited message or a definitive failure gets a fresh key', async () => {
+  const client = composerClient({
+    onPost: (n) => {
+      if (n === 1) throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' });
+      if (n === 3) throw Object.assign(new Error('rifiutato'), { status: 400, code: 'BO_SEND_BODY_REFUSED' });
+      throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' });
+    },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Primo testo');
+  await typeAndSend(panel, 'Primo testo');
+  assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, 'an unknown outcome keeps the key');
+  await typeAndSend(panel, 'Primo testo');
+  await typeAndSend(panel, 'Primo testo');
+  assert.notEqual(client.posts[3].messageKey, client.posts[2].messageKey, 'a refused send drops the key');
+  await typeAndSend(panel, 'Testo cambiato');
+  assert.notEqual(client.posts[4].messageKey, client.posts[3].messageKey, 'an edited message is a new message');
+});
+
+test('send pending: reopening Scrivi stops the old read-back, which never touches the new form', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: async () => { await gate; return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' }; },
+  });
+  const { mount, panel, toasts } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  assert.equal(client.resumes.length, 1, 'the first read-back is in flight');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  release();
+  await flushComposer(24);
+  assert.equal(client.resumes.length, 1, 'the stale send reads back no more');
+  assert.deepEqual(toasts, [], 'the stale send neither toasts nor re-renders');
+  const send = composerSendButton(panel);
+  assert.equal(send.getAttribute('disabled'), null, 'the new form Invia is not held busy by the old send');
+  assert.ok(!panel.textContent.includes('In consegna'), 'the new form shows no status of the old send');
+});
+
+test('send pending: the log names code, status and request, never the claim or the text', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const client = composerClient({
+      onPost: () => { throw pendingSend(); },
+      onResume: () => ({ channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' }),
+    });
+    const { panel } = await openComposerMount({ client });
+    await typeAndSend(panel, 'Testo riservato');
+    await flushComposer(12);
+  } finally {
+    console.error = original;
+  }
+  const pending = logged.filter(([label]) => label === '[bo] invio in attesa');
+  assert.equal(pending.length, 1, 'the pending send is logged once');
+  assert.deepEqual(pending[0][1], { code: 'BO_SEND_PENDING', status: 504, requestId: 'req-1' });
+  assert.ok(!JSON.stringify(logged).includes('claim-1'), 'the claim id never reaches the log');
+  assert.ok(!JSON.stringify(logged).includes('Testo riservato'), 'the message text never reaches the log');
+});
+
+test('send pending: a trailing space or newline keeps the same key', async () => {
+  const client = composerClient({
+    onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Primo testo');
+  await typeAndSend(panel, 'Primo testo  \n');
+  assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, 'whitespace around the text is the same message');
+});
+
+test('send pending: a transient miss of the read-back keeps waiting, never «non inviato»', async () => {
+  const client = composerClient({
+    onPost: () => { throw pendingSend(); },
+    onResume: (round) => {
+      if (round === 1) throw Object.assign(new Error('status'), { status: 502, code: 'BO_SEND_STATUS_FAILED' });
+      if (round === 2) throw new TypeError('Failed to fetch');
+      if (round === 3) throw Object.assign(new Error('slow'), { status: 429, code: 'UNKNOWN' });
+      return { channel: 'email', to: 'guido@palestra-esempio.it', jobId: 'job-1' };
+    },
+  });
+  const { panel, toasts } = await openComposerMount({ client });
+  await typeAndSend(panel);
+  await flushComposer(40);
+  assert.equal(client.resumes.length, 4, 'gateway, network and rate limit do not stop the read-back');
+  assert.deepEqual(toasts, ['Messaggio in consegna']);
+  assert.equal(client.posts.length, 1);
+});
+
+test('send pending: the worker verdict failed ends the wait with an error and a fresh key', async () => {
+  const client = composerClient({
+    onPost: (n) => { if (n === 1) throw pendingSend(); return { channel: 'email', jobId: 'job-2' }; },
+    onResume: () => { throw Object.assign(new Error('failed'), { status: 502, code: 'BO_SEND_FAILED' }); },
+  });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Stesso testo');
+  await flushComposer(12);
+  assert.equal(client.resumes.length, 1);
+  assert.ok(panel.textContent.includes('non inviato') || panel.textContent.includes('non è partito') || panel.textContent.includes('Riprova'),
+    'a failed send says so');
+  await typeAndSend(panel, 'Stesso testo');
+  assert.notEqual(client.posts[1].messageKey, client.posts[0].messageKey, 'a failed send is retried as a new request');
+});
+
+test('send: 408, 425, 429 and 503 keep the key and read as uncertain, not «non inviato»', async () => {
+  for (const status of [408, 425, 429, 503]) {
+    const client = composerClient({ onPost: () => { throw Object.assign(new Error('later'), { status, code: 'UNKNOWN' }); } });
+    const { panel } = await openComposerMount({ client });
+    await typeAndSend(panel, 'Testo');
+    assert.ok(panel.textContent.includes('Non sappiamo ancora se è partito'), `${status} reads as uncertain`);
+    assert.ok(!panel.textContent.includes('non inviato'), `${status} never reads as not sent`);
+    await typeAndSend(panel, 'Testo');
+    assert.equal(client.posts[1].messageKey, client.posts[0].messageKey, `${status} keeps the key`);
+  }
+});
+
+test('send: a second message while the first is pending keeps the first key', async () => {
+  const client = composerClient({ onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); } });
+  const { panel } = await openComposerMount({ client });
+  await typeAndSend(panel, 'Primo messaggio');
+  await typeAndSend(panel, 'Secondo messaggio');
+  await typeAndSend(panel, 'Primo messaggio');
+  assert.notEqual(client.posts[1].messageKey, client.posts[0].messageKey);
+  assert.equal(client.posts[2].messageKey, client.posts[0].messageKey, 'the first message still finds its own request');
 });
 
 test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled', async () => {
@@ -1952,6 +2173,60 @@ test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async
   assert.equal(link.getAttribute('href'), '#/connettori');
 });
 
+// Voce 8ce25b0f445f (P3 review su #588): unlinked channels name the address
+// to link in the visible «canale non collegato» line — a phone has no hover.
+test('8ce25b0f445f: unlinked channels name their address in the off line', async () => {
+  const { panel } = await openComposerMount();
+  const off = panel.findAll('p')
+    .find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+  assert.ok(off, 'the off line exists');
+  assert.ok(off.textContent.includes('non collegato'), 'the off line says the channel is not linked');
+  assert.ok(off.textContent.includes('+39 333 1234567'),
+    'the off line names the number to link, readable without hover');
+});
+
+// Voce 8ce25b0f445f (P3 review su #588): Scrivi pressed twice while channels
+// load paints the newest opening only — no crash, no doubled form.
+test('8ce25b0f445f: Scrivi twice while loading paints one panel', async () => {
+  const profileReleases = [];
+  const connectorReleases = [];
+  const slow = composerClient();
+  const client = {
+    posts: slow.posts,
+    async request(path, options = {}) {
+      if (path === '/api/profile') {
+        return new Promise((_, reject) => profileReleases.push(
+          () => reject(Object.assign(new Error('no profile'), { status: 404 }))));
+      }
+      if (path.startsWith('/api/connectors')) {
+        return new Promise((resolve) => connectorReleases.push(() => resolve(COMPOSER_CONNECTORS)));
+      }
+      return slow.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  const write = mount.findAll('button')
+    .find((node) => node.getAttribute('data-action') === 'compose-message');
+  assert.ok(write, 'a Scrivi action exists');
+  write.dispatch('click');
+  write.dispatch('click');
+  assert.equal(profileReleases.length, 2, 'both openings are loading');
+  for (const release of profileReleases.splice(0)) release();
+  await flushComposer();
+  assert.equal(connectorReleases.length, 1, 'only the newest opening keeps loading');
+  for (const release of connectorReleases.splice(0)) release();
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(panel, 'the composer panel is open');
+  const bodies = panel.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-composer-body'));
+  assert.equal(bodies.length, 1, 'the newest opening paints exactly one form');
+  assert.ok(!panel.textContent.includes('Leggo i canali collegati'),
+    'no stale loading line survives the newest opening');
+});
+
 // Voce a935af6a6d19: a revoked Gmail link connects nothing — revocation
 // reads like no link, never like a sender.
 test('a935af6a6d19: a revoked Gmail link leaves Email off', async () => {
@@ -1985,6 +2260,7 @@ test('e9b4fc2f: the composer names its honest limit and shows the text refusal',
   const client = {
     ...base,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/customer-hub/messages' && (options.method ?? 'GET') === 'POST') throw refusal;
       return base.request(path, options);
     },
@@ -2258,4 +2534,196 @@ test('434cc39a: a failed fields read hides the section, never the scheda', async
   const text = mount.textContent;
   assert.ok(!text.includes('Campi personalizzati'), 'no section on a failed read');
   assert.ok(text.includes('Guido Presti'), 'the name still shows');
+});
+
+test('every card write carries a submission-owned Idempotency-Key, as the real client demands (production 04/11)', async () => {
+  // The real /bo client refuses a mutation without an idempotency key before
+  // any request leaves (requireSubmissionContext): «Aggiungi nota» answered
+  // «Nota non salvata» in production with no request at all.
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const writes = [];
+  const strict = {
+    async request(path, opts = {}) {
+      const method = String(opts?.method ?? 'GET').toUpperCase();
+      if (method === 'GET') return base.request(path);
+      enforceAdminWriteGate(path, opts);
+      writes.push({ path, method });
+      return { ok: true };
+    },
+  };
+  const seen = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client: strict, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare giovedì';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+  await flushClicks();
+  assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }]);
+});
+
+// Composer stile Gmail (Dan 04/11): ✕ and Esc close the window but never
+// lose the typed text — the draft comes back when Scrivi reopens it.
+test('composer gmail: closing keeps the draft and Scrivi brings it back', async () => {
+  const { mount, panel } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  area.value = 'Bozza da non perdere';
+  area.dispatch('input');
+  const close = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close');
+  assert.ok(close, 'the window has a close button');
+  close.dispatch('click');
+  await flushComposer();
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined,
+    'the composer window is closed');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(reopened, 'Scrivi reopens the window');
+  assert.equal(reopened.findAll('textarea')[0].value, 'Bozza da non perdere', 'the draft is restored');
+});
+
+// Muse P1 on #588: Scrivi pressed again while open rebuilds the same panel;
+// Cmd/Ctrl+Invio must still queue exactly one message.
+test('composer gmail: reopen then Cmd+Invio sends exactly once', async () => {
+  const { mount, client } = await openComposerMount();
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  panel.findAll('textarea')[0].value = 'Una volta sola';
+  panel.dispatch('keydown', { key: 'Enter', metaKey: true });
+  await flushComposer();
+  assert.equal(client.posts.length, 1, 'one keydown, one send');
+});
+
+// Muse P2 on #588: arrow keys move the radio with `change`; the shown
+// recipient and the sent channel follow it.
+test('composer gmail: a keyboard change of channel moves the recipient too', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const usable = radios.filter((node) => node.getAttribute('disabled') === null);
+  assert.ok(usable.length >= 1, 'at least one usable channel');
+  for (const radio of usable) {
+    radio.dispatch('change');
+    const chip = radio.parentNode;
+    assert.equal(chip.getAttribute('data-selected'), 'true', 'the pill follows the keyboard choice');
+  }
+});
+
+
+// Dan 06/11: a long conversation reads newest first, a page at a time, with
+// readable text, and Annulla on Dettagli puts the card back without a reload.
+test('the timeline shows the newest 20 first and opens older ones on demand', async () => {
+  const items = Array.from({ length: 45 }, (_, index) => ({
+    entry: 'message', id: `m${index}`, channel: 'email', direction: 'inbound', sync: 'received',
+    body: `Messaggio ${index}`, remoteHandle: 'a@b.it',
+    occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
+  }));
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items } } }));
+  const shown = () => mount.findAll('div').filter((node) => node.getAttribute('class') === 'bo-scheda-entry').map((node) => node.getAttribute('data-entry'));
+  assert.equal(shown().length, 20, 'one page');
+  assert.equal(shown()[0], 'm44', 'newest first');
+  const older = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'timeline-older');
+  assert.equal(older().textContent, 'Mostra precedenti · 20 di 25');
+  older().dispatch('click');
+  assert.equal(shown().length, 40);
+  older().dispatch('click');
+  assert.equal(shown().length, 45);
+  assert.equal(older(), undefined, 'no button when everything shows');
+});
+
+test('message text reads cleanly and a long one folds behind «Mostra tutto»', async () => {
+  const long = `We&#39;ve got news &amp; more \u034f \u034f \u034f ${'parola '.repeat(80)}`;
+  const items = [{ entry: 'message', id: 'x1', channel: 'email', direction: 'inbound', sync: 'received', body: long, remoteHandle: 'a@b.it', occurredAt: '2026-11-05T10:00:00.000Z' }];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 1, truncated: false, items } } }));
+  const body = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-entry-body');
+  assert.ok(body.textContent.startsWith("We've got news & more parola"), body.textContent.slice(0, 40));
+  assert.ok(!/&#39;|&amp;|\u034f/.test(body.textContent), 'no entity or padding left');
+  assert.equal(body.getAttribute('data-folded'), 'true');
+  const more = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'entry-expand');
+  more.dispatch('click');
+  assert.equal(body.getAttribute('data-folded'), 'false');
+  assert.equal(more.textContent, 'Mostra meno');
+});
+
+test('Annulla on Dettagli restores the card in place, without re-reading the scheda', async () => {
+  const client = stubClient();
+  const mount = await renderCard(client);
+  const before = client.calls ? client.calls.length : null;
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'cancel-details'));
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details').dispatch('click');
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'edit-details'), 'Modifica is back');
+  assert.ok(mount.textContent.includes('Tutti i contatti'), 'the scheda never blanks');
+  if (before !== null) assert.equal(client.calls.length, before, 'no re-read of the card');
+});
+
+// «Da leggere» (Dan 06/11): the unread inbound messages read «Nuovo» and
+// opening the scheda marks them read, up to the newest one.
+async function unreadCard({ items, spaceId = 'presti', onMark = null }) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const marks = [];
+  const base = stubClient();
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/customer-hub/timeline/')) {
+        return { entries: { available: true, count: items.length, truncated: false, items }, appointments: { available: true, items: [] } };
+      }
+      if (path === '/api/customer-hub/mark-read') {
+        marks.push(JSON.parse(options.body));
+        if (onMark) return onMark();
+        return { ok: true };
+      }
+      return base.request(path, options);
+    },
+  };
+  await createCustomerCardView({ doc, mount, client, spaceId }).renderCard('contact', 'c1');
+  await flushComposer(6);
+  return { mount, marks };
+}
+const inbound = (id, at, read) => ({ entry: 'message', id, conversationId: 't1', channel: 'email', direction: 'inbound', sync: 'received', body: `testo ${id}`, remoteHandle: 'guido@palestra-esempio.it', occurredAt: at, read });
+
+test('da leggere: unread inbound messages read «Nuovo» and the scheda marks them read up to the newest', async () => {
+  const { mount, marks } = await unreadCard({ items: [
+    inbound('m1', '2026-11-06T08:00:00.000Z', true),
+    inbound('m2', '2026-11-06T09:00:00.000Z', false),
+    inbound('m3', '2026-11-06T10:00:00.000Z', false),
+    { ...inbound('o1', '2026-11-06T11:00:00.000Z', false), direction: 'outbound', remoteHandle: null },
+  ] });
+  const unread = mount.findAll('div').filter((node) => node.getAttribute('data-unread') === 'true').map((node) => node.getAttribute('data-entry'));
+  assert.deepEqual(unread.sort(), ['m2', 'm3'], 'only unread inbound messages light up, never an outbound one');
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Nuovo').length, 2);
+  assert.deepEqual(marks, [{ spaceId: 'presti', resource: 'contact', id: 'c1', upTo: '2026-11-06T10:00:00.000Z' }]);
+});
+
+test('da leggere: nothing unread or no read state sends no mark, and a refused mark stays silent', async () => {
+  const none = await unreadCard({ items: [inbound('m1', '2026-11-06T08:00:00.000Z', true)] });
+  assert.deepEqual(none.marks, []);
+  const legacy = await unreadCard({ items: [inbound('m1', '2026-11-06T08:00:00.000Z', undefined)] });
+  assert.deepEqual(legacy.marks, [], 'an older server without read state is never asked');
+  assert.equal(legacy.mount.findAll('div').filter((node) => node.getAttribute('data-unread') !== null).length, 0);
+  const refused = await unreadCard({
+    items: [inbound('m1', '2026-11-06T08:00:00.000Z', false)],
+    onMark: () => { throw Object.assign(new Error('nope'), { status: 404 }); },
+  });
+  assert.equal(refused.marks.length, 1);
+  assert.ok(refused.mount.textContent.includes('testo m1'), 'the scheda stays whole');
+});
+
+test('da leggere: badge and mark-read share one rule — no direction or no date never lights up', async () => {
+  const { mount, marks } = await unreadCard({ items: [
+    { ...inbound('nodir', '2026-11-06T12:00:00.000Z', false), direction: undefined },
+    inbound('nodate', null, false),
+    inbound('bad', 'ieri', false),
+    inbound('ok', '2026-11-06T09:00:00.000Z', false),
+  ] });
+  const lit = mount.findAll('div').filter((node) => node.getAttribute('data-unread') === 'true').map((node) => node.getAttribute('data-entry'));
+  assert.deepEqual(lit, ['ok'], 'only what mark-read can reach lights up');
+  assert.deepEqual(marks.map((mark) => mark.upTo), ['2026-11-06T09:00:00.000Z']);
 });

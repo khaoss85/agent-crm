@@ -20,6 +20,7 @@ import { createServer } from 'node:http';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 import { chromiumRuns, findChromium } from '../scripts/bo-shots.js';
 
@@ -29,6 +30,7 @@ const BROWSER_SKIP = chromiumRuns(CHROMIUM)
   : 'no runnable Chromium here (set CHROMIUM_BIN); the Mac CI runner produces the PNGs';
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createCatalogView } from './admin-catalog.js';
 const MANUAL = {
   products: [{
@@ -54,7 +56,8 @@ const SCHEMA = { commercial: { commercialContract: 1, discountPolicies: [{
   fingerprint: 'shot', config: { autoApproveMaxBps: 1000, ownerApprovalMaxBps: 3000, approvalKey: 'owner' },
 }] } };
 const client = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/schema') return SCHEMA;
     if (path.startsWith('/api/catalog/products')) return MANUAL;
     throw new Error('unexpected ' + path);

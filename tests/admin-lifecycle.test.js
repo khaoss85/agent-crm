@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AMENDMENT_DISCLAIMERS, renderAmendment } from '../apps/admin/public/admin-lifecycle.js';
+import { bindAdminMutations } from '../apps/admin/public/admin-submission.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin renewal & amendment section (M16b, ADR-035).
@@ -154,6 +156,7 @@ async function render({
   const actions = [];
   const client = {
     request: async (path, options) => {
+      enforceAdminWriteGate(path, options);
       requests.push(path);
       const action = /^\/api\/modules\/([^/]+)\/records\/([^/]+)\/actions\/([^/]+)$/.exec(path);
       if (action) {
@@ -184,7 +187,9 @@ async function render({
     }
   };
   await renderAmendment({
-    contract: CONTRACT, schema, mount, el, client,
+    // Same wiring as production: the quotes view binds once (through
+    // contracts) and hands the section its bound client (#567).
+    contract: CONTRACT, schema, mount, el, client: bindAdminMutations(client).client,
     money: (cents, currency) => `${currency} ${(cents / 100).toFixed(2)}`,
     withBusy, busy,
   });

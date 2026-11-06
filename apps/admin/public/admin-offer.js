@@ -23,6 +23,14 @@ function dayOf(value) {
   return new Date(time).toISOString().slice(0, 10);
 }
 
+const ROME_DATE = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
+/** «20 nov 2026» for a stored day or timestamp (Dan 06/11: dates read like a person writes them). */
+function italianDay(value) {
+  const day = dayOf(value);
+  if (day === null) return null;
+  return ROME_DATE.format(new Date(`${day}T12:00:00Z`)).replace('.', '');
+}
+
 /** Italian label of an audit action; unknown actions stay a generic line. */
 function auditActionLabel(action) {
   if (action === 'opportunity.created') return 'Creata';
@@ -145,6 +153,27 @@ export function createOfferDetail(deps) {
   }
 
   /** @param {string} offerId */
+  /**
+   * The offer the pipeline card opened. The record read comes first; when
+   * it answers not found, the same list the Pipeline board paints from
+   * (`/api/opportunities`) is the fallback — production 03/11: the shared
+   * space answered the record read 404 for a card the board had just shown,
+   * and the detail said «Offerta non trovata».
+   * @param {string} id
+   */
+  async function readOffer(id) {
+    try {
+      return await client.request(`/api/modules/opportunity/records/${encodeURIComponent(id)}`);
+    } catch (error) {
+      const status = Number(/** @type {any} */ (error)?.status ?? 0);
+      if (status !== 404) throw error;
+      const list = await client.request('/api/opportunities?limit=200');
+      const found = Array.isArray(list?.items) ? list.items.find((item) => String(item?.id ?? '') === id) : null;
+      if (!found) throw error;
+      return found;
+    }
+  }
+
   async function renderOfferDetail(offerId) {
     const token = ++renderToken;
     editing = false;
@@ -158,7 +187,7 @@ export function createOfferDetail(deps) {
     let auditUnreadable = false;
     try {
       schema = await client.request('/api/schema');
-      record = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(offerId)}`);
+      record = await readOffer(offerId);
       quotes = await fetchLinked('quote', 'opportunityId', record.id);
       try {
         const audit = await client.request(
@@ -185,37 +214,52 @@ export function createOfferDetail(deps) {
       ? record.contactName
       : (typeof record.companyName === 'string' && record.companyName !== '' ? record.companyName : null);
 
-    mount.appendChild(el('p', 'kicker', 'Offerta'));
-    mount.appendChild(el('h2', undefined, String(record.name ?? 'Offerta')));
-    if (customer) mount.appendChild(el('p', 'lede', customer));
-
-    const created = [...auditItems].reverse().find((entry) => entry?.action === 'opportunity.created') ?? null;
+    // Design (Dan 06/11): the deal reads like the quote — a card with who it
+    // is for, the stage and the value up front, the facts in one strip, the
+    // quotes as cards and the history as a timeline.
+    const page = el('div', 'bo-offer');
+    const sheet = el('article', 'bo-offer-sheet');
+    page.appendChild(sheet);
+    const hero = el('header', 'bo-offer-hero');
+    const words = el('div', 'bo-offer-hero-words');
+    words.appendChild(el('p', 'kicker', 'Offerta'));
+    words.appendChild(el('h2', 'bo-offer-title', String(record.name ?? 'Offerta')));
+    const meta = el('p', 'bo-offer-meta');
+    if (customer) meta.appendChild(el('span', 'bo-offer-for', `Per ${customer}`));
+    meta.appendChild(el('span', 'bo-offer-stage', stageLabel(schema, record)));
+    words.appendChild(meta);
+    hero.appendChild(words);
+    const valueBox = el('div', 'bo-offer-value');
+    valueBox.appendChild(el('span', 'bo-offer-amount', money(record.valueCents, record.currency)));
+    const close = italianDay(record.expectedCloseDate);
+    valueBox.appendChild(el('span', 'bo-offer-amount-note', close !== null ? `chiusura prevista ${close}` : 'valore dell’offerta'));
+    hero.appendChild(valueBox);
+    sheet.appendChild(hero);
 
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
       ['Referente', typeof record.owner === 'string' && record.owner !== '' ? record.owner : '—'],
       ['Fase', stageLabel(schema, record)],
-      ['Valore', money(record.valueCents, record.currency)],
-      ['Chiusura prevista', dayOf(record.expectedCloseDate) ?? '—'],
-      ['Creata il', dayOf(record.createdAt) ?? '—'],
-      ['Ultima modifica', dayOf(record.updatedAt) ?? '—'],
-      ['Creata da', created ? actorLabel(created, record) : '—'],
+      ['Chiusura prevista', close ?? '—'],
+      ['Creata il', italianDay(record.createdAt) ?? '—'],
+      ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {
-      const row = el('p', 'offer-fact');
-      row.appendChild(el('strong', undefined, `${label}: `));
-      row.appendChild(el('span', undefined, value ?? '—'));
-      facts.appendChild(row);
+      const cell = el('p', 'offer-fact');
+      cell.appendChild(el('span', 'offer-fact-label', label));
+      cell.appendChild(el('span', 'offer-fact-value', value ?? '—'));
+      facts.appendChild(cell);
     }
-    mount.appendChild(facts);
+    sheet.appendChild(facts);
 
     // The three editable commercial facts (same PATCH contract as the
     // pipeline card editor): importo, chiusura, referente.
     const editWrap = el('div', 'offer-edit');
-    mount.appendChild(editWrap);
+    sheet.appendChild(editWrap);
     paintEdit(editWrap, record, offerId, token);
+    mount.appendChild(page);
 
     const quotesPanel = el('div', 'offer-quotes');
-    quotesPanel.appendChild(el('h3', undefined, `Preventivi (${quotes.rows.length})`));
+    quotesPanel.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
     if (quotes.rows.length === 0) {
       quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
     }
@@ -226,10 +270,10 @@ export function createOfferDetail(deps) {
       quotesPanel.appendChild(await paintQuote(quote, token, record));
       if (token !== renderToken) return;
     }
-    mount.appendChild(quotesPanel);
+    page.appendChild(quotesPanel);
 
     const historyPanel = el('div', 'offer-history');
-    historyPanel.appendChild(el('h3', undefined, `Cronologia (${auditItems.length})`));
+    historyPanel.appendChild(el('h3', undefined, 'Cronologia'));
     if (auditUnreadable) {
       historyPanel.appendChild(el('p', 'field-error', 'Cronologia non leggibile. Riprova più tardi.'));
     } else if (auditItems.length === 0) {
@@ -237,10 +281,11 @@ export function createOfferDetail(deps) {
     }
     for (const entry of auditItems) {
       const row = el('p', 'history-event');
-      row.appendChild(el('span', undefined, `${dayOf(entry?.createdAt) ?? '—'} · ${auditActionLabel(entry?.action)} · ${actorLabel(entry, record)}`));
+      row.appendChild(el('span', 'history-when', italianDay(entry?.createdAt) ?? '—'));
+      row.appendChild(el('span', 'history-what', `${auditActionLabel(entry?.action)} · da ${actorLabel(entry, record)}`));
       historyPanel.appendChild(row);
     }
-    mount.appendChild(historyPanel);
+    page.appendChild(historyPanel);
   }
 
   /** Edit form (or its opener) for the three commercial facts. */
@@ -248,7 +293,7 @@ export function createOfferDetail(deps) {
     while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
     const id = String(record.id);
     if (!editing) {
-      const edit = el('button', undefined, 'Modifica');
+      const edit = el('button', 'offer-edit-open', 'Modifica');
       edit.setAttribute('type', 'button');
       const startEdit = () => {
         editing = true;
@@ -346,10 +391,13 @@ export function createOfferDetail(deps) {
     const panel = el('div', 'offer-quote');
     panel.setAttribute('data-quote', quote.id);
     const totals = parseTotals(quote.totalsJson);
-    panel.appendChild(el('h4', undefined, `Preventivo · ${quoteStatusLabel(quote.status)} · ${quoteTotalSummary(totals, quote.currency)}`));
-    const link = el('a', undefined, 'Apri il preventivo');
+    const head = el('div', 'offer-quote-head');
+    head.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status)));
+    head.appendChild(el('h4', 'offer-quote-total', quoteTotalSummary(totals, quote.currency)));
+    const link = el('a', 'offer-quote-open', 'Apri il preventivo');
     link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
-    panel.appendChild(link);
+    head.appendChild(link);
+    panel.appendChild(head);
 
     let lines = [];
     let versions = [];
@@ -373,14 +421,20 @@ export function createOfferDetail(deps) {
     if (partial) {
       panel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} elementi per elenco.`));
     }
-    panel.appendChild(el('h5', undefined, `Righe (${lines.length})`));
-    if (lines.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna riga in questo preventivo.'));
+    if (lines.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna voce in questo preventivo.'));
     for (const line of lines) {
-      panel.appendChild(el('p', 'quote-line',
-        `${line.sku ?? '—'} · ${line.offerName ?? '—'} · quantità ${line.quantity ?? '—'} · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}% · netto ${money(line.netAmountCents, quote.currency)}`));
+      // Package, quantity, a discount only when one applies, amount on the
+      // right: SKU and offer revision stay in the records.
+      const row = el('p', 'quote-line');
+      const discount = (line.discountBps ?? 0) > 0
+        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%`
+        : '';
+      row.appendChild(el('span', 'quote-line-name', String(line.offerName ?? '—')));
+      row.appendChild(el('span', 'quote-line-meta', `Quantità ${line.quantity ?? '—'}${discount}`));
+      row.appendChild(el('span', 'quote-line-amount', money(line.netAmountCents, quote.currency)));
+      panel.appendChild(row);
     }
-    panel.appendChild(el('h5', undefined, `Versioni (${versions.length})`));
-    if (versions.length === 0) panel.appendChild(el('p', 'empty', 'Ancora nessuna versione per questo preventivo.'));
+    if (versions.length === 0) panel.appendChild(el('p', 'quote-version quote-version-empty', 'Ancora nessuna versione: nasce quando il preventivo va in approvazione.'));
     for (const version of versions) {
       panel.appendChild(el('p', 'quote-version',
         `Versione ${version.versionNumber ?? '—'} · ${policyDecisionLabel(version.policyDecision)} · ${money(versionTotalsNet(version), version.currency ?? quote.currency)}`));

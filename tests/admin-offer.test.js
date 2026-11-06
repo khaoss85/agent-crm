@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Voce ef92f728: the deal page behind the pipeline card's Apri button.
@@ -49,6 +50,7 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
       if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
@@ -110,7 +112,7 @@ const AUDIT = [
   { action: 'opportunity.stage_changed', actorId: '00000000-0000-4000-8000-000000000000', actorType: 'user', createdAt: '2026-10-28T18:40:00.000Z' },
 ];
 
-test('the detail shows the seven facts, quotes with lines, and history', async () => {
+test('the detail shows who, stage, value and facts, quotes with lines, and history', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ quotes: [QUOTE], lines: [LINE], versions: [VERSION], audit: AUDIT });
@@ -120,29 +122,30 @@ test('the detail shows the seven facts, quotes with lines, and history', async (
   const text = mount.textContent;
   assert.ok(text.includes('Offerta'), 'the kicker names the page');
   assert.ok(text.includes('Cucina per Giulia'), 'the deal name paints');
-  assert.ok(text.includes('Giulia Verdi'), 'the customer paints');
-  assert.ok(text.includes('Referente:'), 'the referente fact paints');
-  assert.ok(text.includes('maria'), 'the referente value paints');
-  assert.ok(text.includes('Fase:'), 'the stage fact paints');
-  assert.ok(text.includes('Scoperta'), 'the stage label paints, not its key');
-  assert.ok(text.includes('Valore:'), 'the value fact paints');
-  assert.ok(text.includes('27.500 €'), 'the value uses the Italian thousands separator');
-  assert.ok(text.includes('Chiusura prevista:'), 'the expected close paints');
-  assert.ok(text.includes('2026-11-20'), 'the close date paints as a day');
-  assert.ok(text.includes('Creata il:'), 'the creation date paints');
-  assert.ok(text.includes('2026-10-02'), 'the creation day paints');
-  assert.ok(text.includes('Ultima modifica:'), 'the update date paints');
-  assert.ok(text.includes('2026-10-28'), 'the update day paints');
-  assert.ok(text.includes('Creata da:'), 'the author fact paints');
+  assert.ok(text.includes('Per Giulia Verdi'), 'the customer paints');
+  const fact = (label) => {
+    const cell = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'offer-fact'
+      && node.childNodes[0]?.textContent === label);
+    return cell ? cell.childNodes[1].textContent : null;
+  };
+  assert.equal(fact('Referente'), 'maria', 'the referente fact paints');
+  assert.equal(fact('Fase'), 'Scoperta', 'the stage label paints, not its key');
+  const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-offer-amount');
+  assert.equal(amount?.textContent, '27.500 €', 'the value leads the page with the Italian thousands separator');
+  assert.equal(fact('Chiusura prevista'), '20 nov 2026', 'the close date reads in Italian');
+  assert.equal(fact('Creata il'), '2 ott 2026', 'the creation day reads in Italian');
+  assert.equal(fact('Ultima modifica'), '28 ott 2026', 'the update day reads in Italian');
+  assert.ok(text.includes('chiusura prevista 20 nov 2026'), 'the close date sits under the value');
   // Quotes, lines, versions and history render from server state.
-  assert.ok(text.includes('Preventivi (1)'), 'the linked quotes paint');
-  assert.ok(text.includes('Preventivo · Bozza · una tantum 5.000 €'), 'the quote state and total paint in Italian');
+  assert.ok(text.includes('Preventivo'), 'the linked quotes paint');
+  assert.ok(text.includes('Bozza') && text.includes('una tantum 5.000 €'), 'the quote state and total paint in Italian');
   assert.ok(text.includes('Approvazione automatica'), 'the version policy decision paints in Italian, not as a dash');
-  assert.ok(text.includes('Righe (1)'), 'the quote lines paint');
-  assert.ok(text.includes('PT10 · Pacchetto 10 PT · quantità 2 · sconto 5,00% · netto 12.000 €'),
-    'the line paints with an Italian percentage and thousands');
-  assert.ok(text.includes('Versioni (1)'), 'the quote versions paint');
-  assert.ok(text.includes('Cronologia (2)'), 'the history paints');
+  const line = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'quote-line');
+  assert.equal(line?.childNodes[0].textContent, 'Pacchetto 10 PT', 'the line names the package, never the SKU');
+  assert.equal(line?.childNodes[1].textContent, 'Quantità 2 · sconto 5,00%', 'quantity and an Italian percentage');
+  assert.equal(line?.childNodes[2].textContent, '12.000 €', 'the line amount uses Italian thousands');
+  assert.ok(!text.includes('PT10'), 'no SKU on screen');
+  assert.ok(text.includes('Cronologia'), 'the history paints');
   assert.ok(text.includes('Creata'), 'the creation event paints in Italian');
   assert.ok(text.includes('Cambio di fase'), 'the stage event paints in Italian');
   // A UUID actor is a technical id, never a name; a named actor paints.
@@ -191,7 +194,7 @@ test('a subscription-only quote never paints a zero one-time total', async () =>
   assert.ok(text.includes('3.200 € ogni 1 mese'), 'the recurring group paints with its own period');
   assert.ok(!text.includes('una tantum'), 'no zero one-time group paints beside it');
   const header = mount.findAll('h4').map((node) => node.textContent).join('\n');
-  assert.ok(header.includes('Preventivo · Bozza · 3.200 € ogni 1 mese'), 'the header is the recurring group alone');
+  assert.equal(header, '3.200 € ogni 1 mese', 'the header is the recurring group alone');
 });
 
 test('an unreadable audit trail is not an empty one', async () => {
@@ -228,7 +231,7 @@ test('technical actor handles never paint, even off the UUID shape', async () =>
   const text = mount.textContent;
   assert.ok(!text.includes('admin-ui'), 'the service handle never paints');
   assert.ok(!text.includes('stranger-handle'), 'an uncorroborated handle never paints');
-  assert.ok(text.includes('Creata da: utente'), 'the author degrades to a generic word');
+  assert.ok(text.includes('Creata · da utente'), 'the author degrades to a generic word');
 });
 
 test('a full linked page says it shows only the first rows', async () => {
@@ -237,7 +240,8 @@ test('a full linked page says it shows only the first rows', async () => {
   const full = { items: new Array(200).fill(null).map((_, index) => ({ id: `q${index}` })) };
   const client = {
     calls: [],
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       this.calls.push(path);
       if (path === '/api/schema') return SCHEMA;
       if (path.startsWith('/api/modules/opportunity/records/')) return { ...offerRecord() };
@@ -316,4 +320,47 @@ test('offer routes parse canonically; hostile routes are invalid', async () => {
   for (const bad of ['#/offerte/', '#/offerte//off1', '#/offerte/a/b', '#/offerte/a%2Fb', '#/offerte/%zz']) {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
+});
+
+// Production 03/11: the shared space answered the record read 404 for a card
+// the Pipeline board had just painted; the detail said «Offerta non trovata».
+// The board's own list is the fallback, so the detail opens the same offer.
+test('a record read 404 falls back to the board list and the detail opens', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient();
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/opportunity/records/')) {
+        throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
+      }
+      if (path.startsWith('/api/opportunities?')) return { items: [offerRecord()] };
+      return base.request(path, options);
+    },
+  };
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer from the board list paints');
+  assert.ok(!mount.textContent.includes('Offerta non trovata'), 'never the not-found line for a card the board showed');
+});
+
+test('an offer missing from the board list too still says not found', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { modules: [] };
+      if (path.startsWith('/api/modules/opportunity/records/')) {
+        throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
+      }
+      if (path.startsWith('/api/opportunities?')) return { items: [] };
+      return { items: [] };
+    },
+  };
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('assente');
+  assert.ok(mount.textContent.includes('non trovata'), 'a truly missing offer says so');
 });

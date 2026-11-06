@@ -72,6 +72,25 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
+/** «Da leggere»: how often the open list re-reads unread state. */
+export const LIST_REFRESH_MS = 60_000;
+/** The server's view of customers with unread inbound messages. */
+const UNREAD_VIEW = 'da-leggere';
+/**
+ * Grid track per column id: [minimum px, flexible share]. Optional and custom
+ * columns get a readable 120px minimum (review #600 P2: never a 0px track).
+ */
+const COLUMN_TRACKS = Object.freeze({
+  canali: [56, '.5fr'],
+  stato: [88, '.6fr'],
+  ultimo: [200, '2.4fr'],
+  prossimo: [110, '1fr'],
+});
+const OTHER_TRACK = [120, '1fr'];
+const CLIENT_TRACK = [170, '1.4fr'];
+const ROW_GAP = 16;
+const ROW_PADDING = 40;
+const CHEVRON = 16;
 
 // The prototype's channel tiles: a short mono mark, the full name in the title.
 const CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', email: '@', tiktok: 'TT', phone: 'TEL', sms: 'SMS', web: 'WEB' });
@@ -150,6 +169,12 @@ export function createCustomerListView(deps) {
   };
   let data = null;
   let renderToken = 0;
+  // «Da leggere»: while the list is on screen and the server serves read
+  // state, it re-reads quietly so a new message lights its row up without a
+  // reload. Injectable for tests; the handle never keeps a process alive.
+  const schedule = typeof deps.schedule === 'function'
+    ? deps.schedule
+    : (fn, ms) => { const handle = setTimeout(fn, ms); handle?.unref?.(); return handle; };
 
   /**
    * Every known column carries an explicit boolean: a stored choice where the
@@ -221,6 +246,46 @@ export function createCustomerListView(deps) {
     }
     if (token !== renderToken) return;
     drawShell();
+    armRefresh(token);
+  }
+
+  /** True when the server names read state on the rows (`unreadCount`). */
+  const servesReadState = (answer) => Array.isArray(answer?.items)
+    && answer.items.some((row) => Number.isFinite(Number(row?.unreadCount)) && row?.unreadCount !== null);
+  /** What a quiet re-read compares: who is unread and what was said last. */
+  const unreadShape = (answer) => JSON.stringify((answer?.items ?? []).map((row) => [
+    row?.id, row?.unreadCount ?? null, row?.lastContactAt ?? null,
+  ]).concat((answer?.views ?? []).map((view) => [view?.id, view?.count ?? null])));
+
+  function armRefresh(token) {
+    if (!servesReadState(data)) return;
+    schedule(() => { void refreshQuietly(token); }, LIST_REFRESH_MS);
+  }
+
+  async function refreshQuietly(token) {
+    if (token !== renderToken) return;
+    // Never repaint under the operator's hands: a hidden tab, a focused
+    // search field or an open menu waits for the next round.
+    const busy = doc?.visibilityState === 'hidden'
+      || openMenus.some((entry) => !String(entry?.menu?.getAttribute?.('class') ?? 'hidden').split(/\s+/).includes('hidden'))
+      || mount.querySelector?.('.bo-clienti-search input') === doc?.activeElement;
+    if (busy) {
+      armRefresh(token);
+      return;
+    }
+    let next;
+    try {
+      next = await client.request(`/api/customer-data/customers?${queryString()}`);
+    } catch {
+      if (token === renderToken) armRefresh(token);
+      return;
+    }
+    if (token !== renderToken) return;
+    if (unreadShape(next) !== unreadShape(data)) {
+      data = next;
+      drawShell();
+    }
+    armRefresh(token);
   }
 
   function reload(resetPage = true) {
@@ -401,6 +466,7 @@ export function createCustomerListView(deps) {
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
+      if (view.id === UNREAD_VIEW && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
       if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
       button.addEventListener('click', () => {
         if (state.vista === view.id) return;
@@ -654,19 +720,26 @@ export function createCustomerListView(deps) {
         // Prototype "04 Clienti": the channel mark, the message excerpt, then
         // the mono line «<canale> · <quando>». Calls carry no text, so the
         // excerpt stays out there; every value travels as text, never HTML.
+        // Two lines that never run together (Dan 05/11: «giovedì.WhatsApp»):
+        // the meta line — mark and mono «canale · quando» — then the excerpt,
+        // clamped to two lines so every row keeps the same rhythm.
         if (!row.lastContactAt) return el('span', 'bo-muted', 'mai');
-        const wrap = el('span');
+        const wrap = el('span', 'bo-clienti-last');
+        const meta = el('span', 'bo-clienti-last-meta');
         const channel = String(row.lastContactChannel ?? '');
         if (channel !== '') {
           const mark = el('span', `bo-clienti-tile bo-tile-${channel.toLowerCase()}`, channelMark(channel));
           mark.setAttribute('title', channelLabel(channel));
           mark.setAttribute('aria-label', channelLabel(channel));
-          wrap.appendChild(mark);
+          meta.appendChild(mark);
         }
+        meta.appendChild(el('span', 'bo-clienti-when', `${channelLabel(channel)} · ${contactWhen(row.lastContactAt)}`));
+        wrap.appendChild(meta);
         if (typeof row.lastContactText === 'string' && row.lastContactText !== '') {
-          wrap.appendChild(el('span', undefined, row.lastContactText));
+          const excerpt = el('span', 'bo-clienti-last-text', row.lastContactText);
+          excerpt.setAttribute('title', row.lastContactText);
+          wrap.appendChild(excerpt);
         }
-        wrap.appendChild(el('span', 'bo-clienti-when', `${channelLabel(channel)} · ${contactWhen(row.lastContactAt)}`));
         return wrap;
       }
       case 'prossimo': {
@@ -724,29 +797,53 @@ export function createCustomerListView(deps) {
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }
     const visible = columnsMeta.filter((column) => !column.always && state.columns[column.id] === true);
-    const grid = `minmax(200px, 1.6fr) ${visible.map(() => 'minmax(0, 1fr)').join(' ')} 16px`;
+    // Each column gets the room its content needs: the excerpt is the widest
+    // read, channel marks and the status pill are narrow.
+    const tracks = [CLIENT_TRACK, ...visible.map((column) => COLUMN_TRACKS[column.id] ?? OTHER_TRACK)];
+    const grid = `${tracks.map(([min, share]) => `minmax(${min}px, ${share})`).join(' ')} ${CHEVRON}px`;
+    // The row floor follows the visible columns: the four defaults keep the
+    // usual 760px, every extra column widens the scrolling table instead of
+    // squeezing a track to nothing.
+    const floor = Math.max(760, tracks.reduce((sum, [min]) => sum + min, 0) + CHEVRON + ROW_GAP * tracks.length + ROW_PADDING);
     const table = el('div', 'bo-clienti-table');
     const head = el('div', 'bo-clienti-thead');
-    head.setAttribute('style', `grid-template-columns: ${grid}`);
+    head.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
     head.setAttribute('role', 'row');
     head.appendChild(el('span', 'bo-clienti-th', 'Cliente'));
     for (const column of visible) head.appendChild(el('span', 'bo-clienti-th', column.label));
     head.appendChild(el('span', undefined, ''));
     table.appendChild(head);
     const list = el('div', 'bo-clienti-list');
+    // «Da leggere»: with read state served, a row with unread inbound
+    // messages lights up (dot on the avatar, «N nuovi» beside the name) and
+    // the others quiet down. Without it the rows read exactly as before.
+    if (servesReadState(data)) list.setAttribute('data-read-state', 'on');
     for (const row of items) {
       const card = el('article', 'bo-clienti-row');
       card.setAttribute('data-customer', `${row.resource}:${row.id}`);
-      card.setAttribute('style', `grid-template-columns: ${grid}`);
+      const unread = Number(row.unreadCount);
+      const hasUnread = Number.isInteger(unread) && unread > 0;
+      if (hasUnread) card.setAttribute('data-unread', String(unread));
+      card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
       head.appendChild(el('span', 'bo-clienti-avatar', initialsOf(name)));
       const who = el('div', 'bo-clienti-who');
-      who.appendChild(link(
+      const nameLink = link(
         `#/customer-card/${encodeURIComponent(row.resource)}/${encodeURIComponent(row.id)}`,
         row.name ?? 'Cliente senza nome',
         'open-customer-card',
-      ));
+      );
+      if (hasUnread) {
+        const nameLine = el('span', 'bo-clienti-nameline');
+        nameLine.appendChild(nameLink);
+        const badge = el('span', 'bo-clienti-unread', unread === 1 ? '1 nuovo' : `${unread > 99 ? '99+' : unread} nuovi`);
+        badge.setAttribute('title', unread === 1 ? '1 messaggio da leggere' : `${unread} messaggi da leggere`);
+        nameLine.appendChild(badge);
+        who.appendChild(nameLine);
+      } else {
+        who.appendChild(nameLink);
+      }
       if (row.company?.name) who.appendChild(el('span', 'bo-muted bo-clienti-sub', String(row.company.name)));
       head.appendChild(who);
       card.appendChild(head);

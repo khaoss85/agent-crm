@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
@@ -89,21 +90,23 @@ test('countFixes counts open issues and unresolved candidates only', () => {
 
 test('loadFixCount returns null (unknown) when a read fails — never 0-as-none', async () => {
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }, { status: 'open' }] };
       return { items: [{ status: 'unresolved' }] };
     },
   };
   assert.equal(await loadFixCount(client), 3);
 
-  const failing = { async request() { throw new Error('no such module'); } };
+  const failing = { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw new Error('no such module'); } };
   assert.equal(await loadFixCount(failing), null);
 
-  const shapeless = { async request() { return { items: null }; } };
+  const shapeless = { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { items: null }; } };
   assert.equal(await loadFixCount(shapeless), null);
 
   const halfShapeless = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [] };
       return { nope: true };
     },
@@ -111,14 +114,15 @@ test('loadFixCount returns null (unknown) when a read fails — never 0-as-none'
   assert.equal(await loadFixCount(halfShapeless), null);
 
   const empty = {
-    async request() { return { items: [] }; },
+    async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { items: [] }; },
   };
   assert.equal(await loadFixCount(empty), 0);
 });
 
 test('a failed sync half of the badge logs its cause and keeps the quality count', async () => {
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [{ status: 'open' }] };
       if (path.includes('duplicate-candidate')) return { items: [] };
       throw new Error('sync giù');
@@ -412,16 +416,16 @@ test('Clienti badge lights only from a real count, grey like the prototype (BO-F
 
 test('loadClientCount reads the customer total once, unknown on failure', async () => {
   assert.deepEqual(
-    await loadClientCount({ async request() { return { items: [], total: 3, totalIsExact: true }; } }),
+    await loadClientCount({ async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { items: [], total: 3, totalIsExact: true }; } }),
     { count: 3, exact: true },
   );
   assert.deepEqual(
-    await loadClientCount({ async request() { return { items: [], total: 3, totalIsExact: false }; } }),
+    await loadClientCount({ async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { items: [], total: 3, totalIsExact: false }; } }),
     { count: 3, exact: false },
   );
-  const failing = { async request() { throw new Error('not composed'); } };
+  const failing = { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); throw new Error('not composed'); } };
   assert.equal(await loadClientCount(failing), null);
-  const shapeless = { async request() { return { items: [] }; } };
+  const shapeless = { async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { items: [] }; } };
   assert.equal(await loadClientCount(shapeless), null);
 });
 
@@ -432,7 +436,8 @@ test('loadClientCount requests a supported page size on the real list path (BO-F
   // size the contract accepts, on the endpoint the Clienti screen reads.
   const seen = [];
   const result = await loadClientCount({
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       seen.push(path);
       return { items: [], total: 7, totalIsExact: true };
     },
@@ -760,7 +765,8 @@ test('a hostile role renders as text, never markup', () => {
 // different attention rows read different counts, never each other's.
 test('loadFixCount counts each space live — never another space count', async () => {
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path.includes('data-quality-issue')) return { items: [] };
       if (path.includes('duplicate-candidate')) return { items: [] };
       if (path.includes('spaceId=spazio-a')) return { needsFix: 2 };

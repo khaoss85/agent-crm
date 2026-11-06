@@ -594,9 +594,13 @@ export function createModuleAdmin(deps) {
       }
       setBusy(true);
       try {
-        const created = await client.request('/api/opportunities', {
+        // Through the view's submission controller like every other write:
+        // the raw client refuses a mutation without a submission-owned key
+        // before any request leaves (production 04/11, same class as #581).
+        const created = await submissions.submit({
+          path: '/api/opportunities',
           method: 'POST',
-          body: JSON.stringify({
+          body: {
             companyId,
             ...(contactId !== null ? { contactId } : {}),
             name: title,
@@ -604,8 +608,10 @@ export function createModuleAdmin(deps) {
             currency: chosenCurrencies.size === 1 ? [...chosenCurrencies][0] : 'EUR',
             ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
             owner,
-          }),
+          },
+          key: form.__submissionKey ?? (form.__submissionKey = submissions.issueKey()),
         });
+        form.__submissionKey = undefined;
         toast('Offerta creata');
         navigate('#/pipelines/accordo-sales');
         return created;

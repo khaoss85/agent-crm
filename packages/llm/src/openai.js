@@ -99,7 +99,11 @@ export function createOpenAiLlmAdapter(options = {}) {
             body: JSON.stringify({
               model: callModel,
               messages: messages.map((message) => ({ role: message.role, content: message.content })),
-              max_tokens: maxTokens,
+              // The current models refuse `max_tokens` with a 400 («Use
+              // 'max_completion_tokens' instead», 04/11): every completion in
+              // production failed LLM_REQUEST_INVALID and, retried, held a
+              // space's queue for 22 hours.
+              max_completion_tokens: maxTokens,
               stream: false,
             }),
             signal: controller.signal,

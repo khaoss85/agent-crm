@@ -40,11 +40,15 @@ export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
 const ASSISTANT_ASK_PATH = '/api/assistant/ask';
 
 /**
- * Italian notice shown when free questions are unavailable: the panel stays
- * usable, only the free-question box is off, and the message says the
- * questions arrive with the key.
+ * Italian notices when free questions are unavailable. The panel never
+ * blames the key by default: the pilot backend serves suggestions only, and
+ * free questions are not part of the MVP. The key sentence appears only
+ * when the status really reports a missing key (LLM_SECRET_UNAVAILABLE);
+ * a disabled space (LLM_SPACE_DISABLED) says the assistant is off there.
  */
-export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti qui sotto, che leggono dati reali.';
+export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti (Suggerisci), che leggono dati reali.';
+export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: in questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci).';
+export const ASSISTANT_SUGGEST_ONLY_NOTICE = 'In questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci): le domande libere non sono attive.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */
 export const FREE_QUESTION_MAX_LENGTH = 500;
@@ -154,6 +158,48 @@ const FALLBACK_SUGGESTIONS = Object.freeze([
  * @param {unknown} screenId
  * @returns {ReadonlyArray<Suggestion>}
  */
+/**
+ * The suggestion closest to a question typed in the top bar (Dan 05/11):
+ * free questions are off in the MVP, so «chi devo ricontattare oggi?»
+ * runs «Chi devo ricontattare?» instead of being dropped. Plain word
+ * overlap on title and detail (words of 4+ letters, accents folded);
+ * null when nothing overlaps.
+ * @param {string} screenId
+ * @param {unknown} question
+ */
+export function closestSuggestion(screenId, question) {
+  if (typeof question !== 'string' || question.trim() === '') return null;
+  const words = (text) => new Set(String(text ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/).filter((word) => word.length >= 4));
+  const asked = words(question);
+  // Highest overlap wins; a tie on the best score is ambiguous and runs
+  // nothing — the panel then asks the operator to pick (review #596 P3).
+  let best = null;
+  let bestScore = 0;
+  let tied = false;
+  for (const suggestion of suggestionsFor(screenId)) {
+    const own = words(`${suggestion.title} ${suggestion.detail ?? ''}`);
+    let score = 0;
+    for (const word of asked) if (own.has(word)) score += 1;
+    if (score > bestScore) { best = suggestion; bestScore = score; tied = false; }
+    else if (score > 0 && score === bestScore) tied = true;
+  }
+  return tied ? null : best;
+}
+
+const CHANNEL_NAMES = Object.freeze({
+  phone: 'Telefono', email: 'Email', whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Facebook',
+  messenger: 'Messenger', tiktok: 'TikTok', sms: 'SMS', telegram: 'Telegram',
+  // One channel under three ids across packages: the site form reads the same everywhere.
+  web: 'Form sito', webform: 'Form sito', 'website-form': 'Form sito',
+});
+
+/** Channel ids read in Italian in the answers (Dan 05/11: «(phone)» → «Telefono»). */
+export function channelName(channel) {
+  const key = String(channel ?? '').toLowerCase();
+  return CHANNEL_NAMES[key] ?? shortText(String(channel ?? ''), 20);
+}
+
 export function suggestionsFor(screenId) {
   if (typeof screenId === 'string' && Object.hasOwn(SUGGESTION_CATALOG, screenId)) {
     return SUGGESTION_CATALOG[screenId];
@@ -324,7 +370,7 @@ async function answerUrgenti(client) {
     const open = conversations.filter((row) => row?.status === 'open');
     answer.lines.push(`${open.length} thread aperti${conversations.length !== open.length ? ` su ${conversations.length} letti` : ''}.`);
     for (const row of newestFirst(open).slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${shortText(row.channel, 20)})` : ''}`);
+      answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
     }
     answer.sources.push(...takeSources(newestFirst(open), 'conversation', conversationLabel));
   }
@@ -391,7 +437,7 @@ async function answerRicontattare(client) {
   }
   answer.lines.push(`${openAll.length} thread aperti da ricontattare${conversations.length !== openAll.length ? ` (tra ${conversations.length} letti)` : ''}:`);
   for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${shortText(row.channel, 20)})` : ''}`);
+    answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
   }
   answer.sources.push(...takeSources(open, 'conversation', conversationLabel));
   const first = open[0];
@@ -982,10 +1028,27 @@ export async function runSuggestion(client, suggestionId, customer = null) {
 }
 
 /**
+ * Which dry-run notice tells the truth about a non-live status: the key
+ * sentence only for a really missing key, the off-in-this-space sentence
+ * for a disabled space, the suggest-only line for anything else (absent
+ * backend, unknown shape — the pilot serves suggestions only). Reads both
+ * `code` and `reason`, mirroring packages/llm error codes.
+ * @param {unknown} status
+ */
+export function assistantDisabledNotice(status) {
+  const code = status !== null && typeof status === 'object'
+    ? status.code ?? status.reason ?? status.errorCode
+    : null;
+  if (code === 'LLM_SECRET_UNAVAILABLE') return FREE_QUESTION_DISABLED_NOTICE;
+  if (code === 'LLM_SPACE_DISABLED') return ASSISTANT_SPACE_DISABLED_NOTICE;
+  return ASSISTANT_SUGGEST_ONLY_NOTICE;
+}
+
+/**
  * The assistant backend probe: live only when the server publishes the
  * assistant status with free questions enabled. Anything else — 404, a
- * disabled flag, a network failure — is dry-run: the panel stays usable and
- * only the free-question box is off, with the key message.
+ * disabled flag, a network failure — is dry-run: the panel stays usable,
+ * the free-question box is hidden, and the notice names the real reason.
  * @param {{ request: (path: string) => Promise<any> }} client
  */
 export async function probeAssistantBackend(client) {
@@ -1001,15 +1064,22 @@ export async function probeAssistantBackend(client) {
       && status.endpoint === ASSISTANT_ASK_PATH) {
       return { mode: 'live', freeQuestions: 'enabled', endpoint: status.endpoint, notice: '' };
     }
-  } catch {
-    // Absent backend (today): dry-run, never a failure.
+    return {
+      mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: assistantDisabledNotice(status),
+    };
+  } catch (error) {
+    // Absent backend (today): dry-run, never a failure. A refusal carrying
+    // a stable code still names its reason.
+    return {
+      mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: assistantDisabledNotice(error),
+    };
   }
-  return { mode: 'dry-run', freeQuestions: 'disabled', endpoint: null, notice: FREE_QUESTION_DISABLED_NOTICE };
 }
 
 /**
- * One free question. In dry-run the question is refused with the key message
- * before any request leaves the panel — zero requests, never a silent call.
+ * One free question. In dry-run the question is refused with the status
+ * notice (or the suggest-only line when the status carries none) before
+ * any request leaves the panel — zero requests, never a silent call.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ mode: string, endpoint?: string | null }} status
  * @param {unknown} question
@@ -1020,23 +1090,28 @@ export async function askFreeQuestion(client, status, question) {
   if (text.length > FREE_QUESTION_MAX_LENGTH) {
     throw new Error(`La domanda è troppo lunga (massimo ${FREE_QUESTION_MAX_LENGTH} caratteri).`);
   }
+  const refusal = typeof status?.notice === 'string' && status.notice !== ''
+    ? status.notice
+    : ASSISTANT_SUGGEST_ONLY_NOTICE;
   if (status?.mode !== 'live' || typeof status?.endpoint !== 'string') {
-    return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
+    return { ok: false, disabled: true, notice: refusal };
   }
   // Re-validate the contract here instead of trusting status.endpoint: a
   // direct caller passing { mode: 'live', endpoint: '/api/...' } must never
   // steer the question text at an arbitrary route. Anything off-contract is
   // dry-run, with zero requests.
   if (status.endpoint !== ASSISTANT_ASK_PATH) {
-    return { ok: false, disabled: true, notice: FREE_QUESTION_DISABLED_NOTICE };
+    return { ok: false, disabled: true, notice: refusal };
   }
   // One fresh submission-owned key per question: keys come from the Admin
   // submission controller (KEY_RE) so the real client gate accepts them, and
   // the full question text is never truncated into a colliding identity.
+  const questionKey = issueAdminKey();
   const body = await client.request(status.endpoint, {
     method: 'POST',
     body: { question: text },
-    idempotencyKey: issueAdminKey(),
+    idempotencyKey: questionKey,
+    headers: { 'Idempotency-Key': questionKey },
   });
   const lines = Array.isArray(body?.lines) ? body.lines.map((line) => String(line)).filter((line) => line !== '') : [];
   /** @type {Source[]} */
@@ -1195,6 +1270,7 @@ export async function runAssistantAction(client, action, options = {}) {
       method: request.method ?? 'POST',
       body: request.body ?? {},
       idempotencyKey: key,
+      headers: { 'Idempotency-Key': key },
     });
   } catch (error) {
     recordExecution('failed', error instanceof Error ? error.message : 'Azione fallita.');
@@ -1231,7 +1307,13 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     pendingConfirmId: null,
     error: '',
     draft: null,
+    // Review #596 P2: a top-bar question asked while an answer is still
+    // running waits here (only the newest one) and starts when it ends.
+    queued: null,
   };
+  // Every open() takes a generation: a slow status probe never lets an older
+  // opening overwrite a newer question.
+  let openGeneration = 0;
 
   // Keep every finished answer for the session (BO-F4-04): conserved, newest
   // last, capped so a long shift never grows the panel without bounds.
@@ -1308,8 +1390,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   function renderTrace(answer) {
     const trace = answer?.trace;
     if (!trace || !Array.isArray(trace.reads) || trace.reads.length === 0) return null;
-    const wrap = el(doc, 'div', 'bo-assistant-trace');
-    wrap.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Traccia di esecuzione'));
+    // Collapsed by default (Dan 04/11): the reads are proof for whoever
+    // wants it, not the answer — «Come ho risposto» opens them.
+    const wrap = el(doc, 'details', 'bo-assistant-trace');
+    wrap.appendChild(el(doc, 'summary', 'bo-assistant-trace-summary', 'Come ho risposto · Traccia di esecuzione'));
     const list = el(doc, 'ul', 'bo-assistant-trace-list');
     for (const read of trace.reads) {
       if (!read || typeof read.target !== 'string') continue;
@@ -1417,8 +1501,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Azione fallita.';
     } finally {
-      state.busy = false;
-      render();
+      releaseBusy();
     }
   }
 
@@ -1434,8 +1517,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Suggerimento fallito.';
     } finally {
-      state.busy = false;
-      render();
+      releaseBusy();
     }
   }
 
@@ -1456,72 +1538,198 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     } catch (error) {
       state.error = error instanceof Error ? error.message : 'Domanda fallita.';
     } finally {
-      state.busy = false;
-      render();
+      releaseBusy();
     }
+  }
+
+  /**
+   * The one way out of «busy» (review #596 P1): every busy owner — a
+   * suggestion, a free question, a confirmed action — ends here, so a
+   * question queued meanwhile always starts.
+   */
+  function releaseBusy() {
+    state.busy = false;
+    render();
+    drainQueued();
+  }
+
+  /**
+   * The one close (review #596 P2): the header ✕ and the public close()
+   * both cancel what waits — no queued question and no slow probe may
+   * reopen the panel afterwards.
+   */
+  function doClose() {
+    state.open = false;
+    state.queued = null;
+    openGeneration += 1;
+    render();
+  }
+
+  /** Start the question that waited for the running answer, if any. */
+  function drainQueued() {
+    if (state.queued === null || !state.open) return;
+    const next = state.queued;
+    state.queued = null;
+    void openPanel(next.screenId, next.draft, next.customer, next.question);
+  }
+
+  async function openPanel(screenId, draft, customer, question) {
+    const typed = typeof question === 'string' ? question.trim() : '';
+    // Busy with an answer: the new question waits (newest wins) and the panel
+    // says so — the running answer never lands under the wrong question.
+    if (state.busy && typed !== '') {
+      state.open = true;
+      state.queued = { screenId, draft, customer, question: typed };
+      render();
+      return;
+    }
+    const generation = (openGeneration += 1);
+    // Review #596 P2: nothing shared changes before the probe answers — a
+    // run started meanwhile keeps its screen, draft and asked header.
+    const status = await probeAssistantBackend(client);
+    if (generation !== openGeneration) return;
+    if (state.busy && typed !== '') {
+      state.open = true;
+      state.queued = { screenId, draft, customer, question: typed };
+      render();
+      return;
+    }
+    state.open = true;
+    if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
+    state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
+    state.customerCtx = schedaCustomer(customer);
+    state.asked = null;
+    state.status = status;
+    // A new question never shows the previous answer (review #596 P1).
+    if (typed !== '') {
+      state.answer = null;
+      state.error = '';
+      state.pendingConfirmId = null;
+    }
+    if (typed === '') {
+      render();
+      return;
+    }
+    // A question typed in the top bar (Dan 05/11): live → the free
+    // question; otherwise the closest suggestion runs, and the panel says
+    // which one — the words are never silently dropped.
+    if (state.status?.mode === 'live') {
+      await submitFreeQuestion(typed);
+      return;
+    }
+    const match = closestSuggestion(state.screenId, typed);
+    state.asked = { text: typed, matched: match ? match.title : null };
+    if (match) {
+      await runSuggestionById(match.id);
+      return;
+    }
+    render();
   }
 
   function render() {
     clearMount();
     if (!state.open) return;
     const panel = el(doc, 'aside', 'bo-assistant');
+    panel.setAttribute('aria-label', 'Assistente');
     const header = el(doc, 'div', 'bo-assistant-header');
     header.appendChild(el(doc, 'h2', 'bo-assistant-name', 'Assistente'));
-    const close = el(doc, 'button', 'bo-assistant-close', 'Chiudi');
+    const live = state.status?.mode === 'live';
+    header.appendChild(el(doc, 'span', 'bo-assistant-mode', live ? 'AI attiva' : 'solo suggerimenti'));
+    const close = el(doc, 'button', 'bo-assistant-close', '✕');
+    close.setAttribute('type', 'button');
     close.setAttribute('aria-label', 'Chiudi assistente');
-    close.addEventListener('click', () => {
-      state.open = false;
-      render();
-    });
+    close.addEventListener('click', () => doClose());
     header.appendChild(close);
     panel.appendChild(header);
 
+    // Conversation column (Dan 04/11, design): answer first as a card,
+    // suggestions as chips, history and errors under it; the question box
+    // stays pinned at the bottom like a chat.
+    const scroll = el(doc, 'div', 'bo-assistant-scroll');
+    if (state.asked && typeof state.asked.text === 'string') {
+      const asked = el(doc, 'div', 'bo-assistant-asked');
+      asked.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.asked.text, 140)}»`));
+      asked.appendChild(el(doc, 'p', 'bo-assistant-asked-note', state.asked.matched
+        ? `Le domande libere non sono ancora attive: rispondo con «${state.asked.matched}».`
+        : 'Le domande libere non sono ancora attive: scegli una delle domande qui sotto.'));
+      scroll.appendChild(asked);
+    }
+    if (state.queued !== null) {
+      const waiting = el(doc, 'div', 'bo-assistant-asked');
+      waiting.setAttribute('data-queued', 'true');
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.queued.question, 140)}»`));
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-note', 'Finisco la risposta in corso, poi rispondo a questa.'));
+      scroll.appendChild(waiting);
+    }
+    const answer = renderAnswer();
+    if (!answer && !state.busy && !state.asked) {
+      const hello = el(doc, 'div', 'bo-assistant-hello');
+      hello.appendChild(el(doc, 'p', 'bo-assistant-hello-title', 'Cosa vuoi sapere?'));
+      hello.appendChild(el(doc, 'p', 'bo-assistant-hello-text', 'Rispondo leggendo i dati di questo spazio e ti porto alla scheda giusta.'));
+      scroll.appendChild(hello);
+    }
+    if (answer) scroll.appendChild(answer);
+    if (state.busy) {
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Lavoro in corso…'));
+    }
+    if (state.error !== '') {
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-error', state.error));
+    }
     const list = el(doc, 'div', 'bo-assistant-suggestions');
-    list.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Suggerimenti'));
+    list.appendChild(el(doc, 'p', 'bo-assistant-heading', answer ? 'Altre domande' : 'Prova a chiedere'));
+    const chips = el(doc, 'div', 'bo-assistant-chips');
     for (const suggestion of suggestionsFor(state.screenId)) {
       const button = el(doc, 'button', 'bo-assistant-suggestion', suggestion.title);
+      button.setAttribute('type', 'button');
       button.setAttribute('title', suggestion.detail);
       button.addEventListener('click', () => {
         void runSuggestionById(suggestion.id);
       });
-      list.appendChild(button);
+      chips.appendChild(button);
     }
-    panel.appendChild(list);
-
-    if (state.busy) {
-      panel.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Lavoro in corso…'));
-    }
-    const answer = renderAnswer();
-    if (answer) panel.appendChild(answer);
+    list.appendChild(chips);
+    scroll.appendChild(list);
     const history = renderHistory();
-    if (history) panel.appendChild(history);
-    if (state.error !== '') {
-      panel.appendChild(el(doc, 'p', 'bo-assistant-error', state.error));
-    }
+    if (history) scroll.appendChild(history);
+    panel.appendChild(scroll);
 
+    // Free questions are not part of the MVP: without a live backend the
+    // panel shows no free-question field at all — one honest line saying
+    // the assistant here suggests replies (Suggerisci), with the reason the
+    // status reported. The key sentence appears only for a really missing
+    // key, never as the default.
+    if (!live) {
+      const notice = typeof state.status?.notice === 'string' && state.status.notice !== ''
+        ? state.status.notice
+        : ASSISTANT_SUGGEST_ONLY_NOTICE;
+      panel.appendChild(el(doc, 'p', 'bo-assistant-notice bo-assistant-foot', notice));
+      // BO-F5-01 draft handoff ("+ Nuovo modulo" -> assistant): with no live
+      // backend there is no free-question field, but the caller's draft must
+      // not vanish silently — show it as inert read-only text (text only via
+      // el(), never markup, never a submit) next to the honest notice.
+      if (typeof state.draft === 'string' && state.draft !== '') {
+        panel.appendChild(el(doc, 'p', 'bo-assistant-draft bo-assistant-foot', state.draft));
+      }
+      mount.appendChild(panel);
+      return;
+    }
     const free = el(doc, 'form', 'bo-assistant-free');
-    free.appendChild(el(doc, 'p', 'bo-assistant-heading', 'Domanda libera'));
+    free.appendChild(el(doc, 'p', 'bo-assistant-heading bo-assistant-free-label', 'Domanda libera'));
+    const row = el(doc, 'div', 'bo-assistant-free-row');
     const input = doc.createElement('input');
     input.setAttribute('type', 'search');
     input.setAttribute('class', 'bo-assistant-input ui-field'); // BO-F6-02: system field class.
     input.setAttribute('aria-label', 'Domanda libera');
-    if (state.status?.mode !== 'live') {
-      input.setAttribute('disabled', 'true');
-      input.setAttribute('placeholder', 'Le domande libere arrivano con la chiave');
-    } else {
-      input.setAttribute('placeholder', 'Scrivi una domanda…');
-    }
+    input.setAttribute('placeholder', 'Scrivi una domanda…');
     // A caller-drafted handoff (BO-F5-01 "+ Nuovo modulo"): the description
     // typed on the screen lands in the panel input, so the user never
     // retypes it. Text only — never markup, never a submit.
     if (typeof state.draft === 'string' && state.draft !== '') input.value = state.draft;
-    free.appendChild(input);
+    row.appendChild(input);
     const send = el(doc, 'button', 'bo-assistant-send', 'Chiedi');
-    if (state.status?.mode !== 'live') send.setAttribute('disabled', 'true');
-    free.appendChild(send);
-    if (state.status?.mode !== 'live') {
-      free.appendChild(el(doc, 'p', 'bo-assistant-notice', FREE_QUESTION_DISABLED_NOTICE));
-    }
+    send.setAttribute('type', 'submit');
+    row.appendChild(send);
+    free.appendChild(row);
     free.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       void submitFreeQuestion(typeof input.value === 'string' ? input.value : '');
@@ -1534,23 +1742,18 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   return {
     /**
      * @param {unknown} screenId
-     * @param {unknown} [draft] a caller-typed description to prefill the
-     * free-question input with (BO-F5-01); anything else clears the draft.
+     * @param {unknown} [draft] a caller-typed description: with a live
+     * backend it prefills the free-question input (BO-F5-01), without one
+     * it is shown as inert read-only text; anything else clears the draft.
      * @param {unknown} [customer] the customer in context
      * (`{ resource, id }`, validated like every record identity); anything
      * else clears the context, so a later screen never reuses a stale one.
      */
-    async open(screenId, draft, customer) {
-      state.open = true;
-      if (typeof screenId === 'string' && screenId !== '') state.screenId = screenId;
-      state.draft = typeof draft === 'string' && draft !== '' ? draft : null;
-      state.customerCtx = schedaCustomer(customer);
-      state.status = await probeAssistantBackend(client);
-      render();
+    open(screenId, draft, customer, question) {
+      return openPanel(screenId, draft, customer, question);
     },
     close() {
-      state.open = false;
-      render();
+      doClose();
     },
     getState() {
       return {

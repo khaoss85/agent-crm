@@ -624,16 +624,25 @@ export function createConnectorDetailView(deps) {
     try {
       // The record id never travels on the read rows: resolve it from the
       // same module endpoint the quality queue reads (MEM_ACC_REUSE),
-      // narrowed to this binding's source key.
+      // narrowed to this binding's source key. The answer is trusted only
+      // when it names exactly the requested binding (backlog:3a3e6eaf):
+      // a relaxed or unfiltered answer must never renew another row.
+      const wanted = section.connectionKey;
       const read = await client.request(
-        `/api/modules/channel-connection/records?filter.sourceKey=${encodeURIComponent(section.connectionKey)}&limit=1`,
+        `/api/modules/channel-connection/records?filter.sourceKey=${encodeURIComponent(wanted)}&limit=1`,
       );
       const record = Array.isArray(read?.items) ? read.items[0] : null;
-      const id = record !== null && typeof record === 'object' && typeof record.id === 'string' && record.id !== ''
+      const sameBinding = (value) => typeof value !== 'string' || value === '' || value === wanted;
+      const id = record !== null && typeof record === 'object'
+        && typeof record.id === 'string' && record.id !== ''
+        && record.sourceKey === wanted
+        && sameBinding(record.binding)
+        && sameBinding(record.connectionKey)
+        && sameBinding(record.connection_key)
         ? record.id : null;
       if (id === null) {
-        toast('Collegamento non trovato: ricarica e riprova.', true);
-        render(channel, section.connectionKey);
+        toast('Collegamento non trovato, ricarica la pagina.', true);
+        render(channel, wanted);
         return;
       }
       await client.request(

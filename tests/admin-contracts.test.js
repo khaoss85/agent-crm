@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin contract activation section (Milestone 12, ADR-018 domain
@@ -185,6 +186,7 @@ function stubClient({ order = ORDER, plans = [AMBIGUOUS_PLAN], schema = SCHEMA, 
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return schema;
       if (options.method === 'POST' && path.endsWith('/actions/plan-activation')) {

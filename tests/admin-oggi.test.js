@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import {
@@ -383,7 +384,8 @@ test('triage done and postpone are both reversible with undo', () => {
 test('execute re-reads the record and refuses a changed datum', async () => {
   const action = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [], now: OGGI_NOW }).actions[0];
   const calls = [];
-  const matching = async (path) => {
+  const matching = async (path, options = {}) => {
+    enforceAdminWriteGate(path, options);
     assert.ok(path.endsWith('/records/task-1'), `re-reads by id: ${path}`);
     return { ...TASK_OPEN };
   };
@@ -395,7 +397,10 @@ test('execute re-reads the record and refuses a changed datum', async () => {
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1].status, 'open');
 
-  const changed = async () => ({ ...TASK_OPEN, title: 'Titolo cambiato nel frattempo' });
+  const changed = async (path = '', options = {}) => {
+    enforceAdminWriteGate(path, options);
+    return { ...TASK_OPEN, title: 'Titolo cambiato nel frattempo' };
+  };
   let ran = false;
   await assert.rejects(
     executeAdvisorAction({ request: changed }, action, async () => { ran = true; }),
@@ -403,7 +408,10 @@ test('execute re-reads the record and refuses a changed datum', async () => {
   );
   assert.equal(ran, false, 'the domain action never fires on stale data');
 
-  const closed = async () => ({ ...TASK_OPEN, status: 'completed' });
+  const closed = async (path = '', options = {}) => {
+    enforceAdminWriteGate(path, options);
+    return { ...TASK_OPEN, status: 'completed' };
+  };
   await assert.rejects(
     executeAdvisorAction({ request: closed }, action, async () => {}),
     (error) => error.code === 'OGGI_STALE_RECORD',
@@ -411,7 +419,7 @@ test('execute re-reads the record and refuses a changed datum', async () => {
 
   let requested = false;
   await assert.rejects(
-    executeAdvisorAction({ request: async () => { requested = true; } }, { record: {} }, async () => {}),
+    executeAdvisorAction({ request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); requested = true; } }, { record: {} }, async () => {}),
     (error) => error.code === 'OGGI_INVALID_RECORD',
   );
   assert.equal(requested, false, 'no read without a cited record');
@@ -815,7 +823,8 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   };
   const seen = [];
   const data = await loadOggiData({
-    request: async (path) => {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       seen.push(path);
       if (path === '/api/schema') return { domains: {} };
       if (path === '/api/profile') return profile;
@@ -827,7 +836,8 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   assert.equal(countConnectedNine(data.connections, data.profile), 1, 'Gmail counts Email as connected');
 
   const refused = await loadOggiData({
-    request: async (path) => {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { domains: {} };
       throw new Error('no profile here');
     },
@@ -1000,6 +1010,7 @@ function oggiFakeClient(state) {
   return {
     posts: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const method = String(options.method ?? 'GET').toUpperCase();
       if (method !== 'GET') {
         this.posts.push({ path, body: options.body });
@@ -1045,6 +1056,7 @@ test('Oggi view postpones through the work-task action, then keeps the open row'
   const client = {
     posts: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const method = String(options.method ?? 'GET').toUpperCase();
       if (method !== 'GET') {
         this.posts.push({ path, body: options.body });
@@ -1099,4 +1111,50 @@ test('Oggi view keeps the row open and shows the refusal on stale data', async (
   await settle(() => mount.textContent.includes('Il dato è cambiato'));
   assert.equal(client.posts.length, 0, 'no mutation on stale data');
   assert.ok(mount.querySelector('button[data-triage="postpone"]'), 'the row stays open');
+});
+
+test('Da rispondere: one row per conversation waiting on the team, newest first (MVP Presti, Dan 04/11)', async () => {
+  const { buildInbox, waitedFor } = await import('../apps/admin/public/admin-oggi.js');
+  const now = new Date('2026-11-04T15:00:00Z');
+  const host = { subjectOwner: 'host', subjectResource: 'contact' };
+  const conversations = [
+    { id: 'c1', subjectLabel: 'Fio Neri', channel: 'whatsapp', status: 'open' },
+    { id: 'c2', subjectLabel: 'Lia Marroni', channel: 'instagram', status: 'open' },
+    { id: 'c3', subjectLabel: 'Ada Rossi', channel: 'email', status: 'open' },
+    { id: 'c4', subjectLabel: 'Chiusa', channel: 'whatsapp', status: 'closed' },
+  ];
+  const messages = [
+    { conversationId: 'c1', direction: 'inbound', channel: 'whatsapp', body: 'Quanto costa il pacchetto?', occurredAt: '2026-11-04T12:00:00Z', ...host, subjectId: 'p1' },
+    { conversationId: 'c2', direction: 'inbound', channel: 'instagram', body: 'Fate anche Milano?', occurredAt: '2026-11-04T14:30:00Z', ...host, subjectId: 'p2' },
+    { conversationId: 'c3', direction: 'inbound', channel: 'email', body: 'Ciao', occurredAt: '2026-11-04T10:00:00Z', ...host, subjectId: 'p3' },
+    { conversationId: 'c3', direction: 'outbound', channel: 'email', body: 'Risposto', occurredAt: '2026-11-04T11:00:00Z', ...host, subjectId: 'p3' },
+    { conversationId: 'c4', direction: 'inbound', channel: 'whatsapp', body: 'vecchia', occurredAt: '2026-11-04T14:50:00Z', ...host, subjectId: 'p4' },
+  ];
+  const inbox = buildInbox({ messages, conversations, now });
+  assert.equal(inbox.total, 2, 'the answered and the closed conversations are not waiting');
+  assert.deepEqual(inbox.rows.map((row) => row.name), ['Lia Marroni', 'Fio Neri'], 'newest first');
+  assert.equal(inbox.rows[0].mono, 'IG');
+  assert.equal(inbox.rows[0].when, 'da 30 min · Instagram');
+  assert.equal(inbox.rows[1].href, '#/customer-card/contact/p1', 'Rispondi opens the scheda');
+  assert.equal(waitedFor('2026-11-03T15:00:00Z', now), 'da ieri');
+});
+
+test('Da rispondere renders its rows, the empty line and the unreadable line', async () => {
+  const { renderOggi } = await import('../apps/admin/public/admin-oggi.js');
+  const draw = (inbox) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const navigated = [];
+    renderOggi({ doc, mount, userName: 'Dan', navigate: (h) => navigated.push(h), home: { actions: [], agenda: [], inbox } });
+    return { mount, navigated };
+  };
+  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'WA', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
+  assert.ok(full.mount.textContent.includes('Da rispondere'));
+  assert.ok(full.mount.textContent.includes('1 in attesa'));
+  assert.ok(full.mount.textContent.includes('Fio Neri') && full.mount.textContent.includes('Quanto costa?'));
+  full.mount.findAll('button').find((b) => b.getAttribute('data-action') === 'inbox-reply').dispatch('click');
+  assert.deepEqual(full.navigated, ['#/customer-card/contact/p1']);
+  assert.ok(draw({ available: true, total: 0, rows: [] }).mount.textContent.includes('Nessun messaggio aspetta una risposta'));
+  assert.ok(draw({ available: false, total: 0, rows: [] }).mount.textContent.includes('non si sono potuti leggere'));
+  assert.ok(!draw(null).mount.textContent.includes('Da rispondere'), 'without interactions composed the section is absent');
 });

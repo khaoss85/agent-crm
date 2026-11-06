@@ -146,6 +146,24 @@ function memoryStorage() {
  * @param {{request: Function}} client
  * @param {{ submissions?: ReturnType<typeof createSubmissionController>, storage?: any }} [deps]
  */
+/**
+ * A /bo write that rides the worker answers `{ saved, spaceId }`: the
+ * framework's own result is `saved`, the space is the session's. Screens
+ * read the framework result (receipts, record, product…), so the envelope
+ * is opened here once for every write instead of in each screen (prod
+ * 03/11: Nuovo cliente saved and still said «non si è potuto creare»).
+ * Any other answer passes through untouched.
+ * @param {unknown} answer
+ */
+export function unwrapBoWriteAnswer(answer) {
+  if (answer && typeof answer === 'object' && !Array.isArray(answer)) {
+    const keys = Object.keys(answer).sort().join(',');
+    const saved = /** @type {any} */ (answer).saved;
+    if (keys === 'saved,spaceId' && saved && typeof saved === 'object') return saved;
+  }
+  return answer;
+}
+
 export function bindAdminMutations(client, deps = {}) {
   const submissions = deps.submissions ?? createSubmissionController({
     storage: deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? memoryStorage() : globalThis.localStorage),
@@ -175,7 +193,7 @@ export function bindAdminMutations(client, deps = {}) {
             method,
             body,
             key: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
-          });
+          }).then(unwrapBoWriteAnswer);
         }
         return client.request(path, options);
       },

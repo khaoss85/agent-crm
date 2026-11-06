@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Admin signature and order section (ADR-017) renders from server state
@@ -85,6 +86,7 @@ function stubClient({ envelopes = [], signers = [], artifacts = [], orders = [],
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
       if (options.method === 'POST') return { ok: true, result: { envelope: envelopes[0] ?? ENVELOPE } };
@@ -119,12 +121,12 @@ test('an approved quote with no envelope offers exactly one send control, with i
   const mount = await render(client);
   const text = mount.textContent;
 
-  assert.ok(text.includes('Signature'), 'the signature section renders');
-  assert.ok(text.includes('Request signature'), 'the send control is offered');
-  assert.ok(text.includes('human user actor'), 'the human-actor requirement is stated');
-  assert.ok(text.includes('not Sales or Legal role enforcement'), 'the boundary is not overclaimed');
-  assert.ok(text.includes('Signer identity assurance is not claimed'));
-  assert.ok(text.includes('All signers are required'), 'v1 signer semantics are stated');
+  assert.ok(text.includes('Firma'), 'the signature section renders');
+  assert.ok(text.includes('Richiedi firma'), 'the send control is offered');
+  assert.ok(text.includes('serve un utente umano'), 'the human-actor requirement is stated');
+  assert.ok(text.includes('non un controllo di ruoli commerciali o legali'), 'the boundary is not overclaimed');
+  assert.ok(text.includes('Nessuna garanzia sull’identità dei firmatari'));
+  assert.ok(text.includes('Tutti i firmatari devono firmare'), 'v1 signer semantics are stated');
   // No payment, invoice, delivery or fulfillment control exists anywhere.
   assert.ok(!/payment|invoice|billing|fulfil|delivery note/i.test(text), text);
 
@@ -154,17 +156,17 @@ test('a completed envelope renders evidence and the order, with no edit controls
   assert.ok(text.includes('env_abc123'), 'provider envelope id shown');
   assert.ok(text.includes('d'.repeat(64)), 'document hash shown');
   assert.ok(text.includes('Mario Rossi'), 'signer shown');
-  assert.ok(text.includes('signed'), 'signer status shown');
+  assert.ok(text.includes('firmato'), 'signer status shown');
   assert.ok(text.includes('b'.repeat(64)), 'artifact hash shown');
   assert.ok(text.includes('fixture://artifacts/env_abc123'), 'artifact reference shown');
-  assert.ok(text.includes('not a legally qualified signature'), 'the assurance limit is stated');
-  assert.ok(text.includes('Long-term object-storage durability is not claimed'));
+  assert.ok(text.includes('non è una firma legalmente qualificata'), 'the assurance limit is stated');
+  assert.ok(text.includes('Nessuna garanzia di conservazione a lungo termine'));
 
   // The order and its grouped totals, never summed and never annualized.
   assert.equal(byClass(mount, 'div', 'quote-order').getAttribute('data-order'), 'ord1');
-  assert.ok(text.includes('EUR 4,750.00'), 'one-time order total');
-  assert.ok(text.includes('EUR 2,850.00'), 'monthly order total');
-  assert.ok(text.includes('never recalculated from the current catalog'));
+  assert.ok(text.includes('Una tantum: 4.750 € netto'), 'one-time order total');
+  assert.ok(text.includes('Ricorrente ogni 1 mese: 2.850 € netto'), 'monthly order total');
+  assert.ok(text.includes('mai ricalcolate dal catalogo attuale'));
   assert.ok(!/\b(ARR|MRR|TCV)\b/.test(text), 'no annualized figure is derived');
 
   // Everything here is evidence: no input, select or send control remains.
@@ -180,21 +182,21 @@ test('a failed envelope states its uncertainty honestly and offers reconciliatio
   const unknown = { ...ENVELOPE, status: 'failed', providerEnvelopeId: null, failureCode: 'PROVIDER_TIMEOUT', failurePhase: 'external' };
   const client = stubClient({ envelopes: [unknown], signers: [{ ...SIGNER, status: 'pending' }] });
   const mount = await render(client);
-  assert.ok(mount.textContent.includes('The external phase failed (PROVIDER_TIMEOUT)'), mount.textContent);
-  assert.ok(mount.textContent.includes('is UNKNOWN'), 'an unknown provider outcome is never presented as known');
-  assert.ok(mount.textContent.includes('never request a second signature'));
+  assert.ok(mount.textContent.includes('La fase external non è riuscita (PROVIDER_TIMEOUT)'), mount.textContent);
+  assert.ok(mount.textContent.includes('Non si sa se il fornitore ha accettato'), 'an unknown provider outcome is never presented as known');
+  assert.ok(mount.textContent.includes('mai chiedere una seconda firma'));
   assert.equal(anyByClass(mount, 'signature-request'), null, 'no second send control is ever offered');
   await byClass(mount, 'div', 'signature-envelope').__reconcile();
   assert.equal(client.calls.find((call) => call.method === 'POST').path, '/api/signature/envelopes/env1/reconcile');
 
   // Known acceptance: only the local step after it failed.
   const accepted = await render(stubClient({ envelopes: [{ ...unknown, providerEnvelopeId: 'env_abc123', failurePhase: 'finalize', failureCode: 'INJECTED' }] }));
-  assert.ok(accepted.textContent.includes('DID accept this envelope'), accepted.textContent);
+  assert.ok(accepted.textContent.includes('HA accettato questa busta'), accepted.textContent);
 
   // Known absence: the provider never received it, and M11 has no resend.
   const absent = await render(stubClient({ envelopes: [{ ...unknown, failureCode: 'PROVIDER_ENVELOPE_ABSENT' }] }));
-  assert.ok(absent.textContent.includes('does not have this envelope'), absent.textContent);
-  assert.ok(absent.textContent.includes('cannot be sent again in this milestone'), 'the limitation is stated, not hidden');
+  assert.ok(absent.textContent.includes('non ha questa busta'), absent.textContent);
+  assert.ok(absent.textContent.includes('non si può inviare di nuovo in questa fase'), 'the limitation is stated, not hidden');
 
   // A terminal envelope offers no reconcile control at all: there is nothing
   // left to reconcile, and the evidence is read-only.
@@ -220,6 +222,7 @@ test('a project without signature enabled degrades to a clear message', async ()
   const client = {
     calls: [],
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       client.calls.push({ path, method: options.method ?? 'GET' });
       if (path === '/api/schema') return { commercial: SCHEMA.commercial };
       if (path.startsWith('/api/modules/quote/records/')) return APPROVED_QUOTE;
@@ -228,7 +231,7 @@ test('a project without signature enabled degrades to a clear message', async ()
     },
   };
   const mount = await render(client);
-  assert.ok(mount.textContent.includes('Signature is not enabled in this project.'));
+  assert.ok(mount.textContent.includes('La firma non è attiva in questo progetto.'));
   assert.equal(anyByClass(mount, 'signature-request'), null);
   assert.ok(!client.calls.some((call) => call.path.includes('signature-envelope')), 'no signature records are fetched');
 });

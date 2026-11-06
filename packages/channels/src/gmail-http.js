@@ -5,8 +5,12 @@ import {
   GMAIL_MAX_TEXT,
   buildGmailSendRequest,
   canonicalGmailAddress,
-  gmailThreadIdForSubject,
+  isAutomatedGmailRecipient,
+  isBulkGmailMessage,
   isGmailThreadId,
+  gmailThreadIdForSubject,
+  parseGmailAddressHeader,
+  parseGmailRecipients,
 } from './gmail.js';
 
 /**
@@ -28,8 +32,8 @@ import {
 
 export const GMAIL_API_BASE = 'https://gmail.googleapis.com';
 
-function httpError(message, code, status) {
-  return new AppError(message, { code, status });
+function httpError(message, code, status, details) {
+  return new AppError(message, { code, status, ...(details === undefined ? {} : { details }) });
 }
 
 function assertSecret(secret, what) {
@@ -55,6 +59,49 @@ function restHeader(payload, name) {
   return null;
 }
 
+/** Every value one header name carries on a REST payload (To/Cc may repeat). */
+function restHeaderAll(payload, name) {
+  const headers = payload && typeof payload === 'object' && Array.isArray(payload.headers)
+    ? payload.headers
+    : [];
+  const want = String(name).toLowerCase();
+  const values = [];
+  for (const entry of headers) {
+    if (entry && typeof entry === 'object'
+      && typeof entry.name === 'string' && entry.name.toLowerCase() === want
+      && typeof entry.value === 'string') {
+      values.push(entry.value);
+    }
+  }
+  return values;
+}
+
+/**
+ * The three bulk headers off a REST payload, in the plain shape
+ * `isBulkGmailMessage` reads (backlog:13c09f03, backlog:1a4d9b30):
+ * same three names the fake path reads, same closed-vocabulary verdict.
+ */
+function restBulkHeaders(payload) {
+  const list = restHeaderAll(payload, 'List-Unsubscribe');
+  const precedence = restHeaderAll(payload, 'Precedence');
+  const auto = restHeaderAll(payload, 'Auto-Submitted');
+  return {
+    listUnsubscribe: list.length > 0 ? list[0] : null,
+    precedence: precedence.length > 0 ? precedence[0] : null,
+    autoSubmitted: auto.length > 0 ? auto[0] : null,
+  };
+}
+
+/** One sender-shaped evidence off a REST address header: address plus display name, never a throw past the caller. */
+function restAddressEvidence(raw) {
+  const parsed = parseGmailAddressHeader(raw);
+  return {
+    handle: parsed.address,
+    ...(parsed.firstName === null ? {} : { firstName: parsed.firstName }),
+    ...(parsed.lastName === null ? {} : { lastName: parsed.lastName }),
+  };
+}
+
 /**
  * Normalize one Gmail REST message (`messages.get` with
  * `format=metadata`) onto the channel event shape the inbox path reads:
@@ -64,8 +111,11 @@ function restHeader(payload, name) {
  * otherwise — a message id never lands in the `email:` namespace.
  *
  * A delivery off our own mailbox (a sent copy looping back) normalizes
- * to an empty subject, exactly like the push path: the operations layer
- * quarantines it as evidence, never as a customer.
+ * to an empty subject with its recipients attached, exactly like the
+ * push path: the operations layer reconciles the recipients into leads
+ * and quarantines a loopback with nobody else as evidence, never as a
+ * customer. Mass mail normalizes to an empty subject with no sender at
+ * all: no contact is ever invented from it.
  */
 export function normalizeGmailRestMessage(wire, mailbox) {
   if (!wire || typeof wire !== 'object' || Array.isArray(wire)) {
@@ -84,22 +134,43 @@ export function normalizeGmailRestMessage(wire, mailbox) {
   }
   let from;
   try {
-    const rawFrom = restHeader(wire.payload, 'From') ?? '';
-    const bare = rawFrom.includes('<')
-      ? (/<([^<>]*)>/.exec(rawFrom)?.[1] ?? '')
-      : rawFrom.trim();
-    from = canonicalGmailAddress(bare);
+    from = restAddressEvidence(restHeader(wire.payload, 'From') ?? '');
   } catch {
     throw httpError('Gmail message needs a valid sender address', 'CHANNEL_EVENT_MALFORMED', 422);
-  }
-  if (from === mailbox) {
-    return { providerEventId: id, subject: '', sequence: null, occurredAt: null };
   }
   const atMs = typeof wire.internalDate === 'string'
     ? Number.parseInt(wire.internalDate, 10)
     : wire.internalDate;
   if (!Number.isSafeInteger(atMs) || atMs < 0 || atMs > 4102444800000) {
     throw httpError('Gmail message needs a valid internalDate', 'CHANNEL_EVENT_MALFORMED', 422);
+  }
+  const atIso = new Date(atMs).toISOString();
+  // The linked mailbox reads first (backlog:1a4d9b30, arbitration 06/11):
+  // mail the owner sent — even from an automated-looking mailbox like
+  // support@ — is never bulk-quarantined for its From alone.
+  if (from.handle === mailbox) {
+    // Same recipient door as the fake path (backlog:1a4d9b30): an
+    // automated To/Cc never becomes a lead, and an all-automated To/Cc
+    // quarantines as evidence below.
+    const recipients = parseGmailRecipients(
+      restHeaderAll(wire.payload, 'To'), restHeaderAll(wire.payload, 'Cc'), mailbox,
+    ).filter((recipient) => !isAutomatedGmailRecipient(recipient.handle));
+    if (recipients.length === 0) {
+      return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
+    }
+    return {
+      providerEventId: id,
+      subject: `email:${threadId}`,
+      sequence: atMs,
+      occurredAt: atIso,
+      text: '',
+      recipients,
+    };
+  }
+  // Bulk quarantines inbound only: the mailbox branch above already took
+  // the owner's sent mail (backlog:1a4d9b30).
+  if (isBulkGmailMessage({ from: from.handle, ...restBulkHeaders(wire.payload) })) {
+    return { providerEventId: id, subject: '', sequence: null, occurredAt: atIso };
   }
   const snippet = typeof wire.snippet === 'string' ? wire.snippet : '';
   if (snippet.length > GMAIL_MAX_TEXT) {
@@ -109,9 +180,10 @@ export function normalizeGmailRestMessage(wire, mailbox) {
     providerEventId: id,
     subject: `email:${threadId}`,
     sequence: atMs,
-    occurredAt: new Date(atMs).toISOString(),
+    occurredAt: atIso,
     text: snippet,
     attachment: null,
+    sender: from,
   };
 }
 
@@ -125,14 +197,94 @@ async function readJson(response, what) {
   throw httpError(`Gmail ${what} returned an unreadable response`, 'CHANNEL_HISTORY_MALFORMED', 502);
 }
 
-function mapHistoryFailure(status, what) {
+/**
+ * Google's machine reason for a refused call, or null. The shape is the
+ * documented error envelope (`{ error: { errors: [{ reason }], status } }`):
+ * `errors[0].reason` first (`insufficientPermissions` for a missing scope,
+ * `accessNotConfigured` for a disabled Gmail API, `authError` for a dead
+ * grant), then the envelope `status` (`PERMISSION_DENIED`,
+ * `UNAUTHENTICATED`). Only those two code fields travel — never the
+ * envelope message (it can echo the request), never the token, never an
+ * address: anything else falls back to the closed-vocabulary refusal.
+ */
+function googleRefusalReason(body) {
+  const envelope = body && typeof body === 'object' && !Array.isArray(body) ? body.error : null;
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return null;
+  const errors = Array.isArray(envelope.errors) ? envelope.errors : [];
+  const first = errors.length > 0 && errors[0] && typeof errors[0] === 'object' && !Array.isArray(errors[0])
+    ? errors[0]
+    : null;
+  for (const candidate of [first?.reason, envelope.status]) {
+    if (typeof candidate === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Gmail answers quota exhaustion with 403, not 429: after hundreds of
+ * `messages.get` calls in one import the provider refuses with
+ * `rateLimitExceeded`, which used to read as a revoked grant
+ * (CHANNEL_HISTORY_REFUSED, backlog:3a3a41b2). The body's machine reason
+ * tells the two apart — a quota reason retries, only an auth-shaped
+ * refusal (or no reason at all, fail-closed) keeps the refused code.
+ * The reason itself never lands in a message, a row or a rethrow.
+ */
+const GMAIL_QUOTA_REASONS = new Set([
+  'rateLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded',
+  'dailyLimitExceeded', 'dailyLimitExceededUnreg',
+]);
+
+function mapHistoryFailure(status, what, body) {
+  if (status === 403 && GMAIL_QUOTA_REASONS.has(googleRefusalReason(body))) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
   if (status === 401 || status === 403) {
+    const reason = googleRefusalReason(body);
     throw httpError(`Gmail ${what} refused: the grant is missing, expired or revoked`,
-      'CHANNEL_HISTORY_REFUSED', 403);
+      'CHANNEL_HISTORY_REFUSED', 403, reason === null ? undefined : { reason });
   }
   if (status === 429) {
     throw httpError(`Gmail ${what} is rate limited: retry the import later`,
       'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
+  // The list-level read always aborts the page with a retryable code:
+  // a status that names "not found" (HTTP 404) is still a provider
+  // failure here — the per-message get below is the only path that may
+  // skip one message gone between list and get, and only on Google's
+  // confirmed not-found envelope. Keeping 404 out of the transient
+  // pair stops retry, alerting and HTTP mapping keyed on status from
+  // reading "not found" for a retryable condition (backlog:3a3a41b2).
+  throw httpError(`Gmail ${what} failed without provider detail: retry the import later`,
+    'CHANNEL_HISTORY_TRANSIENT', 502);
+}
+
+/**
+ * One `messages.get` failure, mapped beside the list-level mapper. Quota
+ * and outage map exactly like the list read (retryable); a 404 carrying
+ * Google's confirmed not-found envelope (`reason: 'notFound'`) becomes
+ * the gone marker the loop skips — one deleted message never aborts the
+ * hundreds already read. Any other 404 (transient miss, mapped proxy
+ * error) still aborts the page as transient, so a live message is
+ * retried instead of silently dropped (backlog:3a3a41b2). The marker
+ * carries a fixed message and no body: no provider text travels.
+ */
+function mapHistoryGetFailure(status, what, body) {
+  if (status === 403 && GMAIL_QUOTA_REASONS.has(googleRefusalReason(body))) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
+  if (status === 401 || status === 403) {
+    const reason = googleRefusalReason(body);
+    throw httpError(`Gmail ${what} refused: the grant is missing, expired or revoked`,
+      'CHANNEL_HISTORY_REFUSED', 403, reason === null ? undefined : { reason });
+  }
+  if (status === 429) {
+    throw httpError(`Gmail ${what} is rate limited: retry the import later`,
+      'CHANNEL_HISTORY_TRANSIENT', 503);
+  }
+  if (status === 404 && googleRefusalReason(body) === 'notFound') {
+    throw httpError('Gmail message gone between list and get: skipped', 'CHANNEL_HISTORY_MESSAGE_GONE', 404);
   }
   throw httpError(`Gmail ${what} failed without provider detail: retry the import later`,
     'CHANNEL_HISTORY_TRANSIENT', 502);
@@ -192,7 +344,16 @@ export function createGmailHttpIo(options = {}) {
       throw httpError(`Gmail ${what} is unreachable: retry later`, 'CHANNEL_HISTORY_TRANSIENT', 503);
     }
     if (!response || response.ok !== true) {
-      mapFailure(Number.isSafeInteger(response?.status) ? response.status : 502, what);
+      // The refusal mapper reads the provider envelope (reason codes only,
+      // never text): consume the body once here, since the mapper throws.
+      let failureBody = null;
+      try {
+        const parsed = await response?.json();
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) failureBody = parsed;
+      } catch {
+        // Unreadable refusal body: the mapper falls back to the bare code.
+      }
+      mapFailure(Number.isSafeInteger(response?.status) ? response.status : 502, what, failureBody);
     }
     return readJson(response, what);
   }
@@ -202,7 +363,9 @@ export function createGmailHttpIo(options = {}) {
     /**
      * Page the mailbox oldest-first: threads since the instant, one
      * normalized event per message with its sender attached — the same
-     * page shape the fake serves, so the import converges identically.
+     * page shape the fake serves, so the import converges identically —
+     * plus `skippedMessages`, the count of provider-confirmed-gone
+     * messages skipped on this page.
      */
     async listHistory({ secret, since, pageToken, limit }) {
       assertSecret(secret, 'history');
@@ -222,23 +385,44 @@ export function createGmailHttpIo(options = {}) {
       );
       const messages = Array.isArray(listed.messages) ? listed.messages : [];
       const events = [];
+      // Messages Google confirms gone between list and get: skipped, and
+      // counted on the page so a systematically-404 read is visible as a
+      // number instead of a silently shorter page (backlog:3a3a41b2).
+      let skippedMessages = 0;
       for (const entry of messages) {
         if (!entry || typeof entry !== 'object' || typeof entry.id !== 'string' || entry.id === '') continue;
-        const full = await call(
-          `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}`
-          + '?format=metadata&metadataHeaders=From&metadataHeaders=Subject',
-          { method: 'GET', headers: headers(secret) },
-          'history',
-          mapHistoryFailure,
-        );
-        const normalized = normalizeGmailRestMessage(full, mailbox);
-        if (normalized.subject === '') {
-          // Our own sent copy looping back: quarantined as evidence with
-          // its provider time, the same way the push path treats it.
-          events.push({ ...normalized, sender: { handle: mailbox } });
-          continue;
+        let full;
+        try {
+          // To/Cc name the recipients the owner wrote to (backlog:13c09f03)
+          // and List-Unsubscribe/Precedence/Auto-Submitted mark mass mail
+          // (backlog:1a4d9b30): requested like From, so the fake and the
+          // REST reader reconcile identically.
+          const meta = new URLSearchParams();
+          meta.set('format', 'metadata');
+          for (const name of ['From', 'To', 'Cc', 'List-Unsubscribe', 'Precedence', 'Auto-Submitted']) {
+            meta.append('metadataHeaders', name);
+          }
+          full = await call(
+            `${baseUrl}/gmail/v1/users/me/messages/${encodeURIComponent(entry.id)}?${meta.toString()}`,
+            { method: 'GET', headers: headers(secret) },
+            'history',
+            mapHistoryGetFailure,
+          );
+        } catch (error) {
+          // Only the confirmed-gone marker skips: one deleted message
+          // must not abort the hundreds already read. Anything else —
+          // quota, refusal, an unconfirmed 404 — still aborts the page
+          // and the retry re-reads it.
+          if (error?.code === 'CHANNEL_HISTORY_MESSAGE_GONE') {
+            skippedMessages += 1;
+            continue;
+          }
+          throw error;
         }
-        events.push({ ...normalized, sender: { handle: senderOf(full) } });
+        // The normalizer already carries sender, recipients, bulk and
+        // loopback evidence in the same shape the fake serves — pushed
+        // unchanged, so the import converges identically on both readers.
+        events.push(normalizeGmailRestMessage(full, mailbox));
       }
       const next = typeof listed.nextPageToken === 'string' && listed.nextPageToken !== ''
         ? listed.nextPageToken
@@ -249,7 +433,7 @@ export function createGmailHttpIo(options = {}) {
         if (atA !== atB) return atA < atB ? -1 : 1;
         return a.providerEventId < b.providerEventId ? -1 : 1;
       });
-      return { events, nextPageToken: next };
+      return { events, nextPageToken: next, skippedMessages };
     },
 
     /**
@@ -293,11 +477,4 @@ export function createGmailHttpIo(options = {}) {
       };
     },
   };
-
-  /** The sender behind one REST message: already validated by the normalizer. */
-  function senderOf(full) {
-    const raw = restHeader(full?.payload, 'From') ?? '';
-    const bare = raw.includes('<') ? (/<([^<>]*)>/.exec(raw)?.[1] ?? '') : raw.trim();
-    return canonicalGmailAddress(bare);
-  }
 }

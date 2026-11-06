@@ -63,12 +63,38 @@ const parseBreakdown = (text) => {
 };
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
+/**
+ * The policy reason the server writes speaks basis points («sconto massimo
+ * 0bps entro il limite 1000bps»): the owner reads percentages.
+ * @param {unknown} reason
+ */
+export function percentReason(reason) {
+  return String(reason ?? '').replace(/(\d+)\s?bps\b/g, (_, bps) =>
+    `${(Number(bps) / 100).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}%`);
+}
+
 export function createQuoteView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
+  /** The space the quote is issued by (Dan 06/11: a quote is a little personal). */
+  const spaceName = () => {
+    try {
+      const name = typeof deps.spaceName === 'function' ? deps.spaceName() : deps.spaceName;
+      return typeof name === 'string' ? name.trim() : '';
+    } catch {
+      return '';
+    }
+  };
   const { client } = bindAdminMutations(deps.client, deps);
   let renderToken = 0;
 
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  /** A small labelled field: the label names the input (never a bare «1» / «0»). */
+  const labelled = (text, input) => {
+    const field = el('label', 'quote-field');
+    field.appendChild(el('span', 'quote-field-label', text));
+    field.appendChild(input);
+    return field;
+  };
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
@@ -137,27 +163,27 @@ export function createQuoteView(deps) {
    */
   async function resolveCardBackLink(quote) {
     const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
-    if (opportunityId === null) return { back: null, opportunityName: null };
+    if (opportunityId === null) return { back: null, opportunityName: null, customerName: null };
     let opportunity;
     try {
       opportunity = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}`);
     } catch {
-      return { back: null, opportunityName: null };
+      return { back: null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
     const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
     const subjectId = contactId ?? companyId;
-    if (resource === null || subjectId === null) return { back: null, opportunityName };
+    if (resource === null || subjectId === null) return { back: null, opportunityName, customerName: null };
     const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
     const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : null;
-    if (name === null) return { back: null, opportunityName };
+    if (name === null) return { back: null, opportunityName, customerName: null };
     const back = el('a', 'quote-back');
     back.setAttribute('href', `#/customer-card/${resource}/${encodeURIComponent(subjectId)}`);
     // Text only: a hostile customer name stays inert text inside the link.
     back.textContent = `← ${name}`;
-    return { back, opportunityName };
+    return { back, opportunityName, customerName: name };
   }
 
   async function renderQuoteList() {
@@ -277,7 +303,7 @@ export function createQuoteView(deps) {
     // Heading and status already paint as the loading indicator, so they move
     // below the link with remove-then-append (a move in both the real DOM
     // and the test double, never a copy).
-    const { back, opportunityName } = await resolveCardBackLink(quote);
+    const { back, opportunityName, customerName } = await resolveCardBackLink(quote);
     if (token !== renderToken) return;
     if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
     if (back !== null) {
@@ -288,33 +314,69 @@ export function createQuoteView(deps) {
       mount.appendChild(status);
     }
 
-    const summary = el('div', 'quote-summary');
-    summary.setAttribute('data-status', quote.status);
-    for (const [label, value] of [
-      ['Stato', quoteStatusLabel(quote.status)],
-      ['Valuta', quote.currency],
-      ['Revisione bozza', quote.draftRevision],
-    ]) {
-      const row = el('p', 'quote-fact');
-      row.appendChild(el('strong', undefined, `${label}: `));
-      row.appendChild(el('span', undefined, value ?? '—'));
-      summary.appendChild(row);
+    // Design (Dan 06/11): the quote reads as a small, tidy document — the
+    // issuing space, who it is for, what it includes and what it costs — with
+    // the workflow (approval, signature, history) in a side column.
+    const totals = parseTotals(quote.totalsJson);
+    const page = el('div', 'bo-quote');
+    page.setAttribute('data-status', quote.status);
+    const sheet = el('article', 'bo-quote-sheet');
+    const side = el('aside', 'bo-quote-side');
+    page.appendChild(sheet);
+    page.appendChild(side);
+    const hero = el('header', 'bo-quote-hero');
+    const heroWords = el('div', 'bo-quote-hero-words');
+    const issuer = spaceName();
+    heroWords.appendChild(el('p', 'bo-quote-kicker', issuer !== '' ? `Preventivo · ${issuer}` : 'Preventivo'));
+    mount.removeChild(heading);
+    heading.setAttribute('class', 'bo-quote-title');
+    heading.textContent = opportunityName ?? 'Preventivo';
+    heroWords.appendChild(heading);
+    const meta = el('p', 'bo-quote-meta');
+    if (customerName !== null) meta.appendChild(el('span', 'bo-quote-for', `Per ${customerName}`));
+    if (versions.length > 0) meta.appendChild(el('span', 'bo-quote-version', `Versione ${versions[0].versionNumber}`));
+    meta.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status) ?? '—'));
+    heroWords.appendChild(meta);
+    hero.appendChild(heroWords);
+    const heroTotal = el('div', 'bo-quote-hero-total');
+    const lead = totals.oneTimeTotal ?? totals.recurringTotals[0] ?? null;
+    if (lead !== null) {
+      heroTotal.appendChild(el('span', 'bo-quote-amount', money(lead.netAmountCents, lead.currency ?? quote.currency)));
+      heroTotal.appendChild(el('span', 'bo-quote-amount-note', totals.oneTimeTotal
+        ? 'una tantum, netto'
+        : `ogni ${lead.intervalCount} ${periodLabel(lead.intervalCount, lead.interval)}, netto`));
+      if (totals.oneTimeTotal && totals.recurringTotals.length > 0) {
+        const next = totals.recurringTotals[0];
+        heroTotal.appendChild(el('span', 'bo-quote-amount-note', `+ ${money(next.netAmountCents, next.currency ?? quote.currency)} ogni ${next.intervalCount} ${periodLabel(next.intervalCount, next.interval)}`));
+      }
     }
-    mount.appendChild(summary);
+    hero.appendChild(heroTotal);
+    sheet.appendChild(hero);
+    mount.removeChild(status);
+    mount.appendChild(page);
+    sheet.appendChild(status);
+
 
     // Grouped totals: the one-time group and each recurring period are shown
     // SEPARATELY — unlike periods are never summed, and no ARR/MRR/TCV is
     // derived (contract term and normalization are not modeled).
-    const totals = parseTotals(quote.totalsJson);
     const totalsPanel = el('div', 'quote-totals');
     totalsPanel.setAttribute('data-recurring-groups', String(totals.recurringTotals.length));
-    totalsPanel.appendChild(el('h3', undefined, 'Totali per periodo commerciale'));
+    totalsPanel.appendChild(el('h3', undefined, 'Totale'));
     const totalRow = (label, group, vatEntry) => {
       const row = el('p', 'quote-total-row');
       row.setAttribute('data-total', label);
-      row.appendChild(el('strong', undefined, `${label}: `));
-      row.appendChild(el('span', undefined,
-        `${money(group.netAmountCents, group.currency ?? quote.currency)} netto (listino ${money(group.listAmountCents, group.currency ?? quote.currency)}, sconto ${money(group.discountAmountCents, group.currency ?? quote.currency)})${vatText(vatEntry, group.currency ?? quote.currency, totals.vatRateBps)}`));
+      row.appendChild(el('span', 'quote-total-label', `${label}: `));
+      const currency = group.currency ?? quote.currency;
+      // List price and discount only when a discount exists: «sconto 0 €»
+      // told the owner nothing.
+      const discounted = Number(group.discountAmountCents ?? 0) > 0
+        ? ` (listino ${money(group.listAmountCents, currency)}, sconto ${money(group.discountAmountCents, currency)})`
+        : '';
+      const value = el('span', 'quote-total-value');
+      value.appendChild(el('strong', undefined, money(group.netAmountCents, currency)));
+      value.appendChild(el('span', 'quote-total-detail', ` netto${discounted}${vatText(vatEntry, currency, totals.vatRateBps)}`));
+      row.appendChild(value);
       totalsPanel.appendChild(row);
     };
     if (totals.oneTimeTotal) totalRow('Una tantum', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
@@ -324,11 +386,10 @@ export function createQuoteView(deps) {
     if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
       totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
-    totalsPanel.appendChild(el('p', 'muted', 'Tutti gli importi sono calcolati dal server (centesimi, due decimali). I periodi non si sommano mai in un unico totale e non si ricava nessuna cifra annualizzata o di contratto (la durata del contratto non è modellata).'));
-    mount.appendChild(totalsPanel);
+    totalsPanel.appendChild(el('p', 'quote-totals-note', 'Importi calcolati dal server di Accordo. I periodi non si sommano mai: una tantum e ricorrenti restano separati, senza totali annui.'));
 
     const errorLine = el('small', 'field-error', '');
-    mount.appendChild(errorLine);
+    side.appendChild(errorLine);
     const busy = [];
     const withBusy = async (fn) => {
       for (const control of busy) control.disabled = true;
@@ -349,15 +410,26 @@ export function createQuoteView(deps) {
 
     // Draft lines with controlled edit/remove.
     const linesPanel = el('div', 'quote-lines');
-    linesPanel.appendChild(el('h3', undefined, `Righe (${lines.length})`));
+    linesPanel.appendChild(el('h3', undefined, lines.length === 1 ? 'Cosa include' : `Cosa include · ${lines.length} voci`));
+    if (lines.length === 0) linesPanel.appendChild(el('p', 'quote-lines-empty', 'Ancora nessuna voce in questo preventivo.'));
     for (const line of lines) {
       const row = el('div', 'quote-line');
       row.setAttribute('data-line', line.id);
-      row.appendChild(el('span', 'quote-line-head',
-        `${line.sku} · ${line.offerName} (rev. ${line.offerRevision}) · quantità ${line.quantity} · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}% · netto ${money(line.netAmountCents, quote.currency)}`));
-      // Every price component of the offer, with its tier breakdown.
+      // The owner reads the package, the quantity, a discount only when one
+      // applies, and the net: SKU and offer revision stay in the records.
+      const lineDiscount = (line.discountBps ?? 0) > 0
+        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%`
+        : '';
+      const head = el('span', 'quote-line-head');
+      head.appendChild(el('span', 'quote-line-name', line.offerName));
+      head.appendChild(el('span', 'quote-line-meta', `Quantità ${line.quantity}${lineDiscount}`));
+      head.appendChild(el('span', 'quote-line-amount', money(line.netAmountCents, quote.currency)));
+      row.appendChild(head);
+      // The price components only for a composite offer or a tiered one: a
+      // single fixed price repeated the line above word for word.
       const breakdown = parseBreakdown(line.breakdownJson);
       const componentList = el('div', 'quote-components');
+      if (breakdown.length <= 1 && !(breakdown[0]?.tierBreakdown ?? []).length) componentList.setAttribute('hidden', '');
       for (const component of breakdown) {
         const recurrence = component.chargeType === 'one_time'
           ? 'una tantum'
@@ -396,24 +468,28 @@ export function createQuoteView(deps) {
           lineId: line.id,
           expectedRevision: quote.draftRevision,
         })));
-        row.appendChild(quantityInput);
-        row.appendChild(discountInput);
-        row.appendChild(updateButton);
-        row.appendChild(removeButton);
+        const edit = el('div', 'quote-line-edit');
+        edit.appendChild(labelled('Quantità', quantityInput));
+        edit.appendChild(labelled('Sconto (punti base)', discountInput));
+        edit.appendChild(updateButton);
+        edit.appendChild(removeButton);
+        row.appendChild(edit);
         row.__update = () => withBusy(() => act('update-line', { lineId: line.id, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
         row.__quantity = quantityInput;
         row.__discount = discountInput;
       }
       linesPanel.appendChild(row);
     }
-    mount.appendChild(linesPanel);
+    sheet.appendChild(linesPanel);
+    sheet.appendChild(totalsPanel);
 
     if (quote.status === 'draft') {
       const addPanel = el('div', 'quote-add-line');
       addPanel.appendChild(el('h3', undefined, 'Aggiungi riga'));
       const entrySelect = el('select');
       for (const entry of entries) {
-        const option = el('option', undefined, `${entry.name} — ${entry.componentCount} component(s)`);
+        const count = Number(entry.componentCount) || 0;
+        const option = el('option', undefined, count > 1 ? `${entry.name} — ${count} componenti` : entry.name);
         option.setAttribute('value', entry.id);
         entrySelect.appendChild(option);
         if (entrySelect.value === undefined || entrySelect.value === '') entrySelect.value = entry.id;
@@ -434,16 +510,16 @@ export function createQuoteView(deps) {
         discountBps: Number(discountInput.value),
         expectedRevision: quote.draftRevision,
       })));
-      addPanel.appendChild(entrySelect);
-      addPanel.appendChild(quantityInput);
-      addPanel.appendChild(discountInput);
+      addPanel.appendChild(labelled('Pacchetto', entrySelect));
+      addPanel.appendChild(labelled('Quantità', quantityInput));
+      addPanel.appendChild(labelled('Sconto (punti base)', discountInput));
       addPanel.appendChild(hint);
       addPanel.appendChild(addButton);
       addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
       addPanel.__discountBps = discountInput;
-      mount.appendChild(addPanel);
+      side.appendChild(addPanel);
 
       const submitPanel = el('div', 'quote-submit');
       submitPanel.appendChild(el('h3', undefined, 'Invia per l’approvazione'));
@@ -460,13 +536,13 @@ export function createQuoteView(deps) {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
       }));
-      submitPanel.appendChild(policySelect);
+      submitPanel.appendChild(labelled('Regola di sconto', policySelect));
       submitPanel.appendChild(submitButton);
       submitPanel.__submit = () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
       });
-      mount.appendChild(submitPanel);
+      side.appendChild(submitPanel);
     }
 
     if (quote.status === 'pending_approval') {
@@ -486,7 +562,7 @@ export function createQuoteView(deps) {
       decidePanel.__approve = () => withBusy(() => act('approve', {}));
       decidePanel.__reject = () => withBusy(() => act('reject', { reason: reasonInput.value }));
       decidePanel.__reason = reasonInput;
-      mount.appendChild(decidePanel);
+      side.appendChild(decidePanel);
     }
 
     if (quote.status === 'rejected') {
@@ -496,16 +572,19 @@ export function createQuoteView(deps) {
       reviseButton.addEventListener('click', () => withBusy(() => act('revise', {})));
       revisePanel.appendChild(reviseButton);
       revisePanel.__revise = () => withBusy(() => act('revise', {}));
-      mount.appendChild(revisePanel);
+      side.appendChild(revisePanel);
     }
 
     if (quote.status === 'approved') {
-      mount.appendChild(el('p', 'quote-approved', 'Approvato — il contenuto commerciale di questo preventivo è in sola lettura.'));
-      await renderSignature({ quote, schema, mount, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel });
+      side.appendChild(el('p', 'quote-approved', 'Approvato: righe e prezzi sono in sola lettura.'));
+      await renderSignature({ quote, schema, mount: side, el, client, withBusy, busy, money, quoteStatusLabel, periodLabel });
     }
 
     const versionsPanel = el('div', 'quote-versions');
-    versionsPanel.appendChild(el('h3', undefined, `Versioni (${versions.length})`));
+    versionsPanel.appendChild(el('h3', undefined, 'Storico'));
+    if (versions.length === 0) {
+      versionsPanel.appendChild(el('p', 'quote-versions-empty', 'Ancora nessuna versione: nasce quando il preventivo va in approvazione.'));
+    }
     for (const version of versions) {
       const row = el('div', 'quote-version-row');
       row.setAttribute('data-version', version.id);
@@ -518,10 +597,10 @@ export function createQuoteView(deps) {
         `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
-      if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${version.decisionReason}`));
+      if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${percentReason(version.decisionReason)}`));
       versionsPanel.appendChild(row);
     }
-    mount.appendChild(versionsPanel);
+    side.appendChild(versionsPanel);
   }
 
   /**

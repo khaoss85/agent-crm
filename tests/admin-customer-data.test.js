@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CUSTOMER_DATA_DISCLAIMERS, createCustomerDataView } from '../apps/admin/public/admin-customer-data.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * The Customer Data Foundation Admin section, against a stub server.
@@ -40,6 +41,7 @@ function stubClient({ withPackage = true, rows = {}, profile = null, onPost = ()
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') {
         return withPackage ? { domains: { 'customer-data': { metadata: META } } } : { domains: {} };

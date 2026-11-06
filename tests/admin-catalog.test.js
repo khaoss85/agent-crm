@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents, buildCreateBody } from '../apps/admin/public/admin-catalog.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
  * Product catalog Admin (BO-F2-05): the backoffice product table renders from
@@ -139,6 +140,7 @@ function stubClient({ schema = SCHEMA, tables = { '': MANUAL_TABLE }, fail = nul
   return {
     calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const method = String(options.method ?? 'GET').toUpperCase();
       let body = options.body;
       if (typeof body === 'string' && body !== '') {
@@ -1017,6 +1019,7 @@ test('an uncertain creation reconciles the created row instead of retrying blind
   const client = {
     calls: base.calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
         loads += 1;
         if (loads > 1) return reconciled;
@@ -1130,6 +1133,7 @@ test('an uncertain creation never reconciles a matching imported row', async () 
   const client = {
     calls: base.calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
         loads += 1;
         if (loads > 1) return reloaded;
@@ -1174,6 +1178,7 @@ test('an uncertain creation reloads with the table filters', async () => {
   const client = {
     calls: base.calls,
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (String(options.method ?? 'GET').toUpperCase() === 'GET' && path.startsWith('/api/catalog/products')) {
         loads.push(path);
       }

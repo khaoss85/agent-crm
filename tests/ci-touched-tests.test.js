@@ -37,6 +37,9 @@ import {
   relativeImportsOf,
   runBudgetSec,
   selectTouchedTests,
+  touchedTestDistances,
+  nearestFirst,
+  fillNearest,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -673,11 +676,14 @@ test('an oversized synthetic selection falls back to the changed tests', () => {
 
 // ------------------------------------------------------------------ repo-wide guards
 //
-// Twice `main` turned red after green-alone PRs (#222 against #221 through
-// tests/isolated-git.test.js, #234 through tests/actor-fails-closed.test.js)
-// because the guards below scan the whole repository while importing almost
-// none of it, so the import mapping never selects them. They always run on
-// top of the selection (see `withRepoWideGuards`); these tests hold that.
+// Three times `main` turned red after green-alone PRs (#222 against #221
+// through tests/isolated-git.test.js, #234 through
+// tests/actor-fails-closed.test.js, and the nightly main run 41956161675
+// through tests/admin-authority-tokens.test.js, which reads styles.css
+// without importing it) because the guards below scan repository files
+// they never relatively import, so the import mapping never selects them.
+// They always run on top of the selection (see `withRepoWideGuards`);
+// these tests hold that.
 
 test('the declared list holds the acceptance guards', () => {
   assert.ok(
@@ -687,6 +693,10 @@ test('the declared list holds the acceptance guards', () => {
   assert.ok(
     REPO_WIDE_GUARDS.includes('tests/isolated-git.test.js'),
     'a payments-only PR must run tests/isolated-git.test.js',
+  );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/admin-authority-tokens.test.js'),
+    'a CSS-only admin PR must run tests/admin-authority-tokens.test.js',
   );
   assert.ok(
     REPO_WIDE_GUARDS.includes('tests/module-manifest-revision-guard.test.js'),
@@ -710,6 +720,29 @@ test('a payments-only change runs the guards on top of its selection', () => {
     'tests/isolated-git.test.js',
     'tests/payments-checkout.test.js',
   ]);
+});
+
+test('a CSS-only admin change runs the authority-token guard on top of its selection', () => {
+  // styles.css is CSS, not JS: the import mapping selects nothing from it,
+  // and tests/admin-authority-tokens.test.js reads it with readFileSync
+  // instead of importing it — so without the guard list the fast gate
+  // would run nothing while the full suite fails (nightly main run
+  // 41956161675, cure in agent-crm#593).
+  const selected = selectTouchedTests(
+    ['apps/admin/public/styles.css'],
+    contents({
+      'tests/admin-authority-tokens.test.js': "import test from 'node:test';\n",
+    }),
+  );
+  assert.deepEqual(selected, []);
+  const stubbed = new Map(
+    REPO_WIDE_GUARDS.map((guard) => [guard, "import test from 'node:test';\n"]),
+  );
+  const guarded = withRepoWideGuards([], stubbed, ['apps/admin/public/styles.css']);
+  assert.ok(
+    guarded.includes('tests/admin-authority-tokens.test.js'),
+    'a styles.css-only change must run tests/admin-authority-tokens.test.js',
+  );
 });
 
 test('guards join docs-only diffs but an empty diff stays empty', () => {
@@ -1608,4 +1641,31 @@ test('every declared exclusion is load-bearing and reasoned', () => {
       `${relative} no longer looks like a repo-wide guard: drop its exclusion entry`,
     );
   }
+});
+
+test('an oversized selection keeps the nearest tests: a direct importer before a far one', () => {
+  // #555: admin-quotes.js changed, admin-signature imports it directly, and
+  // the oversized fallback dropped it with the far importers of admin-core.
+  const tests = contents({
+    'tests/admin-signature.test.js': "import { createQuoteView } from '../apps/admin/public/admin-quotes.js';\n",
+    'tests/admin-far.test.js': "import { shell } from '../apps/admin/public/app.js';\n",
+  });
+  const imports = new Map([
+    ['apps/admin/public/app', new Set(['apps/admin/public/admin-quotes'])],
+  ]);
+  const distances = touchedTestDistances(['apps/admin/public/admin-quotes.js'], tests, imports);
+  assert.equal(distances.get('tests/admin-signature.test.js'), 1);
+  assert.equal(distances.get('tests/admin-far.test.js'), 2);
+  assert.deepEqual(nearestFirst(distances), ['tests/admin-signature.test.js', 'tests/admin-far.test.js']);
+  assert.deepEqual(
+    selectTouchedTests(['apps/admin/public/admin-quotes.js'], tests, imports),
+    ['tests/admin-far.test.js', 'tests/admin-signature.test.js'],
+  );
+});
+
+test('the fill never passes the file budget and never repeats a planned test', () => {
+  const ranked = ['tests/a.test.js', 'tests/b.test.js', 'tests/c.test.js'];
+  assert.deepEqual(fillNearest(['tests/a.test.js', 'tests/g.test.js'], ranked, 3), ['tests/b.test.js']);
+  assert.deepEqual(fillNearest(['tests/g.test.js'], ranked, 1), []);
+  assert.deepEqual(fillNearest([], ranked, 10), ranked);
 });

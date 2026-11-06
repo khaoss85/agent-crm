@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   buildSequenceClaim,
@@ -62,6 +63,7 @@ function stubClient({ sequences = [SEQUENCE], steps = STEPS, failAction = null }
   return {
     calls,
     request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body, key: options.idempotencyKey ?? options.headers?.['Idempotency-Key'] ?? null });
       if (path === '/api/schema') return { domains: { sequences: { sequencesContract: 1 } } };
       if (path.startsWith('/api/modules/sequence/records?')) return { items: sequences };
@@ -312,6 +314,7 @@ test('a failed dataset reads as unavailable, never as a genuine zero', async () 
   const client = {
     calls: inner.calls,
     request: async (path, options) => {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/modules/sequence-enrollment/records?')) {
         throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
       }
@@ -329,7 +332,7 @@ test('a failed steps read stays failed, never an empty list', async () => {
   const ok = await loadSequenzaSteps(stubClient());
   assert.equal(ok.failed, false);
   assert.equal(ok.rows.length, 2);
-  const failing = { request: async () => { throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' }); } };
+  const failing = { request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' }); } };
   const bad = await loadSequenzaSteps(failing, 'seq-bentornato', 'presti');
   assert.equal(bad.failed, true);
   assert.deepEqual(bad.rows, []);
@@ -342,6 +345,7 @@ test('a failed steps read renders unavailable in the dettaglio, never a genuine 
   const client = {
     calls: inner.calls,
     request: async (path, options) => {
+      enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/modules/sequence-step/records?')) {
         throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
       }
@@ -377,7 +381,8 @@ test('a refused write says the state moved and reloads, never a raw error', asyn
 test('without the package the screen says so in Italian, never a blank page', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = { request: async (path) => {
+  const client = { request: async (path, options = {}) => {
+    enforceAdminWriteGate(path, options);
     if (path === '/api/schema') return { domains: {} };
     throw new Error(`unexpected request ${path}`);
   } };
@@ -395,7 +400,7 @@ test('loadSequenzeData marks availability from the contract, not from rows', asy
   const data = await loadSequenzeData(stubClient({ sequences: [] }));
   assert.equal(data.sequencesAvailable, true);
   assert.deepEqual(data.sequences, []);
-  const empty = await loadSequenzeData({ request: async () => ({ domains: {} }) });
+  const empty = await loadSequenzeData({ request: async (path = '', options = {}) => { enforceAdminWriteGate(path, options); return { domains: {} }; } });
   assert.equal(empty.sequencesAvailable, false);
 });
 
@@ -587,6 +592,7 @@ test('pausing an active sequence offers Riattiva, the In pausa pill and in pausa
   const client = {
     calls: inner.calls,
     request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       if (options.method === 'POST' && path.includes('/actions/pause')) {
         status = 'paused';
         return { ok: true };
@@ -700,6 +706,7 @@ function createDriveClient() {
   return {
     calls,
     request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       const body = typeof options.body === 'string' && options.body !== '' ? JSON.parse(options.body) : options.body;
       calls.push({ path, method: options.method ?? 'GET', body });
       if (path === '/api/schema') return { domains: { sequences: { sequencesContract: 1 } } };
@@ -819,6 +826,7 @@ test('a refused creation says so in Italian and keeps the panel', async () => {
   const client = {
     calls: inner.calls,
     request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/sequences/create') {
         const error = new Error('denied here');
         error.status = 500;

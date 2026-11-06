@@ -11,6 +11,7 @@
  */
 
 import test from 'node:test';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   PERSONALIZZAZIONE_TAB_LABELS,
@@ -39,6 +40,7 @@ const UNITS = [
 function stubClient({ catalog = UNITS, rows = [], preview = null, connectors = [], calls = null, failCatalog = null, needsBySpace = null } = {}) {
   return {
     async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       const rawBody = options?.body ?? null;
       let body = rawBody;
       if (typeof rawBody === 'string' && rawBody !== '') {
@@ -248,7 +250,8 @@ test('the pacchetti tab shows a loading note while the catalog is still flying',
   const mount = createMount();
   let releaseCatalog = null;
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') {
         await new Promise((resolve) => { releaseCatalog = resolve; });
         return { units: UNITS };
@@ -387,7 +390,8 @@ test('a connectors outage renders the Italian error with Riprova', async () => {
   const mount = createMount();
   let fail = true;
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') return { units: UNITS };
       if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
       if (path.startsWith('/api/connectors?')) {
@@ -634,7 +638,8 @@ test('a refused card answers like its + action and never leaves the readable pag
   const said = [];
   const navigated = [];
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') return { units: [] };
       if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
       if (path.startsWith('/api/connectors?')) throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
@@ -666,7 +671,8 @@ test('without permission the page stays readable and + explains in Italian', asy
   const said = [];
   const navigated = [];
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') return { units: [] };
       if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
       if (path.startsWith('/api/connectors?')) throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
@@ -786,6 +792,7 @@ test('a refused Skill or Pacchetti action names no channel', async () => {
     const said = [];
     const client = {
       async request(path, options = {}) {
+        enforceAdminWriteGate(path, options);
         if (path === '/api/space-packages/catalog') return { units: UNITS };
         if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
         if (path === '/api/space-packages/activate') throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });
@@ -858,7 +865,8 @@ test('without permission the hero Inizia, Configura manualmente and Mostra tutto
   const said = [];
   const navigated = [];
   const client = {
-    async request(path) {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
       if (path === '/api/space-packages/catalog') return { units: [] };
       if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
       if (path.startsWith('/api/connectors?')) throw Object.assign(new Error('denied'), { code: 'FORBIDDEN', status: 403 });

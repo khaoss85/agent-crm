@@ -24,6 +24,7 @@ import { createServer } from 'node:http';
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ADMIN_WRITE_GATE_BROWSER_PRELUDE, enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 function readDirSafe(directory) {
   try {
@@ -146,12 +147,14 @@ const DRAFT = {
 };
 
 const FIXTURE_SCRIPT = `
+${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(WEEK)};
 const SLOTS = ${JSON.stringify(SLOTS)};
 const DRAFT = ${JSON.stringify(DRAFT)};
 const client = {
-  async request(path) {
+  async request(path, options = {}) {
+    enforceAdminWriteGate(path, options);
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
@@ -170,7 +173,9 @@ const view = createCalendarioView({
   client,
   // Pin Rome time like the unit tests: the fixture week is Oct 2026, so the
   // painted week must be that one whatever day the CI runner boots on.
-  now: () => new Date('2026-10-23T06:00:00Z'),
+  // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
+  // so the view clock must still see them as future — same Oct 19–25 week.
+  now: () => new Date('2026-10-21T06:00:00Z'),
 });
 await view.render();
 byName('members').value = 'marco, sara';
