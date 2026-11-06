@@ -248,9 +248,11 @@ function shapeEntries(entries) {
       }));
     }
   }
-  // The provider read is oldest-first and complete; the scheda shows the
-  // first page and reports the cut, like the sibling sections above.
-  const items = shaped.slice(0, ENTRY_LIMIT);
+  // The provider read is oldest-first and complete. The scheda opens on
+  // the newest, so the cut keeps the latest ENTRY_LIMIT rows (still oldest
+  // first) and drops the oldest: a cut that dropped the newest hid today's
+  // mail and the note the operator had just added (prod 06/11, 102 rows).
+  const items = shaped.slice(Math.max(0, shaped.length - ENTRY_LIMIT));
   return Object.freeze({
     available: true,
     count: shaped.length,

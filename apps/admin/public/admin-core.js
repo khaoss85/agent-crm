@@ -757,3 +757,25 @@ export function customerDataDeferredLine(deferred) {
 }
 
 export { IMMUTABLE_FIELDS };
+
+/**
+ * The error a failed API answer throws, built from its status and parsed
+ * payload (`{ error: { code, message, details } }`). A 504 BO_SEND_PENDING
+ * names the queued request beside the error (`requestId`, `claimId` at the
+ * top level, the pilot's send route shape): both travel on the error so the
+ * composer reads the same request back instead of sending again. Kept pure
+ * and here, not in the shell bootstrap, so the mapping is tested.
+ * @param {number} status
+ * @param {any} payload the parsed JSON body, or null/undefined
+ */
+export function apiFailure(status, payload) {
+  const error = new Error(payload?.error?.message || `Request failed (${status})`);
+  Object.assign(error, {
+    status,
+    code: payload?.error?.code ?? 'UNKNOWN',
+    details: payload?.error?.details ?? null,
+  });
+  if (typeof payload?.requestId === 'string' && payload.requestId !== '') Object.assign(error, { requestId: payload.requestId });
+  if (typeof payload?.claimId === 'string' && payload.claimId !== '') Object.assign(error, { claimId: payload.claimId });
+  return error;
+}

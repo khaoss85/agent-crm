@@ -2007,6 +2007,20 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }
 .bo-composer-body .field-error:empty { display: none; }
 .bo-composer-body .field-error { margin: 0 0 8px; }
+.bo-composer-body .field-error[data-tone="pending"] {
+  color: var(--muted);
+  display: flex; align-items: center; gap: 8px;
+}
+.bo-composer-body .field-error[data-tone="pending"]::before {
+  content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  animation: bo-composer-pending 1.4s ease-in-out infinite;
+}
+@keyframes bo-composer-pending { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .bo-composer-body .field-error[data-tone="pending"]::before { animation: none; }
+}
+.bo-composer-foot button[aria-busy="true"] { cursor: progress; opacity: .7; }
 .bo-composer-foot { display: flex; align-items: center; gap: 14px; padding: 12px 18px 14px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-composer-foot [data-action="composer-send"] { min-width: 96px; border-radius: 999px; }
 .bo-composer-limit { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--dim); }
@@ -2025,3 +2039,18 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-assistant-asked-note { margin: 0; font-size: 11.5px; line-height: 1.4; opacity: .75; }
 .bo-assistant .bo-assistant-foot { margin: 0; padding: 12px 20px 16px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-assistant-draft.bo-assistant-foot { padding-top: 0; border-top: 0; color: var(--ink); font-size: 13px; }
+
+/* «Da leggere» (Dan 06/11): un cliente con messaggi nuovi «si accende» nella
+   lista — pallino sull'avatar, «N nuovi» accanto al nome, estratto in pieno
+   inchiostro — e nella scheda i messaggi nuovi portano «Nuovo». Senza stato
+   di lettura dal server (nessun data-read-state) le righe restano come prima. */
+.bo-clienti-nameline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.bo-clienti-unread { flex: none; padding: 2px 8px; border-radius: 99px; background: var(--accent); color: var(--paper); font-size: 11px; font-weight: 700; line-height: 1.5; white-space: nowrap; }
+.bo-clienti-row[data-unread] { box-shadow: inset 3px 0 0 var(--accent); }
+.bo-clienti-row[data-unread] .bo-clienti-avatar { position: relative; background: var(--accent-soft); color: var(--accent); }
+.bo-clienti-row[data-unread] .bo-clienti-avatar::after { content: ""; position: absolute; top: 0; right: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+.bo-clienti-list[data-read-state="on"] .bo-clienti-row:not([data-unread]) .bo-clienti-last-text { color: var(--muted); }
+.bo-clienti-row[data-unread] .bo-clienti-last-text { font-weight: 600; }
+.bo-clienti-view.ui-tab[data-attention="true"]::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.bo-scheda-timeline .bo-scheda-entry[data-unread="true"] > :not(.bo-scheda-chan) { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
+.bo-scheda-new { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 99px; background: var(--accent); color: var(--paper); font-size: 10.5px; font-weight: 700; letter-spacing: .02em; vertical-align: 1px; }
