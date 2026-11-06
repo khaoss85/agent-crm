@@ -262,18 +262,91 @@ function subjectHref(row, fallbackId) {
 }
 
 /**
- * The display name of one thread. Names the customer (the subject snapshot,
- * else the channel handle), never a raw record id: a thread without a name
- * is «Thread whatsapp», never its UUID (voce 34fd687c: «Chiudi il thread di
- * 712e1f90-…» non deve più comparire). Ids travel only in hrefs, never in
- * lines, labels or buttons.
+ * Masked channel reference of one thread (voce 34fd687c): the customer
+ * handle on the channel with the middle hidden (es. «+39 333 …4567»),
+ * never a raw record id. Short handles stay whole; long ones keep the
+ * first 4 and the last 4 characters so two different handles stay
+ * different without leaking the full reference.
+ * @param {unknown} handle
+ */
+function maskChannelRef(handle) {
+  const text = shortText(handle, 40);
+  if (text === '' || text.length <= 7) return text;
+  return `${text.slice(0, 4)} …${text.slice(-4)}`;
+}
+
+/**
+ * Last-activity stamp of one thread (voce 34fd687c): the newest of
+ * updatedAt/openedAt/observedAt in Italian «06/11/2026, 10:15» form, ''
+ * when the row carries no readable time.
+ * @param {unknown} row
+ */
+function threadStamp(row) {
+  const ts = Math.max(rowTime(row?.updatedAt), rowTime(row?.openedAt), rowTime(row?.observedAt));
+  if (!ts) return '';
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '';
+  const day = italianDay(localDayOf(date));
+  if (day === '') return '';
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${day}, ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * The display name of one thread. Names the customer (the subject
+ * snapshot), else the masked channel reference plus the last-activity
+ * date — never a raw record id (voce 34fd687c: «Chiudi il thread di
+ * 712e1f90-…» non deve più comparire). Ids travel only in hrefs, never
+ * in lines, labels or buttons.
  * @param {unknown} row
  */
 function conversationLabel(row) {
-  const named = shortText(row?.subjectLabel, 80) || shortText(row?.remoteHandle, 80);
+  const named = shortText(row?.subjectLabel, 80);
   if (named !== '') return named;
-  const channel = shortText(row?.channel, 20);
-  return channel !== '' ? `Thread ${channel}` : 'Conversazione';
+  const channel = channelName(row?.channel) || 'Conversazione';
+  const ref = maskChannelRef(row?.remoteHandle);
+  const stamp = threadStamp(row);
+  if (ref !== '' && stamp !== '') return `${channel} · ${ref} · ${stamp}`;
+  if (ref !== '') return `${channel} · ${ref}`;
+  if (stamp !== '') return `${channel} · ${stamp}`;
+  return channel;
+}
+
+/**
+ * One source of truth for thread labels in a list (voce 34fd687c): every
+ * listed line, source and close/confirm label of the same answer shares
+ * these strings. Rows are already ordered (newest first); equal bases get
+ * a stable ordinal (« · 1», « · 2») so two unnamed threads on the same
+ * channel never share one identical label.
+ * @param {Array<any>} rows
+ */
+function uniqueConversationLabels(rows) {
+  const bases = rows.map((row) => conversationLabel(row));
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const base of bases) counts.set(base, (counts.get(base) ?? 0) + 1);
+  /** @type {Map<string, number>} */
+  const seen = new Map();
+  return rows.map((row, index) => {
+    const base = bases[index];
+    if ((counts.get(base) ?? 0) <= 1) return base;
+    const position = (seen.get(base) ?? 0) + 1;
+    seen.set(base, position);
+    return `${base} · ${position}`;
+  });
+}
+
+/**
+ * The listed line of one thread: a named thread keeps its channel in
+ * parentheses, an unnamed one already carries it in its label.
+ * @param {unknown} row
+ * @param {string} label the unique label of this row in its answer
+ */
+function conversationLine(row, label) {
+  if (shortText(row?.subjectLabel, 80) !== '' && row?.channel) {
+    return `• ${label} (${channelName(row.channel)})`;
+  }
+  return `• ${label}`;
 }
 
 /**
@@ -375,12 +448,17 @@ async function answerUrgenti(client) {
   if (conversations === null) {
     answer.unavailable.push('Thread: modulo conversation non leggibile in questo spazio.');
   } else {
-    const open = conversations.filter((row) => row?.status === 'open');
-    answer.lines.push(`${open.length} thread aperti${conversations.length !== open.length ? ` su ${conversations.length} letti` : ''}.`);
-    for (const row of newestFirst(open).slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
-    }
-    answer.sources.push(...takeSources(newestFirst(open), 'conversation', conversationLabel));
+    const ordered = newestFirst(conversations.filter((row) => row?.status === 'open'));
+    answer.lines.push(`${ordered.length} thread aperti${conversations.length !== ordered.length ? ` su ${conversations.length} letti` : ''}.`);
+    const sourced = ordered.slice(0, SUGGESTION_MAX_SOURCES);
+    const labels = uniqueConversationLabels(sourced);
+    sourced.slice(0, SUGGESTION_MAX_LISTED).forEach((row, index) => {
+      answer.lines.push(conversationLine(row, labels[index]));
+    });
+    sourced.forEach((row, index) => {
+      const source = recordSource('conversation', row?.id, labels[index]);
+      if (source !== null) answer.sources.push(source);
+    });
   }
   if (issues === null) {
     answer.unavailable.push('Qualità dati: modulo data-quality-issue non leggibile in questo spazio.');
@@ -444,11 +522,18 @@ async function answerRicontattare(client) {
     return answer;
   }
   answer.lines.push(`${openAll.length} thread aperti da ricontattare${conversations.length !== openAll.length ? ` (tra ${conversations.length} letti)` : ''}:`);
-  for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
-  }
-  answer.sources.push(...takeSources(open, 'conversation', conversationLabel));
+  const sourced = open.slice(0, SUGGESTION_MAX_SOURCES);
+  const labels = uniqueConversationLabels(sourced);
+  const labelById = new Map(sourced.map((row, index) => [row?.id, labels[index]]));
+  sourced.slice(0, SUGGESTION_MAX_LISTED).forEach((row, index) => {
+    answer.lines.push(conversationLine(row, labels[index]));
+  });
+  sourced.forEach((row, index) => {
+    const source = recordSource('conversation', row?.id, labels[index]);
+    if (source !== null) answer.sources.push(source);
+  });
   const first = open[0];
+  const firstLabel = labelById.get(first?.id) ?? conversationLabel(first);
   const cardHref = subjectHref(first, first?.id);
   if (cardHref !== null) {
     answer.actions.push({ id: 'bo04:apri-scheda', label: 'Apri scheda cliente', kind: 'navigate', href: cardHref, customerFacing: false });
@@ -470,11 +555,11 @@ async function answerRicontattare(client) {
       // label names the thread so the operator confirms exactly what closes.
       answer.actions.push({
         id: `bo04:chiudi:${conversationId}`,
-        label: `Chiudi il thread di ${conversationLabel(first)}`,
+        label: `Chiudi il thread di ${firstLabel}`,
         kind: 'api',
         request: { path: `/api/modules/conversation/records/${encodeURIComponent(conversationId)}/actions/close`, method: 'POST', body: {} },
         customerFacing: true,
-        confirmLabel: `Chiudere il thread di ${conversationLabel(first)}? Non si può riaprire: i nuovi messaggi aprono un altro thread.`,
+        confirmLabel: `Chiudere il thread di ${firstLabel}? Non si può riaprire: i nuovi messaggi aprono un altro thread.`,
       });
     }
     answer.actions.push({
@@ -483,7 +568,7 @@ async function answerRicontattare(client) {
       kind: 'navigate',
       href: `#/modules/conversation/${encodeURIComponent(conversationId)}`,
       customerFacing: true,
-      confirmLabel: `Aprire il thread con ${conversationLabel(first)} per contattare il cliente?`,
+      confirmLabel: `Aprire il thread con ${firstLabel} per contattare il cliente?`,
     });
   }
   return answer;
@@ -1205,6 +1290,21 @@ export async function answerFreeLocal(client, title, context = null) {
       ? (context.day === today ? shiftDay(today, -1) : context.day)
       : today;
     return answerLeadDay(client, title, target, dayWord);
+  }
+  // «il primo lead» / «chi è il primo lead di oggi|ieri?» names one person,
+  // never the whole list: primo wins over the lead-day list, reading the
+  // explicit day (or the previous lead-day context, or today) and then
+  // formatting only its first entry through the primo path.
+  if (wantsPrimo && hasLead) {
+    const hasIeri = /\bieri\b/.test(folded);
+    const hasOggi = /\boggi\b/.test(folded);
+    const target = hasIeri ? shiftDay(today, -1)
+      : hasOggi ? today
+      : (context?.kind === 'lead-day' && typeof context?.day === 'string' && context.day !== '' ? context.day : today);
+    const word = hasIeri ? 'ieri' : hasOggi ? 'oggi'
+      : (typeof context?.dayWord === 'string' && context.dayWord !== '' ? context.dayWord : (target === today ? 'oggi' : 'ieri'));
+    const dayAnswer = await answerLeadDay(client, title, target, word);
+    return answerPrimo(title, dayAnswer.context);
   }
   if (hasLead) {
     const day = dayWord === 'ieri' ? shiftDay(today, -1) : today;

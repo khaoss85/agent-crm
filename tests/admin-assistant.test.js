@@ -1420,9 +1420,66 @@ test('voce 34fd687c: thread senza nomi non mostrano mai UUID', async () => {
   const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
   const text = [...answer.lines, ...answer.sources.map((s) => s.label), ...answer.actions.map((a) => a.label)].join('\n');
   assert.ok(!text.includes(uuid), `UUID leaked: ${text}`);
-  assert.ok(text.includes('Thread whatsapp') || text.includes('Conversazione'), text);
+  assert.ok(text.includes('WhatsApp') || text.includes('Conversazione'), text);
   const close = answer.actions.find((action) => action.id.startsWith('bo04:chiudi'));
   assert.ok(close && !close.label.includes(uuid) && !close.confirmLabel.includes(uuid));
+});
+
+test('voce 34fd687c: due thread senza nome sullo stesso canale hanno etichette diverse', async () => {
+  const uuidA = '712e1f90-1111-2222-3333-444455556666';
+  const uuidB = '823f0a01-2222-3333-4444-555566667777';
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': {
+      items: [
+        { id: uuidA, status: 'open', channel: 'whatsapp', remoteHandle: '+393331111111', updatedAt: `${LEAD_TODAY}T10:00:00` },
+        { id: uuidB, status: 'open', channel: 'whatsapp', remoteHandle: '+393332222222', updatedAt: `${LEAD_TODAY}T09:00:00` },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const text = shownText(answer);
+  assert.ok(!text.includes(uuidA) && !text.includes(uuidB), `UUID leaked: ${text}`);
+  assert.ok(!text.includes('+393331111111') && !text.includes('+393332222222'), `full handle leaked: ${text}`);
+  const closeLabels = answer.actions.filter((action) => action.id.startsWith('bo04:chiudi'))
+    .map((action) => `${action.label} ${action.confirmLabel ?? ''}`);
+  assert.equal(answer.lines.filter((line) => line.startsWith('•')).length, 2);
+  const listed = answer.lines.filter((line) => line.startsWith('•'));
+  assert.notEqual(listed[0], listed[1], `identical labels: ${JSON.stringify(listed)}`);
+  assert.ok(closeLabels.length === 1 && closeLabels[0].includes(answer.sources[0].label),
+    `close does not name its target: ${JSON.stringify(closeLabels)} vs ${answer.sources[0].label}`);
+});
+
+test('voce 34fd687c: due thread senza handle né data restano distinguibili', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': {
+      items: [
+        { id: 't-primo-thread', status: 'open', channel: 'whatsapp' },
+        { id: 't-secondo-thread', status: 'open', channel: 'whatsapp' },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const listed = answer.lines.filter((line) => line.startsWith('•'));
+  assert.equal(listed.length, 2);
+  assert.notEqual(listed[0], listed[1], `identical labels: ${JSON.stringify(listed)}`);
+  const text = shownText(answer);
+  assert.ok(!text.includes('t-primo-thread') && !text.includes('t-secondo-thread'), `id leaked: ${text}`);
+});
+
+test('voce 34fd687c: «il primo lead» e «chi è il primo lead» nominano una persona sola', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const dry = { mode: 'dry-run' };
+  for (const question of ['il primo lead', 'chi è il primo lead', 'chi è il primo lead di oggi?', 'chi è il primo lead di ieri?']) {
+    const outcome = await askFreeQuestion(client, dry, question);
+    assert.equal(outcome.ok, true, question);
+    const text = shownText(outcome.answer);
+    const isIeri = question.includes('ieri');
+    const expected = isIeri ? 'Ada Neri' : 'Marco Rossi';
+    const excluded = isIeri ? 'Marco Rossi' : 'Ada Neri';
+    assert.ok(text.includes(expected), `${question}: ${JSON.stringify(outcome.answer.lines)}`);
+    assert.ok(!text.includes(excluded), `${question} mixes days: ${text}`);
+    assert.ok(outcome.answer.lines.some((line) => line.includes('Il primo')), `${question}: ${JSON.stringify(outcome.answer.lines)}`);
+  }
 });
 
 test('voce 34fd687c: domanda non dati in dry-run resta avviso chiaro in italiano', async () => {
