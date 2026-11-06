@@ -14,6 +14,7 @@ import {
   parseGmailAddressHeader,
   parseGmailRecipients,
   sanitizeGmailText,
+  sanitizeMailDescriptorText,
 } from './gmail.js';
 
 /**
@@ -201,15 +202,21 @@ function readMailAttachments(payload) {
     const children = Array.isArray(part.parts) ? part.parts : [];
     for (const child of children) walk(child);
     if (out.length >= GMAIL_MAX_ATTACHMENTS) return;
-    const filename = typeof part.filename === 'string' ? part.filename : '';
-    if (filename === '') return;
     const body = part.body && typeof part.body === 'object' && !Array.isArray(part.body) ? part.body : null;
     if (!body || typeof body.attachmentId !== 'string' || body.attachmentId === '') return;
-    const mime = typeof part.mimeType === 'string' && part.mimeType !== '' ? part.mimeType : 'application/octet-stream';
+    // A dirty provider name degrades to a skipped descriptor, never a
+    // refused message: the same shared helper the push reader uses, so both
+    // paths sanitize identically.
+    const name = sanitizeMailDescriptorText(part.filename, 200);
+    if (name === null) return;
+    const mime = typeof part.mimeType === 'string' && part.mimeType !== ''
+      ? sanitizeMailDescriptorText(part.mimeType, 128)
+      : 'application/octet-stream';
+    if (mime === null) return;
     const size = Number.isSafeInteger(body.size) && body.size >= 0 ? body.size : 0;
     out.push(Object.freeze({
-      name: filename.slice(0, 200),
-      mimeType: mime.slice(0, 128),
+      name,
+      mimeType: mime,
       sizeBytes: size,
     }));
   };

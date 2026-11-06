@@ -882,7 +882,10 @@ export function validateMessageRequest(request) {
   // A photo with no caption carries no text (backlog:32820692): the body is
   // required unless an attachment rides along, in which case an empty body
   // stores as null and the card renders the attachment instead of a blank
-  // bubble. Text-only messages keep the old contract exactly.
+  // bubble. A mail with only its subject (backlog:3055d50330b5 — empty
+  // snippet, image-only body, padding-only text) stores the same way with a
+  // null body, so the synced subject is never lost over missing text.
+  // Text-only messages keep the old contract exactly.
   const attachment = validateAttachment(value.attachment);
   const channel = validateChannel(value.channel, 'channel');
   // Email-only extras (backlog:3055d50330b5): a chat message naming a mail
@@ -898,8 +901,9 @@ export function validateMessageRequest(request) {
   const bodyAbsent = value.body === undefined || value.body === null
     || (typeof value.body === 'string' && value.body.replace(/\r\n/g, '\n').trim() === '');
   // A wrong-typed body is still refused (fail-closed): only an absent or
-  // blank body may ride along with an attachment, stored as null.
-  const body = bodyAbsent && (attachment !== null || mailAttachmentsJson !== null)
+  // blank body may ride along with an attachment, a descriptor list or a
+  // mail subject, stored as null.
+  const body = bodyAbsent && (attachment !== null || mailAttachmentsJson !== null || mailSubject !== null)
     ? null
     : safeMessageBody(value.body, 'body', MAX_BODY);
   return {

@@ -607,13 +607,30 @@ function normalizeGmailAttachments(raw) {
 }
 
 /**
+ * One provider descriptor text (filename, MIME type) to storable text, or
+ * null when nothing displayable remains (backlog:3055d50330b5). Provider
+ * controls (newlines, tabs) become spaces and the result trims, so a
+ * cosmetic field never refuses the whole message downstream in
+ * `cleanMailAttachment` — a dirty name degrades to a skipped descriptor.
+ * The REST twin in `gmail-http.js` imports this helper, so both readers
+ * sanitize identically and their descriptor lists agree.
+ * @param {unknown} value
+ * @param {number} max
+ */
+export function sanitizeMailDescriptorText(value, max) {
+  if (typeof value !== 'string') return null;
+  const text = sanitizeGmailText(value).replace(/\n/g, ' ').trim();
+  if (text === '') return null;
+  return text.length > max ? text.slice(0, max) : text;
+}
+
+/**
  * Attachment descriptors of one push payload (backlog:3055d50330b5): the same
  * `{ name, mimeType, sizeBytes }` metadata list the REST reader builds, from
- * the same raw entries with the same rules (fetch id required, names clipped
- * to 200 chars, MIME to 128, `GMAIL_MAX_ATTACHMENTS` at most — the REST twin
- * in `gmail-http.js` owns those numbers, this one mirrors them). The legacy
- * singular `attachment` below keeps its own contract; this list is what the
- * timeline reads, so push and history readers agree on it.
+ * the same raw entries with the same rules (fetch id required, names
+ * sanitized to 200 chars, MIME to 128, `GMAIL_MAX_ATTACHMENTS` at most).
+ * The legacy singular `attachment` below keeps its own contract; this list
+ * is what the timeline reads, so push and history readers agree on it.
  * @param {unknown} raw
  */
 function gmailPushMailDescriptors(raw) {
@@ -622,15 +639,17 @@ function gmailPushMailDescriptors(raw) {
   for (const candidate of list) {
     if (out.length >= GMAIL_MAX_ATTACHMENTS) break;
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue;
-    const filename = typeof candidate.filename === 'string' ? candidate.filename : '';
-    if (filename === '') continue;
     if (typeof candidate.attachmentId !== 'string' || candidate.attachmentId === '') continue;
+    const name = sanitizeMailDescriptorText(candidate.filename, 200);
+    if (name === null) continue;
     const mime = typeof candidate.mimeType === 'string' && candidate.mimeType !== ''
-      ? candidate.mimeType : 'application/octet-stream';
+      ? sanitizeMailDescriptorText(candidate.mimeType, 128)
+      : 'application/octet-stream';
+    if (mime === null) continue;
     const size = Number.isSafeInteger(candidate.size) && candidate.size >= 0 ? candidate.size : 0;
     out.push(Object.freeze({
-      name: filename.slice(0, 200),
-      mimeType: mime.slice(0, 128),
+      name,
+      mimeType: mime,
       sizeBytes: size,
     }));
   }

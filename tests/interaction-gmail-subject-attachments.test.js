@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { normalizeGmailRestMessage } from '../packages/channels/src/gmail-http.js';
+import { GMAIL_MAX_STORED_TEXT, normalizeGmailRestMessage } from '../packages/channels/src/gmail-http.js';
 import { createGmailChannelAdapter, gmailPushBody } from '../packages/channels/src/gmail.js';
+import { bounds } from '../packages/interactions/src/interactions.js';
 import {
   logMessage,
   readTimeline,
@@ -198,12 +199,24 @@ test('a body longer than the record fence still stores, truncated to 2000', () =
   // P1 backlog:3055d50330b5 — a 2500-character plain part used to normalize
   // to a 2500-character text that validateMessageRequest refused (MAX_BODY
   // 2000), so the message was never stored. Both readers truncate first.
-  const long = `Le offerte di novembre.\n\n${'n'.repeat(2500)}`;
+  // An anonymized long newsletter (over 2000 characters, real paragraphs
+  // with line breaks, like the billing receipt Dan checked on Presti).
+  const long = [
+    'Le offerte di novembre, solo fino a domenica.',
+    '',
+    'Ciao, ecco le novità del mese per i soci del centro.',
+    '',
+    ...Array.from({ length: 40 }, (_, i) => `Offerta ${i + 1}: lezione di prova gratuita su prenotazione, valida fino al 30 novembre.`),
+    '',
+    'Per disdire rispondi a questa email. A presto!',
+  ].join('\n');
+  assert.ok(long.length > 2000, `the fixture is a long mail, got ${long.length}`);
   const wire = newsletterFullMessage();
   wire.payload.parts[0].body = { data: b64url(long), size: long.length };
   const rest = normalizeGmailRestMessage(wire, MAILBOX);
   assert.ok(rest.text.length <= 2000, `REST text fits the record fence, got ${rest.text.length}`);
-  assert.ok(rest.text.startsWith('Le offerte di novembre.'), 'the preheader stays on top after truncation');
+  assert.ok(rest.text.startsWith('Le offerte di novembre, solo fino a domenica.'), 'the preheader stays on top after truncation');
+  assert.ok(rest.text.includes('\n'), 'line breaks survive truncation');
   const validated = validateMessageRequest({
     sourceKey: 'gmail:long:1', conversationId: 'email:thread-news-1', direction: 'inbound',
     channel: 'email', body: rest.text, mailSubject: rest.mailSubject,
@@ -219,7 +232,8 @@ test('a body longer than the record fence still stores, truncated to 2000', () =
     subject: 'Novità di novembre', snippet: long, internalDateMs: AT,
   }));
   assert.ok(push.text.length <= 2000, `push text fits the record fence, got ${push.text.length}`);
-  assert.ok(push.text.startsWith('Le offerte di novembre.'), 'push keeps the preheader on top after truncation');
+  assert.ok(push.text.startsWith('Le offerte di novembre, solo fino a domenica.'), 'push keeps the preheader on top after truncation');
+  assert.ok(push.text.includes('\n'), 'push keeps line breaks after truncation');
 });
 
 test('push and history readers agree on the mail subject and attachments', () => {
@@ -399,4 +413,96 @@ test('mail extras are email-only and fail closed', () => {
     }),
     /at most 20/,
   );
+});
+
+test('a mail with only its subject stores with a null body', async () => {
+  // P1 backlog:3055d50330b5 — a decoded subject with empty readable text
+  // (empty snippet, image-only body, padding-only text) normalized to '' and
+  // the record refused the whole message, losing the synced subject.
+  const wire = {
+    id: 'gmail-subject-only-1',
+    threadId: 'thread-subject-only-1',
+    snippet: '',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Solo oggetto' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [],
+    },
+  };
+  const event = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.equal(event.mailSubject, 'Solo oggetto');
+  assert.equal(event.text, '');
+  const { stored } = await hostLogsMail(event, 'gmail:subject-only:1');
+  assert.equal(stored.mailSubject, 'Solo oggetto');
+  assert.equal(stored.body, null, 'the subject-only mail stores with a null body');
+});
+
+test('a dirty attachment name degrades to a skipped descriptor, never a refused message', () => {
+  // P1 backlog:3055d50330b5 — a provider filename with controls passed both
+  // readers unchanged, then the record refused the whole mail over the
+  // cosmetic field. Both readers sanitize the same way now.
+  const wire = {
+    id: 'gmail-dirty-1',
+    threadId: 'thread-dirty-1',
+    snippet: 'Corpo vero.',
+    internalDate: String(AT),
+    labelIds: ['INBOX'],
+    payload: {
+      headers: [
+        { name: 'From', value: 'Esempio <mittente@example.com>' },
+        { name: 'To', value: MAILBOX },
+        { name: 'Subject', value: 'Nomi sporchi' },
+      ],
+      mimeType: 'multipart/mixed',
+      parts: [
+        {
+          mimeType: 'application/pdf',
+          filename: 'ricevuta\n1234\t.pdf',
+          body: { attachmentId: 'gmail-att-dirty-1', size: 10 },
+        },
+        {
+          mimeType: 'application/pdf',
+          filename: '   ',
+          body: { attachmentId: 'gmail-att-blank-1', size: 10 },
+        },
+      ],
+    },
+  };
+  const rest = normalizeGmailRestMessage(wire, MAILBOX);
+  assert.deepEqual(rest.attachments, [{
+    name: 'ricevuta 1234 .pdf', mimeType: 'application/pdf', sizeBytes: 10,
+  }], 'controls become spaces, the blank name drops out');
+
+  const definition = createGmailChannelAdapter({ mailbox: MAILBOX, secret: 'gmail-test-secret' }).definition;
+  const [push] = definition.normalizeInbound(gmailPushBody({
+    id: 'gmail-dirty-1', threadId: 'thread-dirty-1',
+    from: 'Esempio <mittente@example.com>', to: MAILBOX,
+    subject: 'Nomi sporchi', snippet: 'Corpo vero.', internalDateMs: AT,
+    attachments: [
+      { filename: 'ricevuta\n1234\t.pdf', mimeType: 'application/pdf', size: 10, attachmentId: 'gmail-att-dirty-1' },
+      { filename: '   ', mimeType: 'application/pdf', size: 10, attachmentId: 'gmail-att-blank-1' },
+    ],
+  }));
+  assert.deepEqual(push.attachments, rest.attachments, 'push sanitizes exactly like history');
+
+  const validated = validateMessageRequest({
+    sourceKey: 'gmail:dirty:1', conversationId: 'email:thread-dirty-1', direction: 'inbound',
+    channel: 'email', body: rest.text, mailSubject: rest.mailSubject,
+    mailAttachments: rest.attachments, subject: SUBJECT, occurredAt: '2026-11-05T09:00:00.000Z',
+    source: SOURCE,
+  });
+  assert.deepEqual(JSON.parse(validated.mailAttachmentsJson), rest.attachments);
+});
+
+test('the reader fence mirrors the record fence', () => {
+  // P3 backlog:3055d50330b5 — the two 2000 fences live in different
+  // packages by convention, so this test pins them equal instead of a
+  // shared import: a drift would truncate wrong or refuse downstream.
+  assert.equal(GMAIL_MAX_STORED_TEXT, bounds.body);
 });
