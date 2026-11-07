@@ -351,7 +351,7 @@ const SYSTEM = () => trustedSystemActor('channel package internal write');
  *   resolveSecret: (reference: string, context: {spaceId: string, purpose: string}) => Promise<string>,
  *   tenantId: string,
  *   config?: Record<string, any>,
- *   interactionLog?: { logMessage: (request: any) => Promise<any> } | null,
+ *   interactionLog?: { logMessage: (request: any) => Promise<any>, advanceMessage?: (record: any, to: any, errorCode?: any) => Promise<any> } | null,
  * }} deps `resolveSecret` is the deployment's custody edge (platform
  * runtime-vault in production, a fixture map in tests): the reference is
  * stored, the value is resolved at call time and never persisted.
@@ -423,7 +423,10 @@ export function createChannelOperations(deps) {
   // the worker logs no timeline row — the host keeps logging sends itself,
   // exactly as before. Opened by the composition with the channels package
   // as consumer and a system writer actor, so the logged row carries the
-  // worker as writer and the sending human as team author.
+  // worker as writer and the sending human as team author. `advanceMessage`
+  // on the handle is optional too (backlog:97cba17c): with it a terminal
+  // send also lands as a failed timeline row with the reason code; without
+  // it the dead letter stays the only record, exactly as before.
   const interactionLog = deps.interactionLog ?? null;
   if (interactionLog !== null && (typeof interactionLog !== 'object' || typeof interactionLog.logMessage !== 'function')) {
     throw new ValidationError('channel interactionLog must open the composed interaction-log@1 capability (logMessage)', {
@@ -2586,6 +2589,52 @@ export function createChannelOperations(deps) {
    * the same row instead of writing a second one. Throws on any refusal —
    * the caller settles terminal, never a retry past a completed send.
    */
+  /**
+   * Log a terminal composer send as its subject's failed outbound timeline
+   * row (backlog:97cba17c, VALIDAZIONE A4): the message the operator sent
+   * stays visible in the scheda cronologia with the reason code, and the
+   * card offers Riprova on it. The row is written as `sent` first and then
+   * advanced to `failed` — the interactions contract refuses a fresh row
+   * carrying a failure — under the same idempotency-derived key the proven
+   * path uses. Text-only like the proven path: a template send carries no
+   * loggable text and stays out of the timeline. Without an
+   * `advanceMessage` on the composed log (older compositions) nothing is
+   * written: the dead letter stays the only record, exactly as before.
+   */
+  async function logFailedSendTimeline({ timeline, connection, adapter, message, idempotencyKey, errorCode }) {
+    const text = typeof message?.text === 'string' ? message.text : '';
+    if (text === '') return null;
+    if (timeline === null || timeline === undefined || connection === null || connection === undefined) return null;
+    if (typeof interactionLog?.advanceMessage !== 'function') return null;
+    const keyHash = createHash('sha256').update(idempotencyKey, 'utf8').digest('hex');
+    const explicit = typeof timeline.conversationId === 'string' ? timeline.conversationId : null;
+    const conversationId = resolveSentConversationId({
+      channel: connection.channel,
+      adapter,
+      message,
+      providerMessageId: null,
+      providerThreadId: null,
+      explicitConversationId: explicit,
+    });
+    const logged = await interactionLog.logMessage({
+      sourceKey: `${CHANNEL_TIMELINE_SOURCE_PACKAGE}-send:${keyHash}`,
+      conversationId,
+      direction: 'outbound',
+      channel: connection.channel,
+      body: text,
+      attachment: null,
+      teamAuthorId: timeline.teamAuthorId,
+      remoteHandle: typeof message?.to === 'string' ? message.to : null,
+      subject: timeline.subject,
+      occurredAt: nowIso(),
+      source: { package: CHANNEL_TIMELINE_SOURCE_PACKAGE, action: CHANNEL_TIMELINE_SOURCE_ACTION },
+    });
+    const row = logged?.message ?? null;
+    if (!row || row.status === 'failed') return row;
+    const advanced = await interactionLog.advanceMessage(row, 'failed', errorCode);
+    return advanced?.message ?? row;
+  }
+
   async function logSentTimeline({ timeline, connection, adapter, message, providerMessageId, providerThreadId, idempotencyKey }) {
     const text = typeof message?.text === 'string' ? message.text : '';
     if (text === '') return;
@@ -2626,6 +2675,26 @@ export function createChannelOperations(deps) {
         const idempotencyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey : '';
         const message = body.message && typeof body.message === 'object' ? body.message : null;
         const failTerminal = async (code) => {
+          // A terminal composer send stays visible as its subject's failed
+          // outbound timeline row (backlog:97cba17c, VALIDAZIONE A4): the
+          // scheda cronologia keeps the reason and offers Riprova, instead
+          // of the failure living only in the dead letter the card never
+          // reads. Best-effort beside the letter — the letter stays the
+          // record of the failure, never the row.
+          try {
+            const failedTimeline = body.timeline && typeof body.timeline === 'object' && !Array.isArray(body.timeline)
+              ? body.timeline : null;
+            if (failedTimeline !== null && interactionLog !== null) {
+              await logFailedSendTimeline({
+                timeline: failedTimeline, connection, adapter, message,
+                idempotencyKey, errorCode: code,
+              });
+            }
+          } catch {
+            // The dead letter below stays the record: a timeline write that
+            // refuses (a replayed failed row, an uncomposed log) never
+            // renames the failure.
+          }
           const letter = await recordDeadLetter({
             spaceId, connectionKey, idempotencyKey,
             jobId: job.id, errorCode: code,
