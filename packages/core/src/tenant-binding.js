@@ -191,7 +191,7 @@ export function resolveTenantBinding(options) {
     // Re-coded so the refusal matrix has one stable code for "not a tenant id",
     // and still without echoing the offending value.
     throw new AppError(
-      'the bound tenant id must be lowercase letters, digits and hyphens, starting with a letter, '
+      'the bound tenant id must be lowercase letters, digits and hyphens, starting with a letter or digit, '
       + 'at most 63 characters — it becomes part of a filesystem path, so it is a slug and nothing else',
       { code: 'SPINE_BOUND_TENANT_INVALID', status: 500, details: { mode } },
     );

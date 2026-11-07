@@ -88,12 +88,12 @@ function boundedLine(value, label, max) {
   return value.trim();
 }
 
-/** The Accordo space slug. Same rule as a tenant id: lowercase slug, never inferred. */
+/** The Accordo space id. Same rule as a tenant id: lowercase slug or canonical UUID, never inferred. */
 export function assertSpaceId(value) {
   try {
     return assertTenantId(value);
   } catch {
-    throw new ValidationError('spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter, at most 63 characters)', { field: 'spaceId' });
+    throw new ValidationError('spaceId must be a lowercase slug or canonical UUID (letters, digits, hyphens, starting with a letter or digit, at most 63 characters)', { field: 'spaceId' });
   }
 }
 

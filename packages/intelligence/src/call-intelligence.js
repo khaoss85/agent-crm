@@ -62,7 +62,7 @@ export const CALL_TRANSCRIPT_PURGE_MAX_ATTEMPTS = 5;
 
 const PURGE_ACTOR = trustedSystemActor('purging expired call transcripts');
 
-const SPACE_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
+const SPACE_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const CALL_REF_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 const MAX_TRANSCRIPT_CHARS = 30000;
 const MAX_SUMMARY_CHARS = 2000;
@@ -77,7 +77,7 @@ const MAX_RECORDED_FUTURE_SKEW_MS = 5 * 60 * 1000;
  */
 function assertSpaceId(value, field = 'spaceId') {
   if (typeof value !== 'string' || !SPACE_ID_RE.test(value)) {
-    throw new ValidationError(`${field} must be a lowercase slug (letters, digits, hyphens, starting with a letter, at most 63 characters)`, { field });
+    throw new ValidationError(`${field} must be a lowercase slug or canonical UUID (letters, digits, hyphens, starting with a letter or digit, at most 63 characters)`, { field });
   }
   return value;
 }
