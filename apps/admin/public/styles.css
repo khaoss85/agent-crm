@@ -1478,7 +1478,7 @@ select.bo-spazi-input { flex: none; }
 .plist { padding: 0 30px 30px; }
 .plist .ui-hero { position: relative; flex-wrap: nowrap; padding: 30px 68px; border-radius: 18px; background: var(--hero-ink); }
 .plist .ui-hero-copy { max-width: 470px; }
-@media (max-width: 700px) { .plist { padding: 0; } .plist .ui-hero { flex-wrap: wrap; padding: 24px; } .bo-perso-bar .search.ui-field { margin-left: 0; width: 100%; } .personalizzazione.panel { padding: 0; } }
+@media (max-width: 700px) { .plist { padding: 0; } .plist .ui-hero { flex-wrap: wrap; padding: 24px; } .bo-perso-bar span.search-wrap { margin-left: 0; width: 100%; } .bo-perso-bar .search-wrap .search.ui-field { width: 100%; } .personalizzazione.panel { padding: 0; } }
 .plist .ui-hero-title { font-size: 36px; }
 .plist .ui-hero-text { font-size: 15px; }
 .plist .ui-hero-tiles .ui-chip { width: 64px; height: 64px; display: grid; place-items: center; padding: 0; border-radius: 14px; font-size: 13px; }
@@ -1519,7 +1519,9 @@ select.bo-spazi-input { flex: none; }
 .ui-conn-verified .ui-icon { width: 9px; height: 9px; stroke-width: 3; }
 /* Toolbar like the prototype: the search wears its lens, filter and sort are
  * bare icon-buttons, the CTA reads «+ Aggiungi» with its chevron. */
-.bo-perso-bar .search.ui-field { padding-left: 34px; background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6a5a' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4'/%3E%3C/svg%3E") no-repeat 12px center / 15px 15px; }
+.bo-perso-bar .search-wrap { position: relative; display: inline-flex; align-items: center; margin-left: auto; }
+.bo-perso-bar .search-wrap .ui-icon-search { position: absolute; left: 12px; top: 50%; width: 15px; height: 15px; transform: translateY(-50%); color: var(--dim); pointer-events: none; }
+.bo-perso-bar .search-wrap .search.ui-field { margin-left: 0; padding-left: 34px; background: var(--surface); }
 .bo-perso-bar .ui-conn-menuwrap > .ui-btn { width: 36px; height: 36px; min-height: 0; padding: 0; display: grid; place-items: center; border: none; border-radius: 9px; background: transparent; box-shadow: none; }
 .bo-perso-bar .ui-conn-menuwrap > .ui-btn:hover, .bo-perso-bar .ui-conn-menuwrap > .ui-btn[aria-expanded="true"] { background: var(--line-soft); }
 .bo-perso-bar .ui-btn-cta { display: inline-flex; align-items: center; gap: 6px; }
