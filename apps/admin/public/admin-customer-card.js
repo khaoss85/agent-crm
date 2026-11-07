@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -465,6 +465,15 @@ export function createCustomerCardView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  // Azioni rapide: the prototype's stroke icon above the label, drawn as a
+  // real SVG element. A CSS data: mask is blocked by the host CSP
+  // (default-src 'self'), so the icons of #627 never painted in production.
+  const tile = (label, icon) => {
+    const node = el('button', 'bo-scheda-tile');
+    node.appendChild(uiIcon(doc, icon));
+    node.appendChild(el('span', undefined, label));
+    return node;
+  };
   const link = (href, text, action) => {
     const node = el('a', undefined, text);
     node.setAttribute('href', href);
@@ -726,7 +735,7 @@ export function createCustomerCardView(deps) {
       // one the card says so and falls back to `tel:`, never logging a call
       // the CRM never placed. A hostile value stays text in the title: the
       // href is built only from the fallback branch below, never here.
-      const call = el('button', 'bo-scheda-tile', 'Chiama');
+      const call = tile('Chiama', 'telefono');
       call.setAttribute('type', 'button');
       call.setAttribute('data-action', 'call-customer');
       call.setAttribute('title', `Chiama ${phone}`);
@@ -739,7 +748,7 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
       // Voce 105563eea902: the empty state offers its own cure — the
       // operator holds the number here, through POST /api/customer-hub/phone.
-      const add = el('button', 'bo-scheda-tile', 'Aggiungi telefono');
+      const add = tile('Aggiungi telefono', 'telefono-piu');
       add.setAttribute('type', 'button');
       add.setAttribute('data-action', 'add-phone');
       add.setAttribute('title', 'Salva il numero del cliente per chiamarlo dalla scheda');
@@ -754,7 +763,7 @@ export function createCustomerCardView(deps) {
     if (writable.length === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
     } else {
-      const write = el('button', 'bo-scheda-tile', 'Scrivi');
+      const write = tile('Scrivi', 'messaggio');
       write.setAttribute('type', 'button');
       write.setAttribute('data-action', 'compose-message');
       write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
@@ -1537,7 +1546,7 @@ export function createCustomerCardView(deps) {
     const pick = customerPickFor(navCtx, card);
     // Voce c2793930850a: the creation voices are tiles like Chiama and
     // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
-    const offer = el('button', 'bo-scheda-tile', 'Nuova offerta');
+    const offer = tile('Nuova offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
     offer.addEventListener('click', () => {
@@ -1545,7 +1554,7 @@ export function createCustomerCardView(deps) {
       navigate('#/modules/opportunity/new');
     });
     row.appendChild(offer);
-    const appointment = el('button', 'bo-scheda-tile', 'Nuovo appuntamento');
+    const appointment = tile('Nuovo appuntamento', 'appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
     appointment.addEventListener('click', () => {
