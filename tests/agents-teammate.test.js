@@ -973,3 +973,238 @@ test('a progress heartbeat at done == total stays live for the lease, then final
   assert.equal(stale.run.outcome, 'applied');
   assert.equal(appliedCalls, 0, 'no proposal is applied twice');
 });
+
+test('spentSince counts the execution month, not the slot month', async () => {
+  const { spentSince } = await import('../packages/agents/src/agents.js');
+  const runs = [
+    { startedAt: '2026-01-31T08:00:00.000Z', decidedAt: '2026-02-01T08:01:00.000Z', costCents: 60 },
+    { startedAt: '2026-01-15T08:00:00.000Z', decidedAt: '2026-01-15T08:00:00.000Z', costCents: 60 },
+    // Rows written before decidedAt existed fall back to the slot instant.
+    { startedAt: '2026-01-20T08:00:00.000Z', costCents: 60 },
+  ];
+  assert.equal(spentSince(runs, '2026-02-01T00:00:00.000Z'), 60);
+  assert.equal(spentSince(runs, '2026-01-01T00:00:00.000Z'), 180);
+});
+
+test('backlogged slots executed in the new month spend the new month\u2019s cap', async () => {
+  // The worker stood still across the month boundary: two daily slots due
+  // 31 January run on 1 February against a 100c cap with 60c estimates.
+  const FEB_01 = '2026-02-01T08:01:00.000Z';
+  const { ops, modules } = compose(FEB_01);
+  await makeAgent(ops, { sourceKey: 'ag-feb', spendingCapCents: 100 });
+  for (const sourceKey of ['as-feb-a', 'as-feb-b']) {
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey,
+      agentSourceKey: 'ag-feb',
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+      costPerRunCents: 60,
+    });
+    const row = (await modules.get('teammate-assignment').service.listWhere({ spaceId: SPACE, sourceKey }))[0];
+    await modules.get('teammate-assignment').service.applyManaged(
+      row.id, { nextRunAt: '2026-01-31T08:00:00.000Z' }, { actor: SYSTEM },
+    );
+  }
+  // January already spent 60c on a run executed in January.
+  await modules.get('teammate-run').service.createManaged({
+    sourceKey: 'run:as-feb-a:2026-01-15T08:00:00.000Z',
+    spaceId: SPACE,
+    agentSourceKey: 'ag-feb',
+    assignmentSourceKey: 'as-feb-a',
+    startedAt: '2026-01-15T08:00:00.000Z',
+    decidedAt: '2026-01-15T08:00:00.000Z',
+    actorType: 'system',
+    actorId: 'agent-sweep',
+    sourcePackage: 'agents',
+    sourceAction: 'run-due',
+    costCents: 60,
+    outcome: 'artifact',
+    artifact: JSON.stringify({ day: 15 }),
+    artifactVersion: 1,
+  }, { actor: SYSTEM });
+  let executions = 0;
+  const summary = await ops.runDue({
+    actor: SYSTEM,
+    at: FEB_01,
+    execute: async () => {
+      executions += 1;
+      return { kind: 'artifact', costCents: 60, artifact: { feb: true } };
+    },
+  });
+  assert.equal(executions, 1, 'the second backlogged slot is capped, not executed');
+  assert.deepEqual([summary.artifacts, summary.capped], [1, 1]);
+  const rows = await modules.get('teammate-run').service.listWhere({ spaceId: SPACE, agentSourceKey: 'ag-feb' });
+  const febSpend = rows
+    .filter((row) => typeof row.decidedAt === 'string' && row.decidedAt >= '2026-02-01T00:00:00.000Z')
+    .reduce((total, row) => total + row.costCents, 0);
+  assert.equal(febSpend, 60, 'February holds one execution against the 100c cap');
+  for (const row of rows.filter((entry) => entry.outcome === 'artifact' && entry.decidedAt >= '2026-02-01T00:00:00.000Z')) {
+    assert.ok(!/Slot claimed/.test(row.note ?? ''), 'no claim note survives on a finished artifact row');
+  }
+});
+
+/**
+ * Async-only run storage: no `.sync` handle and no `mutationSync`, like the
+ * PostgreSQL adapter. The agent operations must take the `mutationAsync`
+ * branch of the conditional run write and still record the run.
+ */
+function asyncRunService(realManifest) {
+  const rows = [];
+  let seq = 0;
+  const fieldOf = (column) => {
+    if (column === 'id') return 'id';
+    return realManifest.fields.find((field) => field.column === column)?.name ?? null;
+  };
+  const match = (row, where) => (where ?? []).every((predicate) => {
+    const field = fieldOf(predicate.column);
+    const current = field === null ? row[predicate.column] : row[field];
+    if (predicate.op === 'is-null') return current === null || current === undefined;
+    if (predicate.op !== 'eq') throw new Error(`stub run storage supports only eq/is-null (got ${predicate.op})`);
+    return current === predicate.value;
+  });
+  const storage = {
+    execute: async (statement) => {
+      if (statement?.kind !== 'update' || statement.table !== realManifest.table) {
+        throw new Error(`stub run storage supports only updates on ${realManifest.table}`);
+      }
+      const targets = rows.filter((row) => match(row, statement.where));
+      for (const target of targets) {
+        for (const { column, value } of statement.values ?? []) {
+          const field = fieldOf(column);
+          target[field ?? column] = value;
+        }
+      }
+      return { affectedRows: targets.length };
+    },
+  };
+  return {
+    rows,
+    manifest: realManifest,
+    database: { storage },
+    audit: { record: async () => {} },
+    events: { emit: async () => {} },
+    async mutationAsync(fn) {
+      return fn({ execute: (statement) => storage.execute(statement) });
+    },
+    async createManaged(data) {
+      if (rows.some((row) => row.sourceKey === data.sourceKey)) {
+        throw Object.assign(new Error('UNIQUE constraint failed: teammate_run.sourceKey'), {
+          code: 'SQLITE_CONSTRAINT_UNIQUE',
+        });
+      }
+      seq += 1;
+      const stored = { ...data, id: `stub-run-${seq}` };
+      rows.push(stored);
+      return { ...stored };
+    },
+    async applyManaged(id, patch) {
+      const row = rows.find((entry) => entry.id === id);
+      if (!row) throw new Error('Unknown stub run');
+      Object.assign(row, patch);
+      return { ...row };
+    },
+    async get(id) {
+      const row = rows.find((entry) => entry.id === id);
+      if (!row) throw new Error('Unknown stub run');
+      return { ...row };
+    },
+    async listWhere(filters = {}) {
+      return rows
+        .filter((row) => Object.entries(filters).every(([key, value]) => row[key] === value))
+        .map((row) => ({ ...row }));
+    },
+  };
+}
+
+test('a stale claim taken over across the month boundary spends the new month', async () => {
+  // A sweep claimed the 31 January slot at 23:50 UTC and crashed before
+  // finalizing. The worker restarts on 1 February and takes over the stale
+  // claim: the February execution must spend the February cap, not January's.
+  const FEB_01 = '2026-02-01T08:01:00.000Z';
+  const { ops, modules } = compose(FEB_01);
+  await makeAgent(ops, { sourceKey: 'ag-stale-feb', spendingCapCents: 100 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-stale-feb',
+    agentSourceKey: 'ag-stale-feb',
+    phrase: 'ogni giorno il report',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 60,
+  });
+  const queued = (await modules.get('teammate-assignment').service.listWhere({ spaceId: SPACE, sourceKey: 'as-stale-feb' }))[0];
+  await modules.get('teammate-assignment').service.applyManaged(
+    queued.id, { nextRunAt: '2026-01-31T08:00:00.000Z' }, { actor: SYSTEM },
+  );
+  await modules.get('teammate-run').service.createManaged({
+    sourceKey: 'run:as-stale-feb:2026-01-31T08:00:00.000Z',
+    spaceId: SPACE,
+    agentSourceKey: 'ag-stale-feb',
+    assignmentSourceKey: 'as-stale-feb',
+    startedAt: '2026-01-31T08:00:00.000Z',
+    decidedAt: '2026-01-31T23:50:00.000Z',
+    actorType: 'system',
+    actorId: 'agent-sweep',
+    sourcePackage: 'agents',
+    sourceAction: 'run-due',
+    costCents: 60,
+    outcome: 'started',
+    note: 'Slot claimed, execution not yet recorded.',
+  }, { actor: SYSTEM });
+  let executions = 0;
+  const summary = await ops.runDue({
+    actor: SYSTEM,
+    at: FEB_01,
+    execute: async () => {
+      executions += 1;
+      return { kind: 'artifact', costCents: 60, artifact: { feb: true } };
+    },
+  });
+  assert.equal(executions, 1);
+  assert.equal(summary.artifacts, 1);
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: 'run:as-stale-feb:2026-01-31T08:00:00.000Z' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].outcome, 'artifact');
+  assert.equal(rows[0].decidedAt, FEB_01, 'the takeover executes now, so it spends the new month');
+  const febSpend = (await modules.get('teammate-run').service.listWhere({ spaceId: SPACE, agentSourceKey: 'ag-stale-feb' }))
+    .filter((row) => typeof row.decidedAt === 'string' && row.decidedAt >= '2026-02-01T00:00:00.000Z')
+    .reduce((total, row) => total + row.costCents, 0);
+  assert.equal(febSpend, 60);
+});
+
+test('conditional run writes hold on async (PostgreSQL-like) storage', async () => {
+  const FEB_01 = '2026-02-01T08:01:00.000Z';
+  const base = compose(FEB_01);
+  const stub = asyncRunService(base.modules.get('teammate-run').service.manifest);
+  const modules = new Map(base.modules);
+  modules.set('teammate-run', { service: stub });
+  const ops = createAgentOperations({ modules, now: () => FEB_01 });
+  await makeAgent(ops, { sourceKey: 'ag-pg', spendingCapCents: 100 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-pg',
+    agentSourceKey: 'ag-pg',
+    phrase: 'ogni giorno il report',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 60,
+  });
+  const queued = (await base.modules.get('teammate-assignment').service.listWhere({ spaceId: SPACE, sourceKey: 'as-pg' }))[0];
+  await base.modules.get('teammate-assignment').service.applyManaged(
+    queued.id, { nextRunAt: '2026-01-31T08:00:00.000Z' }, { actor: SYSTEM },
+  );
+  const summary = await ops.runDue({
+    actor: SYSTEM,
+    at: FEB_01,
+    execute: async () => ({ kind: 'artifact', costCents: 60, artifact: { pg: true } }),
+  });
+  assert.equal(summary.artifacts, 1);
+  const rows = await stub.listWhere({ spaceId: SPACE });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].outcome, 'artifact');
+  assert.equal(rows[0].decidedAt, FEB_01);
+  assert.ok(!/Slot claimed/.test(rows[0].note ?? ''), 'no claim note survives on the async path either');
+});

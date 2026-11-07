@@ -314,13 +314,20 @@ export function agentRunKey(assignmentSourceKey, startedAt) {
   return `run:${assignmentSourceKey}:${startedAt}`;
 }
 
-/** @param {Array<{startedAt?:string,costCents?:number,outcome?:string}>} runs */
+/**
+ * Monthly spend counts the month the execution happened in (`decidedAt`),
+ * never the slot month (`startedAt`): a backlogged slot from last month
+ * executed this month spends this month's cap. Rows without `decidedAt`
+ * (written before it existed) fall back to `startedAt` instead of vanishing.
+ * @param {Array<{startedAt?:string,decidedAt?:string,costCents?:number,outcome?:string}>} runs
+ */
 export function spentSince(runs, monthStart) {
   const startMs = Date.parse(monthStart);
   let total = 0;
   for (const run of runs ?? []) {
     if (!run || typeof run !== 'object') continue;
-    const at = typeof run.startedAt === 'string' ? Date.parse(run.startedAt) : NaN;
+    const raw = typeof run.decidedAt === 'string' && run.decidedAt !== '' ? run.decidedAt : run.startedAt;
+    const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
     if (!Number.isFinite(at) || at < startMs) continue;
     if (typeof run.costCents === 'number' && Number.isFinite(run.costCents) && run.costCents > 0) {
       total += run.costCents;

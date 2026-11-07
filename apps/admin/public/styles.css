@@ -2093,3 +2093,25 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-chips-authors { display: inline-flex; flex-wrap: wrap; gap: 6px; padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line-soft); }
 .bo-scheda-chips-authors button { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 550; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
 .bo-scheda-chips-authors button[data-active="true"] { background: var(--pending-soft); border-color: var(--pending-ink); color: var(--pending-ink); }
+
+/* Dan 07/11: la conversazione si legge come una chat — ricevuti a sinistra,
+   inviati dal team a destra, ognuno nella sua bolla; il badge del canale sta
+   sul bordo esterno. Note e giorni restano a tutta larghezza. */
+.bo-scheda-timeline .bo-scheda-entry-in,
+.bo-scheda-timeline .bo-scheda-entry-out { display: flex; align-items: flex-end; gap: 10px; }
+.bo-scheda-timeline .bo-scheda-entry-out { flex-direction: row-reverse; }
+.bo-scheda-timeline .bo-scheda-entry-none { display: flex; align-items: flex-end; justify-content: center; gap: 10px; }
+.bo-scheda-timeline .bo-scheda-entry-none > .bo-scheda-chan { flex: none; width: 30px; height: 30px; border-radius: 9px; font-size: 9.5px; }
+.bo-scheda-entry-none .bo-scheda-bubble { border-radius: 16px; background: var(--surface-soft); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.bo-scheda-timeline .bo-scheda-entry-in > .bo-scheda-chan,
+.bo-scheda-timeline .bo-scheda-entry-out > .bo-scheda-chan { flex: none; width: 30px; height: 30px; border-radius: 9px; font-size: 9.5px; }
+.bo-scheda-bubble { min-width: 0; max-width: min(78%, 640px); display: flex; flex-direction: column; gap: 4px; padding: 10px 14px 11px; border: 1px solid var(--line-soft); border-radius: 16px 16px 16px 5px; background: var(--surface); }
+.bo-scheda-entry-out .bo-scheda-bubble { border-color: color-mix(in srgb, var(--accent) 22%, var(--line-soft)); border-radius: 16px 16px 5px 16px; background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
+.bo-scheda-timeline .bo-scheda-bubble .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.bo-scheda-timeline .bo-scheda-entry .bo-scheda-bubble p { padding: 0; border: 0; background: transparent; }
+.bo-scheda-timeline .bo-scheda-bubble .bo-scheda-entry-more { padding: 0; border: 0; background: transparent; width: auto; }
+.bo-scheda-timeline .bo-scheda-bubble .bo-scheda-sync { align-self: flex-end; padding: 0; border: 0; border-radius: 0; background: transparent; font-size: 10.5px; }
+.bo-scheda-timeline .bo-scheda-bubble .bo-scheda-sync[data-sync="failed"] { color: var(--danger); font-weight: 600; }
+.bo-scheda-bubble .bo-scheda-allegato { max-width: 100%; border-radius: 10px; }
+@media (max-width: 560px) { .bo-scheda-bubble { max-width: 86%; } }
