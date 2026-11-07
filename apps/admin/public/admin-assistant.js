@@ -29,7 +29,7 @@
 import { formatMinorUnits } from './admin-core.js';
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
 import {
-  PHRASE_UNCLEAR_NOTE, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
+  PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
 import { callOutcomeLabel, romeClock } from './admin-labels.js';
@@ -1728,6 +1728,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
   /** @type {any} */
   let boundClient = null;
+  /** The «@Agente» intent in flight, kept until it succeeds (review #661 P1). @type {any} */
+  let pendingAttempt = null;
   const bound = () => {
     if (boundClient === null) boundClient = bindAdminMutations(client).client;
     return boundClient;
@@ -1735,7 +1737,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   const state = {
     /**
      * backlog:33782ba68747: the «@Agente …» request in flight, or null.
-     * @type {null | { typed: string, status: string, agent?: any, instruction?: string, rest?: string, agents?: Array<any>, message?: string, busy?: boolean, space?: string | null }}
+     * @type {null | { typed: string, status: string, agent?: any, instruction?: string, rest?: string, agents?: Array<any>, message?: string, busy?: boolean, once?: boolean, space?: string | null }}
      */
     mention: null,
     open: false,
@@ -2129,15 +2131,22 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   async function confirmMention(once) {
     const mention = state.mention;
     if (!mention || mention.busy || !mention.agent || !mention.instruction || !mention.space) return;
+    // Review #661 P2: the space may have changed since the card resolved.
+    // Never post to the space left behind: resolve again in the active one.
+    if (readSpace() !== mention.space) {
+      await startMention(mention.typed);
+      return;
+    }
     mention.busy = true;
+    mention.once = once;
+    // Review #661 P1: one intent keeps one sourceKey and key across retries.
+    pendingAttempt = assignAttempt(pendingAttempt, {
+      spaceId: mention.space, agentSourceKey: mention.agent.sourceKey, phrase: mention.instruction,
+    });
     render();
     try {
-      const made = await assignToAgent(bound(), {
-        spaceId: mention.space,
-        agentSourceKey: mention.agent.sourceKey,
-        phrase: mention.instruction,
-        once,
-      });
+      const made = await assignToAgent(bound(), pendingAttempt, { once });
+      pendingAttempt = null;
       mention.status = 'done';
       mention.message = `Fatto: ${mention.agent.name} ha l’incarico «${mention.instruction}» (${made ? describeSchedule(made).toLowerCase() : 'registrato'}).`;
       notify(`Incarico dato a ${mention.agent.name}`);
@@ -2226,8 +2235,16 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         say(String(mention.message ?? ''));
         box.appendChild(agentsLink());
         break;
-      default:
+      default: {
         box.appendChild(el(doc, 'p', 'bo-assistant-error', String(mention.message ?? 'Qualcosa non è andato.')));
+        // Retry the same intent: same sourceKey, never a second incarico.
+        const retry = el(doc, 'button', 'bo-assistant-confirm', 'Riprova');
+        retry.setAttribute('type', 'button');
+        retry.setAttribute('data-action', 'agent-retry');
+        retry.disabled = mention.busy === true;
+        retry.addEventListener('click', () => { void confirmMention(mention.once === true); });
+        box.appendChild(retry);
+      }
     }
     return box;
   }

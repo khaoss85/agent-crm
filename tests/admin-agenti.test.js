@@ -143,7 +143,7 @@ test('the #/agenti route resolves to the Agenti screen; anything under it is inv
 });
 
 /** A drive over the three reads and the two writes, like the server. */
-function driveClient({ composed = true, unclearFirst = false } = {}) {
+function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = false, rows = null } = {}) {
   const calls = [];
   const agents = [{ ...RIAGGANCIO }];
   const assignments = [];
@@ -153,6 +153,7 @@ function driveClient({ composed = true, unclearFirst = false } = {}) {
     proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'WhatsApp a Giulia Romano' } }]),
   }];
   let refusedOnce = false;
+  let lostOnce = false;
   return {
     calls,
     agents,
@@ -166,7 +167,7 @@ function driveClient({ composed = true, unclearFirst = false } = {}) {
         if (!composed) throw Object.assign(new Error('Operation not found'), { code: 'NOT_FOUND', status: 404 });
         return { agents: CATALOG };
       }
-      if (path.startsWith('/api/modules/teammate-agent/records?')) return { items: agents.map((row) => ({ ...row })) };
+      if (path.startsWith('/api/modules/teammate-agent/records?')) return { items: rows ?? agents.map((row) => ({ ...row })) };
       if (path.startsWith('/api/modules/teammate-assignment/records?')) return { items: assignments.map((row) => ({ ...row })) };
       if (path.startsWith('/api/modules/teammate-run/records?')) return { items: runs };
       if (path === '/api/agents/create' && method === 'POST') {
@@ -182,11 +183,18 @@ function driveClient({ composed = true, unclearFirst = false } = {}) {
           refusedOnce = true;
           throw Object.assign(new Error('This phrase does not name a schedule'), { code: 'AGENT_PHRASE_UNCLEAR', status: 422 });
         }
+        // Like create-assignment: a known sourceKey replays, never doubles.
+        const known = assignments.find((row) => row.sourceKey === body.sourceKey);
+        if (known) return { duplicate: true, assignment: known };
         const assignment = {
           sourceKey: body.sourceKey, agentSourceKey: body.agentSourceKey, phrase: body.phrase,
           cadence: body.plan ? body.plan.cadence : 'weekly', weekday: 1, timeOfDay: '08:00', status: 'active', decidedAt: NOW,
         };
         assignments.push(assignment);
+        if (loseFirstAnswer && !lostOnce) {
+          lostOnce = true;
+          throw Object.assign(new Error('network lost after commit'), { code: 'NETWORK', status: 0 });
+        }
         return { duplicate: false, assignment };
       }
       throw new Error(`unexpected request ${method} ${path}`);
@@ -362,4 +370,93 @@ test('⌘K «@…» without the agents package says the agents are not available
   await flush();
   assert.equal(panel.getState().mentionStatus, 'unavailable');
   assert.ok(textOf(mount).includes('Gli agenti non sono ancora disponibili in questo spazio.'));
+});
+
+test('review #661 P1: a retry after a lost answer reuses the same sourceKey and key — one incarico, not two', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({ loseFirstAnswer: true });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'ogni lunedì ricontrolla i lead';
+  input.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.ok(textOf(mount).includes('Non riesco a dare l’incarico adesso'));
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].body.sourceKey, posts[0].body.sourceKey, 'the retry keeps the assignment identity');
+  assert.equal(posts[1].key, posts[0].key, 'the same body keeps its Idempotency-Key');
+  assert.equal(client.assignments.length, 1, 'one user intent, one incarico');
+  // A new phrase after success is a new intent with a new identity.
+  input.value = 'ogni giorno controlla le offerte';
+  const fresh = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  fresh.value = 'ogni giorno controlla le offerte';
+  fresh.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  const after = client.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.notEqual(after[2].body.sourceKey, posts[0].body.sourceKey);
+});
+
+test('review #661 P2: ⌘K never posts to the space left behind; it resolves again in the active one', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = assistantClient([RIAGGANCIO]);
+  let space = 'presti';
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {}, spaceId: () => space });
+  await panel.open('oggi', null, null, '@Riaggancio ogni lunedì ricontrolla i lead');
+  await flush();
+  assert.equal(panel.getState().mentionStatus, 'confirm');
+  space = 'altro';
+  findButton(mount, 'agent-assign').dispatch('click', {});
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing posted for the old space');
+  const reads = client.calls.filter((call) => call.path.startsWith('/api/modules/teammate-agent/records?'));
+  assert.ok(reads.at(-1).path.includes('filter.spaceId=altro'), 'the agents are read again in the active space');
+});
+
+test('review #661 P1: ⌘K «Riprova» after a lost answer keeps the same sourceKey and key', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const drive = driveClient({ loseFirstAnswer: true });
+  const client = {
+    calls: drive.calls,
+    request: async (path, options = {}) => (path === ASSISTANT_STATUS_PATH ? { freeQuestions: 'disabled' } : drive.request(path, options)),
+  };
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {}, spaceId: () => 'presti' });
+  await panel.open('oggi', null, null, '@Riaggancio ogni lunedì ricontrolla i lead');
+  await flush();
+  findButton(mount, 'agent-assign').dispatch('click', {});
+  await flush();
+  assert.equal(panel.getState().mentionStatus, 'error');
+  findButton(mount, 'agent-retry').dispatch('click', {});
+  await flush();
+  const posts = drive.calls.filter((call) => call.path === '/api/agents/assign');
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].body.sourceKey, posts[0].body.sourceKey);
+  assert.equal(posts[1].key, posts[0].key);
+  assert.equal(drive.assignments.length, 1);
+  assert.equal(panel.getState().mentionStatus, 'done');
+});
+
+test('review #661 P3: «capped» needs a row past the page; an unreadable clock counts no spend', async () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, sourceKey: `agent:presti:a${i}`, spaceId: 'presti', name: `Agente ${i}`, status: 'active' }));
+  for (const [count, capped] of [[200, false], [201, true]]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = driveClient({ rows: many(count) });
+    const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+    await view.render();
+    await flush();
+    assert.equal(view.state.capped, capped, `${count} rows`);
+    assert.ok(view.state.agents.length <= 200);
+    assert.ok(client.calls.some((call) => call.path.includes('limit=201')));
+  }
+  const runs = [{ agentSourceKey: 'a', decidedAt: '2026-11-02T08:00:00.000Z', costCents: 40 }];
+  assert.equal(spentThisMonthCents(runs, 'a', 'not-a-date'), 0);
 });

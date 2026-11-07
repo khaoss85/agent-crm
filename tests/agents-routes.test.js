@@ -118,3 +118,23 @@ test('without the agents package every route answers 404, never 500', async () =
     assert.equal(assign.status, 404);
   });
 });
+
+test('review #661: an agent of one space cannot be instructed under another space id', async () => {
+  // Spaces of one organization share one team by design (the organization
+  // is the tenant, ADR-038): the space id is not an authorization boundary
+  // inside it. What the route does enforce is that an assignment names an
+  // agent of the space it is written to.
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  try {
+    await withServer(app, async (base) => {
+      await post(base, '/api/agents/create', { spaceId: 'presti', slug: 'riaggancio' });
+      const crossed = await post(base, '/api/agents/assign', {
+        spaceId: 'altro', sourceKey: 'bo-x-1', agentSourceKey: catalogAgentSourceKey('presti', 'riaggancio'), phrase: 'ogni lunedì il report',
+      });
+      assert.equal(crossed.status, 404);
+      assert.equal(crossed.body.error.code, 'AGENT_UNKNOWN');
+    });
+  } finally {
+    app.close();
+  }
+});

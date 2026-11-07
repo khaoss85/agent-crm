@@ -92,7 +92,11 @@ export function describeSchedule(assignment) {
 
 /** First instant of the UTC month of `nowIso`, like packages/agents monthStartIso. @param {string} nowIso */
 export function monthStartMs(nowIso) {
-  const date = new Date(Date.parse(nowIso));
+  const ms = Date.parse(nowIso);
+  // Fail closed (review #661 P3): an unreadable clock is NaN, and every
+  // comparison with NaN is false, so no run counts — never all of them.
+  if (!Number.isFinite(ms)) return NaN;
+  const date = new Date(ms);
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
 }
 
@@ -104,6 +108,7 @@ export function monthStartMs(nowIso) {
  */
 export function spentThisMonthCents(runs, agentSourceKey, nowIso) {
   const start = monthStartMs(nowIso);
+  if (!Number.isFinite(start)) return 0;
   let total = 0;
   for (const run of runs ?? []) {
     if (!run || typeof run !== 'object' || run.agentSourceKey !== agentSourceKey) continue;
@@ -275,11 +280,13 @@ export function findMentionedAgent(line, agents = []) {
  * @param {string} module @param {string | null} spaceId
  */
 async function readModulePage(client, module, spaceId) {
-  const query = new URLSearchParams({ limit: String(AGENTI_READ_LIMIT) });
+  // One row past the page (review #661 P3): «capped» needs evidence that
+  // something was left out, so exactly AGENTI_READ_LIMIT rows is not capped.
+  const query = new URLSearchParams({ limit: String(AGENTI_READ_LIMIT + 1) });
   if (spaceId) query.set('filter.spaceId', spaceId);
   const answer = await client.request(`/api/modules/${module}/records?${query.toString()}`);
   const rows = Array.isArray(answer?.items) ? answer.items : [];
-  return { rows, capped: rows.length >= AGENTI_READ_LIMIT };
+  return { rows: rows.slice(0, AGENTI_READ_LIMIT), capped: rows.length > AGENTI_READ_LIMIT };
 }
 
 /**
@@ -340,26 +347,53 @@ export async function loadAgentiData(client, spaceId) {
 }
 
 /**
+ * One user intent — this phrase, to this agent, in this space — and the
+ * identities every retry of it reuses (review #661 P1): one assignment
+ * sourceKey (the server's idempotency identity: create-assignment replays
+ * a known key as `duplicate: true`), one Idempotency-Key per body, and the
+ * «una volta» instant fixed at its first try. A lost response retried, or
+ * a double submit, therefore never creates a second incarico. A different
+ * phrase, agent or space is a new intent with new identities.
+ * @param {any} previous the attempt kept from the last try, or null
+ * @param {{ spaceId: string, agentSourceKey: string, phrase: string }} intent
+ */
+export function assignAttempt(previous, intent) {
+  if (previous && previous.spaceId === intent.spaceId && previous.agentSourceKey === intent.agentSourceKey
+    && previous.phrase === intent.phrase) return previous;
+  return {
+    spaceId: intent.spaceId,
+    agentSourceKey: intent.agentSourceKey,
+    phrase: intent.phrase,
+    sourceKey: `bo-agent-assign:${issueAdminKey()}`,
+    runAt: null,
+    keys: { plain: null, once: null },
+  };
+}
+
+/**
  * Give one agent an instruction through create-assignment. `once` is the
  * user's explicit «una volta, adesso» after a phrase with no schedule — the
  * screen never picks a plan on its own.
  * @param {{ request: (path: string, options?: any) => Promise<any> }} bound the mutation-bound client
- * @param {{ spaceId: string, agentSourceKey: string, phrase: string, once?: boolean, nowIso?: string, sourceKey?: string }} input
+ * @param {ReturnType<typeof assignAttempt>} attempt from assignAttempt — reused across retries
+ * @param {{ once?: boolean, nowIso?: string }} [options]
  */
-export async function assignToAgent(bound, input) {
-  const sourceKey = input.sourceKey ?? `bo-agent-assign:${issueAdminKey()}`;
+export async function assignToAgent(bound, attempt, options = {}) {
+  const mode = options.once ? 'once' : 'plain';
+  if (options.once && attempt.runAt === null) attempt.runAt = options.nowIso ?? new Date().toISOString();
+  if (attempt.keys[mode] === null) attempt.keys[mode] = issueAdminKey();
   const body = {
-    spaceId: input.spaceId,
-    sourceKey,
-    agentSourceKey: input.agentSourceKey,
-    phrase: input.phrase,
-    ...(input.once ? { plan: { cadence: 'once', runAt: input.nowIso ?? new Date().toISOString() } } : {}),
+    spaceId: attempt.spaceId,
+    sourceKey: attempt.sourceKey,
+    agentSourceKey: attempt.agentSourceKey,
+    phrase: attempt.phrase,
+    ...(options.once ? { plan: { cadence: 'once', runAt: attempt.runAt } } : {}),
   };
   const answer = await bound.request('/api/agents/assign', {
     method: 'POST',
     body,
-    // A different body (the «una volta» resend) always takes a new key.
-    idempotencyKey: issueAdminKey(),
+    // Same body, same key; the «una volta» body has its own.
+    idempotencyKey: attempt.keys[mode],
   });
   return answer?.assignment ?? null;
 }
@@ -446,7 +480,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     runs: /** @type {Array<any>} */ ([]),
     capped: false,
     unavailable: /** @type {Array<string>} */ ([]),
-    /** @type {Map<string, { text: string, busy: boolean, error: string, unclear: boolean, done: string }>} */
+    /** @type {Map<string, { text: string, busy: boolean, error: string, unclear: boolean, done: string, attempt: any }>} */
     drafts: new Map(),
     /** slug being added, or null */
     adding: /** @type {string | null} */ (null),
@@ -459,7 +493,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   function draftOf(key) {
-    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', busy: false, error: '', unclear: false, done: '' });
+    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', busy: false, error: '', unclear: false, done: '', attempt: null });
     return /** @type {any} */ (state.drafts.get(key));
   }
 
@@ -512,13 +546,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     draft.error = '';
     draft.done = '';
     paint();
+    draft.attempt = assignAttempt(draft.attempt, { spaceId: state.space, agentSourceKey: agent.sourceKey, phrase });
     try {
-      const made = await assignToAgent(bound, {
-        spaceId: state.space, agentSourceKey: agent.sourceKey, phrase, once, nowIso: now(),
-      });
+      const made = await assignToAgent(bound, draft.attempt, { once, nowIso: now() });
       draft.busy = false;
       draft.unclear = false;
       draft.text = '';
+      draft.attempt = null;
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`;
       if (await reload()) paint();
     } catch (error) {
