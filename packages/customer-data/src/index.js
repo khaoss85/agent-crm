@@ -107,6 +107,21 @@ function callablePhraseAdapter(candidate) {
 export function createCustomerDataPackage(options = {}) {
   const config = options.config;
   const names = resolvedNames(config);
+  // «Da leggere» (backlog:9e003582): the interactions package's read-state
+  // functions ({ actorMemberId, countUnreadForSubject }) the customer list
+  // counts with — the same rule the scheda timeline flags with, so the two
+  // badges can never disagree. A display column adds no requires edge, so
+  // the functions arrive as a plain option instead of a capability; a
+  // wrong shape refuses at composition, an absent one reads nulls.
+  const readState = options.interactions ?? null;
+  if (readState !== null
+    && (typeof readState.actorMemberId !== 'function' || typeof readState.countUnreadForSubject !== 'function')) {
+    throw new AppError(
+      'The customer-data package was composed with an interactions edge that is not '
+      + 'the read-state functions { actorMemberId, countUnreadForSubject }',
+      { code: 'PACKAGE_DEPENDENCY_MISMATCH', status: 500 },
+    );
+  }
   const offeredFollowUp = Array.isArray(options.work?.capabilities)
     ? options.work.capabilities.find((entry) => entry?.name === 'follow-up' && entry?.version === 1) ?? null
     : null;
@@ -446,7 +461,7 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'canale', type: 'string', hint: 'Channel system, e.g. "whatsapp", or "all".' },
           { name: 'stato', type: 'string', hint: '"cliente", "contatto" or "all".' },
           { name: 'sort', type: 'string', hint: 'One of recent, name, value, status.' },
-          { name: 'vista', type: 'string', hint: 'One of tutti, ricontattare-oggi, nuovi-lead, clienti-attivi, rinnovi-30-giorni.' },
+          { name: 'vista', type: 'string', hint: 'One of tutti, ricontattare-oggi, nuovi-lead, clienti-attivi, rinnovi-30-giorni, da-leggere.' },
           { name: 'page', type: 'integer', hint: '1-based page. Absent means 1.' },
           { name: 'pageSize', type: 'integer', hint: '10, 25 or 50. Absent means 10.' },
           { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals. Absent means the budget column reads unavailable.' },
@@ -455,6 +470,7 @@ export function createCustomerDataPackage(options = {}) {
           const operations = createCustomerDataOperations({
             database: runtime.database, modules: runtime.modules, events: runtime.events,
             config: runtime.config, core: runtime.core, policy, names,
+            interactions: readState,
           });
           return (request) => operations.listCustomerRecords(request);
         },

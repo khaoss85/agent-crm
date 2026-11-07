@@ -1633,6 +1633,33 @@ export async function watermarksForMember({ modules, moduleNames }, memberId) {
   return byConversation;
 }
 
+/**
+ * One member's `read` verdicts over entries the caller already holds, in
+ * order: the one unread rule (`isInboundUnread`) applied to rows in hand,
+ * so the scheda and the list badge can never disagree about the same
+ * message. The member is always the actor — a request never names one, so
+ * nobody reads another member's state — and an actor without a member, or
+ * a composition without the watermark table, answers null: no read state,
+ * never an invented page. Entries that are not inbound messages of a
+ * conversation carry null, never a verdict, mirroring the timeline's own
+ * shaping (backlog:9e003582).
+ * @param {unknown} actor
+ * @param {Array<any>} entries
+ */
+export async function readEntryFlags({ modules, moduleNames }, actor, entries) {
+  const member = actorMemberId(actor);
+  if (member === null) return null;
+  const watermarks = await watermarksForMember({ modules, moduleNames }, member);
+  if (watermarks === null) return null;
+  const rows = Array.isArray(entries) ? entries : [];
+  return Object.freeze(rows.map((row) => {
+    if (row?.direction !== 'inbound') return null;
+    if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') return null;
+    const watermark = watermarks.get(String(row.conversationId)) ?? null;
+    return !isInboundUnread(row, watermark);
+  }));
+}
+
 // The one unread rule and its counters live beside the watermark table they
 // read, so every caller counts the same messages: the unread rule, the
 // per-subject counter and the actor-to-member mapping this package shares
@@ -2026,7 +2053,7 @@ export function createInteractionTimelineCapability(moduleNames) {
     description:
       'Read one subject\'s interaction history — its messages and calls plus the work-activity entries on the same '
       + 'subject, oldest first — every thread row naming the subject, one thread with its ownership trail, '
-      + 'one member\'s unread on a thread, and one member\'s read watermarks over every conversation. '
+      + 'one member\'s unread on a thread, and one member\'s `read` verdicts over entries the caller holds. '
       + 'Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
@@ -2059,11 +2086,13 @@ export function createInteractionTimelineCapability(moduleNames) {
         assignment: (conversationId) => readConversationAssignment(fullScope, conversationId),
         /** @param {string} conversationId @param {string} memberId */
         unread: (conversationId, memberId) => unreadCount(fullScope, conversationId, memberId),
-        // One member's watermarks for readers that shape read state without
-        // owning the table (the customer list, the scheda timeline): null
-        // when the record is not composed, so callers omit read state.
-        /** @param {string} memberId */
-        watermarks: (memberId) => watermarksForMember(fullScope, memberId),
+        // One member's `read` verdicts over entries the caller already
+        // holds, for the readers that shape read state without owning the
+        // table (the scheda timeline): null when there is no member or no
+        // watermark table, so callers omit read state instead of
+        // inventing it. The raw watermarks never leave this package.
+        /** @param {unknown} actor @param {Array<any>} entries */
+        readFlags: (actor, entries) => readEntryFlags(fullScope, actor, entries),
       });
     },
   };

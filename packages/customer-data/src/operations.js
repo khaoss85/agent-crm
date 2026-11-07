@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, ValidationError, actorMemberId, countUnreadForSubject, normalizeActor } from '../../core/index.js';
+import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
@@ -53,7 +53,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -365,7 +365,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async listCustomerRecords(request) {
-      return listCustomerRecords({ modules, core, names }, request);
+      return listCustomerRecords({ modules, core, names, interactions }, request);
     },
 
     /**
@@ -595,7 +595,7 @@ function subjectsByIndex(storedRows) {
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-export async function listCustomerRecords({ modules, core, names }, request) {
+export async function listCustomerRecords({ modules, core, names, interactions = null }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');
@@ -697,14 +697,18 @@ export async function listCustomerRecords({ modules, core, names }, request) {
   // «Da leggere» (backlog:9e003582): one member's read watermarks over
   // every conversation, read once for the whole page. The member is always
   // the request actor — the query names no member — and without one (or
-  // without the watermark table composed) every row below carries nulls:
-  // no read state, never an invented count. The table lives in the
-  // interactions package, but this read goes straight at the record module
-  // (like the message and call reads above), never through that package's
-  // code — a domain package reaches another only through requires plus
-  // capability, and this list has no edge to add for a display column.
+  // without the watermark table composed, or without the interactions
+  // read-state functions) every row below carries nulls: no read state,
+  // never an invented count. The table lives in the interactions package,
+  // but this read goes straight at the record module (like the message and
+  // call reads above), never through that package's code — a domain package
+  // reaches another only through requires plus capability, and this list
+  // has no edge to add for a display column. The one unread rule arrives
+  // through `options.interactions` instead, so both readers count alike.
+  const readFns = interactions ?? null;
   const watermarks = await (async () => {
-    const member = actorMemberId(normalizeActor(request?.actor));
+    if (readFns === null || typeof readFns.actorMemberId !== 'function') return null;
+    const member = readFns.actorMemberId(normalizeActor(request?.actor));
     if (member === null) return null;
     const reads = optional(modules, 'conversation-read');
     if (!reads || typeof reads.listWhere !== 'function') return null;
@@ -900,8 +904,11 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
     // The row's unread badge, from the message rows already in hand — no new
     // query. Calls never count (only what the scheda badges counts), and a
-    // null here (no member, no watermark table) shapes nulls downstream.
-    const myUnread = countUnreadForSubject(messages.rows.filter(mine), watermarks);
+    // null here (no member, no watermark table, no read-state functions)
+    // shapes nulls downstream.
+    const myUnread = readFns !== null && typeof readFns.countUnreadForSubject === 'function'
+      ? readFns.countUnreadForSubject(messages.rows.filter(mine), watermarks)
+      : null;
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only
     // on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery

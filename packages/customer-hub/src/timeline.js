@@ -1,6 +1,6 @@
 // @ts-check
 
-import { NotFoundError, ValidationError, isInboundUnread } from '../../core/index.js';
+import { NotFoundError, ValidationError } from '../../core/index.js';
 import { PHONE_SYSTEMS, SOCIAL_SYSTEMS, toDialablePhone } from './card.js';
 // This module imports nothing from any other domain package — not even the
 // entries of the packages it reads. Conversations, messages, calls and
@@ -36,14 +36,15 @@ const APPOINTMENT_LIMIT = 50;
 const ENTRY_LIMIT = 50;
 
 /**
- * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>, memberId?: string|null, readWatermarks?: ((memberId: string) => Promise<Map<string, unknown>|null>)|null}} input
- *   memberId names the signed-in team member the `read` flags answer for
- *   (backlog:9e003582); readWatermarks fetches that member's watermarks.
- *   Both absent (or a null table behind the reader) the entries still read,
+ * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>, readFlags?: ((entries: Array<any>) => Promise<Array<boolean|null>|null>)|null}} input
+ *   readFlags answers the `read` verdicts over the history entries through
+ *   the interactions timeline capability (backlog:9e003582): the same rule
+ *   the customer list counts with, so the scheda badge and the list badge
+ *   can never disagree. Absent (or answering null) the entries still read,
  *   with every `read` null and `readState.available` false — no read state,
  *   never an invented flag.
  */
-export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, memberId = null, readWatermarks = null }) {
+export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, readFlags = null }) {
   const resource = subject?.resource;
   const id = subject?.id;
   if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
@@ -72,27 +73,28 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
   // it), but the three provider reads are independent of each other, so
   // they run together instead of stacking three waits.
   const profile = await readProfile({ core, subject: { resource, id } });
-  // The watermarks ride along: they depend on nothing the providers return,
-  // only on the member.
-  const [threads, history, schedule, watermarks] = await Promise.all([
+  const [threads, history, schedule] = await Promise.all([
     readConversations(envelope),
     readTimeline(envelope),
     readSchedule(envelope),
-    readWatermarksFor(memberId, readWatermarks),
   ]);
-  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id }, watermarks });
+  // The flags ride after: they read the entries the providers returned, so
+  // they wait for the history instead of racing it.
+  const read = await readFlagsFor(history?.entries ?? [], readFlags);
+  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id }, read });
 }
 
 /**
- * One member's read watermarks, or null when there is no read state to
- * answer for. Null member, no reader, or a null table behind the reader —
+ * The `read` verdicts over history entries, in order, or null when there
+ * is no read state to answer for. No flag reader, or a null behind it —
  * every one of those reads null, never an invented all-unread map: without
  * read state the entries below carry `read: null` instead of lighting up.
+ * A ragged answer (not an array) reads null too, never a shifted verdict.
  */
-async function readWatermarksFor(memberId, readWatermarks) {
-  if (typeof memberId !== 'string' || memberId === '') return null;
-  if (typeof readWatermarks !== 'function') return null;
-  return readWatermarks(memberId);
+async function readFlagsFor(entries, readFlags) {
+  if (typeof readFlags !== 'function') return null;
+  const flags = await readFlags(entries);
+  return Array.isArray(flags) ? flags : null;
 }
 
 /**
@@ -101,11 +103,12 @@ async function readWatermarksFor(memberId, readWatermarks) {
  * over fabricated provider reads, while the database tests prove reuse and
  * no-write.
  *
- * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}, watermarks?: Map<string, unknown>|null}} input
- *   watermarks is the member's conversation id to `lastReadAt` map, or null
- *   when there is no read state to answer for (backlog:9e003582).
+ * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}, read?: Array<boolean|null>|null}} input
+ *   read is the capability's `read` verdicts over the history entries, in
+ *   order, or null when there is no read state to answer for
+ *   (backlog:9e003582).
  */
-export function shapeCustomerTimeline({ profile, threads, history, schedule, subject, watermarks = null }) {
+export function shapeCustomerTimeline({ profile, threads, history, schedule, subject, read = null }) {
   // Like the card: a missing canonical record is NOT_FOUND, never an empty
   // timeline that reads as "this customer never spoke to us".
   const contact = profile.identity?.contact ?? null;
@@ -115,7 +118,7 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
   }
   const contactPoints = shapeContactPoints(profile);
   const conversations = shapeConversations(threads ?? [], history?.entries ?? []);
-  const entries = shapeEntries(history?.entries ?? [], watermarks ?? null);
+  const entries = shapeEntries(history?.entries ?? [], read ?? null);
   const appointments = shapeAppointments(schedule ?? []);
 
   return Object.freeze({
@@ -127,7 +130,7 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
     contactPoints,
     // Whether the `read` flags below answer for somebody: false means every
     // one of them is null, never an invented flag.
-    readState: Object.freeze({ available: watermarks !== null && watermarks !== undefined }),
+    readState: Object.freeze({ available: read !== null && read !== undefined }),
     timelineNote:
       'Accordo-managed threads and bookings only: marketing, analytics and external systems are not represented. '
       + 'Threads are listed from their rows, so threads with no message or call logged yet are listed too.',
@@ -220,26 +223,24 @@ function shapeConversations(threads, entries) {
  * reads it back.
  */
 /**
- * The `read` flag on one message row: the core's one unread rule
- * (`isInboundUnread`), the same rule the customer list counts with, so the
- * scheda badge and the list badge can never disagree about the same message
- * (backlog:9e003582). Only inbound messages carry a verdict — the team does
- * not unread its own words — and only when read state is available: without
- * watermarks every flag is null, never an invented all-unread page. A
- * message outside any conversation has no watermark to move, so it reads
- * null too, or it would light up forever: no mark can ever clear it.
+ * The `read` flag on one message row: the capability's verdict at the same
+ * index, so the scheda badge and the list badge can never disagree about
+ * the same message (backlog:9e003582). Only message rows carry a verdict —
+ * the team does not unread its own words, and a call carries none — and
+ * only when read state is available: without flags every verdict is null,
+ * never an invented all-unread page. A non-boolean verdict reads null too,
+ * never a shifted flag.
  */
-function readFlag(row, watermarks) {
-  if (row?.direction !== 'inbound') return null;
-  if (watermarks === null || watermarks === undefined) return null;
-  if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') return null;
-  const watermark = watermarks.get(String(row.conversationId)) ?? null;
-  return !isInboundUnread(row, watermark);
+function readFlagAt(read, index) {
+  if (!Array.isArray(read)) return null;
+  return typeof read[index] === 'boolean' ? read[index] : null;
 }
 
-function shapeEntries(entries, watermarks = null) {
+function shapeEntries(entries, read = null) {
+  const rows = entries ?? [];
   const shaped = [];
-  for (const row of entries ?? []) {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
     if (row?.entry === 'message') {
       shaped.push(Object.freeze({
         entry: 'message',
@@ -248,7 +249,7 @@ function shapeEntries(entries, watermarks = null) {
         channel: row.channel ?? null,
         direction: row.direction ?? null,
         sync: row.status ?? null,
-        read: readFlag(row, watermarks),
+        read: readFlagAt(read, index),
         body: row.body ?? null,
         attachment: row.attachment ?? null,
         subject: row.subject ?? null,

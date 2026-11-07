@@ -1397,3 +1397,46 @@ test('9e003582: markCustomerRead moves every thread of the customer, nobody else
     '2026-09-15T10:02:00.000Z',
   );
 });
+
+test('9e003582: la capability readFlags risponde per il membro, null senza stato', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'cust-read-flags.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, markCustomerRead } = await interactionsFrom(root);
+  const { createInteractionTimelineCapability } = await import(
+    pathToFileURL(join(root, 'packages/interactions/src/interactions.js')).href);
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:flags-1', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const inbound = (sourceKey, at) => logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey, conversationId: first.conversation.id, direction: 'inbound', channel: 'whatsapp',
+    body: 'domanda sui pacchetti', remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: at, source: SOURCE,
+  });
+  await inbound('wa:msg:flags:1', '2026-09-15T10:01:00.000Z');
+  await inbound('wa:msg:flags:2', '2026-09-15T10:02:00.000Z');
+  await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:flags:3', conversationId: first.conversation.id, direction: 'outbound', channel: 'whatsapp',
+    body: 'sì, dica pure', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:03:00.000Z', source: SOURCE,
+  });
+  await markCustomerRead(
+    { modules: app.modules, moduleNames: {}, actor: { type: 'user', id: 'guido' } },
+    { subject: { resource: 'contact', id: 'c-presti' }, upTo: '2026-09-15T10:01:30.000Z', source: { package: 'host', action: 'mark-customer-read' } },
+  );
+  const timeline = createInteractionTimelineCapability({}).create({ modules: app.modules });
+  const entries = [
+    { conversationId: first.conversation.id, direction: 'inbound', occurredAt: '2026-09-15T10:01:00.000Z' },
+    { conversationId: first.conversation.id, direction: 'inbound', occurredAt: '2026-09-15T10:02:00.000Z' },
+    { conversationId: first.conversation.id, direction: 'outbound', occurredAt: '2026-09-15T10:03:00.000Z' },
+    { conversationId: null, direction: 'inbound', occurredAt: '2026-09-15T10:01:00.000Z' },
+  ];
+  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'guido' }, entries), [true, false, null, null]);
+  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'maria' }, entries), [false, false, null, null],
+    'a member who never marked still has every inbound unread');
+  assert.equal(await timeline.readFlags({ type: 'anonymous' }, entries), null);
+  const bare = createInteractionTimelineCapability({}).create({ modules: new Map() });
+  assert.equal(await bare.readFlags({ type: 'user', id: 'guido' }, entries), null,
+    'without the watermark table no read state answers');
+});

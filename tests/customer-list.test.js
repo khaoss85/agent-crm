@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveCustomerStatus } from '../packages/customer-data/src/customer-status.js';
 import { listCustomerRecords } from '../packages/customer-data/src/operations.js';
+import { actorMemberId, countUnreadForSubject } from '../packages/interactions/src/index.js';
 import {
   CUSTOMER_COLUMNS,
   CUSTOMER_PAGE_SIZES,
@@ -756,4 +757,36 @@ test('826e377c review giro-7: a canale filter over a partial message scan refuse
     { vista: 'tutti', sort: 'name', pageSize: '10' },
   )).items.find((item) => item.name === 'Guido Presti');
   assert.equal(exactGuido.channelsComplete, true, 'a fully read scan still claims an exact union');
+});
+
+test('9e003582: la lista conta i non letti con la regola di interactions, senza resta null', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const messages = [
+    { id: 'm1', conversationId: 'wa:1', direction: 'inbound', channel: 'whatsapp', body: 'ciao', occurredAt: '2026-10-20T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { id: 'm2', conversationId: 'wa:1', direction: 'inbound', channel: 'whatsapp', body: 'ci sei?', occurredAt: '2026-10-20T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { id: 'm3', conversationId: 'wa:1', direction: 'outbound', channel: 'whatsapp', body: 'sì', teamAuthorId: 'guido', occurredAt: '2026-10-20T10:05:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+  ];
+  const reads = [
+    { id: 'r1', sourceKey: 'read:wa:1:guido', conversationId: 'wa:1', memberId: 'guido', lastReadAt: '2026-10-20T09:30:00.000Z' },
+  ];
+  const modules = fakeModules({ contacts, companies, identities, messages, reads });
+  const base = { modules, core: {}, names: { identity: 'external-identity' } };
+  const actor = { type: 'user', id: 'guido' };
+  // With the interactions read-state functions the row badges m2 only: m1
+  // sits before the watermark, the outbound reply never counts.
+  const withFns = { ...base, interactions: { actorMemberId, countUnreadForSubject } };
+  const page = await listCustomerRecords(withFns, { vista: 'tutti', actor });
+  const guido = page.items.find((item) => item.name === 'Guido Presti');
+  assert.equal(guido.unreadCount, 1);
+  assert.equal(guido.lastUnreadAt, '2026-10-20T10:00:00.000Z');
+  const anna = page.items.find((item) => item.name === 'Anna Bianchi');
+  assert.equal(anna.unreadCount, 0, 'a customer with no messages counts zero, never null');
+  assert.equal(anna.lastUnreadAt, null);
+  assert.equal((await listCustomerRecords(withFns, { vista: 'da-leggere', actor })).total, 1,
+    'da-leggere keeps only the row with unread inbound');
+  // Without the functions every row carries nulls and da-leggere reads empty.
+  const noFns = await listCustomerRecords(base, { vista: 'tutti', actor });
+  assert.ok(noFns.items.every((item) => item.unreadCount === null && item.lastUnreadAt === null),
+    'no read-state functions, no read state');
+  assert.equal((await listCustomerRecords(base, { vista: 'da-leggere', actor })).total, 0);
 });

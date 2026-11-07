@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { actorMemberId, countUnreadForSubject, isInboundUnread } from '../packages/core/src/read-state.js';
+import { actorMemberId, countUnreadForSubject, isInboundUnread } from '../packages/interactions/src/read-state.js';
 
 /**
  * La regola unica del non-letto (backlog:9e003582).
