@@ -465,7 +465,7 @@ test('the log and timeline capabilities open for a declared consumer, with prove
     consumer: 'timeline-probe', capability: 'interaction-log', version: 1,
     context: { modules: app.modules, actor: ACTOR },
   });
-  assert.deepEqual(Object.keys(log).sort(), ['assignConversation', 'capabilityContract', 'logCall', 'logMessage', 'markConversationRead', 'openConversation']);
+  assert.deepEqual(Object.keys(log).sort(), ['assignConversation', 'capabilityContract', 'logCall', 'logMessage', 'markConversationRead', 'markCustomerRead', 'openConversation']);
   const opened = await log.openConversation({
     sourceKey: 'wa:thread:probe', subject: SUBJECT, channel: 'whatsapp',
     source: { package: 'timeline-probe', action: 'probe' },
@@ -1330,4 +1330,146 @@ test('mark-read needs only the read record', async (t) => {
     }),
     (error) => error.code === 'INTERACTIONS_STORAGE_INVALID' && /conversation-assignment/.test(error.message),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Mark one customer read: every thread of the subject, nobody else's
+// ---------------------------------------------------------------------------
+
+test('9e003582: markCustomerRead moves every thread of the customer, nobody else\u2019s', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'customer-read.sqlite'), {
+    clock: () => '2026-09-15T10:08:00.000Z',
+  });
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, markCustomerRead, unreadCount } = await interactionsFrom(root);
+  const scope = { modules: app.modules, moduleNames: {} };
+  const OTHER = { resource: 'contact', id: 'c-altro', owner: 'host' };
+  const SOURCE_READ = { package: 'host', action: 'mark-customer-read' };
+
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:cust-read-1', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  // Only open threads join: closing the first opens a genuine second thread
+  // on the same customer, so the mark below must move both, open and closed.
+  await run(app, 'conversation', 'close', first.conversation.id, {});
+  const second = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'mail:thread:cust-read-2', subject: SUBJECT, channel: 'email', source: SOURCE,
+  });
+  assert.notEqual(second.conversation.id, first.conversation.id);
+  const stranger = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:cust-read-x', subject: OTHER, channel: 'whatsapp', source: SOURCE,
+  });
+  const inbound = (sourceKey, conversationId, subject, at) => logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey, conversationId, direction: 'inbound', channel: 'whatsapp',
+    body: 'domanda sui pacchetti', remoteHandle: '+3902000001',
+    subject, occurredAt: at, source: SOURCE,
+  });
+  await inbound('wa:msg:cr:1', first.conversation.id, SUBJECT, '2026-09-15T10:01:00.000Z');
+  await inbound('mail:msg:cr:2', second.conversation.id, SUBJECT, '2026-09-15T10:02:00.000Z');
+  await inbound('wa:msg:cr:x', stranger.conversation.id, OTHER, '2026-09-15T10:03:00.000Z');
+
+  const mark = (actorId, upTo) => markCustomerRead(
+    { modules: app.modules, moduleNames: {}, actor: { type: 'user', id: actorId } },
+    { subject: { resource: 'contact', id: 'c-presti' }, upTo, source: SOURCE_READ },
+  );
+  const marked = await mark('guido', '2026-09-15T10:02:00.000Z');
+  assert.deepEqual([...marked.conversations].sort(), [first.conversation.id, second.conversation.id].sort());
+  assert.equal(marked.memberId, 'guido');
+  assert.equal(marked.touched, 2);
+  assert.equal((await unreadCount(scope, first.conversation.id, 'guido')).unread, 0);
+  assert.equal((await unreadCount(scope, second.conversation.id, 'guido')).unread, 0);
+  // Nobody else's thread moves, and nobody else's member clears.
+  assert.equal((await unreadCount(scope, stranger.conversation.id, 'guido')).unread, 1);
+  assert.equal((await unreadCount(scope, first.conversation.id, 'maria')).unread, 1);
+
+  // The same instant twice moves nothing: idempotent.
+  const again = await mark('guido', '2026-09-15T10:02:00.000Z');
+  assert.equal(again.touched, 0);
+  assert.equal((await unreadCount(scope, first.conversation.id, 'guido')).unread, 0);
+
+  // An older instant never drags a newer watermark back.
+  const older = await mark('guido', '2026-09-15T10:00:00.000Z');
+  assert.equal(older.touched, 0);
+  assert.deepEqual(
+    (await unreadCount(scope, first.conversation.id, 'guido')).lastReadAt,
+    '2026-09-15T10:02:00.000Z',
+  );
+});
+
+test('9e003582 review: markCustomerRead refuses the anonymous and non-user actor, never orphan watermarks', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'cust-read-anon.sqlite'), {
+    clock: () => '2026-09-15T10:08:00.000Z',
+  });
+  t.after(() => context.close());
+  const { app } = context;
+  const { markCustomerRead, unreadCount, openConversation } = await interactionsFrom(root);
+  const scope = { modules: app.modules, moduleNames: {} };
+  const SOURCE_READ = { package: 'host', action: 'mark-customer-read' };
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:cust-read-anon', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const request = { subject: { resource: 'contact', id: 'c-presti' }, upTo: '2026-09-15T10:02:00.000Z', source: SOURCE_READ };
+  for (const actor of [{ type: 'user', id: 'anonymous' }, { type: 'agent', id: 'guido' }, { type: 'system', id: 'accordo' }]) {
+    await assert.rejects(
+      markCustomerRead({ modules: app.modules, moduleNames: {}, actor }, request),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+      `markCustomerRead refuses ${actor.type}:${actor.id} instead of writing orphan rows`,
+    );
+  }
+  assert.equal((await unreadCount(scope, first.conversation.id, 'guido')).unread, 0,
+    'no inbound message logged, so nothing counts unread and no watermark was stored');
+  // The operation gate refuses the same actors before touching any module.
+  const { buildMarkCustomerReadOperation } = await interactionsFrom(root);
+  const run = buildMarkCustomerReadOperation({}).create({ modules: new Map() });
+  await assert.rejects(
+    run({ actor: { type: 'user', id: 'anonymous' }, resource: 'contact', id: 'c-presti', upTo: '2026-09-15T10:02:00.000Z' }),
+    (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+    'the mark-customer-read operation refuses the anonymous actor at its gate',
+  );
+});
+
+test('9e003582: la capability readFlags risponde per il membro, null senza stato', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'cust-read-flags.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const { openConversation, logMessage, markCustomerRead } = await interactionsFrom(root);
+  const { createInteractionTimelineCapability } = await import(
+    pathToFileURL(join(root, 'packages/interactions/src/interactions.js')).href);
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:flags-1', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const inbound = (sourceKey, at) => logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey, conversationId: first.conversation.id, direction: 'inbound', channel: 'whatsapp',
+    body: 'domanda sui pacchetti', remoteHandle: '+3902000001',
+    subject: SUBJECT, occurredAt: at, source: SOURCE,
+  });
+  await inbound('wa:msg:flags:1', '2026-09-15T10:01:00.000Z');
+  await inbound('wa:msg:flags:2', '2026-09-15T10:02:00.000Z');
+  await logMessage({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:msg:flags:3', conversationId: first.conversation.id, direction: 'outbound', channel: 'whatsapp',
+    body: 'sì, dica pure', teamAuthorId: 'guido',
+    subject: SUBJECT, occurredAt: '2026-09-15T10:03:00.000Z', source: SOURCE,
+  });
+  await markCustomerRead(
+    { modules: app.modules, moduleNames: {}, actor: { type: 'user', id: 'guido' } },
+    { subject: { resource: 'contact', id: 'c-presti' }, upTo: '2026-09-15T10:01:30.000Z', source: { package: 'host', action: 'mark-customer-read' } },
+  );
+  const timeline = createInteractionTimelineCapability({}).create({ modules: app.modules });
+  const entries = [
+    { conversationId: first.conversation.id, direction: 'inbound', occurredAt: '2026-09-15T10:01:00.000Z' },
+    { conversationId: first.conversation.id, direction: 'inbound', occurredAt: '2026-09-15T10:02:00.000Z' },
+    { conversationId: first.conversation.id, direction: 'outbound', occurredAt: '2026-09-15T10:03:00.000Z' },
+    { conversationId: null, direction: 'inbound', occurredAt: '2026-09-15T10:01:00.000Z' },
+  ];
+  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'guido' }, entries), [true, false, null, null]);
+  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'maria' }, entries), [false, false, null, null],
+    'a member who never marked still has every inbound unread');
+  assert.equal(await timeline.readFlags({ type: 'anonymous' }, entries), null);
+  const bare = createInteractionTimelineCapability({}).create({ modules: new Map() });
+  assert.equal(await bare.readFlags({ type: 'user', id: 'guido' }, entries), null,
+    'without the watermark table no read state answers');
 });

@@ -212,6 +212,15 @@ export function createCustomerHubPackage(options = {}) {
           };
           return async (request) => {
             const { profile, threads, schedule } = await open();
+            // «Da leggere» (backlog:9e003582): the `read` flags answer for
+            // the signed-in member through the timeline capability — the
+            // request actor rides along, the query names no member, so
+            // nobody reads another member's state. Without the
+            // capability's flag reader the entries still read, with every
+            // `read` null: no read state, never an invented flag.
+            const readFlags = typeof threads.readFlags === 'function'
+              ? (entries) => threads.readFlags(request?.actor, entries)
+              : null;
             return readCustomerTimeline({
               core: runtime.core,
               subject: { resource: request?.resource, id: request?.id },
@@ -219,6 +228,7 @@ export function createCustomerHubPackage(options = {}) {
               readConversations: (subject) => threads.conversations(subject),
               readTimeline: (subject) => threads.timeline(subject),
               readSchedule: (subject) => schedule.scheduleFor(subject),
+              readFlags,
             });
           };
         },

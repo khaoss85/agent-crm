@@ -4,6 +4,7 @@ import {
   AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate,
 } from '../../core/index.js';
+import { actorMemberId, countUnreadForSubject, isInboundUnread } from './read-state.js';
 
 /**
  * **Interactions — the native message and call records.**
@@ -1536,6 +1537,15 @@ export async function markConversationRead(context, request) {
   // A read watermark without a reader would store that somebody saw the
   // customer's words with nobody saying who.
   const who = requireActor(actor);
+  // The write path refuses the same actors the read path never reads back:
+  // actorMemberId answers null for the anonymous actor and for non-user
+  // actors, and a watermark row under one would be orphan state nobody
+  // could ever read.
+  if (actorMemberId(who) === null) {
+    throw new AppError('Marking a conversation read is a human decision', {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new ValidationError('a mark-read request object is required', { field: 'request' });
   }
@@ -1604,10 +1614,171 @@ export async function unreadCount({ modules, moduleNames }, conversationId, memb
   if (!found) throw new NotFoundError('conversation', id);
   const watermark = (await reads.listWhere({ conversationId: id, memberId: member }))[0]?.lastReadAt ?? null;
   const inbound = await messages.listWhere({ conversationId: id, direction: 'inbound' });
-  const unread = watermark === null
-    ? inbound.length
-    : inbound.filter((row) => String(row.occurredAt ?? '') > String(watermark)).length;
+  // The one unread rule beside it: every caller of the watermark counts
+  // the same messages, never a local copy of the compare.
+  const unread = inbound.filter((row) => isInboundUnread(row, watermark)).length;
   return Object.freeze({ conversationId: id, memberId: member, unread, lastReadAt: watermark });
+}
+
+/**
+ * One member's watermarks over every conversation: conversation id to the
+ * `lastReadAt` instant, for the readers that shape unread state without
+ * owning the table (the customer list, the timeline). Returns null when the
+ * `conversation-read` record is not composed: callers then omit read state
+ * instead of inventing it — without the table every inbound message would
+ * read unread and every row would light up.
+ */
+export async function watermarksForMember({ modules, moduleNames }, memberId) {
+  const names = resolvedNames(moduleNames);
+  const member = validateMemberId(memberId, 'memberId');
+  const reads = resolveModule(modules, names.read)?.service;
+  if (!reads?.listWhere) return null;
+  const rows = await reads.listWhere({ memberId: member });
+  const byConversation = new Map();
+  for (const row of rows ?? []) {
+    if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
+    byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
+  }
+  return byConversation;
+}
+
+/**
+ * One member's `read` verdicts over entries the caller already holds, in
+ * order: the one unread rule (`isInboundUnread`) applied to rows in hand,
+ * so the scheda and the list badge can never disagree about the same
+ * message. The member is always the actor — a request never names one, so
+ * nobody reads another member's state — and an actor without a member, or
+ * a composition without the watermark table, answers null: no read state,
+ * never an invented page. Entries that are not inbound messages of a
+ * conversation carry null, never a verdict, mirroring the timeline's own
+ * shaping (backlog:9e003582).
+ * @param {unknown} actor
+ * @param {Array<any>} entries
+ */
+export async function readEntryFlags({ modules, moduleNames }, actor, entries) {
+  const member = actorMemberId(actor);
+  if (member === null) return null;
+  const watermarks = await watermarksForMember({ modules, moduleNames }, member);
+  if (watermarks === null) return null;
+  const rows = Array.isArray(entries) ? entries : [];
+  return Object.freeze(rows.map((row) => {
+    if (row?.direction !== 'inbound') return null;
+    if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') return null;
+    const watermark = watermarks.get(String(row.conversationId)) ?? null;
+    return !isInboundUnread(row, watermark);
+  }));
+}
+
+// The one unread rule and its counters live beside the watermark table they
+// read, so every caller counts the same messages: the unread rule, the
+// per-subject counter and the actor-to-member mapping this package shares
+// with the readers that shape read state without owning the table.
+export { actorMemberId, countUnreadForSubject, isInboundUnread } from './read-state.js';
+
+/**
+ * Mark one customer's inbound messages read up to an instant: every open or
+ * closed thread of the subject gets the acting member's watermark moved to
+ * the later of its current value and `upTo`. Idempotent — a second mark
+ * with the same instant moves nothing and answers the same outcome — and
+ * scoped to the subject's own threads, never a stranger's.
+ *
+ * The member is always the actor: the request never names one, so nobody
+ * marks another member read, and a browser never writes the table directly
+ * — the write happens only here, through the managed watermark rows, called
+ * by the door route or by the worker with the session's actor.
+ */
+export async function markCustomerRead(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const { conversations } = interactionServices({ modules: context.modules, names });
+  const { reads } = readStateServices({ modules: context.modules, names });
+  const actor = context.actor;
+  // A read watermark without a reader would store that somebody saw the
+  // customer's words with nobody saying who.
+  const who = requireActor(actor);
+  // The write path refuses the same actors the read path never reads back:
+  // actorMemberId answers null for the anonymous actor and for non-user
+  // actors, and a watermark row under one would be orphan state nobody
+  // could ever read.
+  if (actorMemberId(who) === null) {
+    throw new AppError('Marking a customer read is a human decision', {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new ValidationError('a mark-read request object is required', { field: 'request' });
+  }
+  const value = /** @type {any} */ (request);
+  // Contacts and companies are host-owned records (the timeline reads them
+  // under the same envelope), so the subject here names only the kind and
+  // the id — never an owner a caller could point at another package's rows.
+  const resource = value?.subject?.resource;
+  if (resource !== 'contact' && resource !== 'company') {
+    throw new ValidationError('a customer mark-read needs subject resource contact or company', { field: 'subject.resource' });
+  }
+  const id = safeText(value?.subject?.id, 'subject.id', MAX_ID);
+  const subject = { resource, id, owner: 'host', ownerPackage: null };
+  bindSourcePackage(validateSource(value.source), context.consumer);
+  const upTo = realIsoDate(value.upTo, 'upTo');
+  const memberId = validateMemberId(who.id, 'memberId');
+
+  const threads = await conversations.listWhere({
+    subjectResource: subject.resource,
+    subjectId: subject.id,
+  });
+  const marked = [];
+  let touched = 0;
+  for (const thread of threads ?? []) {
+    const conversationId = thread?.id;
+    if (typeof conversationId !== 'string' || conversationId === '') continue;
+    const sourceKey = `read:${conversationId}:${memberId}`;
+    const existing = (await reads.listWhere({ sourceKey }))[0];
+    const current = typeof existing?.lastReadAt === 'string' ? existing.lastReadAt : null;
+    const next = current !== null && current > upTo ? current : upTo;
+    if (existing) {
+      if (existing.lastReadAt !== next) {
+        await reads.applyManaged(existing.id, {
+          lastReadAt: next,
+          updatedByType: who.type,
+          updatedById: who.id,
+        }, { actor });
+        touched += 1;
+      }
+    } else {
+      try {
+        await reads.createManaged({
+          sourceKey,
+          conversationId,
+          memberId,
+          lastReadAt: next,
+          updatedByType: who.type,
+          updatedById: who.id,
+        }, { actor });
+        touched += 1;
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+        const raced = (await reads.listWhere({ sourceKey }))[0];
+        if (!raced) throw error;
+        const racedCurrent = typeof raced?.lastReadAt === 'string' ? raced.lastReadAt : null;
+        const racedNext = racedCurrent !== null && racedCurrent > upTo ? racedCurrent : upTo;
+        if (raced.lastReadAt !== racedNext) {
+          await reads.applyManaged(raced.id, {
+            lastReadAt: racedNext,
+            updatedByType: who.type,
+            updatedById: who.id,
+          }, { actor });
+          touched += 1;
+        }
+      }
+    }
+    marked.push(conversationId);
+  }
+  return Object.freeze({
+    subject: Object.freeze({ resource: subject.resource, id: subject.id }),
+    memberId,
+    upTo,
+    conversations: Object.freeze(marked),
+    touched,
+  });
 }
 
 /**
@@ -1879,6 +2050,8 @@ export function createInteractionLogCapability(moduleNames) {
         assignConversation: (request) => assignConversation(scope, request),
         /** @param {unknown} request */
         markConversationRead: (request) => markConversationRead(scope, request),
+        /** @param {unknown} request */
+        markCustomerRead: (request) => markCustomerRead(scope, request),
       });
     },
   };
@@ -1898,7 +2071,7 @@ export function createInteractionTimelineCapability(moduleNames) {
     description:
       'Read one subject\'s interaction history — its messages and calls plus the work-activity entries on the same '
       + 'subject, oldest first — every thread row naming the subject, one thread with its ownership trail, '
-      + 'and one member\'s unread on a thread. '
+      + 'one member\'s unread on a thread, and one member\'s `read` verdicts over entries the caller holds. '
       + 'Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
@@ -1931,6 +2104,13 @@ export function createInteractionTimelineCapability(moduleNames) {
         assignment: (conversationId) => readConversationAssignment(fullScope, conversationId),
         /** @param {string} conversationId @param {string} memberId */
         unread: (conversationId, memberId) => unreadCount(fullScope, conversationId, memberId),
+        // One member's `read` verdicts over entries the caller already
+        // holds, for the readers that shape read state without owning the
+        // table (the scheda timeline): null when there is no member or no
+        // watermark table, so callers omit read state instead of
+        // inventing it. The raw watermarks never leave this package.
+        /** @param {unknown} actor @param {Array<any>} entries */
+        readFlags: (actor, entries) => readEntryFlags(fullScope, actor, entries),
       });
     },
   };
