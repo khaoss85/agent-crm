@@ -1599,13 +1599,24 @@ export function createCalendarioView(deps) {
     const now = clock();
     const nowMin = romeMinutes(now);
     const columns = weekColumns();
+    /** Rome days holding any loaded booking, hidden people included. */
+    const heldDays = new Set();
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        const day = romeDayKey(row?.startsAt);
+        if (day !== null) heldDays.add(day);
+      }
+    }
     columns.forEach(([key, rows], dayIndex) => {
       const ghosts = state.proposals.filter((slot) => romeDayKey(slot?.startsAt) === key
         && slotInGrid(slot?.startsAt, slot?.endsAt));
       // backlog:5fbebe8559e9: on the stacked phone layout a day with nothing
       // painted collapses to one compact row (CSS ≤ 700px); desktop keeps
       // the empty timeline, the compact row stays hidden there.
-      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key;
+      // Review #646 round 3: «Nessun appuntamento» is a claim about the day,
+      // so it reads the whole loaded week — a day whose only bookings belong
+      // to a hidden person keeps its timeline, never the compact row.
+      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
       const head = el(doc, 'div', {
         className: empty ? 'cal-day-head is-empty' : 'cal-day-head',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },
@@ -2013,12 +2024,12 @@ export function createCalendarioView(deps) {
    * The team week holding every searched identity: the painted week when it
    * already lists them all, else one team-week read for the searched ones
    * over the shown window (review #646 P2).
-   * @param {Array<string>} searchIds
+   * @param {Array<string>} searchIds @param {Array<string>} weekKeys the searched week
    */
-  async function heldWeekFor(searchIds) {
+  async function heldWeekFor(searchIds, weekKeys) {
     const painted = new Set((state.week?.members ?? []).map((group) => group?.teamMemberId));
-    if (searchIds.every((id) => painted.has(id))) return state.week;
-    const window = weekWindow(state.weekKeys);
+    if (state.weekKeys === weekKeys && searchIds.every((id) => painted.has(id))) return state.week;
+    const window = weekWindow(weekKeys);
     if (!window) throw new Error('Settimana non valida.');
     return client.request(
       `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
@@ -2078,6 +2089,9 @@ export function createCalendarioView(deps) {
         state.aiNote = 'Settimana non valida.';
         return;
       }
+      // Review #646 round 3: the searched week is captured once; a pager
+      // move while the search runs leaves this answer unpublished.
+      const searchKeys = state.weekKeys;
       // backlog:d1e4d90e — the draft names a person («Marco»), the search
       // needs booking identities: resolve against the known team, and search
       // every identity the human holds. Unresolved words keep the outsider
@@ -2106,7 +2120,9 @@ export function createCalendarioView(deps) {
       // week. When the painted week does not hold every searched identity
       // (the filter shows marco, the phrase names sara), the guard reads
       // theirs too — a failed read fails the search, never an unguarded list.
-      const heldWeek = await heldWeekFor(searchIds);
+      if (state.weekKeys !== searchKeys) return;
+      const heldWeek = await heldWeekFor(searchIds, searchKeys);
+      if (state.weekKeys !== searchKeys) return;
       const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(kept, clock().getTime()), heldWeek, searchIds));
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';

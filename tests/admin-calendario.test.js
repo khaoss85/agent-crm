@@ -3507,3 +3507,60 @@ test('review #646 P2: the held guard reads the searched person, not only the pai
   assert.ok(list.textContent.includes('22 ott · 15:00–15:30'), list.textContent);
   assert.ok(!list.textContent.includes('16:00–16:30'), 'the step on sara\'s held piega is never offered');
 });
+
+// Review #646 round 3 (Muse, head f20a1081).
+
+test('review #646 r3: a day whose only bookings are hidden never reads «Nessun appuntamento»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // marco holds Thursday, sara only Wednesday 21 Oct (16:00 Rome).
+  const week = {
+    ...WEEK_TWO,
+    members: [
+      WEEK_TWO.members[0],
+      { teamMemberId: 'sara', appointments: [{ ...WEEK_TWO.members[1].appointments[0], startsAt: '2026-10-21T14:00:00.000Z', endsAt: '2026-10-21T14:30:00.000Z' }] },
+    ],
+  };
+  const view = createCalendarioView({ doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount, 'marco, sara');
+  const compactDays = () => mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'))
+    .map((node) => node.getAttribute('data-day'));
+  assert.ok(!compactDays().includes('2026-10-21'), 'Wednesday holds sara');
+  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'sara is hidden');
+  assert.ok(!compactDays().includes('2026-10-21'), 'a hidden booking still holds its day: no compact «Nessun appuntamento»');
+  assert.deepEqual(compactDays(), ['2026-10-19', '2026-10-20', '2026-10-23'], 'truly empty days stay compact');
+});
+
+test('review #646 r3: a pager move during the search leaves its answer unpublished', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', durationMinutes: 30 },
+    slots: [{ startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' }],
+  });
+  const client = {
+    ...base,
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/suggest-slots')) await gate;
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  mount.findAll('button').find((node) => node.textContent === '›').dispatch('click');
+  await flushAll();
+  release();
+  await flushAll();
+  assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal of the old week lands on the new one');
+  assert.ok(!mount.findAll('button').some((node) => (node.textContent ?? '').startsWith('✦ Proposta')), 'no ghost either');
+});
