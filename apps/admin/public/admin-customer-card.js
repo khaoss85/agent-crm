@@ -284,6 +284,21 @@ const channelLabel = (channel) => ownLabel(CHANNEL_LABELS, String(channel ?? '')
 const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase()) ?? String(sync ?? 'stato ignoto');
 
 /**
+ * Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta visibile in
+ * cronologia con il motivo e Riprova. La riga del server porta `sync:
+ * 'failed'` e il codice inglese in `errorCode`: qui si legge solo italiano,
+ * mai il codice grezzo da solo.
+ */
+export function failedSendReason(errorCode) {
+  const code = String(errorCode ?? '').trim();
+  if (code === 'CHANNEL_TEMPLATE_REQUIRED') return 'Fuori dalla finestra di 24 ore: serve un modello approvato.';
+  if (code === 'CHANNEL_CONNECTION_NOT_ACTIVE' || code === 'CHANNEL_CONNECTION_UNKNOWN') return 'Il canale non è collegato: aprilo in Connettori e riprova.';
+  if (code === 'CHANNEL_SECRET_UNAVAILABLE') return 'Il canale non può firmare l’invio: ricontrolla il collegamento e riprova.';
+  if (code !== '') return `Motivo: ${code}.`;
+  return 'Non sappiamo perché: controlla il collegamento e riprova.';
+}
+
+/**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
  *   spaceId?: string | (() => (string | null | undefined)),
  *   onAskAi?: (screenId: string, draft: string, customer: { resource: string, id: string }) => void}} deps
@@ -2382,6 +2397,45 @@ export function createCustomerCardView(deps) {
           const state = el('p', 'bo-scheda-sync', outcome);
           state.setAttribute('data-sync', syncKey);
           bubble.appendChild(state);
+        }
+        // Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta
+        // visibile con il motivo italiano e Riprova. Riprova riusa la
+        // stessa rotta del composer (un tasto nuovo, mai un doppio invio:
+        // la chiave del messaggio è fresca a ogni tocco).
+        if (item?.entry === 'message' && isOutbound && syncKey === 'failed') {
+          const reason = el('p', 'bo-scheda-failed-reason', `Non consegnato: ${failedSendReason(item?.errorCode)}`);
+          reason.setAttribute('data-failed-reason', String(item?.errorCode ?? ''));
+          bubble.appendChild(reason);
+          const body = typeof item?.body === 'string' ? item.body : '';
+          const channel = typeof item?.channel === 'string' ? item.channel : '';
+          if (body !== '' && channel !== '') {
+            const retry = el('button', 'bo-scheda-retry', 'Riprova');
+            retry.setAttribute('type', 'button');
+            retry.setAttribute('data-action', 'message-retry');
+            retry.addEventListener('click', async () => {
+              retry.setAttribute('disabled', '');
+              try {
+                const spaceId = activeSpaceId();
+                await client.request('/api/customer-hub/messages', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    spaceId,
+                    resource: noteCtx?.resource,
+                    id: noteCtx?.id,
+                    channel,
+                    text: body,
+                    messageKey: freshMessageKey(),
+                  }),
+                });
+                toast('Messaggio in consegna');
+                await renderCard(noteCtx?.resource, noteCtx?.id);
+              } catch (error) {
+                toast(humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' }), true);
+                retry.removeAttribute('disabled');
+              }
+            });
+            bubble.appendChild(retry);
+          }
         }
         row.appendChild(bubble);
         list.appendChild(row);

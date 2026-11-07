@@ -465,7 +465,7 @@ test('the log and timeline capabilities open for a declared consumer, with prove
     consumer: 'timeline-probe', capability: 'interaction-log', version: 1,
     context: { modules: app.modules, actor: ACTOR },
   });
-  assert.deepEqual(Object.keys(log).sort(), ['assignConversation', 'capabilityContract', 'logCall', 'logMessage', 'markConversationRead', 'markCustomerRead', 'openConversation']);
+  assert.deepEqual(Object.keys(log).sort(), ['advanceMessage', 'assignConversation', 'capabilityContract', 'logCall', 'logMessage', 'markConversationRead', 'markCustomerRead', 'openConversation']);
   const opened = await log.openConversation({
     sourceKey: 'wa:thread:probe', subject: SUBJECT, channel: 'whatsapp',
     source: { package: 'timeline-probe', action: 'probe' },
