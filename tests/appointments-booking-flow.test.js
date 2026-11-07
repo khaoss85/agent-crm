@@ -621,6 +621,41 @@ test('the phrase carries a stated duration and refuses a past draft (backlog:d1e
   );
 });
 
+test('the phrase returns a day field when the sentence names no time (backlog:65ed7430)', async () => {
+  const service = fakeAppointments();
+  const withText = (text) => capabilityFor({ service, phraseLlm: { async complete() { return { text, dryRun: false }; } } });
+  const thursday = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22"}').parseBookingPhrase({
+    spaceId: 'spazio-prova', phrase: 'giovedì con Guido',
+  });
+  assert.equal(thursday.draft.day, '2026-10-22');
+  assert.equal(thursday.draft.startsAt, undefined, 'a day without a time never invents an hour');
+  for (const text of ['{"day": "22-10-2026"}', '{"day": "2026-02-30"}', '{"day": ""}']) {
+    await assert.rejects(
+      withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì con Guido' }),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+        return true;
+      },
+      `day must be refused: ${text}`,
+    );
+  }
+  await assert.rejects(
+    withText('{"day": "2026-10-22", "startsAt": "2026-10-23T17:00:00.000Z"}').parseBookingPhrase({
+      spaceId: 'spazio-prova', phrase: 'giovedì con Guido',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+      return true;
+    },
+    'a day and an instant on different Rome days disagree and are refused',
+  );
+  const timed = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22", "startsAt": "2026-10-22T17:00:00.000Z"}')
+    .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì alle 19 con Guido' });
+  assert.equal(timed.draft.day, '2026-10-22');
+  assert.equal(timed.draft.startsAt, '2026-10-22T17:00:00.000Z');
+  assert.equal(service.rows.length, 0, 'a draft never writes');
+});
+
 test('the phrase names the Rome weekday and the next-occurrence rule (backlog:d1e4d90e)', async () => {
   const service = fakeAppointments();
   let seen = null;

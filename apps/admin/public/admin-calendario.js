@@ -2286,7 +2286,11 @@ export function createCalendarioView(deps) {
       }
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
       if (draft.notes) inputs.notes.value = String(draft.notes);
-      const dayKey = romeDayKey(draft.startsAt);
+      // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
+      // prefill the day and ask the hour, never paint an invented midnight.
+      const dayKey = typeof draft.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)
+        ? draft.day
+        : romeDayKey(draft.startsAt);
       if (dayKey) inputs.date.value = dayKey;
       if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
       if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);

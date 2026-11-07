@@ -1961,13 +1961,16 @@ const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italia
   + 'Reply with JSON only, no other text, with any of these keys: '
   + '{"teamMemberId": "opaque team identity, only when the sentence names a person", '
   + '"serviceKey": "lowercase listino slug, only when the sentence names a service", '
-  + '"startsAt": "ISO instant the sentence asks for, resolved against the reference instant", '
+  + '"day": "YYYY-MM-DD calendar day in Europe/Rome, only when the sentence names a day but no time", '
+  + '"startsAt": "ISO instant the sentence asks for, resolved against the reference instant, only when the sentence states a time", '
   + '"endsAt": "ISO instant the appointment ends, when the sentence gives a duration or an end", '
   + '"durationMinutes": "integer minutes the sentence states for the appointment, only when stated", '
   + '"notes": "anything else worth keeping, at most one line"}. '
   + 'Omit every key the sentence does not state. Never invent a person, a service or a time. '
+  + 'When the sentence names a day but no time (for example «giovedì»), return day and never startsAt: '
+  + 'never invent 00:00, noon or any other hour for a missing time — the caller asks the human for the hour. '
   + 'The reference instant also names the weekday: a weekday the sentence names means its NEXT occurrence after '
-  + 'the reference instant, never a past day. When the sentence states a day or a time, startsAt is required — '
+  + 'the reference instant, never a past day. When the sentence states a time, startsAt is required — '
   + 'never drop it. When the sentence states a duration in minutes, endsAt is startsAt plus that duration; '
   + 'when no day or time is stated, still record the stated durationMinutes so the caller can size the search.';
 
@@ -2028,10 +2031,31 @@ export async function parseBookingPhrase(context, request) {
 }
 
 /**
+ * The Rome calendar day of an instant, for the day/startsAt agreement check
+ * below (backlog:65ed7430). `en-CA` formats as YYYY-MM-DD; anything else is
+ * unprovable and the draft is refused, never guessed.
+ *
+ * @param {string} iso
+ */
+function romeDayKeyOfInstant(iso) {
+  try {
+    const key = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(iso));
+    return /^\d{4}-\d{2}-\d{2}$/.test(key) ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Strictly validate the model's JSON: known keys only, every one proven. A
  * draft naming a moment at or before the reference instant is refused with
  * its own code (backlog:d1e4d90e): the caller tells the human to name a
- * future day instead of proposing the past.
+ * future day instead of proposing the past. A draft naming a day but no
+ * time rides `day` (backlog:65ed7430): an invented midnight is never
+ * accepted as a stated hour, so when both ride they must name the same Rome
+ * day or the draft is unusable.
  */
 function extractPhraseDraft(text, nowMs) {
   const fenced = String(text ?? '').replace(/```(?:json)?/gi, '').trim();
@@ -2063,6 +2087,25 @@ function extractPhraseDraft(text, nowMs) {
       draft.serviceKey = key;
     }
     if (parsed.startsAt !== undefined) draft.startsAt = realIsoInstant(parsed.startsAt, 'draft.startsAt').iso;
+    if (parsed.day !== undefined) {
+      const day = safeText(parsed.day, 'draft.day', 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !isCalendarDate(day)) {
+        throw new ValidationError(
+          'draft.day must be a real calendar day as YYYY-MM-DD: a day that never existed is refused, not rolled over',
+          { field: 'draft.day' },
+        );
+      }
+      draft.day = day;
+    }
+    if (draft.startsAt !== undefined && draft.day !== undefined) {
+      const startsDay = romeDayKeyOfInstant(draft.startsAt);
+      if (startsDay === null || startsDay !== draft.day) {
+        throw new ValidationError(
+          'draft.day must name the same Europe/Rome day as draft.startsAt: a midnight invented for a missing hour is never a stated time',
+          { field: 'draft.day' },
+        );
+      }
+    }
     if (parsed.endsAt !== undefined) draft.endsAt = realIsoInstant(parsed.endsAt, 'draft.endsAt').iso;
     if (draft.startsAt !== undefined && draft.endsAt !== undefined
       && Date.parse(draft.endsAt) <= Date.parse(draft.startsAt)) {
