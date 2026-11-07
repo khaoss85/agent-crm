@@ -125,7 +125,7 @@ test('the columns keep their source order: story first, form second', () => {
   const storyAt = page.indexOf('login-story');
   const formAt = page.indexOf('login-form-wrap');
   assert.ok(storyAt !== -1 && formAt !== -1 && storyAt < formAt,
-    'the story panel precedes the form, so narrow viewports stack story above form');
+    'the story panel precedes the form in the DOM, as in the prototype (phones reorder with CSS)');
   assert.match(page, /<main class="login">/, 'a single two-column main holds both panels');
 });
 
@@ -398,13 +398,18 @@ test('27a0b924 C5: the four rows step to the right like the prototype, from the 
   assert.ok(!/class="login-msg" style=/.test(page), 'the stagger lives in the stylesheet, so the phone layout can narrow it');
 });
 
-test('27a0b924 C20-C22: a dedicated phone layout keeps the story readable at 390', () => {
+test('27a0b924 C20-C22: on phone the sign-in comes first and the story turns compact', () => {
   const phone = pageStyle.match(/@media \(max-width: 520px\) \{([\s\S]*?)\n {6}\}/)?.[1] ?? '';
   assert.ok(phone !== '', 'the page carries a phone breakpoint');
+  // Less is more: a person opening the login on a phone signs in without
+  // scrolling past the story. CSS order, so the DOM stays the prototype's.
+  assert.match(phone, /\.login-form-wrap \{ order: -1;/, 'under 520px the form precedes the story visually');
+  assert.ok(page.indexOf('login-story') < page.indexOf('login-form-wrap'), 'the DOM keeps the desktop order');
+  assert.match(phone, /\.login-thread \{ display: none; \}/, 'the four rows and the client card hide on phone');
   assert.match(phone, /\.login-story \{ padding: 32px 28px;[^}]*min-height: 0;/,
-    'the story uses the form side margins and no desktop minimum height');
-  assert.match(phone, /\.login-msg:nth-child\(4\) \{ margin-left: 24px; \}/,
-    'the staircase narrows so the rows keep nearly full width');
+    'the compact story uses the form side margins and no desktop minimum height');
+  assert.ok(!/@media[^{]*\{[^}]*\.login-thread/.test(pageStyle.replace(/@media \(max-width: 520px\)/, '')),
+    'the rows hide only under the phone breakpoint');
   assert.match(pageStyle, /\.login-form \{ width: 100%; max-width: 380px;/, 'the form spans the column (C22)');
 });
 

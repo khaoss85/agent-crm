@@ -166,7 +166,7 @@ const LOGIN_PAGE_STYLE = [
   '      .login-msg:nth-child(2){margin-left:20px}',
   '      .login-msg:nth-child(3){margin-left:40px}',
   '      .login-msg:nth-child(4){margin-left:60px}',
-  '      @media (max-width:520px){.login-story{padding:32px 28px;gap:36px;min-height:0}.login-msg:nth-child(2){margin-left:8px}.login-msg:nth-child(3){margin-left:16px}.login-msg:nth-child(4){margin-left:24px}}',
+  '      @media (max-width:520px){.login{grid-template-rows:auto 1fr}.login-form-wrap{order:-1;padding:32px 28px;align-items:flex-start}.login-story{padding:32px 28px;gap:24px;min-height:0;justify-content:flex-start}.login-thread{display:none}}',
 ].join('\n');
 
 /**
@@ -275,10 +275,10 @@ export function backofficeLoginHtml(options = {}) {
     '      .login-error { margin: 12px 0 0; font-size: 13px; line-height: 1.45; font-weight: 600; color: var(--danger); }',
     '      .login-sent { margin: 12px 0 0; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); font-size: 14px; line-height: 1.45; font-weight: 600; }',
     '      @media (max-width: 520px) {',
-    '        .login-story { padding: 32px 28px; gap: 36px; min-height: 0; }',
-    '        .login-msg:nth-child(2) { margin-left: 8px; }',
-    '        .login-msg:nth-child(3) { margin-left: 16px; }',
-    '        .login-msg:nth-child(4) { margin-left: 24px; }',
+    '        .login { grid-template-rows: auto 1fr; }',
+    '        .login-form-wrap { order: -1; padding: 32px 28px; align-items: flex-start; }',
+    '        .login-story { padding: 32px 28px; gap: 24px; min-height: 0; justify-content: flex-start; }',
+    '        .login-thread { display: none; }',
     '      }',
     '    </style>',
     '  </head>',
