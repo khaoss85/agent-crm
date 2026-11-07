@@ -2982,3 +2982,83 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
   assert.match(panel.textContent, /Nessun canale collegato/);
 });
+
+// Dan 06/11: «ho aggiunto una nota ma non si vede e non si capisce dove;
+// servirebbe un filtro per vedere tutte le note (da chi sono lasciate)».
+test('Dan 06/11: notes read as notes, with a Note chip and one chip per writer', async () => {
+  const note = (id, author, at, body) => ({
+    entry: 'note', id, conversationId: null, channel: null, direction: null, sync: null,
+    body, teamAuthorId: author, remoteHandle: null, errorCode: null, occurredAt: at,
+  });
+  const timeline = {
+    ...TIMELINE,
+    entries: {
+      ...TIMELINE.entries,
+      count: TIMELINE.entries.items.length + 3,
+      items: [
+        ...TIMELINE.entries.items,
+        note('n1', 'dan', '2026-10-21T09:00:00.000Z', 'Richiamare lunedì'),
+        note('n2', 'elena', '2026-10-21T10:00:00.000Z', 'Preferisce la sera'),
+        note('n3', null, '2026-10-21T11:00:00.000Z', 'Nota di sistema'),
+      ],
+    },
+  };
+  const mount = createMount();
+  await createCustomerCardView({ doc: createFakeDocument(), mount, client: stubClient({ timeline }) }).renderCard('contact', 'c1');
+  const chipOf = (key) => mount.findAll('button').find((node) => node.getAttribute('data-channel') === key);
+
+  const noteRow = mount.findAll('div').find((node) => node.getAttribute('data-entry') === 'n1');
+  assert.ok(String(noteRow.getAttribute('class')).includes('bo-scheda-entry-note'), 'a note has its own look');
+  assert.ok(noteRow.textContent.includes('✎'), 'and its own mark');
+  assert.ok(noteRow.textContent.includes('Nota · da dan'), 'the writer reads');
+
+  assert.equal(chipOf('note').textContent, 'Note · 3', 'the Note chip counts the notes');
+  assert.equal(chipOf('note:dan'), undefined, 'writer chips show only under Note');
+  chipOf('note').dispatch('click');
+  let text = mount.textContent;
+  assert.ok(text.includes('Richiamare lunedì') && text.includes('Preferisce la sera') && text.includes('Nota di sistema'));
+  assert.ok(!text.includes('vorrei prenotare una prova'), 'messages are filtered out');
+  assert.ok(chipOf('note:dan') && chipOf('note:elena') && chipOf('note:'), 'one chip per writer');
+  assert.equal(chipOf('note:').textContent, 'dal team');
+
+  chipOf('note:elena').dispatch('click');
+  text = mount.textContent;
+  assert.ok(text.includes('Preferisce la sera'));
+  assert.ok(!text.includes('Richiamare lunedì'), 'only elena’s notes');
+  chipOf('note:elena').dispatch('click');
+  assert.ok(mount.textContent.includes('Richiamare lunedì'), 'a second tap shows every writer again');
+
+  chipOf('all').dispatch('click');
+  assert.ok(mount.textContent.includes('vorrei prenotare una prova'), 'Tutti brings the messages back');
+});
+
+test('Dan 06/11: without notes there is no Note chip', async () => {
+  const mount = createMount();
+  await createCustomerCardView({ doc: createFakeDocument(), mount, client: stubClient() }).renderCard('contact', 'c1');
+  assert.equal(mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'note'), undefined);
+});
+
+test('review #617: a cut cronologia counts the notes as a floor, and a note body reads like text', async () => {
+  const timeline = {
+    ...TIMELINE,
+    entries: {
+      ...TIMELINE.entries,
+      count: 120,
+      truncated: true,
+      items: [
+        ...TIMELINE.entries.items,
+        {
+          entry: 'note', id: 'n1', conversationId: null, channel: null, direction: null, sync: null,
+          body: 'Prezzo &quot;speciale&quot; &amp; prova​ gratuita', teamAuthorId: 'dan',
+          remoteHandle: null, errorCode: null, occurredAt: '2026-10-21T09:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = createMount();
+  await createCustomerCardView({ doc: createFakeDocument(), mount, client: stubClient({ timeline }) }).renderCard('contact', 'c1');
+  const noteChip = mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'note');
+  assert.equal(noteChip.textContent, 'Note · 1+', 'older notes may sit past the page');
+  const body = mount.findAll('p').find((node) => String(node.getAttribute('class')).includes('bo-scheda-note-body'));
+  assert.equal(body.textContent, 'Prezzo "speciale" & prova gratuita', 'entities decoded, invisible marks dropped');
+});

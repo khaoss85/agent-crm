@@ -1986,22 +1986,57 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
     const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
+    // Dan 06/11: the notes get their own chip — «Note · N» — and, once
+    // there, one chip per writer («da dan», «dal team»).
+    const notes = entries.filter((item) => item?.entry === 'note');
+    const noteAuthor = (item) => (isHumanHandle(item?.teamAuthorId) ? String(item.teamAuthorId).trim() : '');
+    const authors = [...new Set(notes.map(noteAuthor))];
     const chips = el('p', 'bo-scheda-chips');
+    const chip = (label, key, active, onPick) => {
+      const node = el('button', undefined, label);
+      node.setAttribute('type', 'button');
+      node.setAttribute('data-channel', key);
+      if (active) node.setAttribute('data-active', 'true');
+      node.addEventListener('click', onPick);
+      return node;
+    };
     const drawChips = () => {
       while (chips.firstChild) chips.removeChild(chips.firstChild);
+      const pick = (key) => () => {
+        channelFilter = key;
+        noteAuthorFilter = null;
+        shownCount = TIMELINE_PAGE;
+        drawChips();
+        drawList();
+      };
       for (const key of ['all', ...channels]) {
-        const chip = el('button', undefined, key === 'all' ? 'Tutti' : channelLabel(key));
-        chip.setAttribute('data-channel', key);
-        if (channelFilter === key) chip.setAttribute('data-active', 'true');
-        chip.addEventListener('click', () => {
-          channelFilter = key;
-          shownCount = TIMELINE_PAGE;
-          drawChips();
-          drawList();
-        });
-        chips.appendChild(chip);
+        chips.appendChild(chip(key === 'all' ? 'Tutti' : channelLabel(key), key, channelFilter === key, pick(key)));
+      }
+      if (notes.length > 0) {
+        // Review #617: a cut cronologia may hold older notes past the page,
+        // so the count reads as a floor («3+»), never an exact total.
+        const partial = timeline?.entries?.truncated === true;
+        const noteChip = chip(`Note · ${notes.length}${partial ? '+' : ''}`, 'note', channelFilter === 'note', pick('note'));
+        noteChip.setAttribute('class', 'bo-scheda-chip-note');
+        chips.appendChild(noteChip);
+      }
+      if (channelFilter === 'note' && authors.length > 1) {
+        const byAuthor = el('span', 'bo-scheda-chips-authors');
+        for (const author of authors) {
+          const label = author === '' ? 'dal team' : `da ${author}`;
+          const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
+            noteAuthorFilter = noteAuthorFilter === author ? null : author;
+            shownCount = TIMELINE_PAGE;
+            drawChips();
+            drawList();
+          });
+          node.setAttribute('data-author', author === '' ? 'team' : author);
+          byAuthor.appendChild(node);
+        }
+        chips.appendChild(byAuthor);
       }
     };
+    let noteAuthorFilter = null;
     const list = el('div', 'bo-scheda-timeline');
     // Voce 32820692: the timeline entry carries the attachment reference
     // the host logged, and the card shows it — a thumbnail for photos, a
@@ -2039,12 +2074,21 @@ export function createCustomerCardView(deps) {
       // `Tutti` only — a channel filter shows that channel's passages alone.
       // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
       // a 5.600px page. «Mostra precedenti» opens the next page below.
-      const filtered = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
+      const filtered = entries.filter((item) => {
+        if (channelFilter === 'all') return true;
+        if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
+        return String(item?.channel ?? '') === channelFilter;
+      });
       const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
       const visible = ordered.slice(0, shownCount);
       if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
+        if (channelFilter === 'note') {
+          list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessuna nota qui'));
+          list.appendChild(el('p', 'bo-muted', 'Scrivi una nota qui sotto: resta nella cronologia del cliente.'));
+          return;
+        }
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
         list.appendChild(el('p', 'bo-muted', 'Prova un altro canale oppure scrivi il primo messaggio qui sotto.'));
         return;
@@ -2071,14 +2115,22 @@ export function createCustomerCardView(deps) {
           // line — it is a statement about the customer, not a passage.
           // The writer reads when the row names a human handle, like the
           // outbound passages above; markup in the body stays text.
+          // Dan 06/11: «ho aggiunto una nota ma non si vede» — the note
+          // reads as a note at a glance: its own mark and a paper tone.
           const when = timeParts(item?.occurredAt);
           const author = isHumanHandle(item?.teamAuthorId)
             ? `da ${String(item.teamAuthorId).trim()}` : 'dal team';
-          row.appendChild(el('p', 'bo-scheda-entry-head',
+          row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
+          const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
+          mark.setAttribute('aria-hidden', 'true');
+          row.appendChild(mark);
+          const paper = el('div', 'bo-scheda-note-paper');
+          paper.appendChild(el('p', 'bo-scheda-entry-head',
             when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
           if (typeof item?.body === 'string' && item.body !== '') {
-            row.appendChild(el('p', undefined, item.body));
+            paper.appendChild(el('p', 'bo-scheda-note-body', readableText(item.body)));
           }
+          row.appendChild(paper);
           list.appendChild(row);
           continue;
         }
