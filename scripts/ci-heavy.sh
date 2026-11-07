@@ -26,20 +26,22 @@
 set -euo pipefail
 name="$1"; shift
 [ "${1:-}" = "--" ] && shift
-core="${ACCORDO_CORE_HEAVY_JOB:-$HOME/dev/_work/minimal-core-versions/current/tools/minimal/heavy-job.sh}"
+core="${ACCORDO_CORE_HEAVY_JOB:-${HOME:-}/dev/_work/minimal-core-versions/current/tools/minimal/heavy-job.sh}"
 if [ -f "$core" ]; then
-  conf="${ACCORDO_HEAVY_JOB_CONF:-$HOME/.config/environment.d/60-heavy-job.conf}"
+  conf="${ACCORDO_HEAVY_JOB_CONF:-${HOME:-}/.config/environment.d/60-heavy-job.conf}"
   if [ -f "$conf" ]; then
     # Not sourced: environment.d values are raw (a regex with parentheses is not shell).
     # The last line counts without a trailing newline; a malformed key is skipped, never fatal.
-    while IFS='=' read -r key value || [ -n "$key" ]; do
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in *=*) ;; *) continue ;; esac
+      key="${line%%=*}"; value="${line#*=}"
       [[ "$key" =~ ^HEAVY_JOB_[A-Z0-9_]+$ ]] || continue
       [ -n "${!key+x}" ] || export "$key=$value"
     done < "$conf"
   fi
   lock="$core"
 else
-  lock="${ACCORDO_HEAVY_JOB:-$HOME/dev/_work/minimal-core-main/tools/minimal/heavy-job.sh}"
+  lock="${ACCORDO_HEAVY_JOB:-${HOME:-}/dev/_work/minimal-core-main/tools/minimal/heavy-job.sh}"
 fi
 if [ -f "$lock" ]; then
   exec env HEAVY_JOB_WAIT_SEC="${HEAVY_JOB_WAIT_SEC:-5400}" HEAVY_JOB_MAX_SEC="${HEAVY_JOB_MAX_SEC:-3600}" \

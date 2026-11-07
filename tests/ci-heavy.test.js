@@ -76,14 +76,22 @@ test('the last policy line counts without a newline and a malformed key is skipp
   try {
     const core = fakeLock(dir, 'core.sh');
     const conf = join(dir, 'policy.conf');
-    writeFileSync(conf, 'HEAVY_JOB_bad-key=1\nHEAVY_JOB_=2\nHEAVY_JOB_SLOTS=2');
+    writeFileSync(conf, 'HEAVY_JOB_bad-key=1\nHEAVY_JOB_=2\nHEAVY_JOB_NOVALUE\nHEAVY_JOB_SLOTS=2');
     const out = run({ ACCORDO_CORE_HEAVY_JOB: core, ACCORDO_HEAVY_JOB_CONF: conf });
     assert.match(out, /^HEAVY_JOB_SLOTS=2$/m);
     assert.match(out, /args=accordo ci-fast -- echo step-ran/);
     assert.doesNotMatch(out, /bad-key/);
+    assert.doesNotMatch(out, /HEAVY_JOB_NOVALUE/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an unset HOME does not abort the step', () => {
+  const out = execFileSync('bash', ['scripts/ci-heavy.sh', 'fast', '--', 'echo', 'step-ran'], {
+    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH },
+  });
+  assert.equal(out.trim(), 'step-ran');
 });
 
 test('without the core lock nor a lock script the step runs as before', () => {
