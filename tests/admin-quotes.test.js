@@ -136,8 +136,8 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   assert.ok(text.includes('Ricorrente ogni 1 mese'), 'the monthly group is labelled');
   assert.ok(text.includes('Ricorrente ogni 1 anno'), 'the annual group is labelled');
   assert.ok(!/ARR|MRR|TCV/.test(text), 'no ARR/MRR/TCV is implied');
-  assert.ok(text.includes('I periodi non si sommano mai'), 'the grouping contract is disclosed');
-  assert.ok(text.includes('calcolati dal server'), 'the money contract is disclosed');
+  assert.ok(text.includes('non si sommano tra loro'), 'the grouping contract is disclosed');
+  assert.ok(!text.includes('server'), 'voce ef92f728: no developer note about who computes the amounts');
   assert.ok(text.includes('5,00%'), 'basis points shown as a percentage');
   assert.ok(text.includes('Sconto in punti base'), 'the discount unit is explained');
   assert.ok(text.includes('le quote fisse si addebitano una volta'), 'quantity semantics disclosed');
@@ -202,7 +202,9 @@ test('pending approval shows human decision controls; approved and rejected show
   await createQuoteView({ doc: createFakeDocument(), mount: pending, client: pendingClient }).renderQuoteDetail('q1');
   const decide = pending.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-decide');
   assert.ok(decide, 'decision panel rendered');
-  assert.ok(pending.textContent.includes('Production Spine'), 'the role-enforcement boundary is stated honestly');
+  // Voce ef92f728: no developer roadmap note on the owner's page.
+  assert.ok(!pending.textContent.includes('Production Spine'), 'no internal milestone name on the page');
+  assert.ok(!pending.textContent.includes('Admin'), 'no internal role name on the page');
   await decide.__reject();
   const rejectPost = pendingClient.calls.find((call) => call.method === 'POST');
   assert.equal(rejectPost.path, '/api/modules/quote/records/q1/actions/reject');

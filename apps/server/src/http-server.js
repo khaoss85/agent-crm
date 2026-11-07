@@ -19,6 +19,7 @@ import { requireIdempotencyKey } from '../../../packages/core/src/idempotency.js
 import { bundleVersion, getAdminBundle } from './admin-bundle.js';
 import { connectionSecretRef } from '../../../packages/channels/src/connection.js';
 import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../packages/channels/src/composer-text.js';
+import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-window.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
@@ -729,7 +730,7 @@ export function buildRouter(app) {
     return await app.readCustomerCard({ resource: params.resource, id: params.id });
   });
 
-  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, actor, identity, organizationId }) => {
+  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, query, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerTimeline !== 'function') {
       throw new NotFoundError('Operation', 'customer timeline');
@@ -737,7 +738,14 @@ export function buildRouter(app) {
     // «Da leggere» (backlog:9e003582): the actor rides along so the
     // timeline's `read` flags answer for the signed-in member. The query
     // names no member — without an actor the flags read null, never refused.
-    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor });
+    // backlog:ea463d6ff10d: `before`/`limit` ask for the entries newest
+    // first, a page at a time; the package validates them. Absent, the
+    // request is the legacy read, unchanged — and so is an empty value
+    // (`?before=&limit=`), never a switch to the cursor read (review #639).
+    const page = {};
+    if (query.before !== undefined && query.before !== null && query.before !== '') page.before = query.before;
+    if (query.limit !== undefined && query.limit !== null && query.limit !== '') page.limit = query.limit;
+    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor, ...page });
   });
 
   // «Da leggere» (backlog:9e003582): opening the scheda marks its inbound
@@ -928,16 +936,29 @@ export function buildRouter(app) {
     if (!COMPOSER_CHANNELS.includes(channel)) {
       throw new ValidationError(`channel must be one of ${COMPOSER_CHANNELS.join(', ')}`, { field: 'channel' });
     }
+    const template = input.template === undefined || input.template === null ? null : input.template;
+    if (template !== null && channel !== 'whatsapp') {
+      throw new ValidationError('solo WhatsApp manda un modello approvato', { field: 'template' });
+    }
+    const templateMessage = template === null ? null : assertComposerTemplate(template);
     const text = typeof input.text === 'string' ? input.text : '';
-    // The composer always attaches the customer's timeline row, and the row
-    // holds at most 2000 characters without tabs or control characters
-    // (line breaks allowed) — so the route refuses anything the row would
-    // refuse, naming the composer limit, instead of passing route
-    // validation and failing at the queue after the check above. A refusal
-    // here is 400 VALIDATION_ERROR on field `text`.
-    const textRefusal = composerTimelineRefusal(text);
-    if (textRefusal !== null) {
-      throw new ValidationError(`Il messaggio non entra nella cronologia (limite: ${COMPOSER_TIMELINE_BODY_MAX} caratteri): ${textRefusal}`, { field: 'text' });
+    if (templateMessage !== null) {
+      // A template send carries no free text: the adapter would silently
+      // drop it, so the route refuses the mix instead of losing words.
+      if (text.trim() !== '') {
+        throw new ValidationError('un invio con modello non porta testo libero: svuota il messaggio oppure togli il modello', { field: 'text' });
+      }
+    } else {
+      // The composer always attaches the customer's timeline row, and the row
+      // holds at most 2000 characters without tabs or control characters
+      // (line breaks allowed) — so the route refuses anything the row would
+      // refuse, naming the composer limit, instead of passing route
+      // validation and failing at the queue after the check above. A refusal
+      // here is 400 VALIDATION_ERROR on field `text`.
+      const textRefusal = composerTimelineRefusal(text);
+      if (textRefusal !== null) {
+        throw new ValidationError(`Il messaggio non entra nella cronologia (limite: ${COMPOSER_TIMELINE_BODY_MAX} caratteri): ${textRefusal}`, { field: 'text' });
+      }
     }
     let subject;
     if (input.subject !== undefined && input.subject !== null) {
@@ -1000,20 +1021,52 @@ export function buildRouter(app) {
       conversationId = found?.conversationId;
       threadId = found?.threadId;
     }
-    const message = { to, text };
+    // WhatsApp 24-hour window (backlog:97cba17c, VALIDAZIONE A4): outside
+    // the window only an approved template may go, and the composer says
+    // so in Italian before anything is queued — never a free-text send
+    // Meta would refuse in silence. The queue re-resolves the window at
+    // execution time, so a send approved here can still refuse there.
+    let lastInboundAt = null;
+    if (channel === 'whatsapp' && templateMessage === null && typeof app.readCustomerTimeline === 'function') {
+      lastInboundAt = await latestWhatsAppInboundAt(
+        app,
+        { resource: input.resource, id: String(input.id ?? '') },
+        { spaceId, connectionKey: connection.connectionKey },
+      );
+      const refusal = refuseWhatsAppFreeText({ lastInboundAt });
+      if (refusal !== null) {
+        throw new AppError(refusal, { code: 'CHANNEL_TEMPLATE_REQUIRED', status: 422 });
+      }
+    }
+    const message = templateMessage !== null ? { to, template: templateMessage } : { to, text };
     if (subject !== undefined) message.subject = subject;
     if (threadId !== undefined) message.threadId = threadId;
-    const queued = await app.queueChannelSend({
-      actor,
-      spaceId,
-      connectionKey: connection.connectionKey,
-      message,
-      messageKey,
-      timeline: {
-        subject: { resource: input.resource, id: String(input.id ?? ''), owner: 'host' },
-        ...(conversationId === undefined ? {} : { conversationId }),
-      },
-    });
+    let queued;
+    try {
+      queued = await app.queueChannelSend({
+        actor,
+        spaceId,
+        connectionKey: connection.connectionKey,
+        message,
+        messageKey,
+        timeline: {
+          subject: { resource: input.resource, id: String(input.id ?? ''), owner: 'host' },
+          ...(conversationId === undefined ? {} : { conversationId }),
+        },
+      });
+    } catch (error) {
+      // The window moved between the check above and the send, or the
+      // template is not approved: the Italian line names the fix, with the
+      // queue's own code and status intact for the screens that read them.
+      if (channel === 'whatsapp' && error !== null && typeof error === 'object'
+        && (error.code === 'CHANNEL_TEMPLATE_REQUIRED' || error.code === 'CHANNEL_MESSAGE_MALFORMED')) {
+        const line = templateMessage !== null
+          ? `Il modello "${templateMessage.name}" non è tra quelli approvati per questo numero: scegli un modello approvato.`
+          : (refuseWhatsAppFreeText({ lastInboundAt }) ?? 'Su WhatsApp puoi mandare solo un modello approvato.');
+        throw new AppError(line, { code: error.code, status: 422 });
+      }
+      throw error;
+    }
     return respond(201, {
       channel,
       to,
@@ -1021,6 +1074,7 @@ export function buildRouter(app) {
       jobId: queued.jobId,
       idempotencyKey: queued.idempotencyKey,
       state: queued.state,
+      ...(templateMessage === null ? {} : { template: templateMessage.name }),
     });
   });
 
@@ -2146,6 +2200,91 @@ async function latestEmailThread(app, subject) {
   const threadId = gmailThreadIdForSubject(newest.conversationId);
   if (threadId === null) return null;
   return { conversationId: newest.conversationId, threadId };
+}
+
+/**
+ * The newest inbound WhatsApp instant for one customer, or null
+ * (backlog:97cba17c, VALIDAZIONE A4): the `{ lastInboundAt }` observation
+ * the composer window rule reads. Only a recorded inbound passage opens
+ * the window — an outbound, a note, or a missing instant never does, so
+ * the composer fails closed to templates instead of guessing.
+ *
+ * The read walks the complete history newest-first through the timeline
+ * cursor (`limit` + `nextCursor`), never the capped display slice: an
+ * in-window inbound buried under newer notes, calls or other-channel rows
+ * still opens the window, the way the queue's full inbox scan allows it
+ * (review rev-agent-crm-653-109e03ad P1). The space and the resolved
+ * connection travel with the read, so a scoping host answers for this
+ * send's connection instead of a cross-space projection; hosts that do
+ * not scope yet answer as before. The queue stays the execution
+ * authority: it re-resolves the window from the inbox at send time.
+ */
+async function latestWhatsAppInboundAt(app, subject, scope = {}) {
+  const spaceId = typeof scope.spaceId === 'string' ? scope.spaceId : '';
+  const connectionKey = typeof scope.connectionKey === 'string' ? scope.connectionKey : '';
+  let latest = null;
+  let latestMs = -1;
+  let before = null;
+  const seenCursors = new Set();
+  // The cursor strictly descends, so the loop always ends: a missing or
+  // repeated cursor, an empty page, or a host that never pages stops it.
+  // The 100-page ceiling (5000 rows) only guards a pathological host.
+  for (let page = 0; page < 100; page += 1) {
+    const timeline = await app.readCustomerTimeline({
+      resource: subject.resource,
+      id: subject.id,
+      ...(spaceId === '' ? {} : { spaceId }),
+      ...(connectionKey === '' ? {} : { connectionKey }),
+      limit: 50,
+      ...(before === null ? {} : { before }),
+    });
+    const entries = timeline?.entries ?? null;
+    const items = Array.isArray(entries?.items) ? entries.items : [];
+    for (const row of items) {
+      if (row?.entry !== 'message' || row?.channel !== 'whatsapp' || row?.direction !== 'inbound') continue;
+      const at = typeof row?.occurredAt === 'string' ? row.occurredAt : null;
+      const ms = at === null ? NaN : Date.parse(at);
+      if (!Number.isFinite(ms)) continue;
+      if (ms > latestMs) { latestMs = ms; latest = at; }
+    }
+    const next = typeof entries?.nextCursor === 'string' && entries.nextCursor !== '' ? entries.nextCursor : null;
+    if (next === null || seenCursors.has(next)) break;
+    seenCursors.add(next);
+    if (items.length === 0) break;
+    before = next;
+  }
+  return latest;
+}
+
+/**
+ * The bounded shape of one composer template send (backlog:97cba17c):
+ * `{ name, language?, variables? }`. The queue approves strictly against
+ * the connection's approved list at send time — the route only checks the
+ * shape, fail-fast, so garbage never reaches the provider mapping.
+ */
+function assertComposerTemplate(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ValidationError('template must be an object {name, language?, variables?}', { field: 'template' });
+  }
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  if (name === '' || name.length > 64 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new ValidationError('template.name must be bounded single-line text', { field: 'template' });
+  }
+  const out = { name };
+  if (value.language !== undefined) {
+    if (typeof value.language !== 'string' || value.language.trim() === '' || value.language.length > 16) {
+      throw new ValidationError('template.language must be bounded text when present', { field: 'template' });
+    }
+    out.language = value.language.trim();
+  }
+  if (value.variables !== undefined) {
+    if (!Array.isArray(value.variables) || value.variables.length > 32
+      || value.variables.some((entry) => typeof entry !== 'string' || entry === '' || entry.length > 1024)) {
+      throw new ValidationError('template.variables must be a bounded list of non-empty text (at most 32, at most 1024 chars each)', { field: 'template' });
+    }
+    out.variables = [...value.variables];
+  }
+  return out;
 }
 
 /**

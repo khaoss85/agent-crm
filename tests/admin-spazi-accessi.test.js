@@ -64,7 +64,8 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
         return { items: members };
       }
       if (path.startsWith('/api/spine/memberships/') && path.endsWith('/suspend')) {
-        const subject = decodeURIComponent(path.split('/')[3]);
+        const subject = decodeURIComponent(path.split('/')[4]);
+        if (fail.suspend && Object.hasOwn(fail.suspend, subject)) throw fail.suspend[subject];
         const found = members.find((row) => row.subject === subject);
         if (!found) throw Object.assign(new Error('no such member'), { code: 'NOT_FOUND' });
         members.splice(members.indexOf(found), 1);
@@ -171,7 +172,7 @@ test('space cards name the operator role, hostile names stay text', () => {
     role: 'owner',
   });
   assert.equal(cards.length, 1);
-  assert.equal(cards[0].role, 'Proprietario');
+  assert.equal(cards[0].role, 'Titolare', 'the same word the shell prints under the space name');
   assert.equal(cards[0].roleKnown, true);
   assert.equal(cards[0].active, true);
   assert.equal(spaceRoleLabel('operator'), 'Operatore');
@@ -247,9 +248,13 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   const rendered = text(mount);
   assert.match(rendered, /Spazi di lavoro/);
   assert.match(rendered, /Stai lavorando qui/);
-  assert.match(rendered, /Tu: Proprietario/);
+  assert.match(rendered, /Tu: Titolare/);
   assert.match(rendered, /Team dell\u2019organizzazione/);
   assert.match(rendered, /intera organizzazione/);
+  // Supervisor design check on #644: the team is the organization's, the
+  // screen never says «postazione».
+  assert.match(rendered, /Lo stesso team per tutta l’organizzazione/);
+  assert.doesNotMatch(rendered, /postazione/);
   assert.match(rendered, /marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
   for (const entry of SPAZI_AI_SWITCHES) {
@@ -820,4 +825,164 @@ test('the invite toggle closes the inline form and aria-expanded tracks menu or 
   await flush();
   assert.ok(!formOpen(), 'the toggle closes the inline form again');
   assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'collapsed once menu and form are both closed');
+});
+
+// backlog:6b44b0e9fcdf — Spazi e accessi like prototype 08: one team row per
+// person (prod 07/11 listed «Daniele Pelleri» twice: the adopted broker
+// member and the Google one), name over email, and the card foot.
+
+const byClassIn = (mount, tag, cls) => mount.findAll(tag)
+  .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(cls));
+
+test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name alone never merges', () => {
+  const rows = buildTeamRows([
+    { subject: 'broker|dan', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: ' DAN@esempio.invalid ' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Rossi' },
+    { subject: 'google|8', role: 'observer', status: 'active', displayName: 'Marco Rossi' },
+  ]);
+  assert.equal(rows.length, 3, 'Daniele is one row; the two email-less homonyms stay two people');
+  const dan = rows.find((row) => row.name === 'Daniele Pelleri');
+  assert.deepEqual(dan.subjects, ['broker|dan', 'google|42'], 'the row keeps every subject, nothing merges server-side');
+  assert.deepEqual(dan.removable, ['broker|dan', 'google|42']);
+  assert.equal(dan.email, 'dan@esempio.invalid');
+  assert.equal(dan.initials, 'DP', 'initials follow the person name');
+  assert.equal(dan.role, 'Titolare', 'a person holding two roles shows the stronger one');
+  assert.equal(dan.status, 'attivo');
+  assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2);
+  // Without enrichment the row reads exactly as before.
+  const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
+  assert.equal(bare.name, 'marco');
+  assert.equal(bare.email, null);
+  assert.equal(bare.initials, 'MA');
+  // A suspended subject is not suspended twice.
+  const [half] = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'suspended', displayName: 'Ada', email: 'x@esempio.invalid' },
+    { subject: 'b', role: 'owner', status: 'active', displayName: 'Ada', email: 'x@esempio.invalid' },
+  ]);
+  assert.deepEqual(half.removable, ['b']);
+  assert.equal(half.status, 'attivo', 'a person with one live subject is active');
+});
+
+test('6b44b0e9fcdf review: a mailbox alone never merges — different or missing names stay separate people', () => {
+  const rows = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'active', displayName: 'Anna Bianchi', email: 'info@studio.invalid' },
+    { subject: 'b', role: 'operator', status: 'active', displayName: 'Bruno Verdi', email: 'INFO@studio.invalid' },
+    { subject: 'c', role: 'observer', status: 'active', email: 'info@studio.invalid' },
+    { subject: 'd', role: 'observer', status: 'active', displayName: ' anna  BIANCHI ', email: 'info@studio.invalid' },
+  ]);
+  assert.equal(rows.length, 3, 'Anna (two subjects), Bruno and the nameless subject');
+  const anna = rows.find((row) => row.subjects.includes('a'));
+  assert.deepEqual(anna.subjects, ['a', 'd'], 'same mailbox AND same name (trimmed, any case) is one person');
+  const bruno = rows.find((row) => row.subjects.includes('b'));
+  assert.equal(bruno.name, 'Bruno Verdi', 'a different human on a shared mailbox keeps their own row');
+  assert.deepEqual(bruno.removable, ['b'], 'removing Anna never suspends Bruno');
+  assert.deepEqual(rows.find((row) => row.subjects.includes('c')).subjects, ['c'], 'a nameless subject is not folded in by mailbox');
+});
+
+test('6b44b0e9fcdf review: the person status is deterministic and reads sospeso only when every subject is suspended', () => {
+  const person = (statuses) => buildTeamRows(statuses.map((status, index) => ({
+    subject: `s${index}`, role: 'operator', status, displayName: 'Ada Neri', email: 'ada@esempio.invalid',
+  })));
+  assert.equal(person(['suspended', 'invited'])[0].status, 'invitato');
+  assert.equal(person(['invited', 'suspended'])[0].status, 'invitato', 'the store order does not change the row');
+  assert.equal(person(['pending', 'invited'])[0].status, 'invitato');
+  assert.equal(person(['suspended', 'active', 'invited'])[0].status, 'attivo');
+  assert.equal(person(['suspended', 'suspended'])[0].status, 'sospeso');
+});
+
+test('6b44b0e9fcdf review: a refused subject does not stop the others, the outcome is told and Riprova asks only for the refused one', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.invalid' },
+  ];
+  const calls = [];
+  const fail = { suspend: { 'broker|dan': Object.assign(new Error('ultimo amministratore'), { code: 'SPINE_LAST_ADMIN', status: 403 }) } };
+  const { mount, seen, view: v } = view({ client: stubClient({ members, calls, fail }) });
+  await v.render();
+  await flush();
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Daniele Pelleri'));
+  await remove.listeners.click[0]();
+  await flush();
+  const reason = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della rimozione di Daniele Pelleri');
+  reason.value = 'doppio account';
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma rimozione').listeners.click[0]();
+  await flush(30);
+  const suspendPaths = () => calls.filter((call) => call.path.endsWith('/suspend')).map((call) => call.path);
+  assert.deepEqual(suspendPaths(), [
+    `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
+    `/api/spine/memberships/${encodeURIComponent('google|42')}/suspend`,
+  ], 'the first refusal does not stop the second subject');
+  const said = seen.toast.at(-1);
+  assert.equal(said.error, true);
+  assert.match(said.message, /account sospesi 1 su 2, rifiutati 1/, 'the partial outcome is counted, not hidden behind a generic failure');
+  assert.match(text(mount), /account sospesi 1 su 2/, 'the outcome stays next to the row');
+  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|42'), 'no technical subject on screen');
+  const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
+  assert.ok(retry, 'the row stays open with Riprova');
+  const kept = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della rimozione di Daniele Pelleri');
+  assert.equal(kept.value, 'doppio account', 'the motive is kept for the retry');
+
+  delete fail.suspend['broker|dan'];
+  await retry.listeners.click[0]();
+  await flush(30);
+  assert.deepEqual(suspendPaths().slice(2), [
+    `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
+  ], 'Riprova suspends only the refused subject');
+  assert.equal(seen.toast.at(-1).message, 'Daniele Pelleri rimosso dal team.');
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Riprova'), 'a full success closes the retry');
+});
+
+test('6b44b0e9fcdf: the team paints one row per person with name over email, and removal suspends each subject', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.invalid' },
+  ];
+  const calls = [];
+  const { mount, view: v } = view({ client: stubClient({ members, calls }) });
+  await v.render();
+  await flush();
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.deepEqual(names, ['Daniele Pelleri', 'Marco Ferri'], 'Daniele appears once');
+  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|42'), 'no technical subject on screen');
+  const emails = byClassIn(mount, 'div', 'bo-spazi-email');
+  assert.deepEqual(emails.map((node) => node.textContent), ['dan@esempio.invalid', 'marco@esempio.invalid']);
+  assert.equal(emails[0].getAttribute('title'), 'dan@esempio.invalid', 'the full address survives the ellipsis');
+  assert.match(text(mount), /2 persone/, 'the card statistic counts people, not subjects');
+
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Daniele Pelleri'));
+  await remove.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Rimuovere Daniele Pelleri dal team\?/);
+  const reason = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della rimozione di Daniele Pelleri');
+  reason.value = 'prova';
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma rimozione').listeners.click[0]();
+  await flush(30);
+  const suspended = calls.filter((call) => call.path.endsWith('/suspend')).map((call) => call.path);
+  assert.deepEqual(suspended, [
+    `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
+    `/api/spine/memberships/${encodeURIComponent('google|42')}/suspend`,
+  ], 'each subject of the person is suspended through the spine route');
+});
+
+test('6b44b0e9fcdf: the card foot pairs Tu: <ruolo> with the badge or Apri; a description shows only when the space carries one', async () => {
+  const spaces = [
+    { id: 'spazio-1', name: 'Negozio', initials: 'NE', description: 'Abbigliamento · Torino' },
+    { id: 'spazio-2', name: 'Palestra', initials: 'PA' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members: [{ subject: 'marco', role: 'operator', status: 'active' }] }), spaces, active: 'spazio-1' });
+  await v.render();
+  await flush();
+  const feet = byClassIn(mount, 'div', 'bo-spazi-foot');
+  assert.equal(feet.length, 2, 'one foot per space card');
+  assert.equal(feet[0].textContent, 'Tu: TitolareStai lavorando qui');
+  assert.equal(feet[1].textContent, 'Tu: TitolareApri');
+  const open = feet[1].findAll('button')[0];
+  assert.ok((open.getAttribute('class') ?? '').split(/\s+/).includes('ui-btn-primary'), 'Apri is the system primary button');
+  const descriptions = byClassIn(mount, 'div', 'bo-spazi-desc').map((node) => node.textContent);
+  assert.deepEqual(descriptions, ['Abbigliamento · Torino'], 'no description is invented for the space without one');
+  const cards = byClassIn(mount, 'div', 'bo-spazi-card');
+  assert.ok((cards.at(-1).getAttribute('class') ?? '').includes('bo-spazi-adder'), 'the dashed adder stays last');
 });

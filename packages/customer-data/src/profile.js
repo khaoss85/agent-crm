@@ -323,6 +323,17 @@ async function readOneSection(section, { modules, references, subject, opportuni
         opportunityName: row.opportunityId != null
           ? (opportunityNames.get(row.opportunityId) ?? null)
           : null,
+        // Voce 59def6cb805d (C25): the amount the owning record already
+        // holds, server-computed — the scheda never sums anything. A quote
+        // with recurring groups has no single one-time total, so it carries
+        // none (null), never a partial figure.
+        amountCents: Number.isSafeInteger(row.oneTimeNetCents) && row.recurringGroupCount === 0
+          ? row.oneTimeNetCents : null,
+        currency: typeof row.currency === 'string' ? row.currency : null,
+      } : {}),
+      ...(section.key === 'opportunities' ? {
+        amountCents: Number.isSafeInteger(row.valueCents) ? row.valueCents : null,
+        currency: typeof row.currency === 'string' ? row.currency : null,
       } : {}),
     }))),
     truncated: rows.length > 50,

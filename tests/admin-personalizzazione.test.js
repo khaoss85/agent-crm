@@ -11,6 +11,7 @@
  */
 
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
@@ -132,7 +133,10 @@ test('search matches label, blurb and name; sort stato puts active first', () =>
 test('every tab names its honest banner', () => {
   assert.ok(bannerFor('pacchetti').includes('pacchetto'));
   assert.ok(bannerFor('skill').includes('Prova'));
-  assert.ok(bannerFor('connettori').includes('Collega'));
+  // backlog:34672b9f5a1f: the prototype's Connettori has no line under the
+  // toolbar (the hero carries the message), so its banner is empty and the
+  // toolbar renders none.
+  assert.equal(bannerFor('connettori'), '');
 });
 
 test('Scopri shows cards with Prova and +, activating moves the unit to I tuoi', async () => {
@@ -307,7 +311,9 @@ test('the Connettori tab renders the prototype hero and the two card sections', 
   assert.ok(all, 'each section links the full list');
   all.dispatch('click');
   assert.ok(navigated.includes('#/connettori'), 'Mostra tutto opens the wizard hub');
-  const add = buttons.find((node) => node.textContent === 'Aggiungi ▾');
+  // backlog:34672b9f5a1f: the CTA reads «+ Aggiungi» with a chevron icon,
+  // like the prototype (spec C8), no longer «Aggiungi ▾».
+  const add = buttons.find((node) => node.textContent === '+ Aggiungi');
   assert.ok(add, 'the green CTA renders on the Connettori tab');
   assert.ok(add.getAttribute('class').split(/\s+/).includes('ui-btn-cta'), 'Aggiungi stays the green accord CTA');
   add.dispatch('click');
@@ -371,6 +377,14 @@ test('Connettori opens by default with the prototype copy, filtered badges and a
   const search = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Cerca');
   assert.ok(search, 'the search field renders');
   assert.equal(search.getAttribute('placeholder'), 'Cerca', 'the placeholder is the prototype verbatim (spec C8)');
+  // The lens is a real SVG element in the field wrapper: a CSS data: image is
+  // blocked by the host CSP and would break the «no data: url» stylesheet test.
+  const wrap = search.parentNode;
+  assert.ok(String(wrap.getAttribute('class') ?? '').split(/\s+/).includes('search-wrap'), 'the field sits in its wrapper');
+  const lens = wrap.findAll('svg')[0];
+  assert.ok(lens && String(lens.getAttribute('class')).split(/\s+/).includes('ui-icon-search'), 'the wrapper carries svg.ui-icon-search');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(!/url\(["']?data:/.test(css), 'no data: url in the stylesheet — the host CSP would block it');
   const badges = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-count'));
   assert.deepEqual(badges.map((node) => node.textContent), ['7', '3'], 'badges count the visible cards (spec C13-C14)');
   view.test.state.query = 'stripe';
@@ -533,7 +547,8 @@ test('the Aggiungi menu closes with Escape and explains the AI voice honestly (s
   });
   await view.render();
   await flush();
-  const add = mount.findAll('button').find((node) => node.textContent === 'Aggiungi ▾');
+  // backlog:34672b9f5a1f: «+ Aggiungi» with a chevron (spec C8), was «Aggiungi ▾».
+  const add = mount.findAll('button').find((node) => node.textContent === '+ Aggiungi');
   add.dispatch('click');
   const addMenu = mount.querySelector('.ui-conn-addmenu');
   assert.ok(addMenu, 'the Aggiungi menu renders');
@@ -573,8 +588,13 @@ test('the hero carousel walks three prototype slides with arrows and dots (spec 
   await flush();
   assert.ok(text().includes('Agenda, lead e pagamenti'), 'Successiva moves to slide two');
   assert.ok(text().includes('Appuntamenti condivisi'), 'slide two keeps the prototype copy');
-  const dots = mount.findAll('button').filter((node) => String(node.getAttribute('aria-label') ?? '').startsWith('Vai alla slide'));
+  const dots = mount.findAll('button').filter((node) => /^Vai alla scheda \d$/.test(String(node.getAttribute('aria-label') ?? '')));
   assert.equal(dots.length, 3, 'three clickable dots under the panel');
+  // Review #645 P3: plain buttons, no partial tab pattern; the active dot
+  // is marked with aria-current.
+  for (const dot of dots) assert.equal(dot.getAttribute('role'), null, 'a dot is a plain button, never a tab');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('role') === 'tablist' && classesOf(node).includes('ui-hero-dots')).length, 0, 'the dots are no tablist');
+  assert.deepEqual(dots.map((dot) => dot.getAttribute('aria-current')), [null, 'true', null], 'aria-current marks the active slide');
   dots[2].dispatch('click');
   await flush();
   assert.ok(text().includes('Configura con l\u2019AI'), 'the third dot opens the Accordo AI slide');
@@ -903,4 +923,120 @@ test('without permission the hero Inizia, Configura manualmente and Mostra tutto
   all.dispatch('click', {});
   assert.equal(said.filter((message) => message === 'Chiedi al titolare di collegare questo canale.').length, 3, 'Mostra tutto answers in Italian with no codes');
   assert.deepEqual(navigated, [], 'Mostra tutto never leaves the readable page');
+});
+
+// backlog:34672b9f5a1f — completion like the approved prototype (`02
+// Personalizzazione`, Connettori): card order, carousel dots, curated mark,
+// «+ Aggiungi», no technical text on any tab.
+const classesOf = (node) => String(node.getAttribute('class') ?? '').split(/\s+/);
+
+test('Connettori opens on Più usati: the cards follow the prototype order (spec C15, C23)', async () => {
+  const mount = createMount();
+  const view = createPersonalizzazioneView({ doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId });
+  assert.equal(view.test.state.sort, 'piu-usati', 'the first Ordina per voice is the default');
+  await view.render();
+  await flush();
+  const labels = mount.findAll('strong').filter((node) => classesOf(node).includes('ui-conn-label')).map((node) => node.textContent);
+  assert.deepEqual(labels, [
+    'WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Telegram',
+    'Form sito', 'Google Calendar', 'Stripe',
+  ], 'the prototype six first, Telegram (a live channel the prototype predates) after them');
+  const ordina = mount.findAll('button').find((node) => String(node.getAttribute('aria-label') ?? '').startsWith('Ordina per'));
+  assert.equal(ordina.getAttribute('aria-label'), 'Ordina per: Più usati', 'the toolbar names the real order');
+});
+
+test('the carousel dots sit in their own row under the panel (spec C12)', async () => {
+  const mount = createMount();
+  const view = createPersonalizzazioneView({ doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  const hero = mount.findAll('section').find((node) => classesOf(node).includes('ui-hero'));
+  assert.ok(hero, 'the hero renders');
+  assert.equal(hero.findAll('div').filter((node) => classesOf(node).includes('ui-hero-dots')).length, 0, 'no dots inside the dark panel');
+  const siblings = hero.parentNode.childNodes;
+  const dots = siblings.find((node) => classesOf(node).includes('ui-hero-dots'));
+  assert.ok(dots, 'the dots row follows the panel');
+  assert.equal(siblings.indexOf(dots), siblings.indexOf(hero) + 1);
+  assert.equal(dots.childNodes.length, 3, 'one dot per slide');
+  for (const label of ['Precedente', 'Successiva']) {
+    const arrow = hero.childNodes.find((node) => node.getAttribute('aria-label') === label);
+    assert.ok(arrow && arrow.findAll('svg').length === 1, `${label} is an icon arrow`);
+  }
+  // The stylesheet no longer hides the dots, and paints the arrows round.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.doesNotMatch(css, /\.plist \.ui-hero-dots\s*\{\s*display:\s*none/);
+  assert.match(css, /\.plist \.ui-hero-dot\.on\s*\{[^}]*width:\s*22px/);
+  assert.match(css, /\.plist \.ui-hero > \.ui-btn\[aria-label="Precedente"\][^{]*\{[^}]*border-radius:\s*50%/);
+});
+
+test('every catalog card name carries the curated mark, and the CTA reads + Aggiungi with its arrow (spec C8, C15)', async () => {
+  const mount = createMount();
+  const view = createPersonalizzazioneView({ doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId });
+  await view.render();
+  await flush();
+  const cards = mount.findAll('article').filter((node) => classesOf(node).includes('ui-conn-card'));
+  assert.equal(cards.length, 10);
+  // Review #645 P2: the non-catalog fallbacks (channel null) are not
+  // curated by Accordo, so they carry no «Verificato da Accordo» mark.
+  const unverified = new Set(['Google Calendar', 'Stripe']);
+  for (const card of cards) {
+    const label = card.findAll('strong').find((node) => classesOf(node).includes('ui-conn-label')).textContent;
+    const mark = card.findAll('span').find((node) => classesOf(node).includes('ui-conn-verified'));
+    if (unverified.has(label)) {
+      assert.equal(mark, undefined, `${label} is no catalog channel: no curated mark`);
+      continue;
+    }
+    assert.ok(mark, `${label} carries the curated mark`);
+    assert.equal(mark.getAttribute('aria-label'), 'Verificato da Accordo');
+  }
+  assert.equal(cards.filter((card) => card.findAll('span').some((node) => classesOf(node).includes('ui-conn-verified'))).length, 8);
+  const add = mount.findAll('button').find((node) => node.textContent === '+ Aggiungi');
+  assert.ok(add, '«+ Aggiungi» renders');
+  assert.equal(add.findAll('svg').length, 1, 'with its chevron');
+});
+
+test('Skill and Pacchetti «+ Aggiungi» open no menu, so they carry no chevron (review #645 P3)', async () => {
+  const mount = createMount();
+  const said = [];
+  const view = createPersonalizzazioneView({
+    doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId,
+    toast: (message) => said.push(message),
+  });
+  await view.render();
+  await flush();
+  for (const tab of ['skill', 'pacchetti']) {
+    view.test.state.tab = tab;
+    await view.render();
+    await flush();
+    const add = mount.findAll('button').find((node) => node.textContent === '+ Aggiungi');
+    assert.ok(add, `«+ Aggiungi» renders on ${tab}`);
+    assert.equal(add.findAll('svg').length, 0, `no dropdown chevron on ${tab}: it opens no menu`);
+    add.dispatch('click', {});
+    assert.equal(mount.querySelector('.ui-conn-addmenu'), null, `no menu opens on ${tab}`);
+  }
+  assert.equal(said.length, 2, 'each CTA answers with its note instead');
+});
+
+test('Connettori shows no line under the toolbar; Skill and Pacchetti speak plain Italian', async () => {
+  const mount = createMount();
+  const toasts = [];
+  const view = createPersonalizzazioneView({
+    doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId,
+    toast: (message) => toasts.push(message),
+  });
+  await view.render();
+  await flush();
+  assert.equal(mount.findAll('p').filter((node) => classesOf(node).includes('banner')).length, 0, 'no banner on Connettori');
+  for (const tab of ['skill', 'pacchetti']) {
+    view.test.state.tab = tab;
+    await view.render();
+    await flush();
+    mount.findAll('button').find((node) => node.textContent === '+ Aggiungi').dispatch('click');
+  }
+  const publish = mount.findAll('button').find((node) => node.textContent === 'Come pubblicare un pacchetto');
+  if (publish) publish.dispatch('click');
+  assert.ok(toasts.length >= 2, 'each CTA answers');
+  for (const message of toasts) {
+    assert.doesNotMatch(message, /BO-F\d|module:create|docs\/|`/, `no story id, command or path: ${message}`);
+  }
 });

@@ -457,13 +457,15 @@ export function triageState(triage, actionId) {
 }
 
 /**
- * Progress over today's suggestions: decided (done or postponed) over total.
+ * Progress over today's suggestions: done over total. A postponed card is
+ * not «fatta» — the prototype's bar counts done cards only
+ * (backlog:9c7d1477a8d4).
  * @param {Array<{ id?: unknown }>} [actions]
  * @param {Record<string, string>} [triage]
  */
 export function advisorProgress(actions = [], triage = {}) {
   const list = Array.isArray(actions) ? actions : [];
-  const handled = list.filter((action) => triageState(triage, action?.id) !== 'open').length;
+  const handled = list.filter((action) => triageState(triage, action?.id) === 'done').length;
   return Object.freeze({ handled, total: list.length });
 }
 
@@ -513,9 +515,9 @@ export async function executeAdvisorAction(client, action, run) {
   const fresh = await client.request(`/api/modules/${module}/records/${segment(id)}`);
   const drift = staleFields(action?.snapshot ?? {}, fresh ?? {});
   if (drift.length > 0) {
-    const error = new Error(
-      `Il dato è cambiato mentre leggevi (${drift.join(', ')}): ricarica e rileggi prima di agire.`,
-    );
+    // The drifted field names stay in `details`: they are internal names,
+    // never screen copy (C23, backlog:9c7d1477a8d4).
+    const error = new Error('Il dato è cambiato mentre leggevi: ricarica e rileggi prima di agire.');
     error.code = 'OGGI_STALE_RECORD';
     error.details = { fields: drift };
     throw error;
@@ -587,12 +589,15 @@ export function buildTodayAgenda(appointments = [], now = new Date()) {
     // honest cue from the notes. Never invented when neither exists.
     const team = nonEmptyText(row?.teamMemberId);
     const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
+    // The prototype attenuates an appointment already behind us today.
+    const start = toInstant(row.startsAt);
     return Object.freeze({
       id,
       time: romeTime(row.startsAt),
       title: subjectDisplayLabel(row),
       who: cue,
       status: row.status,
+      past: now instanceof Date && start !== null && start.getTime() < now.getTime(),
       href: cardHrefForSubject(row) ?? (id !== '' ? recordDetailHref('appointment', id) : null),
     });
   });
@@ -1051,7 +1056,7 @@ export async function loadOggiData(client, now = new Date()) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons
@@ -1104,18 +1109,20 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
     controls.appendChild(postpone);
     controls.appendChild(execute);
     row.appendChild(controls);
-  } else if (state === 'postponed' && action?.run === 'complete-task') {
-    // Durable deferral: the work-task postpone action already moved the due
-    // date and wrote timeline evidence. No session "Annulla" here — it would
-    // imply the deferral was cancelled while tomorrow's date stays stored.
+  } else if (action?.run === 'complete-task') {
+    // Durable decision: the work-task postpone action already moved the due
+    // date, or complete already closed the task, with timeline evidence. No
+    // session "Annulla" here — it would imply the decision was reversed
+    // while the stored record says otherwise (the work package has no
+    // reopen).
     const done = el(doc, 'div', 'bo-oggi-btns');
-    done.appendChild(el(doc, 'span', 'bo-oggi-state', 'Rimandato a domani'));
+    done.appendChild(el(doc, 'span', 'bo-oggi-state', state === 'done' ? '✓ Fatto' : 'Rimandato a domani'));
     row.appendChild(done);
   } else {
     const done = el(doc, 'div', 'bo-oggi-btns');
     done.appendChild(el(
       doc, 'span', 'bo-oggi-state',
-      state === 'done' ? 'Fatto' : 'Rimandato a domani',
+      state === 'done' ? '✓ Fatto' : 'Rimandato a domani',
     ));
     const undo = el(doc, 'button', 'small secondary', 'Annulla');
     undo.setAttribute('data-triage', 'undo');
@@ -1129,8 +1136,9 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
 
 /**
  * Render the Oggi home into the given mount. Without `home` this is the
- * greeting frame over the delivered-screen links (pre-BO-F3-04 behavior,
- * kept while data loads); with `home` it is the full screen.
+ * greeting frame over the delivered-screen links (pre-BO-F3-04 behavior);
+ * with `loading` the frame shows the loading state instead of the links,
+ * while the home's reads are pending; with `home` it is the full screen.
  *
  * @param {{
  *   doc: object,
@@ -1140,6 +1148,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *   links?: Array<{ id: unknown, label: string, route: string }>,
  *   navigate?: (hash: string) => void,
  *   now?: Date,
+ *   loading?: boolean,
  *   home?: {
  *     recap?: string,
  *     actions?: Array<any>,
@@ -1165,6 +1174,7 @@ export function renderOggi({
   links = [],
   navigate = () => {},
   now = new Date(),
+  loading = false,
   home = null,
 } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1178,6 +1188,13 @@ export function renderOggi({
   // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
   // scale is untouched — only the semantics change (C6).
   page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
+
+  if (home == null && loading === true) {
+    // Reads pending (production 07/11): a neutral loading line under the
+    // greeting, never the shortcut list that looked like the real home.
+    page.appendChild(uiLoading(doc, { label: 'la tua giornata' }));
+    return;
+  }
 
   if (home == null) {
     page.appendChild(el(
@@ -1218,9 +1235,10 @@ export function renderOggi({
   }
   head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total} fatte`));
   advisor.appendChild(head);
-  if (actions.length === 0) {
-    advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
-  } else {
+  // The prototype's done line shows once no card is open (allDone): the
+  // decided cards stay listed above it, attenuated (C14).
+  const allDone = actions.every((action) => triageState(triage, action?.id) !== 'open');
+  if (actions.length > 0) {
     const list = el(doc, 'div', 'bo-oggi-actions');
     for (const action of actions) {
       list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), { ...events, navigate }, disabled));
@@ -1230,8 +1248,11 @@ export function renderOggi({
       advisor.appendChild(el(doc, 'p', 'bo-muted', `Mostro le prime ${actions.length} azioni.`));
     }
   }
+  if (allDone) {
+    advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  }
   if (home.availability?.work === false) {
-    advisor.appendChild(el(doc, 'p', 'bo-muted', 'I follow-up non sono composti in questo spazio: niente azioni da proporre.'));
+    advisor.appendChild(el(doc, 'p', 'bo-muted', 'I follow-up non sono attivi in questo spazio: niente azioni da proporre.'));
   }
   page.appendChild(advisor);
 
@@ -1293,13 +1314,14 @@ export function renderOggi({
   agenda.appendChild(el(doc, 'h3', undefined, 'Agenda di oggi'));
   const rows = Array.isArray(home.agenda) ? home.agenda : [];
   if (home.availability?.appointments === false) {
-    agenda.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è composto in questo spazio.'));
+    agenda.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è attivo in questo spazio.'));
   } else if (rows.length === 0) {
     agenda.appendChild(el(doc, 'p', 'bo-muted', 'Niente appuntamenti oggi.'));
   } else {
     const list = el(doc, 'div', 'bo-oggi-agenda');
     for (const entry of rows) {
       const item = el(doc, 'div', 'bo-oggi-agenda-row');
+      if (entry?.past === true) item.setAttribute('data-state', 'past');
       item.appendChild(el(doc, 'span', 'bo-oggi-time', String(entry?.time ?? '')));
       const cell = el(doc, 'div');
       if (typeof entry?.href === 'string' && entry.href !== '') {
@@ -1389,7 +1411,7 @@ export function renderOggi({
   const missing = Array.isArray(home.missing) ? home.missing : [];
   if (home.availability?.channels === false) {
     const note = el(doc, 'section', 'bo-oggi-section');
-    note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono composti in questo spazio.'));
+    note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono attivi in questo spazio.'));
     page.appendChild(note);
   } else if (missing.length > 0) {
     const invite = el(doc, 'section', 'bo-oggi-section');
@@ -1483,6 +1505,17 @@ export function createOggiView(deps) {
   let last = null;
   /** Last advisor list, so Domani finds the suggestion it defers. */
   let lastBuilt = null;
+  /**
+   * Follow-ups completed in this session, with the place they held: the
+   * task leaves the open list on the next read, but like the prototype the
+   * card stays, struck through, and the bar counts it (C12). Each entry
+   * keeps the Rome day it was completed on: a paint on another day drops
+   * it, so yesterday's completions never come back into today's list.
+   * @type {Map<string, { action: any, index: number, day: string | null }>}
+   */
+  const completed = new Map();
+  /** The cards last painted, completed ones included: their order is the place a completion keeps. */
+  let lastActions = [];
   let lastMeta = { spaceName: '', userName: '', links: [], now: new Date() };
   let error = '';
   let busy = false;
@@ -1491,6 +1524,21 @@ export function createOggiView(deps) {
     if (!last) return;
     const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now });
     lastBuilt = built;
+    const merged = [...built.actions];
+    const today = romeDayKey(lastMeta.now);
+    for (const [id, entry] of completed) {
+      if (entry.day !== today) {
+        completed.delete(id);
+        continue;
+      }
+      if (merged.some((action) => action?.id === id)) continue;
+      merged.splice(Math.min(entry.index, merged.length), 0, entry.action);
+    }
+    // The cap holds on what is painted, completed cards included, and the
+    // disclosure follows the merged list rather than the open one.
+    const actions = merged.slice(0, ADVISOR_ACTION_LIMIT);
+    const capped = built.capped || merged.length > ADVISOR_ACTION_LIMIT;
+    lastActions = actions;
     const agenda = buildTodayAgenda(last.appointments, lastMeta.now);
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls })
@@ -1506,9 +1554,9 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       home: {
         recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now }),
-        actions: built.actions,
+        actions,
         triage,
-        capped: built.capped,
+        capped,
         agenda,
         brief,
         inbox: !last.inboxComposed
@@ -1597,6 +1645,8 @@ export function createOggiView(deps) {
           { method: 'POST', body: JSON.stringify({}) },
         ));
         triage = applyTriageDecision(triage, action.id, 'done');
+        const index = lastActions.findIndex((candidate) => candidate?.id === action.id);
+        completed.set(action.id, { action, index: index === -1 ? 0 : index, day: romeDayKey(lastMeta.now) });
       } else {
         if (typeof action?.href === 'string' && action.href !== '') navigate(action.href);
         triage = applyTriageDecision(triage, action?.id, 'done');
@@ -1630,14 +1680,14 @@ export function createOggiView(deps) {
 
   return {
     /**
-     * Render the home: the greeting frame first, the full screen once the
-     * records arrive. `userName` greets the person; without it the space
+     * Render the home: the greeting frame with the loading state first,
+     * the full screen once the records arrive. `userName` greets the person; without it the space
      * name stands in, as before.
      */
     async render({ spaceName = '', userName = '', links = [], now = new Date() } = {}) {
       const token = ++renderToken;
       lastMeta = { spaceName, userName, links, now };
-      renderOggi({ doc, mount, spaceName, userName, links, navigate, now });
+      renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
       let data;
       try {
         data = await loadOggiData(bound, now);

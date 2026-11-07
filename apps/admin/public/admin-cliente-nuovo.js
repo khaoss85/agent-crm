@@ -3,6 +3,7 @@
 import { elFor, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { bindAdminMutations } from './admin-submission.js';
 import { customerImportReasonLabel } from './admin-core.js';
+import { isSessionLostCode } from './admin-session.js';
 import {
   addFieldForm,
   applyPhrase,
@@ -44,6 +45,231 @@ import {
 export const CLIENTI_NUOVO_ROUTE = '#/clienti/nuovo';
 export const MANUAL_IMPORT_SYSTEM = 'inserimento-manuale';
 export const MANUAL_PHONE_SYSTEM = 'phone';
+
+/**
+ * B4 — the session may die while the operator is typing (backlog:5a40c73e54aa).
+ * The half-written customer stays in this key, so the login round-trip the
+ * shell performs on a lost session never eats a long note. Same shell
+ * storage the other views use; nothing leaves the browser.
+ */
+export const NEW_CUSTOMER_DRAFT_KEY = 'accordo.nuovoClienteDraft.v1';
+/** A kept draft older than this never comes back: stale PII stays unreadable. */
+export const NEW_CUSTOMER_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+/** Save steps after the customer exists, in run order, for resume bookkeeping. */
+const DRAFT_STEPS = Object.freeze(['phone', 'custom', 'note']);
+
+const cleanDraftText = (value) => (typeof value === 'string' ? value.slice(0, 4000) : '');
+
+/** Space-scoped key: another space never reads this draft. Local dev (no space) keeps the base key. */
+export function newCustomerDraftKey(spaceId) {
+  if (typeof spaceId === 'string' && spaceId !== '') return `${NEW_CUSTOMER_DRAFT_KEY}.${spaceId}`;
+  return NEW_CUSTOMER_DRAFT_KEY;
+}
+
+/** Tab-scoped draft store: the login round-trip is a same-tab replace, so the draft survives it, while another tab, operator or browser restart never sees it. Null where sessionStorage is unavailable (then the caller falls back). */
+export function tabDraftStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const base = window.sessionStorage;
+      return {
+        getItem: (key) => base.getItem(key),
+        setItem: (key, value) => base.setItem(key, String(value)),
+        removeItem: (key) => base.removeItem(key),
+      };
+    }
+  } catch {
+    // Private mode: no tab store, the caller falls back.
+  }
+  return null;
+}
+
+/** @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} scope */
+function scopeOf(scope) {
+  const space = typeof scope?.spaceId === 'string' && scope.spaceId !== '' ? scope.spaceId : null;
+  const operator = typeof scope?.operator === 'string' && scope.operator !== '' ? scope.operator : null;
+  return { space, operator };
+}
+
+/** A draft shows only to the space and operator it was kept for; blanks match anything (local dev). */
+function draftMatchesScope(draft, scope) {
+  const { space, operator } = scopeOf(scope);
+  if (space !== null && typeof draft?.space === 'string' && draft.space !== '' && draft.space !== space) return false;
+  if (operator !== null && typeof draft?.by === 'string' && draft.by !== '' && draft.by !== operator) return false;
+  return true;
+}
+
+const validCreated = (value) => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+  && typeof value.resource === 'string' && value.resource !== ''
+  && typeof value.id === 'string' && value.id !== ''
+    ? { resource: value.resource, id: value.id }
+    : null
+);
+
+const validDone = (value) => (
+  Array.isArray(value) ? value.filter((step) => DRAFT_STEPS.includes(step)) : []
+);
+
+/**
+ * The custom key/value pairs on screen when the session died. Comparison
+ * only: the resume writes the live input, never this snapshot, so the
+ * snapshot stays uncut (no silent tail loss) while keys stay bounded.
+ */
+const validCustomSnapshot = (value) => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const snapshot = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (Object.keys(snapshot).length >= 100) break;
+    if (typeof key !== 'string' || key === '' || key.length > 200) continue;
+    if (typeof entry !== 'string') continue;
+    snapshot[key] = entry;
+  }
+  return snapshot;
+};
+
+/** @param {unknown} raw */
+function parseDraft(raw) {
+  if (typeof raw !== 'string' || raw === '') return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (typeof parsed.savedAt !== 'number' || !(parsed.savedAt > 0)) return null;
+  if (Date.now() - parsed.savedAt > NEW_CUSTOMER_DRAFT_TTL_MS) return null;
+  const draft = {
+    nome: cleanDraftText(parsed.nome),
+    email: cleanDraftText(parsed.email),
+    telefono: cleanDraftText(parsed.telefono),
+    azienda: cleanDraftText(parsed.azienda),
+    nota: cleanDraftText(parsed.nota),
+    space: typeof parsed.space === 'string' && parsed.space !== '' ? parsed.space : null,
+    by: typeof parsed.by === 'string' && parsed.by !== '' ? parsed.by : null,
+    created: validCreated(parsed.created),
+    done: validDone(parsed.done),
+    custom: validCustomSnapshot(parsed.custom),
+  };
+  const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
+  if (texts.every((value) => value === '') && draft.created === null) return null;
+  return draft;
+}
+
+/**
+ * @param {{ getItem?: unknown, setItem?: unknown, removeItem?: unknown } | null | undefined} storage
+ * @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} [scope]
+ */
+export function readNewCustomerDraft(storage, scope) {
+  try {
+    const key = newCustomerDraftKey(scopeOf(scope).space);
+    const raw = storage?.getItem?.(key);
+    if (typeof raw === 'string' && raw !== '') {
+      const draft = parseDraft(raw);
+      if (draft !== null) return draftMatchesScope(draft, scope) ? draft : null;
+      try { storage?.removeItem?.(key); } catch { /* Corrupt or expired: drop it. */ }
+    }
+    // Adopt a pre-scoping draft once: it was kept on this same keyboard, so
+    // it belongs to this operator — move it under the scoped key instead of
+    // leaving global PII behind.
+    if (key !== NEW_CUSTOMER_DRAFT_KEY) {
+      const legacy = storage?.getItem?.(NEW_CUSTOMER_DRAFT_KEY);
+      if (typeof legacy === 'string' && legacy !== '') {
+        try { storage?.removeItem?.(NEW_CUSTOMER_DRAFT_KEY); } catch { /* Keep going. */ }
+        const draft = parseDraft(legacy);
+        if (draft === null) return null;
+        const { space, operator } = scopeOf(scope);
+        draft.space = space;
+        draft.by = operator;
+        try { storage?.setItem?.(key, JSON.stringify({ ...draft, savedAt: Date.now() })); } catch { /* Memory only. */ }
+        return draftMatchesScope(draft, scope) ? draft : null;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {{ getItem?: unknown, setItem?: unknown, removeItem?: unknown } | null | undefined} storage
+ * @param {{ nome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values
+ * @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} [scope]
+ * @param {{ created?: unknown, done?: unknown, custom?: unknown } | null | undefined} [extra]
+ */
+export function saveNewCustomerDraft(storage, values, scope, extra) {
+  try {
+    const { space, operator } = scopeOf(scope);
+    const created = validCreated(extra?.created);
+    const draft = {
+      nome: cleanDraftText(values?.nome),
+      email: cleanDraftText(values?.email),
+      telefono: cleanDraftText(values?.telefono),
+      azienda: cleanDraftText(values?.azienda),
+      nota: cleanDraftText(values?.nota),
+      space,
+      by: operator,
+      created,
+      done: validDone(extra?.done),
+      custom: validCustomSnapshot(extra?.custom),
+      savedAt: Date.now(),
+    };
+    const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
+    if (texts.every((value) => value === '') && created === null) return false;
+    storage?.setItem?.(newCustomerDraftKey(space), JSON.stringify(draft));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {{ removeItem?: unknown } | null | undefined} storage
+ * @param {{ spaceId?: unknown } | null | undefined} [scope]
+ */
+export function clearNewCustomerDraft(storage, scope) {
+  try {
+    storage?.removeItem?.(newCustomerDraftKey(scopeOf(scope).space));
+  } catch {
+    // The draft simply stays until the next successful save.
+  }
+}
+
+/**
+ * A lost session is the one failure the login can cure: anything else keeps
+ * its own error. Same signals the shell uses to leave for the space login
+ * (sessionLostTarget): under a mount an expired session never answers
+ * 401/403 JSON — fetch follows the host login redirect (redirected) or the
+ * mount answers 200 login HTML (invalidResponse, thrown on as
+ * INVALID_RESPONSE by the shell client).
+ */
+export function isNewCustomerSessionLoss(error) {
+  if (error?.redirected === true || error?.invalidResponse === true) return true;
+  const status = error?.status;
+  if (status === 401) return true;
+  if (status === 403 && isSessionLostCode(error?.code)) return true;
+  return false;
+}
+
+/**
+ * Resume identity, both sides normalized the same way: a trailing space
+ * from a phone keyboard or a different case never defeats the resume.
+ */
+export function normalizeResumeEmail(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/**
+ * One gate for every post-creation step (B4, backlog:5a40c73e54aa): a step
+ * reruns when its live input is non-empty and the step never completed or
+ * the input changed since the rescue — never on the step state alone, so
+ * text typed after the rescue is written instead of silently dropped.
+ */
+export function stepNeedsRun(doneSet, step, before, now) {
+  if (String(now ?? '').trim() === '') return false;
+  if (!(doneSet instanceof Set) || !doneSet.has(step)) return true;
+  return String(before ?? '').trim() !== String(now ?? '').trim();
+}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -106,10 +332,22 @@ export function applyRefusalText(receipt) {
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
- *   notify?: (message: string) => void, submissions?: any, storage?: any}} deps
+ *   notify?: (message: string) => void, submissions?: any, storage?: any,
+ *   draftStorage?: any, spaceId?: unknown, operator?: unknown}} deps
  */
 export function createCustomerFormView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {} } = deps;
+  const store = deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage);
+  // The kept draft lives apart from the submissions store: tab-scoped, so a
+  // login round-trip (same-tab replace) brings it back while another tab,
+  // operator or restart never sees it.
+  const drafts = deps.draftStorage ?? tabDraftStorage() ?? store;
+  /** @param {unknown} value */
+  const resolveScopeValue = (value) => {
+    const resolved = typeof value === 'function' ? value() : value;
+    return typeof resolved === 'string' && resolved !== '' ? resolved : null;
+  };
+  const draftScope = () => ({ spaceId: resolveScopeValue(deps.spaceId), operator: resolveScopeValue(deps.operator) });
   const { client } = bindAdminMutations(deps.client, deps);
   const el = elFor(doc); // BO-F6-02: shared element builder.
   let renderToken = 0;
@@ -218,6 +456,22 @@ export function createCustomerFormView(deps) {
     nota.setAttribute('placeholder', 'Come ci ha conosciuti, cosa cerca…');
     field('nota', 'Nota', nota, 'La nota si salva nella cronologia della scheda.');
 
+    // B4: after the login round-trip the half-written customer is back, so
+    // the operator checks it and presses Salva instead of retyping a long note.
+    // When the customer already exists (kept mid-save), Salva resumes from
+    // the failed step instead of creating a second scheda.
+    const restored = readNewCustomerDraft(drafts, draftScope());
+    if (restored !== null) {
+      if (restored.nome !== '') nome.value = restored.nome;
+      if (restored.email !== '') email.value = restored.email;
+      if (restored.telefono !== '') telefono.value = restored.telefono;
+      if (restored.azienda !== '') azienda.value = restored.azienda;
+      if (restored.nota !== '') nota.value = restored.nota;
+      general.textContent = restored.created !== null
+        ? 'Il cliente è già creato: controlla e premi Salva per completare.'
+        : 'Bozza ripristinata dopo l\u2019accesso: controlla e premi Salva.';
+    }
+
     const actions = el('div', 'bo-cliente-nuovo-actions');
     const save = uiButton(doc, { variant: 'primary', label: 'Salva', attrs: { 'data-action': 'save-customer' } });
     const cancel = uiSecondaryButton(doc, 'Annulla');
@@ -285,83 +539,219 @@ export function createCustomerFormView(deps) {
 
     let busy = false;
     save.addEventListener('click', () => void saveCustomer());
-    cancel.addEventListener('click', () => navigate('#/customer-data'));
+    cancel.addEventListener('click', () => {
+      clearNewCustomerDraft(drafts, draftScope());
+      navigate('#/customer-data');
+    });
+
+    const currentValues = () => ({
+      nome: String(nome.value ?? ''),
+      email: String(email.value ?? ''),
+      telefono: String(telefono.value ?? ''),
+      azienda: String(azienda.value ?? ''),
+      nota: String(nota.value ?? ''),
+    });
+
+    // The session may die after the customer exists (phone, custom value,
+    // note). The shell is already leaving for the space login: keep the
+    // unsaved remainder in the draft together with the created subject and
+    // the steps already done, stay on the form with the session message,
+    // never navigate away. After sign-in Salva resumes from the failed step
+    // instead of creating a second scheda. True when the error was a lost
+    // session (handled or invalidated: the save stops either way).
+    const SESSION_KEPT_MESSAGE = 'Sessione scaduta: accedi di nuovo, il testo è conservato e lo ritrovi qui.';
+    const SESSION_CREATED_MESSAGE = 'Sessione scaduta: il cliente è già creato, accedi di nuovo e premi Salva per completare.';
+    // B4 — resume bookkeeping is receipt-based (backlog:5a40c73e54aa): a
+    // step counts as done only after its own write answered with success in
+    // this run (the done list the caller passes, starting from the rescued
+    // draft). A step skipped because its input was empty is never marked
+    // done, so text typed after the rescue still runs on the next Salva
+    // instead of being silently dropped.
+    // The custom values on screen when the session died, for the resume to
+    // compare against: the draft keeps them so a value typed or changed
+    // after the rescue is written even when the custom step was done.
+    const snapshotCustomValues = () => {
+      const snapshot = {};
+      for (const entry of customControls) {
+        const key = entry?.control?.getAttribute?.('data-field-key');
+        if (typeof key !== 'string' || key === '') continue;
+        try {
+          snapshot[key] = String(entry.read() ?? '').trim();
+        } catch {
+          // An unreadable control keeps no snapshot: the resume reruns it.
+        }
+      }
+      return snapshot;
+    };
+
+    const rescueSessionLoss = (err, { subject = null, done = [] } = {}) => {
+      if (!isNewCustomerSessionLoss(err)) return false;
+      if (token !== renderToken) return true;
+      saveNewCustomerDraft(drafts, currentValues(), draftScope(),
+        { created: subject, done, custom: snapshotCustomValues() });
+      const kept = subject === null ? SESSION_KEPT_MESSAGE : SESSION_CREATED_MESSAGE;
+      setErrors({ general: kept });
+      notify(kept);
+      return true;
+    };
 
     async function saveCustomer() {
       if (busy) return;
-      const values = {
-        nome: String(nome.value ?? ''),
-        email: String(email.value ?? ''),
-        telefono: String(telefono.value ?? ''),
-        azienda: String(azienda.value ?? ''),
-      };
+      const values = currentValues();
       const errors = validateCustomerForm(values);
       setErrors(errors);
       if (Object.keys(errors).length > 0) return;
       busy = true;
       save.disabled = true;
       try {
-        const { firstName, lastName } = splitNome(values.nome);
-        const row = { firstName };
-        if (lastName !== '') row.lastName = lastName;
         const cleanEmail = values.email.trim();
-        if (cleanEmail !== '') row.email = cleanEmail;
+        const cleanNome = values.nome.trim();
         const cleanAzienda = values.azienda.trim();
-        if (cleanAzienda !== '') row.companyName = cleanAzienda;
-        const result = await client.request('/api/customer-data/import/apply', {
-          method: 'POST',
-          body: JSON.stringify({ system: MANUAL_IMPORT_SYSTEM, rows: [row], acceptance: 'partial' }),
-        });
-        if (token !== renderToken) return;
-        const receipt = result?.receipts?.[0] ?? null;
-        const subject = receipt?.subject ?? null;
-        if (receipt?.outcome !== 'accepted' || !subject?.id) {
-          setErrors({ general: applyRefusalText(receipt) });
-          return;
-        }
+        // Resume: the customer may already exist from a session-loss rescue.
+        // Identity is the full creation triple — email normalized (trimmed,
+        // case-insensitive) plus nome and azienda — never the email alone, so
+        // edits typed after the rescue are never silently dropped.
+        const resumed = readNewCustomerDraft(drafts, draftScope());
+        const sameSubjectEmail = resumed?.created !== null && resumed?.created !== undefined
+          && normalizeResumeEmail(resumed.email) === cleanEmail.toLowerCase();
+        const kept = sameSubjectEmail ? resumed : null;
+        const sameIdentity = kept !== null
+          && String(kept.nome ?? '').trim() === cleanNome
+          && String(kept.azienda ?? '').trim() === cleanAzienda;
+        let subject;
+        let done = new Set();
         let warning = null;
-        if (receipt?.reasonCode === 'MATCHED_EXISTING') {
-          warning = 'Esisteva già una scheda con questa email: eccola, senza duplicati.';
+        let updateWarning = null;
+        if (sameIdentity) {
+          // Nothing changed: reuse the subject and rerun only the steps that
+          // never completed, never a second apply.
+          subject = kept.created;
+          done = new Set(kept.done);
+        } else if (kept !== null && kept.created.resource === 'contact') {
+          // Same customer, edited base fields: reuse the subject and write
+          // the edits back instead of a second apply the server would only
+          // match without updating. Nome goes through the scheda's governed
+          // contact update; Azienda has no update route in the codebase
+          // (CompanyService creates, gets and lists only), so a changed
+          // azienda is declared, never dropped silently. DECISION (to be
+          // confirmed): keep the explicit azienda warning until a governed
+          // company rename exists.
+          subject = kept.created;
+          done = new Set(kept.done);
+          if (String(kept.nome ?? '').trim() !== cleanNome) {
+            const { firstName, lastName } = splitNome(values.nome);
+            const namePatch = lastName !== '' ? { firstName, lastName } : { firstName };
+            try {
+              await client.request(`/api/contacts/${encodeURIComponent(subject.id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify(namePatch),
+              });
+              if (token !== renderToken) return;
+            } catch (err) {
+              if (rescueSessionLoss(err, { subject, done: [...done] })) return;
+              if (token !== renderToken) return;
+              updateWarning = 'Il cliente è creato, ma il nuovo nome non si è salvato: cambialo dalla scheda.';
+            }
+          }
+          if (String(kept.azienda ?? '').trim() !== cleanAzienda) {
+            const aziendaWarning = 'Il cliente è già creato e l\u2019azienda cambiata non si è salvata: la scheda mostra quella precedente.';
+            updateWarning = updateWarning === null ? aziendaWarning : `${updateWarning} ${aziendaWarning}`;
+          }
+        } else {
+          const { firstName, lastName } = splitNome(values.nome);
+          const row = { firstName };
+          if (lastName !== '') row.lastName = lastName;
+          if (cleanEmail !== '') row.email = cleanEmail;
+          if (cleanAzienda !== '') row.companyName = cleanAzienda;
+          const result = await client.request('/api/customer-data/import/apply', {
+            method: 'POST',
+            body: JSON.stringify({ system: MANUAL_IMPORT_SYSTEM, rows: [row], acceptance: 'partial' }),
+          });
+          if (token !== renderToken) return;
+          const receipt = result?.receipts?.[0] ?? null;
+          const created = receipt?.subject ?? null;
+          if (receipt?.outcome !== 'accepted' || !created?.id) {
+            setErrors({ general: applyRefusalText(receipt) });
+            return;
+          }
+          subject = created;
+          if (receipt?.reasonCode === 'MATCHED_EXISTING') {
+            warning = 'Esisteva già una scheda con questa email: eccola, senza duplicati.';
+          }
         }
+        // Steps confirmed by their own success receipt in this run, starting
+        // from the rescued draft: only these are skipped on the next resume,
+        // never a positional prefix of steps that may never have run.
+        const completedNow = new Set(done);
         const phone = normalizeTelefono(values.telefono);
-        if (phone !== '' && cleanEmail !== '') {
+        // Never skip a phone the operator typed after the rescue: the kept
+        // draft holds the rescued input, so a live input that differs reruns
+        // the link even when an old draft claims the step is done.
+        const rescuedPhone = kept !== null ? normalizeTelefono(kept.telefono ?? '') : '';
+        if (cleanEmail !== '' && stepNeedsRun(done, 'phone', rescuedPhone, phone)) {
           try {
             const linked = await linkPhone(phone, cleanEmail, subject);
             if (token !== renderToken) return;
             if (!linked.ok) warning = linked.warning;
-          } catch {
+            completedNow.add('phone');
+          } catch (err) {
+            if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
             if (token !== renderToken) return;
             warning = 'Il cliente è creato, ma il telefono non si è collegato. Riprova dalla scheda.';
           }
         }
         // Custom values, one governed write per touched field; a refused
-        // value warns with the field's own Italian error, never blocks.
+        // value warns with the field's own Italian error, never blocks. A
+        // rescued done=custom skips only the values that are still the
+        // rescued ones: anything typed or changed after the rescue runs,
+        // never dropped for the step state.
+        const rescuedCustom = kept !== null ? validCustomSnapshot(kept.custom) : {};
         for (const entry of customControls) {
-          const key = entry.control.getAttribute('data-field-key');
+          const rawKey = entry.control.getAttribute('data-field-key');
+          const key = typeof rawKey === 'string' ? rawKey : '';
           const typed = entry.read().trim();
-          if (typed === '') continue;
+          if (!stepNeedsRun(done, 'custom', rescuedCustom[key] ?? '', typed)) continue;
           try {
             await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
           } catch (err) {
+            if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
             entry.setError(String(err?.message ?? 'Valore non valido.'));
             if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
           }
           if (token !== renderToken) return;
         }
+        completedNow.add('custom');
         // The note through the single writer: it lands in the cronologia.
         const noteText = String(nota.value ?? '').trim();
-        if (noteText !== '') {
+        const rescuedNote = kept !== null ? String(kept.nota ?? '').trim() : '';
+        if (stepNeedsRun(done, 'note', rescuedNote, noteText)) {
           try {
             await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
-          } catch {
+          } catch (err) {
+            if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
             if (token !== renderToken) return;
             if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
           }
         }
+        // Base-field edits written back above join the part-step warnings so
+        // a later step failure can never overwrite them into silence.
+        if (updateWarning !== null) warning = warning === null ? updateWarning : `${warning} ${updateWarning}`;
+        clearNewCustomerDraft(drafts, draftScope());
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
         if (warning !== null) notify(warning);
       } catch (error) {
         if (token !== renderToken) return;
+        if (isNewCustomerSessionLoss(error)) {
+          // B4: the shell is already taking the browser to the space login
+          // (moduleClient navigates on a lost session). The typed text —
+          // a long note above all — stays in storage, so signing back in
+          // reopens this form with everything still here. Nothing writes:
+          // the customer is created only after the new login, with Salva.
+          saveNewCustomerDraft(drafts, currentValues(), draftScope());
+          setErrors({ general: SESSION_KEPT_MESSAGE });
+          notify(SESSION_KEPT_MESSAGE);
+          return;
+        }
         const fieldName = error?.details?.field;
         if (typeof fieldName === 'string' && slots[fieldName]) {
           setErrors({ [fieldName]: String(error?.message ?? 'Valore non valido.') });

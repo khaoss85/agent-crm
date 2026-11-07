@@ -1,11 +1,12 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { SYNC_LABELS } from './admin-labels.js';
 import {
   addFieldForm,
   defineField,
@@ -94,17 +95,7 @@ export function isDefinitiveRefusal(error) {
 }
 const SEND_RESUME_ROUNDS = 40;
 
-/** Delivery/sync state, inbound or outbound, in the operator's words. */
-const SYNC_LABELS = Object.freeze({
-  received: 'ricevuto',
-  sent: 'inviato',
-  delivered: 'consegnato',
-  read: 'letto',
-  failed: 'non consegnato',
-  completed: 'completata',
-  missed: 'persa',
-  'no-answer': 'senza risposta',
-});
+// Delivery/sync state words: shared with the assistant panel (admin-labels.js).
 
 /**
  * Voce cc525cd6a3c5: the quote and opportunity-fallback stages share the
@@ -405,6 +396,30 @@ export function mergeLinkedIdentities(timeline) {
 }
 
 /**
+ * Voce 59def6cb805d (C10): the directions observed per channel on the
+ * customer's passages — `{in, out}` by lowercase system. Evidence only: a
+ * direction nobody recorded is never assumed.
+ * @param {any} timeline the read-customer-timeline answer
+ * @returns {Map<string, {in: boolean, out: boolean}>}
+ */
+export function observedDirections(timeline) {
+  /** @type {Map<string, {in: boolean, out: boolean}>} */
+  const seen = new Map();
+  const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  for (const entry of entries) {
+    const system = String(entry?.channel ?? '').toLowerCase();
+    if (system === '') continue;
+    const direction = String(entry?.direction ?? '');
+    if (direction !== 'inbound' && direction !== 'outbound') continue;
+    const current = seen.get(system) ?? { in: false, out: false };
+    if (direction === 'inbound') current.in = true;
+    else current.out = true;
+    seen.set(system, current);
+  }
+  return seen;
+}
+
+/**
  * «Da leggere»: the one rule for an unread passage, shared by the «Nuovo»
  * badge and by mark-read so the two never disagree — an inbound message the
  * server names unread, with a date mark-read can reach (`upTo`). A passage
@@ -445,6 +460,50 @@ export function readableText(value) {
     .trim();
 }
 
+/** «Aggiungi telefono»: the Italian reason for each refusal the server names. */
+const PHONE_REFUSALS = Object.freeze({
+  400: 'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567',
+  404: 'Il cliente non è più in questo spazio: ricarica la scheda',
+  409: 'Questo numero è già collegato a un altro cliente',
+});
+const PHONE_SAVE_FAILED = 'Numero non salvato. Riprova più tardi.';
+/** The /bo edge's generic refusal: Italian, but it says nothing the operator can act on. */
+const GENERIC_PANEL_REFUSAL = 'Scrittura del pannello rifiutata';
+
+/**
+ * Whether a server message is an Italian sentence the operator can read:
+ * the /bo edge answers its refusals in Italian, the standalone framework
+ * in English, and a code or path never reaches the screen.
+ * @param {unknown} message
+ */
+function isItalianSentence(message) {
+  if (typeof message !== 'string') return false;
+  const text = message.trim();
+  if (text === '' || text.length > 240 || text === GENERIC_PANEL_REFUSAL) return false;
+  if (/[_/{}<>]|\b[A-Z]{2,}_[A-Z]/.test(text)) return false;
+  return /[àèéìòù]|\b(il|lo|la|non|un|una|questo|questa|già|del|della|di|per|scrivilo|ricarica)\b/i.test(text);
+}
+
+/**
+ * Production 07/11 (pilot #426): «Aggiungi telefono» always said «Numero
+ * non salvato…». A 400 (bad format), 404 (customer gone) or 409 (number
+ * held by another customer) now reads its own reason — the server's Italian
+ * sentence when it sends one, else the same reason in our words; anything
+ * else (unknown, 5xx, network) keeps the generic retry line.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function phoneRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status
+    : (record.code === 'PHONE_ALREADY_HELD' ? 409 : null);
+  const own = status === null ? undefined : PHONE_REFUSALS[/** @type {400|404|409} */ (status)];
+  if (own === undefined) {
+    return humanReadError(error, { failed: PHONE_SAVE_FAILED });
+  }
+  humanReadError(error, { failed: own });
+  return isItalianSentence(record.message) ? String(record.message).trim() : own;
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -474,6 +533,15 @@ export function createCustomerCardView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  // Azioni rapide: the prototype's stroke icon above the label, drawn as a
+  // real SVG element. A CSS data: mask is blocked by the host CSP
+  // (default-src 'self'), so the icons of #627 never painted in production.
+  const tile = (label, icon) => {
+    const node = el('button', 'bo-scheda-tile');
+    node.appendChild(uiIcon(doc, icon));
+    node.appendChild(el('span', undefined, label));
+    return node;
+  };
   const link = (href, text, action) => {
     const node = el('a', undefined, text);
     node.setAttribute('href', href);
@@ -735,7 +803,7 @@ export function createCustomerCardView(deps) {
       // one the card says so and falls back to `tel:`, never logging a call
       // the CRM never placed. A hostile value stays text in the title: the
       // href is built only from the fallback branch below, never here.
-      const call = el('button', 'bo-scheda-tile', 'Chiama');
+      const call = tile('Chiama', 'telefono');
       call.setAttribute('type', 'button');
       call.setAttribute('data-action', 'call-customer');
       call.setAttribute('title', `Chiama ${phone}`);
@@ -748,7 +816,7 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
       // Voce 105563eea902: the empty state offers its own cure — the
       // operator holds the number here, through POST /api/customer-hub/phone.
-      const add = el('button', 'bo-scheda-tile', 'Aggiungi telefono');
+      const add = tile('Aggiungi telefono', 'telefono-piu');
       add.setAttribute('type', 'button');
       add.setAttribute('data-action', 'add-phone');
       add.setAttribute('title', 'Salva il numero del cliente per chiamarlo dalla scheda');
@@ -763,7 +831,7 @@ export function createCustomerCardView(deps) {
     if (writable.length === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
     } else {
-      const write = el('button', 'bo-scheda-tile', 'Scrivi');
+      const write = tile('Scrivi', 'messaggio');
       write.setAttribute('type', 'button');
       write.setAttribute('data-action', 'compose-message');
       write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
@@ -825,7 +893,8 @@ export function createCustomerCardView(deps) {
         toast('Telefono salvato');
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
-        err.textContent = humanReadError(error, { failed: 'Numero non salvato. Riprova più tardi.' });
+        // The typed number stays in the field: the operator corrects it.
+        err.textContent = phoneRefusalText(error);
       } finally {
         busy = false;
       }
@@ -1290,6 +1359,12 @@ export function createCustomerCardView(deps) {
     text.addEventListener?.('input', keepDraft);
     const foot = el('div', 'bo-composer-foot');
     const limitHint = el('span', 'bo-composer-limit', 'Massimo 2000 caratteri');
+    // Voce 59def6cb805d (C22): the prototype's channel note beside Invia.
+    const channelHint = el('span', 'bo-composer-hint', '');
+    // Voce 59def6cb805d (C21): the placeholder names the customer by first
+    // name and the chosen channel, like the prototype.
+    const firstName = typeof card?.name === 'string' ? (card.name.trim().split(/\s+/)[0] ?? '') : '';
+    const sendLabel = () => (selected !== null ? `Invia su ${selected.label}` : 'Invia');
     const err = el('p', 'field-error', '');
     const send = el('button', 'primary', 'Invia');
     send.setAttribute('type', 'button');
@@ -1304,6 +1379,11 @@ export function createCustomerCardView(deps) {
         row.chip.setAttribute('data-selected', row.entry === entry ? 'true' : 'false');
       }
       toLine.textContent = entry.recipient;
+      text.setAttribute('placeholder', firstName !== ''
+        ? `Scrivi a ${firstName} su ${entry.label}…`
+        : `Scrivi su ${entry.label}…`);
+      if (send.getAttribute('aria-busy') !== 'true') send.textContent = sendLabel();
+      channelHint.textContent = `parte da ${entry.label} · resta anche lì`;
       const sender = typeof entry.sender === 'string' && entry.sender !== '' ? entry.sender : '';
       fromValue.textContent = sender;
       fromRow.setAttribute('data-empty', sender === '' ? 'true' : 'false');
@@ -1357,6 +1437,7 @@ export function createCustomerCardView(deps) {
       offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
       offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     }
+    body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
     if (offLinked.length > 0) body.appendChild(offLine);
     body.appendChild(fromRow);
@@ -1378,6 +1459,7 @@ export function createCustomerCardView(deps) {
     body.appendChild(text);
     body.appendChild(err);
     foot.appendChild(send);
+    foot.appendChild(channelHint);
     foot.appendChild(limitHint);
     panel.appendChild(body);
     panel.appendChild(foot);
@@ -1410,7 +1492,7 @@ export function createCustomerCardView(deps) {
     send.addEventListener('click', () => { void doSend(); });
     const setBusy = (on) => {
       busy = on;
-      send.textContent = on ? 'Invio…' : 'Invia';
+      send.textContent = on ? 'Invio…' : sendLabel();
       if (on) send.setAttribute('disabled', 'disabled');
       else send.removeAttribute?.('disabled');
       send.setAttribute('aria-busy', on ? 'true' : 'false');
@@ -1546,7 +1628,7 @@ export function createCustomerCardView(deps) {
     const pick = customerPickFor(navCtx, card);
     // Voce c2793930850a: the creation voices are tiles like Chiama and
     // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
-    const offer = el('button', 'bo-scheda-tile', 'Nuova offerta');
+    const offer = tile('Nuova offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
     offer.addEventListener('click', () => {
@@ -1554,7 +1636,7 @@ export function createCustomerCardView(deps) {
       navigate('#/modules/opportunity/new');
     });
     row.appendChild(offer);
-    const appointment = el('button', 'bo-scheda-tile', 'Nuovo appuntamento');
+    const appointment = tile('Nuovo appuntamento', 'appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
     appointment.addEventListener('click', () => {
@@ -1618,6 +1700,7 @@ export function createCustomerCardView(deps) {
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
+    const directions = observedDirections(timeline);
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -1628,13 +1711,29 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', undefined, row.externalId == null
         ? ` ${channelLabel(system)} · senza identificativo`
         : ` ${channelLabel(system)} · ${row.externalId}`));
+      // Voce 59def6cb805d (C10): the prototype's sync line, from what the
+      // passages on this channel prove — both directions seen reads
+      // «↔ sincronizzato», received only «← in entrata», sent only
+      // «→ in uscita». A channel with no directed passage says nothing.
+      // Review #650 (P2): the directions come from the entries page, so on
+      // a truncated read a single direction is not exhaustive — the other
+      // may sit on a later page. Both seen is proven either way; one seen
+      // names the partial list, the same honesty standard as the count.
+      const seen = directions.get(system);
+      const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+      const sync = seen?.in && seen?.out ? '↔ sincronizzato'
+        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
+      if (sync) line.appendChild(el('span', 'bo-scheda-identity-sync', sync));
       box.appendChild(line);
     }
-    const members = Array.isArray(cluster.members) ? cluster.members : [];
-    box.appendChild(el('p', 'bo-muted',
-      cluster.linked === true
-        ? `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`
-        : 'una sola scheda: nessuna unione registrata'));
+    // Voce 785428ec3de0: a customer with no union reads nothing here — no
+    // technical line, no lone «scheda principale» row. The union block shows
+    // only when several schede are linked as the same person.
+    const members = cluster.linked === true && Array.isArray(cluster.members) ? cluster.members : [];
+    if (cluster.linked === true) {
+      box.appendChild(el('p', 'bo-muted',
+        `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`));
+    }
     for (const member of members) {
       const line = el('p', 'bo-scheda-identity');
       line.setAttribute('data-member', `${member?.resource ?? ''}:${member?.id ?? ''}`);
@@ -2281,7 +2380,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function nextSteps(box, profile, profileError = null) {
+  function nextSteps(box, profile, profileError = null, stepCtx = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no next steps".
     if (profileError) {
@@ -2301,7 +2400,43 @@ export function createCustomerCardView(deps) {
     }
     for (const task of tasks.slice(0, 5)) {
       const name = typeof task?.name === 'string' && task.name !== '' ? task.name : 'attività';
-      box.appendChild(el('p', 'bo-scheda-step', name));
+      // Voce 59def6cb805d (C24): the prototype's circular check before each
+      // step. It completes the real work task through the work-task
+      // `complete` action (the same path Oggi uses), then re-reads the card:
+      // the list is the server's, never an optimistic copy. Without an id or
+      // a card context the step stays plain text.
+      const taskId = typeof task?.id === 'string' && task.id !== '' ? task.id : null;
+      if (taskId === null || !stepCtx || typeof stepCtx.resource !== 'string' || typeof stepCtx.id !== 'string') {
+        box.appendChild(el('p', 'bo-scheda-step', name));
+        continue;
+      }
+      const row = el('div', 'bo-scheda-step bo-scheda-step-row');
+      const check = el('button', 'bo-scheda-step-check', '');
+      check.setAttribute('type', 'button');
+      check.setAttribute('data-action', 'complete-step');
+      check.setAttribute('aria-label', `Segna come fatto: ${name}`);
+      check.setAttribute('title', 'Segna come fatto');
+      let busy = false;
+      check.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        check.setAttribute('aria-busy', 'true');
+        try {
+          await client.request(`/api/modules/work-task/records/${encodeURIComponent(taskId)}/actions/complete`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+          toast(`Fatto: ${name}`);
+          await renderCard(stepCtx.resource, stepCtx.id);
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Passo non aggiornato. Riprova più tardi.' }), true);
+          busy = false;
+          check.setAttribute('aria-busy', 'false');
+        }
+      });
+      row.appendChild(check);
+      row.appendChild(el('span', undefined, name));
+      box.appendChild(row);
     }
     return true;
   }
@@ -2359,12 +2494,20 @@ export function createCustomerCardView(deps) {
     // storia) — the line is a link to #/quotes/<id>. An opportunity without
     // a quote has no detail screen, so its fallback line stays plain text.
     const quoteId = fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // Voce 59def6cb805d (C25): the prototype's big amount, read from the
+    // server total the profile carries — never summed here. No figure (a
+    // recurring quote, a record without a value, an empty draft) shows none.
+    const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
+      && typeof first?.currency === 'string' && first.currency !== ''
+      ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
     if (quoteId === null) {
       box.appendChild(line);
+      if (amount) box.appendChild(amount);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', `#/quotes/${encodeURIComponent(quoteId)}`);
       link.appendChild(line);
+      if (amount) link.appendChild(amount);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -2487,10 +2630,27 @@ export function createCustomerCardView(deps) {
     }
     const endTime = timeParts(next?.endsAt);
     const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
-    const when = endTime && endTime !== timeParts(next?.startsAt)
-      ? (sameDay ? `${start}–${endTime}` : `${start} – ${dateTimeParts(next?.endsAt)}`)
-      : start;
+    // Voce 59def6cb805d (C26): the prototype card — a title, then
+    // `<giorno> · <orari>`. The title is the booked service (its listino key
+    // made readable) with the team member when the handle reads as a name;
+    // the row names the long Rome day. No place and no Google sync line:
+    // the booking records neither, so none is written.
+    const service = serviceTitle(next?.serviceKey);
+    const member = teamName(next?.teamMemberId);
+    box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
+    const day = dayParts(next?.startsAt);
+    const startTime = timeParts(next?.startsAt);
+    const hours = endTime && endTime !== startTime ? `${startTime}–${endTime}` : startTime;
+    const when = day && sameDay
+      ? `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${hours}`
+      : (endTime && endTime !== startTime ? `${start} – ${dateTimeParts(next?.endsAt)}` : start);
     box.appendChild(el('p', 'bo-scheda-appt', when));
+  }
+
+  /** A listino key made readable («lezione-prova» → «Lezione prova»), never the raw slug. */
+  function serviceTitle(serviceKey) {
+    const words = typeof serviceKey === 'string' ? serviceKey.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
   }
 
   const SIGNAL_LABELS = Object.freeze({
@@ -2672,7 +2832,7 @@ export function createCustomerCardView(deps) {
       section(right, 'bo-scheda-ai', aiSummary, calls);
       section(right, '', callsBox, calls);
     }
-    section(right, '', nextSteps, profile, profileError);
+    section(right, '', nextSteps, profile, profileError, { resource, id });
     section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError);
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);

@@ -89,9 +89,15 @@ export const SPAZI_AI_DEFAULTS = Object.freeze({
   'move-offers': true,
 });
 
-/** Italian names for the control-plane membership roles the spine mirrors. */
+/**
+ * Italian names for the control-plane membership roles the spine mirrors —
+ * the same words the shell prints under the space name and the user
+ * (admin-session.js), so one screen never calls the same role «Titolare»
+ * in the sidebar and something else in the card (prototype 08: «Tu:
+ * Titolare»).
+ */
 export const SPACE_ROLE_LABELS = Object.freeze({
-  owner: 'Proprietario',
+  owner: 'Titolare',
   operator: 'Operatore',
   observer: 'Osservatore',
 });
@@ -172,6 +178,13 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
     .map((space) => ({
       id: space.id,
       name: typeof space.name === 'string' && space.name !== '' ? space.name : space.id,
+      // Prototype 08 prints a line under the name («Interior design ·
+      // Milano»). Only a space that carries one shows it: the shell's
+      // space list holds no description today, and none is ever invented.
+      description: typeof /** @type {any} */ (space).description === 'string'
+        && /** @type {any} */ (space).description.trim() !== ''
+        ? /** @type {any} */ (space).description.trim()
+        : null,
       initials: typeof space.initials === 'string' && space.initials !== '' ? space.initials : '·',
       role: spaceRoleLabel(role),
       roleKnown: typeof role === 'string' && role !== '',
@@ -181,11 +194,10 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
 
 /**
  * Avatar initials for a team subject: the first two alphanumeric characters,
- * uppercased. The spine membership store carries no display name and no
- * email, so the subject itself is the only honest source — never a prettier
- * invention. Prototype screen 08 shows name/email per member; those fields do
- * not exist in the store, and the screen states the reason instead of
- * inventing them.
+ * uppercased. The spine store itself carries no display name; when the
+ * roster arrives without the enriched displayName/email, the subject is the
+ * only honest source — never a prettier invention (buildTeamRows uses the
+ * person name when the roster carries one).
  * @param {unknown} subject
  */
 export function memberInitials(subject) {
@@ -202,17 +214,108 @@ export function memberInitials(subject) {
  */
 const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', invited: 'invitato', pending: 'in attesa' });
 
+/** Strongest role first: a person holding two subjects shows the higher one. */
+const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
+
+/** Liveliest status first: a person reads «sospeso» only when no subject is live. */
+const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
+
+/** @param {unknown} value */
+function personText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text === '' ? null : text;
+}
+
+/**
+ * Avatar initials for a person name: the first letter of the first two
+ * words («Daniele Pelleri» → «DP»), or the subject rule for one word.
+ * @param {string} name
+ */
+function nameInitials(name) {
+  const words = name.split(/\s+/).map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '')).filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  return memberInitials(name);
+}
+
+/**
+ * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
+ * carry, beside each opaque subject, the control-plane displayName and email
+ * the pilot enriches it with — the same fields the Calendario team reads.
+ * One human can hold several subjects (an adopted broker member and the
+ * Google one: prod 07/11 listed «Daniele Pelleri» twice). The roster carries
+ * no person id, so subjects merge into one row ONLY when both the mailbox
+ * and the display name match (trimmed, case-insensitive). A mailbox alone
+ * never merges: a shared mailbox (info@…) or stale enrichment could fold a
+ * different human into the row, hide them and let «Rimuovi» suspend them.
+ * A name alone never merges either: two homonyms without email are two
+ * people. Nothing merges in the backend: the row keeps every subject, and
+ * removal suspends each of them.
+ *
+ * Without enrichment the row reads exactly as before: the subject is the
+ * name and the status sits under it. Sorted by name, then subject, so the
+ * list is stable regardless of store order.
+ * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown}>} members
+ */
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
-  return list
-    .filter((member) => member && typeof member === 'object' && typeof member.subject === 'string' && member.subject !== '')
-    .map((member) => ({
-      subject: member.subject,
-      initials: memberInitials(member.subject),
-      role: spaceRoleLabel(member.role),
-      status: MEMBER_STATUS[member.status] ?? (typeof member.status === 'string' && member.status !== '' ? member.status : 'sconosciuto'),
-    }))
-    .sort((left, right) => (left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0));
+  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, roles: unknown[], statuses: unknown[]}>} */
+  const people = [];
+  const byIdentity = new Map();
+  const seen = new Set();
+  for (const member of list) {
+    if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
+    if (seen.has(member.subject)) continue;
+    seen.add(member.subject);
+    const email = personText(member.email);
+    const displayName = personText(member.displayName);
+    const key = email === null || displayName === null
+      ? null
+      : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
+    let person = key === null ? null : byIdentity.get(key) ?? null;
+    if (person === null) {
+      person = { subjects: [], live: [], displayName: null, email, roles: [], statuses: [] };
+      people.push(person);
+      if (key !== null) byIdentity.set(key, person);
+    }
+    person.subjects.push(member.subject);
+    if (member.status !== 'suspended') person.live.push(member.subject);
+    person.roles.push(member.role);
+    person.statuses.push(member.status);
+    if (person.displayName === null) person.displayName = displayName;
+  }
+  return people
+    .map((person) => {
+      const subject = [...person.subjects].sort()[0];
+      const name = person.displayName ?? person.email ?? subject;
+      const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
+      const role = known.length > 0
+        ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
+        : person.roles[0];
+      // Deterministic, whatever the store order: the liveliest status wins,
+      // and «sospeso» only when every subject of the person is suspended.
+      const other = person.statuses.findIndex((status) => status !== 'suspended');
+      const rawStatus = STATUS_RANK.find((status) => person.statuses.includes(status))
+        ?? (other >= 0 ? person.statuses[other] : 'suspended');
+      return {
+        subject,
+        subjects: [...person.subjects].sort(),
+        // What «Rimuovi» suspends: every subject of the person not already
+        // suspended (all of them when none is live, so a retry still asks).
+        removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
+        name,
+        email: person.email,
+        initials: person.displayName !== null ? nameInitials(person.displayName) : memberInitials(name),
+        role: spaceRoleLabel(role),
+        status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
+      };
+    })
+    .sort((left, right) => {
+      const a = left.name.toLowerCase();
+      const b = right.name.toLowerCase();
+      if (a !== b) return a < b ? -1 : 1;
+      return left.subject < right.subject ? -1 : left.subject > right.subject ? 1 : 0;
+    });
 }
 
 /**
@@ -299,6 +402,8 @@ export function createSpaziAccessiView(deps) {
     stats: new Map(),
     /** @type {string|null} subject armed for the two-step removal */
     confirmRemove: null,
+    /** @type {{subject: string, reason: string, note: string}|null} a removal with refused subjects, offered again as «Riprova» */
+    removeRetry: null,
     /** @type {{key: string, to: boolean}|null} switch flip armed for confirm */
     confirmFlip: null,
     busy: false,
@@ -388,6 +493,7 @@ export function createSpaziAccessiView(deps) {
     state.switchesUnavailable = null;
     state.stats = new Map();
     state.confirmRemove = null;
+    state.removeRetry = null;
     state.confirmFlip = null;
     state.refusal = null;
     state.inviteMenuOpen = false;
@@ -474,7 +580,7 @@ export function createSpaziAccessiView(deps) {
     const grid = el(doc, 'div', { cls: 'bo-spazi-grid' });
     if (cards.length === 0) {
       grid.appendChild(el(doc, 'p', {
-        text: 'Nessuno spazio in questa postazione: aggiungi uno spazio prima di continuare.',
+        text: 'Nessuno spazio in questa organizzazione: aggiungi uno spazio prima di continuare.',
         cls: 'bo-muted',
       }));
     }
@@ -484,10 +590,9 @@ export function createSpaziAccessiView(deps) {
       head.appendChild(el(doc, 'span', { text: card.initials, cls: 'bo-spazi-initials' }));
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
       names.appendChild(el(doc, 'div', { text: card.name, cls: 'bo-spazi-name' }));
-      names.appendChild(el(doc, 'div', {
-        text: card.roleKnown ? `Tu: ${card.role}` : 'Tu: ruolo non riconosciuto',
-        cls: 'bo-muted',
-      }));
+      if (card.description !== null) {
+        names.appendChild(el(doc, 'div', { text: card.description, cls: 'bo-muted bo-spazi-desc' }));
+      }
       head.appendChild(names);
       cell.appendChild(head);
       const stat = state.stats.get(card.id) ?? null;
@@ -500,24 +605,31 @@ export function createSpaziAccessiView(deps) {
           attrs: { title: 'canali di questo spazio; persone e clienti dell\u2019intera organizzazione' },
         }));
       }
+      // Prototype 08: the card foot pairs \u00abTu: <ruolo>\u00bb with the badge or
+      // the small dark \u00abApri\u00bb on the right.
+      const foot = el(doc, 'div', { cls: 'bo-spazi-foot' });
+      const you = el(doc, 'span', { text: 'Tu: ', cls: 'bo-muted bo-spazi-you' });
+      you.appendChild(el(doc, 'strong', { text: card.roleKnown ? card.role : 'ruolo non riconosciuto' }));
+      foot.appendChild(you);
       if (card.active) {
-        cell.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
+        foot.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
       } else if (typeof deps.onPickSpace === 'function') {
-        const open = el(doc, 'button', { text: 'Apri', cls: 'bo-spazi-open', attrs: { type: 'button' } });
+        const open = el(doc, 'button', { text: 'Apri', cls: 'ui-btn ui-btn-primary ui-btn-small bo-spazi-open', attrs: { type: 'button' } });
         open.disabled = state.busy;
         open.addEventListener('click', () => {
           deps.onPickSpace(card.id);
           if (typeof navigate === 'function') navigate('#/');
           void refresh();
         });
-        cell.appendChild(open);
+        foot.appendChild(open);
       }
+      cell.appendChild(foot);
       grid.appendChild(cell);
     }
     // C11: the dashed box stays last; its menu carries the verbatim C20
     // voices. Creation itself lives in the control plane (no capability
     // here), so picking a voice never invents a space.
-    const adder = el(doc, 'div', { cls: 'bo-spazi-card' });
+    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder' });
     const adderToggle = el(doc, 'button', {
       text: '+ Nuovo spazio di lavoro',
       cls: 'bo-spazi-quiet',
@@ -601,7 +713,7 @@ export function createSpaziAccessiView(deps) {
       section.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
-      text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
+      text: 'Lo stesso team per tutta l\u2019organizzazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
       cls: 'bo-muted',
     }));
     if (state.members === null) {
@@ -619,23 +731,42 @@ export function createSpaziAccessiView(deps) {
       const identity = el(doc, 'div', { cls: 'bo-spazi-identity' });
       identity.appendChild(el(doc, 'span', { text: row.initials, cls: 'bo-spazi-avatar', attrs: { 'aria-hidden': 'true' } }));
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
-      names.appendChild(el(doc, 'div', { text: row.subject, cls: 'bo-spazi-subject' }));
-      names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
+      // Prototype 08: name over email. The email line carries the
+      // ellipsis (C13) with the full address in its title; a non-active
+      // status joins it. A roster without email keeps the status line.
+      names.appendChild(el(doc, 'div', { text: row.name, cls: 'bo-spazi-subject' }));
+      if (row.email !== null) {
+        const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
+        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
+      } else {
+        names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
+      }
       identity.appendChild(names);
       item.appendChild(identity);
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
-      if (state.confirmRemove === row.subject) {
+      if (state.confirmRemove !== null && row.subjects.includes(state.confirmRemove)) {
+        const retry = state.removeRetry !== null && row.subjects.includes(state.removeRetry.subject)
+          ? state.removeRetry
+          : null;
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
         confirmBox.appendChild(el(doc, 'p', {
-          text: `Rimuovere ${row.subject} dal team? La sospensione vale per l\u2019intera organizzazione. Il motivo resta registrato.`,
+          text: `Rimuovere ${row.name} dal team? La sospensione vale per l\u2019intera organizzazione. Il motivo resta registrato.`,
           cls: 'bo-muted',
         }));
+        if (retry !== null) {
+          confirmBox.appendChild(el(doc, 'p', { text: retry.note, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
+        }
         const reason = el(doc, 'input', {
           cls: 'bo-spazi-input',
-          attrs: { type: 'text', placeholder: 'Motivo (obbligatorio)', 'aria-label': `Motivo della rimozione di ${row.subject}` },
+          attrs: { type: 'text', placeholder: 'Motivo (obbligatorio)', 'aria-label': `Motivo della rimozione di ${row.name}` },
         });
+        if (retry !== null) reason.value = retry.reason;
         confirmBox.appendChild(reason);
-        const yes = el(doc, 'button', { text: 'Conferma rimozione', cls: 'bo-spazi-danger', attrs: { type: 'button' } });
+        const yes = el(doc, 'button', {
+          text: retry !== null ? 'Riprova' : 'Conferma rimozione',
+          cls: 'bo-spazi-danger',
+          attrs: { type: 'button' },
+        });
         yes.disabled = state.busy;
         yes.addEventListener('click', async () => {
           const motive = String(reason.value ?? '').trim();
@@ -643,33 +774,56 @@ export function createSpaziAccessiView(deps) {
             say('Serve un motivo: senza, il server rifiuta la rimozione.', true);
             return;
           }
-          try {
-            await mutate(`/api/spine/memberships/${encodeURIComponent(row.subject)}/suspend`, { reason: motive });
-            say(`${row.subject} rimosso dal team.`);
-          } catch (error) {
-            const failure = errorOf(error);
-            const message = humanWriteError(failure, {
-              failed: 'La rimozione non è riuscita. Riprova più tardi.',
-            });
-            say(message, true);
-            await load();
+          // One person may hold several subjects: each is suspended through
+          // the same spine route, one at a time (mutate holds the busy flag),
+          // and every outcome is collected — a refusal never hides what
+          // already happened. Riprova then asks only for what was refused:
+          // the reloaded roster no longer lists a suspended subject as live.
+          /** @type {Array<{subject: string, failure: any}>} */
+          const refused = [];
+          for (const subjectId of row.removable) {
+            try {
+              await mutate(`/api/spine/memberships/${encodeURIComponent(subjectId)}/suspend`, { reason: motive });
+            } catch (error) {
+              refused.push({ subject: subjectId, failure: errorOf(error) });
+            }
+          }
+          if (refused.length === 0) {
+            say(`${row.name} rimosso dal team.`);
             state.confirmRemove = null;
-            state.refusal = message;
-            render();
+            state.removeRetry = null;
+            await refresh();
             return;
           }
-          state.confirmRemove = null;
-          await refresh();
+          const total = row.removable.length;
+          const done = total - refused.length;
+          const why = humanWriteError(refused[0].failure, {
+            failed: total === 1
+              ? 'La rimozione non \u00E8 riuscita. Riprova pi\u00F9 tardi.'
+              : 'Il server ha rifiutato la sospensione.',
+          });
+          const note = total === 1
+            ? why
+            : done === 0
+              ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
+              : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
+          say(note, true);
+          await load();
+          // load() closes every confirmation: reopen this one on a subject
+          // that is still there, with the refusal and the motive kept.
+          state.confirmRemove = refused[0].subject;
+          state.removeRetry = { subject: refused[0].subject, reason: motive, note };
+          render();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
-        no.addEventListener('click', () => { state.confirmRemove = null; state.refusal = null; render(); });
+        no.addEventListener('click', () => { state.confirmRemove = null; state.removeRetry = null; state.refusal = null; render(); });
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         item.appendChild(confirmBox);
       } else {
         const remove = el(doc, 'button', { text: 'Rimuovi', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         remove.disabled = state.busy;
-        remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.refusal = null; render(); });
+        remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; state.refusal = null; render(); });
         item.appendChild(remove);
       }
       list.appendChild(item);

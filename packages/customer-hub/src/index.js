@@ -162,6 +162,8 @@ export function createCustomerHubPackage(options = {}) {
         input: [
           { name: 'resource', type: 'string', hint: 'The record kind, e.g. "company" or "contact".' },
           { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'before', type: 'string', required: false, hint: 'Entries cursor: the nextCursor of the previous page (<occurredAt>|<id>); reads strictly older entries, newest first.' },
+          { name: 'limit', type: 'integer', required: false, hint: 'Entries per page, newest first (default 20, at most 50). With neither before nor limit the entries read oldest first, capped at 50.' },
         ],
         create(runtime) {
           // Opened lazily on first read, NOT at composition: the framework
@@ -229,6 +231,13 @@ export function createCustomerHubPackage(options = {}) {
               readTimeline: (subject) => threads.timeline(subject),
               readSchedule: (subject) => schedule.scheduleFor(subject),
               readFlags,
+              // backlog:ea463d6ff10d: the cursor read only when the caller
+              // asks for a page; every other caller keeps the legacy read.
+              // An explicit null is no request (review #639).
+              page: (request?.before !== undefined && request?.before !== null)
+                || (request?.limit !== undefined && request?.limit !== null)
+                ? { before: request?.before ?? null, limit: request?.limit ?? null }
+                : null,
             });
           };
         },

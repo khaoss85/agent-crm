@@ -27,7 +27,7 @@ const page = loginPageHtml({ googleHref });
 test('f9680c478410: the exported page paints the prototype login screen', () => {
   for (const text of [
     'Ogni conversazione, un solo cliente.',
-    'Bentornata',
+    'Rieccoti',
     'Continua con Google',
     'Accedi — Accordo',
   ]) {
@@ -41,6 +41,15 @@ test('f9680c478410: the exported page ships no form, no stylesheet and no script
   assert.ok(!/<form[\s>]/.test(page), 'no form: the pilot authenticates at the deployment entry, not here');
   assert.ok(!/<link[\s>]/.test(page), 'no stylesheet link: the page is self-contained');
   assert.ok(!/<script[\s>]/.test(page), 'no script at all, hence no script src');
+});
+
+test('27a0b924: the production page keeps the staircase, the phone layout and a visible focus', () => {
+  assert.ok(page.includes('.login-msg:nth-child(4){margin-left:60px}'), 'the four rows step to the right (C5)');
+  assert.ok(!/class="login-msg" style=/.test(page), 'the stagger lives in the style, not on the rows');
+  assert.match(page, /@media \(max-width:520px\)\{[^@]*\.login-form-wrap\{order:-1;/, 'on phone the sign-in comes first (C20)');
+  assert.ok(page.includes('.login-thread{display:none}}'), 'on phone the rows and the client card hide (C20)');
+  assert.match(page, /\.login-story\{padding:32px 28px;[^}]*min-height:0[;}]/, 'the compact story drops the desktop height');
+  assert.ok(page.includes('.login-google:focus-visible{outline:2px solid #176b2a'), 'keyboard focus is visible on Google');
 });
 
 test('f9680c478410: the exported page leaks no machinery and asks no password', () => {
@@ -88,7 +97,7 @@ test('f9680c478410: login.html and the function share markup, never duplicate it
   assert.equal(BACKOFFICE_GOOGLE_HREF, '/auth/google', 'the backoffice entry stays the deployment path the tests pin');
   const onDisk = readFileSync(join(root, 'apps/admin/public/login.html'), 'utf8');
   assert.equal(onDisk, backofficeLoginHtml(), 'login.html is generated from the module: regenerate, never hand-edit');
-  for (const fragment of ['Ogni conversazione, un solo cliente.', 'Bentornata', 'Continua con Google']) {
+  for (const fragment of ['Ogni conversazione, un solo cliente.', 'Rieccoti', 'Continua con Google']) {
     assert.ok(onDisk.includes(fragment), `login.html keeps the shared fragment: ${fragment}`);
   }
 });

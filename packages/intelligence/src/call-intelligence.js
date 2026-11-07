@@ -62,7 +62,16 @@ export const CALL_TRANSCRIPT_PURGE_MAX_ATTEMPTS = 5;
 
 const PURGE_ACTOR = trustedSystemActor('purging expired call transcripts');
 
-const SPACE_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const SPACE_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
+/**
+ * Voce 785428ec3de0: a shared-host space is named by its workspace id, a
+ * lowercase UUID, and about two in three of those start with a digit, which
+ * the slug rule refused («spaceId must be a lowercase slug…») — every call
+ * read of such a space failed. A canonical lowercase UUID is accepted beside
+ * the slug; nothing else widens.
+ */
+const SPACE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isSpaceId = (value) => SPACE_ID_RE.test(value) || SPACE_UUID_RE.test(value);
 const CALL_REF_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 const MAX_TRANSCRIPT_CHARS = 30000;
 const MAX_SUMMARY_CHARS = 2000;
@@ -76,8 +85,8 @@ const MAX_RECORDED_FUTURE_SKEW_MS = 5 * 60 * 1000;
  * @param {unknown} value @param {string} field
  */
 function assertSpaceId(value, field = 'spaceId') {
-  if (typeof value !== 'string' || !SPACE_ID_RE.test(value)) {
-    throw new ValidationError(`${field} must be a lowercase slug or canonical UUID (letters, digits, hyphens, starting with a letter or digit, at most 63 characters)`, { field });
+  if (typeof value !== 'string' || !isSpaceId(value)) {
+    throw new ValidationError(`${field} must be a lowercase slug (letters, digits, hyphens, starting with a letter, at most 63 characters) or a workspace id`, { field });
   }
   return value;
 }

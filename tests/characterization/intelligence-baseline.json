@@ -2542,7 +2542,7 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "f2eb98eb26601778690b8e5f5656af214eec0f6adb0f5c2dc2bd1339ca3ef1ae",
+    "apps/server/src/http-server.js": "c68f1f873c8cda8af9cd79fb48fbaa3122db2e978e288a26513cfec76341447d",
     "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
     "examples/starters/b2b-lead-qualification/actions/qualify.js": "3d5ddd5f51be258f7e65554b74ac9f449ac39f69845aef1d0d858b7660c06b78",
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
@@ -2564,7 +2564,7 @@
     "packages/intelligence/modules/score-contribution.module.json": "24a46c9090b066edca2f9eaa7b4e008c93e983e3b6cd903a0e39980cc5b20e7e",
     "packages/intelligence/modules/score-run.module.json": "a3c985aba54e14d28f7cfebefaea03b679ef92efea7cb90d7676ecef13e19621",
     "packages/intelligence/src/actions.js": "1beb29454e8b6fa6ada9b0df53569a9a989f8780f64e055b94f1745d57c2a378",
-    "packages/intelligence/src/call-intelligence.js": "83982fa8da79ffd4a98bb7d3775c5373817d056aa4d8a0c9c54b7dce6b6c51d9",
+    "packages/intelligence/src/call-intelligence.js": "1fc979fe2c5c397ff781fa0e08544db89b90561e92dfd7faacf345afba77fda1",
     "packages/intelligence/src/capability.js": "7ce4d157c87e26274f027354adc2a120efd27ee891e67f1268e7b3c754f291ea",
     "packages/intelligence/src/index.js": "7bdc53d6ea1e60645ad819f2206ed9292dbb21f6e7cf190ee9c6f14aa8d2f3ae",
     "packages/intelligence/src/registry.js": "da1f64931cb551917314bd05eede6f3519ac9ae571a58252399054b67b450463",

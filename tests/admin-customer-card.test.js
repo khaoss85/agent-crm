@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   createCustomerCardView,
   mergeLinkedIdentities,
+  observedDirections,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
   teamName,
@@ -3146,4 +3147,182 @@ test('review #626: direction reads aloud, no direction stays neutral, writer chi
   const chip = mount.findAll('button').find((node) => node.getAttribute('data-author') === 'coach-guido');
   assert.ok(chip, 'a chip per writer');
   assert.ok(chip.textContent.includes('da Coach Guido'), 'the chip reads the name, never the handle');
+});
+
+// Voce 785428ec3de0: a customer with no union reads no technical line under
+// Identità collegate — no «nessuna unione registrata», no lone
+// «scheda principale» row; a real union still reads its schede.
+test('785428ec3de0: Identità collegate says nothing technical for a single scheda', async () => {
+  const single = await renderCard(stubClient({ profile: PROFILE_BARE }));
+  const text = single.textContent;
+  assert.ok(!text.includes('nessuna unione'), 'no «nessuna unione registrata»');
+  assert.ok(!text.includes('una sola scheda'), 'no technical single-scheda line');
+  assert.ok(!text.includes('scheda principale'), 'no lone principal row without a union');
+  const linked = await renderCard(stubClient());
+  assert.ok(linked.textContent.includes('della stessa persona'), 'a real union still reads its schede');
+});
+
+// #627 followed up: the quick-action icons are real SVG elements, never a CSS
+// data: mask — the host CSP (default-src 'self') blocks data: images, so the
+// masked icons never painted in production.
+test('Azioni rapide: every tile carries its stroke icon as an SVG element, and the label stays the text', async () => {
+  const mount = await renderCard(stubClient());
+  const tiles = mount.findAll('button').filter((node) => String(node.getAttribute('class') ?? node.className ?? '').split(/\s+/).includes('bo-scheda-tile'));
+  assert.ok(tiles.length >= 3, 'the quick actions render');
+  for (const node of tiles) {
+    const icon = node.findAll('svg')[0];
+    assert.ok(icon, `${node.textContent} has an icon`);
+    assert.match(String(icon.getAttribute('class')), /ui-icon ui-icon-(telefono|telefono-piu|messaggio|offerta|appuntamento)/);
+    assert.equal(icon.getAttribute('aria-hidden'), 'true', 'decorative: the label names the action');
+  }
+  assert.ok(tiles.some((node) => node.textContent === 'Scrivi'), 'the label is still the whole text');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(!/url\(["']?data:/.test(css), 'no data: url in the stylesheet — the host CSP would block it');
+});
+
+// backlog:59def6cb805d — completion like the prototype: the missing details.
+
+test('59def6cb805d: each identity reads its sync line from the observed passages (C10)', async () => {
+  const mount = await renderCard(stubClient());
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const byChannel = Object.fromEntries(rows.map((node) => [node.getAttribute('data-channel'), node.textContent]));
+  assert.ok(byChannel.whatsapp.includes('↔ sincronizzato'), `received and sent on WhatsApp: ${byChannel.whatsapp}`);
+  assert.ok(byChannel.instagram.includes('← in entrata'), `only received on Instagram: ${byChannel.instagram}`);
+  assert.ok(byChannel.phone.includes('→ in uscita'), `only an outgoing call: ${byChannel.phone}`);
+});
+
+test('59def6cb805d review: on a truncated page a one-way sync line names itself partial (C10)', async () => {
+  // The first page holds only inbound Instagram passages; the outbound one
+  // may sit on a later page. «← in entrata» alone would claim the channel
+  // never sent anything: on a partial read it says so, like the count line.
+  const truncated = { ...TIMELINE, entries: { ...TIMELINE.entries, truncated: true } };
+  const mount = await renderCard(stubClient({ timeline: truncated }));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('instagram'), '← in entrata (elenco parziale)', 'one direction on a partial page is not exhaustive');
+  assert.equal(syncOf('phone'), '→ in uscita (elenco parziale)');
+  assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'both directions seen are proven even on a partial page');
+  assert.ok(mount.textContent.includes('(elenco parziale)'), 'the count line and the sync lines share one honesty standard');
+  const complete = await renderCard(stubClient());
+  assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
+});
+
+test('59def6cb805d: observedDirections never assumes a direction nobody recorded (C10)', () => {
+  const seen = observedDirections({ entries: { items: [
+    { channel: 'WhatsApp', direction: 'inbound' },
+    { channel: 'whatsapp', direction: 'outbound' },
+    { channel: 'email', direction: null },
+    { channel: '', direction: 'inbound' },
+  ] } });
+  assert.deepEqual(seen.get('whatsapp'), { in: true, out: true });
+  assert.equal(seen.has('email'), false, 'a passage with no direction proves nothing');
+  assert.equal(observedDirections(null).size, 0);
+});
+
+test('59def6cb805d: a next step completes its work task from the circular check (C24)', async () => {
+  const toasts = [];
+  let completed = false;
+  const base = stubClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/modules/work-task/records/w1/actions/complete') {
+        enforceAdminWriteGate(path, options);
+        assert.equal(options.method, 'POST');
+        completed = true;
+        return { id: 'w1', status: 'done' };
+      }
+      if (completed && path.startsWith('/api/customer-data/profile/')) {
+        return { ...PROFILE, workTasks: { ...PROFILE.workTasks, items: [{ id: 'w1', status: 'done', name: 'Richiamare per la prova' }] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const mount = await renderCard(client, undefined, (message) => toasts.push(message));
+  const check = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'complete-step');
+  assert.ok(check, 'the open step carries the circular check');
+  assert.equal(check.getAttribute('aria-label'), 'Segna come fatto: Richiamare per la prova');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 1,
+    'a done task carries no check');
+  check.dispatch('click');
+  await flushComposer(10);
+  assert.ok(completed, 'the work-task complete action ran');
+  assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
+  assert.ok(mount.textContent.includes('nessun passo aperto'), 'the card re-reads: the server list, never an optimistic copy');
+});
+
+test('59def6cb805d: a refused step completion keeps the step and says so in Italian (C24)', async () => {
+  const toasts = [];
+  const base = stubClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path.includes('/actions/complete')) throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' });
+      return base.request(path, options);
+    },
+  };
+  const mount = await renderCard(client, undefined, (message) => toasts.push(message));
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'complete-step').dispatch('click');
+  await flushComposer(10);
+  assert.ok(mount.textContent.includes('Richiamare per la prova'), 'the step stays');
+  assert.equal(toasts.length, 1);
+  assert.doesNotMatch(toasts[0], /INTERNAL|boom|500/);
+});
+
+test('59def6cb805d: the offer card shows the server amount, none without one (C25)', async () => {
+  const withAmount = await renderCard(stubClient({
+    profile: { ...PROFILE, quotes: { ...PROFILE.quotes, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi', amountCents: 2750000, currency: 'EUR' }] } },
+  }));
+  const amount = withAmount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the amount paints');
+  assert.equal(amount.textContent, '27.500 €');
+  const without = await renderCard(stubClient());
+  assert.equal(without.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount').length, 0,
+    'no server amount, no figure');
+  const recurring = await renderCard(stubClient({
+    profile: { ...PROFILE, quotes: { ...PROFILE.quotes, items: [{ id: 'q1', status: 'sent', name: 'Abbonamento', amountCents: null, currency: 'EUR' }] } },
+  }));
+  assert.equal(recurring.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount').length, 0);
+});
+
+test('59def6cb805d review: an opportunity without quotes paints its server amount on the scheda (C25)', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 120000, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the opportunity fallback paints its amount');
+  assert.equal(amount.textContent, '1.200 €');
+  assert.equal(mount.findAll('a').filter((node) => node.getAttribute('class') === 'bo-scheda-offer-link').length, 0,
+    'an opportunity has no quote detail: the line stays plain');
+});
+
+test('59def6cb805d: the next appointment reads title then day and hours (C26)', async () => {
+  const mount = await renderCard(stubClient());
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'service made readable, member by name');
+  assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
+  assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
+  assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');
+});
+
+test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {
+  const { panel } = await openComposerMount();
+  assert.ok(panel.textContent.includes('Rispondi su'), 'the channel row is labelled');
+  const area = panel.findAll('textarea').find((node) => node.getAttribute('aria-label') === 'Messaggio');
+  assert.equal(area.getAttribute('placeholder'), 'Scrivi a Guido su Email…');
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.equal(send.textContent, 'Invia su Email');
+  assert.ok(panel.textContent.includes('parte da Email · resta anche lì'), 'the channel note sits beside Invia');
 });

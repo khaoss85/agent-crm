@@ -615,18 +615,31 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-setting-link { font-size: 13px; font-weight: 700; color: var(--accent); }
 .bo-setting-coming { font-size: 12px; color: var(--dim); }
 
+.bo-menu-toggle, .bo-phonebar-space { display: none; }
 @media (max-width: 700px) {
+  /* design: shell telefono (oggi.md C26) — the phone shell, same ≤700px
+   * breakpoint as every other phone rule. The sidebar hides behind the ☰
+   * button and opens as a modal drawer over the page, the body locked while
+   * it is open. The top bar names the space exactly where the sidebar
+   * switcher sat (badge, name, role) with ☰ on the right; path and AI bar
+   * follow. Ink scrim from --shadow-pop: no new colour. */
   .bo-shell { grid-template-columns: minmax(0, 1fr); }
   .bo-main { padding: 0 12px 32px; }
-  .bo-sidebar { position: static; height: auto; max-height: none; border-right: none; border-bottom: 1px solid var(--line); }
-  .bo-nav { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
-  .bo-nav-header { display: none; }
-  .bo-nav-item { white-space: nowrap; flex: none; }
-  .bo-topbar { flex-direction: column; align-items: stretch; gap: 8px; }
+  .bo-sidebar { display: none; }
+  .bo-sidebar.bo-drawer-open {
+    display: flex; position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
+    width: min(300px, 86vw); height: 100vh; height: 100dvh; max-height: none; overflow-y: auto;
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
+  }
+  body.bo-scroll-lock { overflow: hidden; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; margin: 0 -12px; padding: 14px 12px 8px; }
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; }
-  .bo-topbar { margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
-  .bo-main > .bo-topbar + * { margin-top: 18px; }
   .bo-crumb { white-space: normal; }
+  .bo-main > .bo-topbar + * { margin-top: 6px; }
+  .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
 
 /*
@@ -688,6 +701,15 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-offer-state { flex: none; padding: 3px 9px; border-radius: 99px; background: var(--pending-soft); color: var(--pending-ink, var(--ink)); font-size: 11.5px; font-weight: 700; }
 .bo-scheda-card-offer > h4, .bo-scheda-card-appt > h4 { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 .bo-scheda-card-appt .bo-scheda-appt { border-top: none; padding: 0; font-size: 15px; font-weight: 700; }
+/* Voce 59def6cb805d (C10, C24, C25, C26): the prototype details. */
+.bo-scheda-identity-sync { display: block; margin-top: 2px; font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.bo-scheda-step-row { display: flex; align-items: flex-start; gap: 10px; }
+button.bo-scheda-step-check { flex: 0 0 18px; width: 18px; height: 18px; min-width: 0; min-height: 0; box-shadow: none; margin-top: 1px; padding: 0; border: 1.5px solid var(--line-strong, var(--muted)); border-radius: 999px; background: var(--surface); cursor: pointer; }
+.bo-scheda-step-check:hover, .bo-scheda-step-check:focus-visible { border-color: var(--accent); background: var(--accent-soft, var(--surface-soft)); }
+.bo-scheda-step-check[aria-busy="true"] { cursor: progress; opacity: .6; }
+.bo-scheda-offer-amount { margin: 8px 0 0; font-family: var(--mono); font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+.bo-scheda-card-appt .bo-scheda-appt-title { margin: 0 0 4px; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-scheda-card-appt .bo-scheda-appt-title + .bo-scheda-appt { font-size: 13px; font-weight: 400; color: var(--muted); }
 /* Voce c2793930850a: the four quick actions are a 2x2 grid of equal tiles —
  * same columns, same floor height (the grid stretches each row), one icon
  * over the label on every tile, long labels wrap inside, never outside.
@@ -697,19 +719,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
  * of the 2x2 — at the same height, so all four tiles read equal. */
 .bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; }
 .bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 4px 10px; font-size: 12px; line-height: 1.25; overflow-wrap: normal; word-break: keep-all; hyphens: none; }
-/* Dan 07/11: the quick-action tiles wear the prototype's stroke icons
- * (Chiama, Scrivi, Offerta, Appuntamento), drawn as a mask so they take the
- * text colour in light and dark, instead of the text glyphs ☎ ✉ ◈ ◷. */
-.bo-scheda-tile[data-action="call-customer"]::before,
-.bo-scheda-tile[data-action="add-phone"]::before,
-.bo-scheda-tile[data-action="compose-message"]::before,
-.bo-scheda-tile[data-action="new-offer"]::before,
-.bo-scheda-tile[data-action="new-appointment"]::before { content: ""; align-self: center; width: 18px; height: 18px; background-color: currentColor; -webkit-mask: var(--qa-icon) center / contain no-repeat; mask: var(--qa-icon) center / contain no-repeat; }
-.bo-scheda-tile[data-action="call-customer"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="add-phone"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2M18 3v6M15 6h6'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="compose-message"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h16v11H9l-5 4z'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="new-offer"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="new-appointment"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 6h14v13H5zM5 10h14M9 4v4M15 4v4'/%3E%3C/svg%3E"); }
+/* Azioni rapide: the prototype's stroke icon is a real SVG (uiIcon) above
+ * the label — a CSS data: mask is blocked by the host CSP. */
+.bo-scheda-tile > .ui-icon { align-self: center; width: 18px; height: 18px; flex: none; }
 /* Voce d525f4aa48b2: the AI voice in Dettagli wears the assistant's violet,
  * like the ✦ summary card — same tokens, no new visual identity. */
 button.bo-scheda-tile { font-size: 12px; padding: 12px 4px 10px; overflow-wrap: normal; word-break: keep-all; }
@@ -802,6 +814,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-oggi-actions { display: flex; flex-direction: column; gap: 10px; }
 .bo-oggi-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line-soft); }
 .bo-oggi-row[data-state] { opacity: .55; }
+/* backlog:9c7d1477a8d4 (C12): a done card is struck through, its confirmation green, like the prototype. */
+.bo-oggi-row[data-state="done"] .bo-oggi-title { text-decoration: line-through; }
+.bo-oggi-row[data-state="done"] .bo-oggi-state { color: var(--accent); }
 .bo-oggi-mono { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-oggi-body { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .bo-oggi-title { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
@@ -829,6 +844,7 @@ a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-ai h3 { font-size: 13px; color: var(--agent-ink); }
 .bo-oggi-agenda { display: flex; flex-direction: column; }
 .bo-oggi-agenda-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-faint); font-size: 14px; font-weight: 600; }
+.bo-oggi-agenda-row[data-state="past"] { opacity: .5; }
 .bo-oggi-agenda-row > a { min-width: 0; overflow-wrap: anywhere; color: var(--ink); text-decoration: none; }
 .bo-oggi-more { margin-top: auto; padding-top: 8px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .bo-oggi-time { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink); }
@@ -840,6 +856,7 @@ a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-sources a { color: inherit; text-decoration: none; font-weight: 400; }
 .bo-oggi-invite { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px; border: 1px dashed var(--line-dashed); font-size: 14px; font-weight: 400; color: var(--muted); text-decoration: none; }
 .bo-oggi-invite:hover { border-color: var(--ink); color: var(--ink); }
+.bo-oggi-invite strong { flex: none; white-space: nowrap; }
 
 @media (max-width: 700px) {
   .bo-oggi-btns { width: 100%; }
@@ -1054,6 +1071,24 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-ai-panel .bo-spazi-switches { gap: 0; padding: 0 20px 8px; }
 .bo-spazi-ai-panel .bo-spazi-switch { border: none !important; border-radius: 0 !important; background: transparent !important; padding: 14px 0 !important; border-top: 1px solid var(--line-faint) !important; }
 .bo-spazi-ai-panel > h3 { padding-bottom: 6px; }
+/* backlog:6b44b0e9fcdf: card foot, dashed adder, mono statistic, member email
+   with ellipsis — prototype 08. */
+.bo-spazi-desc { font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.bo-spazi-stat { font-family: var(--mono); font-size: 11.5px; letter-spacing: .02em; }
+.bo-spazi-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: auto; }
+.bo-spazi-you { font-size: 13px; }
+.bo-spazi-you strong { color: var(--ink); font-weight: 700; }
+.bo-spazi-foot .bo-spazi-here { align-self: center; }
+.bo-spazi-open.ui-btn { padding: 7px 14px; }
+.bo-spazi-adder { border: 1px dashed var(--line-dashed); background: transparent; justify-content: center; align-items: center; min-height: 150px; }
+.bo-spazi-adder .bo-spazi-quiet.ui-btn { height: auto; padding: 10px 14px; font-size: 15px; font-weight: 700; color: var(--muted); }
+.bo-spazi-adder .ui-add-menu { align-self: stretch; }
+.bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bo-spazi-names { overflow: hidden; }
+.bo-spazi-invite-toggle.ui-btn { white-space: nowrap; flex: none; }
+@media (max-width: 700px) {
+  .bo-spazi-adder { min-height: 88px; }
+}
 
 @media (max-width: 700px) {
   .bo-spazi-grid { grid-template-columns: minmax(0, 1fr); }
@@ -1421,17 +1456,28 @@ select.bo-spazi-input { flex: none; }
 .bo-sync-channels .bo-sync-table td { padding: 12px 10px; border-bottom: none; border-top: 1px solid var(--line-faint); vertical-align: middle; }
 .bo-sync-channels .bo-sync-table td:first-child { padding-left: 20px; }
 .bo-sync-channels .bo-sync-table td:last-child { padding-right: 20px; text-align: right; }
-.bo-sync-channels .bo-sync-table td:nth-child(2) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); padding: 0; }
 .bo-sync-channels .bo-sync-table td .ui-btn { height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
 .bo-sync-namewrap { display: flex; align-items: center; gap: 12px; min-width: 170px; }
 .bo-sync-channels .bo-sync-table td { white-space: nowrap; }
-.bo-sync-channels .bo-sync-table td:nth-child(5) { white-space: normal; min-width: 140px; }
 .bo-sync-tile { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-sync-nametext { display: flex; flex-direction: column; min-width: 0; }
 .bo-sync-nametext strong { font-size: 15px; }
 .bo-sync-dir { font-family: var(--mono); font-size: 11px; color: var(--data-ink); }
 .bo-sync-dircell { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.bo-sync-channels .bo-sync-table td:nth-child(2), .bo-sync-channels .bo-sync-table td:nth-child(4), .bo-sync-channels .bo-sync-table td:nth-child(5) { color: var(--muted); font-size: 13px; }
+.bo-sync-channels .bo-sync-table td:nth-child(2), .bo-sync-channels .bo-sync-table td:nth-child(3) { color: var(--muted); font-size: 13px; }
+/* Voce 3a3e6eaf: the Canali card like prototype 03 — count beside the
+ * title, coloured state pills, unlinked rows dimmed with a solid Collega. */
+.bo-sync-cardhead .bo-sync-count { margin: 0; padding: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); white-space: nowrap; }
+.bo-sync-pill { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--surface-soft); color: var(--ink); }
+.bo-sync-pill[data-pill="attivo"] { background: var(--accent-soft); color: var(--accent); }
+.bo-sync-pill[data-pill="permesso"] { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-sync-pill[data-pill="importazione"] { background: var(--data-soft); color: var(--data-ink); }
+.bo-sync-pill[data-pill="altro"] { background: var(--human-soft); color: var(--human-ink); }
+.bo-sync-row-off .bo-sync-namewrap, .bo-sync-row-off td:nth-child(2), .bo-sync-row-off td:nth-child(3) { opacity: .6; }
+.bo-sync-channels .bo-sync-table .bo-sync-fix-action { background: var(--muted); border-color: var(--muted); color: var(--paper); padding: 5px 12px; font-size: 12px; }
+.bo-sync-hero-connect { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.bo-sync-hero-connect[hidden] { display: none; }
+.bo-sync-hero-dot-empty { background: var(--line-dashed); }
 .bo-sync-live .bo-sync-note { padding: 0 20px 18px; }
 .bo-sync-live .bo-sync-feed { gap: 0; padding: 0 20px 6px; }
 .bo-sync-live .bo-sync-feed-line { display: grid; grid-template-columns: 70px 20px minmax(0, 1fr); gap: 6px; padding: 10px 0; border-top: 1px solid var(--line-faint); font-size: 14px; line-height: 1.4; }
@@ -1448,6 +1494,15 @@ select.bo-spazi-input { flex: none; }
   .bo-sync-hero-title { font-size: 30px; }
   .bo-sync-cols { grid-template-columns: minmax(0, 1fr); }
   .bo-sync-hero-pull { width: 100%; }
+  .bo-sync-channels .bo-sync-table, .bo-sync-channels .bo-sync-table tbody { display: block; }
+  .bo-sync-channels .bo-sync-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line-faint); }
+  .bo-sync-channels .bo-sync-table td { display: block; padding: 0; border-top: 0; white-space: normal; }
+  .bo-sync-channels .bo-sync-table td:first-child { padding-left: 0; grid-column: 1; grid-row: 1; }
+  .bo-sync-channels .bo-sync-table td:last-child { padding-right: 0; grid-column: 2; grid-row: 1; align-self: center; }
+  .bo-sync-channels .bo-sync-table td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; padding: 6px 0 0 48px; font-size: 12px; }
+  .bo-sync-channels .bo-sync-table td:nth-child(3) { grid-column: 1 / -1; grid-row: 3; padding: 2px 0 0 48px; font-size: 12px; }
+  .bo-sync-namewrap { min-width: 0; }
+  .bo-sync-channels .bo-sync-table .bo-sync-row-off td:nth-child(3) { display: none; }
 }
 /* Impostazioni tab row on the sync screen (BO-F6-16): the section label over
  * the underlined area tabs, reusing ui-tabs (which already scrolls under
@@ -1474,13 +1529,28 @@ select.bo-spazi-input { flex: none; }
 .plist { padding: 0 30px 30px; }
 .plist .ui-hero { position: relative; flex-wrap: nowrap; padding: 30px 68px; border-radius: 18px; background: var(--hero-ink); }
 .plist .ui-hero-copy { max-width: 470px; }
-@media (max-width: 700px) { .plist { padding: 0; } .plist .ui-hero { flex-wrap: wrap; padding: 24px; } .bo-perso-bar .search.ui-field { margin-left: 0; width: 100%; } .personalizzazione.panel { padding: 0; } }
+@media (max-width: 700px) { .plist { padding: 0; } .plist .ui-hero { flex-wrap: wrap; padding: 24px; } .bo-perso-bar span.search-wrap { margin-left: 0; width: 100%; } .bo-perso-bar .search-wrap .search.ui-field { width: 100%; } .personalizzazione.panel { padding: 0; } }
 .plist .ui-hero-title { font-size: 36px; }
 .plist .ui-hero-text { font-size: 15px; }
 .plist .ui-hero-tiles .ui-chip { width: 64px; height: 64px; display: grid; place-items: center; padding: 0; border-radius: 14px; font-size: 13px; }
 .plist .ui-hero-tiles .ui-chip:nth-child(even) { transform: translateY(12px); width: 52px; height: 52px; }
-/* No carousel controls behind the dots: the hero is one static banner. */
-.plist .ui-hero-dots { display: none; }
+/* Carousel controls like the prototype (backlog:34672b9f5a1f, spec C12):
+ * round see-through arrows on the panel's sides, the dots in their own row
+ * under it — the active one wide and dark, the others small and grey. */
+.plist .ui-hero-eyebrow { text-transform: uppercase; opacity: .75; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"], .plist .ui-hero > .ui-btn[aria-label="Successiva"] {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; min-height: 0; padding: 0;
+  display: grid; place-items: center; border: none; border-radius: 50%; background: rgba(255, 253, 247, .14);
+  color: var(--paper); box-shadow: none; font-size: 20px; line-height: 1; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"] { left: 14px; }
+/* The library chevron points down: turned into ‹ and ›. */
+.plist .ui-hero > .ui-btn[aria-label="Precedente"] .ui-icon { transform: rotate(90deg); }
+.plist .ui-hero > .ui-btn[aria-label="Successiva"] .ui-icon { transform: rotate(-90deg); }
+.plist .ui-hero > .ui-btn[aria-label="Successiva"] { right: 14px; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"]:hover, .plist .ui-hero > .ui-btn[aria-label="Successiva"]:hover { background: rgba(255, 253, 247, .24); }
+.plist .ui-hero-dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+.plist .ui-hero-dot { width: 6px; height: 6px; min-height: 0; padding: 0; border: none; border-radius: 99px; background: var(--line); font-size: 0; line-height: 0; color: transparent; cursor: pointer; box-shadow: none; transition: width .2s; }
+.plist .ui-hero-dot.on { width: 22px; background: var(--ink); }
 .plist .ui-conn-head { align-items: center; margin: 40px 0 14px; }
 .plist .ui-conn-head h3 { font-size: 18px; letter-spacing: -.01em; }
 .plist .ui-conn-count { padding: 1px 7px; border-radius: 99px; background: var(--surface-soft); }
@@ -1492,6 +1562,30 @@ select.bo-spazi-input { flex: none; }
 .plist .ui-conn-lines + .ui-conn-lines { font-size: 12.5px; color: var(--dim); }
 .plist .ui-conn-state .ui-btn { width: 32px; height: 32px; padding: 0; border-radius: 9px; font-size: 18px; }
 .plist .ui-conn-state .ui-badge { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; font-size: 16px; }
+/* Cards like the prototype: the action sits top-right, the name row carries
+ * the curated mark. */
+.plist .ui-conn-card { align-items: flex-start; }
+.ui-conn-title { display: flex; align-items: center; gap: 6px; }
+.ui-conn-verified { display: inline-grid; place-items: center; width: 15px; height: 15px; border: 1.5px solid var(--dim); border-radius: 50%; color: var(--dim); flex: none; }
+.ui-conn-verified .ui-icon { width: 9px; height: 9px; stroke-width: 3; }
+/* Toolbar like the prototype: the search wears its lens, filter and sort are
+ * bare icon-buttons, the CTA reads «+ Aggiungi» with its chevron. */
+.bo-perso-bar .search-wrap { position: relative; display: inline-flex; align-items: center; margin-left: auto; }
+.bo-perso-bar .search-wrap .ui-icon-search { position: absolute; left: 12px; top: 50%; width: 15px; height: 15px; transform: translateY(-50%); color: var(--dim); pointer-events: none; }
+.bo-perso-bar .search-wrap .search.ui-field { margin-left: 0; padding-left: 34px; background: var(--surface); }
+.bo-perso-bar .ui-conn-menuwrap > .ui-btn { width: 36px; height: 36px; min-height: 0; padding: 0; display: grid; place-items: center; border: none; border-radius: 9px; background: transparent; box-shadow: none; }
+.bo-perso-bar .ui-conn-menuwrap > .ui-btn:hover, .bo-perso-bar .ui-conn-menuwrap > .ui-btn[aria-expanded="true"] { background: var(--line-soft); }
+.bo-perso-bar .ui-btn-cta { display: inline-flex; align-items: center; gap: 6px; }
+.bo-perso-bar .ui-btn-cta .ui-icon { width: 15px; height: 15px; }
+@media (max-width: 700px) {
+  /* On a phone the arrows leave the text alone: they sit together at the
+   * panel's bottom right, the copy keeps the full width. */
+  .plist .ui-hero { padding: 26px 22px 70px; }
+  .plist .ui-hero > .ui-btn[aria-label="Precedente"], .plist .ui-hero > .ui-btn[aria-label="Successiva"] { top: auto; bottom: 18px; transform: none; }
+  .plist .ui-hero > .ui-btn[aria-label="Precedente"] { left: auto; right: 62px; }
+  .plist .ui-hero > .ui-btn[aria-label="Successiva"] { right: 18px; }
+  .plist .ui-hero-title { font-size: 30px; }
+}
 
 /*
  * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
@@ -1551,7 +1645,6 @@ select.bo-spazi-input { flex: none; }
 .catalog-meta { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .catalog-source { padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--muted); }
 .catalog-source-provider { background: var(--agent-card); color: var(--agent-ink); }
-.catalog-active-state { font-size: 12px; font-weight: 700; color: var(--muted); }
 .catalog-create-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; }
 .catalog-create-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .catalog-ai-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
@@ -1587,6 +1680,37 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
 .catalog-rules > .muted { margin: 4px 0 10px; font-size: 13px; }
 .catalog-rule { padding: 12px 0; border-top: 1px solid var(--line-faint); }
 .catalog-rule-bands { margin: 0; font-size: 14px; color: var(--ink); }
+/* One line per product (supervisor design review, backlog:b44fe65ac3e5):
+ * cells sit on the row's middle; the price reads with «Modifica prezzi»
+ * beside it and the Attivo switch with «Togli» beside it. What opens on a
+ * click (the price form, a confirm, a note) takes its own full line inside
+ * the cell, only while it has something to say. */
+.catalog-thead, .catalog-row { align-items: center; }
+.catalog-cell-price, .catalog-cell-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.catalog-cell-price > .catalog-edit-wrap, .catalog-cell-switch > .catalog-toggle-wrap, .catalog-cell-switch > .catalog-remove-wrap { display: contents; }
+.catalog-cell-price .catalog-edit-wrap > .ui-btn { height: 24px; padding: 0 4px; }
+.catalog-cell-price .catalog-edit-form:not(:empty), .catalog-cell-price .catalog-takeover-note, .catalog-cell-price .catalog-readonly,
+.catalog-cell-price .catalog-ineligible, .catalog-cell-price .catalog-empty,
+.catalog-cell-switch .catalog-confirm:not(:empty) { flex-basis: 100%; }
+.catalog-cell-price .catalog-takeover-note { margin: 0; font-size: 11.5px; color: var(--dim); }
+.catalog-cell-price .catalog-readonly { order: 2; margin: 0; }
+/* On a phone the cells stack their column label (data-label) above the
+ * value: in the flex cells it keeps its own line. */
+.catalog-cell-price::before, .catalog-cell-switch::before { flex-basis: 100%; }
+/* Filters in one row beside the chips, placeholders never cut at 1440. */
+@media (min-width: 701px) {
+  .catalog-bar > .catalog-filters { flex: 1 1 auto; justify-content: flex-end; }
+  .catalog-filters select[name="source"], .catalog-filters select[name="active"] { flex: 0 1 auto; }
+  .catalog-filters input[name="category"] { flex: 0 1 160px; max-width: 170px; }
+  .catalog-filters .catalog-search { flex: 0 1 240px; max-width: 260px; }
+}
+.catalog-cell-price .catalog-edit-form:empty, .catalog-cell-switch .catalog-confirm:empty { display: none; }
+button.catalog-remove { height: 28px; min-height: 0; padding: 0 8px; border: none; background: transparent; box-shadow: none; color: var(--muted); font-size: 12.5px; font-weight: 700; }
+button.catalog-remove:hover { color: var(--danger); background: var(--surface-soft); }
+.catalog-switch-static { position: relative; display: inline-block; width: 40px; height: 24px; border-radius: 99px; background: var(--line); opacity: .7; }
+.catalog-switch-static::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); }
+.catalog-switch-static.on { background: var(--accent); }
+.catalog-switch-static.on::after { left: 19px; }
 
 @media (max-width: 700px) {
   .catalog-thead { display: none; }
@@ -1596,7 +1720,8 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
   .catalog-bar { flex-direction: column; align-items: stretch; }
   .catalog-filters { flex-direction: column; align-items: stretch; }
   /* In colonna il flex-basis (110-180 px) diventava altezza: menu e ricerca alti 100 px. */
-  .catalog-filters > *, .catalog-filters select[name="source"], .catalog-filters .catalog-search { flex: none; max-width: none; }
+  .catalog-filters > *, .catalog-filters select[name="source"], .catalog-filters .catalog-search,
+  .catalog-filters input[name="category"] { flex: none; max-width: none; }
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
@@ -1683,6 +1808,7 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-empty { border: 1px dashed var(--line); border-radius: 9px; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .ui-empty strong { font-size: 14px; }
 .ui-empty span { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.ui-loading { padding: 24px 0; font-size: 13px; color: var(--muted); }
 .ui-section { margin: 34px 0 0; }
 .ui-section-title { margin: 0 0 16px; font-size: 22px; letter-spacing: -.024em; }
 .ui-icon { display: inline-flex; width: 16px; height: 16px; flex-shrink: 0; vertical-align: -3px; }
@@ -1752,6 +1878,39 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep-rows.panel { margin-top: 4px; border-radius: 16px; border: 1px solid var(--line-soft); box-shadow: none; }
 .bo-rep-rows .panel-heading h2 { font-size: 18px; }
 .bo-rep-rows > .lede { font-size: 13px; }
+/* backlog:c3e66b36ddb7 — Reporting like prototype 09: filters beside the
+   title, funnel steps, forecast head, violet «Cosa noto», dark code tree. */
+.bo-rep-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 20px; }
+.bo-rep-header > .bo-rep-top { min-width: 0; }
+.bo-rep-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.bo-rep-people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bo-rep-person.ui-chip { min-width: 34px; height: 34px; padding: 0 9px; border-radius: 99px; border: 1.5px solid transparent; background: var(--surface-soft); color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 700; cursor: pointer; }
+.bo-rep-person.ui-chip:hover { border-color: var(--line); }
+.bo-rep-person.ui-chip.active { border-color: var(--ink); background: var(--surface); }
+.bo-preventivi .bo-rep-step { display: grid; gap: 6px; margin-top: 12px; }
+.bo-rep-step-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
+.bo-rep-step-name { font-weight: 600; }
+.bo-rep-step-value { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.bo-rep-step-track { height: 24px; border-radius: 6px; background: var(--surface-soft); overflow: hidden; }
+.bo-rep-step-fill { height: 100%; border-radius: 6px; background: var(--accord); }
+.bo-rep-grid > .pipeline-forecast .bo-rep-head h3 { margin: 0; font-size: 16px; color: var(--ink); }
+.bo-rep-amount { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+.bo-rep-grid > .bo-rep-full + .bo-rep-wide { grid-row: span 2; }
+.bo-rep-grid > .bo-rep-narrow:last-child { background: var(--surface); border-color: var(--line-soft); }
+.bo-rep-grid > .bo-cosa-noto { background: var(--agent-card); border-color: var(--agent-line); }
+.bo-cosa-noto-title { margin: 0 0 4px; font-size: 14px; font-weight: 700; color: var(--agent-ink); }
+.bo-cosa-noto-item { margin: 0; padding: 12px 0; border-top: 1px solid var(--agent-line); font-size: 14px; line-height: 1.5; color: var(--ink); }
+.bo-cosa-noto-cta.ui-btn { margin-top: 4px; background: var(--agent-ink); color: var(--paper); }
+.bo-codice-title { margin: 0 0 12px; font-size: 16px; font-weight: 700; color: var(--ink); }
+.panel pre.bo-codice-tree { display: grid; gap: 3px; margin: 0 0 12px; padding: 14px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); overflow-x: auto; }
+.panel pre.bo-codice-tree code { font-family: var(--mono); font-size: 12px; white-space: pre; background: transparent; color: var(--paper); padding: 0; }
+.bo-codice > .lede { font-size: 12.5px; color: var(--muted); }
+.panel pre.bo-codice-prompt { margin: 10px 0; }
+.panel pre.bo-codice-prompt code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11.5px; }
+.bo-codice .actions .ui-btn { padding: 8px 12px; border-radius: 9px; font-size: 13px; }
+@media (max-width: 900px) {
+  .bo-rep-grid > .bo-rep-full + .bo-rep-wide { grid-row: auto; }
+}
 
 /* Pipeline, passaggio 4 (supervisore): la card resta quella del prototipo; il
    «Sposta in» serve a tastiera e touch, non si vede col mouse (si trascina). */
@@ -2050,6 +2209,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-foot { display: flex; align-items: center; gap: 14px; padding: 12px 18px 14px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-composer-foot [data-action="composer-send"] { min-width: 96px; border-radius: 999px; }
 .bo-composer-limit { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.bo-composer-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.bo-composer-body .bo-composer-reply-on { flex: none; margin: 0 0 6px; }
 @media (max-width: 700px) {
   .bo-scheda-composer { inset: 0; width: auto; max-height: none; border-radius: 0; border: 0; }
   .bo-scheda-composer[data-minimized="true"] { inset: auto 0 0 0; width: auto; }
@@ -2115,3 +2276,29 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-timeline .bo-scheda-bubble .bo-scheda-sync[data-sync="failed"] { color: var(--danger); font-weight: 600; }
 .bo-scheda-bubble .bo-scheda-allegato { max-width: 100%; border-radius: 10px; }
 @media (max-width: 560px) { .bo-scheda-bubble { max-width: 86%; } }
+
+/* B5 — real phone pass (backlog:d7c78e9cdf53): send from the scheda, book
+ * without dragging, no zoom and no sideways scroll on a 390px phone. */
+@media (max-width: 700px) {
+  /* The inline new-appointment form (phone, no popover): its customer search
+   * kept `.cal-form input`'s 12px left padding, so the magnifier sat on the
+   * placeholder. Same 36px the popover already gives it; desktop untouched. */
+  .cal-form .ui-search .ui-search-input { padding-left: 36px; }
+  /* iOS Safari zooms the page when a field under 16px takes focus, and the
+   * page stays zoomed (sideways scroll included): on a phone every typed
+   * field reads at 16px. `!important` because the desktop sizes ride
+   * component selectors of every specificity; the rule only lifts the floor
+   * on narrow screens, desktop sizes are untouched. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px !important; }
+  /* The stacked new-appointment form: search and person pickers take the
+   * full row like the other fields instead of a half-width box. */
+  .cal-form .ui-search, .cal-form .ui-select { display: flex; flex: 1 1 100%; width: 100%; }
+}
+@media (max-width: 700px) {
+  /* `touch-action: none` (kept for the press-and-drag) swallowed every swipe
+   * on the stacked phone week, so a finger on the grid could not scroll the
+   * page. Pan stays the browser's: a tap still opens the 30-minute slot form
+   * (pointerdown + pointerup), a swipe scrolls and cancels the pick. Scoped
+   * to the stacked layout only: a wide touch screen keeps the drag. */
+  .cal-day { touch-action: manipulation; }
+}
