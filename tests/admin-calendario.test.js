@@ -4094,3 +4094,65 @@ test('AI off stays remembered for each space, not only the last one', async () =
   await view.render();
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'space A is still off');
 });
+
+// Review #657 round 5 P1: a pager move while the named week preloads made
+// the held guard read the paged week and propose a held step.
+test('a pager move during the cross-week preload never proposes against the wrong week', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const namedWeek = {
+    from: '2026-10-26T00:00:00.000Z',
+    to: '2026-11-02T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'n1', status: 'booked', teamMemberId: 'marco', serviceKey: 'taglio',
+        startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', label: 'Ada' },
+      }],
+    }],
+  };
+  const pagedWeek = { from: '2026-11-02T00:00:00.000Z', to: '2026-11-09T00:00:00.000Z', members: [{ teamMemberId: 'marco', appointments: [] }] };
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-29T10:00:00.000Z', endsAt: '2026-10-29T10:45:00.000Z' },
+    slots: [
+      { startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z' },
+      { startsAt: '2026-10-29T13:00:00.000Z', endsAt: '2026-10-29T13:45:00.000Z' },
+    ],
+  });
+  let holdNamed = false;
+  let releaseNamed = () => {};
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week') && holdNamed) {
+        holdNamed = false;
+        base.calls.push({ path, method: 'GET' });
+        await new Promise((resolve) => { releaseNamed = resolve; });
+        return namedWeek;
+      }
+      if (path.startsWith('/api/appointments/team-week') && path.includes('2026-11-0')) {
+        base.calls.push({ path, method: 'GET' });
+        return pagedWeek;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await flushMany();
+  holdNamed = true;
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  // The operator pages forward while the named week is still loading.
+  mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Settimana dopo').dispatch('click');
+  await flushMany();
+  releaseNamed();
+  await flushMany(14);
+  const rows = (mount.querySelector('.cal-slots')?.findAll('span') ?? []).map((node) => node.textContent);
+  assert.ok(!rows.includes('29 ott · 10:00–10:45'), `the held 10:00 Rome step is never proposed (${rows.join(' | ')})`);
+});

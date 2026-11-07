@@ -2221,7 +2221,12 @@ export function createCalendarioView(deps) {
         const shown = parseMemberFilter(state.memberFilter);
         // The held-overlap guard below reads the named week: wait for it,
         // never filter against a nulled week (review #657).
+        const wantedKeys = state.weekKeys;
         if (shown.length > 0) await loadWeek(shown);
+        // A pager move during the preload leaves this answer unpublished:
+        // the guard must never read a week other than the named one
+        // (review #657, round 5).
+        if (state.weekKeys !== wantedKeys) return;
       }
       const bounds = suggestBounds(dayKey);
       if (!bounds) {
