@@ -3192,6 +3192,24 @@ test('59def6cb805d: each identity reads its sync line from the observed passages
   assert.ok(byChannel.phone.includes('→ in uscita'), `only an outgoing call: ${byChannel.phone}`);
 });
 
+test('59def6cb805d review: on a truncated page a one-way sync line names itself partial (C10)', async () => {
+  // The first page holds only inbound Instagram passages; the outbound one
+  // may sit on a later page. «← in entrata» alone would claim the channel
+  // never sent anything: on a partial read it says so, like the count line.
+  const truncated = { ...TIMELINE, entries: { ...TIMELINE.entries, truncated: true } };
+  const mount = await renderCard(stubClient({ timeline: truncated }));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('instagram'), '← in entrata (elenco parziale)', 'one direction on a partial page is not exhaustive');
+  assert.equal(syncOf('phone'), '→ in uscita (elenco parziale)');
+  assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'both directions seen are proven even on a partial page');
+  assert.ok(mount.textContent.includes('(elenco parziale)'), 'the count line and the sync lines share one honesty standard');
+  const complete = await renderCard(stubClient());
+  assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
+});
+
 test('59def6cb805d: observedDirections never assumes a direction nobody recorded (C10)', () => {
   const seen = observedDirections({ entries: { items: [
     { channel: 'WhatsApp', direction: 'inbound' },
@@ -3268,6 +3286,24 @@ test('59def6cb805d: the offer card shows the server amount, none without one (C2
     profile: { ...PROFILE, quotes: { ...PROFILE.quotes, items: [{ id: 'q1', status: 'sent', name: 'Abbonamento', amountCents: null, currency: 'EUR' }] } },
   }));
   assert.equal(recurring.findAll('p').filter((node) => node.getAttribute('class') === 'bo-scheda-offer-amount').length, 0);
+});
+
+test('59def6cb805d review: an opportunity without quotes paints its server amount on the scheda (C25)', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 120000, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the opportunity fallback paints its amount');
+  assert.equal(amount.textContent, '1.200 €');
+  assert.equal(mount.findAll('a').filter((node) => node.getAttribute('class') === 'bo-scheda-offer-link').length, 0,
+    'an opportunity has no quote detail: the line stays plain');
 });
 
 test('59def6cb805d: the next appointment reads title then day and hours (C26)', async () => {

@@ -1670,8 +1670,14 @@ export function createCustomerCardView(deps) {
       // passages on this channel prove — both directions seen reads
       // «↔ sincronizzato», received only «← in entrata», sent only
       // «→ in uscita». A channel with no directed passage says nothing.
+      // Review #650 (P2): the directions come from the entries page, so on
+      // a truncated read a single direction is not exhaustive — the other
+      // may sit on a later page. Both seen is proven either way; one seen
+      // names the partial list, the same honesty standard as the count.
       const seen = directions.get(system);
-      const sync = seen?.in && seen?.out ? '↔ sincronizzato' : seen?.in ? '← in entrata' : seen?.out ? '→ in uscita' : null;
+      const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+      const sync = seen?.in && seen?.out ? '↔ sincronizzato'
+        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
       if (sync) line.appendChild(el('span', 'bo-scheda-identity-sync', sync));
       box.appendChild(line);
     }
