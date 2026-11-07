@@ -53,51 +53,164 @@ export const MANUAL_PHONE_SYSTEM = 'phone';
  * storage the other views use; nothing leaves the browser.
  */
 export const NEW_CUSTOMER_DRAFT_KEY = 'accordo.nuovoClienteDraft.v1';
+/** A kept draft older than this never comes back: stale PII stays unreadable. */
+export const NEW_CUSTOMER_DRAFT_TTL_MS = 12 * 60 * 60 * 1000;
+/** Save steps after the customer exists, in run order, for resume bookkeeping. */
+const DRAFT_STEPS = Object.freeze(['phone', 'custom', 'note']);
 
-/** @param {{ getItem?: unknown } | null | undefined} storage */
-export function readNewCustomerDraft(storage) {
+const cleanDraftText = (value) => (typeof value === 'string' ? value.slice(0, 4000) : '');
+
+/** Space-scoped key: another space never reads this draft. Local dev (no space) keeps the base key. */
+export function newCustomerDraftKey(spaceId) {
+  if (typeof spaceId === 'string' && spaceId !== '') return `${NEW_CUSTOMER_DRAFT_KEY}.${spaceId}`;
+  return NEW_CUSTOMER_DRAFT_KEY;
+}
+
+/** Tab-scoped draft store: the login round-trip is a same-tab replace, so the draft survives it, while another tab, operator or browser restart never sees it. Null where sessionStorage is unavailable (then the caller falls back). */
+export function tabDraftStorage() {
   try {
-    const raw = storage?.getItem?.(NEW_CUSTOMER_DRAFT_KEY);
-    if (typeof raw !== 'string' || raw === '') return null;
-    const parsed = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const clean = (value) => (typeof value === 'string' ? value.slice(0, 4000) : '');
-    const draft = {
-      nome: clean(parsed.nome),
-      email: clean(parsed.email),
-      telefono: clean(parsed.telefono),
-      azienda: clean(parsed.azienda),
-      nota: clean(parsed.nota),
-    };
-    if (Object.values(draft).every((value) => value === '')) return null;
-    return draft;
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const base = window.sessionStorage;
+      return {
+        getItem: (key) => base.getItem(key),
+        setItem: (key, value) => base.setItem(key, String(value)),
+        removeItem: (key) => base.removeItem(key),
+      };
+    }
+  } catch {
+    // Private mode: no tab store, the caller falls back.
+  }
+  return null;
+}
+
+/** @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} scope */
+function scopeOf(scope) {
+  const space = typeof scope?.spaceId === 'string' && scope.spaceId !== '' ? scope.spaceId : null;
+  const operator = typeof scope?.operator === 'string' && scope.operator !== '' ? scope.operator : null;
+  return { space, operator };
+}
+
+/** A draft shows only to the space and operator it was kept for; blanks match anything (local dev). */
+function draftMatchesScope(draft, scope) {
+  const { space, operator } = scopeOf(scope);
+  if (space !== null && typeof draft?.space === 'string' && draft.space !== '' && draft.space !== space) return false;
+  if (operator !== null && typeof draft?.by === 'string' && draft.by !== '' && draft.by !== operator) return false;
+  return true;
+}
+
+const validCreated = (value) => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+  && typeof value.resource === 'string' && value.resource !== ''
+  && typeof value.id === 'string' && value.id !== ''
+    ? { resource: value.resource, id: value.id }
+    : null
+);
+
+const validDone = (value) => (
+  Array.isArray(value) ? value.filter((step) => DRAFT_STEPS.includes(step)) : []
+);
+
+/** @param {unknown} raw */
+function parseDraft(raw) {
+  if (typeof raw !== 'string' || raw === '') return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (typeof parsed.savedAt !== 'number' || !(parsed.savedAt > 0)) return null;
+  if (Date.now() - parsed.savedAt > NEW_CUSTOMER_DRAFT_TTL_MS) return null;
+  const draft = {
+    nome: cleanDraftText(parsed.nome),
+    email: cleanDraftText(parsed.email),
+    telefono: cleanDraftText(parsed.telefono),
+    azienda: cleanDraftText(parsed.azienda),
+    nota: cleanDraftText(parsed.nota),
+    space: typeof parsed.space === 'string' && parsed.space !== '' ? parsed.space : null,
+    by: typeof parsed.by === 'string' && parsed.by !== '' ? parsed.by : null,
+    created: validCreated(parsed.created),
+    done: validDone(parsed.done),
+  };
+  const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
+  if (texts.every((value) => value === '') && draft.created === null) return null;
+  return draft;
+}
+
+/**
+ * @param {{ getItem?: unknown, setItem?: unknown, removeItem?: unknown } | null | undefined} storage
+ * @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} [scope]
+ */
+export function readNewCustomerDraft(storage, scope) {
+  try {
+    const key = newCustomerDraftKey(scopeOf(scope).space);
+    const raw = storage?.getItem?.(key);
+    if (typeof raw === 'string' && raw !== '') {
+      const draft = parseDraft(raw);
+      if (draft !== null) return draftMatchesScope(draft, scope) ? draft : null;
+      try { storage?.removeItem?.(key); } catch { /* Corrupt or expired: drop it. */ }
+    }
+    // Adopt a pre-scoping draft once: it was kept on this same keyboard, so
+    // it belongs to this operator — move it under the scoped key instead of
+    // leaving global PII behind.
+    if (key !== NEW_CUSTOMER_DRAFT_KEY) {
+      const legacy = storage?.getItem?.(NEW_CUSTOMER_DRAFT_KEY);
+      if (typeof legacy === 'string' && legacy !== '') {
+        try { storage?.removeItem?.(NEW_CUSTOMER_DRAFT_KEY); } catch { /* Keep going. */ }
+        const draft = parseDraft(legacy);
+        if (draft === null) return null;
+        const { space, operator } = scopeOf(scope);
+        draft.space = space;
+        draft.by = operator;
+        try { storage?.setItem?.(key, JSON.stringify({ ...draft, savedAt: Date.now() })); } catch { /* Memory only. */ }
+        return draftMatchesScope(draft, scope) ? draft : null;
+      }
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-/** @param {{ nome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values */
-export function saveNewCustomerDraft(storage, values) {
+/**
+ * @param {{ getItem?: unknown, setItem?: unknown, removeItem?: unknown } | null | undefined} storage
+ * @param {{ nome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values
+ * @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} [scope]
+ * @param {{ created?: unknown, done?: unknown } | null | undefined} [extra]
+ */
+export function saveNewCustomerDraft(storage, values, scope, extra) {
   try {
-    const clean = (value) => (typeof value === 'string' ? value.slice(0, 4000) : '');
+    const { space, operator } = scopeOf(scope);
+    const created = validCreated(extra?.created);
     const draft = {
-      nome: clean(values?.nome),
-      email: clean(values?.email),
-      telefono: clean(values?.telefono),
-      azienda: clean(values?.azienda),
-      nota: clean(values?.nota),
+      nome: cleanDraftText(values?.nome),
+      email: cleanDraftText(values?.email),
+      telefono: cleanDraftText(values?.telefono),
+      azienda: cleanDraftText(values?.azienda),
+      nota: cleanDraftText(values?.nota),
+      space,
+      by: operator,
+      created,
+      done: validDone(extra?.done),
+      savedAt: Date.now(),
     };
-    if (Object.values(draft).every((value) => value === '')) return false;
-    storage?.setItem?.(NEW_CUSTOMER_DRAFT_KEY, JSON.stringify(draft));
+    const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
+    if (texts.every((value) => value === '') && created === null) return false;
+    storage?.setItem?.(newCustomerDraftKey(space), JSON.stringify(draft));
     return true;
   } catch {
     return false;
   }
 }
 
-export function clearNewCustomerDraft(storage) {
+/**
+ * @param {{ removeItem?: unknown } | null | undefined} storage
+ * @param {{ spaceId?: unknown } | null | undefined} [scope]
+ */
+export function clearNewCustomerDraft(storage, scope) {
   try {
-    storage?.removeItem?.(NEW_CUSTOMER_DRAFT_KEY);
+    storage?.removeItem?.(newCustomerDraftKey(scopeOf(scope).space));
   } catch {
     // The draft simply stays until the next successful save.
   }
@@ -180,11 +293,22 @@ export function applyRefusalText(receipt) {
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
- *   notify?: (message: string) => void, submissions?: any, storage?: any}} deps
+ *   notify?: (message: string) => void, submissions?: any, storage?: any,
+ *   draftStorage?: any, spaceId?: unknown, operator?: unknown}} deps
  */
 export function createCustomerFormView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {} } = deps;
   const store = deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage);
+  // The kept draft lives apart from the submissions store: tab-scoped, so a
+  // login round-trip (same-tab replace) brings it back while another tab,
+  // operator or restart never sees it.
+  const drafts = deps.draftStorage ?? tabDraftStorage() ?? store;
+  /** @param {unknown} value */
+  const resolveScopeValue = (value) => {
+    const resolved = typeof value === 'function' ? value() : value;
+    return typeof resolved === 'string' && resolved !== '' ? resolved : null;
+  };
+  const draftScope = () => ({ spaceId: resolveScopeValue(deps.spaceId), operator: resolveScopeValue(deps.operator) });
   const { client } = bindAdminMutations(deps.client, deps);
   const el = elFor(doc); // BO-F6-02: shared element builder.
   let renderToken = 0;
@@ -295,14 +419,18 @@ export function createCustomerFormView(deps) {
 
     // B4: after the login round-trip the half-written customer is back, so
     // the operator checks it and presses Salva instead of retyping a long note.
-    const restored = readNewCustomerDraft(store);
+    // When the customer already exists (kept mid-save), Salva resumes from
+    // the failed step instead of creating a second scheda.
+    const restored = readNewCustomerDraft(drafts, draftScope());
     if (restored !== null) {
       if (restored.nome !== '') nome.value = restored.nome;
       if (restored.email !== '') email.value = restored.email;
       if (restored.telefono !== '') telefono.value = restored.telefono;
       if (restored.azienda !== '') azienda.value = restored.azienda;
       if (restored.nota !== '') nota.value = restored.nota;
-      general.textContent = 'Bozza ripristinata dopo l\u2019accesso: controlla e premi Salva.';
+      general.textContent = restored.created !== null
+        ? 'Il cliente è già creato: controlla e premi Salva per completare.'
+        : 'Bozza ripristinata dopo l\u2019accesso: controlla e premi Salva.';
     }
 
     const actions = el('div', 'bo-cliente-nuovo-actions');
@@ -373,7 +501,7 @@ export function createCustomerFormView(deps) {
     let busy = false;
     save.addEventListener('click', () => void saveCustomer());
     cancel.addEventListener('click', () => {
-      clearNewCustomerDraft(store);
+      clearNewCustomerDraft(drafts, draftScope());
       navigate('#/customer-data');
     });
 
@@ -387,16 +515,21 @@ export function createCustomerFormView(deps) {
 
     // The session may die after the customer exists (phone, custom value,
     // note). The shell is already leaving for the space login: keep the
-    // unsaved remainder in the draft, stay on the form with the session
-    // message, never navigate away. True when the error was a lost session
-    // (handled or invalidated: the save stops either way).
+    // unsaved remainder in the draft together with the created subject and
+    // the steps already done, stay on the form with the session message,
+    // never navigate away. After sign-in Salva resumes from the failed step
+    // instead of creating a second scheda. True when the error was a lost
+    // session (handled or invalidated: the save stops either way).
     const SESSION_KEPT_MESSAGE = 'Sessione scaduta: accedi di nuovo, il testo è conservato e lo ritrovi qui.';
-    const rescueSessionLoss = (err) => {
+    const SESSION_CREATED_MESSAGE = 'Sessione scaduta: il cliente è già creato, accedi di nuovo e premi Salva per completare.';
+    const rescueSessionLoss = (err, { subject = null, step = null } = {}) => {
       if (!isNewCustomerSessionLoss(err)) return false;
       if (token !== renderToken) return true;
-      saveNewCustomerDraft(store, currentValues());
-      setErrors({ general: SESSION_KEPT_MESSAGE });
-      notify(SESSION_KEPT_MESSAGE);
+      const done = step === null ? [] : DRAFT_STEPS.slice(0, DRAFT_STEPS.indexOf(step));
+      saveNewCustomerDraft(drafts, currentValues(), draftScope(), { created: subject, done });
+      const kept = subject === null ? SESSION_KEPT_MESSAGE : SESSION_CREATED_MESSAGE;
+      setErrors({ general: kept });
+      notify(kept);
       return true;
     };
 
@@ -409,67 +542,83 @@ export function createCustomerFormView(deps) {
       busy = true;
       save.disabled = true;
       try {
-        const { firstName, lastName } = splitNome(values.nome);
-        const row = { firstName };
-        if (lastName !== '') row.lastName = lastName;
         const cleanEmail = values.email.trim();
-        if (cleanEmail !== '') row.email = cleanEmail;
         const cleanAzienda = values.azienda.trim();
-        if (cleanAzienda !== '') row.companyName = cleanAzienda;
-        const result = await client.request('/api/customer-data/import/apply', {
-          method: 'POST',
-          body: JSON.stringify({ system: MANUAL_IMPORT_SYSTEM, rows: [row], acceptance: 'partial' }),
-        });
-        if (token !== renderToken) return;
-        const receipt = result?.receipts?.[0] ?? null;
-        const subject = receipt?.subject ?? null;
-        if (receipt?.outcome !== 'accepted' || !subject?.id) {
-          setErrors({ general: applyRefusalText(receipt) });
-          return;
-        }
+        // Resume: the customer already exists from a session-loss rescue and
+        // the identity on screen is unchanged — reuse the subject and rerun
+        // only the steps that never completed, never a second apply.
+        const resumed = readNewCustomerDraft(drafts, draftScope());
+        const resumable = resumed?.created !== null && resumed?.created !== undefined
+          && resumed.email === cleanEmail ? resumed : null;
+        let subject;
+        let done = new Set();
         let warning = null;
-        if (receipt?.reasonCode === 'MATCHED_EXISTING') {
-          warning = 'Esisteva già una scheda con questa email: eccola, senza duplicati.';
+        if (resumable !== null) {
+          subject = resumable.created;
+          done = new Set(resumable.done);
+        } else {
+          const { firstName, lastName } = splitNome(values.nome);
+          const row = { firstName };
+          if (lastName !== '') row.lastName = lastName;
+          if (cleanEmail !== '') row.email = cleanEmail;
+          if (cleanAzienda !== '') row.companyName = cleanAzienda;
+          const result = await client.request('/api/customer-data/import/apply', {
+            method: 'POST',
+            body: JSON.stringify({ system: MANUAL_IMPORT_SYSTEM, rows: [row], acceptance: 'partial' }),
+          });
+          if (token !== renderToken) return;
+          const receipt = result?.receipts?.[0] ?? null;
+          const created = receipt?.subject ?? null;
+          if (receipt?.outcome !== 'accepted' || !created?.id) {
+            setErrors({ general: applyRefusalText(receipt) });
+            return;
+          }
+          subject = created;
+          if (receipt?.reasonCode === 'MATCHED_EXISTING') {
+            warning = 'Esisteva già una scheda con questa email: eccola, senza duplicati.';
+          }
         }
         const phone = normalizeTelefono(values.telefono);
-        if (phone !== '' && cleanEmail !== '') {
+        if (phone !== '' && cleanEmail !== '' && !done.has('phone')) {
           try {
             const linked = await linkPhone(phone, cleanEmail, subject);
             if (token !== renderToken) return;
             if (!linked.ok) warning = linked.warning;
           } catch (err) {
-            if (rescueSessionLoss(err)) return;
+            if (rescueSessionLoss(err, { subject, step: 'phone' })) return;
             if (token !== renderToken) return;
             warning = 'Il cliente è creato, ma il telefono non si è collegato. Riprova dalla scheda.';
           }
         }
         // Custom values, one governed write per touched field; a refused
         // value warns with the field's own Italian error, never blocks.
-        for (const entry of customControls) {
-          const key = entry.control.getAttribute('data-field-key');
-          const typed = entry.read().trim();
-          if (typed === '') continue;
-          try {
-            await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
-          } catch (err) {
-            if (rescueSessionLoss(err)) return;
-            entry.setError(String(err?.message ?? 'Valore non valido.'));
-            if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
+        if (!done.has('custom')) {
+          for (const entry of customControls) {
+            const key = entry.control.getAttribute('data-field-key');
+            const typed = entry.read().trim();
+            if (typed === '') continue;
+            try {
+              await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
+            } catch (err) {
+              if (rescueSessionLoss(err, { subject, step: 'custom' })) return;
+              entry.setError(String(err?.message ?? 'Valore non valido.'));
+              if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
+            }
+            if (token !== renderToken) return;
           }
-          if (token !== renderToken) return;
         }
         // The note through the single writer: it lands in the cronologia.
         const noteText = String(nota.value ?? '').trim();
-        if (noteText !== '') {
+        if (noteText !== '' && !done.has('note')) {
           try {
             await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
           } catch (err) {
-            if (rescueSessionLoss(err)) return;
+            if (rescueSessionLoss(err, { subject, step: 'note' })) return;
             if (token !== renderToken) return;
             if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
           }
         }
-        clearNewCustomerDraft(store);
+        clearNewCustomerDraft(drafts, draftScope());
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
         if (warning !== null) notify(warning);
       } catch (error) {
@@ -480,7 +629,7 @@ export function createCustomerFormView(deps) {
           // a long note above all — stays in storage, so signing back in
           // reopens this form with everything still here. Nothing writes:
           // the customer is created only after the new login, with Salva.
-          saveNewCustomerDraft(store, currentValues());
+          saveNewCustomerDraft(drafts, currentValues(), draftScope());
           setErrors({ general: SESSION_KEPT_MESSAGE });
           notify(SESSION_KEPT_MESSAGE);
           return;

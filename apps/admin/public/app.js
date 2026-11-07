@@ -432,7 +432,7 @@ import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { CLIENTI_IMPORT_ROUTE, createCustomerListView } from './admin-clienti.js';
-import { CLIENTI_NUOVO_ROUTE, createCustomerFormView } from './admin-cliente-nuovo.js';
+import { CLIENTI_NUOVO_ROUTE, createCustomerFormView, tabDraftStorage } from './admin-cliente-nuovo.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
@@ -619,8 +619,13 @@ const customerFormView = createCustomerFormView({
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
   // B4 (backlog:5a40c73e54aa): the half-written customer survives the login
-  // round-trip in this same shell storage, and returns after sign-in.
+  // round-trip in the tab store, and returns after sign-in. Tab-scoped (never
+  // the shared shell storage), keyed by space and operator, so another
+  // space, operator or restart never reads it.
   storage: shellStorage,
+  draftStorage: tabDraftStorage() ?? shellStorage,
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  operator: () => shellUser?.email ?? null,
 });
 
 // Clienti import tool (ADR-037, backlog:80b25fb0, restyle backlog:5b164ab5):
