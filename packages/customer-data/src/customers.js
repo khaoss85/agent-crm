@@ -79,6 +79,12 @@ export const CUSTOMER_VIEWS = Object.freeze([
   { id: 'nuovi-lead', label: 'Nuovi lead', filters: Object.freeze({ stato: 'contatto' }) },
   { id: 'clienti-attivi', label: 'Clienti attivi', filters: Object.freeze({ stato: 'cliente' }) },
   { id: 'rinnovi-30-giorni', label: 'Rinnovi entro 30 giorni', filters: Object.freeze({ rinnoviGiorni: 30 }) },
+  // «Da leggere» (backlog:9e003582): only customers with unread inbound
+  // messages, most recent unread first. A saved query like the rest: no row
+  // snapshot, so it re-reads current records on every open. Rows without
+  // read state (no member, no watermark table) carry unreadCount null and
+  // never match — the view reads empty, never everybody.
+  { id: 'da-leggere', label: 'Da leggere', filters: Object.freeze({ daLeggere: true }) },
 ]);
 
 /** Sort orders from the approved prototype ("04 Clienti"). */
@@ -257,6 +263,9 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     if (strippedQ !== '' && !haystackOf(row).includes(strippedQ)) return false;
     if (viewExtra.ricontattareOggi === true && row?.nextStep?.dueAt?.slice(0, 10) !== today && !(row?.nextStep?.overdue === true)) return false;
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
+    // «Da leggere»: only rows with unread inbound messages. A null
+    // unreadCount (no member, no watermark table) never matches.
+    if (viewExtra.daLeggere === true && !((row?.unreadCount ?? 0) > 0)) return false;
     return true;
   });
   return Object.freeze(filtered);
@@ -279,6 +288,10 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     const time = Date.parse(String(row?.lastContactAt ?? ''));
     return Number.isFinite(time) ? time : -1;
   };
+  const lastUnreadMs = (row) => {
+    const time = Date.parse(String(row?.lastUnreadAt ?? ''));
+    return Number.isFinite(time) ? time : -1;
+  };
   const sorted = [...filtered];
   if (query.sort === 'name') sorted.sort(byName);
   else if (query.sort === 'value') sorted.sort((a, b) => (Number(b?.offerValueCents ?? 0) - Number(a?.offerValueCents ?? 0)) || byName(a, b));
@@ -286,6 +299,11 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     sorted.sort((a, b) => (
       CUSTOMER_STATUS_ORDER.indexOf(a?.status?.value) - CUSTOMER_STATUS_ORDER.indexOf(b?.status?.value)
     ) || byName(a, b));
+  } else if (query.view?.id === 'da-leggere') {
+    // «Da leggere» recency is the newest unread message, not the newest
+    // contact: a customer whose latest event is an outbound reply still sorts
+    // by the inbound message nobody read. Nulls (no unread) sort last.
+    sorted.sort((a, b) => (lastUnreadMs(b) - lastUnreadMs(a)) || byName(a, b));
   } else {
     sorted.sort((a, b) => (lastContactMs(b) - lastContactMs(a)) || byName(a, b));
   }
@@ -367,6 +385,10 @@ export function shapeCustomerRow(subject, reads = {}) {
     ?? { value: 'contatto', reason: 'no signed-business evidence was read for this customer in the list scan' };
   const activity = reads.activityBySubject?.get(key) ?? null;
   const offer = reads.offerBySubject?.get(key) ?? null;
+  // «Da leggere» (backlog:9e003582): inbound messages nobody read, counted
+  // with the core's one unread rule. Nulls when the caller passed no read
+  // state (no member, no watermark table) — never an invented zero.
+  const unread = reads.unreadBySubject?.get(key) ?? null;
   const task = reads.taskBySubject?.get(key) ?? null;
   const budget = reads.budgetBySubject?.get(key)
     ?? { available: false, value: null, source: null, reason: 'nessun budget estratto dall\u2019AI per questo cliente' };
@@ -383,6 +405,8 @@ export function shapeCustomerRow(subject, reads = {}) {
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
     lastContactText: previewLastContactText(activity?.text ?? null),
+    unreadCount: unread === null ? null : unread.unread,
+    lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,

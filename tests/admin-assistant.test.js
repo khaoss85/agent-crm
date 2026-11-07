@@ -6,6 +6,7 @@ import {
   ASSISTANT_SUGGEST_ONLY_NOTICE,
   FREE_QUESTION_DISABLED_NOTICE,
   SUGGESTION_CATALOG,
+  answerFreeLocal,
   askFreeQuestion,
   assistantDisabledNotice,
   createAssistantPanel,
@@ -1292,4 +1293,344 @@ test('review #596 P2: the header ✕ cancels a waiting question and a slow probe
   await panel.open('clienti');
   assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'no ghost waiting bubble on the next open');
   assert.ok(!mount.textContent.includes('«meteo a Milano»'), 'the cancelled question never runs');
+});
+
+// Voce 34fd687c: domande libere sui dati, con i nomi dei clienti e il
+// contesto su più turni. Date locali a mezzogiorno: mai sul confine.
+
+const pad2 = (part) => String(part).padStart(2, '0');
+const localYmd = (date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+const LEAD_TODAY = localYmd(new Date());
+const LEAD_YESTERDAY = localYmd(new Date(Date.now() - 86400000));
+const atHour = (day, hour) => `${day}T${pad2(hour)}:00:00`;
+
+const LEAD_CLIENT = {
+  '/api/modules/contact/records?limit=50': {
+    items: [
+      { id: 'c-sara', firstName: 'Sara', lastName: 'Bianchi', email: 'sara@example.it', createdAt: atHour(LEAD_TODAY, 9) },
+      { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+      { id: 'c-ada', firstName: 'Ada', lastName: 'Neri', email: 'ada@example.it', createdAt: atHour(LEAD_YESTERDAY, 15) },
+      { id: 'c-vecchio', firstName: 'Vecchio', lastName: 'Lead', createdAt: '2025-01-01T10:00:00' },
+    ],
+  },
+  '/api/modules/company/records?limit=50': {
+    items: [
+      { id: 'co-olimpia', name: 'Palestra Olimpia', createdAt: atHour(LEAD_TODAY, 10) },
+    ],
+  },
+};
+
+function shownText(answer) {
+  return [...answer.lines, ...answer.sources.map((source) => source.label),
+    ...answer.actions.map((action) => `${action.label} ${action.confirmLabel ?? ''}`)].join('\n');
+}
+
+test('voce 34fd687c: «quanti lead oggi?» nomina i clienti, mai UUID', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi??');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.disabled, false);
+  const text = shownText(outcome.answer);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('3 lead nuovi oggi')), JSON.stringify(outcome.answer.lines));
+  assert.ok(text.includes('Marco Rossi'));
+  assert.ok(text.includes('Sara Bianchi'));
+  assert.ok(text.includes('Palestra Olimpia'));
+  assert.ok(!text.includes('Ada Neri'), 'yesterday stays out of today');
+  for (const raw of ['c-marco', 'c-sara', 'co-olimpia', 'c-ada']) {
+    assert.ok(!text.includes(raw), `raw id leaked: ${raw}`);
+  }
+  assert.ok(outcome.answer.sources.length > 0);
+  for (const source of outcome.answer.sources) {
+    assert.ok(source.href.startsWith('#/customer-card/'), source.href);
+  }
+  const action = outcome.answer.actions[0];
+  assert.ok(action.label.includes('Marco Rossi'), 'the button names the first customer');
+  assert.ok(action.href.includes('c-marco'));
+});
+
+test('voce 34fd687c: tre turni tengono il contesto (oggi, e ieri, chi è il primo)', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const dry = { mode: 'dry-run' };
+  const first = await askFreeQuestion(client, dry, 'quanti lead oggi?');
+  assert.equal(first.ok, true);
+  assert.ok(first.answer.context && first.answer.context.kind === 'lead-day');
+  const second = await askFreeQuestion(client, dry, 'e ieri?', first.answer.context);
+  assert.equal(second.ok, true);
+  assert.ok(shownText(second.answer).includes('Ada Neri'));
+  assert.ok(!shownText(second.answer).includes('Marco Rossi'));
+  const third = await askFreeQuestion(client, dry, 'chi è il primo?', second.answer.context);
+  assert.equal(third.ok, true);
+  assert.ok(third.answer.lines.some((line) => line.includes('Ada Neri')), JSON.stringify(third.answer.lines));
+  assert.ok(third.answer.actions[0].label.includes('Ada Neri'));
+});
+
+test('voce 34fd687c: «chi è il primo?» senza contesto guida in italiano', async () => {
+  const outcome = await askFreeQuestion(stubClient(LEAD_CLIENT), { mode: 'dry-run' }, 'chi è il primo?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('quanti lead oggi')), JSON.stringify(outcome.answer.lines));
+  assert.deepEqual(outcome.answer.sources, []);
+});
+
+test('voce 34fd687c: ieri vuoto poi «chi è il primo?» non riusa il giorno prima', async () => {
+  const dry = { mode: 'dry-run' };
+  const todayOnly = stubClient({
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+      ],
+    },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const first = await askFreeQuestion(todayOnly, dry, 'quanti lead oggi?');
+  assert.equal(first.ok, true);
+  assert.ok(first.answer.context && first.answer.context.ids.length === 1);
+  const second = await askFreeQuestion(todayOnly, dry, 'e ieri?', first.answer.context);
+  assert.equal(second.ok, true);
+  assert.ok(second.answer.lines.some((line) => line.includes('Nessun lead nuovo ieri')), JSON.stringify(second.answer.lines));
+  assert.ok(second.answer.context && second.answer.context.day === LEAD_YESTERDAY, 'empty yesterday carries context');
+  assert.deepEqual(second.answer.context.ids, []);
+  const third = await askFreeQuestion(todayOnly, dry, 'chi è il primo?', second.answer.context);
+  assert.equal(third.ok, true);
+  const text = shownText(third.answer);
+  assert.ok(!text.includes('Marco Rossi'), `stale name leaked: ${text}`);
+  assert.ok(third.answer.lines.some((line) => line.includes('Nessun lead')), JSON.stringify(third.answer.lines));
+});
+
+test('voce 34fd687c: moduli illeggibili portano contesto vuoto invece di tenere il giorno prima', async () => {
+  const failing = stubClient({
+    '/api/modules/contact/records?limit=50': new Error('forbidden'),
+    '/api/modules/company/records?limit=50': new Error('forbidden'),
+  });
+  const outcome = await askFreeQuestion(failing, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.context && outcome.answer.context.kind === 'lead-day');
+  assert.deepEqual(outcome.answer.context.ids, []);
+  assert.equal(outcome.answer.context.unreadable, true);
+  const primo = await askFreeQuestion(failing, { mode: 'dry-run' }, 'chi è il primo?', outcome.answer.context);
+  assert.ok(!shownText(primo.answer).includes('Dimmi prima'), 'a day context answers for that day');
+  assert.ok(!shownText(primo.answer).includes('Nessun lead'), `unknown re-reported as zero: ${shownText(primo.answer)}`);
+  assert.ok(primo.answer.lines.some((line) => line.includes('Non riesco a leggere i lead')), JSON.stringify(primo.answer.lines));
+  assert.ok(primo.answer.unavailable.length > 0, 'the primo answer keeps the day unavailable notes');
+});
+
+test('voce 34fd687c: thread senza nomi non mostrano mai UUID', async () => {
+  const uuid = '712e1f90-1111-2222-3333-444455556666';
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': {
+      items: [{ id: uuid, status: 'open', channel: 'whatsapp' }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const text = [...answer.lines, ...answer.sources.map((s) => s.label), ...answer.actions.map((a) => a.label)].join('\n');
+  assert.ok(!text.includes(uuid), `UUID leaked: ${text}`);
+  assert.ok(text.includes('WhatsApp') || text.includes('Conversazione'), text);
+  const close = answer.actions.find((action) => action.id.startsWith('bo04:chiudi'));
+  assert.ok(close && !close.label.includes(uuid) && !close.confirmLabel.includes(uuid));
+});
+
+test('voce 34fd687c: due thread senza nome sullo stesso canale hanno etichette diverse', async () => {
+  const uuidA = '712e1f90-1111-2222-3333-444455556666';
+  const uuidB = '823f0a01-2222-3333-4444-555566667777';
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': {
+      items: [
+        { id: uuidA, status: 'open', channel: 'whatsapp', remoteHandle: '+393331111111', updatedAt: `${LEAD_TODAY}T10:00:00` },
+        { id: uuidB, status: 'open', channel: 'whatsapp', remoteHandle: '+393332222222', updatedAt: `${LEAD_TODAY}T09:00:00` },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const text = shownText(answer);
+  assert.ok(!text.includes(uuidA) && !text.includes(uuidB), `UUID leaked: ${text}`);
+  assert.ok(!text.includes('+393331111111') && !text.includes('+393332222222'), `full handle leaked: ${text}`);
+  const closeLabels = answer.actions.filter((action) => action.id.startsWith('bo04:chiudi'))
+    .map((action) => `${action.label} ${action.confirmLabel ?? ''}`);
+  assert.equal(answer.lines.filter((line) => line.startsWith('•')).length, 2);
+  const listed = answer.lines.filter((line) => line.startsWith('•'));
+  assert.notEqual(listed[0], listed[1], `identical labels: ${JSON.stringify(listed)}`);
+  assert.ok(closeLabels.length === 1 && closeLabels[0].includes(answer.sources[0].label),
+    `close does not name its target: ${JSON.stringify(closeLabels)} vs ${answer.sources[0].label}`);
+});
+
+test('voce 34fd687c: due thread senza handle né data restano distinguibili', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': {
+      items: [
+        { id: 't-primo-thread', status: 'open', channel: 'whatsapp' },
+        { id: 't-secondo-thread', status: 'open', channel: 'whatsapp' },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:ricontattare');
+  const listed = answer.lines.filter((line) => line.startsWith('•'));
+  assert.equal(listed.length, 2);
+  assert.notEqual(listed[0], listed[1], `identical labels: ${JSON.stringify(listed)}`);
+  const text = shownText(answer);
+  assert.ok(!text.includes('t-primo-thread') && !text.includes('t-secondo-thread'), `id leaked: ${text}`);
+});
+
+test('voce 34fd687c: «il primo lead» e «chi è il primo lead» nominano una persona sola', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const dry = { mode: 'dry-run' };
+  for (const question of ['il primo lead', 'chi è il primo lead', 'chi è il primo lead di oggi?', 'chi è il primo lead di ieri?']) {
+    const outcome = await askFreeQuestion(client, dry, question);
+    assert.equal(outcome.ok, true, question);
+    const text = shownText(outcome.answer);
+    const isIeri = question.includes('ieri');
+    const expected = isIeri ? 'Ada Neri' : 'Marco Rossi';
+    const excluded = isIeri ? 'Marco Rossi' : 'Ada Neri';
+    assert.ok(text.includes(expected), `${question}: ${JSON.stringify(outcome.answer.lines)}`);
+    assert.ok(!text.includes(excluded), `${question} mixes days: ${text}`);
+    assert.ok(outcome.answer.lines.some((line) => line.includes('Il primo')), `${question}: ${JSON.stringify(outcome.answer.lines)}`);
+  }
+});
+
+test('voce 34fd687c: domanda non dati in dry-run resta avviso chiaro in italiano', async () => {
+  const client = stubClient(LEAD_CLIENT);
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'che tempo fa?');
+  assert.equal(outcome.disabled, true);
+  assert.equal(outcome.notice, ASSISTANT_SUGGEST_ONLY_NOTICE);
+  assert.equal(await answerFreeLocal(client, 'che tempo fa?'), null);
+});
+
+test('voce 34fd687c: la barra AI risponde sui dati anche senza backend', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const panel = createAssistantPanel({ doc, mount, client: stubClient(LEAD_CLIENT), navigate: () => {}, notify: () => {} });
+  await panel.open('clienti', undefined, undefined, 'quanti lead oggi?');
+  for (let i = 0; i < 6; i += 1) await tick();
+  assert.ok(mount.textContent.includes('Marco Rossi'), mount.textContent.slice(0, 400));
+  assert.ok(!mount.textContent.includes('non ancora attive'), 'no stale notice on a data answer');
+  assert.ok(!mount.textContent.includes('c-marco'), 'no raw id on screen');
+});
+
+// Giro 4 (testa 3c16b1c8): «primo» insieme a «lead» tiene la traccia del
+// giorno — letture e note non leggibili viaggiano nella risposta primo.
+test('voce 34fd687c: «il primo lead di oggi» tiene letture e note del giorno', async () => {
+  const client = stubClient({
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+      ],
+    },
+    '/api/modules/company/records?limit=50': new Error('forbidden'),
+  });
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'il primo lead di oggi?');
+  assert.equal(outcome.ok, true);
+  const text = shownText(outcome.answer);
+  assert.ok(text.includes('Marco Rossi'), `the primo names its lead: ${JSON.stringify(outcome.answer.lines)}`);
+  assert.equal(outcome.answer.trace.reads.length, 2, 'both day reads are kept, not discarded');
+  assert.ok(outcome.answer.unavailable.some((note) => note.includes('company')),
+    `the company note survives: ${JSON.stringify(outcome.answer.unavailable)}`);
+  for (const raw of ['c-marco']) {
+    assert.ok(!text.includes(raw), `raw id leaked: ${text}`);
+  }
+});
+
+// Giro 4 (testa 3c16b1c8): giorno illeggibile e giorno vuoto sono due stati
+// diversi — mai uno zero misurato quando niente era leggibile.
+test('voce 34fd687c: giorno vuoto e giorno illeggibile rispondono diverso al «primo»', async () => {
+  const failing = stubClient({
+    '/api/modules/contact/records?limit=50': new Error('forbidden'),
+    '/api/modules/company/records?limit=50': new Error('forbidden'),
+  });
+  const unreadable = await askFreeQuestion(failing, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(unreadable.answer.context.unreadable, true);
+  const primoUnreadable = await askFreeQuestion(failing, { mode: 'dry-run' }, 'chi è il primo?', unreadable.answer.context);
+  assert.ok(!shownText(primoUnreadable.answer).includes('Nessun lead'));
+  assert.ok(primoUnreadable.answer.lines.some((line) => line.includes('Non riesco a leggere i lead')));
+  const emptyClient = stubClient({
+    '/api/modules/contact/records?limit=50': { items: [] },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const empty = await askFreeQuestion(emptyClient, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.ok(!('unreadable' in (empty.answer.context ?? {})));
+  const primoEmpty = await askFreeQuestion(emptyClient, { mode: 'dry-run' }, 'chi è il primo?', empty.answer.context);
+  assert.ok(primoEmpty.answer.lines.some((line) => line.includes('Nessun lead')));
+  assert.ok(!shownText(primoEmpty.answer).includes('Non riesco a leggere'));
+});
+
+// Giro 4 (testa 3c16b1c8): un lead senza etichetta resta nel conteggio, con
+// il riferimento mascherato o «Lead senza nome» — il totale è sempre vero.
+test('voce 34fd687c: i lead senza nome contano nel totale, mai UUID', async () => {
+  const client = stubClient({
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+        { id: 'c-senza-nome', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 9) },
+      ],
+    },
+    '/api/modules/company/records?limit=50': {
+      items: [{ id: 'co-senza-nome', name: '', createdAt: atHour(LEAD_TODAY, 10) }],
+    },
+  });
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('3 lead nuovi oggi')), JSON.stringify(outcome.answer.lines));
+  const text = shownText(outcome.answer);
+  assert.ok(text.includes('Marco Rossi'));
+  assert.ok(text.includes('Lead senza nome'), `fallback label shown: ${text}`);
+  for (const raw of ['c-marco', 'c-senza-nome', 'co-senza-nome']) {
+    assert.ok(!text.includes(raw), `raw id leaked: ${text}`);
+  }
+  const listed = outcome.answer.lines.filter((line) => line.startsWith('•'));
+  assert.equal(new Set(listed).size, listed.length, `duplicate labels: ${JSON.stringify(listed)}`);
+  for (const source of outcome.answer.sources) {
+    assert.ok(source.href.startsWith('#/customer-card/'), source.href);
+  }
+});
+
+// Tabella unica (giri 2-4): ogni riga del giorno conta una volta sola, con
+// un'etichetta senza id grezzi; due righe uguali restano distinguibili.
+test('voce 34fd687c: tabella etichette lead — nominati, senza nome, duplicati', async () => {
+  const cases = [
+    {
+      name: 'solo senza nome',
+      items: [{ id: 'c-x1', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 9) }],
+      headline: '1 lead nuovo oggi', mustShow: ['Lead senza nome'], mustHide: ['c-x1'],
+    },
+    {
+      name: 'due senza nome distinguibili',
+      items: [
+        { id: 'c-x1', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 9) },
+        { id: 'c-x2', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 10) },
+      ],
+      headline: '2 lead nuovi oggi', mustShow: ['Lead senza nome · 1', 'Lead senza nome · 2'], mustHide: ['c-x1', 'c-x2'],
+    },
+    {
+      name: 'solo email come etichetta esistente',
+      items: [{ id: 'c-x3', firstName: '', lastName: '', email: 'nascosto@example.it', createdAt: atHour(LEAD_TODAY, 9) }],
+      headline: '1 lead nuovo oggi', mustShow: ['nascosto@example.it'], mustHide: ['c-x3'],
+    },
+  ];
+  for (const { name, items, headline, mustShow, mustHide } of cases) {
+    const client = stubClient({
+      '/api/modules/contact/records?limit=50': { items },
+      '/api/modules/company/records?limit=50': { items: [] },
+    });
+    const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi?');
+    assert.equal(outcome.ok, true, name);
+    assert.ok(outcome.answer.lines.some((line) => line.includes(headline)), `${name}: ${JSON.stringify(outcome.answer.lines)}`);
+    const text = shownText(outcome.answer);
+    for (const shown of mustShow) assert.ok(text.includes(shown), `${name} shows ${shown}: ${text}`);
+    for (const hidden of mustHide) assert.ok(!text.includes(hidden), `${name} leaks ${hidden}: ${text}`);
+  }
+});
+
+// Giro 4 (testa 3c16b1c8): la finestra occupata della barra in alto non perde
+// la domanda in coda — parte quando la prima finisce, anche senza risposta.
+test('voce 34fd687c: la coda della barra parte dopo una domanda senza risposta', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const panel = createAssistantPanel({ doc, mount, client: stubClient(LEAD_CLIENT), navigate: () => {}, notify: () => {} });
+  const first = panel.open('clienti', undefined, undefined, 'zzz qqq assente wxyz');
+  await Promise.resolve();
+  await Promise.resolve();
+  const second = panel.open('clienti', undefined, undefined, 'quanti lead oggi?');
+  assert.ok(mount.textContent.includes('Finisco la risposta in corso'), 'the second question really queued behind the first');
+  await first;
+  await second;
+  for (let i = 0; i < 12; i += 1) await tick();
+  assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'nothing is left stranded');
+  assert.ok(mount.textContent.includes('Marco Rossi'), `the queued question ran: ${mount.textContent.slice(0, 400)}`);
 });

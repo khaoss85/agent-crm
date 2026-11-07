@@ -74,6 +74,16 @@
  *   step once they join (seen: ~47 mapped + 14 guards needing ~900 s
  *   against a 270 s bound) — past the cap the same warned fallback runs.
  *
+ * The run itself splits past a dozen files into up to four parallel parts
+ * (see `shardCountFor`/`shardTests`/`runTestShards`): agent-crm#621 (an
+ * outbox change selecting 235 tests) ran the warned fallback as one
+ * sequential `node --test` process and timed out past 270 s with no test
+ * failing. A dozen files or fewer run exactly as before (one process,
+ * `--test-concurrency=2`); past that each part runs one file at a time and
+ * the parts run together, so a core-wide fan-in still fits the bound. The
+ * timeout still fails red — never green without running — and now names
+ * the files that remained, so the cause reads from the log.
+ *
  * The default fast suite is the PR's own changed test files — always
  * relevant, self-maintaining, and small by construction. It is not the
  * default `npm test` suite: the full suite holds the machine lock
@@ -100,14 +110,15 @@
  * repo-wide guards, or the fallback suite plus the guards after a warned
  * fallback; an empty diff runs nothing — and a warned fallback runs the
  * guards, so an uncovered source file never exits 0 with nothing run),
- * 1 the selection failed, a test failed, the fallback run failed, a listed
+ * 1 the selection failed, a test failed, the fallback run failed or timed
+ * out (a timeout names the files that remained), a listed
  * guard is missing from `tests/`, or the refusal (an oversized selection
  * the PR carries no test file of its own for — the only fail-closed case
  * left), 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { spawnGit } from './git-env.js';
 import { dirname, join, normalize } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -895,6 +906,172 @@ export function runBudgetSec(
 }
 
 /**
+ * Past this many files one sequential `node --test` process cannot finish
+ * the step inside its bound (agent-crm#621: the warned fallback over its
+ * files timed out past 270 s with no test failing), so the run splits into
+ * parallel parts. At or below it the run stays exactly as before: one
+ * process, `--test-concurrency=2`.
+ */
+export const SINGLE_SHARD_UP_TO = 12;
+
+/**
+ * The most parallel parts a run splits into: four lanes of one file at a
+ * time stay inside what the shared 16 GB runner survived, beside the other
+ * `ci-fast.sh` lanes on the 12-core Linux runner (whose own lane
+ * parallelism already pushed the load to 33 on 12 cores once — #447/#448).
+ */
+export const MAX_SHARDS = 4;
+
+/**
+ * How many parallel parts a run of `fileCount` files splits into: one up
+ * to `SINGLE_SHARD_UP_TO`, then about one part per dozen files, capped at
+ * `MAX_SHARDS`. Pure: unit-tested.
+ */
+export function shardCountFor(
+  /** @type {number} */ fileCount,
+  /** @type {number} */ maxShards = MAX_SHARDS,
+  /** @type {number} */ singleShardUpTo = SINGLE_SHARD_UP_TO,
+) {
+  if (fileCount <= singleShardUpTo) return 1;
+  return Math.min(maxShards, Math.ceil(fileCount / singleShardUpTo));
+}
+
+/**
+ * Split the sorted `tests` into `shardCount` round-robin parts: the
+ * slowest files spread across the parts instead of landing in one chunk.
+ * Pure: unit-tested.
+ */
+export function shardTests(
+  /** @type {string[]} */ tests,
+  /** @type {number} */ shardCount,
+) {
+  const count = Math.max(1, Math.floor(shardCount));
+  /** @type {string[][]} */
+  const shards = Array.from({ length: count }, () => []);
+  tests.forEach((test, index) => {
+    shards[index % count].push(test);
+  });
+  return shards.filter((shard) => shard.length > 0);
+}
+
+/**
+ * Run the test parts together, each as its own `node --test` process over
+ * its files. One part runs exactly like the old sequential step
+ * (`--test-concurrency=2`); several parts run one file at a time each, so
+ * at most `MAX_SHARDS` files run at once. Every part's output streams live
+ * tagged with its part (`[touched 1/4]`), so a failure still attributes to
+ * its files. Past `timeoutSec` the unfinished parts die by SIGKILL and the
+ * run resolves timed out naming the files that remained — the gate fails
+ * red, never green without running, and the cause reads from the log.
+ *
+ * Resolves (never rejects) to `{ status, timedOut, remaining,
+ * completedShards, elapsedSec }`: `status` is the first nonzero part exit
+ * code, or 0 when every part passed; `remaining` lists the files of the
+ * parts still running at the timeout. `cwd` is the repository root; the
+ * parts inherit this process's environment (including
+ * `ACCORDO_TEST_POSTGRES` and `ACCORDO_PG_TEST_URL`), minus
+ * `NODE_TEST_CONTEXT` so a part is always a fresh top-level runner.
+ *
+ * @returns {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number }>}
+ */
+export function runTestShards(
+  /** @type {string[][]} */ shards,
+  /** @type {{ timeoutSec: number, cwd: string, nodePath?: string }} */ options,
+) {
+  /** @type {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number }>} */
+  const done = new Promise((resolve) => {
+    const started = Date.now();
+    const elapsedSec = () => (Date.now() - started) / 1000;
+    /** @type {boolean[]} */
+    const finished = shards.map(() => false);
+    if (shards.length === 0) {
+      resolve({ status: 0, timedOut: false, remaining: [], completedShards: 0, elapsedSec: elapsedSec() });
+      return;
+    }
+    /** @type {import('node:child_process').ChildProcess[]} */
+    const children = [];
+    let pending = shards.length;
+    let firstFailure = 0;
+    let settled = false;
+    const settle = (
+      /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number }} */ result,
+    ) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const remaining = () => shards.filter((_, index) => !finished[index]).flat();
+    const completedShards = () => finished.filter(Boolean).length;
+    const timer = setTimeout(() => {
+      for (const child of children) {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Already gone: its close handler settles the count below.
+        }
+      }
+      settle({
+        status: 1,
+        timedOut: true,
+        remaining: remaining(),
+        completedShards: completedShards(),
+        elapsedSec: elapsedSec(),
+      });
+    }, options.timeoutSec * 1000);
+    shards.forEach((files, index) => {
+      const tag = `touched ${index + 1}/${shards.length}`;
+      const concurrency = shards.length === 1 ? '2' : '1';
+      process.stdout.write(`ci-touched-tests: part ${tag} starting (${files.length} file(s)).\n`);
+      // A part is a fresh top-level runner: without this a `node --test`
+      // parent lends its `NODE_TEST_CONTEXT=child-v8` to the part, and the
+      // part exits 0 without running anything (a silent green the gate must
+      // never trust).
+      const partEnv = { ...process.env };
+      delete partEnv.NODE_TEST_CONTEXT;
+      const child = spawn(
+        options.nodePath ?? process.execPath,
+        ['--no-warnings', '--test', `--test-concurrency=${concurrency}`, '--test-reporter=spec', ...files],
+        { cwd: options.cwd, env: partEnv },
+      );
+      children.push(child);
+      let tail = '';
+      const tagged = (/** @type {Buffer|string} */ chunk) => {
+        tail += String(chunk);
+        const lines = tail.split('\n');
+        tail = lines.pop() ?? '';
+        for (const line of lines) process.stdout.write(`[${tag}] ${line}\n`);
+      };
+      if (child.stdout !== null) child.stdout.on('data', tagged);
+      if (child.stderr !== null) child.stderr.on('data', tagged);
+      child.on('error', () => {
+        // A spawn failure carries no exit code: the close handler below
+        // settles the count and the part counts as failed.
+      });
+      child.on('close', (code) => {
+        if (tail !== '') process.stdout.write(`[${tag}] ${tail}\n`);
+        tail = '';
+        finished[index] = true;
+        pending -= 1;
+        const status = code ?? 1;
+        if (status !== 0 && firstFailure === 0) firstFailure = status;
+        process.stdout.write(`ci-touched-tests: part ${tag} finished (${files.length} file(s), exit ${status}).\n`);
+        if (pending === 0) {
+          settle({
+            status: firstFailure,
+            timedOut: false,
+            remaining: [],
+            completedShards: completedShards(),
+            elapsedSec: elapsedSec(),
+          });
+        }
+      });
+    });
+  });
+  return done;
+}
+
+/**
  * Command-line options, exported so the unit test locks the documented
  * usage (`--timeout-sec <n>` followed by other flags) instead of trusting
  * it. Error paths exit the process and are not unit-tested.
@@ -1290,23 +1467,39 @@ async function main() {
     process.stdout.write(`::warning::ci-touched-tests: ${droppedNote}.\n`);
   }
 
-  // Same flags as `npm test`: two files at a time keeps peak memory inside
-  // what the shared 16 GB runner survived (ci.yml), at the price of wall time
-  // this step bounds with its timeout instead. The bound yields to the
-  // selection phase so select-plus-run always fits the step wrapper; the
-  // floor of a minute still runs at least one slow file.
+  // The run is sharded past a dozen files (see the header): one sequential
+  // `node --test` process cannot finish a core-wide fan-in inside the bound
+  // (agent-crm#621: the warned fallback timed out past 270 s with no test
+  // failing). A dozen files or fewer run exactly as before — same flags as
+  // `npm test`, two files at a time, keeping peak memory inside what the
+  // shared 16 GB runner survived (ci.yml) — at the price of wall time this
+  // step bounds with its timeout instead. Past that each part runs one file
+  // at a time and the parts run together (at most four files at once, beside
+  // the other `ci-fast.sh` lanes on the 12-core Linux runner). The bound
+  // yields to the selection phase so select-plus-run always fits the step
+  // wrapper; the floor of a minute still runs at least one slow file.
   const runBudget = runBudgetSec(options.timeoutSec, selectionElapsedSec);
-  const run = spawnSync(
-    process.execPath,
-    ['--no-warnings', '--test', '--test-concurrency=2', '--test-reporter=spec', ...plan.tests],
-    { cwd: root, stdio: 'inherit', timeout: runBudget * 1000, killSignal: 'SIGKILL' },
-  );
-  if (run.error) {
+  const shards = shardTests(plan.tests, shardCountFor(plan.tests.length));
+  if (shards.length > 1) {
+    process.stdout.write(
+      `ci-touched-tests: running ${plan.tests.length} test file(s) in ${shards.length} parallel part(s).\n`,
+    );
+  }
+  const run = await runTestShards(shards, { timeoutSec: runBudget, cwd: root });
+  if (run.timedOut) {
     const what = plan.kind === 'fallback' ? 'default fast suite' : 'selected run';
-    process.stderr.write(`ci-touched-tests: ${what} did not finish in ${runBudget}s — failing red, not hanging the lock.\n`);
+    process.stderr.write(
+      `ci-touched-tests: ${what} did not finish in ${runBudget}s — failing red, not hanging the lock. `
+        + `${run.remaining.length} file(s) remaining: ${run.remaining.join(', ') || '(none reported)'}.\n`,
+    );
+    process.stdout.write(
+      `::error::ci-touched-tests: ${what} timed out after ${runBudget}s with `
+        + `${run.remaining.length} file(s) remaining: ${run.remaining.join(', ') || '(none reported)'}. `
+        + `Completed ${run.completedShards} of ${shards.length} part(s).\n`,
+    );
     process.exit(1);
   }
-  process.exit(run.status ?? 1);
+  process.exit(run.status);
 }
 
 // Importing this module (the unit test does) must not run the gate: only
