@@ -852,9 +852,9 @@ export function createPersonalizzazioneView(deps) {
       sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
       bar.appendChild(sort);
       // The green CTA opens where a unit is added: the module factory note
-      // for packages, the skill note.
+      // for packages, the skill note. It opens no menu, so it carries no
+      // dropdown chevron: only the Connettori CTA, which has one, does.
       const add = uiButton(doc, { variant: 'cta', label: '+ Aggiungi', attrs: { type: 'button' } });
-      add.appendChild(uiIcon(doc, 'chevron'));
       add.disabled = state.busy;
       add.addEventListener('click', () => {
         if (state.tab === 'skill') {
@@ -1165,12 +1165,15 @@ export function createPersonalizzazioneView(deps) {
     next.appendChild(uiIcon(doc, 'chevron'));
     next.addEventListener('click', () => { state.hero = heroStep(state.hero, 1); renderList(); });
     hero.appendChild(next);
-    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { role: 'tablist', 'aria-label': 'Slide in evidenza' } });
+    // Plain buttons, not a tablist: the dots only move the carousel, so
+    // they carry no tab semantics (no tabpanel, no arrow-key roving); the
+    // active one says so with aria-current.
+    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { role: 'group', 'aria-label': 'Slide in evidenza' } });
     CONNETTORI_HERO.forEach((entry, index) => {
       const dot = el(doc, 'button', {
         text: '•',
         cls: `ui-hero-dot${index === heroStep(state.hero, 0) ? ' on' : ''}`,
-        attrs: { type: 'button', role: 'tab', 'aria-label': `Vai alla slide ${index + 1}: ${entry.title}` },
+        attrs: { type: 'button', 'aria-label': `Vai alla scheda ${index + 1}` },
       });
       if (index === heroStep(state.hero, 0)) dot.setAttribute('aria-current', 'true');
       dot.addEventListener('click', () => { state.hero = index; renderList(); });
@@ -1238,13 +1241,17 @@ export function createPersonalizzazioneView(deps) {
       });
       article.appendChild(uiChannelChip(doc, card.entry.chip));
       const body = el(doc, 'div', { cls: 'ui-conn-body' });
-      // The prototype's name row: the name and the curated mark (every
-      // card is a catalog channel curated by Accordo, like the hero says).
+      // The prototype's name row: the name and the curated mark — only on
+      // a catalog channel Accordo curates. The non-catalog fallbacks
+      // (Google Calendar, Stripe: channel null) are not verified by
+      // Accordo, so they carry no mark.
       const title = el(doc, 'div', { cls: 'ui-conn-title' });
       title.appendChild(el(doc, 'strong', { text: card.entry.label, cls: 'ui-conn-label' }));
-      const mark = el(doc, 'span', { cls: 'ui-conn-verified', attrs: { role: 'img', 'aria-label': 'Verificato da Accordo', title: 'Verificato da Accordo' } });
-      mark.appendChild(uiIcon(doc, 'check'));
-      title.appendChild(mark);
+      if (typeof card.entry.channel === 'string' && CONNETTORI_CATALOG_CHANNELS.has(card.entry.channel)) {
+        const mark = el(doc, 'span', { cls: 'ui-conn-verified', attrs: { role: 'img', 'aria-label': 'Verificato da Accordo', title: 'Verificato da Accordo' } });
+        mark.appendChild(uiIcon(doc, 'check'));
+        title.appendChild(mark);
+      }
       body.appendChild(title);
       for (const line of card.entry.lines) {
         body.appendChild(el(doc, 'p', { text: line, cls: 'ui-conn-lines' }));

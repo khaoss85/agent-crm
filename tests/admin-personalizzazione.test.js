@@ -580,8 +580,13 @@ test('the hero carousel walks three prototype slides with arrows and dots (spec 
   await flush();
   assert.ok(text().includes('Agenda, lead e pagamenti'), 'Successiva moves to slide two');
   assert.ok(text().includes('Appuntamenti condivisi'), 'slide two keeps the prototype copy');
-  const dots = mount.findAll('button').filter((node) => String(node.getAttribute('aria-label') ?? '').startsWith('Vai alla slide'));
+  const dots = mount.findAll('button').filter((node) => /^Vai alla scheda \d$/.test(String(node.getAttribute('aria-label') ?? '')));
   assert.equal(dots.length, 3, 'three clickable dots under the panel');
+  // Review #645 P3: plain buttons, no partial tab pattern; the active dot
+  // is marked with aria-current.
+  for (const dot of dots) assert.equal(dot.getAttribute('role'), null, 'a dot is a plain button, never a tab');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('role') === 'tablist' && classesOf(node).includes('ui-hero-dots')).length, 0, 'the dots are no tablist');
+  assert.deepEqual(dots.map((dot) => dot.getAttribute('aria-current')), [null, 'true', null], 'aria-current marks the active slide');
   dots[2].dispatch('click');
   await flush();
   assert.ok(text().includes('Configura con l\u2019AI'), 'the third dot opens the Accordo AI slide');
@@ -956,21 +961,52 @@ test('the carousel dots sit in their own row under the panel (spec C12)', async 
   assert.match(css, /\.plist \.ui-hero > \.ui-btn\[aria-label="Precedente"\][^{]*\{[^}]*border-radius:\s*50%/);
 });
 
-test('every card name carries the curated mark, and the CTA reads + Aggiungi with its arrow (spec C8, C15)', async () => {
+test('every catalog card name carries the curated mark, and the CTA reads + Aggiungi with its arrow (spec C8, C15)', async () => {
   const mount = createMount();
   const view = createPersonalizzazioneView({ doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId });
   await view.render();
   await flush();
   const cards = mount.findAll('article').filter((node) => classesOf(node).includes('ui-conn-card'));
   assert.equal(cards.length, 10);
+  // Review #645 P2: the non-catalog fallbacks (channel null) are not
+  // curated by Accordo, so they carry no «Verificato da Accordo» mark.
+  const unverified = new Set(['Google Calendar', 'Stripe']);
   for (const card of cards) {
+    const label = card.findAll('strong').find((node) => classesOf(node).includes('ui-conn-label')).textContent;
     const mark = card.findAll('span').find((node) => classesOf(node).includes('ui-conn-verified'));
-    assert.ok(mark, 'the card carries the curated mark');
+    if (unverified.has(label)) {
+      assert.equal(mark, undefined, `${label} is no catalog channel: no curated mark`);
+      continue;
+    }
+    assert.ok(mark, `${label} carries the curated mark`);
     assert.equal(mark.getAttribute('aria-label'), 'Verificato da Accordo');
   }
+  assert.equal(cards.filter((card) => card.findAll('span').some((node) => classesOf(node).includes('ui-conn-verified'))).length, 8);
   const add = mount.findAll('button').find((node) => node.textContent === '+ Aggiungi');
   assert.ok(add, '«+ Aggiungi» renders');
   assert.equal(add.findAll('svg').length, 1, 'with its chevron');
+});
+
+test('Skill and Pacchetti «+ Aggiungi» open no menu, so they carry no chevron (review #645 P3)', async () => {
+  const mount = createMount();
+  const said = [];
+  const view = createPersonalizzazioneView({
+    doc: createFakeDocument(), mount, client: stubClient(), navigate: () => {}, spaceId,
+    toast: (message) => said.push(message),
+  });
+  await view.render();
+  await flush();
+  for (const tab of ['skill', 'pacchetti']) {
+    view.test.state.tab = tab;
+    await view.render();
+    await flush();
+    const add = mount.findAll('button').find((node) => node.textContent === '+ Aggiungi');
+    assert.ok(add, `«+ Aggiungi» renders on ${tab}`);
+    assert.equal(add.findAll('svg').length, 0, `no dropdown chevron on ${tab}: it opens no menu`);
+    add.dispatch('click', {});
+    assert.equal(mount.querySelector('.ui-conn-addmenu'), null, `no menu opens on ${tab}`);
+  }
+  assert.equal(said.length, 2, 'each CTA answers with its note instead');
 });
 
 test('Connettori shows no line under the toolbar; Skill and Pacchetti speak plain Italian', async () => {
