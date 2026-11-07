@@ -463,6 +463,7 @@ import { createConnectorDetailView } from './admin-connector-detail.js';
 import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
+import { createAgentiView } from './admin-agenti.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
@@ -853,6 +854,8 @@ if (boAssistant) {
     client: moduleClient,
     navigate: (hash) => { window.location.hash = hash; },
     notify: (message) => toast(message),
+    // backlog:33782ba68747: «@Agente …» in the bar reads this space's agents.
+    spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   });
 }
 
@@ -922,6 +925,8 @@ let oggiView = null;
 let sequenzeView = null;
 /** Navigation sequence: a render that settles after a newer navigation is stale. */
 let navSeq = 0;
+/** The Agenti screen (backlog:33782ba68747), created once per session. */
+let agentiView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
 
@@ -939,6 +944,7 @@ function shellScreenFor(target) {
     case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
     case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
     case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
+    case 'agenti': return { id: 'agenti', label: 'Agenti' };
     case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
     case 'list':
     case 'new':
@@ -1150,6 +1156,7 @@ async function route() {
     // view must not repaint the settings panel just opened.
     if (oggiView) oggiView.invalidate();
     if (sequenzeView) sequenzeView.invalidate();
+    if (agentiView) agentiView.invalidate();
     calendarioView.invalidate();
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
@@ -1200,6 +1207,7 @@ async function route() {
   // link opened right after login).
   if (target.view !== 'dashboard' && oggiView) oggiView.invalidate();
   if (target.view !== 'sequenze' && sequenzeView) sequenzeView.invalidate();
+  if (target.view !== 'agenti' && agentiView) agentiView.invalidate();
   if (target.view !== 'calendario') calendarioView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
@@ -1279,6 +1287,21 @@ async function route() {
         });
       }
       await sequenzeView.renderSequenze();
+    }
+    else if (target.view === 'agenti') {
+      if (!agentiView) {
+        agentiView = createAgentiView({
+          doc: document,
+          // #655: paint only while Agenti is the routed screen.
+          mount: mountGate.owned('agenti'),
+          client: moduleClient,
+          submissions,
+          storage: shellStorage,
+          spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+          navigate: (next) => { window.location.hash = next; },
+        });
+      }
+      await agentiView.render();
     }
     else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();

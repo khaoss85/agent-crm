@@ -7,7 +7,7 @@
  * demo fixtures and saves one PNG per backoffice screen, at 1440x1800 and
  * at 390x1600:
  *
- *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, reporting, nuovo-modulo,
+ *   login, oggi, clienti, cliente, pipeline, calendario, sequenze, agenti, reporting, nuovo-modulo,
  *   personalizzazione, catalogo, stato-sync, spazi-accessi, connettori,
  *   componenti (the F6-02 component catalog)
  *
@@ -68,6 +68,7 @@ export const SCREEN_NAMES = Object.freeze([
   'pipeline',
   'calendario',
   'sequenze',
+  'agenti',
   'reporting',
   'nuovo-modulo',
   'personalizzazione',
@@ -382,6 +383,27 @@ const DEMO_SENDS = [
   { id: 22, sequenceSourceKey: 'seq-bentornato', spaceId: 'presti', status: 'waiting-approval' },
 ];
 
+// The Agenti screen (backlog:33782ba68747): two agents in the team (one
+// with a weekly and a one-off assignment, one run that proposed a message
+// and waits in Da fare), the catalogue with both marked «Nel tuo team».
+const DEMO_AGENT_CATALOG = [
+  { slug: 'riaggancio', name: 'Riaggancio', role: 'Ricontatta i clienti rimasti senza risposta', instructions: 'Trova i clienti arrivati da WhatsApp, Instagram o email a cui nessuno ha risposto e prepara un messaggio per ciascuno. Ogni messaggio aspetta il tuo ok.', examplePhrase: 'occupati dei lead WhatsApp non contattati', agentSourceKey: 'agent:presti:riaggancio' },
+  { slug: 'report-vendite', name: 'Report vendite', role: 'Prepara il riepilogo delle vendite', instructions: 'Raccoglie le offerte aperte, chiuse e perse del periodo e scrive un riepilogo breve.', examplePhrase: 'ogni lunedì il report vendite', agentSourceKey: 'agent:presti:report-vendite' },
+  { slug: 'pulizia-contatti', name: 'Pulizia contatti', role: 'Tiene in ordine i clienti', instructions: 'Cerca doppioni e dati mancanti tra i clienti e propone come sistemarli.', examplePhrase: 'ogni venerdì controlla i doppioni', agentSourceKey: 'agent:presti:pulizia-contatti' },
+];
+const DEMO_AGENTS = [
+  { id: 1, sourceKey: 'agent:presti:riaggancio', spaceId: 'presti', name: 'Riaggancio', role: 'Ricontatta i clienti rimasti senza risposta', status: 'active', decidedAt: '2026-11-02T08:00:00.000Z' },
+  { id: 2, sourceKey: 'agent:presti:report-vendite', spaceId: 'presti', name: 'Report vendite', role: 'Prepara il riepilogo delle vendite', status: 'active', decidedAt: '2026-11-03T08:00:00.000Z' },
+];
+const DEMO_ASSIGNMENTS = [
+  { id: 1, sourceKey: 'a-1', spaceId: 'presti', agentSourceKey: 'agent:presti:riaggancio', phrase: 'occupati dei lead WhatsApp non contattati', cadence: 'once', timeOfDay: '08:00', status: 'active', decidedAt: '2026-11-06T09:00:00.000Z' },
+  { id: 2, sourceKey: 'a-2', spaceId: 'presti', agentSourceKey: 'agent:presti:report-vendite', phrase: 'ogni lunedì il report vendite', cadence: 'weekly', weekday: 1, timeOfDay: '08:00', status: 'active', decidedAt: '2026-11-03T08:05:00.000Z' },
+];
+const DEMO_RUNS = [
+  { id: 1, sourceKey: 'run-1', spaceId: 'presti', agentSourceKey: 'agent:presti:riaggancio', assignmentSourceKey: 'a-1', startedAt: '2026-11-06T09:01:00.000Z', decidedAt: '2026-11-06T09:01:00.000Z', costCents: 42, outcome: 'proposed', proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'WhatsApp a Giulia Romano: «Ciao Giulia, ti scrivo per la prova che avevi chiesto: ti va giovedì alle 18?»' } }, { action: 'send-message', payload: { summary: 'Instagram a Marco Rossi: «Ciao Marco, hai ancora voglia di provare il corso?»' } }]) },
+  { id: 2, sourceKey: 'run-2', spaceId: 'presti', agentSourceKey: 'agent:presti:report-vendite', assignmentSourceKey: 'a-2', startedAt: '2026-11-02T08:00:00.000Z', decidedAt: '2026-11-02T08:00:00.000Z', costCents: 18, outcome: 'artifact' },
+];
+
 const DEMO_REPORT = {
   period: '2026-10-20',
   periodLabel: 'ottobre 2026',
@@ -583,6 +605,7 @@ export const SCREENS = Object.freeze([
   { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Proposta'] },
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
+  { name: 'agenti', module: 'admin-agenti.js', ready: 'agenti-ready', expect: ['occupati dei lead WhatsApp non contattati', 'Ciao Giulia, ti scrivo per'] },
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
   { name: 'nuovo-modulo', module: 'admin-reporting.js', ready: 'nuovo-modulo-ready', expect: ['Nuovo modulo personalizzato', 'Genera il modulo'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
@@ -614,6 +637,8 @@ export const SHELL_SCREENS = Object.freeze({
   pipeline: { id: 'pipeline', label: 'Pipeline' },
   calendario: { id: 'calendario', label: 'Calendario' },
   sequenze: { id: 'sequenze', label: 'Sequenze' },
+  // backlog:33782ba68747: Agenti, the voice that took Sequenze's place.
+  agenti: { id: 'agenti', label: 'Agenti' },
   reporting: { id: 'reporting', label: 'Reporting' },
   'nuovo-modulo': { id: 'nuovo-modulo', label: 'Nuovo modulo' },
   personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
@@ -663,6 +688,7 @@ shellView.update({
     pipelines: [{ name: 'vendite', label: 'Vendite' }],
     customerDataAvailable: true,
     sequencesAvailable: true,
+    agentsAvailable: true,
   }),
   activeScreenId: ${JSON.stringify(shell.id)},
   aiScreenId: ${JSON.stringify(shell.ai ?? null)},
@@ -993,6 +1019,31 @@ document.getElementById('probe').textContent = JSON.stringify({
   confirm: document.querySelector('.bo-seq-confirm') ? document.querySelector('.bo-seq-confirm').textContent : null,
 });
 document.title = 'sequenze-ready';`;
+    case 'agenti': return `
+import { createAgentiView } from './admin-agenti.js';
+const CATALOG = ${JSON.stringify(DEMO_AGENT_CATALOG)};
+const AGENTS = ${JSON.stringify(DEMO_AGENTS)};
+const ASSIGNMENTS = ${JSON.stringify(DEMO_ASSIGNMENTS)};
+const RUNS = ${JSON.stringify(DEMO_RUNS)};
+const client = {
+  async request(path) {
+    if (path.indexOf('/api/agents/catalog') === 0) return { agents: CATALOG };
+    if (path.includes('/teammate-agent/')) return { items: AGENTS };
+    if (path.includes('/teammate-assignment/')) return { items: ASSIGNMENTS };
+    if (path.includes('/teammate-run/')) return { items: RUNS };
+    throw new Error('unexpected ' + path);
+  },
+};
+const view = createAgentiView({ doc: document, mount: document.getElementById('view-module'), client, spaceId: () => 'presti', now: () => '2026-11-07T10:00:00.000Z' });
+await view.render();
+document.getElementById('probe').textContent = JSON.stringify({
+  agents: document.querySelectorAll('#view-module .bo-agent-card').length,
+  dafare: document.querySelectorAll('#view-module .bo-dafare-item').length,
+  catalog: document.querySelectorAll('#view-module .bo-catalog-item').length,
+  disabled: Array.from(document.querySelectorAll('#view-module .bo-dafare-actions button')).filter((b) => b.disabled).length,
+  talk: document.querySelectorAll('#view-module .bo-agent-talk').length,
+});
+document.title = 'agenti-ready';`;
     case 'reporting': return `
 import { createReportingView } from './admin-reporting.js';
 const MODEL = ${JSON.stringify(DEMO_REPORT)};
@@ -1120,6 +1171,7 @@ document.title = 'stato-sync-ready';`;
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 const SPACES = ${JSON.stringify(DEMO_SPACES)};
 const MEMBERS = ${JSON.stringify(DEMO_MEMBERS)};
+const TEAM_AGENTS = ${JSON.stringify(DEMO_AGENTS)};
 // The proof exercises the wired production path (app.js passes onPickSpace
 // and serves the same reads): connectors and the exact customer total paint
 // the C7 statistic on both cards, and the non-active card paints «Apri».
@@ -1141,6 +1193,8 @@ const client = {
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
     }
+    // backlog:33782ba68747: the space's agents sit beside the people.
+    if (path.indexOf('/api/modules/teammate-agent/records') === 0) return { items: TEAM_AGENTS };
     throw new Error('unexpected ' + path);
   },
 };
@@ -1163,6 +1217,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   switches: document.querySelectorAll('#view-module button[role="switch"]').length,
   stats: Array.from(document.querySelectorAll('#view-module .bo-spazi-stat'), (node) => node.textContent),
   apri: Array.from(document.querySelectorAll('#view-module button')).filter((node) => node.textContent === 'Apri').length,
+  agents: document.querySelectorAll('#view-module .bo-agent-member').length,
 });
 document.title = 'spazi-accessi-ready';`;
     case 'connettori': return `
@@ -1562,6 +1617,16 @@ export function assertProbe(name, probe) {
     }
     case 'stato-sync': {
       if (probe.ok !== true) throw new Error('stato-sync: the probe shows no healthy sync state');
+      return;
+    }
+    case 'agenti': {
+      // Two agent cards each with its talk box, one proposed run in Da
+      // fare with its three disabled controls, three catalogue tiles.
+      if (probe.agents !== 2) throw new Error(`agenti: the probe holds ${String(probe.agents)} agents, expected 2`);
+      if (probe.talk !== 2) throw new Error(`agenti: the probe holds ${String(probe.talk)} talk boxes, expected 2`);
+      if (probe.dafare !== 1) throw new Error(`agenti: the probe holds ${String(probe.dafare)} Da fare items, expected 1`);
+      if (probe.disabled !== 3) throw new Error(`agenti: the probe holds ${String(probe.disabled)} disabled Da fare controls, expected 3`);
+      if (probe.catalog !== 3) throw new Error(`agenti: the probe holds ${String(probe.catalog)} catalogue tiles, expected 3`);
       return;
     }
     case 'spazi-accessi': {

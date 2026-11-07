@@ -1,0 +1,190 @@
+{
+  "stateVersion": 2,
+  "module": "teammate-assignment",
+  "revision": 1,
+  "fingerprint": "c35d896005dac5a26eb08f6265538f937e8aedd05287611b4ab9861936bf7c0e",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "teammate-assignment",
+    "description": "One assignment of one teammate agent (backlog:8986f4459f0f): the original human phrase plus the machine schedule it became (cadence and next run). Created from a phrase with an explicit plan (the fake-AI seam) or the built-in Italian parser; an unclear phrase refuses instead of guessing. (backlog:8986f4459f0f)",
+    "table": "teammate_assignments",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "agentSourceKey",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "agent_source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "phrase",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "phrase",
+        "writable": "managed"
+      },
+      {
+        "name": "cadence",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "cadence",
+        "writable": "managed",
+        "values": [
+          "daily",
+          "weekly",
+          "monthly",
+          "once"
+        ]
+      },
+      {
+        "name": "weekday",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "weekday",
+        "writable": "managed"
+      },
+      {
+        "name": "timeOfDay",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "time_of_day",
+        "writable": "managed"
+      },
+      {
+        "name": "runAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "run_at",
+        "writable": "managed"
+      },
+      {
+        "name": "nextRunAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "next_run_at",
+        "writable": "managed"
+      },
+      {
+        "name": "lastRunAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "last_run_at",
+        "writable": "managed"
+      },
+      {
+        "name": "costPerRunCents",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "cost_per_run_cents",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "status",
+        "writable": "managed",
+        "default": "active",
+        "values": [
+          "active",
+          "paused",
+          "completed"
+        ]
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_teammate_assignments",
+      "checksum": "9dd4b30fd23bb4b1612e2f5e6281741e2bbf9b9f0432f0f47a79b3a13b645b97",
+      "sql": "CREATE TABLE IF NOT EXISTS teammate_assignments (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  agent_source_key TEXT,\n  phrase TEXT,\n  cadence TEXT CHECK(cadence IN ('daily', 'weekly', 'monthly', 'once')),\n  weekday INTEGER,\n  time_of_day TEXT,\n  run_at TEXT,\n  next_run_at TEXT,\n  last_run_at TEXT,\n  cost_per_run_cents INTEGER,\n  status TEXT CHECK(status IN ('active', 'paused', 'completed')),\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS teammate_assignments_space_id ON teammate_assignments(space_id);\nCREATE INDEX IF NOT EXISTS teammate_assignments_agent_source_key ON teammate_assignments(agent_source_key);\nCREATE INDEX IF NOT EXISTS teammate_assignments_source_package ON teammate_assignments(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_teammate_assignments",
+      "checksum": "ac2bed31a9ca809265c93c109d11b62d4eea5c1c0bb1d09e4296ff0c98595827",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"teammate_assignments\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"agent_source_key\" TEXT,\n  \"phrase\" TEXT,\n  \"cadence\" TEXT CHECK(\"cadence\" IN ('daily', 'weekly', 'monthly', 'once')),\n  \"weekday\" BIGINT,\n  \"time_of_day\" TEXT,\n  \"run_at\" TIMESTAMPTZ,\n  \"next_run_at\" TIMESTAMPTZ,\n  \"last_run_at\" TIMESTAMPTZ,\n  \"cost_per_run_cents\" BIGINT,\n  \"status\" TEXT CHECK(\"status\" IN ('active', 'paused', 'completed')),\n  \"decided_at\" TIMESTAMPTZ,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"teammate_assignments_space_id\"\n  ON \"accordo\".\"teammate_assignments\"(\"space_id\");\n\nCREATE INDEX \"teammate_assignments_agent_source_key\"\n  ON \"accordo\".\"teammate_assignments\"(\"agent_source_key\");\n\nCREATE INDEX \"teammate_assignments_source_package\"\n  ON \"accordo\".\"teammate_assignments\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "c35d896005dac5a26eb08f6265538f937e8aedd05287611b4ab9861936bf7c0e"
+      }
+    },
+    "evolutions": []
+  }
+}

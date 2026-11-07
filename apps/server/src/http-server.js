@@ -22,6 +22,7 @@ import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../pa
 import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-window.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
+import { AGENT_CATALOG, catalogAgentSourceKey } from '../../../packages/agents/src/catalog.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
   buildDashboardModel,
@@ -522,6 +523,65 @@ export function buildRouter(app) {
     }
     const input = recordInput(body);
     return respond(201, await app.createSequence({ ...stripServerControlledKeys(input), actor }));
+  });
+
+  // Voce backlog:33782ba68747 — the «Agenti» screen. Three enumerated
+  // adapters over the declared agents operations, the same shape as the
+  // sequences route above: the kernel owns the path and gates the role,
+  // the package owns the rows, and without the agents package composed
+  // each answers an honest 404 naming the missing operation.
+  // - catalog: the checked-in ready-made agents, each with the agent source
+  //   key it takes in the asked space (so the screen can say «già nel
+  //   team» without restating the key rule);
+  // - create: adds ONE catalogue agent through create-agent — only
+  //   catalogue slugs, never a free-form agent; a second add replays as
+  //   `duplicate: true`;
+  // - assign: an instruction to an agent («@Riaggancio …») through
+  //   create-assignment. An explicit `plan` is the user's own choice (the
+  //   screen offers «una volta, adesso» after AGENT_PHRASE_UNCLEAR), never
+  //   a default the server picks.
+  // Approving a proposed run is NOT routed: approve-run needs the
+  // deployment's applyAction seam, which this composition does not wire,
+  // and the package has no reject or edit operation yet.
+  router.add('GET', '/api/agents/catalog', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.createTeammateAgent !== 'function') {
+      throw new NotFoundError('Operation', 'teammate agents');
+    }
+    const spaceId = typeof query.spaceId === 'string' ? query.spaceId.trim() : '';
+    return {
+      agents: AGENT_CATALOG.map((entry) => ({
+        ...entry,
+        agentSourceKey: spaceId === '' ? null : catalogAgentSourceKey(spaceId, entry.slug),
+      })),
+    };
+  });
+  router.add('POST', '/api/agents/create', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createTeammateAgent !== 'function') {
+      throw new NotFoundError('Operation', 'teammate agents');
+    }
+    const input = stripServerControlledKeys(recordInput(body));
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId.trim() : '';
+    const entry = AGENT_CATALOG.find((candidate) => candidate.slug === input.slug);
+    if (!entry) throw new NotFoundError('Catalogue agent', String(input.slug ?? ''));
+    if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+    return respond(201, await app.createTeammateAgent({
+      spaceId,
+      sourceKey: catalogAgentSourceKey(spaceId, entry.slug),
+      name: entry.name,
+      role: entry.role,
+      instructions: entry.instructions,
+      actor,
+    }));
+  });
+  router.add('POST', '/api/agents/assign', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createTeammateAssignment !== 'function') {
+      throw new NotFoundError('Operation', 'teammate assignments');
+    }
+    const input = recordInput(body);
+    return respond(201, await app.createTeammateAssignment({ ...stripServerControlledKeys(input), actor }));
   });
 
   // Signature provider events (ADR-017). A dedicated route, NOT a record
