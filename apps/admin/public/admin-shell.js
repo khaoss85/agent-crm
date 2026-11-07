@@ -739,6 +739,22 @@ export function createShellView({
 }
 
 /**
+ * Render the screen for a backoffice address the router cannot open
+ * (backlog:55985e25ddd2): plain Italian and a way back to Oggi, in the same
+ * panel the old English message used.
+ * @param {{ doc: object, mount: object }} options
+ */
+export function renderUnknownRoute({ doc, mount }) {
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const box = el(doc, 'div', 'panel');
+  box.appendChild(el(doc, 'p', 'empty', 'Questa pagina non esiste.'));
+  const home = el(doc, 'a', undefined, 'Vai a Oggi');
+  home.setAttribute('href', '#/');
+  box.appendChild(home);
+  mount.appendChild(box);
+}
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the

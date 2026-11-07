@@ -144,10 +144,11 @@ test('parseModuleRoute routes the manual customer form to its own screen', () =>
   for (const hash of [
     '#/clienti/nuovo/extra',
     '#/clienti/nuovo//',
-    '#/clienti',
   ]) {
     assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
   }
+  // backlog:55985e25ddd2: #/clienti alone opens the Clienti list.
+  assert.deepEqual(parseModuleRoute('#/clienti'), { view: 'customer-data' });
 });
 
 test('parseModuleRoute routes the customer scheda to its three-column view', () => {

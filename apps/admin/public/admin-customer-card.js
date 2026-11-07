@@ -6,6 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { SYNC_LABELS } from './admin-labels.js';
 import {
   addFieldForm,
   defineField,
@@ -94,17 +95,7 @@ export function isDefinitiveRefusal(error) {
 }
 const SEND_RESUME_ROUNDS = 40;
 
-/** Delivery/sync state, inbound or outbound, in the operator's words. */
-const SYNC_LABELS = Object.freeze({
-  received: 'ricevuto',
-  sent: 'inviato',
-  delivered: 'consegnato',
-  read: 'letto',
-  failed: 'non consegnato',
-  completed: 'completata',
-  missed: 'persa',
-  'no-answer': 'senza risposta',
-});
+// Delivery/sync state words: shared with the assistant panel (admin-labels.js).
 
 /**
  * Voce cc525cd6a3c5: the quote and opportunity-fallback stages share the
@@ -1630,11 +1621,14 @@ export function createCustomerCardView(deps) {
         : ` ${channelLabel(system)} · ${row.externalId}`));
       box.appendChild(line);
     }
-    const members = Array.isArray(cluster.members) ? cluster.members : [];
-    box.appendChild(el('p', 'bo-muted',
-      cluster.linked === true
-        ? `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`
-        : 'una sola scheda: nessuna unione registrata'));
+    // Voce 785428ec3de0: a customer with no union reads nothing here — no
+    // technical line, no lone «scheda principale» row. The union block shows
+    // only when several schede are linked as the same person.
+    const members = cluster.linked === true && Array.isArray(cluster.members) ? cluster.members : [];
+    if (cluster.linked === true) {
+      box.appendChild(el('p', 'bo-muted',
+        `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`));
+    }
     for (const member of members) {
       const line = el('p', 'bo-scheda-identity');
       line.setAttribute('data-member', `${member?.resource ?? ''}:${member?.id ?? ''}`);

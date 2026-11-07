@@ -418,6 +418,7 @@ import {
   loadFixCount,
   readSpaces,
   renderSettingsPanel,
+  renderUnknownRoute,
   resolveBadgeSpaceId,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
@@ -908,7 +909,6 @@ function shellScreenFor(target) {
   switch (target.view) {
     case 'dashboard': return { id: 'oggi', label: 'Oggi' };
     case 'customer-data':
-    case 'customer-profile':
     case 'customer-card': return { id: 'clienti', label: 'Clienti' };
     case 'customer-import': return { id: 'clienti', label: 'Importa clienti' };
     case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
@@ -1122,6 +1122,14 @@ async function route() {
     return;
   }
   const target = targetForHash(hash);
+  // backlog:6542f55ecf8d: the old profile path opens the scheda; rewrite
+  // the address to the scheda's own hash (replace, so the old path does
+  // not stay in history). The hashchange re-enters route() canonical.
+  if (target.view === 'customer-card' && hash.startsWith('#/customer-data/')
+    && typeof window?.location?.replace === 'function') {
+    window.location.replace(`#/customer-card/${encodeURIComponent(target.resource)}/${encodeURIComponent(target.subjectId)}`);
+    return;
+  }
   syncShell(target);
   // backlog:80b25fb0: the list paints straight into the shared mount, so a
   // list read still in flight must die when the operator leaves the list —
@@ -1176,21 +1184,14 @@ async function route() {
       (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
-      ((target.view === 'customer-data' || target.view === 'customer-profile' || target.view === 'customer-card' || target.view === 'customer-import' || target.view === 'customer-new') && link.getAttribute('href') === '#/customer-data')
+      ((target.view === 'customer-data' || target.view === 'customer-card' || target.view === 'customer-import' || target.view === 'customer-new') && link.getAttribute('href') === '#/customer-data')
       || (target.view === 'spine' && link.getAttribute('href') === '#/spine')
     );
     link.classList.toggle('active', active);
   }
   if (onDashboard) return;
   if (target.view === 'invalid') {
-    moduleView.textContent = '';
-    const box = document.createElement('div');
-    box.className = 'panel';
-    const message = document.createElement('p');
-    message.className = 'empty';
-    message.textContent = 'That module route is not valid.';
-    box.appendChild(message);
-    moduleView.appendChild(box);
+    renderUnknownRoute({ doc: document, mount: moduleView });
     return;
   }
   try {
@@ -1232,7 +1233,6 @@ async function route() {
     else if (target.view === 'componenti') createUiCatalogView({ doc: document, mount: moduleView }).render();
     else if (target.view === 'spazi-accessi') await spaziAccessiView.render();
     else if (target.view === 'profilo') await profiloView.render();
-    else if (target.view === 'customer-profile') await customerDataView.renderProfile(target.resource, target.subjectId);
     else if (target.view === 'customer-card') await customerCardView.renderCard(target.resource, target.subjectId);
     else if (target.view === 'work') await workView.renderQueue();
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);

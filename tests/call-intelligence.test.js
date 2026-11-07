@@ -559,3 +559,25 @@ test('a transcript stamped at the notice instant lands: the boundary is inclusiv
   });
   assert.equal(saved.replayed, false, 'recordedAt equal to noticedAt is a same-instant recording, not a predated one');
 });
+
+// Voce 785428ec3de0: a shared-host space is named by its workspace id, a
+// lowercase UUID; one that starts with a digit (2f07eeb9-…) was refused
+// with VALIDATION_ERROR, so every call read of a fresh space failed and the
+// scheda showed Riepilogo AI and Chiamate in red.
+test('785428ec3de0: a workspace id that starts with a digit is a valid space, and only a canonical uuid widens the rule', async (t) => {
+  const harness = setupCallHarness();
+  t.after(() => harness.close());
+  const SPACE_UUID = '2f07eeb9-8080-4df1-8268-e2c9b77cc0c1';
+  const empty = await harness.ops.readCustomerCalls({ spaceId: SPACE_UUID, subjectResource: 'contact', subjectId: 'c1' });
+  assert.deepEqual(empty.calls, [], 'a fresh space with no calls reads an empty list, never an error');
+  await noticeAndSave(harness.ops, { notice: { spaceId: SPACE_UUID }, transcript: { spaceId: SPACE_UUID } });
+  const read = await harness.ops.readCustomerCalls({ spaceId: SPACE_UUID, subjectResource: 'contact', subjectId: 'c1' });
+  assert.equal(read.calls.length, 1, 'the call saved in that space reads back');
+  const other = await harness.ops.readCustomerCalls({ spaceId: SPACE, subjectResource: 'contact', subjectId: 'c1' });
+  assert.equal(other.calls.length, 0, 'another space never sees it');
+  for (const spaceId of ['2F07EEB9-8080-4DF1-8268-E2C9B77CC0C1', '2f07eeb9', '9-lives', '../etc', '']) {
+    const answer = await outcome(harness.ops.readCustomerCalls({ spaceId, subjectResource: 'contact', subjectId: 'c1' }));
+    assert.equal(answer.accepted, false, `${JSON.stringify(spaceId)} stays refused`);
+    assert.equal(answer.code, 'VALIDATION_ERROR');
+  }
+});
