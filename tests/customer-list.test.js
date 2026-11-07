@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deriveCustomerStatus } from '../packages/customer-data/src/customer-status.js';
 import { listCustomerRecords } from '../packages/customer-data/src/operations.js';
+import { actorMemberId, countUnreadForSubject } from '../packages/interactions/src/index.js';
 import {
   CUSTOMER_COLUMNS,
   CUSTOMER_PAGE_SIZES,
@@ -20,7 +21,7 @@ import {
  * filters, free-text search with channel-word detection, sorting and
  * server-side pagination over exact page sizes.
  *
- * What it must prove: the five quick views are saved filter descriptors (no
+ * What it must prove: the six quick views are saved filter descriptors (no
  * row snapshots); filters combine and clear to `all`; unknown query values
  * refuse fail-closed; pages slice server-side with an exact total; the
  * shared status rule promotes only on signed business; the AI budget column
@@ -137,10 +138,10 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 
 /* ----------------------------------------------------------------- views */
 
-test('the five quick views are saved filter descriptors, not row snapshots', () => {
-  assert.equal(CUSTOMER_VIEWS.length, 5);
+test('the six quick views are saved filter descriptors, not row snapshots', () => {
+  assert.equal(CUSTOMER_VIEWS.length, 6);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);
@@ -155,6 +156,31 @@ test('the five quick views are saved filter descriptors, not row snapshots', () 
   assert.equal(applyCustomerListQuery([contatto, cliente], parseCustomerListQuery({ vista: 'nuovi-lead' })).total, 1);
   assert.equal(applyCustomerListQuery([contatto, cliente], parseCustomerListQuery({ vista: 'clienti-attivi' })).total, 1);
   assert.equal(applyCustomerListQuery([contatto, cliente], parseCustomerListQuery({ vista: 'tutti' })).total, 2);
+  // da-leggere is the same kind of live cut: only rows with unread inbound
+  // messages match, most recent unread first. Rows without read state
+  // (unreadCount null) never match.
+  const unread = rowOf({}, {
+    ...baseReads(),
+    unreadBySubject: new Map([['contact:c1', { unread: 2, lastUnreadAt: '2026-10-21T08:00:00.000Z' }]]),
+  });
+  const read = rowOf({}, {
+    ...baseReads(),
+    unreadBySubject: new Map([['contact:c1', { unread: 0, lastUnreadAt: '2026-10-21T07:00:00.000Z' }]]),
+  });
+  const unknown = rowOf({}, baseReads());
+  assert.equal(applyCustomerListQuery([unread, read, unknown], parseCustomerListQuery({ vista: 'da-leggere' })).total, 1);
+});
+
+test('da-leggere sorts by newest unread first, rows without unread last', () => {
+  const row = (firstName, unread) => rowOf({ contact: { firstName } }, {
+    ...baseReads(),
+    unreadBySubject: unread === null ? new Map() : new Map([['contact:c1', unread]]),
+  });
+  const older = row('Anna', { unread: 1, lastUnreadAt: '2026-10-20T08:00:00.000Z' });
+  const newer = row('Bruno', { unread: 3, lastUnreadAt: '2026-10-21T08:00:00.000Z' });
+  const none = row('Carlo', null);
+  const page = applyCustomerListQuery([none, older, newer], parseCustomerListQuery({ vista: 'da-leggere' }));
+  assert.deepEqual(page.items.map((item) => item.name), ['Bruno Presti', 'Anna Presti']);
 });
 
 test('ricontattare-oggi matches open tasks due today or overdue, nothing else', () => {
@@ -282,7 +308,7 @@ const matchShape = (rows, filters) => rows.filter((row) => Object.entries(filter
 }));
 
 /** A module map with exact-match reads and no writes: any write attempt throws. */
-function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], omit = [] }) {
+function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], reads = [], omit = [] }) {
   const exact = (rows) => ({
     listWhere: async (filters) => matchShape(rows, filters),
     createManaged: async () => { throw new Error('the list writes nothing'); },
@@ -297,6 +323,7 @@ function fakeModules({ contacts, companies, identities = [], orders = [], opport
     ['call-signal', { service: exact(signals) }],
     ['interaction-message', { service: exact(messages) }],
     ['interaction-call', { service: exact(calls) }],
+    ['conversation-read', { service: exact(reads) }],
   ]);
   for (const name of omit) map.delete(name);
   return {
@@ -464,6 +491,55 @@ test('a derived view over a truncated dependency refuses instead of omitting row
     (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /subscription/.test(error.message),
     'a truncated subscription read refuses the renewal view instead of an exact-looking page',
   );
+});
+
+test('9e003582 review: da-leggere over an unreadable or partial message scan refuses, never an exact empty page', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const actor = { type: 'user', id: 'guido' };
+  const withFns = (modules) => ({
+    modules, core: {}, names: { identity: 'external-identity' },
+    interactions: { actorMemberId, countUnreadForSubject },
+  });
+  // No interaction-message module composed: the unread counts are unknown,
+  // so the view refuses instead of answering an exact-looking nobody-unread.
+  const noMessages = fakeModules({ contacts, companies, identities, omit: ['interaction-message'] });
+  await assert.rejects(
+    listCustomerRecords(withFns(noMessages), { vista: 'da-leggere', actor }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /interaction-message/.test(error.message),
+    'da-leggere without message records refuses with its reason',
+  );
+  // A message service exposing only list(): the scan is partial, same refusal.
+  const listOnly = (rows) => ({ list: async () => rows });
+  const base = fakeModules({ contacts, companies, identities });
+  const partial = { get: (key) => (key === 'interaction-message' ? { service: listOnly([]) } : base.get(key)) };
+  await assert.rejects(
+    listCustomerRecords(withFns(partial), { vista: 'da-leggere', actor }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /interaction-message/.test(error.message),
+    'da-leggere over a partial message scan refuses instead of an exact-looking empty page',
+  );
+  // The same unreadable scan still answers tutti, without the da-leggere count.
+  const page = await listCustomerRecords(withFns(noMessages), { vista: 'tutti', actor });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in byId['da-leggere']), 'no message read, no da-leggere count');
+  assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
+});
+
+test('9e003582 review: da-leggere without read state refuses, never an exact empty page', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({ contacts, companies, identities });
+  const withFns = {
+    modules, core: {}, names: { identity: 'external-identity' },
+    interactions: { actorMemberId, countUnreadForSubject },
+  };
+  await assert.rejects(
+    listCustomerRecords(withFns, { vista: 'da-leggere', actor: { type: 'anonymous' } }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /read-state/.test(error.message),
+    'da-leggere for the anonymous actor refuses instead of answering nobody-unread',
+  );
+  const page = await listCustomerRecords(withFns, { vista: 'tutti', actor: { type: 'anonymous' } });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in byId['da-leggere']), 'no read state, no da-leggere count');
+  assert.ok(page.items.every((item) => item.unreadCount === null), 'tutti still answers, without read state');
 });
 
 test('budget signals attach with their source only when a space is named', async () => {
@@ -730,4 +806,43 @@ test('826e377c review giro-7: a canale filter over a partial message scan refuse
     { vista: 'tutti', sort: 'name', pageSize: '10' },
   )).items.find((item) => item.name === 'Guido Presti');
   assert.equal(exactGuido.channelsComplete, true, 'a fully read scan still claims an exact union');
+});
+
+test('9e003582: la lista conta i non letti con la regola di interactions, senza resta null', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const messages = [
+    { id: 'm1', conversationId: 'wa:1', direction: 'inbound', channel: 'whatsapp', body: 'ciao', occurredAt: '2026-10-20T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { id: 'm2', conversationId: 'wa:1', direction: 'inbound', channel: 'whatsapp', body: 'ci sei?', occurredAt: '2026-10-20T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { id: 'm3', conversationId: 'wa:1', direction: 'outbound', channel: 'whatsapp', body: 'sì', teamAuthorId: 'guido', occurredAt: '2026-10-20T10:05:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+  ];
+  const reads = [
+    { id: 'r1', sourceKey: 'read:wa:1:guido', conversationId: 'wa:1', memberId: 'guido', lastReadAt: '2026-10-20T09:30:00.000Z' },
+  ];
+  const modules = fakeModules({ contacts, companies, identities, messages, reads });
+  const base = { modules, core: {}, names: { identity: 'external-identity' } };
+  const actor = { type: 'user', id: 'guido' };
+  // With the interactions read-state functions the row badges m2 only: m1
+  // sits before the watermark, the outbound reply never counts.
+  const withFns = { ...base, interactions: { actorMemberId, countUnreadForSubject } };
+  const page = await listCustomerRecords(withFns, { vista: 'tutti', actor });
+  const guido = page.items.find((item) => item.name === 'Guido Presti');
+  assert.equal(guido.unreadCount, 1);
+  assert.equal(guido.lastUnreadAt, '2026-10-20T10:00:00.000Z');
+  const anna = page.items.find((item) => item.name === 'Anna Bianchi');
+  assert.equal(anna.unreadCount, 0, 'a customer with no messages counts zero, never null');
+  assert.equal(anna.lastUnreadAt, null);
+  assert.equal((await listCustomerRecords(withFns, { vista: 'da-leggere', actor })).total, 1,
+    'da-leggere keeps only the row with unread inbound');
+  // Without the functions every row carries nulls and da-leggere refuses:
+  // unknown read state, never an exact-looking empty page.
+  const noFns = await listCustomerRecords(base, { vista: 'tutti', actor });
+  assert.ok(noFns.items.every((item) => item.unreadCount === null && item.lastUnreadAt === null),
+    'no read-state functions, no read state');
+  await assert.rejects(
+    listCustomerRecords(base, { vista: 'da-leggere', actor }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /read-state/.test(error.message),
+    'da-leggere without read state refuses instead of an exact-looking empty page',
+  );
+  const noFnsViews = Object.fromEntries(noFns.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in noFnsViews['da-leggere']), 'no read state, no da-leggere count');
 });

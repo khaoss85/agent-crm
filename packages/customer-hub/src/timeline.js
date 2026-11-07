@@ -36,9 +36,15 @@ const APPOINTMENT_LIMIT = 50;
 const ENTRY_LIMIT = 50;
 
 /**
- * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>}} input
+ * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>, readFlags?: ((entries: Array<any>) => Promise<Array<boolean|null>|null>)|null}} input
+ *   readFlags answers the `read` verdicts over the history entries through
+ *   the interactions timeline capability (backlog:9e003582): the same rule
+ *   the customer list counts with, so the scheda badge and the list badge
+ *   can never disagree. Absent (or answering null) the entries still read,
+ *   with every `read` null and `readState.available` false — no read state,
+ *   never an invented flag.
  */
-export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule }) {
+export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, readFlags = null }) {
   const resource = subject?.resource;
   const id = subject?.id;
   if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
@@ -72,7 +78,23 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
     readTimeline(envelope),
     readSchedule(envelope),
   ]);
-  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id } });
+  // The flags ride after: they read the entries the providers returned, so
+  // they wait for the history instead of racing it.
+  const read = await readFlagsFor(history?.entries ?? [], readFlags);
+  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id }, read });
+}
+
+/**
+ * The `read` verdicts over history entries, in order, or null when there
+ * is no read state to answer for. No flag reader, or a null behind it —
+ * every one of those reads null, never an invented all-unread map: without
+ * read state the entries below carry `read: null` instead of lighting up.
+ * A ragged answer (not an array) reads null too, never a shifted verdict.
+ */
+async function readFlagsFor(entries, readFlags) {
+  if (typeof readFlags !== 'function') return null;
+  const flags = await readFlags(entries);
+  return Array.isArray(flags) ? flags : null;
 }
 
 /**
@@ -81,9 +103,12 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
  * over fabricated provider reads, while the database tests prove reuse and
  * no-write.
  *
- * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}}} input
+ * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}, read?: Array<boolean|null>|null}} input
+ *   read is the capability's `read` verdicts over the history entries, in
+ *   order, or null when there is no read state to answer for
+ *   (backlog:9e003582).
  */
-export function shapeCustomerTimeline({ profile, threads, history, schedule, subject }) {
+export function shapeCustomerTimeline({ profile, threads, history, schedule, subject, read = null }) {
   // Like the card: a missing canonical record is NOT_FOUND, never an empty
   // timeline that reads as "this customer never spoke to us".
   const contact = profile.identity?.contact ?? null;
@@ -93,7 +118,7 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
   }
   const contactPoints = shapeContactPoints(profile);
   const conversations = shapeConversations(threads ?? [], history?.entries ?? []);
-  const entries = shapeEntries(history?.entries ?? []);
+  const entries = shapeEntries(history?.entries ?? [], read ?? null);
   const appointments = shapeAppointments(schedule ?? []);
 
   return Object.freeze({
@@ -103,6 +128,9 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
     entries,
     appointments,
     contactPoints,
+    // Whether the `read` flags below answer for somebody: false means every
+    // one of them is null, never an invented flag.
+    readState: Object.freeze({ available: read !== null && read !== undefined }),
     timelineNote:
       'Accordo-managed threads and bookings only: marketing, analytics and external systems are not represented. '
       + 'Threads are listed from their rows, so threads with no message or call logged yet are listed too.',
@@ -164,6 +192,8 @@ function shapeConversations(threads, entries) {
         channel: last.channel ?? null,
         body: last.entry === 'call' ? null : (last.body ?? null),
         attachment: last.entry === 'call' ? null : (last.attachment ?? null),
+        subject: last.entry === 'call' ? null : (last.subject ?? null),
+        attachments: last.entry === 'call' ? Object.freeze([]) : (last.attachments ?? Object.freeze([])),
         outcome: last.entry === 'call' ? (last.outcome ?? null) : null,
         occurredAt: last.occurredAt ?? null,
       }),
@@ -192,9 +222,25 @@ function shapeConversations(threads, entries) {
  * evidence — but the scheda cronologia is where the operator who wrote it
  * reads it back.
  */
-function shapeEntries(entries) {
+/**
+ * The `read` flag on one message row: the capability's verdict at the same
+ * index, so the scheda badge and the list badge can never disagree about
+ * the same message (backlog:9e003582). Only message rows carry a verdict —
+ * the team does not unread its own words, and a call carries none — and
+ * only when read state is available: without flags every verdict is null,
+ * never an invented all-unread page. A non-boolean verdict reads null too,
+ * never a shifted flag.
+ */
+function readFlagAt(read, index) {
+  if (!Array.isArray(read)) return null;
+  return typeof read[index] === 'boolean' ? read[index] : null;
+}
+
+function shapeEntries(entries, read = null) {
+  const rows = entries ?? [];
   const shaped = [];
-  for (const row of entries ?? []) {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
     if (row?.entry === 'message') {
       shaped.push(Object.freeze({
         entry: 'message',
@@ -203,8 +249,11 @@ function shapeEntries(entries) {
         channel: row.channel ?? null,
         direction: row.direction ?? null,
         sync: row.status ?? null,
+        read: readFlagAt(read, index),
         body: row.body ?? null,
         attachment: row.attachment ?? null,
+        subject: row.subject ?? null,
+        attachments: row.attachments ?? Object.freeze([]),
         teamAuthorId: row.teamAuthorId ?? null,
         remoteHandle: row.remoteHandle ?? null,
         errorCode: row.errorCode ?? null,

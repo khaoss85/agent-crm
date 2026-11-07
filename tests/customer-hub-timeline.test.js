@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { shapeCustomerTimeline } from '../packages/customer-hub/src/timeline.js';
+import { readCustomerTimeline, shapeCustomerTimeline } from '../packages/customer-hub/src/timeline.js';
 import { boot, project } from './helpers/customer-data-project.js';
 import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
@@ -504,4 +504,86 @@ test('the conversations read refuses a store without its records', async () => {
     (error) => error.code === 'INTERACTIONS_STORAGE_INVALID',
     'a store without the conversation record fails closed, never an empty thread list',
   );
+});
+
+test('9e003582: ogni voce messaggio porta read, con la stessa regola della lista', () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  const history = {
+    entries: [
+      { entry: 'message', id: 'm1', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ciao', occurredAt: '2026-11-06T10:01:00.000Z' },
+      { entry: 'message', id: 'm2', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ci siete?', occurredAt: '2026-11-06T10:02:00.000Z' },
+      { entry: 'message', id: 'm3', conversationId: 'wa:1', channel: 'whatsapp', direction: 'outbound', status: 'sent', body: 'sì, dica', teamAuthorId: 'guido', occurredAt: '2026-11-06T10:03:00.000Z' },
+      { entry: 'call', id: 'v1', conversationId: 'wa:1', channel: 'phone', direction: 'inbound', outcome: 'completed', durationSec: 60, occurredAt: '2026-11-06T10:04:00.000Z' },
+    ],
+  };
+  const timeline = shapeCustomerTimeline({
+    profile, threads: [], history, schedule: [],
+    subject: { resource: 'contact', id: 'c1' },
+    // m1 arrived before the mark, m2 after; the reply carries no verdict.
+    read: [true, false, null, null],
+  });
+  assert.equal(timeline.readState.available, true);
+  const byId = Object.fromEntries(timeline.entries.items.map((row) => [row.id, row]));
+  assert.equal(byId.m1.read, true, 'arrived before the watermark: already seen');
+  assert.equal(byId.m2.read, false, 'arrived after the watermark: still unread');
+  assert.equal(byId.m3.read, null, 'our own words never badge');
+  assert.ok(!('read' in byId.v1), 'a call carries no read verdict');
+});
+
+test('9e003582: senza stato di lettura ogni flag è null, mai una pagina tutta da leggere', () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  const history = {
+    entries: [
+      { entry: 'message', id: 'm1', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ciao', occurredAt: '2026-11-06T10:01:00.000Z' },
+      { entry: 'message', id: 'm2', conversationId: null, channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'senza filo', occurredAt: '2026-11-06T10:02:00.000Z' },
+    ],
+  };
+  const shaped = (read) => shapeCustomerTimeline({
+    profile, threads: [], history, schedule: [],
+    subject: { resource: 'contact', id: 'c1' }, read,
+  });
+  for (const timeline of [shaped(null), shaped(undefined)]) {
+    assert.equal(timeline.readState.available, false);
+    assert.deepEqual(timeline.entries.items.map((row) => row.read), [null, null]);
+  }
+  const withMarks = shaped([false, null]);
+  assert.equal(withMarks.readState.available, true);
+  assert.equal(withMarks.entries.items[0].read, false, 'no watermark: still unread');
+  assert.equal(withMarks.entries.items[1].read, null, 'outside any conversation no mark can ever clear it');
+});
+
+test('9e003582: la scheda chiede i flag alla capability, senza lettore ogni read è null', async () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  const entries = [
+    { entry: 'message', id: 'm1', conversationId: 'wa:1', channel: 'whatsapp', direction: 'inbound', status: 'received', body: 'ciao', occurredAt: '2026-11-06T10:01:00.000Z' },
+    { entry: 'message', id: 'm2', conversationId: 'wa:1', channel: 'whatsapp', direction: 'outbound', status: 'sent', body: 'sì, dica', occurredAt: '2026-11-06T10:02:00.000Z' },
+  ];
+  const seen = [];
+  const readFlags = async (rows) => { seen.push(rows); return [false, null]; };
+  const base = {
+    subject: { resource: 'contact', id: 'c1' },
+    readProfile: async () => profile,
+    readConversations: async () => [],
+    readTimeline: async () => ({ entries }),
+    readSchedule: async () => [],
+  };
+  const timeline = await readCustomerTimeline({ ...base, readFlags });
+  assert.deepEqual(seen[0], entries, 'the capability answers over the history entries it is handed');
+  assert.equal(timeline.readState.available, true);
+  assert.deepEqual(timeline.entries.items.map((row) => row.read), [false, null]);
+  const dark = await readCustomerTimeline({ ...base, readFlags: null });
+  assert.equal(dark.readState.available, false);
+  assert.deepEqual(dark.entries.items.map((row) => row.read), [null, null]);
+  const ragged = await readCustomerTimeline({ ...base, readFlags: async () => 'no' });
+  assert.equal(ragged.readState.available, false, 'a ragged answer never shifts a verdict');
+  assert.deepEqual(ragged.entries.items.map((row) => row.read), [null, null]);
 });

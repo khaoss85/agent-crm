@@ -4,6 +4,7 @@ import {
   AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate,
 } from '../../core/index.js';
+import { actorMemberId, countUnreadForSubject, isInboundUnread } from './read-state.js';
 
 /**
  * **Interactions — the native message and call records.**
@@ -102,6 +103,7 @@ const MAX_ID = 200;
 const MAX_CALL_SECONDS = 86400;
 const MAX_MEMBER = 64;
 const MAX_NOTE = 500;
+const MAX_ATTACHMENT_BYTES = 134217728;
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
@@ -118,6 +120,7 @@ export const bounds = Object.freeze({
   callSeconds: MAX_CALL_SECONDS,
   member: MAX_MEMBER,
   note: MAX_NOTE,
+  attachmentBytes: MAX_ATTACHMENT_BYTES,
 });
 
 /** @param {unknown} value @param {string} field @param {number} max */
@@ -177,8 +180,6 @@ export const ATTACHMENT_KINDS = Object.freeze(['photo', 'video', 'audio', 'docum
 
 const MAX_ATTACHMENT_NAME = 200;
 const MAX_ATTACHMENT_REF = 500;
-const MAX_ATTACHMENT_BYTES = 134217728;
-
 /** @param {unknown} handle @param {string} field */
 function safeAttachmentHandle(handle, field) {
   if (typeof handle !== 'string' || handle === '' || handle.length > MAX_ATTACHMENT_REF
@@ -258,6 +259,101 @@ export function shapeAttachment(row) {
     ref: row.attachmentRef,
     preview: row.attachmentPreview ?? null,
   });
+}
+
+/**
+ * The email extras a message row can carry (backlog:3055d50330b5): the
+ * decoded `Subject` line and the attachment descriptors. Email-only on
+ * purpose — a chat message naming a mail subject is a confused writer, so
+ * validation refuses it instead of storing it. The decoding (RFC 2047,
+ * entities, padding invisibles) already happened in the channels reader;
+ * what is checked here is the shape, and the reader proved the content.
+ */
+export const GMAIL_MESSAGE_SUBJECT_MAX = 500;
+export const GMAIL_MESSAGE_ATTACHMENTS_MAX = 20;
+const MAX_MAIL_ATTACHMENT_NAME = 200;
+const MAX_MAIL_ATTACHMENT_MIME = 128;
+
+/** @param {unknown} value */
+function validateMailSubject(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return safeText(value, 'mailSubject', GMAIL_MESSAGE_SUBJECT_MAX);
+}
+
+/**
+ * One validated attachment descriptor to its storable form, or null when
+ * the entry is not one. Null marks a writer bug, never a stored row.
+ * @param {unknown} entry
+ */
+function cleanMailAttachment(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const raw = /** @type {any} */ (entry);
+  if (typeof raw.name !== 'string') return null;
+  const name = raw.name.trim();
+  if (name === '' || name.length > MAX_MAIL_ATTACHMENT_NAME || CONTROL_RE.test(name)) return null;
+  if (typeof raw.mimeType !== 'string') return null;
+  const mimeType = raw.mimeType.trim();
+  if (mimeType === '' || mimeType.length > MAX_MAIL_ATTACHMENT_MIME || CONTROL_RE.test(mimeType)) return null;
+  // An over-cap provider size arrives as null (backlog:3055d50330b5): the
+  // readers degrade it there, so a cosmetic size never refuses the whole
+  // mail here — the descriptor stays with an unknown size. A missing or
+  // malformed size is still a writer bug and refuses the entry.
+  if (raw.sizeBytes !== null
+    && (!Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0 || raw.sizeBytes > MAX_ATTACHMENT_BYTES)) return null;
+  return { name, mimeType, sizeBytes: raw.sizeBytes };
+}
+
+/**
+ * The validated attachment list to its storable JSON, or null when no
+ * descriptor rides along. Anything malformed is refused (fail-closed): a
+ * stored list is always parseable by `shapeMailAttachments` below.
+ * @param {unknown} value
+ */
+function validateMailAttachments(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value)) {
+    throw new ValidationError('mailAttachments must be a list when present', { field: 'mailAttachments' });
+  }
+  if (value.length === 0) return null;
+  if (value.length > GMAIL_MESSAGE_ATTACHMENTS_MAX) {
+    throw new ValidationError(`mailAttachments must hold at most ${GMAIL_MESSAGE_ATTACHMENTS_MAX} entries`, { field: 'mailAttachments' });
+  }
+  const cleaned = [];
+  for (const entry of value) {
+    const clean = cleanMailAttachment(entry);
+    if (clean === null) {
+      throw new ValidationError('mailAttachments entries need a bounded name, MIME type and byte size', { field: 'mailAttachments' });
+    }
+    cleaned.push(clean);
+  }
+  return JSON.stringify(cleaned);
+}
+
+/**
+ * The shape the card reads for email attachments: the frozen descriptor
+ * list, or the empty list for messages without any. Every reader (timeline,
+ * thread, hub) goes through here, so no path invents its own projection.
+ * Anything malformed degrades to the empty list (a pre-rev3 row stores
+ * null), never throws: a timeline read is not where a writer bug surfaces.
+ * @param {any} row
+ */
+export function shapeMailAttachments(row) {
+  const stored = row?.mailAttachmentsJson;
+  if (typeof stored !== 'string' || stored === '') return Object.freeze([]);
+  let parsed;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    return Object.freeze([]);
+  }
+  if (!Array.isArray(parsed)) return Object.freeze([]);
+  const cleaned = [];
+  for (const entry of parsed) {
+    const clean = cleanMailAttachment(entry);
+    if (clean === null) return Object.freeze([]);
+    cleaned.push(Object.freeze(clean));
+  }
+  return Object.freeze(cleaned);
 }
 
 /**
@@ -792,22 +888,39 @@ export function validateMessageRequest(request) {
   // A photo with no caption carries no text (backlog:32820692): the body is
   // required unless an attachment rides along, in which case an empty body
   // stores as null and the card renders the attachment instead of a blank
-  // bubble. Text-only messages keep the old contract exactly.
+  // bubble. A mail with only its subject (backlog:3055d50330b5 — empty
+  // snippet, image-only body, padding-only text) stores the same way with a
+  // null body, so the synced subject is never lost over missing text.
+  // Text-only messages keep the old contract exactly.
   const attachment = validateAttachment(value.attachment);
+  const channel = validateChannel(value.channel, 'channel');
+  // Email-only extras (backlog:3055d50330b5): a chat message naming a mail
+  // subject or mail attachments is a confused writer, refused here rather
+  // than stored where no card looks.
+  const mailExtrasPresent = value.mailSubject !== undefined && value.mailSubject !== null && value.mailSubject !== ''
+    || value.mailAttachments !== undefined && value.mailAttachments !== null;
+  if (channel !== 'email' && mailExtrasPresent) {
+    throw new ValidationError('mailSubject and mailAttachments are email-only', { field: 'mailSubject' });
+  }
+  const mailSubject = channel === 'email' ? validateMailSubject(value.mailSubject) : null;
+  const mailAttachmentsJson = channel === 'email' ? validateMailAttachments(value.mailAttachments) : null;
   const bodyAbsent = value.body === undefined || value.body === null
     || (typeof value.body === 'string' && value.body.replace(/\r\n/g, '\n').trim() === '');
   // A wrong-typed body is still refused (fail-closed): only an absent or
-  // blank body may ride along with an attachment, stored as null.
-  const body = bodyAbsent && attachment !== null
+  // blank body may ride along with an attachment, a descriptor list or a
+  // mail subject, stored as null.
+  const body = bodyAbsent && (attachment !== null || mailAttachmentsJson !== null || mailSubject !== null)
     ? null
     : safeMessageBody(value.body, 'body', MAX_BODY);
   return {
     sourceKey: validateSourceKey(value.sourceKey, 'sourceKey'),
     conversationId: safeText(value.conversationId, 'conversationId', MAX_ID),
     direction,
-    channel: validateChannel(value.channel, 'channel'),
+    channel,
     body,
     attachment,
+    mailSubject,
+    mailAttachmentsJson,
     teamAuthorId,
     remoteHandle: optionalSafeText(value.remoteHandle, 'remoteHandle', MAX_HANDLE),
     subject: validateSubject(value.subject),
@@ -842,6 +955,8 @@ export async function logMessage(context, request) {
     attachmentSize: input.attachment?.size ?? null,
     attachmentRef: input.attachment?.ref ?? null,
     attachmentPreview: input.attachment?.preview ?? null,
+    mailSubject: input.mailSubject,
+    mailAttachmentsJson: input.mailAttachmentsJson,
     teamAuthorId: input.teamAuthorId,
     remoteHandle: input.remoteHandle,
     subjectResource: input.subject.resource,
@@ -1422,6 +1537,15 @@ export async function markConversationRead(context, request) {
   // A read watermark without a reader would store that somebody saw the
   // customer's words with nobody saying who.
   const who = requireActor(actor);
+  // The write path refuses the same actors the read path never reads back:
+  // actorMemberId answers null for the anonymous actor and for non-user
+  // actors, and a watermark row under one would be orphan state nobody
+  // could ever read.
+  if (actorMemberId(who) === null) {
+    throw new AppError('Marking a conversation read is a human decision', {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new ValidationError('a mark-read request object is required', { field: 'request' });
   }
@@ -1490,10 +1614,172 @@ export async function unreadCount({ modules, moduleNames }, conversationId, memb
   if (!found) throw new NotFoundError('conversation', id);
   const watermark = (await reads.listWhere({ conversationId: id, memberId: member }))[0]?.lastReadAt ?? null;
   const inbound = await messages.listWhere({ conversationId: id, direction: 'inbound' });
-  const unread = watermark === null
-    ? inbound.length
-    : inbound.filter((row) => String(row.occurredAt ?? '') > String(watermark)).length;
+  // The one unread rule beside it: every caller of the watermark counts
+  // the same messages, never a local copy of the compare.
+  const unread = inbound.filter((row) => isInboundUnread(row, watermark)).length;
   return Object.freeze({ conversationId: id, memberId: member, unread, lastReadAt: watermark });
+}
+
+/**
+ * One member's watermarks over every conversation: conversation id to the
+ * `lastReadAt` instant, for the readers that shape unread state without
+ * owning the table (the customer list, the timeline). Returns null when the
+ * `conversation-read` record is not composed: callers then omit read state
+ * instead of inventing it — without the table every inbound message would
+ * read unread and every row would light up.
+ */
+export async function watermarksForMember({ modules, moduleNames }, memberId) {
+  const names = resolvedNames(moduleNames);
+  const member = validateMemberId(memberId, 'memberId');
+  const reads = resolveModule(modules, names.read)?.service;
+  if (!reads?.listWhere) return null;
+  const rows = await reads.listWhere({ memberId: member });
+  const byConversation = new Map();
+  for (const row of rows ?? []) {
+    if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
+    byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
+  }
+  return byConversation;
+}
+
+/**
+ * One member's `read` verdicts over entries the caller already holds, in
+ * order: the one unread rule (`isInboundUnread`) applied to rows in hand,
+ * so the scheda and the list badge can never disagree about the same
+ * message. The member is always the actor — a request never names one, so
+ * nobody reads another member's state — and an actor without a member, or
+ * a composition without the watermark table, answers null: no read state,
+ * never an invented page. Entries that are not inbound messages of a
+ * conversation carry null, never a verdict, mirroring the timeline's own
+ * shaping (backlog:9e003582).
+ * @param {unknown} actor
+ * @param {Array<any>} entries
+ */
+export async function readEntryFlags({ modules, moduleNames }, actor, entries) {
+  const member = actorMemberId(actor);
+  if (member === null) return null;
+  const watermarks = await watermarksForMember({ modules, moduleNames }, member);
+  if (watermarks === null) return null;
+  const rows = Array.isArray(entries) ? entries : [];
+  return Object.freeze(rows.map((row) => {
+    if (row?.entry === 'call') return null;
+    if (row?.direction !== 'inbound') return null;
+    if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') return null;
+    const watermark = watermarks.get(String(row.conversationId)) ?? null;
+    return !isInboundUnread(row, watermark);
+  }));
+}
+
+// The one unread rule and its counters live beside the watermark table they
+// read, so every caller counts the same messages: the unread rule, the
+// per-subject counter and the actor-to-member mapping this package shares
+// with the readers that shape read state without owning the table.
+export { actorMemberId, countUnreadForSubject, isInboundUnread } from './read-state.js';
+
+/**
+ * Mark one customer's inbound messages read up to an instant: every open or
+ * closed thread of the subject gets the acting member's watermark moved to
+ * the later of its current value and `upTo`. Idempotent — a second mark
+ * with the same instant moves nothing and answers the same outcome — and
+ * scoped to the subject's own threads, never a stranger's.
+ *
+ * The member is always the actor: the request never names one, so nobody
+ * marks another member read, and a browser never writes the table directly
+ * — the write happens only here, through the managed watermark rows, called
+ * by the door route or by the worker with the session's actor.
+ */
+export async function markCustomerRead(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const { conversations } = interactionServices({ modules: context.modules, names });
+  const { reads } = readStateServices({ modules: context.modules, names });
+  const actor = context.actor;
+  // A read watermark without a reader would store that somebody saw the
+  // customer's words with nobody saying who.
+  const who = requireActor(actor);
+  // The write path refuses the same actors the read path never reads back:
+  // actorMemberId answers null for the anonymous actor and for non-user
+  // actors, and a watermark row under one would be orphan state nobody
+  // could ever read.
+  if (actorMemberId(who) === null) {
+    throw new AppError('Marking a customer read is a human decision', {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
+  if (!request || typeof request !== 'object' || Array.isArray(request)) {
+    throw new ValidationError('a mark-read request object is required', { field: 'request' });
+  }
+  const value = /** @type {any} */ (request);
+  // Contacts and companies are host-owned records (the timeline reads them
+  // under the same envelope), so the subject here names only the kind and
+  // the id — never an owner a caller could point at another package's rows.
+  const resource = value?.subject?.resource;
+  if (resource !== 'contact' && resource !== 'company') {
+    throw new ValidationError('a customer mark-read needs subject resource contact or company', { field: 'subject.resource' });
+  }
+  const id = safeText(value?.subject?.id, 'subject.id', MAX_ID);
+  const subject = { resource, id, owner: 'host', ownerPackage: null };
+  bindSourcePackage(validateSource(value.source), context.consumer);
+  const upTo = realIsoDate(value.upTo, 'upTo');
+  const memberId = validateMemberId(who.id, 'memberId');
+
+  const threads = await conversations.listWhere({
+    subjectResource: subject.resource,
+    subjectId: subject.id,
+  });
+  const marked = [];
+  let touched = 0;
+  for (const thread of threads ?? []) {
+    const conversationId = thread?.id;
+    if (typeof conversationId !== 'string' || conversationId === '') continue;
+    const sourceKey = `read:${conversationId}:${memberId}`;
+    const existing = (await reads.listWhere({ sourceKey }))[0];
+    const current = typeof existing?.lastReadAt === 'string' ? existing.lastReadAt : null;
+    const next = current !== null && current > upTo ? current : upTo;
+    if (existing) {
+      if (existing.lastReadAt !== next) {
+        await reads.applyManaged(existing.id, {
+          lastReadAt: next,
+          updatedByType: who.type,
+          updatedById: who.id,
+        }, { actor });
+        touched += 1;
+      }
+    } else {
+      try {
+        await reads.createManaged({
+          sourceKey,
+          conversationId,
+          memberId,
+          lastReadAt: next,
+          updatedByType: who.type,
+          updatedById: who.id,
+        }, { actor });
+        touched += 1;
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+        const raced = (await reads.listWhere({ sourceKey }))[0];
+        if (!raced) throw error;
+        const racedCurrent = typeof raced?.lastReadAt === 'string' ? raced.lastReadAt : null;
+        const racedNext = racedCurrent !== null && racedCurrent > upTo ? racedCurrent : upTo;
+        if (raced.lastReadAt !== racedNext) {
+          await reads.applyManaged(raced.id, {
+            lastReadAt: racedNext,
+            updatedByType: who.type,
+            updatedById: who.id,
+          }, { actor });
+          touched += 1;
+        }
+      }
+    }
+    marked.push(conversationId);
+  }
+  return Object.freeze({
+    subject: Object.freeze({ resource: subject.resource, id: subject.id }),
+    memberId,
+    upTo,
+    conversations: Object.freeze(marked),
+    touched,
+  });
 }
 
 /**
@@ -1580,6 +1866,8 @@ export async function readTimeline({ modules, moduleNames }, subject) {
       status: row.status,
       body: row.body,
       attachment: shapeAttachment(row),
+      subject: row.mailSubject ?? null,
+      attachments: shapeMailAttachments(row),
       teamAuthorId: row.teamAuthorId ?? null,
       remoteHandle: row.remoteHandle ?? null,
       errorCode: row.errorCode ?? null,
@@ -1672,6 +1960,7 @@ export async function readConversationThread({ modules, moduleNames }, conversat
     ...(await messages.listWhere({ conversationId: id })).map((row) => Object.freeze({
       entry: 'message', id: row.id, direction: row.direction, channel: row.channel,
       status: row.status, body: row.body, attachment: shapeAttachment(row),
+      subject: row.mailSubject ?? null, attachments: shapeMailAttachments(row),
       teamAuthorId: row.teamAuthorId ?? null,
       remoteHandle: row.remoteHandle ?? null, errorCode: row.errorCode ?? null,
       occurredAt: row.occurredAt, createdAt: row.createdAt ?? null,
@@ -1762,6 +2051,8 @@ export function createInteractionLogCapability(moduleNames) {
         assignConversation: (request) => assignConversation(scope, request),
         /** @param {unknown} request */
         markConversationRead: (request) => markConversationRead(scope, request),
+        /** @param {unknown} request */
+        markCustomerRead: (request) => markCustomerRead(scope, request),
       });
     },
   };
@@ -1781,7 +2072,7 @@ export function createInteractionTimelineCapability(moduleNames) {
     description:
       'Read one subject\'s interaction history — its messages and calls plus the work-activity entries on the same '
       + 'subject, oldest first — every thread row naming the subject, one thread with its ownership trail, '
-      + 'and one member\'s unread on a thread. '
+      + 'one member\'s unread on a thread, and one member\'s `read` verdicts over entries the caller holds. '
       + 'Read-only: frozen rows, no storage handle, no write path.',
     /** @param {{modules: any}} context */
     create(context = {}) {
@@ -1814,6 +2105,13 @@ export function createInteractionTimelineCapability(moduleNames) {
         assignment: (conversationId) => readConversationAssignment(fullScope, conversationId),
         /** @param {string} conversationId @param {string} memberId */
         unread: (conversationId, memberId) => unreadCount(fullScope, conversationId, memberId),
+        // One member's `read` verdicts over entries the caller already
+        // holds, for the readers that shape read state without owning the
+        // table (the scheda timeline): null when there is no member or no
+        // watermark table, so callers omit read state instead of
+        // inventing it. The raw watermarks never leave this package.
+        /** @param {unknown} actor @param {Array<any>} entries */
+        readFlags: (actor, entries) => readEntryFlags(fullScope, actor, entries),
       });
     },
   };

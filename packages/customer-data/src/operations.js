@@ -53,7 +53,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -365,7 +365,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async listCustomerRecords(request) {
-      return listCustomerRecords({ modules, core, names }, request);
+      return listCustomerRecords({ modules, core, names, interactions }, request);
     },
 
     /**
@@ -595,7 +595,7 @@ function subjectsByIndex(storedRows) {
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-export async function listCustomerRecords({ modules, core, names }, request) {
+export async function listCustomerRecords({ modules, core, names, interactions = null }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');
@@ -694,6 +694,32 @@ export async function listCustomerRecords({ modules, core, names }, request) {
   const tasks = await batched('work-task');
   const messages = await batched('interaction-message');
   const calls = await batched('interaction-call');
+  // «Da leggere» (backlog:9e003582): one member's read watermarks over
+  // every conversation, read once for the whole page. The member is always
+  // the request actor — the query names no member — and without one (or
+  // without the watermark table composed, or without the interactions
+  // read-state functions) every row below carries nulls: no read state,
+  // never an invented count. The table lives in the interactions package,
+  // but this read goes straight at the record module (like the message and
+  // call reads above), never through that package's code — a domain package
+  // reaches another only through requires plus capability, and this list
+  // has no edge to add for a display column. The one unread rule arrives
+  // through `options.interactions` instead, so both readers count alike.
+  const readFns = interactions ?? null;
+  const watermarks = await (async () => {
+    if (readFns === null || typeof readFns.actorMemberId !== 'function') return null;
+    const member = readFns.actorMemberId(normalizeActor(request?.actor));
+    if (member === null) return null;
+    const reads = optional(modules, 'conversation-read');
+    if (!reads || typeof reads.listWhere !== 'function') return null;
+    const byConversation = new Map();
+    const marks = await reads.listWhere({ memberId: member });
+    for (const row of marks ?? []) {
+      if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
+      byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
+    }
+    return byConversation;
+  })();
   let signals = { rows: [], readable: false };
   if (query.spaceId) {
     const signalSvc = optional(modules, 'call-signal');
@@ -827,6 +853,13 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     && (tasks.readable !== true || tasks.complete === false)) {
     throw new AppError('the ricontattare-oggi view needs the work-task records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
+  if (query.view?.id === 'da-leggere'
+    && (messages.readable !== true || messages.complete === false)) {
+    throw new AppError('the da-leggere view needs the interaction-message records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
+  if (query.view?.id === 'da-leggere' && watermarks === null) {
+    throw new AppError('the da-leggere view needs the read-state records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
 
   const today = new Date().toISOString().slice(0, 10);
   const rows = subjects.map(({ contact, company }) => {
@@ -876,6 +909,13 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    // The row's unread badge, from the message rows already in hand — no new
+    // query. Calls never count (only what the scheda badges counts), and a
+    // null here (no member, no watermark table, no read-state functions)
+    // shapes nulls downstream.
+    const myUnread = readFns !== null && typeof readFns.countUnreadForSubject === 'function'
+      ? readFns.countUnreadForSubject(messages.rows.filter(mine), watermarks)
+      : null;
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only
     // on CUSTOMER_CHANNELS, the same whitelist parseCustomerListQuery
@@ -914,6 +954,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
       identitiesBySubject,
       observedChannelsBySubject: new Map(observedChannels.length === 0 ? [] : [[key, observedChannels]]),
       observedComplete,
+      unreadBySubject: new Map(myUnread === null ? [] : [[key, myUnread]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {
@@ -945,6 +986,7 @@ export async function listCustomerRecords({ modules, core, names }, request) {
     const entry = { id: view.id, label: view.label };
     if (complete !== true) return entry;
     if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
+    if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
     if (view.id === 'rinnovi-30-giorni'
       && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
     return { ...entry, count: filterCustomerRows(rows, query, view, today).length };

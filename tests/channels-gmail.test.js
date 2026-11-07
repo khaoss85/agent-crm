@@ -116,6 +116,29 @@ test('inbound mail lands in the thread conversation', async (t) => {
   assert.equal(rows[0].occurredAt, new Date(at).toISOString());
 });
 
+test('a pushed delivery carries its mail subject and attachments to the host', async (t) => {
+  // P1 backlog:3055d50330b5 — the ingest result content is the production
+  // path a host logs into the interaction record, so the mail extras must
+  // ride on it, never be dropped beside the text.
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const key = await registeredActive(harness);
+  const at = Date.now() - HOUR;
+  const rawBody = gmailPushBody({
+    id: 'gmail-m-subj', threadId: 'thread-SUBJ', from: CUSTOMER, to: MAILBOX,
+    subject: 'La tua ricevuta n. 1234', snippet: 'Grazie per il tuo acquisto.',
+    internalDateMs: at,
+    attachments: [{ filename: 'ricevuta-1234.pdf', mimeType: 'application/pdf', size: 48210, attachmentId: 'att-1' }],
+  });
+  const out = await harness.ingest(SPACE, { connectionKey: key, rawBody, headers: signedHeaders(rawBody) });
+  assert.equal(out.effect, 'applied');
+  assert.equal(out.content.mailSubject, 'La tua ricevuta n. 1234');
+  assert.deepEqual(out.content.mailAttachments, [{
+    name: 'ricevuta-1234.pdf', mimeType: 'application/pdf', sizeBytes: 48210,
+  }]);
+  assert.equal(out.content.text, 'Grazie per il tuo acquisto.');
+});
+
 test('a reply from the card stays in the same email thread', async (t) => {
   const { harness, api } = setup();
   t.after(() => harness.close());
