@@ -834,9 +834,11 @@ export function pendingRequestId(error, expectedCode) {
 
 /**
  * Whether a failed read-back is worth reading again (review #664): a
- * network fault, a gateway or server hiccup, a timeout or a rate limit. A
- * 4xx refusal, an AI-off code (the pilot forwards LLM_* at 502) and a
- * cancelled or unshapable outcome are final.
+ * network fault (fetch rejects with a TypeError, or status 0), a gateway or
+ * server hiccup, a timeout or a rate limit. A 4xx refusal, an AI-off code
+ * (the pilot forwards LLM_* at 502), a cancelled or unshapable outcome and
+ * any other status-less exception (a bug, a shape error) are final — never
+ * retried for a minute and passed off as «still queued».
  * @param {unknown} error
  */
 function transientReadFailure(error) {
@@ -844,7 +846,10 @@ function transientReadFailure(error) {
   const code = typeof record.code === 'string' ? record.code : '';
   if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
   const status = typeof record.status === 'number' ? record.status : null;
-  if (status === null || status === 0) return true;
+  if (status === 0) return true;
+  if (status === null) {
+    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
+  }
   return status >= 500 || status === 408 || status === 425 || status === 429;
 }
 
@@ -859,9 +864,9 @@ function transientReadFailure(error) {
  * @param {{request: (path: string, options?: any) => Promise<any>}} client
  * @param {string} path the queued route, e.g. `/api/appointments/phrase`
  * @param {string} requestId the id the 504 carried
- * @param {{expectedCode: string, wait: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, stale?: () => boolean}} options
+ * @param {{expectedCode: string, wait: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, stale?: () => boolean, spaceId?: string|null}} options
  */
-export async function readBackPending(client, path, requestId, { expectedCode, wait, everyMs = 3000, rounds = 20, stale = () => false }) {
+export async function readBackPending(client, path, requestId, { expectedCode, wait, everyMs = 3000, rounds = 20, stale = () => false, spaceId = null }) {
   let id = requestId;
   for (let round = 0; round < rounds; round += 1) {
     await wait(everyMs);
@@ -883,9 +888,19 @@ export async function readBackPending(client, path, requestId, { expectedCode, w
           code: typeof record?.code === 'string' ? record.code : 'UNKNOWN',
           status: typeof record?.status === 'number' ? record.status : null,
           requestId: id,
+          spaceId,
         });
         continue;
       }
+      // A final refusal is diagnosable (review #664): its cause, the request
+      // and the space go to the log; the caller shows its Italian sentence.
+      const record = /** @type {any} */ (error);
+      console.warn('[bo] rilettura in coda rifiutata', {
+        code: typeof record?.code === 'string' ? record.code : (error instanceof Error ? error.name : 'UNKNOWN'),
+        status: typeof record?.status === 'number' ? record.status : null,
+        requestId: id,
+        spaceId,
+      });
       return { error };
     }
   }

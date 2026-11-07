@@ -2237,10 +2237,14 @@ export function createCalendarioView(deps) {
         if (requestId === null) throw error;
       }
     }
+    // A route away (or a newer search) during the POST owns the mount now:
+    // never paint the waiting card over it (review #664, backlog:607f33ee).
+    if (seq !== phraseSeq) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
     state.phraseWaiting = true;
     renderAll();
     const read = await readBackPending(client, '/api/appointments/phrase', requestId, {
       expectedCode: 'BO_PHRASE_PENDING',
+      spaceId: readSpace(),
       wait, everyMs: PHRASE_RESUME_EVERY_MS, rounds: PHRASE_RESUME_ROUNDS, stale: () => seq !== phraseSeq,
     });
     if (read.stale) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
@@ -2270,8 +2274,12 @@ export function createCalendarioView(deps) {
     state.aiNote = '';
     renderAll();
     try {
+      const asked = state.phrase;
       const answer = await phraseAnswer({ resumeId, seq });
       state.phraseWaiting = false;
+      // An edit while the answer was on its way never relabels it: the
+      // draft paints under the phrase that asked it (review #664 P3).
+      state.phrase = asked;
       const draft = answer?.draft ?? null;
       state.draft = draft;
       if (!draft) {

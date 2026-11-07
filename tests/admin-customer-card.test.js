@@ -3993,3 +3993,27 @@ test('composer AI: a transient read-back failure keeps reading the same queued d
   assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì.', 'the ready draft lands after the hiccup');
   assert.ok(!panel.textContent.includes('Bad Gateway'));
 });
+
+// Review #664 round 2 P2: the queued draft request survives closing and
+// reopening the composer — never a second POST for the same words.
+test('composer AI: a queued draft is resumed after ✕ and Scrivi, never asked again', async () => {
+  const client = pendingDraftClient({ readyAfter: 21 });
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.input.value = 'ricordagli la prova';
+  first.go.dispatch('click');
+  await flushComposer(80);
+  assert.match(panel.textContent, /L’AI sta impiegando più del previsto/);
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const again = aiParts(reopened);
+  again.input.value = 'ricordagli la prova';
+  again.go.dispatch('click');
+  await flushComposer(20);
+  assert.equal(client.drafts.length, 1, 'the reopened composer reads the same request back');
+  assert.equal(client.reads.length, 21);
+  assert.ok(client.reads.at(-1).endsWith('requestId=draft-req-1'));
+  assert.equal(again.area.value, 'Ciao Guido, ti aspettiamo giovedì.');
+});

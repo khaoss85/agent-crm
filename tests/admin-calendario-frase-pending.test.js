@@ -128,7 +128,7 @@ test('a transient read-back failure keeps reading the same request', async () =>
     readyAfter: 3,
     readFailures: [
       Object.assign(new Error('Gateway Timeout'), { status: 504, code: 'UNKNOWN' }),
-      Object.assign(new Error('Failed to fetch'), { code: 'UNKNOWN' }),
+      new TypeError('Failed to fetch'),
     ],
   });
   const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
@@ -187,4 +187,116 @@ test('an unrelated *_PENDING refusal on the POST is never read back', async () =
   assert.equal(reads(client).length, 0, 'no read-back loop on a refusal');
   assert.ok(!mount.textContent.includes('Sto cercando'), 'the card does not pretend to wait');
   assert.ok(!mount.textContent.includes('Claim pending elsewhere'), 'never the English message');
+});
+
+// Review #664 round 2 P1: a route away during the POST, then a 504 pending,
+// repainted the calendar over the new screen.
+test('a route away during the POST never repaints the waiting card over the new screen', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let rejectPost = () => {};
+  const base = phraseClient();
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/appointments/phrase' && (options.method ?? 'GET') === 'POST') {
+        base.calls.push({ path, method: 'POST' });
+        return new Promise((resolve, reject) => { rejectPost = reject; });
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush();
+  // The shell routes away: it drops the calendar and paints another screen.
+  view.invalidate();
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const other = doc.createElement('div');
+  other.setAttribute('data-screen', 'clienti');
+  mount.appendChild(other);
+  rejectPost(pending());
+  await flush();
+  assert.equal(mount.querySelector('.cal-wrap'), null, 'the calendar never repaints');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-screen') === 'clienti'), 'the new screen stays');
+  assert.equal(reads(client).length, 0, 'and nothing is read back for a screen that is gone');
+});
+
+// Review #664 round 2 P2: a status-less exception that is not a network
+// fault is final — never retried for a minute and called «still queued».
+test('a status-less read-back bug is final, never passed off as a slow request', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({ readyAfter: 5, readFailures: [new Error('Unexpected token < in JSON')] });
+  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const warned = [];
+  const original = console.warn;
+  console.warn = (...args) => { warned.push(args); };
+  try {
+    await search(view, mount);
+    await flush(30);
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(reads(client).length, 1, 'read once, not for a minute');
+  assert.ok(!mount.textContent.includes('sta impiegando più del previsto'), 'not called slow');
+  assert.ok(mount.textContent.includes('Ricerca non riuscita'), 'the honest failure');
+  assert.ok(!mount.textContent.includes('Unexpected token'), 'never the raw message');
+  assert.ok(warned.some(([label]) => label === '[bo] rilettura in coda rifiutata'), 'the cause is logged');
+});
+
+// Review #664 round 2 P2: a final read-back refusal logs its cause with the
+// request and the space.
+test('a final 5xx read-back refusal is logged with code, request and space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? 'space-9' : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  const client = phraseClient({
+    readyAfter: 5,
+    readFailures: [Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'BO_PHRASE_OUTCOME_UNKNOWN' })],
+  });
+  const view = createCalendarioView({ doc, mount, client, storage, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const warned = [];
+  const original = console.warn;
+  console.warn = (...args) => { warned.push(args); };
+  try {
+    await search(view, mount);
+    await flush(30);
+  } finally {
+    console.warn = original;
+  }
+  const line = warned.find(([label]) => label === '[bo] rilettura in coda rifiutata');
+  assert.ok(line, 'the final refusal is logged');
+  assert.deepEqual(line[1], { code: 'BO_PHRASE_OUTCOME_UNKNOWN', status: 502, requestId: 'req-1', spaceId: 'space-9' });
+  assert.ok(!mount.textContent.includes('Calendar phrase refused'), 'never the English message');
+});
+
+// Review #664 round 2 P3: an edit while the answer is on its way never
+// relabels the draft.
+test('an edit during the read-back never paints the draft under other words', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseWait = () => {};
+  let first = true;
+  const client = phraseClient({ readyAfter: 1 });
+  const wait = () => {
+    if (!first) return Promise.resolve();
+    first = false;
+    return new Promise((resolve) => { releaseWait = resolve; });
+  };
+  const view = createCalendarioView({ doc, mount, client, wait, now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush();
+  const field = mount.querySelector('textarea[name="phrase"]');
+  field.value = 'trova 60 minuti con sara venerdì';
+  field.dispatch('input');
+  releaseWait();
+  await flush(30);
+  assert.ok(mount.querySelector('.cal-draft'), 'the asked draft paints');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').value, 'trova 30 minuti con marco giovedì');
 });

@@ -1310,10 +1310,11 @@ export function createCustomerCardView(deps) {
     row.appendChild(field);
     row.appendChild(line);
     let busy = false;
-    // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING):
-    // the next Genera with the same words and channel reads that request
-    // back instead of asking the AI again. @type {{requestId: string, words: string, channel: string} | null}
-    let pendingDraft = null;
+    // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
+    // lives in composerAiPending, outside this row (review #664): the next
+    // Genera with the same words and channel — even after ✕ and Scrivi —
+    // reads that request back instead of asking the AI again.
+    const pendingKey = (words, picked) => `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}:${picked}:${words}`;
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
@@ -1368,9 +1369,9 @@ export function createCustomerCardView(deps) {
         // Production 07/11 (same shape as the calendar phrase): a queued
         // draft answers 504 *_PENDING with a requestId; it is read back on
         // the same path every 3 s for about a minute, never asked again.
-        let requestId = pendingDraft !== null && pendingDraft.words === words && pendingDraft.channel === picked
-          ? pendingDraft.requestId : null;
-        pendingDraft = null;
+        const key = pendingKey(words, picked);
+        let requestId = composerAiPending.get(key) ?? null;
+        composerAiPending.delete(key);
         let answer = null;
         if (requestId === null) {
           try {
@@ -1384,16 +1385,24 @@ export function createCustomerCardView(deps) {
           }
         }
         if (requestId !== null) {
-          if (stale()) return;
+          if (stale()) {
+            composerAiPending.set(key, requestId);
+            return;
+          }
           say('Scrivo ancora… la bozza arriva tra poco.');
           const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
             expectedCode: 'BO_DRAFT_PENDING',
+            spaceId: spaceId ?? null,
             wait, everyMs: 3000, rounds: 20, stale,
           });
-          if (read.stale) return;
+          if (read.stale) {
+            // Closed while reading back: the request stays for the next Genera.
+            composerAiPending.set(key, requestId);
+            return;
+          }
           if (read.error) throw read.error;
           if (read.pending) {
-            pendingDraft = { requestId: read.requestId, words, channel: picked };
+            composerAiPending.set(key, read.requestId);
             console.warn('[bo] bozza AI ancora in coda', { requestId: read.requestId, spaceId: spaceId ?? null });
             say('L’AI sta impiegando più del previsto: premi di nuovo Genera per riprendere la stessa bozza.');
             return;
@@ -1467,6 +1476,11 @@ export function createCustomerCardView(deps) {
   // the server accepted. In memory: a reload still drops them, like any
   // unsent form.
   const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
   // The idempotency key of a send whose outcome is not yet known, keyed by
   // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
   // the server finds its own request instead of mailing twice (production
