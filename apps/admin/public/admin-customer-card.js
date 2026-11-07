@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
@@ -1310,6 +1310,10 @@ export function createCustomerCardView(deps) {
     row.appendChild(field);
     row.appendChild(line);
     let busy = false;
+    // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING):
+    // the next Genera with the same words and channel reads that request
+    // back instead of asking the AI again. @type {{requestId: string, words: string, channel: string} | null}
+    let pendingDraft = null;
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
@@ -1361,10 +1365,40 @@ export function createCustomerCardView(deps) {
       go.textContent = 'Scrivo…';
       say('');
       try {
-        const answer = await client.request('/api/customer-hub/messages/draft', {
-          method: 'POST',
-          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
-        });
+        // Production 07/11 (same shape as the calendar phrase): a queued
+        // draft answers 504 *_PENDING with a requestId; it is read back on
+        // the same path every 3 s for about a minute, never asked again.
+        let requestId = pendingDraft !== null && pendingDraft.words === words && pendingDraft.channel === picked
+          ? pendingDraft.requestId : null;
+        pendingDraft = null;
+        let answer = null;
+        if (requestId === null) {
+          try {
+            answer = await client.request('/api/customer-hub/messages/draft', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+            });
+          } catch (error) {
+            requestId = pendingRequestId(error);
+            if (requestId === null) throw error;
+          }
+        }
+        if (requestId !== null) {
+          if (stale()) return;
+          say('Scrivo ancora… la bozza arriva tra poco.');
+          const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
+            wait, everyMs: 3000, rounds: 20, stale,
+          });
+          if (read.stale) return;
+          if (read.error) throw read.error;
+          if (read.pending) {
+            pendingDraft = { requestId: read.requestId, words, channel: picked };
+            console.warn('[bo] bozza AI ancora in coda', { requestId: read.requestId, spaceId: spaceId ?? null });
+            say('L’AI sta impiegando più del previsto: premi di nuovo Genera per riprendere la stessa bozza.');
+            return;
+          }
+          answer = read.answer;
+        }
         // Review #599 P2: the composer may have been closed or reopened while
         // the AI wrote. A stale answer never touches a detached form nor the
         // shared per-customer draft.
