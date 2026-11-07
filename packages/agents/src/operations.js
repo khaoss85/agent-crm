@@ -676,12 +676,15 @@ export function createAgentOperations(options = {}) {
               version = row.artifactVersion + 1;
             }
           }
+          // An artifact row never keeps the claim note: without an overrun
+          // the note is cleared (null), so no "Slot claimed..." line ever
+          // survives on a finished artifact row.
           await finalizeClaim(spaceId, runKey, claim, {
             costCents,
             outcome: 'artifact',
             artifact: JSON.stringify(checked.artifact),
             artifactVersion: version,
-            ...(overrun === '' ? {} : { note: overrun.trim() }),
+            note: overrun === '' ? null : overrun.trim(),
           }, 'artifacts', assignment, startedAt, summary, actor);
         });
       } catch (error) {
