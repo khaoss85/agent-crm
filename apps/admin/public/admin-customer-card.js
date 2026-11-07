@@ -2565,8 +2565,17 @@ export function createCustomerCardView(deps) {
     const page = doc.scrollingElement ?? null;
     const pageTop = key === shownKey && page ? page.scrollTop : null;
     const sideTops = key === shownKey ? shownSides.map((side) => side.scrollTop ?? 0) : [];
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
-    mount.appendChild(node);
+    // Review #612 round 2: the windows that hang off the view (Scrivi, the
+    // offer panel) stay open through a re-read of the same customer, with
+    // their text and focus; only the scheda itself is swapped.
+    const isWindow = (child) => typeof child?.getAttribute === 'function'
+      && (child.getAttribute('data-composer') === 'open' || child.getAttribute('data-offer-panel') === 'open');
+    const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
+    for (const child of Array.from(mount.childNodes ?? [])) {
+      if (!kept.includes(child)) mount.removeChild(child);
+    }
+    if (kept.length > 0 && typeof mount.insertBefore === 'function') mount.insertBefore(node, kept[0]);
+    else mount.appendChild(node);
     sides.forEach((side, index) => {
       if (sideTops[index]) side.scrollTop = sideTops[index];
     });

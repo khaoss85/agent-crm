@@ -3076,14 +3076,40 @@ test('a slower older re-read never overwrites a newer one', async () => {
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
 
-  const release = hold(client);
+  // The older read is held until the newer one is on screen, then lands.
+  let releaseOlder;
+  client.gate = new Promise((resolve) => { releaseOlder = resolve; });
   const older = view.renderCard('contact', 'c1');
-  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  client.gate = null;
   const newer = view.renderCard('contact', 'c1');
   await newer;
   const shown = mount.firstChild;
+  assert.ok(shown, 'the newer scheda is on screen');
+  releaseOlder();
   await older;
-  assert.equal(mount.firstChild, shown, 'the newer scheda stays');
+  assert.equal(mount.firstChild, shown, 'the older read landing late never replaces the newer scheda');
+  assert.equal(mount.childNodes.length, 1);
+});
+
+test('review #612 round 2: the Scrivi window stays open with its text through a re-read', async () => {
+  const { mount, panel } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  area.value = 'Ciao, ti scrivo per';
+  // Same customer re-read (as after a note or an Invia elsewhere).
+  const card = mount.findAll('div').find((node) => String(node.getAttribute('class')).split(' ').includes('bo-scheda'));
+  assert.ok(card);
+  await reRead();
+  const still = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.equal(still, panel, 'the same window stays');
+  assert.equal(still.findAll('textarea')[0].value, 'Ciao, ti scrivo per', 'with the text being written');
+  assert.notEqual(mount.findAll('div').find((node) => String(node.getAttribute('class')).split(' ').includes('bo-scheda')), card, 'the scheda itself was swapped');
+
+  async function reRead() {
+    mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'nota';
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+    await flushComposer();
+  }
 });
 
 // Review #612: the in-place swap must never throw away what the person is
