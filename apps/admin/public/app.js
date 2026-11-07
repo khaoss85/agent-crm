@@ -143,6 +143,9 @@ const moduleClient = {
       // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
       // and claimId on the error, so the composer reads it back.
       const error = apiFailure(response.status, payload);
+      // A followed login redirect still throws: carry the signal so the
+      // calling view can tell a lost session from a refused write.
+      if (followedLogin) Object.assign(error, { redirected: true });
       if (MOUNTED && !followedLogin) {
         leaveForSpaceLogin(sessionLostTarget({
           status: response.status,
@@ -158,7 +161,12 @@ const moduleClient = {
         // fetch no longer flags (or a host that answered HTML directly).
         leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
       }
-      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+      // A 200 that is not JSON still throws: carry which login-page shape
+      // it was, so the calling view reads it like the shell just did.
+      const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+      if (followedLogin) Object.assign(invalid, { redirected: true });
+      else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
+      throw invalid;
     }
     return payload;
   },

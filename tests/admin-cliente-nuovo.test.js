@@ -413,6 +413,113 @@ test('after sign-in the form offers the kept text back, then clears it on Salva'
   assert.equal(readNewCustomerDraft(store), null, 'a created customer leaves no draft behind');
 });
 
+test('isNewCustomerSessionLoss reads the shell redirect and HTML signals', () => {
+  assert.equal(isNewCustomerSessionLoss({ redirected: true }), true);
+  assert.equal(isNewCustomerSessionLoss({ invalidResponse: true }), true);
+  assert.equal(
+    isNewCustomerSessionLoss(Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', invalidResponse: true })),
+    true,
+  );
+  assert.equal(
+    isNewCustomerSessionLoss(Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' })),
+    false,
+    'a bare invalid response without the shell signal keeps its own error',
+  );
+});
+
+test('Salva through the shell redirect path keeps the long note and asks to sign in again', async () => {
+  const store = memoryStore();
+  const htmlLogin = () => Promise.reject(
+    Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', invalidResponse: true }),
+  );
+  const client = stubClient(() => htmlLogin());
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda without a write');
+  assert.match(rendered.mount.textContent, /Sessione scaduta/, 'the form names the expired session');
+  assert.equal(readNewCustomerDraft(store)?.nota, LONG_NOTE, 'the long note survives the HTML login page');
+});
+
+test('a session lost after creation keeps the unsaved note and stays on the form', async () => {
+  const store = memoryStore();
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda: the shell is leaving for the space login');
+  assert.match(rendered.mount.textContent, /Sessione scaduta/, 'the session message replaces the swallowed warning');
+  assert.ok(!rendered.notes.some((note) => note.includes('nota non si è salvata')), 'no swallowed warning');
+  const draft = readNewCustomerDraft(store);
+  assert.ok(draft, 'the unsaved remainder stays in the draft');
+  assert.equal(draft.nota, LONG_NOTE, 'the long note is not lost');
+});
+
+test('a session lost on the phone link keeps the draft and stays on the form', async () => {
+  const store = memoryStore();
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (body.system === MANUAL_PHONE_SYSTEM) {
+      return Promise.reject(
+        Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', redirected: true }),
+      );
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'telefono', '+39 333 1234567');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  assert.match(rendered.mount.textContent, /Sessione scaduta/);
+  assert.equal(readNewCustomerDraft(store)?.telefono, '+39 333 1234567', 'the unsaved phone stays in the draft');
+});
+
+test('a session lost on a custom value keeps the draft and stays on the form', async () => {
+  const store = memoryStore();
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') {
+      return { definitions: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] };
+    }
+    if (path === '/api/customer-data/fields/value') {
+      return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  const control = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  assert.ok(control, 'the space field reads on the form');
+  control.value = 'sì';
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  assert.match(rendered.mount.textContent, /Sessione scaduta/);
+  assert.ok(readNewCustomerDraft(store), 'the unsaved remainder stays in the draft');
+});
+
 test('a generic failure keeps its own error and stores no draft', async () => {
   const store = memoryStore();
   const client = stubClient(() => Promise.reject(Object.assign(new Error('Import unavailable'), { status: 500, code: 'UNKNOWN' })));

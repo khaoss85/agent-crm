@@ -103,8 +103,16 @@ export function clearNewCustomerDraft(storage) {
   }
 }
 
-/** A lost session is the one failure the login can cure: anything else keeps its own error. */
+/**
+ * A lost session is the one failure the login can cure: anything else keeps
+ * its own error. Same signals the shell uses to leave for the space login
+ * (sessionLostTarget): under a mount an expired session never answers
+ * 401/403 JSON — fetch follows the host login redirect (redirected) or the
+ * mount answers 200 login HTML (invalidResponse, thrown on as
+ * INVALID_RESPONSE by the shell client).
+ */
 export function isNewCustomerSessionLoss(error) {
+  if (error?.redirected === true || error?.invalidResponse === true) return true;
   const status = error?.status;
   if (status === 401) return true;
   if (status === 403 && isSessionLostCode(error?.code)) return true;
@@ -377,6 +385,21 @@ export function createCustomerFormView(deps) {
       nota: String(nota.value ?? ''),
     });
 
+    // The session may die after the customer exists (phone, custom value,
+    // note). The shell is already leaving for the space login: keep the
+    // unsaved remainder in the draft, stay on the form with the session
+    // message, never navigate away. True when the error was a lost session
+    // (handled or invalidated: the save stops either way).
+    const SESSION_KEPT_MESSAGE = 'Sessione scaduta: accedi di nuovo, il testo è conservato e lo ritrovi qui.';
+    const rescueSessionLoss = (err) => {
+      if (!isNewCustomerSessionLoss(err)) return false;
+      if (token !== renderToken) return true;
+      saveNewCustomerDraft(store, currentValues());
+      setErrors({ general: SESSION_KEPT_MESSAGE });
+      notify(SESSION_KEPT_MESSAGE);
+      return true;
+    };
+
     async function saveCustomer() {
       if (busy) return;
       const values = currentValues();
@@ -414,7 +437,8 @@ export function createCustomerFormView(deps) {
             const linked = await linkPhone(phone, cleanEmail, subject);
             if (token !== renderToken) return;
             if (!linked.ok) warning = linked.warning;
-          } catch {
+          } catch (err) {
+            if (rescueSessionLoss(err)) return;
             if (token !== renderToken) return;
             warning = 'Il cliente è creato, ma il telefono non si è collegato. Riprova dalla scheda.';
           }
@@ -428,6 +452,7 @@ export function createCustomerFormView(deps) {
           try {
             await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
           } catch (err) {
+            if (rescueSessionLoss(err)) return;
             entry.setError(String(err?.message ?? 'Valore non valido.'));
             if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
           }
@@ -438,7 +463,8 @@ export function createCustomerFormView(deps) {
         if (noteText !== '') {
           try {
             await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
-          } catch {
+          } catch (err) {
+            if (rescueSessionLoss(err)) return;
             if (token !== renderToken) return;
             if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
           }
@@ -455,9 +481,8 @@ export function createCustomerFormView(deps) {
           // reopens this form with everything still here. Nothing writes:
           // the customer is created only after the new login, with Salva.
           saveNewCustomerDraft(store, currentValues());
-          const kept = 'Sessione scaduta: accedi di nuovo, il testo è conservato e lo ritrovi qui.';
-          setErrors({ general: kept });
-          notify(kept);
+          setErrors({ general: SESSION_KEPT_MESSAGE });
+          notify(SESSION_KEPT_MESSAGE);
           return;
         }
         const fieldName = error?.details?.field;
