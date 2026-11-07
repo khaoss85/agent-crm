@@ -1,14 +1,12 @@
 // backlog:d7c78e9cdf53 (VALIDAZIONE-PRODOTTO B5): on a 390px phone one sends
 // from the scheda, books an appointment without dragging and never zooms or
 // scrolls sideways. The PNG proof is `npm run bo:shots` (headless Chrome);
-// these tests lock the stylesheet rules and the shell behaviour it relies on.
+// these tests lock the stylesheet rules it relies on.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createFakeDocument, createMount } from './helpers/fake-dom.js';
-import { createShellView } from '../apps/admin/public/admin-shell.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const css = readFileSync(join(root, 'apps/admin/public/styles.css'), 'utf8');
@@ -75,54 +73,7 @@ test('lint: the inline new-appointment form, phone only: the magnifier never cov
   assert.match(phone, /\.cal-form \.ui-search,\s*\.cal-form \.ui-select\s*\{[^}]*flex:\s*1 1 100%/);
 });
 
-/** A fake DOM with just enough layout for a 390px horizontal nav strip. */
-function phoneDoc({ activeLeft, scrollLeft = 0 }) {
-  const doc = createFakeDocument();
-  const create = doc.createElement;
-  doc.createElement = (tag) => {
-    const node = create(tag);
-    node.scrollLeft = tag === 'nav' ? scrollLeft : 0;
-    node.scrollWidth = tag === 'nav' ? 820 : 0;
-    node.clientWidth = tag === 'nav' ? 390 : 0;
-    node.getBoundingClientRect = () => (node.getAttribute('aria-current') === 'page'
-      ? { left: activeLeft, width: 120 }
-      : { left: 0, width: 390 });
-    return node;
-  };
-  return doc;
-}
-
-function shell(doc, screenId) {
-  const sidebar = createMount();
-  createShellView({
-    doc,
-    sidebar,
-    topbar: createMount(),
-    spaces: [{ id: 'aurora', name: 'Studio Aurora', initials: 'SA' }],
-    user: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
-    screenId,
-  });
-  return sidebar.findAll('nav').find((node) => node.getAttribute('aria-label') === 'Sezioni');
-}
-
-test('a voice past the right edge scrolls the strip just enough to show it', () => {
-  // Calendario painted at 500–620 in a 0–390 strip: the strip — never the
-  // page — scrolls by 620 - 390 = 230, so the voice ends at the edge.
-  const nav = shell(phoneDoc({ activeLeft: 500 }), 'calendario');
-  assert.ok(nav, 'the main nav renders');
-  assert.equal(nav.scrollLeft, 230);
-});
-
-test('a voice past the left edge scrolls the strip back just enough', () => {
-  // Strip already scrolled by 200, voice at -50: scroll back by 50.
-  const nav = shell(phoneDoc({ activeLeft: -50, scrollLeft: 200 }), 'oggi');
-  assert.equal(nav.scrollLeft, 150);
-});
-
-test('a voice fully in view leaves the strip where it is, even mid-strip', () => {
-  // Review of #641: left 250 width 120 is inside 0–390; recentring would
-  // hide the leading voices for nothing.
-  assert.equal(shell(phoneDoc({ activeLeft: 250 }), 'calendario').scrollLeft, 0);
-  assert.equal(shell(phoneDoc({ activeLeft: 20 }), 'oggi').scrollLeft, 0);
-  assert.equal(shell(phoneDoc({ activeLeft: 100, scrollLeft: 80 }), 'calendario').scrollLeft, 80);
-});
+// The strip-scrolling tests of #641 (revealActiveVoice) left with the strip
+// itself: up to 700 px the sidebar is now the ☰ drawer, a vertical list
+// (design: shell telefono, tests/admin-shell-telefono.test.js), so no voice
+// can be cut at the edge any more.

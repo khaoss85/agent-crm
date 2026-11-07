@@ -174,6 +174,23 @@ async function flush(rounds = 30) {
   for (let i = 0; i < rounds; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
+/**
+ * The active flag every row states (backlog:b44fe65ac3e5): through its
+ * switch — the toggle's aria-checked, or the read-only switch's label on
+ * rows without actions — never a text repeating the Attivo column name.
+ * @param {any} mount
+ */
+function rowFlags(mount) {
+  return mount.findAll('div')
+    .filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-cell-switch'))
+    .map((cell) => {
+      const toggle = cell.findAll('button').find((node) => node.getAttribute('role') === 'switch');
+      if (toggle) return toggle.getAttribute('aria-checked') === 'true' ? 'Attivo' : 'Non attivo';
+      const fixed = cell.findAll('span').find((node) => node.getAttribute('role') === 'img');
+      return fixed ? fixed.getAttribute('aria-label') : null;
+    });
+}
+
 function clickButton(mount, text) {
   const button = mount.findAll('button').find((node) => node.textContent === text);
   assert.ok(button, `a "${text}" button renders`);
@@ -414,7 +431,8 @@ test('the search text survives a chip filter change', async () => {
 test('a category past the page chips stays reachable through the exact-value box', async () => {
   // Review on #516 head 3cc943a0 (P2): chips cover only the loaded page,
   // so a category beyond the 200-row page needs a server-only exact-value
-  // box. Typing there never refetches; Filtra sends the exact value.
+  // box. Typing there never refetches; its change (Enter, leaving the
+  // field) sends the exact value — no Filtra button since backlog:b44fe65ac3e5.
   const CODA_TABLE = {
     products: [{
       productId: 'p9',
@@ -449,10 +467,10 @@ test('a category past the page chips stays reachable through the exact-value box
     'typing a category never refetches: the box is server-only',
   );
 
-  clickButton(mount, 'Filtra');
+  box.dispatch('change');
   await flush();
   const sent = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
-  assert.equal(sent.searchParams.get('category'), 'coda', 'Filtra sends the exact box value');
+  assert.equal(sent.searchParams.get('category'), 'coda', 'the box change sends the exact value');
   assert.ok(mount.textContent.includes('Lezione di coda'), 'the server-filtered row renders');
   assert.equal(findCategoryBox(mount).value, 'coda', 'the box keeps the applied filter after the reload');
 });
@@ -831,10 +849,9 @@ test('every row states its active flag, every non-Stripe row offers its actions'
   const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
   await view.renderTable({});
 
-  const states = mount.findAll('span')
-    .filter((node) => node.getAttribute('class') === 'catalog-active-state')
-    .map((node) => node.textContent);
-  assert.deepEqual(states, ['Attivo', 'Non attivo', 'Non attivo'], 'every row states its flag, imported rows too');
+  // backlog:b44fe65ac3e5: the flag reads through the switch, not a text
+  // «Attivo» repeating the column name.
+  assert.deepEqual(rowFlags(mount), ['Attivo', 'Non attivo', 'Non attivo'], 'every row states its flag, imported rows too');
   const labels = mount.findAll('button').map((node) => node.textContent);
   assert.ok(labels.includes('Disattiva'), 'the active manual row offers its toggle');
   assert.ok(labels.includes('Attiva'), 'the inactive manual row offers its toggle');
@@ -872,9 +889,8 @@ test('Stripe rows offer no action and stay read-only', async () => {
   assert.ok(!labels.includes('Attiva') && !labels.includes('Disattiva'), 'no toggle on a Stripe row');
   assert.ok(!labels.includes('Togli'), 'no removal on a Stripe row');
   assert.ok(!mount.textContent.includes('gestione manuale'), 'no takeover note on a Stripe row');
-  const states = mount.findAll('span')
-    .filter((node) => node.getAttribute('class') === 'catalog-active-state')
-    .map((node) => node.textContent);
+  // backlog:b44fe65ac3e5: a read-only switch states the flag on Stripe rows.
+  const states = rowFlags(mount);
   assert.ok(states.length > 0 && states.every((state) => state === 'Attivo' || state === 'Non attivo'), 'Stripe rows still state their flag');
 });
 
@@ -1390,10 +1406,12 @@ test('choosing a source then reloading from the server shows the same rows', asy
   source.dispatch('change');
   assert.equal(rowCount(mount), 2, 'the menu narrows the loaded rows live');
 
-  clickButton(mount, 'Filtra');
+  // backlog:b44fe65ac3e5: no Filtra button — any server reload (here the
+  // category box's change) carries the exact raw source value.
+  findCategoryBox(mount).dispatch('change');
   await flush();
   const reread = new URL(client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).at(-1).path, 'http://admin.test');
-  assert.equal(reread.searchParams.get('source'), 'manual', 'Filtra sends the exact raw value');
+  assert.equal(reread.searchParams.get('source'), 'manual', 'the reload sends the exact raw value');
   assert.equal(rowCount(mount), 2, 'the reload shows the same rows as the live filter');
   assert.ok(mount.textContent.includes('Pacchetto 10 lezioni'), 'a manual row stays');
   assert.ok(mount.textContent.includes('Corso serale'), 'the other manual row stays');
@@ -1469,4 +1487,63 @@ test('\u2726 Aggiungi con l\u2019AI without an assistant names the keyboard shor
   assert.equal(toasted.length, 1, 'the fallback names the way in');
   assert.ok(toasted[0].includes('\u2318K'), 'the fallback names the AI shortcut');
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the fallback sends nothing');
+});
+
+// backlog:b44fe65ac3e5 \u2014 supervisor design review at 1440: one line per
+// product, the header on one line, filters in one row with no Filtra.
+const classList = (node) => String(node.getAttribute('class') ?? '').split(/\s+/);
+
+test('no cell text repeats its column label, the Attivo cell included', async () => {
+  const table = {
+    products: [...structuredClone(MANUAL_TABLE.products), ...structuredClone(STRIPE_TABLE.products)],
+    summary: { manual: 1, byProvider: { 'stripe-test': 1 }, stripeConnected: true },
+  };
+  const mount = createMount();
+  const view = createCatalogView({ doc: createFakeDocument(), mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+  const rows = mount.findAll('div').filter((node) => classList(node).includes('catalog-row'));
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    for (const cell of row.childNodes) {
+      const label = String(cell.getAttribute('data-label') ?? '');
+      assert.ok(label !== '', 'every cell names its column for the phone layout (CSS, not text)');
+      assert.ok(!cell.textContent.toLowerCase().includes(label.toLowerCase()),
+        `the ${label} cell never prints its column name (${cell.textContent})`);
+    }
+  }
+  // The Attivo cell holds the switch (and Togli on managed rows), nothing else.
+  const [manual, stripe] = rows.map((row) => row.childNodes.find((cell) => cell.getAttribute('data-label') === 'Attivo'));
+  assert.ok(manual.findAll('button').some((node) => node.getAttribute('role') === 'switch'), 'the managed row toggles');
+  assert.ok(manual.findAll('button').some((node) => node.textContent === 'Togli'), 'Togli sits in the same cell');
+  assert.equal(stripe.findAll('button').length, 0, 'the Stripe row has no action');
+  assert.equal(stripe.findAll('span').find((node) => node.getAttribute('role') === 'img')?.getAttribute('aria-label'), 'Attivo',
+    'the Stripe row states its flag through a read-only switch');
+});
+
+test('the filters sit in one row beside the chips and act by themselves, no Filtra', async () => {
+  const mount = createMount();
+  const client = stubClient({ tables: { '': SEARCH_TABLE } });
+  const view = createCatalogView({ doc: createFakeDocument(), mount, client });
+  await view.renderTable({});
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Filtra'), 'no Filtra button');
+  const bars = mount.findAll('div').filter((node) => classList(node).includes('catalog-bar'));
+  assert.equal(bars.length, 1, 'one filter bar');
+  const filters = bars[0].childNodes.find((node) => classList(node).includes('catalog-filters'));
+  assert.ok(filters, 'the filters share the bar with the chips');
+  const names = [...filters.findAll('select'), ...filters.findAll('input')].map((node) => node.getAttribute('name'));
+  assert.deepEqual(names.sort(), ['active', 'category', 'search', 'source'], 'every filter control is in that one row');
+  // Typing in Cerca filters at once, without a reload.
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/catalog/products')).length;
+  const before = reads();
+  const search = filters.findAll('input').find((node) => node.getAttribute('name') === 'search');
+  search.value = 'corso';
+  search.dispatch('input');
+  assert.equal(rowCount(mount), 1, 'the rows narrow while typing');
+  assert.equal(reads(), before, 'typing never reloads');
+  // Desktop lint: the row never wraps at 1440, the header never wraps.
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.catalog-filters \{[^}]*flex-wrap:\s*nowrap/);
+  assert.match(css, /\.catalog-thead > span \{[^}]*white-space:\s*nowrap/);
+  assert.match(css, /\.catalog-cell-price, \.catalog-cell-switch \{[^}]*display:\s*flex/, 'price and switch cells lay out inline');
 });
