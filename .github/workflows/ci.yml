@@ -67,8 +67,12 @@ jobs:
     concurrency:
       group: ci-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: true
-    # Same billing-lock routing as `verify` below.
-    runs-on: [self-hosted, accordo-ci]
+    # GitHub-hosted (07/11): the repository is public, so hosted minutes are free and PR
+    # gates run in parallel instead of one at a time under the CI server's lock, which also
+    # keeps the shared server's load for the lanes. `verify` and the main-only jobs stay on
+    # the self-hosted runner. If the account billing lock still refuses hosted jobs (0 steps,
+    # startup failure), this PR's own run shows it and the line goes back.
+    runs-on: ubuntu-latest
     env:
       ACCORDO_TEST_POSTGRES: '1'
       # ACCORDO_PG_TEST_URL is set by the PostgreSQL start step below: one
