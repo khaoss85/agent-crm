@@ -133,16 +133,18 @@ const WEEK = {
   ],
 };
 
+// The first slot sits beside the held taglio, never on it: a proposal that
+// overlaps the person's own booking is dropped (backlog:5fbebe8559e9).
 const SLOTS = [
-  { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+  { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
   { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
 ];
 
 const DRAFT = {
   teamMemberId: 'marco',
   serviceKey: 'taglio',
-  startsAt: '2026-10-22T16:00:00.000Z',
-  endsAt: '2026-10-22T16:30:00.000Z',
+  startsAt: '2026-10-22T14:00:00.000Z',
+  endsAt: '2026-10-22T14:30:00.000Z',
   notes: 'taglio per Ada',
 };
 
@@ -203,6 +205,10 @@ const probe = {
   outside: [...document.querySelectorAll('p.empty')].filter((n) => n.textContent.startsWith('✦ Proposta')).length,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
+  // Spec 390 order (backlog:5fbebe8559e9): «Fissa con una frase», the week,
+  // Team, online booking — top edges in page order.
+  order: ['.cal-ai', '.cal-week', '.cal-team', '.cal-booking']
+    .map((selector) => Math.round(document.querySelector(selector).getBoundingClientRect().top)),
 };
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'calendario-ready';
@@ -327,7 +333,7 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   const probe = readProbe(dom);
   assert.equal(probe.days, 5, 'the week holds five work-day columns');
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
-  assert.ok(probe.events.includes('taglio'), 'the desktop render lists the week events');
+  assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the desktop render lists the week events');
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
   assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');
@@ -342,7 +348,9 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   assert.ok(shot.bytes > 20000, `the week paints real pixels (${shot.bytes} bytes)`);
   assert.ok(dom.includes('<title>calendario-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
-  assert.ok(probe.events.includes('taglio'), 'the phone render lists the week events');
+  assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the phone render lists the week events');
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
+  const sorted = [...probe.order].sort((a, b) => a - b);
+  assert.deepEqual(probe.order, sorted, `C21: one column in the spec order — AI, week, Team, booking (${probe.order})`);
   console.log(`calendario phone PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });

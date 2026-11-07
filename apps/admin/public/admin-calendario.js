@@ -174,7 +174,9 @@ export function displayKeys(weekKeys) {
 }
 
 /** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
-export const GRID_START_MINUTES = 9 * 60;
+export /** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
+const WEEK_PROFILE_READS = 40;
+const GRID_START_MINUTES = 9 * 60;
 export const GRID_END_MINUTES = 18 * 60;
 export const GRID_SLOT_MINUTES = 30;
 export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
@@ -486,7 +488,10 @@ export function slotInGrid(startsAt, endsAt) {
   const startMin = romeMinutes(startsAt);
   const endMin = romeMinutes(endsAt);
   if (startMin === null || endMin === null || endMin <= startMin) return false;
-  return startMin >= GRID_START_MINUTES && startMin <= GRID_END_MINUTES;
+  // 18:00 is the bottom edge of the grid, not a row: a slot starting there
+  // would clamp onto the 17:30 row (backlog:5fbebe8559e9), so it is named
+  // below the grid like every other out-of-hours step.
+  return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
 /**
@@ -610,11 +615,79 @@ export function personFreeSlots(groups, searchIds, member) {
   return kept;
 }
 
+/** Statuses that no longer hold their slot, in the operator's words (C14: never English). */
+const STATUS_WORDS = Object.freeze({ cancelled: 'annullato', done: 'svolto', 'no-show': 'non presentato' });
+
 /**
- * Overlap lanes per day column: events sharing Rome time split the column
+ * backlog:5fbebe8559e9 (C14) — the Italian word of a row status that no
+ * longer holds its slot; anything unknown reads «non attivo», never the raw
+ * English value.
+ * @param {unknown} status
+ */
+export function statusWord(status) {
+  const key = String(status ?? '').trim().toLowerCase();
+  return Object.hasOwn(STATUS_WORDS, key) ? STATUS_WORDS[key] : 'non attivo';
+}
+
+/**
+ * backlog:5fbebe8559e9 — the service name of a booked row: the catalog
+ * product name for its listino key when the catalog names it, else the key
+ * itself made readable («lezione-prova» → «Lezione prova»), never the raw
+ * slug. A row without a key reads «Appuntamento».
+ * @param {unknown} serviceKey @param {Map<string, string> | null | undefined} names sku → name
+ */
+export function serviceLabel(serviceKey, names) {
+  const key = typeof serviceKey === 'string' ? serviceKey.trim() : '';
+  if (key === '') return 'Appuntamento';
+  const named = names instanceof Map ? names.get(key.toLowerCase()) : undefined;
+  if (typeof named === 'string' && named !== '') return named;
+  const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+
+/**
+ * backlog:5fbebe8559e9 — a proposal never overlaps a booking the searched
+ * person already holds in the painted week. The server answers free steps
+ * per identity; this second check runs on the very rows the grid paints, so
+ * a ghost can never sit on top of the person's own held block. Cancelled,
+ * done and no-show rows free their time. Fail closed: a held row whose time
+ * does not parse blocks nothing it cannot prove, a slot that does not parse
+ * is dropped.
+ * @param {unknown} slots @param {unknown} week team-week answer @param {unknown} searchIds
+ */
+export function dropHeldOverlaps(slots, week, searchIds) {
+  if (!Array.isArray(slots)) return [];
+  const ids = new Set(Array.isArray(searchIds) ? searchIds : []);
+  /** @type {Array<[number, number]>} */
+  const held = [];
+  const groups = Array.isArray(/** @type {any} */ (week)?.members) ? /** @type {any} */ (week).members : [];
+  for (const group of groups) {
+    if (!ids.has(group?.teamMemberId)) continue;
+    for (const row of group?.appointments ?? []) {
+      const status = String(row?.status ?? 'booked');
+      if (status !== 'booked' && status !== 'confirmed') continue;
+      const from = Date.parse(String(row?.startsAt ?? ''));
+      const to = Date.parse(String(row?.endsAt ?? ''));
+      if (Number.isFinite(from) && Number.isFinite(to) && to > from) held.push([from, to]);
+    }
+  }
+  return slots.filter((slot) => {
+    const from = Date.parse(String(slot?.startsAt ?? ''));
+    const to = Date.parse(String(slot?.endsAt ?? ''));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return false;
+    return !held.some(([start, end]) => start < to && from < end);
+  });
+}
+
+/**
+ * Overlap lanes per day column: blocks sharing grid rows split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
- * the column lane count.
+ * the column lane count. Lanes follow the PAINTED half-hour rows, not the
+ * exact minutes (backlog:5fbebe8559e9): a 10:00–10:45 booking and a
+ * 10:45–11:30 proposal both cover the 10:30 row, so they sit side by side.
+ * Events and «✦ Proposta» ghosts share one pass, so a ghost never covers a
+ * booking or another ghost.
  * @param {Array<any>} rows
  * @returns {Map<any, {lane: number, lanes: number}>}
  */
@@ -628,8 +701,9 @@ export function lanesFor(rows) {
   /** @type {Map<any, {lane: number, lanes: number}>} */
   const placed = new Map();
   for (const row of ordered) {
-    const startMin = romeMinutes(row?.startsAt) ?? GRID_START_MINUTES;
-    const endMin = romeMinutes(row?.endsAt) ?? (startMin + GRID_SLOT_MINUTES);
+    const painted = gridRowsFor(row?.startsAt, row?.endsAt);
+    const startMin = painted.row;
+    const endMin = painted.row + painted.span;
     let lane = laneEnd.findIndex((end) => end <= startMin);
     if (lane === -1) {
       lane = laneEnd.length;
@@ -726,6 +800,8 @@ export function createCalendarioView(deps) {
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
     profiles: {},
+    /** Catalog product names by lowercase listino key; undefined until read, an empty Map when unreadable. @type {Map<string, string> | null | undefined} */
+    services: undefined,
     /** @type {any} */
     week: null,
     weekError: null,
@@ -859,7 +935,65 @@ export function createCalendarioView(deps) {
     // Same mount guard as the roster and profile reads below: a late week
     // answer never paints over another screen sharing the mount
     // (backlog:607f33ee).
+    if (mount.querySelector('.cal-wrap') !== null) {
+      renderAll();
+      void loadWeekLabels(token);
+    }
+  }
+
+  /**
+   * backlog:5fbebe8559e9 — the names a block title needs: the catalog
+   * service names (read once per view) and the customer name of every linked
+   * row in the loaded week (one read-only profile per customer, cached by
+   * key, capped). One repaint when they settle, only while this week is
+   * still the painted one; until then the block paints the readable key.
+   * @param {number} token
+   */
+  async function loadWeekLabels(token) {
+    const pending = [];
+    if (state.services === undefined) {
+      state.services = null;
+      pending.push(loadServices());
+    }
+    let reads = 0;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        const linked = subjectKeyOf(row);
+        if (!linked || linked.key in state.profiles || reads >= WEEK_PROFILE_READS) continue;
+        reads += 1;
+        state.profiles[linked.key] = null;
+        pending.push(fetchSubjectName(linked));
+      }
+    }
+    if (pending.length === 0) return;
+    await Promise.all(pending);
+    if (token !== renderToken) return;
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
+
+  /** Catalog product names for the block titles; fail-soft to the readable key. */
+  async function loadServices() {
+    /** @type {Map<string, string>} */
+    const names = new Map();
+    try {
+      const answer = await client.request('/api/catalog/products?limit=200');
+      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
+        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+        const name = typeof product?.name === 'string' ? product.name.trim() : '';
+        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+      }
+    } catch (error) {
+      // No catalog in this project (or a stale bundle): the readable key
+      // stays. Anything else is unexpected and logged without the message.
+      if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
+        console.warn(
+          'bo-calendario catalog unreadable:',
+          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+          `spaceId=${readSpace()}`,
+        );
+      }
+    }
+    state.services = names;
   }
 
   /**
@@ -1457,7 +1591,11 @@ export function createCalendarioView(deps) {
         className: 'cal-day',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
       });
-      const lanes = lanesFor(rows);
+      const ghosts = state.proposals.filter((slot) => romeDayKey(slot?.startsAt) === key
+        && slotInGrid(slot?.startsAt, slot?.endsAt));
+      // Events and ghosts share the lanes (backlog:5fbebe8559e9): a ghost
+      // never paints over a booking or over another ghost.
+      const lanes = lanesFor([...rows, ...ghosts]);
       const laneCount = lanes.size === 0 ? 1 : Math.max(...[...lanes.values()].map((entry) => entry.lanes));
       col.setAttribute('style', `${col.getAttribute('style')}; --lanes: ${laneCount}`);
       for (const row of rows) {
@@ -1470,13 +1608,12 @@ export function createCalendarioView(deps) {
       // each ghost on its time rows, spanning the day width. Fetta 8: a slot
       // starting outside 09:00–18:00 never lands on another hour's row — it
       // joins the honest out-of-hours lines below the grid instead.
-      for (const slot of state.proposals) {
-        if (romeDayKey(slot?.startsAt) !== key) continue;
-        if (!slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
+      for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
+        const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
         const ghost = el(doc, 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: 1 / -1` },
+          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
         ghost.addEventListener('click', () => void confirmSlot(slot));
@@ -1590,7 +1727,7 @@ export function createCalendarioView(deps) {
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
     if (cancelled) {
-      foot.appendChild(el(doc, 'span', { className: 'badge', text: status }));
+      foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
     item.appendChild(foot);
     const id = String(row?.id ?? '');
@@ -1601,11 +1738,16 @@ export function createCalendarioView(deps) {
     return item;
   }
 
-  /** Event title: the agreed service, never an invented label. */
+  /**
+   * Event title, like the prototype «Prima call · Giulia Romano»: the service
+   * name, then the customer name when the row is linked to a named customer
+   * (backlog:5fbebe8559e9). Never the raw listino key, never an invented
+   * name; the free notes move to the detail card.
+   */
   function titleOf(row) {
-    if (typeof row.notes === 'string' && row.notes.trim() !== '') return row.notes.trim();
-    if (typeof row.serviceKey === 'string' && row.serviceKey !== '') return row.serviceKey;
-    return 'Appuntamento';
+    const service = serviceLabel(row?.serviceKey, state.services);
+    const customer = displayNameOf(row, subjectKeyOf(row));
+    return customer ? `${service} · ${customer}` : service;
   }
 
   /**
@@ -1653,6 +1795,15 @@ export function createCalendarioView(deps) {
 
   /** @param {{resource: string, id: string, key: string}} linked */
   async function loadSubjectName(linked) {
+    await fetchSubjectName(linked);
+    // The operator may have opened the customer card while the read was in
+    // flight: that view clears this same mount, so no calendar wrap means
+    // the calendar is gone and repainting would wipe the card in its place.
+    if (state.selectedId !== null && mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
+
+  /** @param {{resource: string, id: string, key: string}} linked */
+  async function fetchSubjectName(linked) {
     // The cache is keyed, not selection-bound: a late answer stays valid
     // data for its key whatever is selected meanwhile — the repaint below
     // only refreshes the calendar while it is still the mounted view.
@@ -1676,10 +1827,6 @@ export function createCalendarioView(deps) {
       }
       state.profiles[linked.key] = null;
     }
-    // The operator may have opened the customer card while the read was in
-    // flight: that view clears this same mount, so no calendar wrap means
-    // the calendar is gone and repainting would wipe the card in its place.
-    if (state.selectedId !== null && mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**
@@ -1736,6 +1883,8 @@ export function createCalendarioView(deps) {
     if (participants.length > 0) {
       card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
     }
+    const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
+    if (notes !== '') card.appendChild(el(doc, 'p', { text: `Nota: ${notes}` }));
     if (channelOf(row) === 'whatsapp') {
       const pill = el(doc, 'p');
       pill.appendChild(uiChannelChip(doc, 'WA'));
@@ -1893,7 +2042,7 @@ export function createCalendarioView(deps) {
       // backlog:d1e4d90e — the night is always free, so rank the painted
       // hours first: day steps fill the proposals, night steps stay behind
       // for the honest lines, never dropped (fetta 8).
-      const proposals = rankPhraseProposals(filterPhraseProposals(kept, clock().getTime()));
+      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(kept, clock().getTime()), state.week, searchIds));
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
       state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
@@ -1927,8 +2076,15 @@ export function createCalendarioView(deps) {
   /** @param {any} draft */
   function renderDraft(draft) {
     const box = el(doc, 'div', { className: 'cal-draft' });
+    // backlog:5fbebe8559e9: a phrase without a time («45 minuti con
+    // Daniele») drafts no startsAt — the line names the duration it will
+    // search, never «? –».
+    const day = romeShortDay(draft?.startsAt);
+    const from = romeTime(draft?.startsAt);
+    const to = romeTime(draft?.endsAt);
+    const when = day && from && to ? `${day} ${from}–${to}` : `${draftMinutes(draft)} minuti`;
     box.appendChild(el(doc, 'p', {
-      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(draft.startsAt) ?? '?'} ${romeTime(draft.startsAt) ?? ''}–${romeTime(draft.endsAt) ?? ''}`,
+      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
     return box;

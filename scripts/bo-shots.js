@@ -357,8 +357,10 @@ const DEMO_WEEK = {
   ],
 };
 
+// The first slot sits beside the held taglio, never on it: a proposal that
+// overlaps the person's own booking is dropped (backlog:5fbebe8559e9).
 const DEMO_SLOTS = [
-  { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+  { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
   { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
 ];
 
@@ -884,10 +886,18 @@ document.title = 'pipeline-ready';`;
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(DEMO_WEEK)};
 const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
-const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z', notes: 'taglio per Ada' };
+const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z', notes: 'taglio per Ada' };
 const client = {
   async request(path) {
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
+    // Block titles read the catalog service names (backlog:5fbebe8559e9);
+    // the demo has no customer profiles, so the row labels name them.
+    if (path.startsWith('/api/catalog/products')) {
+      return { products: [{ sku: 'taglio', name: 'Taglio' }, { sku: 'barba', name: 'Barba' }] };
+    }
+    if (path.startsWith('/api/customer-data/profile/')) {
+      throw Object.assign(new Error('no profile'), { code: 'NOT_FOUND', status: 404 });
+    }
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
       return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
@@ -1468,7 +1478,7 @@ export function assertProbe(name, probe) {
     case 'calendario': {
       if (probe.days !== 5) throw new Error(`calendario: the probe holds ${String(probe.days)} day columns, expected 5`);
       const events = Array.isArray(probe.events) ? probe.events : [];
-      if (!events.includes('taglio')) {
+      if (!events.some((text) => /^taglio\b/i.test(String(text)))) {
         throw new Error('calendario: the probe lists no week events (expected taglio)');
       }
       if (typeof probe.lede !== 'string' || !probe.lede.includes('ott')) {
