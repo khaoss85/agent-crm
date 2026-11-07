@@ -1405,9 +1405,12 @@ test('voce 34fd687c: moduli illeggibili portano contesto vuoto invece di tenere 
   assert.equal(outcome.ok, true);
   assert.ok(outcome.answer.context && outcome.answer.context.kind === 'lead-day');
   assert.deepEqual(outcome.answer.context.ids, []);
+  assert.equal(outcome.answer.context.unreadable, true);
   const primo = await askFreeQuestion(failing, { mode: 'dry-run' }, 'chi è il primo?', outcome.answer.context);
   assert.ok(!shownText(primo.answer).includes('Dimmi prima'), 'a day context answers for that day');
-  assert.ok(primo.answer.lines.some((line) => line.includes('Nessun lead')), JSON.stringify(primo.answer.lines));
+  assert.ok(!shownText(primo.answer).includes('Nessun lead'), `unknown re-reported as zero: ${shownText(primo.answer)}`);
+  assert.ok(primo.answer.lines.some((line) => line.includes('Non riesco a leggere i lead')), JSON.stringify(primo.answer.lines));
+  assert.ok(primo.answer.unavailable.length > 0, 'the primo answer keeps the day unavailable notes');
 });
 
 test('voce 34fd687c: thread senza nomi non mostrano mai UUID', async () => {
@@ -1499,4 +1502,135 @@ test('voce 34fd687c: la barra AI risponde sui dati anche senza backend', async (
   assert.ok(mount.textContent.includes('Marco Rossi'), mount.textContent.slice(0, 400));
   assert.ok(!mount.textContent.includes('non ancora attive'), 'no stale notice on a data answer');
   assert.ok(!mount.textContent.includes('c-marco'), 'no raw id on screen');
+});
+
+// Giro 4 (testa 3c16b1c8): «primo» insieme a «lead» tiene la traccia del
+// giorno — letture e note non leggibili viaggiano nella risposta primo.
+test('voce 34fd687c: «il primo lead di oggi» tiene letture e note del giorno', async () => {
+  const client = stubClient({
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+      ],
+    },
+    '/api/modules/company/records?limit=50': new Error('forbidden'),
+  });
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'il primo lead di oggi?');
+  assert.equal(outcome.ok, true);
+  const text = shownText(outcome.answer);
+  assert.ok(text.includes('Marco Rossi'), `the primo names its lead: ${JSON.stringify(outcome.answer.lines)}`);
+  assert.equal(outcome.answer.trace.reads.length, 2, 'both day reads are kept, not discarded');
+  assert.ok(outcome.answer.unavailable.some((note) => note.includes('company')),
+    `the company note survives: ${JSON.stringify(outcome.answer.unavailable)}`);
+  for (const raw of ['c-marco']) {
+    assert.ok(!text.includes(raw), `raw id leaked: ${text}`);
+  }
+});
+
+// Giro 4 (testa 3c16b1c8): giorno illeggibile e giorno vuoto sono due stati
+// diversi — mai uno zero misurato quando niente era leggibile.
+test('voce 34fd687c: giorno vuoto e giorno illeggibile rispondono diverso al «primo»', async () => {
+  const failing = stubClient({
+    '/api/modules/contact/records?limit=50': new Error('forbidden'),
+    '/api/modules/company/records?limit=50': new Error('forbidden'),
+  });
+  const unreadable = await askFreeQuestion(failing, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(unreadable.answer.context.unreadable, true);
+  const primoUnreadable = await askFreeQuestion(failing, { mode: 'dry-run' }, 'chi è il primo?', unreadable.answer.context);
+  assert.ok(!shownText(primoUnreadable.answer).includes('Nessun lead'));
+  assert.ok(primoUnreadable.answer.lines.some((line) => line.includes('Non riesco a leggere i lead')));
+  const emptyClient = stubClient({
+    '/api/modules/contact/records?limit=50': { items: [] },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const empty = await askFreeQuestion(emptyClient, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.ok(!('unreadable' in (empty.answer.context ?? {})));
+  const primoEmpty = await askFreeQuestion(emptyClient, { mode: 'dry-run' }, 'chi è il primo?', empty.answer.context);
+  assert.ok(primoEmpty.answer.lines.some((line) => line.includes('Nessun lead')));
+  assert.ok(!shownText(primoEmpty.answer).includes('Non riesco a leggere'));
+});
+
+// Giro 4 (testa 3c16b1c8): un lead senza etichetta resta nel conteggio, con
+// il riferimento mascherato o «Lead senza nome» — il totale è sempre vero.
+test('voce 34fd687c: i lead senza nome contano nel totale, mai UUID', async () => {
+  const client = stubClient({
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'c-marco', firstName: 'Marco', lastName: 'Rossi', email: 'marco@example.it', createdAt: atHour(LEAD_TODAY, 8) },
+        { id: 'c-senza-nome', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 9) },
+      ],
+    },
+    '/api/modules/company/records?limit=50': {
+      items: [{ id: 'co-senza-nome', name: '', createdAt: atHour(LEAD_TODAY, 10) }],
+    },
+  });
+  const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi?');
+  assert.equal(outcome.ok, true);
+  assert.ok(outcome.answer.lines.some((line) => line.includes('3 lead nuovi oggi')), JSON.stringify(outcome.answer.lines));
+  const text = shownText(outcome.answer);
+  assert.ok(text.includes('Marco Rossi'));
+  assert.ok(text.includes('Lead senza nome'), `fallback label shown: ${text}`);
+  for (const raw of ['c-marco', 'c-senza-nome', 'co-senza-nome']) {
+    assert.ok(!text.includes(raw), `raw id leaked: ${text}`);
+  }
+  const listed = outcome.answer.lines.filter((line) => line.startsWith('•'));
+  assert.equal(new Set(listed).size, listed.length, `duplicate labels: ${JSON.stringify(listed)}`);
+  for (const source of outcome.answer.sources) {
+    assert.ok(source.href.startsWith('#/customer-card/'), source.href);
+  }
+});
+
+// Tabella unica (giri 2-4): ogni riga del giorno conta una volta sola, con
+// un'etichetta senza id grezzi; due righe uguali restano distinguibili.
+test('voce 34fd687c: tabella etichette lead — nominati, senza nome, duplicati', async () => {
+  const cases = [
+    {
+      name: 'solo senza nome',
+      items: [{ id: 'c-x1', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 9) }],
+      headline: '1 lead nuovo oggi', mustShow: ['Lead senza nome'], mustHide: ['c-x1'],
+    },
+    {
+      name: 'due senza nome distinguibili',
+      items: [
+        { id: 'c-x1', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 9) },
+        { id: 'c-x2', firstName: '', lastName: '', email: '', createdAt: atHour(LEAD_TODAY, 10) },
+      ],
+      headline: '2 lead nuovi oggi', mustShow: ['Lead senza nome · 1', 'Lead senza nome · 2'], mustHide: ['c-x1', 'c-x2'],
+    },
+    {
+      name: 'solo email come etichetta esistente',
+      items: [{ id: 'c-x3', firstName: '', lastName: '', email: 'nascosto@example.it', createdAt: atHour(LEAD_TODAY, 9) }],
+      headline: '1 lead nuovo oggi', mustShow: ['nascosto@example.it'], mustHide: ['c-x3'],
+    },
+  ];
+  for (const { name, items, headline, mustShow, mustHide } of cases) {
+    const client = stubClient({
+      '/api/modules/contact/records?limit=50': { items },
+      '/api/modules/company/records?limit=50': { items: [] },
+    });
+    const outcome = await askFreeQuestion(client, { mode: 'dry-run' }, 'quanti lead oggi?');
+    assert.equal(outcome.ok, true, name);
+    assert.ok(outcome.answer.lines.some((line) => line.includes(headline)), `${name}: ${JSON.stringify(outcome.answer.lines)}`);
+    const text = shownText(outcome.answer);
+    for (const shown of mustShow) assert.ok(text.includes(shown), `${name} shows ${shown}: ${text}`);
+    for (const hidden of mustHide) assert.ok(!text.includes(hidden), `${name} leaks ${hidden}: ${text}`);
+  }
+});
+
+// Giro 4 (testa 3c16b1c8): la finestra occupata della barra in alto non perde
+// la domanda in coda — parte quando la prima finisce, anche senza risposta.
+test('voce 34fd687c: la coda della barra parte dopo una domanda senza risposta', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const panel = createAssistantPanel({ doc, mount, client: stubClient(LEAD_CLIENT), navigate: () => {}, notify: () => {} });
+  const first = panel.open('clienti', undefined, undefined, 'zzz qqq assente wxyz');
+  await Promise.resolve();
+  await Promise.resolve();
+  const second = panel.open('clienti', undefined, undefined, 'quanti lead oggi?');
+  assert.ok(mount.textContent.includes('Finisco la risposta in corso'), 'the second question really queued behind the first');
+  await first;
+  await second;
+  for (let i = 0; i < 12; i += 1) await tick();
+  assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'nothing is left stranded');
+  assert.ok(mount.textContent.includes('Marco Rossi'), `the queued question ran: ${mount.textContent.slice(0, 400)}`);
 });

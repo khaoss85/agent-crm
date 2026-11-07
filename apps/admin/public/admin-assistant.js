@@ -313,27 +313,34 @@ function conversationLabel(row) {
 }
 
 /**
- * One source of truth for thread labels in a list (voce 34fd687c): every
- * listed line, source and close/confirm label of the same answer shares
- * these strings. Rows are already ordered (newest first); equal bases get
- * a stable ordinal (« · 1», « · 2») so two unnamed threads on the same
- * channel never share one identical label.
- * @param {Array<any>} rows
+ * One ordinal disambiguator for every listed label (voce 34fd687c, unica
+ * fonte di verità): equal bases get a stable ordinal (« · 1», « · 2») so
+ * two rows with the same display text never share one identical label —
+ * threads and leads alike. Unique bases pass through untouched.
+ * @param {Array<string>} bases
  */
-function uniqueConversationLabels(rows) {
-  const bases = rows.map((row) => conversationLabel(row));
+function uniqueLabels(bases) {
   /** @type {Map<string, number>} */
   const counts = new Map();
   for (const base of bases) counts.set(base, (counts.get(base) ?? 0) + 1);
   /** @type {Map<string, number>} */
   const seen = new Map();
-  return rows.map((row, index) => {
-    const base = bases[index];
+  return bases.map((base) => {
     if ((counts.get(base) ?? 0) <= 1) return base;
     const position = (seen.get(base) ?? 0) + 1;
     seen.set(base, position);
     return `${base} · ${position}`;
   });
+}
+
+/**
+ * One source of truth for thread labels in a list (voce 34fd687c): every
+ * listed line, source and close/confirm label of the same answer shares
+ * these strings. Rows are already ordered (newest first).
+ * @param {Array<any>} rows
+ */
+function uniqueConversationLabels(rows) {
+  return uniqueLabels(rows.map((row) => conversationLabel(row)));
 }
 
 /**
@@ -1154,6 +1161,22 @@ function companyDisplayName(row) {
 }
 
 /**
+ * Fallback label of a lead row without a displayable name (voce 34fd687c):
+ * the masked channel reference when the row carries one (never the raw
+ * reference, never a raw id), else the neutral «Lead senza nome». The
+ * caller counts the row either way — the headline total is always the
+ * true measured total.
+ * @param {unknown} row
+ */
+function fallbackLeadLabel(row) {
+  const handle = row !== null && typeof row === 'object'
+    ? (row.email ?? row.phone ?? row.remoteHandle ?? row.handle)
+    : null;
+  const masked = maskChannelRef(handle);
+  return masked !== '' ? masked : 'Lead senza nome';
+}
+
+/**
  * One lead-day answer: contacts and companies created on one local day,
  * oldest first, named (never UUIDs) and linked to their customer card.
  * @param {{ request: (path: string) => Promise<any> }} client
@@ -1180,18 +1203,25 @@ async function answerLeadDay(client, title, day, dayWord) {
       const at = Date.parse(row?.createdAt);
       if (Number.isNaN(at) || localDayOf(at) !== day) continue;
       if (!isSafeRecordId(row?.id)) continue;
-      const label = labelOf(row);
-      if (label === '') continue;
+      // Every day-matching row counts, named or not: a missing label gets
+      // the masked-reference fallback, never a silent drop from the total.
+      const label = labelOf(row) || fallbackLeadLabel(row);
       entries.push({ module, id: row.id, label, at });
     }
   }
   entries.sort((a, b) => a.at - b.at);
+  // Same ordinal gate as the thread labels: two rows with the same display
+  // text never share one identical label in this answer.
+  const distinct = uniqueLabels(entries.map((entry) => entry.label));
+  distinct.forEach((label, index) => { entries[index].label = label; });
   const when = `${dayWord} (${italianDay(day)})`;
   const capped = readable.some(([, rows]) => rows.length >= FREE_DATA_READ_LIMIT);
   const bound = capped ? ' (prime 50 lette)' : '';
   if (readable.length === 0) {
     answer.lines.push(`I lead ${when} non sono leggibili in questo spazio${bound}.`);
-    answer.context = { kind: 'lead-day', day, dayWord, ids: [] };
+    answer.context = {
+      kind: 'lead-day', day, dayWord, ids: [], unreadable: true, unavailable: [...answer.unavailable],
+    };
     return answer;
   }
   if (entries.length === 0) {
@@ -1227,24 +1257,44 @@ async function answerLeadDay(client, title, day, dayWord) {
 /**
  * «Chi è il primo?»: the first entry of the last lead-day list, named and
  * linked. Without that context the panel says which question to ask first —
- * in Italian, never a refusal code.
+ * in Italian, never a refusal code. An unreadable day stays unreadable
+ * (never re-reported as a measured zero), carrying the same unavailable
+ * notes as the day answer.
  * @param {string} title the original question, shown on the card
  * @param {unknown} context the previous free answer's context
+ * @param {unknown} inherit an Answer whose trace reads and unavailable notes
+ * this primo answer reuses instead of discarding (voce 34fd687c P1: the
+ * «primo lead» path reads the day, so it keeps the day's trace)
  */
-function answerPrimo(title, context) {
+function answerPrimo(title, context, inherit = null) {
   const answer = emptyAnswer('bo04:domanda-libera', title);
+  if (inherit !== null && typeof inherit === 'object') {
+    if (Array.isArray(inherit.trace?.reads)) answer.trace.reads = inherit.trace.reads;
+    if (Array.isArray(inherit.unavailable)) answer.unavailable = [...inherit.unavailable];
+  }
   const ids = Array.isArray(context?.ids) ? context.ids.filter((entry) => entry !== null && typeof entry === 'object'
     && isSafeModule(entry.module) && isSafeRecordId(entry.id) && typeof entry.label === 'string' && entry.label !== '') : [];
   if (ids.length === 0) {
     const day = typeof context?.day === 'string' ? context.day : null;
     const word = typeof context?.dayWord === 'string' ? context.dayWord : null;
-    if (day !== null && day !== '') {
+    const inherited = Array.isArray(context?.unavailable) ? context.unavailable.filter((note) => typeof note === 'string' && note !== '') : [];
+    if (context?.unreadable === true && day !== null && day !== '') {
+      const when = word !== null && word !== '' ? ` ${word} (${italianDay(day)})` : ` del ${italianDay(day)}`;
+      answer.lines.push(`Non riesco a leggere i lead${when} in questo spazio: non so dire chi è il primo.`);
+      for (const note of inherited) {
+        if (!answer.unavailable.includes(note)) answer.unavailable.push(note);
+      }
+      answer.context = {
+        kind: 'lead-day', day, dayWord: word, ids: [], unreadable: true, unavailable: [...inherited],
+      };
+    } else if (day !== null && day !== '') {
       const when = word !== null && word !== '' ? ` ${word} (${italianDay(day)})` : ` del ${italianDay(day)}`;
       answer.lines.push(`Nessun lead${when}: non c'è un primo da mostrare.`);
+      answer.context = { kind: 'lead-day', day, dayWord: word, ids: [] };
     } else {
       answer.lines.push('Dimmi prima «quanti lead oggi?»: poi ti dico chi è il primo.');
+      answer.context = { kind: 'lead-day', day, dayWord: word, ids: [] };
     }
-    answer.context = { kind: 'lead-day', day, dayWord: word, ids: [] };
     return answer;
   }
   const first = ids[0];
@@ -1304,7 +1354,7 @@ export async function answerFreeLocal(client, title, context = null) {
     const word = hasIeri ? 'ieri' : hasOggi ? 'oggi'
       : (typeof context?.dayWord === 'string' && context.dayWord !== '' ? context.dayWord : (target === today ? 'oggi' : 'ieri'));
     const dayAnswer = await answerLeadDay(client, title, target, word);
-    return answerPrimo(title, dayAnswer.context);
+    return answerPrimo(title, dayAnswer.context, dayAnswer);
   }
   if (hasLead) {
     const day = dayWord === 'ieri' ? shiftDay(today, -1) : today;
@@ -1970,6 +2020,9 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return;
     }
     render();
+    // No local answer and no suggestion match: the queued #596 question
+    // still starts — this path drains like every other busy exit.
+    drainQueued();
   }
 
   function render() {
