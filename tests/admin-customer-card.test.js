@@ -2170,7 +2170,7 @@ test('eaa84ccafc53: a profile-sourced email row fills «Da» with its mailbox', 
     }),
   });
   assert.equal(fromValueOf(panel), 'studio@palestra.it', 'Da names the linked mailbox');
-  assert.ok(!panel.textContent.includes('profile:'), 'the connection key never reads as text');
+  assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the connection key never reads as text');
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
   assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null);
 });
@@ -2187,7 +2187,7 @@ test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; 
     }),
   });
   assert.equal(fromValueOf(keyOnly.panel), '', 'a key posing as an account is never a sender');
-  assert.ok(!keyOnly.panel.textContent.includes('profile:'));
+  assert.ok(!keyOnly.panel.textContent.toLowerCase().includes('profile:'));
 });
 
 // Review #648 P1: the synthetic profile row is no channel connection — its
@@ -2211,6 +2211,26 @@ test('review #648: a profile-sourced email row sends no connectionKey', async ()
   const { panel } = await openComposerMount({ client: real });
   await typeAndSend(panel, 'Ciao Guido');
   assert.equal(real.posts[0].connectionKey, 'gmail-1', 'a real connection keeps its route');
+});
+
+// Review #648 giro 2 P1: with the synthetic profile row listed first and a
+// real email connection after it, the real row routes the send and names
+// «Da» — never the synthetic key, never a «Da» the route does not send from.
+test('review #648 giro 2: a real email connection wins over the synthetic profile row, whatever the order', async () => {
+  for (const syntheticKey of ['profile:gmail', 'PROFILE:Gmail']) {
+    const client = composerClient({
+      connectors: { connectors: [
+        { connectionKey: syntheticKey, channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' },
+        { connectionKey: 'real-123', channel: 'email', account: 'reale@studio.it', status: 'active' },
+      ] },
+    });
+    const { panel } = await openComposerMount({ client });
+    assert.equal(fromValueOf(panel), 'reale@studio.it', `${syntheticKey}: «Da» names the mailbox the route sends from`);
+    await typeAndSend(panel, 'Ciao Guido');
+    assert.equal(client.posts.length, 1);
+    assert.equal(client.posts[0].connectionKey, 'real-123', `${syntheticKey}: the send queues on the real route`);
+    assert.ok(!panel.textContent.toLowerCase().includes('profile:'));
+  }
 });
 
 // Review #648 P1/P2: «connected» implies a valid sender. A linked Email row

@@ -650,6 +650,8 @@ export function createCustomerCardView(deps) {
   function composerChannelsFor(card, connections, profile) {
     /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
     const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+    /** The pilot's profile mailbox merged as a connection row: never a route. */
+    const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
     // Voce a935af6a6d19: the profile Google link counts for Email. The
     // Connettori screen links channel connections (one row per account),
@@ -681,7 +683,13 @@ export function createCustomerCardView(deps) {
     };
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
-      const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      // A real channel connection is preferred over the pilot's synthetic
+      // profile row, whatever their order (review #648, giro 2): the real
+      // row's key is a route readSyncState knows and its account is the
+      // mailbox that route sends from, so «Da» and the route agree. The
+      // synthetic row only stands in when it is the sole active one.
+      const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
+      const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
       // queues on); the profile Gmail mailbox only fills the gap, with no
       // key — the server still needs its own email connection to send.
@@ -700,7 +708,7 @@ export function createCustomerCardView(deps) {
       // The synthetic profile row is no channel connection: its key is not
       // a route the send queues on, so it is never sent (the server derives
       // the route from the space's own mailbox).
-      const synthetic = live !== null && (live.source === 'profile' || isProfileKey(live.connectionKey));
+      const synthetic = live !== null && isSyntheticRow(live);
       // «Connected» implies a sender for Email: a linked row that names no
       // valid mailbox reads off with its Connettori link, never an enabled
       // channel with an empty «Da».
