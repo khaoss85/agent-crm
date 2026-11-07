@@ -564,7 +564,7 @@ export function createSpaziAccessiView(deps) {
     const grid = el(doc, 'div', { cls: 'bo-spazi-grid' });
     if (cards.length === 0) {
       grid.appendChild(el(doc, 'p', {
-        text: 'Nessuno spazio in questa postazione: aggiungi uno spazio prima di continuare.',
+        text: 'Nessuno spazio in questa organizzazione: aggiungi uno spazio prima di continuare.',
         cls: 'bo-muted',
       }));
     }
@@ -697,7 +697,7 @@ export function createSpaziAccessiView(deps) {
       section.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
-      text: 'Lo stesso team per tutti gli spazi di questa postazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
+      text: 'Lo stesso team per tutta l\u2019organizzazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
       cls: 'bo-muted',
     }));
     if (state.members === null) {

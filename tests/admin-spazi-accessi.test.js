@@ -250,6 +250,10 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   assert.match(rendered, /Tu: Titolare/);
   assert.match(rendered, /Team dell\u2019organizzazione/);
   assert.match(rendered, /intera organizzazione/);
+  // Supervisor design check on #644: the team is the organization's, the
+  // screen never says «postazione».
+  assert.match(rendered, /Lo stesso team per tutta l’organizzazione/);
+  assert.doesNotMatch(rendered, /postazione/);
   assert.match(rendered, /marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
   for (const entry of SPAZI_AI_SWITCHES) {
