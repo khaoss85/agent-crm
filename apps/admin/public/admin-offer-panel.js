@@ -330,6 +330,12 @@ export function openOfferPanel(deps) {
       if (gone()) return;
       const code = error?.code ?? null;
       const status = error?.status ?? null;
+      const off = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE'
+        || status === 404 || status === 405 || isNotComposedFailure(error);
+      // Like the composer: the operator sees why the row went quiet, never the prompt.
+      if (off && typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] AI spenta nel pannello offerta', { code, status: typeof status === 'number' ? status : null, spaceId: deps.spaceId ?? null });
+      }
       if (code === 'LLM_SPACE_DISABLED') aiOff('L’AI non è attiva in questo spazio: compila i campi qui sotto.');
       else if (code === 'LLM_SECRET_UNAVAILABLE') aiOff('L’AI non è ancora configurata: compila i campi qui sotto.');
       else if (status === 404 || status === 405 || isNotComposedFailure(error)) {

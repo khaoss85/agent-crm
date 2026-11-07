@@ -154,8 +154,18 @@ test('AI off, no key or no route turns the row into one honest line and the fiel
   for (const [error, sentence] of cases) {
     const { panel } = await open({ client: fakeClient({ draft: error }) });
     aiInput(panel).value = 'scrivi tu';
-    byAction(panel, 'offer-ai-fill').dispatch('click');
-    await flush();
+    const logged = [];
+    const realError = console.error;
+    console.error = (...args) => { logged.push(args); };
+    try {
+      byAction(panel, 'offer-ai-fill').dispatch('click');
+      await flush();
+    } finally {
+      console.error = realError;
+    }
+    assert.equal(logged.length, 1, 'one line for the operator');
+    assert.deepEqual(Object.keys(logged[0][1]).sort(), ['code', 'spaceId', 'status']);
+    assert.ok(!JSON.stringify(logged).includes('scrivi tu'), 'the prompt never reaches the log');
     assert.match(panel.textContent, sentence);
     assert.equal(byAction(panel, 'offer-ai-fill'), undefined, 'no dead Compila stays');
     assert.ok(input(panel, 'title'), 'the fields stay for writing by hand');
