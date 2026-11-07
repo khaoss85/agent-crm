@@ -684,13 +684,22 @@ export function createCustomerCardView(deps) {
       // queues on); the profile Gmail mailbox only fills the gap, with no
       // key — the server still needs its own email connection to send.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
+      // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
+      // connections as an active email row (`profile:gmail`). Its account is
+      // the mailbox the «Da» row names; without one the profile Gmail still
+      // fills it. A connection key is never a sender: a `profile:` handle
+      // posing as an account falls back like a missing one.
+      const liveAccount = channel === 'email' && live !== null && typeof live.account === 'string'
+        && live.account.trim() !== '' && !live.account.trim().startsWith('profile:')
+        ? live.account.trim() : null;
+      const sender = liveAccount ?? (gmailLinked ? gmailSender : null);
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
         connected: live !== null || gmailLinked,
         connectionKey: live?.connectionKey ?? null,
-        sender: gmailLinked ? gmailSender : null,
+        sender,
       });
     });
   }

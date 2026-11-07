@@ -2151,6 +2151,43 @@ test('a935af6a6d19: with Gmail linked in the profile Email is connected and show
   assert.equal(send.getAttribute('disabled'), null, 'Invia is available on the Gmail-linked Email');
 });
 
+// Voce eaa84ccafc53: the pilot merges the profile mailbox into the
+// connections as an active email row. The «Da» row names that mailbox and
+// the `profile:` connection key never reads as text.
+const fromValueOf = (panel) => {
+  const row = panel.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-composer-row'
+    && node.childNodes[0]?.textContent === 'Da');
+  return row ? row.childNodes[1].textContent : null;
+};
+
+test('eaa84ccafc53: a profile-sourced email row fills «Da» with its mailbox', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: ' studio@palestra.it ', status: 'active', source: 'profile' }] },
+      profile: null,
+    }),
+  });
+  assert.equal(fromValueOf(panel), 'studio@palestra.it', 'Da names the linked mailbox');
+  assert.ok(!panel.textContent.includes('profile:'), 'the connection key never reads as text');
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null);
+});
+
+test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; a key never does', async () => {
+  const old = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  assert.equal(fromValueOf(old.panel), 'daniele.pelleri@gmail.com', 'the old shape is unchanged');
+  const keyOnly = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: 'profile:gmail', status: 'active' }] },
+      profile: null,
+    }),
+  });
+  assert.equal(fromValueOf(keyOnly.panel), '', 'a key posing as an account is never a sender');
+  assert.ok(!keyOnly.panel.textContent.includes('profile:'));
+});
+
 // Voce a935af6a6d19 (acceptance 2): a channel with no link anywhere — no
 // channel connection and no profile Gmail — reads off with its Collega link.
 test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async () => {
