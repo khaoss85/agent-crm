@@ -1969,6 +1969,8 @@ const PHRASE_SYSTEM = 'You extract appointment booking parameters from an Italia
   + 'Omit every key the sentence does not state. Never invent a person, a service or a time. '
   + 'When the sentence names a day but no time (for example «giovedì»), return day and never startsAt: '
   + 'never invent 00:00, noon or any other hour for a missing time — the caller asks the human for the hour. '
+  + 'A stated midnight («mezzanotte») always rides with its day: return day together with startsAt, '
+  + 'never startsAt alone. '
   + 'The reference instant also names the weekday: a weekday the sentence names means its NEXT occurrence after '
   + 'the reference instant, never a past day. When the sentence states a time, startsAt is required — '
   + 'never drop it. When the sentence states a duration in minutes, endsAt is startsAt plus that duration; '
@@ -2049,13 +2051,34 @@ function romeDayKeyOfInstant(iso) {
 }
 
 /**
+ * The Rome wall-clock time of an instant as 'HH:MM', null when unparsable —
+ * the same shape the admin calendar paints, so the check below refuses what
+ * the operator would see. A lone midnight (backlog:65ed7430) is the invented
+ * shape: the model writes it either as 00:00Z or as 00:00 on the Rome clock.
+ *
+ * @param {string} iso
+ */
+function romeClockOfInstant(iso) {
+  try {
+    const clock = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(iso));
+    return /^\d{2}:\d{2}$/.test(clock) ? clock : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Strictly validate the model's JSON: known keys only, every one proven. A
  * draft naming a moment at or before the reference instant is refused with
  * its own code (backlog:d1e4d90e): the caller tells the human to name a
  * future day instead of proposing the past. A draft naming a day but no
  * time rides `day` (backlog:65ed7430): an invented midnight is never
  * accepted as a stated hour, so when both ride they must name the same Rome
- * day or the draft is unusable.
+ * day or the draft is unusable — and a midnight with no day is refused even
+ * when it names a future instant, because the prompt alone cannot stop the
+ * model from writing 00:00 for a missing hour.
  */
 function extractPhraseDraft(text, nowMs) {
   const fenced = String(text ?? '').replace(/```(?:json)?/gi, '').trim();
@@ -2103,6 +2126,18 @@ function extractPhraseDraft(text, nowMs) {
         throw new ValidationError(
           'draft.day must name the same Europe/Rome day as draft.startsAt: a midnight invented for a missing hour is never a stated time',
           { field: 'draft.day' },
+        );
+      }
+    }
+    if (draft.startsAt !== undefined && draft.day === undefined) {
+      const instant = new Date(draft.startsAt);
+      const romeMidnight = romeClockOfInstant(draft.startsAt) === '00:00';
+      const zuluMidnight = instant.getUTCHours() === 0 && instant.getUTCMinutes() === 0;
+      if (romeMidnight || zuluMidnight) {
+        throw new ValidationError(
+          'draft.startsAt at 00:00 with no draft.day is an invented midnight, never a stated time: '
+          + 'a stated midnight rides with its day (backlog:65ed7430)',
+          { field: 'draft.startsAt' },
         );
       }
     }

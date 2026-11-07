@@ -649,6 +649,20 @@ test('the phrase returns a day field when the sentence names no time (backlog:65
     },
     'a day and an instant on different Rome days disagree and are refused',
   );
+  for (const text of ['{"startsAt": "2026-10-22T00:00:00.000Z"}', '{"startsAt": "2026-10-21T22:00:00.000Z"}']) {
+    await assert.rejects(
+      withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì con Guido' }),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+        return true;
+      },
+      `a lone midnight without day is never a stated hour: ${text}`,
+    );
+  }
+  const midnight = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22", "startsAt": "2026-10-21T22:00:00.000Z"}')
+    .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì a mezzanotte con Guido' });
+  assert.equal(midnight.draft.day, '2026-10-22');
+  assert.equal(midnight.draft.startsAt, '2026-10-21T22:00:00.000Z', 'a stated midnight rides with its day');
   const timed = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22", "startsAt": "2026-10-22T17:00:00.000Z"}')
     .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì alle 19 con Guido' });
   assert.equal(timed.draft.day, '2026-10-22');
