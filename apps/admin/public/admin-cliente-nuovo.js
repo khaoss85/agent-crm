@@ -3,6 +3,7 @@
 import { elFor, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { bindAdminMutations } from './admin-submission.js';
 import { customerImportReasonLabel } from './admin-core.js';
+import { isSessionLostCode } from './admin-session.js';
 import {
   addFieldForm,
   applyPhrase,
@@ -44,6 +45,79 @@ import {
 export const CLIENTI_NUOVO_ROUTE = '#/clienti/nuovo';
 export const MANUAL_IMPORT_SYSTEM = 'inserimento-manuale';
 export const MANUAL_PHONE_SYSTEM = 'phone';
+
+/**
+ * B4 — the session may die while the operator is typing (backlog:5a40c73e54aa).
+ * The half-written customer stays in this key, so the login round-trip the
+ * shell performs on a lost session never eats a long note. Same shell
+ * storage the other views use; nothing leaves the browser.
+ */
+export const NEW_CUSTOMER_DRAFT_KEY = 'accordo.nuovoClienteDraft.v1';
+
+/** @param {{ getItem?: unknown } | null | undefined} storage */
+export function readNewCustomerDraft(storage) {
+  try {
+    const raw = storage?.getItem?.(NEW_CUSTOMER_DRAFT_KEY);
+    if (typeof raw !== 'string' || raw === '') return null;
+    const parsed = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const clean = (value) => (typeof value === 'string' ? value.slice(0, 4000) : '');
+    const draft = {
+      nome: clean(parsed.nome),
+      email: clean(parsed.email),
+      telefono: clean(parsed.telefono),
+      azienda: clean(parsed.azienda),
+      nota: clean(parsed.nota),
+    };
+    if (Object.values(draft).every((value) => value === '')) return null;
+    return draft;
+  } catch {
+    return null;
+  }
+}
+
+/** @param {{ nome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values */
+export function saveNewCustomerDraft(storage, values) {
+  try {
+    const clean = (value) => (typeof value === 'string' ? value.slice(0, 4000) : '');
+    const draft = {
+      nome: clean(values?.nome),
+      email: clean(values?.email),
+      telefono: clean(values?.telefono),
+      azienda: clean(values?.azienda),
+      nota: clean(values?.nota),
+    };
+    if (Object.values(draft).every((value) => value === '')) return false;
+    storage?.setItem?.(NEW_CUSTOMER_DRAFT_KEY, JSON.stringify(draft));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function clearNewCustomerDraft(storage) {
+  try {
+    storage?.removeItem?.(NEW_CUSTOMER_DRAFT_KEY);
+  } catch {
+    // The draft simply stays until the next successful save.
+  }
+}
+
+/**
+ * A lost session is the one failure the login can cure: anything else keeps
+ * its own error. Same signals the shell uses to leave for the space login
+ * (sessionLostTarget): under a mount an expired session never answers
+ * 401/403 JSON — fetch follows the host login redirect (redirected) or the
+ * mount answers 200 login HTML (invalidResponse, thrown on as
+ * INVALID_RESPONSE by the shell client).
+ */
+export function isNewCustomerSessionLoss(error) {
+  if (error?.redirected === true || error?.invalidResponse === true) return true;
+  const status = error?.status;
+  if (status === 401) return true;
+  if (status === 403 && isSessionLostCode(error?.code)) return true;
+  return false;
+}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -110,6 +184,7 @@ export function applyRefusalText(receipt) {
  */
 export function createCustomerFormView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {} } = deps;
+  const store = deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage);
   const { client } = bindAdminMutations(deps.client, deps);
   const el = elFor(doc); // BO-F6-02: shared element builder.
   let renderToken = 0;
@@ -218,6 +293,18 @@ export function createCustomerFormView(deps) {
     nota.setAttribute('placeholder', 'Come ci ha conosciuti, cosa cerca…');
     field('nota', 'Nota', nota, 'La nota si salva nella cronologia della scheda.');
 
+    // B4: after the login round-trip the half-written customer is back, so
+    // the operator checks it and presses Salva instead of retyping a long note.
+    const restored = readNewCustomerDraft(store);
+    if (restored !== null) {
+      if (restored.nome !== '') nome.value = restored.nome;
+      if (restored.email !== '') email.value = restored.email;
+      if (restored.telefono !== '') telefono.value = restored.telefono;
+      if (restored.azienda !== '') azienda.value = restored.azienda;
+      if (restored.nota !== '') nota.value = restored.nota;
+      general.textContent = 'Bozza ripristinata dopo l\u2019accesso: controlla e premi Salva.';
+    }
+
     const actions = el('div', 'bo-cliente-nuovo-actions');
     const save = uiButton(doc, { variant: 'primary', label: 'Salva', attrs: { 'data-action': 'save-customer' } });
     const cancel = uiSecondaryButton(doc, 'Annulla');
@@ -285,16 +372,37 @@ export function createCustomerFormView(deps) {
 
     let busy = false;
     save.addEventListener('click', () => void saveCustomer());
-    cancel.addEventListener('click', () => navigate('#/customer-data'));
+    cancel.addEventListener('click', () => {
+      clearNewCustomerDraft(store);
+      navigate('#/customer-data');
+    });
+
+    const currentValues = () => ({
+      nome: String(nome.value ?? ''),
+      email: String(email.value ?? ''),
+      telefono: String(telefono.value ?? ''),
+      azienda: String(azienda.value ?? ''),
+      nota: String(nota.value ?? ''),
+    });
+
+    // The session may die after the customer exists (phone, custom value,
+    // note). The shell is already leaving for the space login: keep the
+    // unsaved remainder in the draft, stay on the form with the session
+    // message, never navigate away. True when the error was a lost session
+    // (handled or invalidated: the save stops either way).
+    const SESSION_KEPT_MESSAGE = 'Sessione scaduta: accedi di nuovo, il testo è conservato e lo ritrovi qui.';
+    const rescueSessionLoss = (err) => {
+      if (!isNewCustomerSessionLoss(err)) return false;
+      if (token !== renderToken) return true;
+      saveNewCustomerDraft(store, currentValues());
+      setErrors({ general: SESSION_KEPT_MESSAGE });
+      notify(SESSION_KEPT_MESSAGE);
+      return true;
+    };
 
     async function saveCustomer() {
       if (busy) return;
-      const values = {
-        nome: String(nome.value ?? ''),
-        email: String(email.value ?? ''),
-        telefono: String(telefono.value ?? ''),
-        azienda: String(azienda.value ?? ''),
-      };
+      const values = currentValues();
       const errors = validateCustomerForm(values);
       setErrors(errors);
       if (Object.keys(errors).length > 0) return;
@@ -329,7 +437,8 @@ export function createCustomerFormView(deps) {
             const linked = await linkPhone(phone, cleanEmail, subject);
             if (token !== renderToken) return;
             if (!linked.ok) warning = linked.warning;
-          } catch {
+          } catch (err) {
+            if (rescueSessionLoss(err)) return;
             if (token !== renderToken) return;
             warning = 'Il cliente è creato, ma il telefono non si è collegato. Riprova dalla scheda.';
           }
@@ -343,6 +452,7 @@ export function createCustomerFormView(deps) {
           try {
             await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
           } catch (err) {
+            if (rescueSessionLoss(err)) return;
             entry.setError(String(err?.message ?? 'Valore non valido.'));
             if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
           }
@@ -353,15 +463,28 @@ export function createCustomerFormView(deps) {
         if (noteText !== '') {
           try {
             await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
-          } catch {
+          } catch (err) {
+            if (rescueSessionLoss(err)) return;
             if (token !== renderToken) return;
             if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
           }
         }
+        clearNewCustomerDraft(store);
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
         if (warning !== null) notify(warning);
       } catch (error) {
         if (token !== renderToken) return;
+        if (isNewCustomerSessionLoss(error)) {
+          // B4: the shell is already taking the browser to the space login
+          // (moduleClient navigates on a lost session). The typed text —
+          // a long note above all — stays in storage, so signing back in
+          // reopens this form with everything still here. Nothing writes:
+          // the customer is created only after the new login, with Salva.
+          saveNewCustomerDraft(store, currentValues());
+          setErrors({ general: SESSION_KEPT_MESSAGE });
+          notify(SESSION_KEPT_MESSAGE);
+          return;
+        }
         const fieldName = error?.details?.field;
         if (typeof fieldName === 'string' && slots[fieldName]) {
           setErrors({ [fieldName]: String(error?.message ?? 'Valore non valido.') });
