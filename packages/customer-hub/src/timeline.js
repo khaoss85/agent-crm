@@ -34,22 +34,29 @@ export const CUSTOMER_TIMELINE_CONTRACT = 1;
 const CONVERSATION_LIMIT = 50;
 const APPOINTMENT_LIMIT = 50;
 const ENTRY_LIMIT = 50;
+/** The cursor read of the entries (backlog:ea463d6ff10d): 20 a page, at most 50. */
+const ENTRY_PAGE_DEFAULT = 20;
+const ENTRY_PAGE_MAX = 50;
 
 /**
- * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>, readFlags?: ((entries: Array<any>) => Promise<Array<boolean|null>|null>)|null}} input
+ * @param {{core?: any, subject: {resource: string, id: string, owner?: string, ownerPackage?: string|null}, readProfile: (input: any) => Promise<any>, readConversations: (subject: any) => Promise<any>, readTimeline: (subject: any) => Promise<any>, readSchedule: (subject: any) => Promise<any>, readFlags?: ((entries: Array<any>) => Promise<Array<boolean|null>|null>)|null, page?: {before?: unknown, limit?: unknown}|null}} input
  *   readFlags answers the `read` verdicts over the history entries through
  *   the interactions timeline capability (backlog:9e003582): the same rule
  *   the customer list counts with, so the scheda badge and the list badge
  *   can never disagree. Absent (or answering null) the entries still read,
  *   with every `read` null and `readState.available` false — no read state,
  *   never an invented flag.
+ *   page (backlog:ea463d6ff10d) switches the entries to the cursor read,
+ *   newest first; absent, the entries read exactly as before.
  */
-export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, readFlags = null }) {
+export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, readFlags = null, page = null }) {
   const resource = subject?.resource;
   const id = subject?.id;
   if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
     throw new ValidationError('a customer timeline needs a subject resource and id', { field: 'id' });
   }
+  // A malformed cursor refuses before any provider is read.
+  if (page !== null && page !== undefined) parsePage(page);
   for (const [name, reader] of [
     ['customer-profile@1', readProfile],
     ['interaction-timeline@1', readConversations],
@@ -92,7 +99,7 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
   // The flags ride after: they read the entries the providers returned, so
   // they wait for the history instead of racing it.
   const read = await readFlagsFor(history?.entries ?? [], readFlags);
-  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id }, read });
+  return shapeCustomerTimeline({ profile, threads, history, schedule, subject: { resource, id }, read, page });
 }
 
 /**
@@ -114,12 +121,13 @@ async function readFlagsFor(entries, readFlags) {
  * over fabricated provider reads, while the database tests prove reuse and
  * no-write.
  *
- * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}, read?: Array<boolean|null>|null}} input
+ * @param {{profile: any, threads: Array<any>, history: any, schedule: Array<any>, subject: {resource: string, id: string}, read?: Array<boolean|null>|null, page?: {before?: unknown, limit?: unknown}|null}} input
  *   read is the capability's `read` verdicts over the history entries, in
  *   order, or null when there is no read state to answer for
- *   (backlog:9e003582).
+ *   (backlog:9e003582). page selects the entries' cursor read
+ *   (backlog:ea463d6ff10d); null keeps the oldest-first ENTRY_LIMIT read.
  */
-export function shapeCustomerTimeline({ profile, threads, history, schedule, subject, read = null }) {
+export function shapeCustomerTimeline({ profile, threads, history, schedule, subject, read = null, page = null }) {
   // Like the card: a missing canonical record is NOT_FOUND, never an empty
   // timeline that reads as "this customer never spoke to us".
   const contact = profile.identity?.contact ?? null;
@@ -129,7 +137,7 @@ export function shapeCustomerTimeline({ profile, threads, history, schedule, sub
   }
   const contactPoints = shapeContactPoints(profile);
   const conversations = shapeConversations(threads ?? [], history?.entries ?? []);
-  const entries = shapeEntries(history?.entries ?? [], read ?? null);
+  const entries = shapeEntries(history?.entries ?? [], read ?? null, page);
   const appointments = shapeAppointments(schedule ?? []);
 
   return Object.freeze({
@@ -247,7 +255,7 @@ function readFlagAt(read, index) {
   return typeof read[index] === 'boolean' ? read[index] : null;
 }
 
-function shapeEntries(entries, read = null) {
+function shapeEntries(entries, read = null, page = null) {
   const rows = entries ?? [];
   const shaped = [];
   for (let index = 0; index < rows.length; index += 1) {
@@ -304,6 +312,7 @@ function shapeEntries(entries, read = null) {
       }));
     }
   }
+  if (page !== null && page !== undefined) return pageEntries(shaped, page);
   // The provider read is oldest-first and complete. The scheda opens on
   // the newest, so the cut keeps the latest ENTRY_LIMIT rows (still oldest
   // first) and drops the oldest: a cut that dropped the newest hid today's
@@ -315,6 +324,83 @@ function shapeEntries(entries, read = null) {
     truncated: shaped.length > items.length,
     items: Object.freeze(items),
   });
+}
+
+/**
+ * backlog:ea463d6ff10d: the cronologia read newest first, a page at a time.
+ * Opt-in — only a caller that names `before` or `limit` gets this mode; the
+ * read above (oldest first, ENTRY_LIMIT, truncated) stays for every client
+ * that names neither.
+ *
+ * Order is occurredAt desc, then id desc, and `before` is strictly older
+ * than its (occurredAt, id): one comparator drives both the sort and the
+ * cut, so entries sharing an instant never repeat nor fall between pages.
+ * The cursor is the plain `<occurredAt>|<id>` of the last row read — an
+ * empty occurredAt for a row without a readable instant, which sorts as the
+ * oldest. Paging runs over the complete provider read after shaping, so
+ * every row keeps its `read` verdict and `total` is exact.
+ */
+function pageEntries(shaped, page) {
+  const { before, limit } = parsePage(page);
+  const ordered = [...shaped].sort((a, b) => compareNewestFirst(entryKey(a), entryKey(b)));
+  const older = before === null ? ordered : ordered.filter((row) => compareNewestFirst(entryKey(row), before) > 0);
+  const items = older.slice(0, limit);
+  const last = items.at(-1);
+  const nextCursor = older.length > items.length && last !== undefined ? cursorOf(entryKey(last)) : null;
+  return Object.freeze({
+    available: true,
+    count: shaped.length,
+    total: shaped.length,
+    truncated: nextCursor !== null,
+    items: Object.freeze(items),
+    nextCursor,
+  });
+}
+
+/** The (instant, id) a row sorts by; an unreadable instant sorts oldest. */
+function entryKey(row) {
+  const ms = typeof row?.occurredAt === 'string' ? Date.parse(row.occurredAt) : Number.NaN;
+  return { ms: Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY, id: String(row?.id ?? '') };
+}
+
+/** Negative when `a` reads before `b` in a newest-first list. */
+function compareNewestFirst(a, b) {
+  if (a.ms !== b.ms) return a.ms > b.ms ? -1 : 1;
+  if (a.id === b.id) return 0;
+  return a.id > b.id ? -1 : 1;
+}
+
+function cursorOf(key) {
+  return `${Number.isFinite(key.ms) ? new Date(key.ms).toISOString() : ''}|${key.id}`;
+}
+
+function parsePage(page) {
+  if (typeof page !== 'object' || Array.isArray(page)) {
+    throw new ValidationError('a timeline page is an object with before and limit', { field: 'page' });
+  }
+  let limit = ENTRY_PAGE_DEFAULT;
+  if (page.limit !== undefined && page.limit !== null) {
+    const raw = page.limit;
+    const parsed = typeof raw === 'number' ? raw
+      : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : Number.NaN);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new ValidationError(`a timeline page limit is a whole number from 1 to ${ENTRY_PAGE_MAX}`, { field: 'limit' });
+    }
+    limit = Math.min(parsed, ENTRY_PAGE_MAX);
+  }
+  let before = null;
+  if (page.before !== undefined && page.before !== null) {
+    const raw = page.before;
+    const cut = typeof raw === 'string' ? raw.indexOf('|') : -1;
+    const at = cut < 0 ? '' : raw.slice(0, cut);
+    const id = cut < 0 ? '' : raw.slice(cut + 1);
+    const ms = at === '' ? Number.NEGATIVE_INFINITY : Date.parse(at);
+    if (cut < 0 || id === '' || Number.isNaN(ms)) {
+      throw new ValidationError('a timeline cursor reads <occurredAt>|<id>, as nextCursor answered it', { field: 'before' });
+    }
+    before = { ms, id };
+  }
+  return { before, limit };
 }
 
 /** The schedule rows as booked, soonest slot first, capped like the profile. */
