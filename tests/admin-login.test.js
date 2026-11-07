@@ -125,7 +125,7 @@ test('the columns keep their source order: story first, form second', () => {
   const storyAt = page.indexOf('login-story');
   const formAt = page.indexOf('login-form-wrap');
   assert.ok(storyAt !== -1 && formAt !== -1 && storyAt < formAt,
-    'the story panel precedes the form, so narrow viewports stack story above form');
+    'the story panel precedes the form in the DOM, as in the prototype (phones reorder with CSS)');
   assert.match(page, /<main class="login">/, 'a single two-column main holds both panels');
 });
 
@@ -369,5 +369,89 @@ test('Google sign-in stays deployment-owned: the framework adds no Google machin
     const body = readFileSync(file, 'utf8');
     assert.ok(!GOOGLE_MACHINERY_RE.test(body),
       `${file} must not grow a Google client`);
+  }
+});
+
+/** The page's style block, for the CSS-level slices below. */
+const pageStyle = page.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? '';
+
+/**
+ * Visible text of a static page: no style, script or comments, tags
+ * dropped, entities for the apostrophe decoded.
+ * @param {string} html
+ */
+function visibleText(html) {
+  return html
+    .replace(/<style>[\s\S]*?<\/style>/g, ' ')
+    .replace(/<script\b[\s\S]*?<\/script>/g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#x2019;/g, '’')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+test('27a0b924 C5: the four rows step to the right like the prototype, from the stylesheet', () => {
+  assert.match(pageStyle, /\.login-msg:nth-child\(2\)\s*\{\s*margin-left:\s*20px;/, 'second row steps 20px');
+  assert.match(pageStyle, /\.login-msg:nth-child\(3\)\s*\{\s*margin-left:\s*40px;/, 'third row steps 40px');
+  assert.match(pageStyle, /\.login-msg:nth-child\(4\)\s*\{\s*margin-left:\s*60px;/, 'fourth row steps 60px');
+  assert.ok(!/class="login-msg" style=/.test(page), 'the stagger lives in the stylesheet, so the phone layout can narrow it');
+});
+
+test('27a0b924 C20-C22: on phone the sign-in comes first and the story turns compact', () => {
+  const phone = pageStyle.match(/@media \(max-width: 520px\) \{([\s\S]*?)\n {6}\}/)?.[1] ?? '';
+  assert.ok(phone !== '', 'the page carries a phone breakpoint');
+  // Less is more: a person opening the login on a phone signs in without
+  // scrolling past the story. CSS order, so the DOM stays the prototype's.
+  assert.match(phone, /\.login-form-wrap \{ order: -1;/, 'under 520px the form precedes the story visually');
+  assert.ok(page.indexOf('login-story') < page.indexOf('login-form-wrap'), 'the DOM keeps the desktop order');
+  assert.match(phone, /\.login-thread \{ display: none; \}/, 'the four rows and the client card hide on phone');
+  assert.match(phone, /\.login-story \{ padding: 32px 28px;[^}]*min-height: 0;/,
+    'the compact story uses the form side margins and no desktop minimum height');
+  assert.ok(!/@media[^{]*\{[^}]*\.login-thread/.test(pageStyle.replace(/@media \(max-width: 520px\)/, '')),
+    'the rows hide only under the phone breakpoint');
+  assert.match(pageStyle, /\.login-form \{ width: 100%; max-width: 380px;/, 'the form spans the column (C22)');
+});
+
+test('27a0b924 C18-C19: error, sent, invalid and busy states are painted, not just set', () => {
+  assert.match(pageStyle, /\.login-error \{[^}]*color: var\(--danger\);/, 'the Italian error note reads as an error');
+  assert.match(pageStyle, /\.login-sent \{[^}]*background: var\(--accent-soft\);/, 'the sent note reads as a confirmation');
+  assert.match(pageStyle, /\.login-field input\[aria-invalid="true"\] \{ border-color: var\(--danger\); \}/,
+    'an invalid address turns the field border red');
+  assert.match(pageStyle, /\.login-google\[aria-disabled="true"\] \{[^}]*pointer-events: none;/,
+    'the Google entry looks and acts disabled during a send');
+  assert.match(pageStyle, /\.login-google:active, \.login-submit:active \{ transform: translateY\(1px\); \}/,
+    'both buttons show the press');
+  // The classes the behaviour script writes are the ones the page paints.
+  assert.ok(loginSource.includes("'login-error'") && loginSource.includes("'login-sent'"));
+});
+
+test('27a0b924 Dati: no demo person in the email field, only a neutral shape hint', () => {
+  const input = page.match(/<input\b[^>]*>/i)?.[0] ?? '';
+  assert.match(input, /placeholder="nome@azienda\.it"/, 'a neutral example address');
+  assert.ok(!/studioaurora|elena/i.test(input), 'the prototype demo address never ships');
+});
+
+test('27a0b924 C2-C16: every fixed text is visible, in Italian, with no English word', () => {
+  const text = visibleText(page);
+  for (const fixed of [
+    'Accordo',
+    'Ogni conversazione, un solo cliente.',
+    'Instagram, email, telefono e WhatsApp confluiscono in un’unica scheda. L’AI tiene il filo, tu decidi.',
+    'Accedi',
+    'Bentornata',
+    'Ritrova clienti, conversazioni e agenda del team dove li hai lasciati.',
+    'Continua con Google',
+    'oppure',
+    'Email di lavoro',
+    'Ricevi il link di accesso',
+    'Niente password: ti inviamo un link valido 10 minuti.',
+    'Nuovo su Accordo? Crea uno spazio gratuito',
+  ]) {
+    assert.ok(text.includes(fixed), `visible: ${fixed}`);
+  }
+  for (const copy of [text, ...Object.values(LOGIN_COPY)]) {
+    assert.ok(!/\b(Sign in|Log in|Login|Continue|Send|Email address|Welcome|Loading|Error|Submit|Password)\b/.test(copy),
+      `no English UI word in: ${copy.slice(0, 60)}`);
   }
 });
