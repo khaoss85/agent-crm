@@ -632,10 +632,6 @@ export function buildRouter(app) {
       spaceId: query.spaceId,
       campo: query.campo,
       valore: query.valore,
-      // «Da leggere» (backlog:9e003582): the actor rides along so each row's
-      // unreadCount answers for the signed-in member. Without one the rows
-      // carry nulls, never refused and never invented.
-      actor,
     });
   });
 
@@ -729,40 +725,12 @@ export function buildRouter(app) {
     return await app.readCustomerCard({ resource: params.resource, id: params.id });
   });
 
-  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, actor, identity, organizationId }) => {
+  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerTimeline !== 'function') {
       throw new NotFoundError('Operation', 'customer timeline');
     }
-    // «Da leggere» (backlog:9e003582): the actor rides along so the
-    // timeline's `read` flags answer for the signed-in member. The query
-    // names no member — without an actor the flags read null, never refused.
-    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor });
-  });
-
-  // «Da leggere» (backlog:9e003582): opening the scheda marks its inbound
-  // messages read up to the newest unread one. Same enumerated-adapter shape
-  // as the notes route: the kernel owns the path, gates records.write, and
-  // delegates to the composed operation — without the interactions package
-  // composed the honest 404 names the missing operation; a mark on a ghost
-  // record refuses with the record's own NotFoundError, never a dangling
-  // watermark. The member is always the session actor from the server, never
-  // a body field — a body carrying one is stripped, so nobody marks another
-  // member read. Idempotent: the same instant twice moves nothing.
-  router.add('POST', '/api/customer-hub/mark-read', async ({ body, actor, identity, organizationId }) => {
-    await gate(app, identity, organizationId, 'records.write');
-    if (typeof app.markCustomerRead !== 'function') {
-      throw new NotFoundError('Operation', 'customer mark-read');
-    }
-    const input = recordInput(body);
-    if (input.resource === 'contact') {
-      await app.services.contacts.get(String(input.id ?? ''));
-    } else if (input.resource === 'company') {
-      await app.services.companies.get(String(input.id ?? ''));
-    } else {
-      throw new ValidationError('a customer mark-read needs resource contact or company', { field: 'resource' });
-    }
-    return respond(200, await app.markCustomerRead({ ...stripServerControlledKeys(input), actor }));
+    return await app.readCustomerTimeline({ resource: params.resource, id: params.id });
   });
 
   // Voce 714433c2: the scheda cliente's "Aggiungi nota". The note is a
