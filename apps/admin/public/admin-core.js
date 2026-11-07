@@ -580,15 +580,17 @@ const ROME_DAY = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'shor
 /**
  * «20 nov 2026» for a stored day (YYYY-MM-DD) or ISO timestamp, or null when
  * absent/unparseable (Dan 06/11: dates read like a person writes them, never
- * as a raw ISO timestamp).
+ * as a raw ISO timestamp). A bare day is a calendar day and keeps its date;
+ * a timestamp is an instant and reads as the Rome calendar day, so
+ * `2026-08-05T22:30:00Z` is «6 ago 2026».
  * @param {unknown} value
  */
 export function italianDay(value) {
   if (typeof value !== 'string' || !value) return null;
-  const time = Date.parse(value);
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
   if (Number.isNaN(time)) return null;
-  const day = new Date(time).toISOString().slice(0, 10);
-  return ROME_DAY.format(new Date(`${day}T12:00:00Z`)).replace('.', '');
+  return ROME_DAY.format(new Date(time)).replace('.', '');
 }
 
 /**

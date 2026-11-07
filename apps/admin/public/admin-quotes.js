@@ -705,6 +705,8 @@ export function createQuoteView(deps) {
     state.setAttribute('data-provider-envelope', String(envelope.providerEnvelopeId ?? ''));
     state.setAttribute('data-document-hash', String(envelope.documentHash ?? ''));
     state.setAttribute('data-document-format', String(envelope.documentFormat ?? ''));
+    state.setAttribute('data-signature-provider', String(envelope.provider ?? ''));
+    state.setAttribute('data-signature-version', String(envelope.providerVersion ?? ''));
     const providerLabel = (signatureBlock(schema).providers ?? [])
       .find((provider) => provider?.name === envelope.provider)?.label;
     for (const [label, value] of [

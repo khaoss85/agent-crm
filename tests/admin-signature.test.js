@@ -68,7 +68,7 @@ const ARTIFACT = {
   id: 'a1', envelopeId: 'env1', quoteId: 'q1', quoteVersionId: 'v1',
   providerArtifactId: 'art_1', documentHash: 'd'.repeat(64), artifactHash: 'b'.repeat(64),
   mimeType: 'application/vnd.accordo.quote-package+json', sizeBytes: 2048,
-  storageRef: 'fixture://artifacts/env_abc123', completedAt: '2026-08-05T12:00:00.000Z',
+  storageRef: 'fixture://artifacts/env_abc123', completedAt: '2026-08-05T22:30:00.000Z',
 };
 
 const ORDER = {
@@ -158,6 +158,8 @@ test('a completed envelope renders evidence and the order, with no edit controls
   const envelopeNode = byClass(mount, 'div', 'signature-envelope');
   assert.equal(envelopeNode.getAttribute('data-provider-envelope'), 'env_abc123', 'provider envelope id kept as evidence');
   assert.equal(envelopeNode.getAttribute('data-document-hash'), 'd'.repeat(64), 'document hash kept as evidence');
+  assert.equal(envelopeNode.getAttribute('data-signature-provider'), ENVELOPE.provider, 'provider name kept as evidence');
+  assert.equal(envelopeNode.getAttribute('data-signature-version'), String(ENVELOPE.providerVersion), 'provider version kept as evidence');
   assert.ok(!text.includes('env_abc123') && !text.includes('d'.repeat(64)), 'no provider id nor hash in visible text');
   assert.ok(text.includes('Mario Rossi'), 'signer shown');
   assert.ok(text.includes('firmato'), 'signer status shown');
@@ -165,7 +167,8 @@ test('a completed envelope renders evidence and the order, with no edit controls
   assert.equal(artifactNode.getAttribute('data-artifact-hash'), 'b'.repeat(64), 'artifact hash kept as evidence');
   assert.equal(artifactNode.getAttribute('data-storage-ref'), 'fixture://artifacts/env_abc123', 'artifact reference kept as evidence');
   assert.ok(!text.includes('b'.repeat(64)) && !text.includes('fixture://'), 'no artifact hash nor reference in visible text');
-  assert.ok(text.includes('Firmato il: 5 ago 2026'), 'the signing day reads in Italian');
+  // 22:30 UTC on 5 Aug is already 6 Aug in Rome: an instant reads as the Rome day.
+  assert.ok(text.includes('Firmato il: 6 ago 2026'), 'the signing day reads in Italian, on the Rome calendar');
   assert.ok(text.includes('accettato il 5 ago 2026'), 'the order day reads in Italian');
   assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
   assert.ok(text.includes('non è una firma legalmente qualificata'), 'the assurance limit is stated');
