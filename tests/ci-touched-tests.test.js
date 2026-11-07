@@ -42,7 +42,7 @@ import {
   fillNearest,
   runTestShards,
   shardCountFor,
-  shardTests,
+  testJobs,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -1686,20 +1686,16 @@ test('shardCountFor keeps small runs on one part and caps large ones', () => {
   assert.equal(shardCountFor(235), 4);
 });
 
-test('shardTests spreads round-robin with no loss and no duplication', () => {
-  const tests = ['a', 'b', 'c', 'd', 'e'].map((name) => `tests/${name}.test.js`);
-  assert.deepEqual(shardTests(tests, 2), [
-    ['tests/a.test.js', 'tests/c.test.js', 'tests/e.test.js'],
-    ['tests/b.test.js', 'tests/d.test.js'],
-  ]);
-  assert.deepEqual(shardTests(tests, 1), [tests]);
-  assert.deepEqual(shardTests([], 4), []);
-  assert.deepEqual(shardTests(['tests/a.test.js'], 4), [['tests/a.test.js']]);
+test('testJobs keeps one part as one process and queues one file per job past it', () => {
+  const tests = ['a', 'b', 'c'].map((name) => `tests/${name}.test.js`);
+  assert.deepEqual(testJobs(tests, 1), [{ files: tests, concurrency: 2 }]);
+  assert.deepEqual(testJobs(tests, 4), tests.map((file) => ({ files: [file], concurrency: 1 })));
+  assert.deepEqual(testJobs([], 4), []);
+  assert.deepEqual(testJobs([], 1), []);
   const many = Array.from({ length: 50 }, (_, index) => `tests/t${String(index).padStart(2, '0')}.test.js`);
-  const shards = shardTests(many, 4);
-  assert.equal(shards.length, 4);
-  assert.deepEqual(shards.map((shard) => shard.length), [13, 13, 12, 12]);
-  assert.deepEqual(shards.flat().sort(), many);
+  const jobs = testJobs(many, 4);
+  assert.equal(jobs.length, 50);
+  assert.deepEqual(jobs.flatMap((job) => job.files), many);
 });
 
 /** A scratch directory with the given test files, removed afterwards. */
@@ -1715,7 +1711,7 @@ test('runTestShards runs the parts together and passes', async () => {
     'b.test.js': "import test from 'node:test';\ntest('b passes', () => {});\n",
   });
   try {
-    const result = await runTestShards([['a.test.js'], ['b.test.js']], { timeoutSec: 120, cwd: dir });
+    const result = await runTestShards(['a.test.js', 'b.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
     assert.equal(result.timedOut, false);
     assert.deepEqual(result.remaining, []);
     assert.equal(result.status, 0);
@@ -1731,7 +1727,7 @@ test('runTestShards fails red when a part fails, without timing out', async () =
     'b.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('b fails', () => { assert.equal(1, 2); });\n",
   });
   try {
-    const result = await runTestShards([['a.test.js'], ['b.test.js']], { timeoutSec: 120, cwd: dir });
+    const result = await runTestShards(['a.test.js', 'b.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
     assert.equal(result.timedOut, false);
     assert.deepEqual(result.remaining, []);
     assert.notEqual(result.status, 0);
@@ -1746,9 +1742,57 @@ test('runTestShards times out naming the files that remained', async () => {
     'slow.test.js': "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n",
   });
   try {
-    const result = await runTestShards([['slow.test.js']], { timeoutSec: 3, cwd: dir });
+    const result = await runTestShards(['slow.test.js'], { parts: 1, timeoutSec: 3, cwd: dir });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['slow.test.js']);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.completedShards, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runTestShards: a free part takes the next queued file while another part is still busy', async () => {
+  // agent-crm#621: round-robin slices pinned the slow files to two of four
+  // parts; at 270 s two parts were done and idle, two still busy, and the
+  // run failed red with every test green. Here `a` (first in the queue)
+  // can only finish once `c` has run. Fixed round-robin slices over two
+  // parts put `a` and `c` in the same part, one after the other, so `a`
+  // waits for a file queued behind itself and the run times out; a shared
+  // queue hands `c` to the other part as soon as `b` is done, and the run
+  // passes well inside the bound.
+  const marker = 'c-ran.marker';
+  const dir = scratchTests({
+    'a.test.js': "import test from 'node:test';\nimport { existsSync } from 'node:fs';\n"
+      + `test('a waits for c', async () => { while (!existsSync('${marker}')) await new Promise((resolve) => setTimeout(resolve, 50)); });\n`,
+    'b.test.js': "import test from 'node:test';\ntest('b passes', () => {});\n",
+    'c.test.js': "import test from 'node:test';\nimport { writeFileSync } from 'node:fs';\n"
+      + `test('c marks', () => { writeFileSync('${marker}', 'ran'); });\n`,
+    'd.test.js': "import test from 'node:test';\ntest('d passes', () => {});\n",
+  });
+  try {
+    const result = await runTestShards(['a.test.js', 'b.test.js', 'c.test.js', 'd.test.js'], { parts: 2, timeoutSec: 60, cwd: dir });
+    assert.equal(result.timedOut, false, `queued files must flow to the free part: ${JSON.stringify(result)}`);
+    assert.equal(result.status, 0);
+    assert.deepEqual(result.remaining, []);
+    assert.equal(result.completedShards, 2);
+    assert.equal(result.partSec.length, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runTestShards times out naming the running and the still-queued files', async () => {
+  const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
+  const dir = scratchTests({
+    'slow1.test.js': sleeper,
+    'slow2.test.js': sleeper,
+    'quick.test.js': "import test from 'node:test';\ntest('never started', () => {});\n",
+  });
+  try {
+    const result = await runTestShards(['slow1.test.js', 'slow2.test.js', 'quick.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['slow1.test.js', 'slow2.test.js', 'quick.test.js']);
     assert.notEqual(result.status, 0);
     assert.equal(result.completedShards, 0);
   } finally {
