@@ -1,7 +1,7 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, ValidationError, normalizeActor,
+  AppError, ConflictError, ValidationError, normalizeActor, normalizeCompanyName,
 } from '../../core/index.js';
 import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
@@ -228,19 +228,26 @@ export function createPolicyReader({ modules, names, core }) {
 }
 
 /**
- * The reserved company behind a contact that names no company (production
- * 07/11). The core schema requires a company for every contact, so the
- * import keeps one per space under this name instead of inventing one from
- * the email domain; customer reads and the backoffice treat it as «no
- * company». Plain Italian on purpose: wherever a screen still lists it (the
- * Aziende table), it says the truth.
+ * The placeholder company behind a contact that names no company
+ * (production 07/11). The core schema requires a company for every contact,
+ * so the import gives such a contact its OWN placeholder under this name —
+ * never a company derived from the email domain, and never one row shared
+ * between customers (or spaces): an offer filed under it stays this
+ * customer's. Customer reads (list, profile, card) read it as «no company»,
+ * and the cleanup scan never pairs two of them as duplicates.
  */
 export const NO_COMPANY_NAME = 'Senza azienda';
 
-/** Whether a company record is the reserved «no company» one. @param {unknown} company */
+const NO_COMPANY_NORMALIZED = normalizeCompanyName(NO_COMPANY_NAME);
+
+/**
+ * Whether a company record is a «no company» placeholder. One predicate for
+ * every reader, on the same normalization the company lookup uses.
+ * @param {unknown} company
+ */
 export function isNoCompany(company) {
   const name = /** @type {any} */ (company)?.name;
-  return typeof name === 'string' && name.normalize('NFC').trim().toLowerCase() === NO_COMPANY_NAME.toLowerCase();
+  return typeof name === 'string' && normalizeCompanyName(name) === NO_COMPANY_NORMALIZED;
 }
 
 /**
@@ -272,12 +279,11 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     if (!row.companyName && options.companyFromEmail === false) {
       // Production 07/11: a customer typed or imported with no Azienda got
       // the email domain as its company («esempio.invalid»). The core still
-      // needs a company behind a contact, so every such contact joins the
-      // space's one reserved NO_COMPANY_NAME company — never one derived
-      // from the email — and the screens read it as no company at all.
-      const reserved = await core.findCompaniesByNormalizedName(NO_COMPANY_NAME);
-      company = reserved[0]
-        ?? await core.createCompany({ name: NO_COMPANY_NAME, domain: null }, { actor });
+      // needs a company behind a contact, so the contact gets its own
+      // NO_COMPANY_NAME placeholder — never a name derived from the email,
+      // never a row another customer or space shares. An explicit domain
+      // column stays on it as evidence (review #654).
+      company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null }, { actor });
     } else {
       const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
       company = companies.length === 1

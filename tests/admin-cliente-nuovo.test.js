@@ -340,6 +340,40 @@ test('a refused note says so beside the form and keeps the way to the created sc
   assert.equal(rendered.navigated(), '#/customer-card/contact/c7', 'Apri la scheda lands on the created customer');
 });
 
+test('review #654: the note-refused lock lifts as soon as the operator types again', async () => {
+  let applies = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+    }
+    applies += 1;
+    return accepted({ id: `c${applies}`, resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Una nota.');
+  clickSave(rendered.mount);
+  await flush();
+  const saveButton = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-customer');
+  assert.equal(saveButton.disabled, true, 'locked right after the refusal');
+  // Another customer: typing lifts the lock and Salva creates it.
+  setValue(rendered.mount, 'nome', 'Anna Bianchi');
+  field(rendered.mount, 'nome').dispatch('input');
+  setValue(rendered.mount, 'email', 'anna@esempio.it');
+  setValue(rendered.mount, 'nota', '');
+  assert.equal(saveButton.disabled, false, 'typing lifts the lock');
+  const warning = rendered.mount.findAll('p').find((node) => node.getAttribute('data-note-warning') !== null);
+  assert.equal(warning.textContent, '', 'the old warning leaves with the lock');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 2, 'the other customer is created, no reload needed');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c2');
+});
+
 test('+ Aggiungi campo creates a space field and its control reads on the form', async () => {
   const client = phraseClient({ ai: false });
   const rendered = render(client);

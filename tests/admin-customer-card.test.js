@@ -1854,6 +1854,39 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   }, 'the appointment pick names the same record');
 });
 
+test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
+  const pickFor = async (card, profile) => {
+    const map = new Map();
+    const storage = {
+      getItem: (key) => (map.has(key) ? map.get(key) : null),
+      setItem: (key, value) => { map.set(key, String(value)); },
+      removeItem: (key) => { map.delete(key); },
+    };
+    const doc = createFakeDocument();
+    const mount = createMount();
+    await createCustomerCardView({ doc, mount, client: stubClient({ card, profile }), storage, navigate: () => {} })
+      .renderCard('contact', 'c1');
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer').dispatch('click');
+    return JSON.parse(storage.getItem('accordo.bo.customer-pick.offer'));
+  };
+  const ownProfile = {
+    ...OPPORTUNITY_ONLY_PROFILE,
+    identity: {
+      ...OPPORTUNITY_ONLY_PROFILE.identity,
+      company: null,
+      contact: { ...OPPORTUNITY_ONLY_PROFILE.identity.contact, companyId: 'k-own' },
+    },
+  };
+  // The card API names no company for the placeholder (customer-data profile).
+  const viaApi = await pickFor({ ...CARD, company: null }, ownProfile);
+  assert.deepEqual(viaApi.company, { id: 'k-own', name: 'Guido Presti' },
+    'the offer files under the contact own placeholder, read as the person');
+  // An older server still naming the placeholder: same pick, never its name.
+  const viaOld = await pickFor({ ...CARD, company: { id: 'k-own', name: NO_COMPANY_NAME } }, ownProfile);
+  assert.deepEqual(viaOld.company, { id: 'k-own', name: 'Guido Presti' });
+  assert.equal(shownCompanyName({ company: { name: '  SENZA   azienda ' } }), null, 'same normalization as the server');
+});
+
 // Backlog e9b4fc2f: «Scrivi» opens the composer inside the scheda with the
 // customer's own channels. Email is linked (Gmail), WhatsApp has the number
 // but no linked connection — it reads switched off with its Connettori link.

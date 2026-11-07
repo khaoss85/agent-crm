@@ -561,6 +561,18 @@ export function createCustomerFormView(deps) {
       noteWarning.appendChild(open);
       notify(NOTE_NOT_SAVED_WARNING);
     };
+    // Review #654: the lock belongs to the customer just created, not to the
+    // form. Typing anything — another customer, or the same one with the
+    // note to retry — lifts it: Salva works again and the warning goes.
+    const releaseCreated = () => {
+      if (!created) return;
+      created = false;
+      if (!busy) save.disabled = false;
+      while (noteWarning.firstChild) noteWarning.removeChild(noteWarning.firstChild);
+    };
+    for (const control of [nome, email, telefono, azienda, nota]) {
+      control.addEventListener('input', releaseCreated);
+    }
     save.addEventListener('click', () => void saveCustomer());
     cancel.addEventListener('click', () => {
       clearNewCustomerDraft(drafts, draftScope());

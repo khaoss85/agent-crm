@@ -490,7 +490,9 @@ export const NO_COMPANY_NAME = 'Senza azienda';
 /** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
 export function shownCompanyName(card) {
   const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
-  if (name === '' || name.normalize('NFC').toLowerCase() === NO_COMPANY_NAME.toLowerCase()) return null;
+  // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
+  const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
+  if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
   return name;
 }
 
@@ -694,13 +696,21 @@ export function createCustomerCardView(deps) {
     // The offer form files under a company: a company pick is its own
     // company, a contact pick rides the linked one (null when the scheda
     // knows none — the offer form then says so honestly).
-    const companyId = typeof card?.company?.id === 'string' && card.company.id !== '' ? card.company.id : null;
-    const companyName = typeof card?.company?.name === 'string' && card.company.name.trim() !== ''
-      ? card.company.name.trim()
-      : null;
+    // Review #654: a contact typed without Azienda shows no company (the
+    // card API names none for its «no company» placeholder). Its offer is
+    // still filed under the contact's own placeholder — the one id the core
+    // accepts beside this contact, shared with no other customer — and the
+    // offer form reads the person's name, never «Senza azienda».
+    const shown = shownCompanyName(card);
+    const companyId = shown !== null && typeof card?.company?.id === 'string' && card.company.id !== ''
+      ? card.company.id : null;
+    const ownCompanyId = typeof navCtx?.contactCompanyId === 'string' && navCtx.contactCompanyId !== ''
+      ? navCtx.contactCompanyId : null;
     const company = resource === 'company'
       ? { id, name }
-      : (companyId !== null && companyName !== null ? { id: companyId, name: companyName } : null);
+      : (companyId !== null
+        ? { id: companyId, name: shown }
+        : (shown === null && ownCompanyId !== null ? { id: ownCompanyId, name } : null));
     return { resource, id, name, company };
   }
 
@@ -2724,7 +2734,9 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card, { resource, id });
+    section(left, '', quickActions, card, {
+      resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
+    });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
