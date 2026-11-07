@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createMountGate, paintScreenLoading } from '../apps/admin/public/admin-navigation.js';
+import { createMountGate, paintScreenFailure, paintScreenLoading } from '../apps/admin/public/admin-navigation.js';
 import { createOggiView } from '../apps/admin/public/admin-oggi.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -167,4 +167,64 @@ test('the router clears the mount before any await and hands every view a gated 
   // Only the router's own synchronous screens touch the real mount.
   const realMountViews = [...app.matchAll(/(create[A-Za-z]+)\(\{\s*doc: document,\s*mount: moduleView\b/g)].map((m) => m[1]);
   assert.deepEqual(realMountViews, ['createUiCatalogView'], 'every async view paints through its gated handle');
+});
+
+// Review #655 (P2): the routed screen fails before painting — the loading
+// line gives way to an honest note with Riprova, never «Carico…» forever.
+test('a routed screen that fails replaces its loading line with a note and Riprova', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const loading = paintScreenLoading({ doc, mount, label: 'Stato sync' });
+  let retried = 0;
+  assert.equal(paintScreenFailure({ doc, mount, loading, label: 'Stato sync', onRetry: () => { retried += 1; } }), true);
+  assert.equal(busyNodes(mount).length, 0, 'no loading line hangs on');
+  assert.ok(mount.textContent.includes('Non riesco ad aprire Stato sync.'), mount.textContent);
+  const [retry] = mount.findAll('button');
+  assert.equal(retry.textContent, 'Riprova');
+  retry.dispatch('click', {});
+  assert.equal(retried, 1);
+});
+
+test('a failure after the screen already painted leaves the screen alone', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const loading = paintScreenLoading({ doc, mount, label: 'Pipeline' });
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  mount.appendChild(doc.createElement('p')).textContent = 'Pipeline dipinta';
+  assert.equal(paintScreenFailure({ doc, mount, loading, label: 'Pipeline' }), false);
+  assert.equal(mount.textContent, 'Pipeline dipinta');
+  assert.equal(paintScreenFailure({ doc, mount, loading: null, label: 'Pipeline' }), false);
+});
+
+test('the router: a current failure paints the note, a stale one only logs', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const router = app.slice(app.indexOf('async function route()'), app.indexOf("window.addEventListener('hashchange', route);"));
+  const handler = router.slice(router.lastIndexOf('} catch (error) {'));
+  assert.ok(handler.includes('navToken !== navSeq'), 'the stale branch is told apart');
+  const stale = handler.slice(0, handler.indexOf('return;'));
+  assert.ok(stale.includes('console.warn('), 'a stale failure stays diagnosable');
+  assert.ok(!stale.includes('toast('), 'a stale failure never toasts over the new screen');
+  assert.ok(handler.includes('paintScreenFailure('), 'a current failure replaces the loading line');
+});
+
+// Review #655 (P3): the inert handle is an empty mount for every read and
+// accepts no write or listener.
+test('an inert handle reads empty and accepts no text, child or listener', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  mount.appendChild(doc.createElement('p')).textContent = 'schermata nuova';
+  const gate = createMountGate(mount);
+  const handle = gate.owned('pipeline');
+  gate.activate('sync');
+  assert.equal(handle.textContent, '');
+  assert.equal(handle.innerHTML, '');
+  assert.equal(handle.childElementCount, 0);
+  assert.equal(handle.hasChildNodes(), false);
+  assert.deepEqual(handle.getElementsByTagName('p'), []);
+  handle.textContent = 'sovrascritto';
+  let heard = 0;
+  handle.addEventListener('click', () => { heard += 1; });
+  mount.dispatch('click', {});
+  assert.equal(heard, 0, 'no listener lands on the real mount');
+  assert.equal(mount.textContent, 'schermata nuova');
 });

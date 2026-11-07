@@ -17,7 +17,7 @@
 //   (it sees an empty mount and every write is dropped), so a late paint
 //   lands nowhere. The routed view's handle passes straight through.
 
-import { uiLoading } from './admin-ui.js';
+import { uiButton, uiEmpty, uiLoading } from './admin-ui.js';
 
 /**
  * Clear the mount and show the loading state for `label` (the screen name
@@ -32,12 +32,43 @@ export function paintScreenLoading({ doc, mount, label }) {
   return node;
 }
 
-/** What an inert handle answers: an empty mount that accepts nothing. */
+/**
+ * The routed screen failed before painting: while the mount still holds
+ * the loading line painted for it, that line gives way to an honest note
+ * with a retry, so «Carico…» never hangs over data that will not come.
+ * A screen that already painted (or a newer navigation) is left alone.
+ * Returns true when the note was painted.
+ *
+ * @param {{ doc: any, mount: any, loading: any, label?: unknown, onRetry?: () => void }} options
+ */
+export function paintScreenFailure({ doc, mount, loading, label, onRetry }) {
+  if (!loading || !Array.from(mount.childNodes ?? []).includes(loading)) return false;
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const name = typeof label === 'string' && label.trim() !== '' ? label.trim() : 'questa schermata';
+  const note = uiEmpty(doc, { title: `Non riesco ad aprire ${name}.`, text: 'Controlla la connessione e riprova.' });
+  note.setAttribute('role', 'alert');
+  if (typeof onRetry === 'function') {
+    const retry = uiButton(doc, { label: 'Riprova', attrs: { type: 'button' } });
+    retry.addEventListener('click', () => onRetry());
+    note.appendChild(retry);
+  }
+  mount.appendChild(note);
+  return true;
+}
+
+/**
+ * What an inert handle answers: an empty mount that accepts nothing — no
+ * child, no text, no listener. Any other property reads the real node.
+ */
 const INERT = Object.freeze({
   firstChild: null,
   lastChild: null,
   firstElementChild: null,
   lastElementChild: null,
+  textContent: '',
+  innerHTML: '',
+  innerText: '',
+  childElementCount: 0,
 });
 const INERT_METHODS = Object.freeze({
   appendChild: (child) => child,
@@ -50,6 +81,14 @@ const INERT_METHODS = Object.freeze({
   querySelector: () => null,
   querySelectorAll: () => [],
   contains: () => false,
+  hasChildNodes: () => false,
+  getElementsByTagName: () => [],
+  getElementsByClassName: () => [],
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  insertAdjacentElement: () => null,
+  insertAdjacentHTML: () => {},
+  insertAdjacentText: () => {},
 });
 const INERT_LISTS = new Set(['childNodes', 'children']);
 

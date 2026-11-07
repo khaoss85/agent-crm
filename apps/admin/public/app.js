@@ -4,7 +4,7 @@ import { resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
-import { createMountGate, paintScreenLoading } from './admin-navigation.js';
+import { createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -1134,9 +1134,10 @@ async function route() {
   // synchronously on the real mount and own no handle.
   const routedView = target.view === 'invalid' || target.view === 'componenti' ? null : target.view;
   mountGate.activate(routedView);
-  if (routedView !== null && (routedView !== 'dashboard' || MOUNTED)) {
-    paintScreenLoading({ doc: document, mount: moduleView, label: shellScreenFor(target)?.label });
-  }
+  const screenLabel = shellScreenFor(target)?.label;
+  const loadingLine = routedView !== null && (routedView !== 'dashboard' || MOUNTED)
+    ? paintScreenLoading({ doc: document, mount: moduleView, label: screenLabel })
+    : null;
   // backlog:80b25fb0: the list paints straight into the shared mount, so a
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
@@ -1245,9 +1246,20 @@ async function route() {
     else if (target.view === 'marketing') await marketingView.renderProposalList();
     else if (target.view === 'marketing-proposal') await marketingView.renderProposalDetail(target.proposalId);
   } catch (error) {
-    // A screen already left fails silently: its handle was inert, and the
-    // operator is looking at another screen now.
-    if (navToken === navSeq) toast(error.message, true);
+    if (navToken !== navSeq) {
+      // A screen already left: its handle was inert and the operator is on
+      // another screen, so no toast there — but the failure stays
+      // diagnosable (sanitized cause and view, never the payload).
+      const cause = error instanceof Error ? error.name : (error?.code ?? 'unknown');
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('bo-nav stale view failed:', cause, error?.code ?? null, target.view);
+      }
+      return;
+    }
+    toast(error.message, true);
+    // The loading line painted for this screen must not hang on: an honest
+    // note with Riprova replaces it while nothing else painted.
+    paintScreenFailure({ doc: document, mount: moduleView, loading: loadingLine, label: screenLabel, onRetry: () => { void route(); } });
   }
 }
 
