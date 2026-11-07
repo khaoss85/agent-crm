@@ -1799,6 +1799,7 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-empty { border: 1px dashed var(--line); border-radius: 9px; padding: 24px 20px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .ui-empty strong { font-size: 14px; }
 .ui-empty span { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.ui-loading { padding: 24px 0; font-size: 13px; color: var(--muted); }
 .ui-section { margin: 34px 0 0; }
 .ui-section-title { margin: 0 0 16px; font-size: 22px; letter-spacing: -.024em; }
 .ui-icon { display: inline-flex; width: 16px; height: 16px; flex-shrink: 0; vertical-align: -3px; }

@@ -1056,7 +1056,7 @@ export async function loadOggiData(client, now = new Date()) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons
@@ -1136,8 +1136,9 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
 
 /**
  * Render the Oggi home into the given mount. Without `home` this is the
- * greeting frame over the delivered-screen links (pre-BO-F3-04 behavior,
- * kept while data loads); with `home` it is the full screen.
+ * greeting frame over the delivered-screen links (pre-BO-F3-04 behavior);
+ * with `loading` the frame shows the loading state instead of the links,
+ * while the home's reads are pending; with `home` it is the full screen.
  *
  * @param {{
  *   doc: object,
@@ -1147,6 +1148,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *   links?: Array<{ id: unknown, label: string, route: string }>,
  *   navigate?: (hash: string) => void,
  *   now?: Date,
+ *   loading?: boolean,
  *   home?: {
  *     recap?: string,
  *     actions?: Array<any>,
@@ -1172,6 +1174,7 @@ export function renderOggi({
   links = [],
   navigate = () => {},
   now = new Date(),
+  loading = false,
   home = null,
 } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1185,6 +1188,13 @@ export function renderOggi({
   // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
   // scale is untouched — only the semantics change (C6).
   page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
+
+  if (home == null && loading === true) {
+    // Reads pending (production 07/11): a neutral loading line under the
+    // greeting, never the shortcut list that looked like the real home.
+    page.appendChild(uiLoading(doc, { label: 'la tua giornata' }));
+    return;
+  }
 
   if (home == null) {
     page.appendChild(el(
@@ -1670,14 +1680,14 @@ export function createOggiView(deps) {
 
   return {
     /**
-     * Render the home: the greeting frame first, the full screen once the
-     * records arrive. `userName` greets the person; without it the space
+     * Render the home: the greeting frame with the loading state first,
+     * the full screen once the records arrive. `userName` greets the person; without it the space
      * name stands in, as before.
      */
     async render({ spaceName = '', userName = '', links = [], now = new Date() } = {}) {
       const token = ++renderToken;
       lastMeta = { spaceName, userName, links, now };
-      renderOggi({ doc, mount, spaceName, userName, links, navigate, now });
+      renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
       let data;
       try {
         data = await loadOggiData(bound, now);

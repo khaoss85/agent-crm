@@ -526,6 +526,25 @@ export function uiEmpty(doc, options = {}) {
 }
 
 /**
+ * The neutral loading state a screen shows while its reads are pending:
+ * one muted line, announced politely and marked busy. The screen's own
+ * paint replaces it (every view clears its mount before painting).
+ *
+ * @param {any} doc
+ * @param {{ label?: unknown }} [options]
+ */
+export function uiLoading(doc, options = {}) {
+  const box = doc.createElement('div');
+  box.setAttribute('class', 'ui-loading');
+  box.setAttribute('role', 'status');
+  box.setAttribute('aria-live', 'polite');
+  box.setAttribute('aria-busy', 'true');
+  const label = typeof options.label === 'string' && options.label.trim() !== '' ? options.label.trim() : '';
+  box.textContent = label === '' ? 'Carico…' : `Carico ${label}…`;
+  return box;
+}
+
+/**
  * @param {any} doc
  * @param {{ text?: unknown, error?: boolean }} [options]
  */

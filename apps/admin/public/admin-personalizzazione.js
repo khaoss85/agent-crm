@@ -878,10 +878,14 @@ export function createPersonalizzazioneView(deps) {
   }
 
   function renderList() {
+    // A direct child of the mount, compared by membership rather than by
+    // `parentNode === mount`: the shell hands this view a gated handle on
+    // the mount (admin-navigation.js), never the node itself.
+    const direct = (node) => node && Array.from(mount.childNodes ?? []).includes(node);
     const existing = mount.querySelector('.plist');
-    if (existing && existing.parentNode === mount) mount.removeChild(existing);
+    if (direct(existing)) mount.removeChild(existing);
     const stalePreview = mount.querySelector('.preview');
-    if (stalePreview && stalePreview.parentNode === mount) mount.removeChild(stalePreview);
+    if (direct(stalePreview)) mount.removeChild(stalePreview);
     const box = el(doc, 'div', { cls: 'plist' });
     const space = readSpace().trim();
     if (space === '') {
