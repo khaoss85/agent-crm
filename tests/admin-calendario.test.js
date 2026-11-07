@@ -11,6 +11,7 @@ import {
   draftMinutes,
   dropHeldOverlaps,
   filterPhraseProposals,
+  GRID_START_MINUTES,
   gridRowsFor,
   lanesFor,
   memberColorIndex,
@@ -458,10 +459,12 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   const draft = {
     teamMemberId: 'marco',
     serviceKey: 'taglio',
-    startsAt: '2026-10-22T16:00:00.000Z',
-    endsAt: '2026-10-22T16:30:00.000Z',
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T14:30:00.000Z',
   };
-  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  // A free step beside the held taglio (16:00Z): review #646 P2 reads the
+  // searched person's week even before one is painted.
+  const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
   const client = stubClient({
     phrase: draft,
     slots,
@@ -493,11 +496,11 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   const body = payload(confirms[0]);
   assert.equal(body.confirmed, true);
   assert.equal(body.teamMemberId, 'marco');
-  assert.equal(body.startsAt, '2026-10-22T16:00:00.000Z');
-  assert.equal(body.endsAt, '2026-10-22T16:30:00.000Z');
+  assert.equal(body.startsAt, '2026-10-22T14:00:00.000Z');
+  assert.equal(body.endsAt, '2026-10-22T14:30:00.000Z');
   assert.equal(body.priceCents, 4500);
   assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
-  assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T16:00:00.000Z:c1');
+  assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T14:00:00.000Z:c1');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
@@ -545,10 +548,12 @@ test('a failed Conferma names the manual form, never a code', async () => {
   const mount = createMount();
   const draft = {
     teamMemberId: 'marco',
-    startsAt: '2026-10-22T16:00:00.000Z',
-    endsAt: '2026-10-22T16:30:00.000Z',
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T14:30:00.000Z',
   };
-  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  // A free step beside the held taglio (16:00Z): review #646 P2 reads the
+  // searched person's week even before one is painted.
+  const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
@@ -3408,4 +3413,97 @@ test('an empty day carries a compact row with «+ Prenota» for the phone stack'
   const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
   assert.equal(field('date').value, '2026-10-20', '«+ Prenota» opens the form on that day');
   assert.equal(field('start').value, '', 'no hour is invented');
+});
+
+// Review #646 (Muse, head 60594fa5).
+
+test('review #646 P2: GRID_START_MINUTES stays exported beside the grid geometry', () => {
+  assert.equal(GRID_START_MINUTES, 9 * 60);
+});
+
+test('review #646 P1: «+ Prenota» drops the times of an earlier slot', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  // An earlier pick set Thursday 16:00–16:30 in the form.
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  field('date').value = '2026-10-22';
+  field('date').dispatch('input');
+  field('start').value = '16:00';
+  field('start').dispatch('input');
+  field('end').value = '16:30';
+  field('end').dispatch('input');
+  const compact = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'));
+  compact[1].findAll('button').find((node) => node.textContent === '+ Prenota').dispatch('click');
+  await flushAll();
+  assert.equal(field('date').value, '2026-10-20', 'the tapped day');
+  assert.equal(field('start').value, '', 'never the earlier start');
+  assert.equal(field('end').value, '', 'never the earlier end');
+});
+
+test('review #646 P1: after a phrase draft filled the form, «+ Prenota» keeps person and service, never its day and hour', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' };
+  const view = createCalendarioView({
+    doc, mount, client: stubClient({ phrase: draft, slots: [] }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await showWeek(mount);
+  mount.querySelector('textarea[name="phrase"]').value = 'taglio con marco giovedì alle 16';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  assert.equal(field('start').value, '16:00', 'the draft filled the form');
+  const compact = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'));
+  compact[0].findAll('button').find((node) => node.textContent === '+ Prenota').dispatch('click');
+  await flushAll();
+  assert.equal(field('date').value, '2026-10-19', 'the tapped day wins over the draft day');
+  assert.equal(field('start').value, '', 'the draft hour is not carried to another day');
+  assert.equal(field('end').value, '');
+  assert.equal(field('serviceKey').value, 'taglio', 'the draft service is kept');
+});
+
+test('review #646 P2: the held guard reads the searched person, not only the painted week', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const sara = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'sara',
+      appointments: [{ ...WEEK_TWO.members[1].appointments[0] }],
+    }],
+  };
+  const base = stubClient({
+    phrase: { teamMemberId: 'sara', durationMinutes: 30 },
+    suggestGroups: [{ teamMemberId: 'sara', slots: [
+      // 14:00Z is sara's held piega; 13:00Z is free.
+      { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
+      { startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' },
+    ] }],
+  });
+  const weeks = [];
+  const client = {
+    ...base,
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week')) {
+        weeks.push(path);
+        if (path.includes('teamMemberIds=sara')) return sara;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount, 'marco');
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con sara';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  assert.ok(weeks.some((path) => path.includes('teamMemberIds=sara')), 'the searched person week is read');
+  const list = mount.querySelector('.cal-slots');
+  assert.ok(list.textContent.includes('22 ott · 15:00–15:30'), list.textContent);
+  assert.ok(!list.textContent.includes('16:00–16:30'), 'the step on sara\'s held piega is never offered');
 });

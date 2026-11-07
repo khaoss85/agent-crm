@@ -174,9 +174,9 @@ export function displayKeys(weekKeys) {
 }
 
 /** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
-export /** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
+export const GRID_START_MINUTES = 9 * 60;
+/** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
 const WEEK_PROFILE_READS = 40;
-const GRID_START_MINUTES = 9 * 60;
 export const GRID_END_MINUTES = 18 * 60;
 export const GRID_SLOT_MINUTES = 30;
 export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
@@ -1500,7 +1500,19 @@ export function createCalendarioView(deps) {
   function bookDay(key) {
     state.selection = null;
     state.selectedId = null;
-    state.manual = { ...(state.manual ?? {}), date: key };
+    // Review #646 P1: the day is the only thing «+ Prenota» chooses. Times
+    // from an earlier slot or phrase draft are dropped (never booked on the
+    // wrong hour), and a pending phrase draft keeps only its person, service
+    // and note — its own day and time would overwrite the tapped day.
+    const pending = state.draftFill;
+    state.draftFill = null;
+    const kept = { ...(state.manual ?? {}) };
+    if (pending) {
+      if (typeof pending.teamMemberId === 'string' && pending.teamMemberId !== '') kept.teamMemberId = pending.teamMemberId;
+      if (typeof pending.serviceKey === 'string' && pending.serviceKey !== '') kept.serviceKey = pending.serviceKey;
+      if (typeof pending.notes === 'string' && pending.notes !== '') kept.notes = pending.notes;
+    }
+    state.manual = { ...kept, date: key, start: '', end: '' };
     state.manualOpen = true;
     renderAll();
     state.manualFirst?.focus?.();
@@ -1997,6 +2009,23 @@ export function createCalendarioView(deps) {
     return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
   }
 
+  /**
+   * The team week holding every searched identity: the painted week when it
+   * already lists them all, else one team-week read for the searched ones
+   * over the shown window (review #646 P2).
+   * @param {Array<string>} searchIds
+   */
+  async function heldWeekFor(searchIds) {
+    const painted = new Set((state.week?.members ?? []).map((group) => group?.teamMemberId));
+    if (searchIds.every((id) => painted.has(id))) return state.week;
+    const window = weekWindow(state.weekKeys);
+    if (!window) throw new Error('Settimana non valida.');
+    return client.request(
+      `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
+      + `&from=${encodeURIComponent(window.from)}&to=${encodeURIComponent(window.to)}`,
+    );
+  }
+
   /** Suggest window over the shown Rome week, with the day-margin idiom of the booking path. */
   function suggestBounds() {
     if (!Array.isArray(state.weekKeys) || state.weekKeys.length === 0) return null;
@@ -2073,7 +2102,12 @@ export function createCalendarioView(deps) {
       // backlog:d1e4d90e — the night is always free, so rank the painted
       // hours first: day steps fill the proposals, night steps stay behind
       // for the honest lines, never dropped (fetta 8).
-      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(kept, clock().getTime()), state.week, searchIds));
+      // Review #646 P2: the held-booking guard reads the SEARCHED person's
+      // week. When the painted week does not hold every searched identity
+      // (the filter shows marco, the phrase names sara), the guard reads
+      // theirs too — a failed read fails the search, never an unguarded list.
+      const heldWeek = await heldWeekFor(searchIds);
+      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(kept, clock().getTime()), heldWeek, searchIds));
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
       state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
