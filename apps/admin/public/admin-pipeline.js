@@ -321,9 +321,10 @@ export function createPipelineBoard(deps) {
         text: `Mostro solo i primi ${BOARD_LIMIT} record — gli altri non sono in questa vista.`,
       }));
     }
-    if (offPipeline > 0 || composedPipelineNames(pipelines).length > 1) {
-      titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline));
-    }
+    // Backlog 1cb4cc48: the pipeline switch always renders — even with a
+    // single composed pipeline and nothing off-board, the board names which
+    // pipeline it shows instead of leaving the choice invisible.
+    titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline));
     const tools = renderToolbar(pipeline, onBoard);
     tools.appendChild(renderSummary(visible));
     panel.appendChild(tools);
@@ -642,13 +643,13 @@ export function createPipelineBoard(deps) {
   /**
    * Pipeline switch (backlog:1cb4cc48): records of other pipelines are
    * excluded by documented behavior, never silently hidden. The count
-   * still names how many offers live on the other boards, and when the
-   * space composes more than one pipeline a selector replaces the old
-   * "(non mostrata)" line — every composed pipeline is one choice away.
-   * With a single composed pipeline the legacy links stay, so an
-   * out-of-band record still names where the operator can go see it. A
-   * key outside the route grammar cannot be linked: it stays in the
-   * count, never in an href. Every value renders as text, never HTML.
+   * still names how many offers live on the other boards, and the
+   * selector always renders — even with a single composed pipeline it
+   * names the board on screen, so the choice is never invisible. With a
+   * single composed pipeline the legacy links stay, so an out-of-band
+   * record still names where the operator can go see it. A key outside
+   * the route grammar cannot be linked: it stays in the count, never in
+   * an href. Every value renders as text, never HTML.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
    */
@@ -658,12 +659,13 @@ export function createPipelineBoard(deps) {
       const one = offPipeline === 1;
       box.appendChild(el(doc, 'span', { text: `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline. ` }));
     }
-    if (composedPipelineNames(pipelines).length > 1) {
+    {
       const selectId = 'pipeline-switch';
       box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
       const select = el(doc, 'select', { attrs: { id: selectId } });
-      for (const name of composedPipelineNames(pipelines)) {
-        const defined = pipelines.find((candidate) => candidate?.name === name);
+      const names = composedPipelineNames(pipelines);
+      for (const name of names) {
+        const defined = (Array.isArray(pipelines) ? pipelines : []).find((candidate) => candidate?.name === name);
         const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
         select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
       }
@@ -675,10 +677,12 @@ export function createPipelineBoard(deps) {
         }
       });
       box.appendChild(select);
-      return box;
     }
+    // Legacy links only for boards the schema does not compose: composed
+    // boards already have the selector above, never a second way there.
+    const composed = new Set(composedPipelineNames(pipelines));
     const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
-      .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
+      .filter((key) => key !== pipelineName && !composed.has(key) && /^[a-z][a-z0-9-]*$/.test(key))
       .sort();
     others.forEach((key, index) => {
       box.appendChild(el(doc, 'span', { text: index === 0 ? '' : ' · ' }));

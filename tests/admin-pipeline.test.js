@@ -339,12 +339,37 @@ test('a hostile pipeline label renders as inert text in the selector', async () 
   assert.equal(options[1].childNodes.length, 0, 'no element smuggled through the label');
 });
 
-test('with a single composed pipeline there is no selector, only the disclosure', async () => {
+test('with a single composed pipeline the selector names the board on screen', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
+  const navigated = [];
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery')]),
+    navigate: (hash) => navigated.push(hash),
+  });
   await board.renderBoard('b2b-sales');
-  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 0, 'no selector for a single pipeline');
+  const selects = mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch');
+  assert.equal(selects.length, 1, 'the selector is always there, even for a single pipeline');
+  assert.deepEqual(selects[0].childNodes.map((option) => option.textContent), ['B2B Sales'], 'the single board is the single choice');
+  assert.equal(selects[0].value, 'b2b-sales', 'the board on screen is selected');
+  assert.ok(!mount.textContent.includes('offerta di'), 'no exclusion count when everything is on board');
+  selects[0].dispatch('change');
+  assert.deepEqual(navigated, [], 're-picking the same board navigates nowhere');
+});
+
+test('with an empty schema the board stays honest instead of rendering a switch', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([record('a', 'discovery')], { pipelines: [] }),
+  });
+  await board.renderBoard('b2b-sales');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the empty space says so');
+  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 0, 'no switch without a board');
 });
 
 test('the summary counts the shown cards, never the off-pipeline offers', async () => {
