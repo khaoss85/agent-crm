@@ -350,6 +350,9 @@ export function parseModuleRoute(hash) {
   // stays a separate tool on #/import-clienti.
   if (rawParts.length && rawParts[0] === 'clienti') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    // #/clienti alone is the natural Italian name of the Clienti list
+    // (backlog:55985e25ddd2): it opens #/customer-data, never an error.
+    if (rawParts.length === 1) return { view: 'customer-data' };
     if (rawParts.length === 2 && rawParts[1] === 'nuovo') return { view: 'customer-new' };
     return { view: 'invalid' };
   }
