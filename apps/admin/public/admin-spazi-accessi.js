@@ -217,6 +217,9 @@ const MEMBER_STATUS = Object.freeze({ active: 'attivo', suspended: 'sospeso', in
 /** Strongest role first: a person holding two subjects shows the higher one. */
 const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
 
+/** Liveliest status first: a person reads «sospeso» only when no subject is live. */
+const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
+
 /** @param {unknown} value */
 function personText(value) {
   if (typeof value !== 'string') return null;
@@ -240,9 +243,12 @@ function nameInitials(name) {
  * carry, beside each opaque subject, the control-plane displayName and email
  * the pilot enriches it with — the same fields the Calendario team reads.
  * One human can hold several subjects (an adopted broker member and the
- * Google one: prod 07/11 listed «Daniele Pelleri» twice), so subjects merge
- * into one row ONLY on the same mailbox, case-insensitive — the Calendario
- * rule. A shared name alone never merges: two homonyms without email are two
+ * Google one: prod 07/11 listed «Daniele Pelleri» twice). The roster carries
+ * no person id, so subjects merge into one row ONLY when both the mailbox
+ * and the display name match (trimmed, case-insensitive). A mailbox alone
+ * never merges: a shared mailbox (info@…) or stale enrichment could fold a
+ * different human into the row, hide them and let «Rimuovi» suspend them.
+ * A name alone never merges either: two homonyms without email are two
  * people. Nothing merges in the backend: the row keeps every subject, and
  * removal suspends each of them.
  *
@@ -255,25 +261,28 @@ export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
   /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, roles: unknown[], statuses: unknown[]}>} */
   const people = [];
-  const byEmail = new Map();
+  const byIdentity = new Map();
   const seen = new Set();
   for (const member of list) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
     if (seen.has(member.subject)) continue;
     seen.add(member.subject);
     const email = personText(member.email);
-    const key = email === null ? null : email.toLowerCase();
-    let person = key === null ? null : byEmail.get(key) ?? null;
+    const displayName = personText(member.displayName);
+    const key = email === null || displayName === null
+      ? null
+      : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
+    let person = key === null ? null : byIdentity.get(key) ?? null;
     if (person === null) {
       person = { subjects: [], live: [], displayName: null, email, roles: [], statuses: [] };
       people.push(person);
-      if (key !== null) byEmail.set(key, person);
+      if (key !== null) byIdentity.set(key, person);
     }
     person.subjects.push(member.subject);
     if (member.status !== 'suspended') person.live.push(member.subject);
     person.roles.push(member.role);
     person.statuses.push(member.status);
-    if (person.displayName === null) person.displayName = personText(member.displayName);
+    if (person.displayName === null) person.displayName = displayName;
   }
   return people
     .map((person) => {
@@ -283,7 +292,11 @@ export function buildTeamRows(members = []) {
       const role = known.length > 0
         ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
         : person.roles[0];
-      const rawStatus = person.statuses.includes('active') ? 'active' : person.statuses[0];
+      // Deterministic, whatever the store order: the liveliest status wins,
+      // and «sospeso» only when every subject of the person is suspended.
+      const other = person.statuses.findIndex((status) => status !== 'suspended');
+      const rawStatus = STATUS_RANK.find((status) => person.statuses.includes(status))
+        ?? (other >= 0 ? person.statuses[other] : 'suspended');
       return {
         subject,
         subjects: [...person.subjects].sort(),
@@ -389,6 +402,8 @@ export function createSpaziAccessiView(deps) {
     stats: new Map(),
     /** @type {string|null} subject armed for the two-step removal */
     confirmRemove: null,
+    /** @type {{subject: string, reason: string, note: string}|null} a removal with refused subjects, offered again as «Riprova» */
+    removeRetry: null,
     /** @type {{key: string, to: boolean}|null} switch flip armed for confirm */
     confirmFlip: null,
     busy: false,
@@ -478,6 +493,7 @@ export function createSpaziAccessiView(deps) {
     state.switchesUnavailable = null;
     state.stats = new Map();
     state.confirmRemove = null;
+    state.removeRetry = null;
     state.confirmFlip = null;
     state.refusal = null;
     state.inviteMenuOpen = false;
@@ -728,18 +744,29 @@ export function createSpaziAccessiView(deps) {
       identity.appendChild(names);
       item.appendChild(identity);
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
-      if (state.confirmRemove === row.subject) {
+      if (state.confirmRemove !== null && row.subjects.includes(state.confirmRemove)) {
+        const retry = state.removeRetry !== null && row.subjects.includes(state.removeRetry.subject)
+          ? state.removeRetry
+          : null;
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
         confirmBox.appendChild(el(doc, 'p', {
           text: `Rimuovere ${row.name} dal team? La sospensione vale per l\u2019intera organizzazione. Il motivo resta registrato.`,
           cls: 'bo-muted',
         }));
+        if (retry !== null) {
+          confirmBox.appendChild(el(doc, 'p', { text: retry.note, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
+        }
         const reason = el(doc, 'input', {
           cls: 'bo-spazi-input',
           attrs: { type: 'text', placeholder: 'Motivo (obbligatorio)', 'aria-label': `Motivo della rimozione di ${row.name}` },
         });
+        if (retry !== null) reason.value = retry.reason;
         confirmBox.appendChild(reason);
-        const yes = el(doc, 'button', { text: 'Conferma rimozione', cls: 'bo-spazi-danger', attrs: { type: 'button' } });
+        const yes = el(doc, 'button', {
+          text: retry !== null ? 'Riprova' : 'Conferma rimozione',
+          cls: 'bo-spazi-danger',
+          attrs: { type: 'button' },
+        });
         yes.disabled = state.busy;
         yes.addEventListener('click', async () => {
           const motive = String(reason.value ?? '').trim();
@@ -747,38 +774,56 @@ export function createSpaziAccessiView(deps) {
             say('Serve un motivo: senza, il server rifiuta la rimozione.', true);
             return;
           }
-          try {
-            // One person may hold several subjects: each is suspended
-            // through the same spine route, one at a time; the first
-            // refusal stops and reaches the page.
-            for (const subjectId of row.removable) {
+          // One person may hold several subjects: each is suspended through
+          // the same spine route, one at a time (mutate holds the busy flag),
+          // and every outcome is collected — a refusal never hides what
+          // already happened. Riprova then asks only for what was refused:
+          // the reloaded roster no longer lists a suspended subject as live.
+          /** @type {Array<{subject: string, failure: any}>} */
+          const refused = [];
+          for (const subjectId of row.removable) {
+            try {
               await mutate(`/api/spine/memberships/${encodeURIComponent(subjectId)}/suspend`, { reason: motive });
+            } catch (error) {
+              refused.push({ subject: subjectId, failure: errorOf(error) });
             }
+          }
+          if (refused.length === 0) {
             say(`${row.name} rimosso dal team.`);
-          } catch (error) {
-            const failure = errorOf(error);
-            const message = humanWriteError(failure, {
-              failed: 'La rimozione non è riuscita. Riprova più tardi.',
-            });
-            say(message, true);
-            await load();
             state.confirmRemove = null;
-            state.refusal = message;
-            render();
+            state.removeRetry = null;
+            await refresh();
             return;
           }
-          state.confirmRemove = null;
-          await refresh();
+          const total = row.removable.length;
+          const done = total - refused.length;
+          const why = humanWriteError(refused[0].failure, {
+            failed: total === 1
+              ? 'La rimozione non \u00E8 riuscita. Riprova pi\u00F9 tardi.'
+              : 'Il server ha rifiutato la sospensione.',
+          });
+          const note = total === 1
+            ? why
+            : done === 0
+              ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
+              : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
+          say(note, true);
+          await load();
+          // load() closes every confirmation: reopen this one on a subject
+          // that is still there, with the refusal and the motive kept.
+          state.confirmRemove = refused[0].subject;
+          state.removeRetry = { subject: refused[0].subject, reason: motive, note };
+          render();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
-        no.addEventListener('click', () => { state.confirmRemove = null; state.refusal = null; render(); });
+        no.addEventListener('click', () => { state.confirmRemove = null; state.removeRetry = null; state.refusal = null; render(); });
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         item.appendChild(confirmBox);
       } else {
         const remove = el(doc, 'button', { text: 'Rimuovi', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         remove.disabled = state.busy;
-        remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.refusal = null; render(); });
+        remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; state.refusal = null; render(); });
         item.appendChild(remove);
       }
       list.appendChild(item);

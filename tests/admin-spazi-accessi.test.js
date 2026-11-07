@@ -65,6 +65,7 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
       }
       if (path.startsWith('/api/spine/memberships/') && path.endsWith('/suspend')) {
         const subject = decodeURIComponent(path.split('/')[4]);
+        if (fail.suspend && Object.hasOwn(fail.suspend, subject)) throw fail.suspend[subject];
         const found = members.find((row) => row.subject === subject);
         if (!found) throw Object.assign(new Error('no such member'), { code: 'NOT_FOUND' });
         members.splice(members.indexOf(found), 1);
@@ -856,11 +857,81 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   assert.equal(bare.initials, 'MA');
   // A suspended subject is not suspended twice.
   const [half] = buildTeamRows([
-    { subject: 'a', role: 'owner', status: 'suspended', email: 'x@esempio.invalid' },
-    { subject: 'b', role: 'owner', status: 'active', email: 'x@esempio.invalid' },
+    { subject: 'a', role: 'owner', status: 'suspended', displayName: 'Ada', email: 'x@esempio.invalid' },
+    { subject: 'b', role: 'owner', status: 'active', displayName: 'Ada', email: 'x@esempio.invalid' },
   ]);
   assert.deepEqual(half.removable, ['b']);
   assert.equal(half.status, 'attivo', 'a person with one live subject is active');
+});
+
+test('6b44b0e9fcdf review: a mailbox alone never merges — different or missing names stay separate people', () => {
+  const rows = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'active', displayName: 'Anna Bianchi', email: 'info@studio.invalid' },
+    { subject: 'b', role: 'operator', status: 'active', displayName: 'Bruno Verdi', email: 'INFO@studio.invalid' },
+    { subject: 'c', role: 'observer', status: 'active', email: 'info@studio.invalid' },
+    { subject: 'd', role: 'observer', status: 'active', displayName: ' anna  BIANCHI ', email: 'info@studio.invalid' },
+  ]);
+  assert.equal(rows.length, 3, 'Anna (two subjects), Bruno and the nameless subject');
+  const anna = rows.find((row) => row.subjects.includes('a'));
+  assert.deepEqual(anna.subjects, ['a', 'd'], 'same mailbox AND same name (trimmed, any case) is one person');
+  const bruno = rows.find((row) => row.subjects.includes('b'));
+  assert.equal(bruno.name, 'Bruno Verdi', 'a different human on a shared mailbox keeps their own row');
+  assert.deepEqual(bruno.removable, ['b'], 'removing Anna never suspends Bruno');
+  assert.deepEqual(rows.find((row) => row.subjects.includes('c')).subjects, ['c'], 'a nameless subject is not folded in by mailbox');
+});
+
+test('6b44b0e9fcdf review: the person status is deterministic and reads sospeso only when every subject is suspended', () => {
+  const person = (statuses) => buildTeamRows(statuses.map((status, index) => ({
+    subject: `s${index}`, role: 'operator', status, displayName: 'Ada Neri', email: 'ada@esempio.invalid',
+  })));
+  assert.equal(person(['suspended', 'invited'])[0].status, 'invitato');
+  assert.equal(person(['invited', 'suspended'])[0].status, 'invitato', 'the store order does not change the row');
+  assert.equal(person(['pending', 'invited'])[0].status, 'invitato');
+  assert.equal(person(['suspended', 'active', 'invited'])[0].status, 'attivo');
+  assert.equal(person(['suspended', 'suspended'])[0].status, 'sospeso');
+});
+
+test('6b44b0e9fcdf review: a refused subject does not stop the others, the outcome is told and Riprova asks only for the refused one', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.invalid' },
+  ];
+  const calls = [];
+  const fail = { suspend: { 'broker|dan': Object.assign(new Error('ultimo amministratore'), { code: 'SPINE_LAST_ADMIN', status: 403 }) } };
+  const { mount, seen, view: v } = view({ client: stubClient({ members, calls, fail }) });
+  await v.render();
+  await flush();
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Daniele Pelleri'));
+  await remove.listeners.click[0]();
+  await flush();
+  const reason = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della rimozione di Daniele Pelleri');
+  reason.value = 'doppio account';
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma rimozione').listeners.click[0]();
+  await flush(30);
+  const suspendPaths = () => calls.filter((call) => call.path.endsWith('/suspend')).map((call) => call.path);
+  assert.deepEqual(suspendPaths(), [
+    `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
+    `/api/spine/memberships/${encodeURIComponent('google|42')}/suspend`,
+  ], 'the first refusal does not stop the second subject');
+  const said = seen.toast.at(-1);
+  assert.equal(said.error, true);
+  assert.match(said.message, /account sospesi 1 su 2, rifiutati 1/, 'the partial outcome is counted, not hidden behind a generic failure');
+  assert.match(text(mount), /account sospesi 1 su 2/, 'the outcome stays next to the row');
+  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|42'), 'no technical subject on screen');
+  const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
+  assert.ok(retry, 'the row stays open with Riprova');
+  const kept = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della rimozione di Daniele Pelleri');
+  assert.equal(kept.value, 'doppio account', 'the motive is kept for the retry');
+
+  delete fail.suspend['broker|dan'];
+  await retry.listeners.click[0]();
+  await flush(30);
+  assert.deepEqual(suspendPaths().slice(2), [
+    `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
+  ], 'Riprova suspends only the refused subject');
+  assert.equal(seen.toast.at(-1).message, 'Daniele Pelleri rimosso dal team.');
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Riprova'), 'a full success closes the retry');
 });
 
 test('6b44b0e9fcdf: the team paints one row per person with name over email, and removal suspends each subject', async () => {
