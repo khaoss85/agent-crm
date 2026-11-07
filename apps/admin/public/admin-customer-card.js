@@ -436,6 +436,50 @@ export function readableText(value) {
     .trim();
 }
 
+/** «Aggiungi telefono»: the Italian reason for each refusal the server names. */
+const PHONE_REFUSALS = Object.freeze({
+  400: 'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567',
+  404: 'Il cliente non è più in questo spazio: ricarica la scheda',
+  409: 'Questo numero è già collegato a un altro cliente',
+});
+const PHONE_SAVE_FAILED = 'Numero non salvato. Riprova più tardi.';
+/** The /bo edge's generic refusal: Italian, but it says nothing the operator can act on. */
+const GENERIC_PANEL_REFUSAL = 'Scrittura del pannello rifiutata';
+
+/**
+ * Whether a server message is an Italian sentence the operator can read:
+ * the /bo edge answers its refusals in Italian, the standalone framework
+ * in English, and a code or path never reaches the screen.
+ * @param {unknown} message
+ */
+function isItalianSentence(message) {
+  if (typeof message !== 'string') return false;
+  const text = message.trim();
+  if (text === '' || text.length > 240 || text === GENERIC_PANEL_REFUSAL) return false;
+  if (/[_/{}<>]|\b[A-Z]{2,}_[A-Z]/.test(text)) return false;
+  return /[àèéìòù]|\b(il|lo|la|non|un|una|questo|questa|già|del|della|di|per|scrivilo|ricarica)\b/i.test(text);
+}
+
+/**
+ * Production 07/11 (pilot #426): «Aggiungi telefono» always said «Numero
+ * non salvato…». A 400 (bad format), 404 (customer gone) or 409 (number
+ * held by another customer) now reads its own reason — the server's Italian
+ * sentence when it sends one, else the same reason in our words; anything
+ * else (unknown, 5xx, network) keeps the generic retry line.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function phoneRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status
+    : (record.code === 'PHONE_ALREADY_HELD' ? 409 : null);
+  const own = status === null ? undefined : PHONE_REFUSALS[/** @type {400|404|409} */ (status)];
+  if (own === undefined) {
+    return humanReadError(error, { failed: PHONE_SAVE_FAILED });
+  }
+  humanReadError(error, { failed: own });
+  return isItalianSentence(record.message) ? String(record.message).trim() : own;
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -825,7 +869,8 @@ export function createCustomerCardView(deps) {
         toast('Telefono salvato');
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
-        err.textContent = humanReadError(error, { failed: 'Numero non salvato. Riprova più tardi.' });
+        // The typed number stays in the field: the operator corrects it.
+        err.textContent = phoneRefusalText(error);
       } finally {
         busy = false;
       }

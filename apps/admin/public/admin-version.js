@@ -12,9 +12,12 @@
  * its own: the operator always confirms, so no text is ever lost —
  * selects, retained drafts and in-flight saves included.
  *
- * Views with non-DOM draft state can still mark it through markUnsaved,
- * and hasUnsavedWork still reports unsent text for its own callers; the
- * watch itself no longer branches on it.
+ * Views with non-DOM draft state can still mark it through markUnsaved.
+ * The poll itself never branches on unsent text, but the confirming click
+ * does: with text still unsent the first press only says so, and the
+ * reload needs a second press — a reload never takes a draft by surprise.
+ * (Carrying drafts across the reload is the job of the draft store in
+ * PR #634; until it lands the guard is this two-step confirmation.)
  *
  * Pure on purpose: every decision is a tested function of its inputs, and
  * the only impure edges (fetch, reload, timers) arrive as parameters.
@@ -24,7 +27,10 @@ export const BO_VERSION_POLL_MS = 60000;
 
 export const BO_UPDATE_BANNER_ID = 'bo-update-banner';
 
-export const BO_UPDATE_NOTICE = 'È disponibile una nuova versione · Aggiorna';
+export const BO_UPDATE_NOTICE = 'È disponibile una nuova versione · Ricarica';
+
+/** The notice after a first press while text is still unsent. */
+export const BO_UPDATE_UNSAVED_NOTICE = 'Hai del testo non salvato: salvalo, poi premi di nuovo per ricaricare';
 
 const BO_BUNDLE_NAME_PATTERN = /^bo-[0-9a-f]+\.js$/;
 
@@ -266,7 +272,7 @@ export function ensureUpdateBanner(doc, options = {}) {
     banner.textContent = BO_UPDATE_NOTICE;
     const onUpdate = options?.onUpdate;
     banner.addEventListener('click', () => {
-      if (typeof onUpdate === 'function') onUpdate();
+      if (typeof onUpdate === 'function') onUpdate(banner);
     });
     source.body.appendChild(banner);
     return banner;
@@ -310,8 +316,15 @@ export async function checkBundleVersion(options = {}) {
   if (served === null) return 'failed';
   const current = { jsName, cssName: currentStyleName(doc) };
   if (!isUpdateAvailable(current, served)) return 'current';
+  // Unsent text on the page: the first press warns, the next one reloads.
+  let warned = false;
   ensureUpdateBanner(doc, {
-    onUpdate: () => {
+    onUpdate: (banner) => {
+      if (!warned && hasUnsavedWork(doc)) {
+        warned = true;
+        if (banner && typeof banner === 'object') banner.textContent = BO_UPDATE_UNSAVED_NOTICE;
+        return;
+      }
       if (typeof options?.reload === 'function') options.reload();
       else if (win?.location && typeof win.location.reload === 'function') win.location.reload();
     },

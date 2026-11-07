@@ -442,6 +442,9 @@ export function createShellView({
     clientCountExact: true,
     user: user != null && typeof user === 'object' ? { ...user } : {},
     items: buildShellNav(),
+    // design: shell telefono — on a phone the sidebar is a drawer behind
+    // the ☰ button; desktop never shows the button, so this stays false.
+    drawerOpen: false,
   };
   if (!state.spaces.some((space) => space.id === state.activeSpaceId)) {
     state.activeSpaceId = state.spaces[0].id;
@@ -453,27 +456,78 @@ export function createShellView({
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
 
-  /**
-   * B5 (backlog:d7c78e9cdf53): on a phone the nav is one horizontal strip
-   * (styles.css, max-width 700px) and a voice past the edge reads cut — the
-   * Calendario pill showed as «Cal». Scroll the strip, never the page, just
-   * enough to bring the active voice in (nearest edge); a voice already
-   * fully in view leaves the strip where it is. A no-op where the strip does
-   * not overflow (desktop column) or where there is no layout (tests).
-   * @param {any} nav
-   */
-  function revealActiveVoice(nav) {
-    const current = typeof nav.querySelector === 'function' ? nav.querySelector('a[aria-current="page"]') : null;
-    if (!current || typeof current.getBoundingClientRect !== 'function' || typeof nav.getBoundingClientRect !== 'function') return;
-    if (!(nav.scrollWidth > nav.clientWidth)) return;
-    const box = nav.getBoundingClientRect();
-    const voice = current.getBoundingClientRect();
-    const left = voice.left - box.left;
-    const right = left + voice.width;
-    if (left >= 0 && right <= box.width) return;
-    const delta = left < 0 ? left : right - box.width;
-    nav.scrollLeft = Math.max(0, nav.scrollLeft + delta);
+  /** The live ☰ button: the top bar repaints on every update. */
+  let menuToggle = null;
+  const sidebarId = () => {
+    const id = typeof sidebar.getAttribute === 'function' ? sidebar.getAttribute('id') : null;
+    if (typeof id === 'string' && id !== '') return id;
+    sidebar.setAttribute('id', 'boSidebar');
+    return 'boSidebar';
+  };
+
+  function paintToggle() {
+    if (menuToggle === null) return;
+    menuToggle.setAttribute('aria-expanded', state.drawerOpen ? 'true' : 'false');
+    menuToggle.setAttribute('aria-label', state.drawerOpen ? 'Chiudi il menu' : 'Apri il menu');
   }
+
+  /** The sidebar's own landmark label, restored when the drawer closes. */
+  let landmarkLabel = null;
+
+  /**
+   * The drawer's focusable controls in document order: links with an href
+   * and enabled buttons, skipping closed menus (`.hidden` subtrees). A tree
+   * walk, so it reads the same in a browser and in the test DOM.
+   */
+  function drawerFocusables() {
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.childNodes ?? []) {
+        if (child.classList?.contains?.('hidden')) continue;
+        const tag = String(child.tagName ?? '').toLowerCase();
+        if ((tag === 'a' && child.getAttribute('href')) || (tag === 'button' && !child.disabled)) out.push(child);
+        walk(child);
+      }
+    };
+    walk(sidebar);
+    return out;
+  }
+
+  function openDrawer() {
+    state.drawerOpen = true;
+    sidebar.classList.add('bo-drawer-open');
+    // A modal drawer: announced as the «Menu» dialog, the page behind it
+    // locked until it closes (the lock rule lives in the phone block only).
+    landmarkLabel = sidebar.getAttribute('aria-label');
+    sidebar.setAttribute('role', 'dialog');
+    sidebar.setAttribute('aria-modal', 'true');
+    sidebar.setAttribute('aria-label', 'Menu');
+    doc.body?.classList?.add('bo-scroll-lock');
+    paintToggle();
+    // Focus moves into the drawer: its first control is the space switcher.
+    const first = sidebar.querySelector('button');
+    if (first && typeof first.focus === 'function') first.focus();
+  }
+
+  /** @param {{ refocus?: boolean }} [options] */
+  function closeDrawer({ refocus = false } = {}) {
+    if (!state.drawerOpen) return;
+    state.drawerOpen = false;
+    sidebar.classList.remove('bo-drawer-open');
+    sidebar.removeAttribute('role');
+    sidebar.removeAttribute('aria-modal');
+    if (landmarkLabel === null) sidebar.removeAttribute('aria-label');
+    else sidebar.setAttribute('aria-label', landmarkLabel);
+    doc.body?.classList?.remove('bo-scroll-lock');
+    paintToggle();
+    if (refocus && menuToggle !== null && typeof menuToggle.focus === 'function') menuToggle.focus();
+  }
+
+  /** Every route chosen inside the sidebar closes the drawer first. */
+  const go = (hash) => {
+    closeDrawer();
+    navigate(hash);
+  };
 
   function renderSidebar() {
     clearMount(sidebar);
@@ -520,7 +574,7 @@ export function createShellView({
       menu.appendChild(pick);
     }
     const manage = el(doc, 'button', 'bo-space-manage', 'Gestisci spazi e accessi');
-    manage.addEventListener('click', () => navigate(SETTINGS_ROUTE));
+    manage.addEventListener('click', () => go(SETTINGS_ROUTE));
     menu.appendChild(manage);
     sidebar.appendChild(menu);
 
@@ -536,7 +590,7 @@ export function createShellView({
         if (item.id === state.activeScreenId) link.setAttribute('aria-current', 'page');
         link.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
-          navigate(item.route);
+          go(item.route);
         });
       } else {
         link.setAttribute('aria-disabled', 'true');
@@ -574,7 +628,6 @@ export function createShellView({
     nav.setAttribute('aria-label', 'Sezioni');
     appendGroups(nav, ['home', 'native', 'custom']);
     sidebar.appendChild(nav);
-    revealActiveVoice(nav);
 
     const addWrap = el(doc, 'div', 'bo-add');
     const addButton = el(doc, 'button', 'bo-add-button', '+ Nuovo modulo');
@@ -595,7 +648,7 @@ export function createShellView({
       line: 'Nome, dati usati e chi può vederlo' });
     manualOption.addEventListener('click', () => {
       addMenu.classList.toggle('hidden', true);
-      navigate('#/nuovo-modulo');
+      go('#/nuovo-modulo');
     });
     addMenu.appendChild(aiOption);
     addMenu.appendChild(manualOption);
@@ -637,7 +690,7 @@ export function createShellView({
     profileLink.setAttribute('title', 'Il tuo profilo');
     profileLink.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      navigate('#/profilo');
+      go('#/profilo');
     });
     profileLink.appendChild(userBadge);
     profileLink.appendChild(who);
@@ -663,6 +716,27 @@ export function createShellView({
   function renderTopbar() {
     clearMount(topbar);
     const space = activeSpace();
+    // design: shell telefono — on a phone the top bar names the space
+    // (badge, name, role, where the sidebar switcher sits) and the ☰ button
+    // opens the sidebar as a drawer. Both hidden above 560px by the
+    // stylesheet, so desktop is unchanged.
+    const phoneSpace = el(doc, 'div', 'bo-phonebar-space');
+    phoneSpace.appendChild(el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase()));
+    const phoneSpaceText = el(doc, 'span', 'bo-space-text');
+    phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
+    const phoneRole = sessionRoleLabel(state.user.role);
+    if (phoneRole !== '') phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-role', phoneRole));
+    phoneSpace.appendChild(phoneSpaceText);
+    topbar.appendChild(phoneSpace);
+    menuToggle = el(doc, 'button', 'bo-menu-toggle', '☰');
+    menuToggle.setAttribute('type', 'button');
+    menuToggle.setAttribute('aria-controls', sidebarId());
+    paintToggle();
+    menuToggle.addEventListener('click', () => {
+      if (state.drawerOpen) closeDrawer();
+      else openDrawer();
+    });
+    topbar.appendChild(menuToggle);
     const path = el(doc, 'div', 'bo-crumb', crumb(space.name, screenLabelFor(state.activeScreenId)));
     path.setAttribute('aria-label', 'Percorso');
     topbar.appendChild(path);
@@ -704,6 +778,27 @@ export function createShellView({
   if (win != null && typeof win.addEventListener === 'function') {
     win.addEventListener('keydown', (event) => {
       if (event == null) return;
+      if (event.key === 'Escape' && state.drawerOpen) {
+        closeDrawer({ refocus: true });
+        return;
+      }
+      // Focus trap: Tab and Shift+Tab cycle inside the open drawer.
+      if (event.key === 'Tab' && state.drawerOpen) {
+        const focusables = drawerFocusables();
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const current = doc.activeElement ?? null;
+        const inside = current !== null && sidebar.contains(current);
+        const wrapTo = event.shiftKey === true
+          ? (!inside || current === first ? last : null)
+          : (!inside || current === last ? first : null);
+        if (wrapTo !== null) {
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          wrapTo.focus();
+        }
+        return;
+      }
       const isShortcut = event.metaKey === true || event.ctrlKey === true;
       if (!isShortcut || typeof event.key !== 'string') return;
       if (event.key.toLowerCase() === 'k') {
@@ -720,6 +815,18 @@ export function createShellView({
         renderTopbar();
       }
     });
+    // A tap outside the open drawer closes it; the ☰ button handles its own.
+    // Capture phase, and the tap stops there: the scrim is only a shadow, so
+    // without this the tap that dismisses the menu would also press the
+    // button underneath it.
+    win.addEventListener('click', (event) => {
+      if (!state.drawerOpen) return;
+      const target = event?.target ?? null;
+      if (sidebar.contains(target) || (menuToggle !== null && menuToggle.contains(target))) return;
+      if (typeof event?.preventDefault === 'function') event.preventDefault();
+      if (typeof event?.stopPropagation === 'function') event.stopPropagation();
+      closeDrawer();
+    }, true);
   }
 
   renderSidebar();
