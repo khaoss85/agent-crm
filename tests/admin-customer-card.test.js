@@ -3037,3 +3037,28 @@ test('Dan 06/11: without notes there is no Note chip', async () => {
   await createCustomerCardView({ doc: createFakeDocument(), mount, client: stubClient() }).renderCard('contact', 'c1');
   assert.equal(mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'note'), undefined);
 });
+
+test('review #617: a cut cronologia counts the notes as a floor, and a note body reads like text', async () => {
+  const timeline = {
+    ...TIMELINE,
+    entries: {
+      ...TIMELINE.entries,
+      count: 120,
+      truncated: true,
+      items: [
+        ...TIMELINE.entries.items,
+        {
+          entry: 'note', id: 'n1', conversationId: null, channel: null, direction: null, sync: null,
+          body: 'Prezzo &quot;speciale&quot; &amp; prova​ gratuita', teamAuthorId: 'dan',
+          remoteHandle: null, errorCode: null, occurredAt: '2026-10-21T09:00:00.000Z',
+        },
+      ],
+    },
+  };
+  const mount = createMount();
+  await createCustomerCardView({ doc: createFakeDocument(), mount, client: stubClient({ timeline }) }).renderCard('contact', 'c1');
+  const noteChip = mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'note');
+  assert.equal(noteChip.textContent, 'Note · 1+', 'older notes may sit past the page');
+  const body = mount.findAll('p').find((node) => String(node.getAttribute('class')).includes('bo-scheda-note-body'));
+  assert.equal(body.textContent, 'Prezzo "speciale" & prova gratuita', 'entities decoded, invisible marks dropped');
+});

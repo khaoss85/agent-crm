@@ -2013,7 +2013,10 @@ export function createCustomerCardView(deps) {
         chips.appendChild(chip(key === 'all' ? 'Tutti' : channelLabel(key), key, channelFilter === key, pick(key)));
       }
       if (notes.length > 0) {
-        const noteChip = chip(`Note · ${notes.length}`, 'note', channelFilter === 'note', pick('note'));
+        // Review #617: a cut cronologia may hold older notes past the page,
+        // so the count reads as a floor («3+»), never an exact total.
+        const partial = timeline?.entries?.truncated === true;
+        const noteChip = chip(`Note · ${notes.length}${partial ? '+' : ''}`, 'note', channelFilter === 'note', pick('note'));
         noteChip.setAttribute('class', 'bo-scheda-chip-note');
         chips.appendChild(noteChip);
       }
@@ -2125,7 +2128,7 @@ export function createCustomerCardView(deps) {
           paper.appendChild(el('p', 'bo-scheda-entry-head',
             when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
           if (typeof item?.body === 'string' && item.body !== '') {
-            paper.appendChild(el('p', 'bo-scheda-note-body', item.body));
+            paper.appendChild(el('p', 'bo-scheda-note-body', readableText(item.body)));
           }
           row.appendChild(paper);
           list.appendChild(row);
