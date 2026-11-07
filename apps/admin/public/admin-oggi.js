@@ -1498,8 +1498,10 @@ export function createOggiView(deps) {
   /**
    * Follow-ups completed in this session, with the place they held: the
    * task leaves the open list on the next read, but like the prototype the
-   * card stays, struck through, and the bar counts it (C12).
-   * @type {Map<string, { action: any, index: number }>}
+   * card stays, struck through, and the bar counts it (C12). Each entry
+   * keeps the Rome day it was completed on: a paint on another day drops
+   * it, so yesterday's completions never come back into today's list.
+   * @type {Map<string, { action: any, index: number, day: string | null }>}
    */
   const completed = new Map();
   /** The cards last painted, completed ones included: their order is the place a completion keeps. */
@@ -1512,11 +1514,20 @@ export function createOggiView(deps) {
     if (!last) return;
     const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now });
     lastBuilt = built;
-    const actions = [...built.actions];
+    const merged = [...built.actions];
+    const today = romeDayKey(lastMeta.now);
     for (const [id, entry] of completed) {
-      if (actions.some((action) => action?.id === id)) continue;
-      actions.splice(Math.min(entry.index, actions.length), 0, entry.action);
+      if (entry.day !== today) {
+        completed.delete(id);
+        continue;
+      }
+      if (merged.some((action) => action?.id === id)) continue;
+      merged.splice(Math.min(entry.index, merged.length), 0, entry.action);
     }
+    // The cap holds on what is painted, completed cards included, and the
+    // disclosure follows the merged list rather than the open one.
+    const actions = merged.slice(0, ADVISOR_ACTION_LIMIT);
+    const capped = built.capped || merged.length > ADVISOR_ACTION_LIMIT;
     lastActions = actions;
     const agenda = buildTodayAgenda(last.appointments, lastMeta.now);
     const brief = last.next
@@ -1535,7 +1546,7 @@ export function createOggiView(deps) {
         recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now }),
         actions,
         triage,
-        capped: built.capped,
+        capped,
         agenda,
         brief,
         inbox: !last.inboxComposed
@@ -1625,7 +1636,7 @@ export function createOggiView(deps) {
         ));
         triage = applyTriageDecision(triage, action.id, 'done');
         const index = lastActions.findIndex((candidate) => candidate?.id === action.id);
-        completed.set(action.id, { action, index: index === -1 ? 0 : index });
+        completed.set(action.id, { action, index: index === -1 ? 0 : index, day: romeDayKey(lastMeta.now) });
       } else {
         if (typeof action?.href === 'string' && action.href !== '') navigate(action.href);
         triage = applyTriageDecision(triage, action?.id, 'done');

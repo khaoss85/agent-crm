@@ -1060,6 +1060,68 @@ test('Oggi view completes a task with a fresh read, then keeps its row as done (
   assert.equal(rows[0], row, 'the completed card keeps its place');
 });
 
+test('Oggi view drops a completed card once the Rome day changes (review #642 P2)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [] });
+  const view = createOggiView({ doc, mount, client, navigate: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
+  await settle(() => mount.textContent.includes('✓ Fatto'));
+  const doneRow = () => mount.findAll('div').find((node) => node.getAttribute('data-action') === 'bo04:followup:task-1');
+  assert.ok(doneRow(), 'the completed card stays for the rest of the day');
+
+  // Same day, later: the completion is still today's.
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T21:30:00.000Z') });
+  assert.ok(doneRow(), 'still listed before Rome midnight');
+  // 23:30Z on the 19th is already the 20th in Rome: yesterday's card is gone.
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T23:30:00.000Z') });
+  assert.equal(doneRow(), undefined, 'a completion from another Rome day is not re-injected');
+  assert.ok(!mount.textContent.includes('Richiama per il preventivo'));
+});
+
+test('Oggi view caps the merged list, completed cards included, and discloses it (review #642 P3)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const tasks = Array.from({ length: ADVISOR_ACTION_LIMIT + 1 }, (_, index) => ({
+    ...TASK_OPEN, id: `task-${index}`, title: `Compito ${index}`,
+  }));
+  let completedId = null;
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      if (method !== 'GET') {
+        completedId = 'task-0';
+        return { task: { ...tasks[0], status: 'completed' } };
+      }
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+      if (path.startsWith('/api/modules/work-task/records/')) return { ...tasks[0] };
+      // Before: exactly the cap is open. After: task-0 left the open list and
+      // the cap's worth is still open, so open + completed exceeds the cap.
+      if (path.startsWith('/api/modules/work-task/records')) {
+        return { items: completedId === null ? tasks.slice(0, ADVISOR_ACTION_LIMIT) : tasks.slice(1) };
+      }
+      if (path.startsWith('/api/modules/appointment/records')) return { items: [] };
+      if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const view = createOggiView({ doc, mount, client, navigate: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  const rows = () => mount.findAll('div').filter((node) => node.getAttribute('data-action'));
+  assert.equal(rows().length, ADVISOR_ACTION_LIMIT);
+  assert.ok(!mount.textContent.includes('Mostro le prime'), 'exactly the cap: no disclosure');
+
+  mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
+  await settle(() => completedId !== null && mount.textContent.includes('✓ Fatto'));
+  assert.equal(rows().length, ADVISOR_ACTION_LIMIT, 'never more cards than the cap');
+  assert.equal(rows()[0].getAttribute('data-action'), 'bo04:followup:task-0', 'the completed card keeps its place');
+  assert.ok(mount.textContent.includes(`Mostro le prime ${ADVISOR_ACTION_LIMIT} azioni.`), 'the cap is disclosed');
+});
+
 test('Oggi view postpones through the work-task action, then keeps the open row', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
