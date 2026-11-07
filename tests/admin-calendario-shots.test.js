@@ -207,8 +207,12 @@ const probe = {
   innerWidth: window.innerWidth,
   // Spec 390 order (backlog:5fbebe8559e9): «Fissa con una frase», the week,
   // Team, online booking — top edges in page order.
-  order: ['.cal-ai', '.cal-week', '.cal-team', '.cal-booking']
+  order: ['.cal-ai', '.cal-week', '.cal-team', '.cal-manual', '.cal-booking']
     .map((selector) => Math.round(document.querySelector(selector).getBoundingClientRect().top)),
+  // backlog:5fbebe8559e9: empty days collapse to compact rows on the phone.
+  compact: [...document.querySelectorAll('.cal-day-compact')]
+    .filter((node) => node.getBoundingClientRect().height > 0)
+    .map((node) => Math.round(node.getBoundingClientRect().height)),
 };
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'calendario-ready';
@@ -333,6 +337,7 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   const probe = readProbe(dom);
   assert.equal(probe.days, 5, 'the week holds five work-day columns');
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
+  assert.equal(probe.compact.length, 0, 'desktop keeps every empty day as its timeline');
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the desktop render lists the week events');
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
@@ -350,7 +355,12 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   const probe = readProbe(dom);
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the phone render lists the week events');
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
+  console.log(`calendario phone tops (AI, week, Team, form, booking): ${probe.order.join(', ')}`);
   const sorted = [...probe.order].sort((a, b) => a - b);
-  assert.deepEqual(probe.order, sorted, `C21: one column in the spec order — AI, week, Team, booking (${probe.order})`);
+  assert.deepEqual(probe.order, sorted, `C21: one column in the spec order — AI, week, Team, form, booking (${probe.order})`);
+  // The fixture week holds events on Thu and Fri only: Mon–Wed are compact
+  // rows, never 540px empty timelines.
+  assert.equal(probe.compact.length, 3, `three empty days paint compact rows (${probe.compact})`);
+  assert.ok(probe.compact.every((height) => height < 80), `a compact row stays short (${probe.compact})`);
   console.log(`calendario phone PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });

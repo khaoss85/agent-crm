@@ -1491,6 +1491,21 @@ export function createCalendarioView(deps) {
     state.manualFirst?.focus?.();
   }
 
+  /**
+   * «+ Prenota» on a compact empty day (phone, backlog:5fbebe8559e9): the
+   * manual form opens on that day, with the time left to the operator —
+   * never an invented hour.
+   * @param {string} key
+   */
+  function bookDay(key) {
+    state.selection = null;
+    state.selectedId = null;
+    state.manual = { ...(state.manual ?? {}), date: key };
+    state.manualOpen = true;
+    renderAll();
+    state.manualFirst?.focus?.();
+  }
+
   function closeSlot() {
     if (!state.selection) return;
     state.selection = null;
@@ -1573,8 +1588,14 @@ export function createCalendarioView(deps) {
     const nowMin = romeMinutes(now);
     const columns = weekColumns();
     columns.forEach(([key, rows], dayIndex) => {
+      const ghosts = state.proposals.filter((slot) => romeDayKey(slot?.startsAt) === key
+        && slotInGrid(slot?.startsAt, slot?.endsAt));
+      // backlog:5fbebe8559e9: on the stacked phone layout a day with nothing
+      // painted collapses to one compact row (CSS ≤ 700px); desktop keeps
+      // the empty timeline, the compact row stays hidden there.
+      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key;
       const head = el(doc, 'div', {
-        className: 'cal-day-head',
+        className: empty ? 'cal-day-head is-empty' : 'cal-day-head',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },
       });
       const headText = dayHead(key) ?? key;
@@ -1588,11 +1609,9 @@ export function createCalendarioView(deps) {
       }
       grid.appendChild(head);
       const col = el(doc, 'div', {
-        className: 'cal-day',
+        className: empty ? 'cal-day is-empty' : 'cal-day',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
       });
-      const ghosts = state.proposals.filter((slot) => romeDayKey(slot?.startsAt) === key
-        && slotInGrid(slot?.startsAt, slot?.endsAt));
       // Events and ghosts share the lanes (backlog:5fbebe8559e9): a ghost
       // never paints over a booking or over another ghost.
       const lanes = lanesFor([...rows, ...ghosts]);
@@ -1647,6 +1666,18 @@ export function createCalendarioView(deps) {
         col.appendChild(line);
       }
       grid.appendChild(col);
+      if (empty) {
+        const compact = el(doc, 'div', { className: 'cal-day-compact', attrs: { 'data-day': key } });
+        compact.appendChild(el(doc, 'span', { className: 'cal-day-compact-name', text: dayHead(key) ?? key }));
+        compact.appendChild(el(doc, 'span', { text: 'Nessun appuntamento' }));
+        const book = uiButton(doc, {
+          variant: 'secondary', small: true, label: '+ Prenota',
+          attrs: { type: 'button', 'aria-label': `Prenota ${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}`.trim() },
+        });
+        book.addEventListener('click', () => bookDay(key));
+        compact.appendChild(book);
+        grid.appendChild(compact);
+      }
     });
     panel.appendChild(grid);
     // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or

@@ -2269,7 +2269,9 @@ test('email-less homonyms toggle and book the right human', async () => {
   assert.equal(toggles.length, 2, 'two humans are two toggles');
   assert.ok(toggles.some((node) => node.textContent.includes('Rossi (1)')), 'the first human paints');
   assert.ok(toggles.some((node) => node.textContent.includes('Rossi (2)')), 'the second human paints');
-  const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n');
+  // One separator between the groups too: «+ Prenota» glued to the next
+  // span would read «Prenota19» and fake an «a1».
+  const painted = [...texts(mount, 'button'), ...texts(mount, 'span')].join('\n');
   assert.ok(!painted.includes('a1') && !painted.includes('a2'), 'no technical subject id on screen');
   toggles.find((node) => node.textContent.includes('Rossi (1)')).dispatch('click');
   assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'hiding the first hides only its blocks');
@@ -3379,4 +3381,31 @@ test('C16: a week with zero events keeps days and hours, no technical message', 
   assert.equal(eventBlocks(mount).length, 0);
   const grid = mount.querySelector('.cal-week');
   assert.doesNotMatch(grid.textContent, /NOT_FOUND|non composto|error|undefined|null/i);
+});
+
+test('an empty day carries a compact row with «+ Prenota» for the phone stack', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  const classesOf = (node) => (node.getAttribute('class') ?? '').split(/\s+/);
+  const byClass = (name) => mount.findAll('div').filter((node) => classesOf(node).includes(name));
+  // WEEK holds Thu (taglio) and Fri (barba): Mon–Wed are empty.
+  const compact = byClass('cal-day-compact');
+  assert.deepEqual(compact.map((node) => node.getAttribute('data-day')), ['2026-10-19', '2026-10-20', '2026-10-21']);
+  assert.ok(compact[0].textContent.includes('lun 19'));
+  assert.ok(compact[0].textContent.includes('Nessun appuntamento'));
+  // Desktop still paints five timelines; the empty ones carry the marker the
+  // phone CSS collapses, the days with blocks never do.
+  const days = byClass('cal-day');
+  assert.equal(days.length, 5);
+  assert.deepEqual(days.map((node) => classesOf(node).includes('is-empty')), [true, true, true, false, false]);
+  const book = compact[1].findAll('button').find((node) => node.textContent === '+ Prenota');
+  assert.ok(book, 'the compact row books that day');
+  book.dispatch('click');
+  await flushAll();
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  assert.equal(field('date').value, '2026-10-20', '«+ Prenota» opens the form on that day');
+  assert.equal(field('start').value, '', 'no hour is invented');
 });
