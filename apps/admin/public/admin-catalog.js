@@ -341,6 +341,7 @@ export function createCatalogView(deps) {
     const button = el('button', `catalog-toggle catalog-switch${product.active === true ? ' on' : ''}`, target ? 'Attiva' : 'Disattiva');
     button.setAttribute('role', 'switch');
     button.setAttribute('aria-checked', product.active === true ? 'true' : 'false');
+    button.setAttribute('aria-label', product.active === true ? 'Attivo: disattiva' : 'Non attivo: attiva');
     const confirmBox = el('div', 'catalog-confirm');
     const confirmError = el('p', 'field-error', '');
     button.addEventListener('click', () => {
@@ -949,9 +950,11 @@ export function createCatalogView(deps) {
     // Category keeps a server-only exact-value box (review on #516 head
     // 3cc943a0, P2): the chips below cover only the loaded page, so a
     // category past the 200-row page would be unreachable without it. The
-    // box is never used for the live repaint — Filtra, the state select
-    // and the chips send it through renderTable, where the server compares
-    // it exactly, like its own vocabulary does.
+    // box is never used for the live repaint — its own change (Enter,
+    // leaving the field, a suggestion picked), the state select and the
+    // chips send it through renderTable, where the server compares it
+    // exactly, like its own vocabulary does. No Filtra button
+    // (backlog:b44fe65ac3e5): every filter acts by itself, in one row.
     const categoryInput = el('input', 'catalog-category-input');
     categoryInput.setAttribute('type', 'text');
     categoryInput.setAttribute('name', 'category');
@@ -960,7 +963,6 @@ export function createCatalogView(deps) {
     categoryInput.setAttribute('list', 'catalog-category-options');
     categoryInput.value = typeof category === 'string' ? category : '';
     const readCategory = () => categoryInput.value ?? '';
-    const applyButton = el('button', undefined, 'Filtra');
     const filterError = el('small', 'field-error', '');
     // The prototype's search (spec catalogo.md C9): exact placeholder,
     // live client-side match on name and code, never a server param.
@@ -974,7 +976,7 @@ export function createCatalogView(deps) {
     // The search field and the Fonte menu filter the loaded rows in place
     // (no refetch, focus stays in the field) with the server's own values
     // and comparison. The category box stays server-only: typing there
-    // never refetches, it waits for Filtra, the state select or a chip.
+    // never refetches, it applies on its change, the state select or a chip.
     const repaint = () => { paintList(readSearch(), category, sourceSelect.value ?? ''); };
     searchInput.addEventListener('input', repaint);
     searchInput.addEventListener('search', repaint);
@@ -986,20 +988,16 @@ export function createCatalogView(deps) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
       }
     });
-    applyButton.addEventListener('click', async () => {
-      applyButton.disabled = true;
+    categoryInput.addEventListener('change', async () => {
       try {
         await renderTable({ category: readCategory(), active: activeSelect.value, source: sourceSelect.value, search: readSearch() });
       } catch (error) {
         filterError.textContent = error?.message ?? 'Filtro fallito';
-      } finally {
-        applyButton.disabled = false;
       }
     });
     filters.appendChild(sourceSelect);
     filters.appendChild(activeSelect);
     filters.appendChild(categoryInput);
-    filters.appendChild(applyButton);
     filters.appendChild(searchInput);
     filters.appendChild(filterError);
     // Category chips from the read itself, like the prototype's tabs. The
@@ -1067,7 +1065,9 @@ export function createCatalogView(deps) {
       row.appendChild(meta);
       const switchCell = el('div', 'catalog-cell-switch');
       switchCell.setAttribute('data-label', 'Attivo');
-      switchCell.appendChild(el('span', 'catalog-active-state', product.active === true ? 'Attivo' : 'Non attivo'));
+      // The switch itself states the flag (backlog:b44fe65ac3e5): no text
+      // in the Attivo column repeats its name. Rows without actions (Stripe)
+      // show the same switch read-only, so every row still states it.
       row.appendChild(switchCell);
       // Only Stripe-bound rows stay read-only: the write path refuses them
       // with PROVIDER_PRICE_READONLY. Imported rows from any other source
@@ -1102,6 +1102,11 @@ export function createCatalogView(deps) {
         priceCell.appendChild(renderPriceEditor(product));
         switchCell.appendChild(renderActiveToggle(product));
         switchCell.appendChild(renderRemoveAction(product));
+      } else {
+        const state = el('span', `catalog-switch catalog-switch-static${product.active === true ? ' on' : ''}`);
+        state.setAttribute('role', 'img');
+        state.setAttribute('aria-label', product.active === true ? 'Attivo' : 'Non attivo');
+        switchCell.appendChild(state);
       }
       return row;
     };

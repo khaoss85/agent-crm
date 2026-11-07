@@ -473,6 +473,25 @@ const DEMO_CATALOG = {
         sourcePricingModel: 'manual:flat_fee', tiers: [],
       }],
     }],
+    unit: 'pacchetto', maxDiscountBps: 1000,
+  }, {
+    // backlog:b44fe65ac3e5: the summary counts one Stripe product, so the
+    // photographed rows carry it too — the Stripe block and the Fonte chips
+    // never disagree on camera.
+    productId: 'p2', sku: 'YOGA-MESE', name: 'Abbonamento Yoga',
+    description: 'Ingressi illimitati.', category: 'abbonamenti', source: 'stripe-test',
+    priceReadOnly: true, active: true, version: 1, unit: 'mese',
+    offers: [{
+      offerId: 'o2', name: 'Abbonamento Yoga — Canone mensile', active: true,
+      currency: 'EUR', quoteEligible: true, unsupportedReason: null,
+      components: [{
+        key: 'canone', label: 'Canone mensile',
+        chargeType: 'recurring', pricingModel: 'per_unit',
+        interval: 'month', intervalCount: 1, unitAmountCents: 4900,
+        flatAmountCents: null, externalPriceId: 'price_yoga_mese',
+        sourcePricingModel: 'stripe:recurring.per_unit', tiers: [],
+      }],
+    }],
   }],
   summary: { manual: 1, byProvider: { 'stripe-test': 1 }, stripeConnected: true },
 };

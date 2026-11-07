@@ -66,7 +66,10 @@ const client = {
 const view = createCatalogView({ doc: document, mount: document.getElementById('mount'), client });
 await view.renderTable({});
 const probe = {
-  table: document.querySelector('.catalog-list') ? document.querySelector('.catalog-list').textContent.slice(0, 60) : null,
+  // The first product row, not the list head: the list opens with the
+  // column header (~56 characters), so a 60-character slice of the list
+  // never reached the product name (backlog:b44fe65ac3e5).
+  table: document.querySelector('.catalog-row') ? document.querySelector('.catalog-row').textContent.slice(0, 200) : null,
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
   stripe: (document.querySelector('.catalog-stripe') ?? { textContent: null }).textContent,
