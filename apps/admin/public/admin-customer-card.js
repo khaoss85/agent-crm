@@ -1194,6 +1194,11 @@ export function createCustomerCardView(deps) {
         if (stale()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
+        const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
+        // The operator sees why the row went quiet; never the person's prompt.
+        if (aiOff && typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
+        }
         if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
         else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
         else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');

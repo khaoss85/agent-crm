@@ -2810,8 +2810,21 @@ test('composer AI: AI off or route missing turns the row into one honest line', 
     const { panel } = await openComposerMount({ client });
     const { input, go } = aiParts(panel);
     input.value = 'scrivi tu';
-    go.dispatch('click');
-    await flushComposer();
+    const logged = [];
+    const realError = console.error;
+    console.error = (...args) => { logged.push(args); };
+    try {
+      go.dispatch('click');
+      await flushComposer();
+    } finally {
+      console.error = realError;
+    }
+    assert.equal(logged.length, 1, 'AI off leaves one line for the operator');
+    assert.equal(logged[0][0], '[bo] AI spenta nel composer');
+    assert.deepEqual(Object.keys(logged[0][1]).sort(), ['code', 'spaceId', 'status']);
+    assert.equal(logged[0][1].code, error.code ?? null);
+    assert.equal(logged[0][1].status, error.status);
+    assert.ok(!JSON.stringify(logged).includes('scrivi tu'), 'the prompt never reaches the log');
     assert.match(panel.textContent, sentence);
     assert.equal(aiParts(panel).go, undefined, 'no dead Genera button stays');
     assert.ok(aiParts(panel).area, 'the message field stays for writing by hand');
