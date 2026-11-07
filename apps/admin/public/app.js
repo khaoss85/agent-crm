@@ -610,6 +610,9 @@ const customerFormView = createCustomerFormView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
+  // B4 (backlog:5a40c73e54aa): the half-written customer survives the login
+  // round-trip in this same shell storage, and returns after sign-in.
+  storage: shellStorage,
 });
 
 // Clienti import tool (ADR-037, backlog:80b25fb0, restyle backlog:5b164ab5):
