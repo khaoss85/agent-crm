@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createCustomerCardView,
+  failedSendReason,
   mergeLinkedIdentities,
   observedDirections,
   offerStageTargets,
@@ -3325,4 +3326,38 @@ test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, �
   const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
   assert.equal(send.textContent, 'Invia su Email');
   assert.ok(panel.textContent.includes('parte da Email · resta anche lì'), 'the channel note sits beside Invia');
+});
+
+test('97cba17cbb8c: un invio fallito resta in cronologia con il motivo italiano e Riprova', async () => {
+  assert.equal(
+    failedSendReason('CHANNEL_TEMPLATE_REQUIRED'),
+    'Fuori dalla finestra di 24 ore: serve un modello approvato.',
+  );
+  const failed = {
+    entry: 'message', id: 'm9', conversationId: 't1', channel: 'whatsapp', direction: 'outbound',
+    sync: 'failed', body: 'Ciao, ti mando il listino', teamAuthorId: 'elena',
+    remoteHandle: '+39 333 1234567', errorCode: 'CHANNEL_TEMPLATE_REQUIRED',
+    occurredAt: '2026-10-20T09:10:00.000Z',
+  };
+  const timeline = {
+    ...TIMELINE,
+    entries: { ...TIMELINE.entries, count: 5, items: [...TIMELINE.entries.items, failed] },
+  };
+  const client = stubClient({ timeline });
+  const mount = await renderCard(client);
+  assert.ok(mount.textContent.includes('Non consegnato'), 'the failed row names the delivery state');
+  assert.ok(
+    mount.textContent.includes('Fuori dalla finestra di 24 ore: serve un modello approvato.'),
+    'the failed row names the Italian reason, never the raw code alone',
+  );
+  const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'message-retry');
+  assert.ok(retry, 'the failed row offers Riprova');
+  assert.equal(retry.textContent, 'Riprova');
+  retry.dispatch('click');
+  await flushComposer(10);
+  const post = client.writes.find((write) => write.path === '/api/customer-hub/messages');
+  assert.ok(post, 'Riprova resends through the composer route');
+  assert.equal(post.body.channel, 'whatsapp');
+  assert.equal(post.body.text, 'Ciao, ti mando il listino');
+  assert.ok(typeof post.body.messageKey === 'string' && post.body.messageKey !== '', 'a fresh key per retry');
 });
