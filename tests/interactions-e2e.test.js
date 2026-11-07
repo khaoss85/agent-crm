@@ -1398,6 +1398,39 @@ test('9e003582: markCustomerRead moves every thread of the customer, nobody else
   );
 });
 
+test('9e003582 review: markCustomerRead refuses the anonymous and non-user actor, never orphan watermarks', async (t) => {
+  const root = project(t);
+  const context = await boot(root, join(root, 'data', 'cust-read-anon.sqlite'), {
+    clock: () => '2026-09-15T10:08:00.000Z',
+  });
+  t.after(() => context.close());
+  const { app } = context;
+  const { markCustomerRead, unreadCount, openConversation } = await interactionsFrom(root);
+  const scope = { modules: app.modules, moduleNames: {} };
+  const SOURCE_READ = { package: 'host', action: 'mark-customer-read' };
+  const first = await openConversation({ modules: app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:cust-read-anon', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  const request = { subject: { resource: 'contact', id: 'c-presti' }, upTo: '2026-09-15T10:02:00.000Z', source: SOURCE_READ };
+  for (const actor of [{ type: 'user', id: 'anonymous' }, { type: 'agent', id: 'guido' }, { type: 'system', id: 'accordo' }]) {
+    await assert.rejects(
+      markCustomerRead({ modules: app.modules, moduleNames: {}, actor }, request),
+      (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+      `markCustomerRead refuses ${actor.type}:${actor.id} instead of writing orphan rows`,
+    );
+  }
+  assert.equal((await unreadCount(scope, first.conversation.id, 'guido')).unread, 0,
+    'no inbound message logged, so nothing counts unread and no watermark was stored');
+  // The operation gate refuses the same actors before touching any module.
+  const { buildMarkCustomerReadOperation } = await interactionsFrom(root);
+  const run = buildMarkCustomerReadOperation({}).create({ modules: new Map() });
+  await assert.rejects(
+    run({ actor: { type: 'user', id: 'anonymous' }, resource: 'contact', id: 'c-presti', upTo: '2026-09-15T10:02:00.000Z' }),
+    (error) => error.code === 'HUMAN_APPROVAL_REQUIRED',
+    'the mark-customer-read operation refuses the anonymous actor at its gate',
+  );
+});
+
 test('9e003582: la capability readFlags risponde per il membro, null senza stato', async (t) => {
   const root = project(t);
   const context = await boot(root, join(root, 'data', 'cust-read-flags.sqlite'));

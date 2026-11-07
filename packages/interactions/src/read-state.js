@@ -74,13 +74,17 @@ export function countUnreadForSubject(messages, watermarks) {
 
 /**
  * The team member behind an actor, if the actor id fits the member
- * vocabulary. The writer of a mark is always the actor — a request body
- * never names a member, so nobody marks another member read — and an actor
- * whose id does not fit simply gets no read state: reads omit the unread
- * fields instead of refusing the whole page over an identity shape.
+ * vocabulary. Only a human user names a member: an agent, system or missing
+ * actor type never does, so a non-user actor with a colliding id cannot read
+ * another member's watermarks. The writer of a mark is always the actor — a
+ * request body never names a member, so nobody marks another member read —
+ * and an actor whose id does not fit simply gets no read state: reads omit
+ * the unread fields instead of refusing the whole page over an identity
+ * shape.
  * @param {unknown} actor
  */
 export function actorMemberId(actor) {
+  if (actor?.type !== 'user') return null;
   const id = typeof actor?.id === 'string' ? actor.id : '';
   if (id === '' || id.length > 64) return null;
   if (!/^[A-Za-z0-9][A-Za-z0-9._@/-]*$/.test(id)) return null;

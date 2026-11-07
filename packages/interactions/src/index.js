@@ -262,6 +262,14 @@ export function buildMarkCustomerReadOperation(moduleNames) {
             code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
           });
         }
+        // The read path answers no state for the anonymous actor, so the
+        // write path refuses it too: otherwise one call would store orphan
+        // watermark rows nobody could ever read back.
+        if (actorMemberId(actor) === null) {
+          throw new AppError('Marking a customer read is a human decision', {
+            code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+          });
+        }
         // The capability resolves the composed module names once, so a
         // composition that remaps a record still marks the right table —
         // the same handle `log-subject-call` writes through.

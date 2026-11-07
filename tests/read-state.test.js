@@ -73,3 +73,11 @@ test('9e003582: l\u2019attore anonimo non ha stato di lettura', () => {
   assert.equal(actorMemberId({ type: 'user', id: '__proto__' }), null);
   assert.equal(actorMemberId({ type: 'user', id: 'guido' }), 'guido');
 });
+
+test('9e003582 review: solo un attore user nomina un membro, mai agent o system', () => {
+  assert.equal(actorMemberId({ type: 'agent', id: 'guido' }), null,
+    'a colliding agent id reads no member watermarks');
+  assert.equal(actorMemberId({ type: 'system', id: 'guido' }), null);
+  assert.equal(actorMemberId({ id: 'guido' }), null, 'a missing actor type names nobody');
+  assert.equal(actorMemberId({ type: 'user' }), null);
+});

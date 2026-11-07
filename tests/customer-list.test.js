@@ -493,6 +493,37 @@ test('a derived view over a truncated dependency refuses instead of omitting row
   );
 });
 
+test('9e003582 review: da-leggere over an unreadable or partial message scan refuses, never an exact empty page', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const actor = { type: 'user', id: 'guido' };
+  const withFns = (modules) => ({
+    modules, core: {}, names: { identity: 'external-identity' },
+    interactions: { actorMemberId, countUnreadForSubject },
+  });
+  // No interaction-message module composed: the unread counts are unknown,
+  // so the view refuses instead of answering an exact-looking nobody-unread.
+  const noMessages = fakeModules({ contacts, companies, identities, omit: ['interaction-message'] });
+  await assert.rejects(
+    listCustomerRecords(withFns(noMessages), { vista: 'da-leggere', actor }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /interaction-message/.test(error.message),
+    'da-leggere without message records refuses with its reason',
+  );
+  // A message service exposing only list(): the scan is partial, same refusal.
+  const listOnly = (rows) => ({ list: async () => rows });
+  const base = fakeModules({ contacts, companies, identities });
+  const partial = { get: (key) => (key === 'interaction-message' ? { service: listOnly([]) } : base.get(key)) };
+  await assert.rejects(
+    listCustomerRecords(withFns(partial), { vista: 'da-leggere', actor }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /interaction-message/.test(error.message),
+    'da-leggere over a partial message scan refuses instead of an exact-looking empty page',
+  );
+  // The same unreadable scan still answers tutti, without the da-leggere count.
+  const page = await listCustomerRecords(withFns(noMessages), { vista: 'tutti', actor });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in byId['da-leggere']), 'no message read, no da-leggere count');
+  assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
+});
+
 test('budget signals attach with their source only when a space is named', async () => {
   const { contacts, companies, identities } = SCENE();
   const signals = [{

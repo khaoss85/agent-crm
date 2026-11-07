@@ -1537,6 +1537,15 @@ export async function markConversationRead(context, request) {
   // A read watermark without a reader would store that somebody saw the
   // customer's words with nobody saying who.
   const who = requireActor(actor);
+  // The write path refuses the same actors the read path never reads back:
+  // actorMemberId answers null for the anonymous actor and for non-user
+  // actors, and a watermark row under one would be orphan state nobody
+  // could ever read.
+  if (actorMemberId(who) === null) {
+    throw new AppError('Marking a conversation read is a human decision', {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new ValidationError('a mark-read request object is required', { field: 'request' });
   }
@@ -1686,6 +1695,15 @@ export async function markCustomerRead(context, request) {
   // A read watermark without a reader would store that somebody saw the
   // customer's words with nobody saying who.
   const who = requireActor(actor);
+  // The write path refuses the same actors the read path never reads back:
+  // actorMemberId answers null for the anonymous actor and for non-user
+  // actors, and a watermark row under one would be orphan state nobody
+  // could ever read.
+  if (actorMemberId(who) === null) {
+    throw new AppError('Marking a customer read is a human decision', {
+      code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
+    });
+  }
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
     throw new ValidationError('a mark-read request object is required', { field: 'request' });
   }
