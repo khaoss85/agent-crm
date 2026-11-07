@@ -1434,17 +1434,28 @@ select.bo-spazi-input { flex: none; }
 .bo-sync-channels .bo-sync-table td { padding: 12px 10px; border-bottom: none; border-top: 1px solid var(--line-faint); vertical-align: middle; }
 .bo-sync-channels .bo-sync-table td:first-child { padding-left: 20px; }
 .bo-sync-channels .bo-sync-table td:last-child { padding-right: 20px; text-align: right; }
-.bo-sync-channels .bo-sync-table td:nth-child(2) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); padding: 0; }
 .bo-sync-channels .bo-sync-table td .ui-btn { height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; }
 .bo-sync-namewrap { display: flex; align-items: center; gap: 12px; min-width: 170px; }
 .bo-sync-channels .bo-sync-table td { white-space: nowrap; }
-.bo-sync-channels .bo-sync-table td:nth-child(5) { white-space: normal; min-width: 140px; }
 .bo-sync-tile { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-sync-nametext { display: flex; flex-direction: column; min-width: 0; }
 .bo-sync-nametext strong { font-size: 15px; }
 .bo-sync-dir { font-family: var(--mono); font-size: 11px; color: var(--data-ink); }
 .bo-sync-dircell { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.bo-sync-channels .bo-sync-table td:nth-child(2), .bo-sync-channels .bo-sync-table td:nth-child(4), .bo-sync-channels .bo-sync-table td:nth-child(5) { color: var(--muted); font-size: 13px; }
+.bo-sync-channels .bo-sync-table td:nth-child(2), .bo-sync-channels .bo-sync-table td:nth-child(3) { color: var(--muted); font-size: 13px; }
+/* Voce 3a3e6eaf: the Canali card like prototype 03 — count beside the
+ * title, coloured state pills, unlinked rows dimmed with a solid Collega. */
+.bo-sync-cardhead .bo-sync-count { margin: 0; padding: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); white-space: nowrap; }
+.bo-sync-pill { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--surface-soft); color: var(--ink); }
+.bo-sync-pill[data-pill="attivo"] { background: var(--accent-soft); color: var(--accent); }
+.bo-sync-pill[data-pill="permesso"] { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-sync-pill[data-pill="importazione"] { background: var(--data-soft); color: var(--data-ink); }
+.bo-sync-pill[data-pill="altro"] { background: var(--human-soft); color: var(--human-ink); }
+.bo-sync-row-off .bo-sync-namewrap, .bo-sync-row-off td:nth-child(2), .bo-sync-row-off td:nth-child(3) { opacity: .6; }
+.bo-sync-channels .bo-sync-table .bo-sync-fix-action { background: var(--muted); border-color: var(--muted); color: var(--paper); padding: 5px 12px; font-size: 12px; }
+.bo-sync-hero-connect { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.bo-sync-hero-connect[hidden] { display: none; }
+.bo-sync-hero-dot-empty { background: var(--line-dashed); }
 .bo-sync-live .bo-sync-note { padding: 0 20px 18px; }
 .bo-sync-live .bo-sync-feed { gap: 0; padding: 0 20px 6px; }
 .bo-sync-live .bo-sync-feed-line { display: grid; grid-template-columns: 70px 20px minmax(0, 1fr); gap: 6px; padding: 10px 0; border-top: 1px solid var(--line-faint); font-size: 14px; line-height: 1.4; }
@@ -1461,6 +1472,15 @@ select.bo-spazi-input { flex: none; }
   .bo-sync-hero-title { font-size: 30px; }
   .bo-sync-cols { grid-template-columns: minmax(0, 1fr); }
   .bo-sync-hero-pull { width: 100%; }
+  .bo-sync-channels .bo-sync-table, .bo-sync-channels .bo-sync-table tbody { display: block; }
+  .bo-sync-channels .bo-sync-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line-faint); }
+  .bo-sync-channels .bo-sync-table td { display: block; padding: 0; border-top: 0; white-space: normal; }
+  .bo-sync-channels .bo-sync-table td:first-child { padding-left: 0; grid-column: 1; grid-row: 1; }
+  .bo-sync-channels .bo-sync-table td:last-child { padding-right: 0; grid-column: 2; grid-row: 1; align-self: center; }
+  .bo-sync-channels .bo-sync-table td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; padding: 6px 0 0 48px; font-size: 12px; }
+  .bo-sync-channels .bo-sync-table td:nth-child(3) { grid-column: 1 / -1; grid-row: 3; padding: 2px 0 0 48px; font-size: 12px; }
+  .bo-sync-namewrap { min-width: 0; }
+  .bo-sync-channels .bo-sync-table .bo-sync-row-off td:nth-child(3) { display: none; }
 }
 /* Impostazioni tab row on the sync screen (BO-F6-16): the section label over
  * the underlined area tabs, reusing ui-tabs (which already scrolls under

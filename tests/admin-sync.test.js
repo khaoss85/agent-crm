@@ -13,6 +13,7 @@
  * channels package, or on a failed read.
  */
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
@@ -168,9 +169,11 @@ test('indicator is ok with a count and fix with N things to fix', () => {
   assert.equal(two.title, 'Quasi tutto sincronizzato');
   assert.equal(two.count, 2);
 
+  // Voce 3a3e6eaf: nothing linked is never "all synced".
   const empty = syncIndicator(activityOf({ connections: [], feed: [], lastActivityAt: null }), NOW);
-  assert.equal(empty.tone, 'ok');
-  assert.ok(empty.detail.includes('Nessun connettore'));
+  assert.equal(empty.tone, 'empty');
+  assert.equal(empty.title, 'Nessun canale collegato');
+  assert.ok(empty.detail.includes('Collega il primo canale'));
 
   const unknown = syncIndicator(null, NOW);
   assert.equal(unknown.tone, 'wait');
@@ -996,4 +999,129 @@ test('an uncomposed candidates module stays silent with zero cards', async () =>
   } finally {
     console.warn = originalWarn;
   }
+});
+
+// Voce 3a3e6eaf: honest headline. With no channel linked the screen never
+// claims all is synced next to «0 di 9 collegati»: it names the state and
+// offers Collega where the global pull would be.
+const NOTHING_LINKED = { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }) };
+
+test('3a3e6eaf: nothing linked says so, offers Collega and never claims all synced', async () => {
+  const { mount, navigated, view } = renderView({ client: NOTHING_LINKED });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('Nessun canale collegato'), 'the headline names the state');
+  assert.ok(text.includes('0 di 9 collegati'), 'the count stays');
+  assert.ok(!text.includes('Tutto sincronizzato'), 'never all synced with nothing linked');
+  assert.ok(!text.includes('Sincronizza ora'), 'no pull with nothing to pull');
+  const connect = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-connect'));
+  assert.equal(connect?.textContent, 'Collega un canale');
+  connect.dispatch('click', { preventDefault() {} });
+  assert.deepEqual(navigated, ['#/connettori'], 'the call to action opens the connectors');
+  // C27: every one of the nine rows shows Collega or the honest fallback.
+  const rows = mount.findAll('tr').slice(1);
+  assert.equal(rows.length, 9);
+  for (const row of rows) {
+    assert.equal(row.getAttribute('class'), 'bo-sync-row-off', 'an unlinked row reads dimmed');
+    assert.ok(/Collega|Non disponibile/.test(row.textContent), row.textContent);
+  }
+});
+
+test('3a3e6eaf: an observer with nothing linked sees the state but no action', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSyncView({
+    doc, mount, client: fakeClient(NOTHING_LINKED), role: () => 'observer',
+    storage: storageOf(), navigate: () => {}, toast: () => {},
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun canale collegato'));
+  // Review #647 P1: an author `display` beats the `hidden` attribute, so an
+  // observer gets no anchor at all — nothing a stylesheet could repaint.
+  const connect = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-connect'));
+  assert.equal(connect, undefined, 'read-only renders no call to action');
+  assert.ok(!mount.textContent.includes('Collega un canale'), 'no Collega text for an observer');
+  assert.ok(mount.textContent.includes('Sola lettura (Osservatore)'), 'the read-only note stays');
+});
+
+// Review #647 P1: every hero control that hides through `hidden` must not
+// carry an author `display` the attribute cannot beat.
+test('#647: the stylesheet never lets a hidden hero control show', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  for (const selector of ['.bo-sync-hero-pull', '.bo-sync-hero-connect']) {
+    const escaped = selector.replace(/[.]/g, '\\.');
+    const shows = new RegExp(`${escaped}\\s*\\{[^}]*display\\s*:\\s*(?!none)`).test(css);
+    if (!shows) continue;
+    assert.ok(new RegExp(`${escaped}\\[hidden\\]\\s*\\{[^}]*display\\s*:\\s*none`).test(css),
+      `${selector} sets display, so ${selector}[hidden] must set display:none`);
+  }
+});
+
+// Review #647 P2: a channel outside the fixed nine (SMS, Telegram) is a
+// linked row; the hero and the card count must tell the same story.
+for (const channel of ['sms', 'telegram']) {
+  test(`#647: only ${channel} linked — the hero and the count agree`, async () => {
+    const only = { activity: activityOf({
+      connections: [entryOf({ connectionKey: `${channel}-1`, channel, adapter: channel, account: null })],
+    }) };
+    const indicator = syncIndicator(only.activity, NOW);
+    const { mount, view } = renderView({ client: only });
+    await view.render();
+    await flush();
+    const text = mount.textContent;
+    const count = /(\d+) di (\d+) collegati/.exec(text);
+    assert.ok(count, 'the card shows a count');
+    assert.equal(Number(count[1]) > 0, indicator.tone !== 'empty',
+      `hero «${indicator.title}» and «${count[0]}» tell the same story`);
+    assert.equal(count[0], '1 di 10 collegati', 'the extra linked row counts, and so does its place');
+    assert.ok(!text.includes('Nessun canale collegato'), 'a linked row is never «nessun canale»');
+  });
+}
+
+test('3a3e6eaf C15-C16: all clear hides the section, the count sits beside Canali', async () => {
+  const { mount, view } = renderView();
+  await view.render();
+  await flush();
+  assert.ok(!mount.findAll('h3').some((node) => node.textContent.startsWith('Da sistemare')),
+    'with nothing to fix the Da sistemare section hides (banner only)');
+  assert.ok(mount.textContent.includes('✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
+  const head = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-sync-cardhead'
+    && node.textContent.startsWith('Canali'));
+  assert.ok(head, 'Canali has a card head');
+  assert.equal(head.childNodes[1].textContent, '1 di 9 collegati', 'the count sits in the head row');
+});
+
+test('3a3e6eaf C18-C20: a linked row shows agg., events and a coloured pill; no English, no ids', async () => {
+  const { mount, view } = renderView();
+  await view.render();
+  await flush();
+  const row = mount.findAll('tr').find((node) => node.textContent.includes('WhatsApp'));
+  assert.equal(row.getAttribute('class'), null, 'a linked row is not dimmed');
+  assert.match(row.childNodes[1].textContent, /^agg\. /, 'the update column reads agg. <tempo>');
+  assert.match(row.childNodes[2].textContent, /^\d+ eventi ricevuti$/);
+  const pill = row.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-sync-pill');
+  assert.equal(pill.textContent, 'Attivo');
+  assert.equal(pill.getAttribute('data-pill'), 'attivo');
+  const text = mount.textContent;
+  assert.ok(!text.includes('wa-1') && !text.includes('+39 333 1234567'), 'no binding key nor account handle');
+  for (const word of ['Sync now', 'Connect', 'Active', 'Loading', 'Error', 'undefined', 'null']) {
+    assert.ok(!text.includes(word), `no English or empty value: ${word}`);
+  }
+});
+
+test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows on a phone', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(!/\.bo-sync-channels \.bo-sync-table td:nth-child\(2\) \{ position: absolute;/.test(css),
+    'the update column (agg. / non collegato) is never clipped away');
+  for (const tone of ['attivo', 'permesso', 'importazione']) {
+    assert.ok(css.includes(`.bo-sync-pill[data-pill="${tone}"]`), `the ${tone} pill is coloured`);
+  }
+  const phone = css.slice(css.indexOf('@media (max-width: 700px) {\n  .bo-sync-hero-title'));
+  assert.match(phone, /\.bo-sync-channels \.bo-sync-table tr \{ display: grid; grid-template-columns: minmax\(0, 1fr\) auto;/,
+    'on a phone each row stacks: name and state, then agg. and events');
+  assert.match(phone, /\.bo-sync-channels \.bo-sync-table td \{ display: block;[^}]*white-space: normal;/,
+    'nothing is forced onto one line wider than the screen');
 });
