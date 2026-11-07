@@ -135,9 +135,35 @@ function prototypeFunctionNames(object) {
   return names;
 }
 
-/** @param {any} service */
+/**
+ * The portable view of one record service (backlog:1943c161): the prototype
+ * methods plus the plain-data `manifest` and the `audit`/`events` facades a
+ * spend claim needs. The `database` handle stays off the facade on purpose —
+ * callers that need atomicity go through `mutationSync`/`mutationAsync`, which
+ * hand them a transaction handle instead of the owned storage. The manifest
+ * is already public through `modules.schema()` and `list()`, so exposing it
+ * here publishes nothing new; `audit` and `events` mirror the closed-over
+ * graph facades (`record`/`list`, `subscribe`/`emit`/`buffered`).
+ * @param {any} service
+ */
 function portableService(service) {
-  return closeOver(service, prototypeFunctionNames(service));
+  const facade = closeOver(service, prototypeFunctionNames(service));
+  const extra = {};
+  if (service?.manifest !== undefined && service.manifest !== null
+    && typeof service.manifest === 'object' && !Array.isArray(service.manifest)) {
+    extra.manifest = Object.freeze({
+      ...service.manifest,
+      ...(Array.isArray(service.manifest.fields) ? { fields: Object.freeze([...service.manifest.fields]) } : {}),
+    });
+  }
+  if (service?.audit !== undefined && service.audit !== null) {
+    extra.audit = closeOver(service.audit, ['record', 'list']);
+  }
+  if (service?.events !== undefined && service.events !== null) {
+    extra.events = closeOver(service.events, ['subscribe', 'emit', 'buffered']);
+  }
+  if (Object.keys(extra).length === 0) return facade;
+  return Object.freeze({ ...facade, ...extra });
 }
 
 /**

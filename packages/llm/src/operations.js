@@ -286,13 +286,17 @@ function overCap(row, caps) {
 /**
  * The storage seam a spend claim needs: the managed service's own
  * manifest (field names to physical columns, resolved at runtime so no
- * backend's naming is hardcoded here), its storage `execute` with the
- * `affectedRows` verdict from the storage contract, a managed read, the
- * audit/events mirrors `applyManaged` performs, and the service's own
- * atomic-mutation entry point (`mutationSync` on sync storage,
- * `mutationAsync` otherwise — the same ones `applyManaged` uses, so the
- * claim, its framework audit row and the re-read land in one unit with
- * no new seam and no cross-package import). Missing seam refuses
+ * backend's naming is hardcoded here), a managed read, the audit/events
+ * mirrors `applyManaged` performs, and the service's own atomic-mutation
+ * entry point (`mutationSync` on sync storage, `mutationAsync` otherwise —
+ * the same ones `applyManaged` uses, so the claim, its framework audit row
+ * and the re-read land in one unit with no new seam and no cross-package
+ * import). The portable async facade (backlog:1943c161) keeps the owned
+ * `database` handle private and publishes only `mutationAsync`: that is
+ * enough, because the async claim path runs its conditional write on the
+ * transaction handle the mutation hands it instead of reaching into
+ * `service.database.storage` itself. Only a composition that hides both the
+ * storage handle and `mutationAsync` refuses. Missing seam refuses
  * fail-closed: a totals update that cannot prove atomicity never runs.
  */
 function spendSeam(usageService) {
@@ -315,7 +319,6 @@ function spendSeam(usageService) {
   const asyncMutation = typeof usageService.mutationAsync === 'function';
   if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
     || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
-    || !storage || typeof storage.execute !== 'function'
     || typeof usageService.get !== 'function'
     || typeof usageService.audit?.record !== 'function'
     || typeof usageService.events?.emit !== 'function'
@@ -837,6 +840,14 @@ export function createLlmOperations(options = {}) {
         code: 'LLM_PRICING_UNAVAILABLE', status: 500,
       });
     }
+    // The spend and receipt seams must prove atomicity before the provider
+    // is touched (backlog:1943c161): on the portable async facade the claim
+    // used to refuse with LLM_STORAGE_INVALID only after the provider had
+    // already answered — and the caller's queue then repaid the provider on
+    // every retry. A seam that cannot land the spend now refuses here, with
+    // the provider never called, instead of after its answer.
+    spendSeam(usageService);
+    receiptSeam(auditService);
 
     // One serialized spend section per space: the ceiling re-reads fresh
     // totals and every spend lands through the conditional claim, so racing

@@ -92,6 +92,7 @@ export { LLM_KIT_CHECKS, runLlmAdapterKit } from './kit.js';
  *   defaultDailyTokenCap?: number,
  *   pricing?: Record<string, {input: number, output: number}>,
  *   clock?: () => number,
+ *   packageContract?: 1 | 2,
  * }} [options]
  */
 export function createLlmPackage(options = {}) {
@@ -205,5 +206,10 @@ export function createLlmPackage(options = {}) {
 
   /** The registries, for the composition that owns this package instance. */
   pkg.registries = handle.registries;
-  return selectPackageGraph(pkg);
+  return selectPackageGraph(pkg, options.packageContract === 2 ? 2 : 1);
+}
+
+/** Distinct contract-2 graph for the async composition. Existing `createLlmPackage()` callers keep v1. */
+export function createLlmPackageV2(options = {}) {
+  return createLlmPackage({ ...options, packageContract: 2 });
 }
