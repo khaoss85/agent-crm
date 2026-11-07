@@ -69,15 +69,26 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
     owner: subject?.owner ?? 'host',
     ownerPackage: subject?.ownerPackage ?? null,
   });
-  // Voce 908f2eb9bbfb: the profile stays first (the shaping below joins on
-  // it), but the three provider reads are independent of each other, so
-  // they run together instead of stacking three waits.
-  const profile = await readProfile({ core, subject: { resource, id } });
-  const [threads, history, schedule] = await Promise.all([
-    readConversations(envelope),
-    readTimeline(envelope),
-    readSchedule(envelope),
-  ]);
+  // Voce 908f2eb9bbfb: the profile stays first for the verdict (the shaping
+  // below joins on it), but the provider reads never needed it — they take
+  // the envelope only. They start together with the profile instead of
+  // stacking a second wait behind it: one scheda open was paying the profile
+  // twice here (once directly, once behind the card and the timeline).
+  // A synchronously-throwing reader settles like a rejection instead of
+  // escaping while the array is still being built.
+  const call = (reader, input) => Promise.resolve().then(() => reader(input));
+  const profilePromise = call(readProfile, { core, subject: { resource, id } });
+  const providerPromises = [
+    call(readConversations, envelope),
+    call(readTimeline, envelope),
+    call(readSchedule, envelope),
+  ];
+  // The profile error wins, exactly as when it ran first: a late provider
+  // failure behind a failed profile must not surface as an unhandled
+  // rejection, so every provider carries a noop catch until the join below.
+  for (const pending of providerPromises) pending.catch(() => {});
+  const profile = await profilePromise;
+  const [threads, history, schedule] = await Promise.all(providerPromises);
   // The flags ride after: they read the entries the providers returned, so
   // they wait for the history instead of racing it.
   const read = await readFlagsFor(history?.entries ?? [], readFlags);

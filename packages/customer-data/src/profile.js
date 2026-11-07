@@ -95,6 +95,49 @@ export async function canonicalClusterFor({ modules, names, subject }) {
 }
 
 /**
+ * Concurrent reads of one subject share one in-flight computation.
+ *
+ * A scheda opens three reads that all compute the same profile (the card,
+ * the timeline and the direct profile) at the same instant. Run side by
+ * side they are three full computations over the same pool, which is how the
+ * intermittent STORAGE_UNAVAILABLE (503) on `customer-data/profile` was born.
+ * Reads that arrive while one computation for their subject is still running
+ * share it instead: the profile is read-only and frozen, so sharing changes
+ * nothing but the load. Nothing is cached past the computation — the next
+ * read after it settles computes again, so a write followed by a re-read
+ * never sees a stale answer. A shared failure clears too: every sharer gets
+ * the same rejection, and the next read retries from scratch.
+ *
+ * Scoped per modules view (one bucket per caller modules object, held
+ * weakly), so two applications in one process never share a read.
+ */
+const inflightByModules = new WeakMap();
+
+/**
+ * @param {{modules: any, core: any, names: any, subject: {resource: string, id: string}}} input
+ */
+export function coalescedProfileFor({ modules, core, names, subject }) {
+  const key = JSON.stringify([subject?.resource ?? null, subject?.id ?? null]);
+  let bucket = inflightByModules.get(modules);
+  if (!bucket) {
+    bucket = new Map();
+    inflightByModules.set(modules, bucket);
+  }
+  const running = bucket.get(key);
+  if (running) return running;
+  const task = profileFor({ modules, core, names, subject });
+  // Clearing on settle (success or failure) is what keeps this a
+  // singleflight rather than a cache: attach before sharing so a failure
+  // with no sharer left behind still clears instead of sticking.
+  task.then(
+    () => { if (bucket.get(key) === task) bucket.delete(key); },
+    () => { if (bucket.get(key) === task) bucket.delete(key); },
+  );
+  bucket.set(key, task);
+  return task;
+}
+
+/**
  * The profile for one subject.
  *
  * @param {{modules: any, core: any, names: any, subject: {resource: string, id: string}}} input
