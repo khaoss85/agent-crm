@@ -233,8 +233,10 @@ export function createCustomerHubPackage(options = {}) {
               readFlags,
               // backlog:ea463d6ff10d: the cursor read only when the caller
               // asks for a page; every other caller keeps the legacy read.
-              page: request?.before !== undefined || request?.limit !== undefined
-                ? { before: request?.before, limit: request?.limit }
+              // An explicit null is no request (review #639).
+              page: (request?.before !== undefined && request?.before !== null)
+                || (request?.limit !== undefined && request?.limit !== null)
+                ? { before: request?.before ?? null, limit: request?.limit ?? null }
                 : null,
             });
           };

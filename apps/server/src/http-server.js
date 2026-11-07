@@ -739,10 +739,11 @@ export function buildRouter(app) {
     // names no member — without an actor the flags read null, never refused.
     // backlog:ea463d6ff10d: `before`/`limit` ask for the entries newest
     // first, a page at a time; the package validates them. Absent, the
-    // request is the legacy read, unchanged.
+    // request is the legacy read, unchanged — and so is an empty value
+    // (`?before=&limit=`), never a switch to the cursor read (review #639).
     const page = {};
-    if (query.before !== undefined) page.before = query.before;
-    if (query.limit !== undefined) page.limit = query.limit;
+    if (query.before !== undefined && query.before !== null && query.before !== '') page.before = query.before;
+    if (query.limit !== undefined && query.limit !== null && query.limit !== '') page.limit = query.limit;
     return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor, ...page });
   });
 

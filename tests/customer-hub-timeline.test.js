@@ -246,6 +246,11 @@ test('every passage carries its channel, direction and sync state', async (t) =>
   assert.deepEqual(second.entries.items.map((item) => [item.channel, item.direction]), [['whatsapp', 'outbound'], ['whatsapp', 'inbound']]);
   assert.equal(second.entries.nextCursor, null, 'the last page says so');
   assert.equal(second.conversations.count, 2, 'the other sections read as in the full timeline');
+  // Review #639: an explicit null before/limit is no page request — the
+  // composed operation keeps the legacy read.
+  const nulls = await app.readCustomerTimeline({ resource: 'contact', id: contact.id, before: null, limit: null });
+  assert.deepEqual(nulls.entries, timeline.entries, 'null before/limit read the legacy entries');
+  assert.equal('nextCursor' in nulls.entries, false);
 });
 
 test('reading the timeline creates no record anywhere', async (t) => {
@@ -823,4 +828,9 @@ test('ea463d6ff10d: the route forwards before and limit only when the client ask
   assert.equal(paged.calls[0].before, cursor);
   assert.equal(paged.calls[0].limit, '20');
   assert.equal(paged.calls[0].actor?.id, 'scheda-route');
+  // Review #639: empty values are absent — the legacy read, never a page.
+  const empty = await getTimeline(t, '/api/customer-hub/timeline/contact/c1?before=&limit=');
+  assert.equal(empty.status, 200);
+  assert.equal('before' in empty.calls[0], false, '?before= is no cursor');
+  assert.equal('limit' in empty.calls[0], false, '?limit= is no page size');
 });
