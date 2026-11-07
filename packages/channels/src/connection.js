@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash } from 'node:crypto';
-import { ValidationError, assertTenantId } from '../../core/index.js';
+import { ValidationError } from '../../core/index.js';
 import { CHANNELS } from './adapter.js';
 
 /**
@@ -88,13 +88,16 @@ function boundedLine(value, label, max) {
   return value.trim();
 }
 
-/** The Accordo space slug. Same rule as a tenant id: lowercase slug, never inferred. */
+const SPACE_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
+const SPACE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isSpaceId = (value) => typeof value === 'string' && (SPACE_ID_RE.test(value) || SPACE_UUID_RE.test(value));
+
+/** The Accordo space id: lowercase slug (letter-start) or canonical lowercase UUID, never inferred. */
 export function assertSpaceId(value) {
-  try {
-    return assertTenantId(value);
-  } catch {
-    throw new ValidationError('spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter, at most 63 characters)', { field: 'spaceId' });
+  if (!isSpaceId(value)) {
+    throw new ValidationError('spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter, at most 63 characters) or a canonical lowercase UUID', { field: 'spaceId' });
   }
+  return value;
 }
 
 /**
