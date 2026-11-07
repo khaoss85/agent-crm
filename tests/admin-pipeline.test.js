@@ -307,6 +307,46 @@ test('with several composed pipelines the board shows a selector instead of the 
   selects[0].value = 'upsell';
   selects[0].dispatch('change');
   assert.deepEqual(navigated, ['#/pipelines/upsell'], 'choosing a pipeline navigates to its board');
+  // Dedup contract: composed boards live in the selector, never in legacy links.
+  const links = mount.findAll('a');
+  assert.ok(!links.some((node) => node.getAttribute('href') === '#/pipelines/upsell'), 'no legacy link to the composed other board');
+  assert.ok(!links.some((node) => node.getAttribute('href') === '#/pipelines/b2b-sales'), 'no legacy link to the board on screen');
+  assert.ok(!mount.textContent.includes('Vedi upsell'), 'no second way to the composed board');
+});
+
+test('next to the selector only uncomposed boards keep a legacy link', async () => {
+  const SECOND = {
+    pipelineContract: 1,
+    name: 'upsell',
+    label: 'Upsell',
+    module: 'opportunity',
+    defaultStage: 'idea',
+    stages: [
+      { key: 'idea', label: 'Idea', order: 10, type: 'open', probability: 10 },
+      { key: 'won', label: 'Won', order: 50, type: 'won', probability: 100 },
+    ],
+  };
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'idea'), pipelineKey: 'upsell' },
+    { ...record('g', 'idea'), pipelineKey: 'ghost-board' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient(records, { pipelines: [PIPELINE, SECOND] }),
+  });
+  await board.renderBoard('b2b-sales');
+  assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 1, 'the selector is there with an uncomposed record too');
+  assert.ok(mount.textContent.includes('2 offerte di altre pipeline.'), 'the count names both off-board offers');
+  const links = mount.findAll('a');
+  const ghost = links.filter((node) => node.getAttribute('href') === '#/pipelines/ghost-board');
+  assert.equal(ghost.length, 1, 'exactly one legacy link to the uncomposed board');
+  assert.equal(ghost[0].textContent, 'Vedi ghost-board', 'the uncomposed link names its board');
+  assert.ok(!links.some((node) => node.getAttribute('href') === '#/pipelines/upsell'), 'no legacy link to the composed other board');
+  assert.ok(!links.some((node) => node.getAttribute('href') === '#/pipelines/b2b-sales'), 'no legacy link to the board on screen');
 });
 
 test('the selector lists every composed pipeline even when nothing is off-board', async () => {
