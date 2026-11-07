@@ -857,6 +857,9 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     && (messages.readable !== true || messages.complete === false)) {
     throw new AppError('the da-leggere view needs the interaction-message records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
+  if (query.view?.id === 'da-leggere' && watermarks === null) {
+    throw new AppError('the da-leggere view needs the read-state records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
 
   const today = new Date().toISOString().slice(0, 10);
   const rows = subjects.map(({ contact, company }) => {
@@ -983,7 +986,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     const entry = { id: view.id, label: view.label };
     if (complete !== true) return entry;
     if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
-    if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false)) return entry;
+    if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
     if (view.id === 'rinnovi-30-giorni'
       && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
     return { ...entry, count: filterCustomerRows(rows, query, view, today).length };

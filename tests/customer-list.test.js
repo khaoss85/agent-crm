@@ -524,6 +524,24 @@ test('9e003582 review: da-leggere over an unreadable or partial message scan ref
   assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
 });
 
+test('9e003582 review: da-leggere without read state refuses, never an exact empty page', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({ contacts, companies, identities });
+  const withFns = {
+    modules, core: {}, names: { identity: 'external-identity' },
+    interactions: { actorMemberId, countUnreadForSubject },
+  };
+  await assert.rejects(
+    listCustomerRecords(withFns, { vista: 'da-leggere', actor: { type: 'anonymous' } }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /read-state/.test(error.message),
+    'da-leggere for the anonymous actor refuses instead of answering nobody-unread',
+  );
+  const page = await listCustomerRecords(withFns, { vista: 'tutti', actor: { type: 'anonymous' } });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in byId['da-leggere']), 'no read state, no da-leggere count');
+  assert.ok(page.items.every((item) => item.unreadCount === null), 'tutti still answers, without read state');
+});
+
 test('budget signals attach with their source only when a space is named', async () => {
   const { contacts, companies, identities } = SCENE();
   const signals = [{
@@ -815,9 +833,16 @@ test('9e003582: la lista conta i non letti con la regola di interactions, senza 
   assert.equal(anna.lastUnreadAt, null);
   assert.equal((await listCustomerRecords(withFns, { vista: 'da-leggere', actor })).total, 1,
     'da-leggere keeps only the row with unread inbound');
-  // Without the functions every row carries nulls and da-leggere reads empty.
+  // Without the functions every row carries nulls and da-leggere refuses:
+  // unknown read state, never an exact-looking empty page.
   const noFns = await listCustomerRecords(base, { vista: 'tutti', actor });
   assert.ok(noFns.items.every((item) => item.unreadCount === null && item.lastUnreadAt === null),
     'no read-state functions, no read state');
-  assert.equal((await listCustomerRecords(base, { vista: 'da-leggere', actor })).total, 0);
+  await assert.rejects(
+    listCustomerRecords(base, { vista: 'da-leggere', actor }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /read-state/.test(error.message),
+    'da-leggere without read state refuses instead of an exact-looking empty page',
+  );
+  const noFnsViews = Object.fromEntries(noFns.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in noFnsViews['da-leggere']), 'no read state, no da-leggere count');
 });
