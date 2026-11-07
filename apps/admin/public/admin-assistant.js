@@ -28,6 +28,7 @@
 
 import { formatMinorUnits } from './admin-core.js';
 import { issueAdminKey } from './admin-submission.js';
+import { callOutcomeLabel, romeClock } from './admin-labels.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -482,6 +483,58 @@ async function answerUrgenti(client) {
   return answer;
 }
 
+/**
+ * Customer names behind call rows (voce 52854fd292a3). interaction-call
+ * carries no name, only its conversationId; the conversation row carries the
+ * subject snapshot (subjectLabel). One conversation page is read, and only
+ * when some call names a conversation — a call outside that page keeps its
+ * masked number, a name is never guessed.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} calls
+ * @param {Array<TraceRead>} traceReads
+ */
+async function callCustomerNames(client, calls, traceReads) {
+  /** @type {Map<string, string>} */
+  const names = new Map();
+  if (!calls.some((row) => isSafeRecordId(row?.conversationId))) return names;
+  const conversations = await readRecords(client, 'conversation', SUGGESTION_READ_LIMIT, traceReads);
+  for (const row of conversations ?? []) {
+    const name = shortText(row?.subjectLabel, 60);
+    if (name !== '' && isSafeRecordId(row?.id)) names.set(/** @type {string} */ (row.id), name);
+  }
+  return names;
+}
+
+/**
+ * The display label of one call (voce 52854fd292a3): the customer name when
+ * there is one («Mario Rossi · chiamata riuscita»), else the masked number,
+ * never the raw outcome key, the full number or a record id.
+ * @param {any} row
+ * @param {Map<string, string>} names
+ */
+function callLabel(row, names) {
+  const what = `chiamata ${callOutcomeLabel(row?.outcome)}`;
+  const who = names.get(row?.conversationId) ?? maskChannelRef(row?.remoteHandle);
+  return who !== '' ? `${who} · ${what}` : `${what.charAt(0).toUpperCase()}${what.slice(1)}`;
+}
+
+/**
+ * Sources of a call answer: newest first, one distinct label each.
+ * @param {Array<any>} calls
+ * @param {Map<string, string>} names
+ */
+function callSources(calls, names) {
+  const rows = newestFirst(calls).filter((row) => isSafeRecordId(row?.id)).slice(0, SUGGESTION_MAX_SOURCES);
+  const labels = uniqueLabels(rows.map((row) => callLabel(row, names)));
+  /** @type {Source[]} */
+  const sources = [];
+  rows.forEach((row, index) => {
+    const source = recordSource('interaction-call', row.id, labels[index]);
+    if (source !== null) sources.push(source);
+  });
+  return sources;
+}
+
 /** Telefono: esiti delle chiamate registrate in interaction-call. */
 async function answerChiamate(client) {
   const answer = emptyAnswer('bo04:oggi:chiamate', 'Com’è andato il telefono?');
@@ -493,7 +546,7 @@ async function answerChiamate(client) {
   /** @type {Map<string, number>} */
   const byOutcome = new Map();
   for (const row of calls) {
-    const outcome = typeof row?.outcome === 'string' && row.outcome !== '' ? row.outcome : 'sconosciuto';
+    const outcome = callOutcomeLabel(row?.outcome);
     byOutcome.set(outcome, (byOutcome.get(outcome) ?? 0) + 1);
   }
   // Honest bounds: at the read cap the page may hide more rows — the
@@ -503,8 +556,8 @@ async function answerChiamate(client) {
   for (const [outcome, count] of [...byOutcome.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${outcome}: ${count}`);
   }
-  const labelOf = (row) => `${shortText(row?.outcome, 20) || 'chiamata'} ${shortText(row?.remoteHandle, 40) || shortText(row?.id, 24)}`.trim();
-  answer.sources.push(...takeSources(newestFirst(calls), 'interaction-call', labelOf));
+  const names = await callCustomerNames(client, calls, answer.trace.reads);
+  answer.sources.push(...callSources(calls, names));
   const first = answer.sources[0];
   if (first) {
     answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
@@ -919,10 +972,10 @@ async function answerCallReport(client) {
   const capped = calls.length >= CALL_READ_LIMIT;
   answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [member, entry] of [...byMember.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${shortText(member, 30)}: ${entry.total} (${entry.completed} completate)`);
+    answer.lines.push(`• ${shortText(member, 30)}: ${entry.total} (${entry.completed} riuscite)`);
   }
-  const labelOf = (row) => `${shortText(row?.teamAuthorId, 24) || 'call'} ${shortText(row?.outcome, 20) || ''}`.trim();
-  answer.sources.push(...takeSources(newestFirst(calls), 'interaction-call', labelOf));
+  const names = await callCustomerNames(client, calls, answer.trace.reads);
+  answer.sources.push(...callSources(calls, names));
   const first = answer.sources[0];
   if (first) {
     answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
@@ -1787,9 +1840,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     }
     for (const execution of executions) {
       if (!execution || typeof execution.actionId !== 'string') continue;
-      const at = typeof execution.at === 'string' && execution.at.length >= 19
-        ? ` alle ${execution.at.slice(11, 19)} UTC`
-        : '';
+      const clock = romeClock(execution.at);
+      const at = clock !== '' ? ` alle ${clock}` : '';
       const outcome = execution.outcome === 'executed'
         ? 'eseguita'
         : execution.outcome === 'needs-confirmation'
@@ -1829,11 +1881,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     const list = el(doc, 'ul', 'bo-assistant-history-list');
     for (const entry of state.history) {
       if (!entry || typeof entry.title !== 'string') continue;
-      const at = typeof entry.trace?.at === 'string' && entry.trace.at.length >= 19
-        ? entry.trace.at.slice(11, 19)
-        : '';
+      // Local space time (Europe/Rome), never a UTC stamp (voce 52854fd292a3).
+      const at = romeClock(entry.trace?.at);
       const item = el(doc, 'li', 'bo-assistant-history-item');
-      const button = el(doc, 'button', 'bo-assistant-history-open', at !== '' ? `${entry.title} — ${at} UTC` : entry.title);
+      const button = el(doc, 'button', 'bo-assistant-history-open', at !== '' ? `${entry.title} — ${at}` : entry.title);
       button.addEventListener('click', () => {
         state.answer = entry;
         state.pendingConfirmId = null;
