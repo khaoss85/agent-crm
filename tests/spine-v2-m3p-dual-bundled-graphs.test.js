@@ -265,9 +265,10 @@ test('createAccordoApp stays synchronous and does not import bundled v2 graphs',
     // through the checked-in index; the factory itself stays synchronous.
     // magic-link joined the composition in BO-F6-06 slice 1
     // (backlog:ed4bbd35883a): store-only, operations refuse until the
-    // deployment wires its edges.
+    // deployment wires its edges. agents joined with backlog:33782ba68747
+    // (the «Agenti» screen), composed with no seams.
     assert.deepEqual([...app.domains.names()].sort(), [
-      'channels', 'customer-data', 'magic-link', 'reengagement', 'sequences', 'space-permissions', 'work',
+      'agents', 'channels', 'customer-data', 'magic-link', 'reengagement', 'sequences', 'space-permissions', 'work',
     ]);
     assert.deepEqual(app.services.companies.list(), []);
   } finally {
