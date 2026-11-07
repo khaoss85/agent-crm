@@ -11,7 +11,7 @@
 // `/api/opportunities/:id`.
 
 import { elFor } from './admin-ui.js';
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { parseEuroToCents } from './admin-catalog.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -23,13 +23,6 @@ function dayOf(value) {
   return new Date(time).toISOString().slice(0, 10);
 }
 
-const ROME_DATE = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
-/** «20 nov 2026» for a stored day or timestamp (Dan 06/11: dates read like a person writes them). */
-function italianDay(value) {
-  const day = dayOf(value);
-  if (day === null) return null;
-  return ROME_DATE.format(new Date(`${day}T12:00:00Z`)).replace('.', '');
-}
 
 /** Italian label of an audit action; unknown actions stay a generic line. */
 function auditActionLabel(action) {
@@ -236,11 +229,15 @@ export function createOfferDetail(deps) {
     hero.appendChild(valueBox);
     sheet.appendChild(hero);
 
+    // Who created the deal: the actor of its creation event, read through the
+    // same rule as the history (never a technical id); no event, a dash.
+    const createdEvent = auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null;
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
       ['Referente', typeof record.owner === 'string' && record.owner !== '' ? record.owner : '—'],
       ['Fase', stageLabel(schema, record)],
       ['Chiusura prevista', close ?? '—'],
+      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record) : '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {

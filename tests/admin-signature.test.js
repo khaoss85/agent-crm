@@ -123,8 +123,8 @@ test('an approved quote with no envelope offers exactly one send control, with i
 
   assert.ok(text.includes('Firma'), 'the signature section renders');
   assert.ok(text.includes('Richiedi firma'), 'the send control is offered');
-  assert.ok(text.includes('serve un utente umano'), 'the human-actor requirement is stated');
-  assert.ok(text.includes('non un controllo di ruoli commerciali o legali'), 'the boundary is not overclaimed');
+  assert.ok(text.includes('parte davvero verso il firmatario'), 'the real external effect is stated in plain words');
+  assert.ok(!text.includes('Production Spine'), 'no internal milestone name on the page');
   assert.ok(text.includes('Nessuna garanzia sull’identità dei firmatari'));
   assert.ok(text.includes('Tutti i firmatari devono firmare'), 'v1 signer semantics are stated');
   // No payment, invoice, delivery or fulfillment control exists anywhere.
@@ -152,13 +152,22 @@ test('a completed envelope renders evidence and the order, with no edit controls
   const text = mount.textContent;
 
   assert.equal(byClass(mount, 'div', 'signature-envelope').getAttribute('data-status'), 'completed');
-  assert.ok(text.includes('fixture-signature v1'), 'provider identity shown');
-  assert.ok(text.includes('env_abc123'), 'provider envelope id shown');
-  assert.ok(text.includes('d'.repeat(64)), 'document hash shown');
+  assert.ok(text.includes('Servizio di firma: Fixture signature provider'), 'the provider reads by its label');
+  // Voce ef92f728: ids, hashes and references are evidence on the nodes,
+  // never words on the owner's page.
+  const envelopeNode = byClass(mount, 'div', 'signature-envelope');
+  assert.equal(envelopeNode.getAttribute('data-provider-envelope'), 'env_abc123', 'provider envelope id kept as evidence');
+  assert.equal(envelopeNode.getAttribute('data-document-hash'), 'd'.repeat(64), 'document hash kept as evidence');
+  assert.ok(!text.includes('env_abc123') && !text.includes('d'.repeat(64)), 'no provider id nor hash in visible text');
   assert.ok(text.includes('Mario Rossi'), 'signer shown');
   assert.ok(text.includes('firmato'), 'signer status shown');
-  assert.ok(text.includes('b'.repeat(64)), 'artifact hash shown');
-  assert.ok(text.includes('fixture://artifacts/env_abc123'), 'artifact reference shown');
+  const artifactNode = byClass(mount, 'div', 'signed-artifact');
+  assert.equal(artifactNode.getAttribute('data-artifact-hash'), 'b'.repeat(64), 'artifact hash kept as evidence');
+  assert.equal(artifactNode.getAttribute('data-storage-ref'), 'fixture://artifacts/env_abc123', 'artifact reference kept as evidence');
+  assert.ok(!text.includes('b'.repeat(64)) && !text.includes('fixture://'), 'no artifact hash nor reference in visible text');
+  assert.ok(text.includes('Firmato il: 5 ago 2026'), 'the signing day reads in Italian');
+  assert.ok(text.includes('accettato il 5 ago 2026'), 'the order day reads in Italian');
+  assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
   assert.ok(text.includes('non è una firma legalmente qualificata'), 'the assurance limit is stated');
   assert.ok(text.includes('Nessuna garanzia di conservazione a lungo termine'));
 
@@ -166,7 +175,7 @@ test('a completed envelope renders evidence and the order, with no edit controls
   assert.equal(byClass(mount, 'div', 'quote-order').getAttribute('data-order'), 'ord1');
   assert.ok(text.includes('Una tantum: 4.750 € netto'), 'one-time order total');
   assert.ok(text.includes('Ricorrente ogni 1 mese: 2.850 € netto'), 'monthly order total');
-  assert.ok(text.includes('mai ricalcolate dal catalogo attuale'));
+  assert.ok(text.includes('mai ricalcolati dal listino attuale'));
   assert.ok(!/\b(ARR|MRR|TCV)\b/.test(text), 'no annualized figure is derived');
 
   // Everything here is evidence: no input, select or send control remains.
@@ -182,7 +191,9 @@ test('a failed envelope states its uncertainty honestly and offers reconciliatio
   const unknown = { ...ENVELOPE, status: 'failed', providerEnvelopeId: null, failureCode: 'PROVIDER_TIMEOUT', failurePhase: 'external' };
   const client = stubClient({ envelopes: [unknown], signers: [{ ...SIGNER, status: 'pending' }] });
   const mount = await render(client);
-  assert.ok(mount.textContent.includes('La fase external non è riuscita (PROVIDER_TIMEOUT)'), mount.textContent);
+  assert.ok(mount.textContent.includes('L’invio per la firma non è andato a buon fine.'), mount.textContent);
+  assert.ok(!mount.textContent.includes('PROVIDER_TIMEOUT') && !mount.textContent.includes('external'), 'phase and code stay out of the page');
+  assert.equal(byClass(mount, 'div', 'signature-envelope').getAttribute('data-failure-code'), 'PROVIDER_TIMEOUT', 'the code stays on the node');
   assert.ok(mount.textContent.includes('Non si sa se il fornitore ha accettato'), 'an unknown provider outcome is never presented as known');
   assert.ok(mount.textContent.includes('mai chiedere una seconda firma'));
   assert.equal(anyByClass(mount, 'signature-request'), null, 'no second send control is ever offered');
@@ -234,4 +245,43 @@ test('a project without signature enabled degrades to a clear message', async ()
   assert.ok(mount.textContent.includes('La firma non è attiva in questo progetto.'));
   assert.equal(anyByClass(mount, 'signature-request'), null);
   assert.ok(!client.calls.some((call) => call.path.includes('signature-envelope')), 'no signature records are fetched');
+});
+
+/**
+ * Voce ef92f728: the quote page speaks to the owner in every state it can
+ * reach — pending approval, the signature request, a failed send, a signed
+ * document with its order. The scan checks shapes, not only words: no UUID,
+ * no raw ISO timestamp, no UPPER_SNAKE error code, no long hex hash, no
+ * storage reference and no developer note in the visible text.
+ */
+test('ef92f728: no English, technical id or developer note in any quote state', async () => {
+  const uuid = (n) => `${String(n).repeat(8)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`;
+  const envelope = { ...ENVELOPE, id: uuid(1), providerEnvelopeId: uuid(2) };
+  const states = {
+    pending: stubClient({ quoteRecord: { ...APPROVED_QUOTE, status: 'pending_approval' } }),
+    request: stubClient(),
+    failed: stubClient({
+      envelopes: [{ ...envelope, status: 'failed', providerEnvelopeId: null, failureCode: 'PROVIDER_TIMEOUT', failurePhase: 'external' }],
+      signers: [{ ...SIGNER, envelopeId: envelope.id, signerKey: uuid(3), role: '', status: 'pending' }],
+    }),
+    signed: stubClient({
+      envelopes: [envelope],
+      signers: [{ ...SIGNER, envelopeId: envelope.id, signerKey: uuid(3) }],
+      artifacts: [{ ...ARTIFACT, id: uuid(4), providerArtifactId: uuid(5), storageRef: `fixture://artifacts/${uuid(2)}` }],
+      orders: [{ ...ORDER, id: uuid(6) }],
+      orderTotals: ORDER_TOTALS.map((total) => ({ ...total, orderId: uuid(6) })),
+    }),
+  };
+  for (const [name, client] of Object.entries(states)) {
+    const text = (await render(client)).textContent;
+    assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), `${name}: no UUID`);
+    assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), `${name}: no raw ISO timestamp`);
+    assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), `${name}: no error code`);
+    assert.ok(!/[0-9a-f]{32,}/i.test(text), `${name}: no hash`);
+    assert.ok(!text.includes('://'), `${name}: no storage reference`);
+    assert.ok(!/\b(undefined|null)\b/.test(text), `${name}: no empty value leaks`);
+    for (const word of ['Production Spine', 'Admin', 'server', 'external', 'Quote', 'Signature', 'Order', 'Totals', 'Request', 'hash', 'byte', 'artefatto', 'Impronta', 'Busta del fornitore']) {
+      assert.ok(!text.includes(word), `${name}: no developer or English text: ${word}`);
+    }
+  }
 });

@@ -575,6 +575,22 @@ export function formatAmount(minorUnits, currency) {
   return `${sign}${number} ${unit}`.trim();
 }
 
+const ROME_DAY = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
+
+/**
+ * «20 nov 2026» for a stored day (YYYY-MM-DD) or ISO timestamp, or null when
+ * absent/unparseable (Dan 06/11: dates read like a person writes them, never
+ * as a raw ISO timestamp).
+ * @param {unknown} value
+ */
+export function italianDay(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) return null;
+  const day = new Date(time).toISOString().slice(0, 10);
+  return ROME_DAY.format(new Date(`${day}T12:00:00Z`)).replace('.', '');
+}
+
 /**
  * Regola per tutte le schermate (backlog:9da124e5): un errore tecnico non si
  * mostra mai al cliente — niente codici (`NOT_FOUND`), niente nomi di
