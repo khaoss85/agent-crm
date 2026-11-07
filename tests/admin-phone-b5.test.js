@@ -56,24 +56,32 @@ test('on a phone the composer «Scrivi al cliente» takes the whole screen', () 
   assert.match(rule[1], /max-height:\s*none/);
 });
 
-test('the week grid lets a finger scroll the page and tap a slot', () => {
-  const touch = mediaBodies(/max-width:\s*700px[^)]*\)\s*,\s*\(pointer:\s*coarse\)/).join('\n');
-  assert.match(touch, /\.cal-day\s*\{[^}]*touch-action:\s*manipulation/,
-    'touch-action none (mouse drag) is lifted on phones and touch screens');
+// The stylesheet checks below are lint: they pin the rules the phone layout
+// needs. The behaviour they enable — a tap on the stacked week opens the
+// 30-minute form, a swipe (pointercancel) opens nothing — is proven with the
+// fake DOM in tests/admin-calendario.test.js (backlog:d7c78e9cdf53 tests).
+test('lint: the stacked phone week lets a finger scroll; wide touch screens keep the drag', () => {
+  const stacked = mediaBodies(/^\s*\(max-width:\s*700px\)\s*$/).join('\n');
+  assert.match(stacked, /\.cal-day\s*\{[^}]*touch-action:\s*manipulation/,
+    'touch-action none (press-and-drag) is lifted on the stacked phone layout');
+  assert.doesNotMatch(css, /@media[^{]*pointer:\s*coarse[^{]*\{[^@]*\.cal-day\s*\{[^}]*touch-action/,
+    'no touch-only query lifts it at desktop width (a 1280px touch laptop keeps press-and-drag)');
 });
 
-test('the inline new-appointment form: the magnifier never covers the placeholder', () => {
-  assert.match(css, /\.cal-form \.ui-search \.ui-search-input\s*\{[^}]*padding-left:\s*36px/);
+test('lint: the inline new-appointment form, phone only: the magnifier never covers the placeholder', () => {
+  assert.match(phone, /\.cal-form \.ui-search \.ui-search-input\s*\{[^}]*padding-left:\s*36px/);
+  const outside = css.replace(/@media[^{]+\{(?:[^{}]*\{[^}]*\})*[^{}]*\}/g, '');
+  assert.doesNotMatch(outside, /\.cal-form \.ui-search \.ui-search-input/, 'desktop forms are untouched');
   assert.match(phone, /\.cal-form \.ui-search,\s*\.cal-form \.ui-select\s*\{[^}]*flex:\s*1 1 100%/);
 });
 
 /** A fake DOM with just enough layout for a 390px horizontal nav strip. */
-function phoneDoc({ activeLeft }) {
+function phoneDoc({ activeLeft, scrollLeft = 0 }) {
   const doc = createFakeDocument();
   const create = doc.createElement;
   doc.createElement = (tag) => {
     const node = create(tag);
-    node.scrollLeft = 0;
+    node.scrollLeft = tag === 'nav' ? scrollLeft : 0;
     node.scrollWidth = tag === 'nav' ? 820 : 0;
     node.clientWidth = tag === 'nav' ? 390 : 0;
     node.getBoundingClientRect = () => (node.getAttribute('aria-current') === 'page'
@@ -97,15 +105,24 @@ function shell(doc, screenId) {
   return sidebar.findAll('nav').find((node) => node.getAttribute('aria-label') === 'Sezioni');
 }
 
-test('on a phone the nav strip scrolls the active voice into view', () => {
-  // Calendario painted past the 390px edge (left 500): the strip — never
-  // the page — scrolls so the voice sits centred: 500 - (390 - 120) / 2.
+test('a voice past the right edge scrolls the strip just enough to show it', () => {
+  // Calendario painted at 500–620 in a 0–390 strip: the strip — never the
+  // page — scrolls by 620 - 390 = 230, so the voice ends at the edge.
   const nav = shell(phoneDoc({ activeLeft: 500 }), 'calendario');
   assert.ok(nav, 'the main nav renders');
-  assert.equal(nav.scrollLeft, 365);
+  assert.equal(nav.scrollLeft, 230);
 });
 
-test('a voice already in view leaves the strip at its start', () => {
-  const nav = shell(phoneDoc({ activeLeft: 20 }), 'oggi');
-  assert.equal(nav.scrollLeft, 0);
+test('a voice past the left edge scrolls the strip back just enough', () => {
+  // Strip already scrolled by 200, voice at -50: scroll back by 50.
+  const nav = shell(phoneDoc({ activeLeft: -50, scrollLeft: 200 }), 'oggi');
+  assert.equal(nav.scrollLeft, 150);
+});
+
+test('a voice fully in view leaves the strip where it is, even mid-strip', () => {
+  // Review of #641: left 250 width 120 is inside 0–390; recentring would
+  // hide the leading voices for nothing.
+  assert.equal(shell(phoneDoc({ activeLeft: 250 }), 'calendario').scrollLeft, 0);
+  assert.equal(shell(phoneDoc({ activeLeft: 20 }), 'oggi').scrollLeft, 0);
+  assert.equal(shell(phoneDoc({ activeLeft: 100, scrollLeft: 80 }), 'calendario').scrollLeft, 80);
 });
