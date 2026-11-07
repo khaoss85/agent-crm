@@ -201,8 +201,10 @@ const durationParts = (sec) => {
 export function teamName(value) {
   if (!isHumanHandle(value)) return null;
   const text = String(value).trim();
-  const local = text.includes('@') ? text.slice(0, text.indexOf('@')) : text;
-  if (!/^[a-zà-ÿ]+([._-][a-zà-ÿ]+)*$/i.test(local)) return text;
+  const isEmail = text.includes('@');
+  // An e-mail never shows its domain: the local part, without a `+tag`.
+  const local = isEmail ? text.slice(0, text.indexOf('@')).split('+')[0] : text;
+  if (!/^[a-zà-ÿ]+([._-][a-zà-ÿ]+)*$/i.test(local)) return isEmail ? (local === '' ? null : local) : text;
   return local.split(/[._-]/).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 }
 
@@ -2159,7 +2161,11 @@ export function createCustomerCardView(deps) {
         // person and hour once (it used to repeat the channel three times).
         const who = isOutbound
           ? (teamName(item?.teamAuthorId) ?? 'il team')
-          : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== '' ? item.remoteHandle.trim() : null);
+          : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
+            ? item.remoteHandle.trim()
+            // Review #626 giro 2: a received passage without a handle still
+            // names its direction for sighted readers, like main did.
+            : (isInbound ? 'ricevuto' : null));
         // Voce 59def6cb805d (C17): the day already heads the group, so the
         // card shows the hour only (`<hh:mm>`).
         const when = timeParts(item?.occurredAt);

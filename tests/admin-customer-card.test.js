@@ -3101,6 +3101,16 @@ test('teamName turns handles into names and refuses ids', () => {
   assert.equal(teamName('8d8f1d4d-25c1-4641-8836-267581100b32'), null);
   assert.equal(teamName('user-12345'), null);
   assert.equal(teamName(''), null);
+  // Review #626 giro 2: an e-mail never leaks its domain.
+  assert.equal(teamName('elena2@example.it'), 'elena2');
+  assert.equal(teamName('mario.rossi+promo@esempio.it'), 'Mario Rossi');
+});
+
+test('review #626 giro 2: a received passage without a handle still names its direction', async () => {
+  const items = [{ entry: 'message', id: 'in0', channel: 'whatsapp', direction: 'inbound', sync: 'received', body: 'Ciao', occurredAt: '2026-11-07T10:51:00.000Z' }];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 1, truncated: false, items } } }));
+  const row = mount.findAll('div').find((node) => node.getAttribute('data-entry') === 'in0');
+  assert.ok(row.textContent.includes('WhatsApp · ricevuto · '), 'the head reads the direction when no handle is known');
 });
 
 test('review #626: direction reads aloud, no direction stays neutral, writer chips use names, state case is normalized', async () => {
