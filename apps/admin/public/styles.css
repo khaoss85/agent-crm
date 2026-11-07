@@ -1603,7 +1603,6 @@ select.bo-spazi-input { flex: none; }
 .catalog-meta { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .catalog-source { padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--muted); }
 .catalog-source-provider { background: var(--agent-card); color: var(--agent-ink); }
-.catalog-active-state { font-size: 12px; font-weight: 700; color: var(--muted); }
 .catalog-create-bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: flex-start; }
 .catalog-create-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .catalog-ai-wrap { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
@@ -1639,6 +1638,37 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
 .catalog-rules > .muted { margin: 4px 0 10px; font-size: 13px; }
 .catalog-rule { padding: 12px 0; border-top: 1px solid var(--line-faint); }
 .catalog-rule-bands { margin: 0; font-size: 14px; color: var(--ink); }
+/* One line per product (supervisor design review, backlog:b44fe65ac3e5):
+ * cells sit on the row's middle; the price reads with «Modifica prezzi»
+ * beside it and the Attivo switch with «Togli» beside it. What opens on a
+ * click (the price form, a confirm, a note) takes its own full line inside
+ * the cell, only while it has something to say. */
+.catalog-thead, .catalog-row { align-items: center; }
+.catalog-cell-price, .catalog-cell-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.catalog-cell-price > .catalog-edit-wrap, .catalog-cell-switch > .catalog-toggle-wrap, .catalog-cell-switch > .catalog-remove-wrap { display: contents; }
+.catalog-cell-price .catalog-edit-wrap > .ui-btn { height: 24px; padding: 0 4px; }
+.catalog-cell-price .catalog-edit-form:not(:empty), .catalog-cell-price .catalog-takeover-note, .catalog-cell-price .catalog-readonly,
+.catalog-cell-price .catalog-ineligible, .catalog-cell-price .catalog-empty,
+.catalog-cell-switch .catalog-confirm:not(:empty) { flex-basis: 100%; }
+.catalog-cell-price .catalog-takeover-note { margin: 0; font-size: 11.5px; color: var(--dim); }
+.catalog-cell-price .catalog-readonly { order: 2; margin: 0; }
+/* On a phone the cells stack their column label (data-label) above the
+ * value: in the flex cells it keeps its own line. */
+.catalog-cell-price::before, .catalog-cell-switch::before { flex-basis: 100%; }
+/* Filters in one row beside the chips, placeholders never cut at 1440. */
+@media (min-width: 701px) {
+  .catalog-bar > .catalog-filters { flex: 1 1 auto; justify-content: flex-end; }
+  .catalog-filters select[name="source"], .catalog-filters select[name="active"] { flex: 0 1 auto; }
+  .catalog-filters input[name="category"] { flex: 0 1 160px; max-width: 170px; }
+  .catalog-filters .catalog-search { flex: 0 1 240px; max-width: 260px; }
+}
+.catalog-cell-price .catalog-edit-form:empty, .catalog-cell-switch .catalog-confirm:empty { display: none; }
+button.catalog-remove { height: 28px; min-height: 0; padding: 0 8px; border: none; background: transparent; box-shadow: none; color: var(--muted); font-size: 12.5px; font-weight: 700; }
+button.catalog-remove:hover { color: var(--danger); background: var(--surface-soft); }
+.catalog-switch-static { position: relative; display: inline-block; width: 40px; height: 24px; border-radius: 99px; background: var(--line); opacity: .7; }
+.catalog-switch-static::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); }
+.catalog-switch-static.on { background: var(--accent); }
+.catalog-switch-static.on::after { left: 19px; }
 
 @media (max-width: 700px) {
   .catalog-thead { display: none; }
@@ -1648,7 +1678,8 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
   .catalog-bar { flex-direction: column; align-items: stretch; }
   .catalog-filters { flex-direction: column; align-items: stretch; }
   /* In colonna il flex-basis (110-180 px) diventava altezza: menu e ricerca alti 100 px. */
-  .catalog-filters > *, .catalog-filters select[name="source"], .catalog-filters .catalog-search { flex: none; max-width: none; }
+  .catalog-filters > *, .catalog-filters select[name="source"], .catalog-filters .catalog-search,
+  .catalog-filters input[name="category"] { flex: none; max-width: none; }
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
