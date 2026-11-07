@@ -654,6 +654,79 @@ test('a resumed save skips the steps already done before the session died', asyn
   assert.equal(rendered.navigated(), '#/customer-card/contact/c9');
 });
 
+test('a rescue never marks steps that never ran as done: empty note, custom lost (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let values = 0;
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') {
+      return { definitions: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] };
+    }
+    if (path === '/api/customer-data/fields/value') {
+      values += 1;
+      if (values === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { value: { key: body.key, value: body.value } };
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  const control = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  control.value = 'sì';
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  const kept = readNewCustomerDraft(store);
+  assert.ok(kept, 'the unsaved remainder stays in the draft');
+  assert.ok(!kept.done.includes('phone'), 'a phone never typed is not declared done');
+  assert.ok(!kept.done.includes('note'), 'an empty note is not declared saved');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(valuesOf(client).length, 2, 'the failed custom write restarts after sign-in');
+  assert.equal(notesOf(client).length, 0, 'no note is written or declared saved');
+  assert.equal(appliesOf(client).length, 1, 'no second apply: the scheda is not duplicated');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
+  assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
+test('a phone typed after the rescue is linked, not skipped (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let notes = 0;
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    if (body.system === MANUAL_PHONE_SYSTEM) return accepted({ id: 'c9', resource: 'contact' }, 'MATCHED_EXISTING');
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  const kept = readNewCustomerDraft(store);
+  assert.ok(kept, 'the unsaved remainder stays in the draft');
+  assert.ok(!kept.done.includes('phone'), 'a phone never typed is not declared done');
+  setValue(rendered.mount, 'telefono', '+39 333 1234567');
+  clickSave(rendered.mount);
+  await flush();
+  const applies = appliesOf(client);
+  assert.equal(applies.length, 2, 'record once, phone link once the operator typed it');
+  assert.equal(applies[1].body.system, MANUAL_PHONE_SYSTEM, 'the added phone is linked, not dropped');
+  assert.equal(notesOf(client).length, 2, 'the failed note is retried once it can succeed');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
+  assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
 test('a generic failure keeps its own error and stores no draft', async () => {
   const store = memoryStore();
   const client = stubClient(() => Promise.reject(Object.assign(new Error('Import unavailable'), { status: 500, code: 'UNKNOWN' })));

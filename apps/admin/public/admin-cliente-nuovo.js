@@ -522,10 +522,15 @@ export function createCustomerFormView(deps) {
     // session (handled or invalidated: the save stops either way).
     const SESSION_KEPT_MESSAGE = 'Sessione scaduta: accedi di nuovo, il testo è conservato e lo ritrovi qui.';
     const SESSION_CREATED_MESSAGE = 'Sessione scaduta: il cliente è già creato, accedi di nuovo e premi Salva per completare.';
-    const rescueSessionLoss = (err, { subject = null, step = null } = {}) => {
+    // B4 — resume bookkeeping is receipt-based (backlog:5a40c73e54aa): a
+    // step counts as done only after its own write answered with success in
+    // this run (the done list the caller passes, starting from the rescued
+    // draft). A step skipped because its input was empty is never marked
+    // done, so text typed after the rescue still runs on the next Salva
+    // instead of being silently dropped.
+    const rescueSessionLoss = (err, { subject = null, done = [] } = {}) => {
       if (!isNewCustomerSessionLoss(err)) return false;
       if (token !== renderToken) return true;
-      const done = step === null ? [] : DRAFT_STEPS.slice(0, DRAFT_STEPS.indexOf(step));
       saveNewCustomerDraft(drafts, currentValues(), draftScope(), { created: subject, done });
       const kept = subject === null ? SESSION_KEPT_MESSAGE : SESSION_CREATED_MESSAGE;
       setErrors({ general: kept });
@@ -578,14 +583,24 @@ export function createCustomerFormView(deps) {
             warning = 'Esisteva già una scheda con questa email: eccola, senza duplicati.';
           }
         }
+        // Steps confirmed by their own success receipt in this run, starting
+        // from the rescued draft: only these are skipped on the next resume,
+        // never a positional prefix of steps that may never have run.
+        const completedNow = new Set(done);
         const phone = normalizeTelefono(values.telefono);
-        if (phone !== '' && cleanEmail !== '' && !done.has('phone')) {
+        // Never skip a phone the operator typed after the rescue: the kept
+        // draft holds the rescued input, so a live input that differs reruns
+        // the link even when an old draft claims the step is done.
+        const phoneChanged = resumable !== null
+          && normalizeTelefono(resumable.telefono ?? '') !== phone;
+        if (phone !== '' && cleanEmail !== '' && (!done.has('phone') || phoneChanged)) {
           try {
             const linked = await linkPhone(phone, cleanEmail, subject);
             if (token !== renderToken) return;
             if (!linked.ok) warning = linked.warning;
+            completedNow.add('phone');
           } catch (err) {
-            if (rescueSessionLoss(err, { subject, step: 'phone' })) return;
+            if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
             if (token !== renderToken) return;
             warning = 'Il cliente è creato, ma il telefono non si è collegato. Riprova dalla scheda.';
           }
@@ -600,20 +615,23 @@ export function createCustomerFormView(deps) {
             try {
               await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
             } catch (err) {
-              if (rescueSessionLoss(err, { subject, step: 'custom' })) return;
+              if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
               entry.setError(String(err?.message ?? 'Valore non valido.'));
               if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
             }
             if (token !== renderToken) return;
           }
+          completedNow.add('custom');
         }
         // The note through the single writer: it lands in the cronologia.
         const noteText = String(nota.value ?? '').trim();
-        if (noteText !== '' && !done.has('note')) {
+        const noteChanged = resumable !== null
+          && String(resumable.nota ?? '').trim() !== noteText;
+        if (noteText !== '' && (!done.has('note') || noteChanged)) {
           try {
             await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
           } catch (err) {
-            if (rescueSessionLoss(err, { subject, step: 'note' })) return;
+            if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
             if (token !== renderToken) return;
             if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
           }
