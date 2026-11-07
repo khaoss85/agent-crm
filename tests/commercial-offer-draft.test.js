@@ -329,3 +329,46 @@ test('offer draft: a 100% line with no ceiling refuses without an approval flow'
   );
   assert.deepEqual(result.draft.catalogOfferIds, [], 'nothing drafts from the refused line');
 });
+
+test('offer draft: the draft carries rows with product, quantity, price and discount, and the total is their sum (backlog:8efd56406c7e)', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta pacchetto 10 PT con sconto 10% e due mensili',
+    offers: [
+      { offerId: 'offer:pt-10', name: 'Pacchetto 10 PT', priceCents: 35000, currency: 'EUR', maxDiscountBps: 2000 },
+      { offerId: 'offer:mensile', name: 'Mensile sala', priceCents: 3900, currency: 'EUR', maxDiscountBps: 1000 },
+    ],
+    policy: { maxDiscountBps: 2000, currency: 'EUR' },
+    complete: async () => validAnswer({
+      title: 'Pacchetto 10 PT e mensili',
+      lines: [
+        { offerId: 'offer:pt-10', quantity: 1, discountBps: 1000 },
+        { offerId: 'offer:mensile', quantity: 2, discountBps: 0 },
+      ],
+    }),
+  });
+  assert.equal(result.status, 'ok', 'the draft lands');
+  assert.equal(result.draft.lines.length, 2, 'two rows draft');
+  assert.deepEqual(result.draft.lines[0], {
+    offerId: 'offer:pt-10', name: 'Pacchetto 10 PT', quantity: 1,
+    priceCents: 35000, currency: 'EUR', discountBps: 1000,
+    netCents: applyDiscount(35000, 1000).netAmountCents,
+  }, 'the first row names the catalog product with its price and discount');
+  assert.deepEqual(result.draft.lines[1], {
+    offerId: 'offer:mensile', name: 'Mensile sala', quantity: 2,
+    priceCents: 3900, currency: 'EUR', discountBps: 0,
+    netCents: applyDiscount(7800, 0).netAmountCents,
+  }, 'the second row prices quantity 2 without discount');
+  const sum = result.draft.lines.reduce((total, line) => total + line.netCents, 0);
+  assert.equal(result.draft.valueCents, sum, 'the total is the sum of the rows');
+  assert.deepEqual(result.draft.catalogOfferIds, ['offer:pt-10', 'offer:mensile'], 'the ids stay beside the rows');
+});
+
+test('offer draft: an empty draft carries empty rows, never an invented product', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: OFFERS,
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:fantasma' }] }),
+  });
+  assert.deepEqual(result.draft.lines, [], 'no row drafts from an unknown offer');
+  assert.deepEqual(result.draft.catalogOfferIds, [], 'no id drafts either');
+});
