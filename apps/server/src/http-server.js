@@ -730,7 +730,7 @@ export function buildRouter(app) {
     return await app.readCustomerCard({ resource: params.resource, id: params.id });
   });
 
-  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, actor, identity, organizationId }) => {
+  router.add('GET', '/api/customer-hub/timeline/:resource/:id', async ({ params, query, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readCustomerTimeline !== 'function') {
       throw new NotFoundError('Operation', 'customer timeline');
@@ -738,7 +738,14 @@ export function buildRouter(app) {
     // «Da leggere» (backlog:9e003582): the actor rides along so the
     // timeline's `read` flags answer for the signed-in member. The query
     // names no member — without an actor the flags read null, never refused.
-    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor });
+    // backlog:ea463d6ff10d: `before`/`limit` ask for the entries newest
+    // first, a page at a time; the package validates them. Absent, the
+    // request is the legacy read, unchanged — and so is an empty value
+    // (`?before=&limit=`), never a switch to the cursor read (review #639).
+    const page = {};
+    if (query.before !== undefined && query.before !== null && query.before !== '') page.before = query.before;
+    if (query.limit !== undefined && query.limit !== null && query.limit !== '') page.limit = query.limit;
+    return await app.readCustomerTimeline({ resource: params.resource, id: params.id, actor, ...page });
   });
 
   // «Da leggere» (backlog:9e003582): opening the scheda marks its inbound

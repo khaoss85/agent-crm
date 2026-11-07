@@ -45,12 +45,12 @@ test('the login page tells the four-channel story like the prototype', () => {
   for (const text of [
     'Ogni conversazione, un solo cliente.',
     'Instagram, email, telefono e WhatsApp',
-    'Fate anche consulenze a Milano?',
-    'Info ristrutturazione cucina',
+    'Posso provare una lezione gratuita?',
+    'Info abbonamento mensile',
     'Chiamata in entrata',
     'va benissimo!',
     'Giulia Romano',
-    'Prima call gioved',
+    'Lezione di prova gioved',
   ]) {
     assert.ok(page.includes(text), `the story keeps: ${text}`);
   }
@@ -59,7 +59,7 @@ test('the login page tells the four-channel story like the prototype', () => {
 test('the login form matches the prototype: Google, email, ten minutes, no password', () => {
   for (const text of [
     'Accedi',
-    'Bentornata',
+    'Rieccoti',
     'Ritrova clienti, conversazioni e agenda del team',
     'Continua con Google',
     'oppure',
@@ -439,7 +439,7 @@ test('27a0b924 C2-C16: every fixed text is visible, in Italian, with no English 
     'Ogni conversazione, un solo cliente.',
     'Instagram, email, telefono e WhatsApp confluiscono in un’unica scheda. L’AI tiene il filo, tu decidi.',
     'Accedi',
-    'Bentornata',
+    'Rieccoti',
     'Ritrova clienti, conversazioni e agenda del team dove li hai lasciati.',
     'Continua con Google',
     'oppure',
@@ -454,4 +454,24 @@ test('27a0b924 C2-C16: every fixed text is visible, in Italian, with no English 
     assert.ok(!/\b(Sign in|Log in|Login|Continue|Send|Email address|Welcome|Loading|Error|Submit|Password)\b/.test(copy),
       `no English UI word in: ${copy.slice(0, 60)}`);
   }
+});
+
+test('owner decision 07/11: the greeting is gender-neutral «Rieccoti» and the examples come from a fitness studio', () => {
+  const esc = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const text = visibleText(page);
+  assert.ok(text.includes('Rieccoti'), 'the greeting reads «Rieccoti»');
+  assert.ok(!/Bentornat/.test(page), 'no gendered «Bentornata/o» anywhere on the page');
+  for (const old of ['consulenze a Milano', 'ristrutturazione cucina', 'Prima call']) {
+    assert.ok(!page.includes(old), `the old non-fitness example is gone: ${old}`);
+  }
+  for (const [chan, line, time] of [
+    ['IG', 'Posso provare una lezione gratuita?', 'ven'],
+    ['@', 'Info abbonamento mensile', '09:10'],
+    ['TEL', 'Chiamata in entrata · 3:12', '09:47'],
+    ['WA', 'Giovedì alle 18 va benissimo!', '10:20'],
+  ]) {
+    const row = new RegExp(`>${esc(chan)}</span><span class="text">${esc(line)}</span><time>${time}</time>`);
+    assert.match(page, row, `the ${chan} row keeps its badge, text and time`);
+  }
+  assert.ok(page.includes('<strong>Giulia Romano</strong><small>Lezione di prova giovedì 18:00 con coach Marco</small>'), 'the client card speaks fitness');
 });
