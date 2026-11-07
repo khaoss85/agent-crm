@@ -374,6 +374,63 @@ test('review #654: the note-refused lock lifts as soon as the operator types aga
   assert.equal(rendered.navigated(), '#/customer-card/contact/c2');
 });
 
+test('review #654 giro 3: changing only a custom field lifts the note-refused lock', async () => {
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] };
+    if (path === '/api/customer-hub/notes') {
+      throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+    }
+    if (path === '/api/customer-data/fields/value') return { value: { key: 'amico', value: 'sì' } };
+    return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Una nota.');
+  clickSave(rendered.mount);
+  await flush();
+  const saveButton = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-customer');
+  assert.equal(saveButton.disabled, true, 'locked after the refusal');
+  const amico = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  amico.value = 'sì';
+  amico.dispatch('change');
+  assert.equal(saveButton.disabled, false, 'a custom field change lifts the lock');
+});
+
+test('review #654 giro 3: after a refused phrase note Conferma stays, and a second press retries the note', async () => {
+  let notes = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: true };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-data/phrase/preview') return { ...PHRASE_PREVIEW, note: 'Amico di Guido.' };
+    if (path === '/api/customer-data/phrase/apply') {
+      return { subject: { resource: 'contact', id: 'c7' }, matchedExisting: notes > 0, phoneLinked: true, phoneWarning: null, fields: [] };
+    }
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+      return { note: { id: 'n1' } };
+    }
+    return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  rendered.mount.findAll('textarea').find((node) => node.getAttribute('name') === 'frase').value = 'daniele pelleri amico di guido';
+  clickAction(rendered.mount, 'preview-phrase');
+  await flush();
+  clickAction(rendered.mount, 'apply-phrase');
+  await flush();
+  const confirm = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-phrase');
+  assert.ok(confirm && confirm.hidden !== true, 'Conferma stays on screen after the refused note');
+  assert.equal(rendered.navigated(), null, 'the operator stays to read the warning');
+  clickAction(rendered.mount, 'apply-phrase');
+  await flush();
+  assert.equal(notes, 2, 'the second press retries the note');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
+});
+
 test('+ Aggiungi campo creates a space field and its control reads on the form', async () => {
   const client = phraseClient({ ai: false });
   const rendered = render(client);

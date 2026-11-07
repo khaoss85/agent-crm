@@ -507,6 +507,8 @@ export function createCustomerFormView(deps) {
     }
     if (token !== renderToken) return;
     const customControls = fieldDefs.map((def) => fieldControl(el, def));
+    /** Set once the note-refused lock exists: a custom field added later lifts it too. */
+    let watchCustomControl = (entry) => { void entry; };
     for (const entry of customControls) customBox.appendChild(entry.wrap);
 
     let addOpen = false;
@@ -522,6 +524,7 @@ export function createCustomerFormView(deps) {
             const entry = fieldControl(el, def);
             customBox.appendChild(entry.wrap);
             customControls.push(entry);
+            watchCustomControl(entry);
             fieldDefs = [...fieldDefs, def];
           }
           while (addBox.firstChild) addBox.removeChild(addBox.firstChild);
@@ -573,6 +576,14 @@ export function createCustomerFormView(deps) {
     for (const control of [nome, email, telefono, azienda, nota]) {
       control.addEventListener('input', releaseCreated);
     }
+    // Custom fields count as typing too (review #654, giro 3): a select
+    // fires change, a text field input — and a field added later joins.
+    const watchCustom = (entry) => {
+      entry?.control?.addEventListener?.('input', releaseCreated);
+      entry?.control?.addEventListener?.('change', releaseCreated);
+    };
+    for (const entry of customControls) watchCustom(entry);
+    watchCustomControl = watchCustom;
     save.addEventListener('click', () => void saveCustomer());
     cancel.addEventListener('click', () => {
       clearNewCustomerDraft(drafts, draftScope());
@@ -926,7 +937,8 @@ export function createCustomerFormView(deps) {
               await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
             } catch {
               if (token !== renderToken) return;
-              confirm.hidden = true;
+              // Conferma stays (review #654, giro 3): a second press matches
+              // the same customer and retries the note.
               showNoteRefused(subject);
               return;
             }
