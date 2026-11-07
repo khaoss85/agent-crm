@@ -597,6 +597,10 @@ export function createCustomerCardView(deps) {
   // the open Dettagli form, a phone number) when a re-read swaps it. The new
   // scheda is built with it, so an Invia elsewhere never wipes their text.
   let pendingDrafts = null;
+  // Review #612 round 5: what was being typed when a re-read of the same
+  // scheda failed. The error panel replaces the scheda, so the typing is
+  // kept here and handed to the next scheda that loads for this customer.
+  let retainedDrafts = null;
 
   function readDrafts(root) {
     if (!root || typeof root.querySelector !== 'function') return null;
@@ -2991,6 +2995,7 @@ export function createCustomerCardView(deps) {
       while (mount.firstChild) mount.removeChild(mount.firstChild);
       shownKey = null;
       shownSides = [];
+      retainedDrafts = null;
       channelFilter = 'all';
       noteAuthorFilter = null;
       timelineShown = TIMELINE_PAGE;
@@ -3015,6 +3020,7 @@ export function createCustomerCardView(deps) {
       // Review #612 round 3: a failed re-read of the scheda already shown
       // keeps its windows (a half-written Scrivi), filter, pages and scroll;
       // only a first read that fails starts from nothing.
+      if (key === shownKey) retainedDrafts = readDrafts(mount) ?? retainedDrafts;
       show(panel, key === shownKey ? key : null);
       return;
     }
@@ -3032,6 +3038,10 @@ export function createCustomerCardView(deps) {
       throw error;
     });
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
+    if (key === shownKey && retainedDrafts !== null) {
+      pendingDrafts = { ...retainedDrafts, ...(pendingDrafts ?? {}) };
+    }
+    retainedDrafts = null;
     try {
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,

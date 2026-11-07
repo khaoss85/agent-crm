@@ -3862,3 +3862,43 @@ test('review #612 round 3: Invia closes its own Scrivi window before the re-read
   assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined, 'the sent window is closed');
   assert.ok(mount.textContent.includes('Guido Presti'), 'the scheda is on screen');
 });
+
+// Review #612 round 5 (P1): a failed re-read of the scheda already shown
+// replaces it with the error panel; what was being typed in it (a note, a
+// Dettagli edit) comes back with the next scheda that loads.
+test('review #612 round 5: typing in the scheda survives a failed re-read and returns on the next one', async () => {
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  let failCard = false;
+  const client = {
+    async request(path, options = {}) {
+      if (failCard && path.includes('/card/')) throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, toast: () => {} });
+  await view.renderCard('contact', 'c1');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('noteBody').value = 'Richiamare giovedì';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  byName('email').value = 'nuova@esempio.invalid';
+
+  failCard = true;
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the failure is said');
+  // A second failure in a row keeps what the first one saved.
+  await view.renderCard('contact', 'c1');
+
+  failCard = false;
+  await view.renderCard('contact', 'c1');
+  assert.equal(byName('noteBody').value, 'Richiamare giovedì', 'the half-written note is back');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-details'), 'Dettagli is open again');
+  assert.equal(byName('email').value, 'nuova@esempio.invalid', 'with the edit');
+
+  // Another customer never inherits it.
+  failCard = true;
+  await view.renderCard('contact', 'c1');
+  failCard = false;
+  await view.renderCard('contact', 'c2');
+  assert.equal(byName('noteBody').value ?? '', '', 'another customer starts empty');
+});
