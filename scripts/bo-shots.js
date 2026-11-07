@@ -504,9 +504,13 @@ const DEMO_SPACES = [
   { id: 'spazio-2', name: 'Palestra centro', initials: 'PA' },
 ];
 
+// The roster as the pilot enriches it (displayName/email beside each opaque
+// subject). Elena holds two subjects — an adopted broker member and her
+// Google one — and the screen paints one row for her (backlog:6b44b0e9fcdf).
 const DEMO_MEMBERS = [
-  { subject: 'owner-1', role: 'owner', status: 'active' },
-  { subject: 'marco', role: 'operator', status: 'active' },
+  { subject: 'broker|owner-1', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
+  { subject: 'google|1001', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'Elena@studioaurora.it' },
+  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it' },
 ];
 
 // The connectors screen (BO-F6-02): every catalog channel has a composed

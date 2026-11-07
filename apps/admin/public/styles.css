@@ -1049,6 +1049,24 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-ai-panel .bo-spazi-switches { gap: 0; padding: 0 20px 8px; }
 .bo-spazi-ai-panel .bo-spazi-switch { border: none !important; border-radius: 0 !important; background: transparent !important; padding: 14px 0 !important; border-top: 1px solid var(--line-faint) !important; }
 .bo-spazi-ai-panel > h3 { padding-bottom: 6px; }
+/* backlog:6b44b0e9fcdf: card foot, dashed adder, mono statistic, member email
+   with ellipsis — prototype 08. */
+.bo-spazi-desc { font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+.bo-spazi-stat { font-family: var(--mono); font-size: 11.5px; letter-spacing: .02em; }
+.bo-spazi-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: auto; }
+.bo-spazi-you { font-size: 13px; }
+.bo-spazi-you strong { color: var(--ink); font-weight: 700; }
+.bo-spazi-foot .bo-spazi-here { align-self: center; }
+.bo-spazi-open.ui-btn { padding: 7px 14px; }
+.bo-spazi-adder { border: 1px dashed var(--line-dashed); background: transparent; justify-content: center; align-items: center; min-height: 150px; }
+.bo-spazi-adder .bo-spazi-quiet.ui-btn { height: auto; padding: 10px 14px; font-size: 15px; font-weight: 700; color: var(--muted); }
+.bo-spazi-adder .ui-add-menu { align-self: stretch; }
+.bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bo-spazi-names { overflow: hidden; }
+.bo-spazi-invite-toggle.ui-btn { white-space: nowrap; flex: none; }
+@media (max-width: 700px) {
+  .bo-spazi-adder { min-height: 88px; }
+}
 
 @media (max-width: 700px) {
   .bo-spazi-grid { grid-template-columns: minmax(0, 1fr); }
