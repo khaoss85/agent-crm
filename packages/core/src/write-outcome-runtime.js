@@ -14,7 +14,7 @@ import {
   subjectFingerprint,
   tenantNamespace,
 } from './idempotency.js';
-import { isSyncStorage, storageApi } from './storage-runtime.js';
+import { affineStorageFor, isSyncStorage, storageApi } from './storage-runtime.js';
 import { nowIso } from './time.js';
 import { deterministicUuid, snapshotWriteIds, withWriteIds } from './write-ids.js';
 import {
@@ -47,6 +47,39 @@ export function usesWriteOutcomes(database) {
 }
 
 const ENVELOPE = new AsyncLocalStorage();
+
+/**
+ * The inline dispatch below runs on the shared handle right after the inner
+ * commit. When the caller still holds its own outer transaction (the Gmail
+ * sync sender path runs `company.create` inside `resolve-channel-sender`'s
+ * transaction), the outbox worker cannot take the handle and fails with
+ * `NESTED_TRANSACTION`. The effect row is already durable, so the recovery
+ * poller delivers it after the outer commit — attempting the dispatch here
+ * only pages on a healthy pending job, so it is skipped silently.
+ *
+ * @param {any} database
+ */
+function callerTransactionStillOpen(database) {
+  try {
+    return affineStorageFor(database) != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A nested-handle refusal is the skip above racing a composition that does
+ * not publish the affine overlay: the job stays pending for the recovery
+ * poller either way, so it must not log either.
+ *
+ * @param {unknown} errorOrCode
+ */
+function isNestedDispatchRefusal(errorOrCode) {
+  const code = typeof errorOrCode === 'string'
+    ? errorOrCode
+    : (errorOrCode && typeof errorOrCode === 'object' ? /** @type {any} */ (errorOrCode).code : null);
+  return typeof code === 'string' && code === 'NESTED_TRANSACTION';
+}
 
 /**
  * @param {any} database
@@ -230,16 +263,24 @@ export async function runIdempotentWrite(database, events, spec, execute) {
       }));
       const committed = await store.lookup(tenantNs, rawKey, phase);
       if (committed) {
+        // Nested in the caller's transaction (backlog:ad52f988afa4): the
+        // worker cannot take the shared handle until the outer commit, so the
+        // recovery poller owns delivery from here. Attempting it would only
+        // log NESTED_TRANSACTION for a healthy pending job.
+        const deferToRecovery = callerTransactionStillOpen(database);
         for (const job of effectJobs.filter((entry) => entry.handler.name === 'promote-write-outcome-events')) {
+          if (deferToRecovery) continue;
           try {
             const dispatched = await dispatchTransactionalOutboxJob({
               database, events, tenantId: spec.tenantId, clock: now,
               workerId: `write-outcome-${runId}`,
             }, job.id);
-            if (dispatched && dispatched.state !== 'succeeded') {
+            if (dispatched && dispatched.state !== 'succeeded'
+              && !isNestedDispatchRefusal(dispatched.lastErrorCode ?? '')) {
               console.error(`[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: ${dispatched.lastErrorCode ?? 'TRANSACTIONAL_OUTBOX_DISPATCH_PENDING'}`);
             }
           } catch (dispatchError) {
+            if (isNestedDispatchRefusal(dispatchError)) continue;
             console.error(
               `[accordo] ${operation} run ${runId}: committed outbox dispatch is pending recovery: `
               + `TRANSACTIONAL_OUTBOX_DISPATCH_FAILED: ${boundedFailureCode(dispatchError)}`,
