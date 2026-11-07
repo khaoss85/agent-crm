@@ -210,7 +210,7 @@ export function suggestionsFor(screenId) {
 /**
  * @typedef {{ kind: 'record', module: string, id: string, label: string, href: string }} Source
  * @typedef {{ id: string, label: string, kind: 'navigate' | 'api', href?: string, request?: { path: string, method: string, body?: unknown }, customerFacing: boolean, confirmLabel?: string }} AssistantAction
- * @typedef {{ suggestionId: string, title: string, lines: string[], sources: Source[], actions: AssistantAction[], unavailable: string[], trace: AnswerTrace }} Answer
+ * @typedef {{ suggestionId: string, title: string, lines: string[], sources: Source[], actions: AssistantAction[], unavailable: string[], trace: AnswerTrace, context?: { kind: string, day?: string | null, dayWord?: string | null, ids: Array<{ module: string, id: string, label: string }> } | null }} Answer
  * A single read behind an answer: which surface was hit, with which bound,
  * and how many rows it returned. `status` is 'missing' when the module is
  * not composed or the read fails — the answer names it in `unavailable`
@@ -261,11 +261,99 @@ function subjectHref(row, fallbackId) {
   return null;
 }
 
-/** @param {unknown} row */
+/**
+ * Masked channel reference of one thread (voce 34fd687c): the customer
+ * handle on the channel with the middle hidden (es. «+39 333 …4567»),
+ * never a raw record id. Short handles stay whole; long ones keep the
+ * first 4 and the last 4 characters so two different handles stay
+ * different without leaking the full reference.
+ * @param {unknown} handle
+ */
+function maskChannelRef(handle) {
+  const text = shortText(handle, 40);
+  if (text === '' || text.length <= 7) return text;
+  return `${text.slice(0, 4)} …${text.slice(-4)}`;
+}
+
+/**
+ * Last-activity stamp of one thread (voce 34fd687c): the newest of
+ * updatedAt/openedAt/observedAt in Italian «06/11/2026, 10:15» form, ''
+ * when the row carries no readable time.
+ * @param {unknown} row
+ */
+function threadStamp(row) {
+  const ts = Math.max(rowTime(row?.updatedAt), rowTime(row?.openedAt), rowTime(row?.observedAt));
+  if (!ts) return '';
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '';
+  const day = italianDay(localDayOf(date));
+  if (day === '') return '';
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${day}, ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/**
+ * The display name of one thread. Names the customer (the subject
+ * snapshot), else the masked channel reference plus the last-activity
+ * date — never a raw record id (voce 34fd687c: «Chiudi il thread di
+ * 712e1f90-…» non deve più comparire). Ids travel only in hrefs, never
+ * in lines, labels or buttons.
+ * @param {unknown} row
+ */
 function conversationLabel(row) {
-  return shortText(row?.subjectLabel, 80)
-    || shortText(row?.remoteHandle, 80)
-    || shortText(row?.id, 80);
+  const named = shortText(row?.subjectLabel, 80);
+  if (named !== '') return named;
+  const channel = channelName(row?.channel) || 'Conversazione';
+  const ref = maskChannelRef(row?.remoteHandle);
+  const stamp = threadStamp(row);
+  if (ref !== '' && stamp !== '') return `${channel} · ${ref} · ${stamp}`;
+  if (ref !== '') return `${channel} · ${ref}`;
+  if (stamp !== '') return `${channel} · ${stamp}`;
+  return channel;
+}
+
+/**
+ * One ordinal disambiguator for every listed label (voce 34fd687c, unica
+ * fonte di verità): equal bases get a stable ordinal (« · 1», « · 2») so
+ * two rows with the same display text never share one identical label —
+ * threads and leads alike. Unique bases pass through untouched.
+ * @param {Array<string>} bases
+ */
+function uniqueLabels(bases) {
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  for (const base of bases) counts.set(base, (counts.get(base) ?? 0) + 1);
+  /** @type {Map<string, number>} */
+  const seen = new Map();
+  return bases.map((base) => {
+    if ((counts.get(base) ?? 0) <= 1) return base;
+    const position = (seen.get(base) ?? 0) + 1;
+    seen.set(base, position);
+    return `${base} · ${position}`;
+  });
+}
+
+/**
+ * One source of truth for thread labels in a list (voce 34fd687c): every
+ * listed line, source and close/confirm label of the same answer shares
+ * these strings. Rows are already ordered (newest first).
+ * @param {Array<any>} rows
+ */
+function uniqueConversationLabels(rows) {
+  return uniqueLabels(rows.map((row) => conversationLabel(row)));
+}
+
+/**
+ * The listed line of one thread: a named thread keeps its channel in
+ * parentheses, an unnamed one already carries it in its label.
+ * @param {unknown} row
+ * @param {string} label the unique label of this row in its answer
+ */
+function conversationLine(row, label) {
+  if (shortText(row?.subjectLabel, 80) !== '' && row?.channel) {
+    return `• ${label} (${channelName(row.channel)})`;
+  }
+  return `• ${label}`;
 }
 
 /**
@@ -367,12 +455,17 @@ async function answerUrgenti(client) {
   if (conversations === null) {
     answer.unavailable.push('Thread: modulo conversation non leggibile in questo spazio.');
   } else {
-    const open = conversations.filter((row) => row?.status === 'open');
-    answer.lines.push(`${open.length} thread aperti${conversations.length !== open.length ? ` su ${conversations.length} letti` : ''}.`);
-    for (const row of newestFirst(open).slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
-    }
-    answer.sources.push(...takeSources(newestFirst(open), 'conversation', conversationLabel));
+    const ordered = newestFirst(conversations.filter((row) => row?.status === 'open'));
+    answer.lines.push(`${ordered.length} thread aperti${conversations.length !== ordered.length ? ` su ${conversations.length} letti` : ''}.`);
+    const sourced = ordered.slice(0, SUGGESTION_MAX_SOURCES);
+    const labels = uniqueConversationLabels(sourced);
+    sourced.slice(0, SUGGESTION_MAX_LISTED).forEach((row, index) => {
+      answer.lines.push(conversationLine(row, labels[index]));
+    });
+    sourced.forEach((row, index) => {
+      const source = recordSource('conversation', row?.id, labels[index]);
+      if (source !== null) answer.sources.push(source);
+    });
   }
   if (issues === null) {
     answer.unavailable.push('Qualità dati: modulo data-quality-issue non leggibile in questo spazio.');
@@ -436,11 +529,18 @@ async function answerRicontattare(client) {
     return answer;
   }
   answer.lines.push(`${openAll.length} thread aperti da ricontattare${conversations.length !== openAll.length ? ` (tra ${conversations.length} letti)` : ''}:`);
-  for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${conversationLabel(row)}${row?.channel ? ` (${channelName(row.channel)})` : ''}`);
-  }
-  answer.sources.push(...takeSources(open, 'conversation', conversationLabel));
+  const sourced = open.slice(0, SUGGESTION_MAX_SOURCES);
+  const labels = uniqueConversationLabels(sourced);
+  const labelById = new Map(sourced.map((row, index) => [row?.id, labels[index]]));
+  sourced.slice(0, SUGGESTION_MAX_LISTED).forEach((row, index) => {
+    answer.lines.push(conversationLine(row, labels[index]));
+  });
+  sourced.forEach((row, index) => {
+    const source = recordSource('conversation', row?.id, labels[index]);
+    if (source !== null) answer.sources.push(source);
+  });
   const first = open[0];
+  const firstLabel = labelById.get(first?.id) ?? conversationLabel(first);
   const cardHref = subjectHref(first, first?.id);
   if (cardHref !== null) {
     answer.actions.push({ id: 'bo04:apri-scheda', label: 'Apri scheda cliente', kind: 'navigate', href: cardHref, customerFacing: false });
@@ -462,11 +562,11 @@ async function answerRicontattare(client) {
       // label names the thread so the operator confirms exactly what closes.
       answer.actions.push({
         id: `bo04:chiudi:${conversationId}`,
-        label: `Chiudi il thread di ${conversationLabel(first)}`,
+        label: `Chiudi il thread di ${firstLabel}`,
         kind: 'api',
         request: { path: `/api/modules/conversation/records/${encodeURIComponent(conversationId)}/actions/close`, method: 'POST', body: {} },
         customerFacing: true,
-        confirmLabel: `Chiudere il thread di ${conversationLabel(first)}? Non si può riaprire: i nuovi messaggi aprono un altro thread.`,
+        confirmLabel: `Chiudere il thread di ${firstLabel}? Non si può riaprire: i nuovi messaggi aprono un altro thread.`,
       });
     }
     answer.actions.push({
@@ -475,7 +575,7 @@ async function answerRicontattare(client) {
       kind: 'navigate',
       href: `#/modules/conversation/${encodeURIComponent(conversationId)}`,
       customerFacing: true,
-      confirmLabel: `Aprire il thread con ${conversationLabel(first)} per contattare il cliente?`,
+      confirmLabel: `Aprire il thread con ${firstLabel} per contattare il cliente?`,
     });
   }
   return answer;
@@ -1006,6 +1106,264 @@ async function answerSchedaNota(client, customer) {
   return answer;
 }
 
+/**
+ * Deterministic free data questions (voce 34fd687c, ownerTitle: domande
+ * libere su più turni con i nomi dei clienti). No key, no backend, no
+ * spend: pure reads over records the panel already renders, so «quanti
+ * lead oggi?» is answered even in dry-run. Anything this parser does not
+ * recognize returns null and the caller falls back to the backend-or-notice
+ * path — never a silent call, never an invented number.
+ *
+ * Multi-turn context is the previous answer's `context` (kept in the panel
+ * session, never persisted): «e ieri?» shifts the last lead-day question,
+ * «chi è il primo?» names the first entry of its list.
+ */
+const FREE_DATA_READ_LIMIT = 50;
+
+/** Folded lowercase words of a question: accents and punctuation never matter. */
+function freeWords(question) {
+  return String(question ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/** Operator-local calendar day of an Instant, `YYYY-MM-DD`. NaN-safe. */
+function localDayOf(instant) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (part) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/** `YYYY-MM-DD` shifted by whole days, for «e ieri?». */
+function shiftDay(day, delta) {
+  const date = new Date(`${day}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setUTCDate(date.getUTCDate() + delta);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Italian `06/11/2026` for a `YYYY-MM-DD` day. */
+function italianDay(day) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day ?? '');
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+}
+
+/** Display name of a contact row: never an id. */
+function contactDisplayName(row) {
+  const full = `${shortText(row?.firstName, 40)} ${shortText(row?.lastName, 40)}`.trim();
+  return full !== '' ? full : shortText(row?.email, 60) || '';
+}
+
+/** Display name of a company row: never an id. */
+function companyDisplayName(row) {
+  return shortText(row?.name, 80) || '';
+}
+
+/**
+ * Fallback label of a lead row without a displayable name (voce 34fd687c):
+ * the masked channel reference when the row carries one (never the raw
+ * reference, never a raw id), else the neutral «Lead senza nome». The
+ * caller counts the row either way — the headline total is always the
+ * true measured total.
+ * @param {unknown} row
+ */
+function fallbackLeadLabel(row) {
+  const handle = row !== null && typeof row === 'object'
+    ? (row.email ?? row.phone ?? row.remoteHandle ?? row.handle)
+    : null;
+  const masked = maskChannelRef(handle);
+  return masked !== '' ? masked : 'Lead senza nome';
+}
+
+/**
+ * One lead-day answer: contacts and companies created on one local day,
+ * oldest first, named (never UUIDs) and linked to their customer card.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string} title the original question, shown on the card
+ * @param {string} day `YYYY-MM-DD`, operator-local
+ * @param {string} dayWord 'oggi' or 'ieri'
+ */
+async function answerLeadDay(client, title, day, dayWord) {
+  const answer = emptyAnswer('bo04:domanda-libera', title);
+  const [contacts, companies] = await Promise.all([
+    readRecords(client, 'contact', FREE_DATA_READ_LIMIT, answer.trace.reads),
+    readRecords(client, 'company', FREE_DATA_READ_LIMIT, answer.trace.reads),
+  ]);
+  const readable = [];
+  if (contacts !== null) readable.push(['contact', contacts]);
+  else answer.unavailable.push('Lead: modulo contact non leggibile in questo spazio.');
+  if (companies !== null) readable.push(['company', companies]);
+  else answer.unavailable.push('Aziende: modulo company non leggibile in questo spazio.');
+  /** @type {Array<{ module: string, id: string, label: string, at: number }>} */
+  const entries = [];
+  for (const [module, rows] of readable) {
+    const labelOf = module === 'contact' ? contactDisplayName : companyDisplayName;
+    for (const row of rows) {
+      const at = Date.parse(row?.createdAt);
+      if (Number.isNaN(at) || localDayOf(at) !== day) continue;
+      if (!isSafeRecordId(row?.id)) continue;
+      // Every day-matching row counts, named or not: a missing label gets
+      // the masked-reference fallback, never a silent drop from the total.
+      const label = labelOf(row) || fallbackLeadLabel(row);
+      entries.push({ module, id: row.id, label, at });
+    }
+  }
+  entries.sort((a, b) => a.at - b.at);
+  // Same ordinal gate as the thread labels: two rows with the same display
+  // text never share one identical label in this answer.
+  const distinct = uniqueLabels(entries.map((entry) => entry.label));
+  distinct.forEach((label, index) => { entries[index].label = label; });
+  const when = `${dayWord} (${italianDay(day)})`;
+  const capped = readable.some(([, rows]) => rows.length >= FREE_DATA_READ_LIMIT);
+  const bound = capped ? ' (prime 50 lette)' : '';
+  if (readable.length === 0) {
+    answer.lines.push(`I lead ${when} non sono leggibili in questo spazio${bound}.`);
+    answer.context = {
+      kind: 'lead-day', day, dayWord, ids: [], unreadable: true, unavailable: [...answer.unavailable],
+    };
+    return answer;
+  }
+  if (entries.length === 0) {
+    answer.lines.push(`Nessun lead nuovo ${when}${bound}.`);
+    answer.context = { kind: 'lead-day', day, dayWord, ids: [] };
+    return answer;
+  }
+  answer.lines.push(entries.length === 1
+    ? `1 lead nuovo ${when}${bound}:`
+    : `${entries.length} lead nuovi ${when}${bound}:`);
+  for (const entry of entries.slice(0, SUGGESTION_MAX_LISTED)) {
+    answer.lines.push(`• ${entry.label}`);
+  }
+  for (const entry of entries.slice(0, SUGGESTION_MAX_SOURCES)) {
+    answer.sources.push({
+      kind: 'record', module: entry.module, id: entry.id, label: entry.label,
+      href: `#/customer-card/${entry.module}/${encodeURIComponent(entry.id)}`,
+    });
+  }
+  const first = entries[0];
+  answer.actions.push({
+    id: `bo04:lead:apri:${first.id}`, label: `Apri la scheda di ${first.label}`,
+    kind: 'navigate', href: `#/customer-card/${first.module}/${encodeURIComponent(first.id)}`,
+    customerFacing: false,
+  });
+  answer.context = {
+    kind: 'lead-day', day, dayWord,
+    ids: entries.map((entry) => ({ module: entry.module, id: entry.id, label: entry.label })),
+  };
+  return answer;
+}
+
+/**
+ * «Chi è il primo?»: the first entry of the last lead-day list, named and
+ * linked. Without that context the panel says which question to ask first —
+ * in Italian, never a refusal code. An unreadable day stays unreadable
+ * (never re-reported as a measured zero), carrying the same unavailable
+ * notes as the day answer.
+ * @param {string} title the original question, shown on the card
+ * @param {unknown} context the previous free answer's context
+ * @param {unknown} inherit an Answer whose trace reads and unavailable notes
+ * this primo answer reuses instead of discarding (voce 34fd687c P1: the
+ * «primo lead» path reads the day, so it keeps the day's trace)
+ */
+function answerPrimo(title, context, inherit = null) {
+  const answer = emptyAnswer('bo04:domanda-libera', title);
+  if (inherit !== null && typeof inherit === 'object') {
+    if (Array.isArray(inherit.trace?.reads)) answer.trace.reads = inherit.trace.reads;
+    if (Array.isArray(inherit.unavailable)) answer.unavailable = [...inherit.unavailable];
+  }
+  const ids = Array.isArray(context?.ids) ? context.ids.filter((entry) => entry !== null && typeof entry === 'object'
+    && isSafeModule(entry.module) && isSafeRecordId(entry.id) && typeof entry.label === 'string' && entry.label !== '') : [];
+  if (ids.length === 0) {
+    const day = typeof context?.day === 'string' ? context.day : null;
+    const word = typeof context?.dayWord === 'string' ? context.dayWord : null;
+    const inherited = Array.isArray(context?.unavailable) ? context.unavailable.filter((note) => typeof note === 'string' && note !== '') : [];
+    if (context?.unreadable === true && day !== null && day !== '') {
+      const when = word !== null && word !== '' ? ` ${word} (${italianDay(day)})` : ` del ${italianDay(day)}`;
+      answer.lines.push(`Non riesco a leggere i lead${when} in questo spazio: non so dire chi è il primo.`);
+      for (const note of inherited) {
+        if (!answer.unavailable.includes(note)) answer.unavailable.push(note);
+      }
+      answer.context = {
+        kind: 'lead-day', day, dayWord: word, ids: [], unreadable: true, unavailable: [...inherited],
+      };
+    } else if (day !== null && day !== '') {
+      const when = word !== null && word !== '' ? ` ${word} (${italianDay(day)})` : ` del ${italianDay(day)}`;
+      answer.lines.push(`Nessun lead${when}: non c'è un primo da mostrare.`);
+      answer.context = { kind: 'lead-day', day, dayWord: word, ids: [] };
+    } else {
+      answer.lines.push('Dimmi prima «quanti lead oggi?»: poi ti dico chi è il primo.');
+      answer.context = { kind: 'lead-day', day, dayWord: word, ids: [] };
+    }
+    return answer;
+  }
+  const first = ids[0];
+  const when = typeof context?.day === 'string' && context.day !== '' ? ` del ${italianDay(context.day)}` : '';
+  answer.lines.push(`Il primo${when} è ${first.label}.`);
+  answer.sources.push({
+    kind: 'record', module: first.module, id: first.id, label: first.label,
+    href: `#/customer-card/${first.module}/${encodeURIComponent(first.id)}`,
+  });
+  answer.actions.push({
+    id: `bo04:lead:apri:${first.id}`, label: `Apri la scheda di ${first.label}`,
+    kind: 'navigate', href: `#/customer-card/${first.module}/${encodeURIComponent(first.id)}`,
+    customerFacing: false,
+  });
+  answer.context = { kind: 'lead-day', day: context.day ?? null, dayWord: context.dayWord ?? null, ids };
+  return answer;
+}
+
+/**
+ * Try one free question locally. An Answer when the question is a data
+ * question over space records (lead-day, day shift, primo), null when it is
+ * not — the caller then uses the backend-or-notice path.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string} title the validated question text
+ * @param {unknown} context the previous free answer's context
+ * @returns {Promise<Answer | null>}
+ */
+export async function answerFreeLocal(client, title, context = null) {
+  if (client === null || typeof client !== 'object' || typeof client.request !== 'function') return null;
+  const folded = freeWords(title);
+  if (folded === '') return null;
+  const hasLead = /\blead\b/.test(folded)
+    || (/\bnuov[oi]\b/.test(folded) && (/\bclient/.test(folded) || /\bcontatt/.test(folded) || /\baziend/.test(folded)));
+  const wantsPrimo = /\bprim[oi]\b/.test(folded);
+  const dayWord = /\bieri\b/.test(folded) ? 'ieri' : 'oggi';
+  const today = localDayOf(Date.now());
+  const isShiftOnly = /^(e|ed)\s+(ieri|oggi)\??$/.test(folded);
+  if (isShiftOnly) {
+    if (context?.kind !== 'lead-day' || typeof context?.day !== 'string' || context.day === '') return null;
+    // «e ieri?» after «quanti lead oggi?» reads yesterday; after a
+    // yesterday list it stays there. «e oggi?» always reads today.
+    const target = dayWord === 'ieri'
+      ? (context.day === today ? shiftDay(today, -1) : context.day)
+      : today;
+    return answerLeadDay(client, title, target, dayWord);
+  }
+  // «il primo lead» / «chi è il primo lead di oggi|ieri?» names one person,
+  // never the whole list: primo wins over the lead-day list, reading the
+  // explicit day (or the previous lead-day context, or today) and then
+  // formatting only its first entry through the primo path.
+  if (wantsPrimo && hasLead) {
+    const hasIeri = /\bieri\b/.test(folded);
+    const hasOggi = /\boggi\b/.test(folded);
+    const target = hasIeri ? shiftDay(today, -1)
+      : hasOggi ? today
+      : (context?.kind === 'lead-day' && typeof context?.day === 'string' && context.day !== '' ? context.day : today);
+    const word = hasIeri ? 'ieri' : hasOggi ? 'oggi'
+      : (typeof context?.dayWord === 'string' && context.dayWord !== '' ? context.dayWord : (target === today ? 'oggi' : 'ieri'));
+    const dayAnswer = await answerLeadDay(client, title, target, word);
+    return answerPrimo(title, dayAnswer.context, dayAnswer);
+  }
+  if (hasLead) {
+    const day = dayWord === 'ieri' ? shiftDay(today, -1) : today;
+    return answerLeadDay(client, title, day, dayWord);
+  }
+  if (wantsPrimo) return answerPrimo(title, context);
+  return null;
+}
+
 export async function runSuggestion(client, suggestionId, customer = null) {
   if (client === null || typeof client !== 'object' || typeof client.request !== 'function') {
     throw new Error('L’assistente ha bisogno del client API per leggere i record.');
@@ -1077,18 +1435,29 @@ export async function probeAssistantBackend(client) {
 }
 
 /**
- * One free question. In dry-run the question is refused with the status
- * notice (or the suggest-only line when the status carries none) before
- * any request leaves the panel — zero requests, never a silent call.
+ * One free question. Data questions over space records («quanti lead
+ * oggi?», «e ieri?», «chi è il primo?») are answered locally first — pure
+ * reads, no key, no backend, no spend — in live and in dry-run alike. In
+ * dry-run anything else is refused with the status notice (or the
+ * suggest-only line when the status carries none) before any request
+ * leaves the panel — zero requests, never a silent call.
  * @param {{ request: (path: string, options?: object) => Promise<any> }} client
  * @param {{ mode: string, endpoint?: string | null }} status
  * @param {unknown} question
+ * @param {unknown} [context] the previous free answer's context, for follow-ups
  */
-export async function askFreeQuestion(client, status, question) {
+export async function askFreeQuestion(client, status, question, context = null) {
   const text = typeof question === 'string' ? question.trim().replace(/\s+/g, ' ') : '';
   if (text === '') throw new Error('Scrivi una domanda prima di inviarla.');
   if (text.length > FREE_QUESTION_MAX_LENGTH) {
     throw new Error(`La domanda è troppo lunga (massimo ${FREE_QUESTION_MAX_LENGTH} caratteri).`);
+  }
+  // Voce 34fd687c: deterministic data answers need no backend — Dan's
+  // «quanti lead oggi??» is answered from the space's own records even
+  // while free questions stay off, with named sources and buttons.
+  const local = await answerFreeLocal(client, text, context);
+  if (local !== null) {
+    return { ok: true, disabled: false, answer: local };
   }
   const refusal = typeof status?.notice === 'string' && status.notice !== ''
     ? status.notice
@@ -1310,6 +1679,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // Review #596 P2: a top-bar question asked while an answer is still
     // running waits here (only the newest one) and starts when it ends.
     queued: null,
+    // Voce 34fd687c: the last free data answer's context (lead-day list),
+    // so «e ieri?» and «chi è il primo?» keep the thread. In-session only,
+    // like the history — never persisted.
+    freeContext: null,
   };
   // Every open() takes a generation: a slow status probe never lets an older
   // opening overwrite a newer question.
@@ -1528,11 +1901,12 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.draft = null;
     render();
     try {
-      const outcome = await askFreeQuestion(client, state.status ?? { mode: 'dry-run' }, question);
+      const outcome = await askFreeQuestion(client, state.status ?? { mode: 'dry-run' }, question, state.freeContext);
       if (outcome.disabled === true) {
         state.error = outcome.notice;
       } else if (outcome.answer) {
         state.answer = outcome.answer;
+        state.freeContext = outcome.answer.context ?? null;
         pushHistory(state.answer);
       }
     } catch (error) {
@@ -1617,6 +1991,28 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       await submitFreeQuestion(typed);
       return;
     }
+    // Voce 34fd687c: data questions («quanti lead oggi?») are answered
+    // from the space's own records even in dry-run — named customers,
+    // never UUIDs. Anything else falls through to the closest suggestion.
+    state.busy = true;
+    state.error = '';
+    render();
+    let local = null;
+    try {
+      local = await answerFreeLocal(client, typed, state.freeContext);
+    } catch {
+      local = null;
+    }
+    if (local !== null) {
+      state.answer = local;
+      state.freeContext = local.context ?? null;
+      pushHistory(local);
+      state.asked = null;
+      releaseBusy();
+      return;
+    }
+    state.busy = false;
+    render();
     const match = closestSuggestion(state.screenId, typed);
     state.asked = { text: typed, matched: match ? match.title : null };
     if (match) {
@@ -1624,6 +2020,9 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return;
     }
     render();
+    // No local answer and no suggestion match: the queued #596 question
+    // still starts — this path drains like every other busy exit.
+    drainQueued();
   }
 
   function render() {
