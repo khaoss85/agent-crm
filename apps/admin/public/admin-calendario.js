@@ -25,6 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
+import { nameFromProfile } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -175,6 +176,8 @@ export function displayKeys(weekKeys) {
 
 /** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
 export const GRID_START_MINUTES = 9 * 60;
+/** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
+const WEEK_PROFILE_READS = 40;
 export const GRID_END_MINUTES = 18 * 60;
 export const GRID_SLOT_MINUTES = 30;
 export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
@@ -486,7 +489,10 @@ export function slotInGrid(startsAt, endsAt) {
   const startMin = romeMinutes(startsAt);
   const endMin = romeMinutes(endsAt);
   if (startMin === null || endMin === null || endMin <= startMin) return false;
-  return startMin >= GRID_START_MINUTES && startMin <= GRID_END_MINUTES;
+  // 18:00 is the bottom edge of the grid, not a row: a slot starting there
+  // would clamp onto the 17:30 row (backlog:5fbebe8559e9), so it is named
+  // below the grid like every other out-of-hours step.
+  return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
 /**
@@ -500,10 +506,121 @@ export function draftMinutes(draft) {
   const from = draft?.startsAt ? Date.parse(draft.startsAt) : NaN;
   const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
   const pair = Math.round((to - from) / 60000);
-  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
   const stated = draft?.durationMinutes;
-  if (Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated)) return stated;
+  const statedOk = Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated);
+  // A day-only draft (midnight start, production 07/11) carries an end the
+  // model padded, not one the sentence stated: the stated minutes win.
+  if (statedOk && draftDayOnly(draft)) return stated;
+  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
+  if (statedOk) return stated;
   return 30;
+}
+
+/**
+ * Production 07/11 («trova 45 minuti con Daniele giovedì» drafted «12 nov
+ * 00:00–00:30»): the model answers a named day without a time as a Rome
+ * midnight instant. A midnight start is a day, not a time — the booking
+ * hours never start at 00:00 — so the draft paints «orario da scegliere»
+ * and the manual form leaves the hours empty.
+ * @param {any} draft
+ */
+export function draftDayOnly(draft) {
+  const startsAt = typeof draft?.startsAt === 'string' ? draft.startsAt : '';
+  if (startsAt !== '') return romeTime(startsAt) === '00:00';
+  // backlog:65ed7430 — the server names a stated day without a time as
+  // `day` with no startsAt: still a day, not a time.
+  return typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day);
+}
+
+/**
+ * The Rome day a phrase draft names, or null: the slot search is bound to
+ * it, so «giovedì» never proposes Monday first (production 07/11).
+ * @param {any} draft
+ */
+export function draftDayKey(draft) {
+  // backlog:65ed7430 — a stated `day` with no startsAt names the day the
+  // same way, so the slot search stays bound to it.
+  if (typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)) return draft.day;
+  const startsAt = typeof draft?.startsAt === 'string' ? draft.startsAt : '';
+  return startsAt === '' ? null : romeDayKey(startsAt);
+}
+
+/**
+ * The draft line's «when»: day and hours when the sentence gave a time,
+ * the day plus «orario da scegliere» when it named only a day, else the
+ * minutes it will search — never «00:00» and never «? –».
+ * @param {any} draft
+ */
+export function draftWhen(draft) {
+  const day = romeShortDay(draft?.startsAt);
+  if (day && draftDayOnly(draft)) {
+    // The weekday leads, so «giovedì» reads back as the operator said it.
+    const weekday = romeWeekdayShort(draft.startsAt);
+    return `${weekday ? `${weekday} ` : ''}${day} · orario da scegliere · ${draftMinutes(draft)} minuti`;
+  }
+  // backlog:65ed7430 — a stated `day` with no startsAt reads the same way:
+  // noon UTC always falls on the same Rome day (+1/+2). Never «?».
+  if (!day && typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)) {
+    const noon = `${draft.day}T12:00:00Z`;
+    const label = romeShortDay(noon) ?? draft.day;
+    const weekday = romeWeekdayShort(noon);
+    return `${weekday ? `${weekday} ` : ''}${label} · orario da scegliere · ${draftMinutes(draft)} minuti`;
+  }
+  const from = romeTime(draft?.startsAt);
+  const to = romeTime(draft?.endsAt);
+  if (day && from && to) return `${day} ${from}–${to}`;
+  if (day && from) return `${day} ${from}`;
+  return `${draftMinutes(draft)} minuti`;
+}
+
+/** Short Italian Rome weekday («gio») of an instant, or null. @param {unknown} value */
+function romeWeekdayShort(value) {
+  const at = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(at)) return null;
+  try {
+    return new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short' })
+      .format(new Date(at)).replace(/\./g, '');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The listino key a typed service names: the key itself when typed, or
+ * the key of the one catalog product whose name the operator typed
+ * («Lezione prova» → `lezione-prova`). Anything else is sent as typed and
+ * the server answers BO_APPOINTMENT_SERVICE_REFUSED — painted in Italian
+ * under the field (production 07/11).
+ * @param {unknown} typed @param {Map<string, string> | null | undefined} names sku → name
+ */
+export function serviceKeyFor(typed, names) {
+  const text = typeof typed === 'string' ? typed.trim() : '';
+  if (text === '' || !(names instanceof Map)) return text;
+  if (names.has(text.toLowerCase())) return text.toLowerCase();
+  const wanted = text.toLowerCase();
+  const hits = [...names.entries()].filter(([, name]) => String(name).trim().toLowerCase() === wanted);
+  return hits.length === 1 ? hits[0][0] : text;
+}
+
+/**
+ * The Italian sentence for a calendar refusal whose code names the cause
+ * (production 07/11: a typed service fell to «Riprova più tardi», AI off
+ * fell to «Ricerca non riuscita»). Null when the code is not one of these:
+ * the caller keeps its generic sentence.
+ * @param {unknown} error
+ */
+export function calendarRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = record.code;
+  // The pilot web refuses with its own code; the framework answers a
+  // validation error naming the field.
+  if (code === 'BO_APPOINTMENT_SERVICE_REFUSED' || record.details?.field === 'serviceKey') {
+    return 'Scegli un servizio dal listino: questo servizio non c’è.';
+  }
+  if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') {
+    return 'L’AI è spenta in questo spazio: usa il modulo qui sotto.';
+  }
+  return null;
 }
 
 /**
@@ -610,11 +727,91 @@ export function personFreeSlots(groups, searchIds, member) {
   return kept;
 }
 
+/** Statuses that no longer hold their slot, in the operator's words (C14: never English). */
+const STATUS_WORDS = Object.freeze({ cancelled: 'annullato', done: 'svolto', 'no-show': 'non presentato' });
+
 /**
- * Overlap lanes per day column: events sharing Rome time split the column
+ * backlog:5fbebe8559e9 (C14) — the Italian word of a row status that no
+ * longer holds its slot; anything unknown reads «non attivo», never the raw
+ * English value.
+ * @param {unknown} status
+ */
+export function statusWord(status) {
+  const key = String(status ?? '').trim().toLowerCase();
+  return Object.hasOwn(STATUS_WORDS, key) ? STATUS_WORDS[key] : 'non attivo';
+}
+
+/**
+ * backlog:5fbebe8559e9 — the service name of a booked row: the catalog
+ * product name for its listino key when the catalog names it, else the key
+ * itself made readable («lezione-prova» → «Lezione prova»), never the raw
+ * slug. A row without a key reads «Appuntamento».
+ * @param {unknown} serviceKey @param {Map<string, string> | null | undefined} names sku → name
+ */
+export function serviceLabel(serviceKey, names) {
+  const key = typeof serviceKey === 'string' ? serviceKey.trim() : '';
+  if (key === '') return 'Appuntamento';
+  const named = names instanceof Map ? names.get(key.toLowerCase()) : undefined;
+  if (typeof named === 'string' && named !== '') return named;
+  const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+
+/**
+ * backlog:5fbebe8559e9 — a proposal never overlaps a booking the searched
+ * person already holds in the painted week. The server answers free steps
+ * per identity; this second check runs on the very rows the grid paints, so
+ * a ghost can never sit on top of the person's own held block. Cancelled,
+ * done and no-show rows free their time. Fail closed: a held row whose time
+ * does not parse blocks nothing it cannot prove, a slot that does not parse
+ * is dropped.
+ * @param {unknown} slots @param {unknown} week team-week answer @param {unknown} searchIds
+ */
+export function dropHeldOverlaps(slots, week, searchIds) {
+  if (!Array.isArray(slots)) return [];
+  const ids = new Set(Array.isArray(searchIds) ? searchIds : []);
+  /** @type {Array<[number, number]>} */
+  const held = [];
+  const groups = Array.isArray(/** @type {any} */ (week)?.members) ? /** @type {any} */ (week).members : [];
+  for (const group of groups) {
+    if (!ids.has(group?.teamMemberId)) continue;
+    for (const row of group?.appointments ?? []) {
+      const status = String(row?.status ?? 'booked');
+      if (status !== 'booked' && status !== 'confirmed') continue;
+      const from = Date.parse(String(row?.startsAt ?? ''));
+      const to = Date.parse(String(row?.endsAt ?? ''));
+      if (Number.isFinite(from) && Number.isFinite(to) && to > from) held.push([from, to]);
+    }
+  }
+  return slots.filter((slot) => {
+    const from = Date.parse(String(slot?.startsAt ?? ''));
+    const to = Date.parse(String(slot?.endsAt ?? ''));
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return false;
+    return !held.some(([start, end]) => start < to && from < end);
+  });
+}
+
+/**
+ * Whether a loaded team week lists every searched identity, so the
+ * held-overlap guard can read their bookings from it (review #657).
+ * @param {any} week @param {Array<string>} searchIds
+ */
+export function weekCovers(week, searchIds) {
+  const groups = Array.isArray(week?.members) ? week.members : null;
+  if (!groups || !Array.isArray(searchIds) || searchIds.length === 0) return false;
+  const listed = new Set(groups.map((group) => group?.teamMemberId));
+  return searchIds.every((id) => listed.has(id));
+}
+
+/**
+ * Overlap lanes per day column: blocks sharing grid rows split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
- * the column lane count.
+ * the column lane count. Lanes follow the PAINTED half-hour rows, not the
+ * exact minutes (backlog:5fbebe8559e9): a 10:00–10:45 booking and a
+ * 10:45–11:30 proposal both cover the 10:30 row, so they sit side by side.
+ * Events and «✦ Proposta» ghosts share one pass, so a ghost never covers a
+ * booking or another ghost.
  * @param {Array<any>} rows
  * @returns {Map<any, {lane: number, lanes: number}>}
  */
@@ -628,8 +825,9 @@ export function lanesFor(rows) {
   /** @type {Map<any, {lane: number, lanes: number}>} */
   const placed = new Map();
   for (const row of ordered) {
-    const startMin = romeMinutes(row?.startsAt) ?? GRID_START_MINUTES;
-    const endMin = romeMinutes(row?.endsAt) ?? (startMin + GRID_SLOT_MINUTES);
+    const painted = gridRowsFor(row?.startsAt, row?.endsAt);
+    const startMin = painted.row;
+    const endMin = painted.row + painted.span;
     let lane = laneEnd.findIndex((end) => end <= startMin);
     if (lane === -1) {
       lane = laneEnd.length;
@@ -726,6 +924,8 @@ export function createCalendarioView(deps) {
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
     profiles: {},
+    /** Catalog product names by lowercase listino key; undefined until read, an empty Map when unreadable. @type {Map<string, string> | null | undefined} */
+    services: undefined,
     /** @type {any} */
     week: null,
     weekError: null,
@@ -738,12 +938,16 @@ export function createCalendarioView(deps) {
     aiLoading: false,
     /** Latest AI card note: zero slots, missing person, confirm outcome. */
     aiNote: '',
+    /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
+    aiOff: new Set(),
     /** Live manual form nodes, so a slot Conferma books the claim the operator sees. @type {any} */
     manualNodes: null,
     /** @type {any} */
     draft: null,
     draftNote: '',
     bookingNote: '',
+    /** The service field's own refusal, painted under it (BO_APPOINTMENT_SERVICE_REFUSED). */
+    serviceError: '',
     /** @type {any} */
     confirmed: null,
     /** Last manual form values, restored on every re-render. @type {any} */
@@ -859,7 +1063,80 @@ export function createCalendarioView(deps) {
     // Same mount guard as the roster and profile reads below: a late week
     // answer never paints over another screen sharing the mount
     // (backlog:607f33ee).
+    if (mount.querySelector('.cal-wrap') !== null) {
+      renderAll();
+      void loadWeekLabels(token);
+    }
+  }
+
+  /**
+   * backlog:5fbebe8559e9 — the names a block title needs: the catalog
+   * service names (read once per view) and the customer name of every linked
+   * row in the loaded week (one read-only profile per customer, cached by
+   * key, capped). One repaint when they settle, only while this week is
+   * still the painted one; until then the block paints the readable key.
+   * @param {number} token
+   */
+  async function loadWeekLabels(token) {
+    const pending = [];
+    if (state.services === undefined) {
+      state.services = null;
+      pending.push(ensureServices());
+    }
+    let reads = 0;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        const linked = subjectKeyOf(row);
+        if (!linked || linked.key in state.profiles || reads >= WEEK_PROFILE_READS) continue;
+        reads += 1;
+        state.profiles[linked.key] = null;
+        pending.push(fetchSubjectName(linked));
+      }
+    }
+    if (pending.length === 0) return;
+    await Promise.all(pending);
+    if (token !== renderToken) return;
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
+
+  /** The catalog read in flight, shared so a booking and the week labels read it once. @type {Promise<void>|null} */
+  let servicesRead = null;
+  /**
+   * The catalog names a booking needs to turn a typed product name into its
+   * listino key (review #657: a Conferma racing the first catalog read sent
+   * the raw name and was refused). Resolves at once once the catalog is read.
+   */
+  function ensureServices() {
+    if (state.services instanceof Map) return Promise.resolve();
+    if (servicesRead === null) {
+      servicesRead = loadServices().finally(() => { servicesRead = null; });
+    }
+    return servicesRead;
+  }
+
+  /** Catalog product names for the block titles; fail-soft to the readable key. */
+  async function loadServices() {
+    /** @type {Map<string, string>} */
+    const names = new Map();
+    try {
+      const answer = await client.request('/api/catalog/products?limit=200');
+      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
+        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+        const name = typeof product?.name === 'string' ? product.name.trim() : '';
+        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+      }
+    } catch (error) {
+      // No catalog in this project (or a stale bundle): the readable key
+      // stays. Anything else is unexpected and logged without the message.
+      if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
+        console.warn(
+          'bo-calendario catalog unreadable:',
+          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+          `spaceId=${readSpace()}`,
+        );
+      }
+    }
+    state.services = names;
   }
 
   /**
@@ -1357,6 +1634,33 @@ export function createCalendarioView(deps) {
     state.manualFirst?.focus?.();
   }
 
+  /**
+   * «+ Prenota» on a compact empty day (phone, backlog:5fbebe8559e9): the
+   * manual form opens on that day, with the time left to the operator —
+   * never an invented hour.
+   * @param {string} key
+   */
+  function bookDay(key) {
+    state.selection = null;
+    state.selectedId = null;
+    // Review #646 P1: the day is the only thing «+ Prenota» chooses. Times
+    // from an earlier slot or phrase draft are dropped (never booked on the
+    // wrong hour), and a pending phrase draft keeps only its person, service
+    // and note — its own day and time would overwrite the tapped day.
+    const pending = state.draftFill;
+    state.draftFill = null;
+    const kept = { ...(state.manual ?? {}) };
+    if (pending) {
+      if (typeof pending.teamMemberId === 'string' && pending.teamMemberId !== '') kept.teamMemberId = pending.teamMemberId;
+      if (typeof pending.serviceKey === 'string' && pending.serviceKey !== '') kept.serviceKey = pending.serviceKey;
+      if (typeof pending.notes === 'string' && pending.notes !== '') kept.notes = pending.notes;
+    }
+    state.manual = { ...kept, date: key, start: '', end: '' };
+    state.manualOpen = true;
+    renderAll();
+    state.manualFirst?.focus?.();
+  }
+
   function closeSlot() {
     if (!state.selection) return;
     state.selection = null;
@@ -1438,9 +1742,26 @@ export function createCalendarioView(deps) {
     const now = clock();
     const nowMin = romeMinutes(now);
     const columns = weekColumns();
+    /** Rome days holding any loaded booking, hidden people included. */
+    const heldDays = new Set();
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        const day = romeDayKey(row?.startsAt);
+        if (day !== null) heldDays.add(day);
+      }
+    }
     columns.forEach(([key, rows], dayIndex) => {
+      const ghosts = state.proposals.filter((slot) => romeDayKey(slot?.startsAt) === key
+        && slotInGrid(slot?.startsAt, slot?.endsAt));
+      // backlog:5fbebe8559e9: on the stacked phone layout a day with nothing
+      // painted collapses to one compact row (CSS ≤ 700px); desktop keeps
+      // the empty timeline, the compact row stays hidden there.
+      // Review #646 round 3: «Nessun appuntamento» is a claim about the day,
+      // so it reads the whole loaded week — a day whose only bookings belong
+      // to a hidden person keeps its timeline, never the compact row.
+      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
       const head = el(doc, 'div', {
-        className: 'cal-day-head',
+        className: empty ? 'cal-day-head is-empty' : 'cal-day-head',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },
       });
       const headText = dayHead(key) ?? key;
@@ -1454,10 +1775,12 @@ export function createCalendarioView(deps) {
       }
       grid.appendChild(head);
       const col = el(doc, 'div', {
-        className: 'cal-day',
+        className: empty ? 'cal-day is-empty' : 'cal-day',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
       });
-      const lanes = lanesFor(rows);
+      // Events and ghosts share the lanes (backlog:5fbebe8559e9): a ghost
+      // never paints over a booking or over another ghost.
+      const lanes = lanesFor([...rows, ...ghosts]);
       const laneCount = lanes.size === 0 ? 1 : Math.max(...[...lanes.values()].map((entry) => entry.lanes));
       col.setAttribute('style', `${col.getAttribute('style')}; --lanes: ${laneCount}`);
       for (const row of rows) {
@@ -1470,13 +1793,12 @@ export function createCalendarioView(deps) {
       // each ghost on its time rows, spanning the day width. Fetta 8: a slot
       // starting outside 09:00–18:00 never lands on another hour's row — it
       // joins the honest out-of-hours lines below the grid instead.
-      for (const slot of state.proposals) {
-        if (romeDayKey(slot?.startsAt) !== key) continue;
-        if (!slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
+      for (const slot of ghosts) {
         const placed = gridRowsFor(slot?.startsAt, slot?.endsAt);
+        const lane = lanes.get(slot) ?? { lane: 0, lanes: 1 };
         const ghost = el(doc, 'button', {
           className: 'bo-add-button',
-          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: 1 / -1` },
+          attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
         ghost.addEventListener('click', () => void confirmSlot(slot));
@@ -1510,6 +1832,18 @@ export function createCalendarioView(deps) {
         col.appendChild(line);
       }
       grid.appendChild(col);
+      if (empty) {
+        const compact = el(doc, 'div', { className: 'cal-day-compact', attrs: { 'data-day': key } });
+        compact.appendChild(el(doc, 'span', { className: 'cal-day-compact-name', text: dayHead(key) ?? key }));
+        compact.appendChild(el(doc, 'span', { text: 'Nessun appuntamento' }));
+        const book = uiButton(doc, {
+          variant: 'secondary', small: true, label: '+ Prenota',
+          attrs: { type: 'button', 'aria-label': `Prenota ${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}`.trim() },
+        });
+        book.addEventListener('click', () => bookDay(key));
+        compact.appendChild(book);
+        grid.appendChild(compact);
+      }
     });
     panel.appendChild(grid);
     // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or
@@ -1590,7 +1924,7 @@ export function createCalendarioView(deps) {
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
     if (cancelled) {
-      foot.appendChild(el(doc, 'span', { className: 'badge', text: status }));
+      foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
     item.appendChild(foot);
     const id = String(row?.id ?? '');
@@ -1601,11 +1935,16 @@ export function createCalendarioView(deps) {
     return item;
   }
 
-  /** Event title: the agreed service, never an invented label. */
+  /**
+   * Event title, like the prototype «Prima call · Giulia Romano»: the service
+   * name, then the customer name when the row is linked to a named customer
+   * (backlog:5fbebe8559e9). Never the raw listino key, never an invented
+   * name; the free notes move to the detail card.
+   */
   function titleOf(row) {
-    if (typeof row.notes === 'string' && row.notes.trim() !== '') return row.notes.trim();
-    if (typeof row.serviceKey === 'string' && row.serviceKey !== '') return row.serviceKey;
-    return 'Appuntamento';
+    const service = serviceLabel(row?.serviceKey, state.services);
+    const customer = displayNameOf(row, subjectKeyOf(row));
+    return customer ? `${service} · ${customer}` : service;
   }
 
   /**
@@ -1621,22 +1960,7 @@ export function createCalendarioView(deps) {
     return { resource, id, key: `${resource}:${id}` };
   }
 
-  /**
-   * Display name from a read-only customer profile: the contact's full name,
-   * else the company name. The email is deliberately not a "nome", and an
-   * unknown customer resolves to null (the card falls back to the row label
-   * or id) — never a guessed name. @param {any} profile
-   */
-  function nameFromProfile(profile) {
-    const contact = profile?.identity?.contact ?? null;
-    const full = [contact?.firstName, contact?.lastName]
-      .filter((part) => typeof part === 'string' && part.trim() !== '')
-      .join(' ').trim();
-    if (full !== '') return full;
-    const company = typeof profile?.identity?.company?.name === 'string'
-      ? profile.identity.company.name.trim() : '';
-    return company !== '' ? company : null;
-  }
+  // nameFromProfile lives in admin-labels.js: Oggi reads the same name.
 
   /**
    * The customer display name: the cached profile name first, then the row
@@ -1653,6 +1977,15 @@ export function createCalendarioView(deps) {
 
   /** @param {{resource: string, id: string, key: string}} linked */
   async function loadSubjectName(linked) {
+    await fetchSubjectName(linked);
+    // The operator may have opened the customer card while the read was in
+    // flight: that view clears this same mount, so no calendar wrap means
+    // the calendar is gone and repainting would wipe the card in its place.
+    if (state.selectedId !== null && mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
+
+  /** @param {{resource: string, id: string, key: string}} linked */
+  async function fetchSubjectName(linked) {
     // The cache is keyed, not selection-bound: a late answer stays valid
     // data for its key whatever is selected meanwhile — the repaint below
     // only refreshes the calendar while it is still the mounted view.
@@ -1676,10 +2009,6 @@ export function createCalendarioView(deps) {
       }
       state.profiles[linked.key] = null;
     }
-    // The operator may have opened the customer card while the read was in
-    // flight: that view clears this same mount, so no calendar wrap means
-    // the calendar is gone and repainting would wipe the card in its place.
-    if (state.selectedId !== null && mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**
@@ -1736,6 +2065,8 @@ export function createCalendarioView(deps) {
     if (participants.length > 0) {
       card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
     }
+    const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
+    if (notes !== '') card.appendChild(el(doc, 'p', { text: `Nota: ${notes}` }));
     if (channelOf(row) === 'whatsapp') {
       const pill = el(doc, 'p');
       pill.appendChild(uiChannelChip(doc, 'WA'));
@@ -1786,7 +2117,14 @@ export function createCalendarioView(deps) {
     input.addEventListener('input', () => { state.phrase = String(input.value ?? ''); });
     state.phraseInput = input;
     const find = el(doc, 'button', { className: 'primary small', text: 'Trova slot liberi' });
-    if (state.aiLoading) find.setAttribute('disabled', 'true');
+    // AI off in this space (production 07/11): once the server said so, the
+    // phrase box stays disabled for the visit and the note points at the
+    // manual form, instead of a retry that can only fail the same way.
+    const aiOff = state.aiOff.has(readSpace());
+    if (aiOff) {
+      input.setAttribute('disabled', 'true');
+      find.setAttribute('disabled', 'true');
+    } else if (state.aiLoading) find.setAttribute('disabled', 'true');
     else find.addEventListener('click', () => void submitAi(String(input.value ?? '')));
     row.appendChild(input);
     row.appendChild(find);
@@ -1794,7 +2132,8 @@ export function createCalendarioView(deps) {
     if (state.aiLoading) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: 'Cerco gli slot liberi…' }));
     }
-    if (state.aiNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.aiNote }));
+    const aiNote = state.aiNote || (aiOff ? calendarRefusalText({ code: 'LLM_SPACE_DISABLED' }) : '');
+    if (aiNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: aiNote }));
     if (state.draft) panel.appendChild(renderDraft(state.draft));
     if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
     if (state.proposals.length > 0) {
@@ -1817,11 +2156,32 @@ export function createCalendarioView(deps) {
     return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
   }
 
-  /** Suggest window over the shown Rome week, with the day-margin idiom of the booking path. */
-  function suggestBounds() {
-    if (!Array.isArray(state.weekKeys) || state.weekKeys.length === 0) return null;
-    const first = Date.parse(`${state.weekKeys[0]}T00:00:00Z`);
-    const last = Date.parse(`${state.weekKeys[state.weekKeys.length - 1]}T00:00:00Z`);
+  /**
+   * The team week holding every searched identity: the painted week when it
+   * already lists them all, else one team-week read for the searched ones
+   * over the shown window (review #646 P2).
+   * @param {Array<string>} searchIds @param {Array<string>} weekKeys the searched week
+   */
+  async function heldWeekFor(searchIds, weekKeys) {
+    if (state.weekKeys === weekKeys && weekCovers(state.week, searchIds)) return state.week;
+    const window = weekWindow(weekKeys);
+    if (!window) throw new Error('Settimana non valida.');
+    return client.request(
+      `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
+      + `&from=${encodeURIComponent(window.from)}&to=${encodeURIComponent(window.to)}`,
+    );
+  }
+
+  /**
+   * Suggest window over the shown Rome week, with the day-margin idiom of
+   * the booking path — or over the one Rome day the phrase named.
+   * @param {string|null} [dayKey]
+   */
+  function suggestBounds(dayKey = null) {
+    const keys = typeof dayKey === 'string' && dayKey !== '' ? [dayKey] : state.weekKeys;
+    if (!Array.isArray(keys) || keys.length === 0) return null;
+    const first = Date.parse(`${keys[0]}T00:00:00Z`);
+    const last = Date.parse(`${keys[keys.length - 1]}T00:00:00Z`);
     if (Number.isNaN(first) || Number.isNaN(last)) return null;
     return {
       from: new Date(first - 2 * 3600 * 1000).toISOString(),
@@ -1864,11 +2224,32 @@ export function createCalendarioView(deps) {
         state.aiNote = 'Dalla frase non capisco la persona: scrivi con chi, per esempio «trova 45 minuti con Marco».';
         return;
       }
-      const bounds = suggestBounds();
+      // Production 07/11: «giovedì» named a day, the search spanned the
+      // whole week and Monday came first. A named day bounds the search to
+      // it, and the grid moves to that day's week so the ghosts show there.
+      const dayKey = draftDayKey(draft);
+      const movedWeek = Boolean(dayKey && !state.weekKeys.includes(dayKey));
+      if (movedWeek) {
+        state.weekKeys = romeWeekKeys(new Date(`${dayKey}T12:00:00Z`));
+        state.week = null;
+        const shown = parseMemberFilter(state.memberFilter);
+        // The held-overlap guard below reads the named week: wait for it,
+        // never filter against a nulled week (review #657).
+        const wantedKeys = state.weekKeys;
+        if (shown.length > 0) await loadWeek(shown);
+        // A pager move during the preload leaves this answer unpublished:
+        // the guard must never read a week other than the named one
+        // (review #657, round 5).
+        if (state.weekKeys !== wantedKeys) return;
+      }
+      const bounds = suggestBounds(dayKey);
       if (!bounds) {
         state.aiNote = 'Settimana non valida.';
         return;
       }
+      // Review #646 round 3: the searched week is captured once; a pager
+      // move while the search runs leaves this answer unpublished.
+      const searchKeys = state.weekKeys;
       // backlog:d1e4d90e — the draft names a person («Marco»), the search
       // needs booking identities: resolve against the known team, and search
       // every identity the human holds. Unresolved words keep the outsider
@@ -1893,18 +2274,41 @@ export function createCalendarioView(deps) {
       // backlog:d1e4d90e — the night is always free, so rank the painted
       // hours first: day steps fill the proposals, night steps stay behind
       // for the honest lines, never dropped (fetta 8).
-      const proposals = rankPhraseProposals(filterPhraseProposals(kept, clock().getTime()));
+      // Review #646 P2: the held-booking guard reads the SEARCHED person's
+      // week. When the painted week does not hold every searched identity
+      // (nobody named, the filter shows marco and the phrase names sara, a
+      // moved week the grid could not load), the guard reads theirs too — a
+      // failed read proposes nothing, never an unguarded list (review #657).
+      if (state.weekKeys !== searchKeys) return;
+      let heldWeek = null;
+      try {
+        heldWeek = await heldWeekFor(searchIds, searchKeys);
+      } catch {
+        heldWeek = null;
+      }
+      if (state.weekKeys !== searchKeys) return;
+      if (!heldWeek) {
+        state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
+        return;
+      }
+      const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
+      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, clock().getTime()), heldWeek, searchIds));
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
-      state.aiNote = proposals.length === 0 ? 'Nessuno slot libero questa settimana, prova con altri giorni.' : '';
+      state.aiNote = proposals.length === 0
+        ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
+        : '';
     } catch (error) {
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
       const record = error !== null && typeof error === 'object' ? error : {};
+      const refusal = calendarRefusalText(error);
+      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
+      if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
         ? 'La frase indica un momento già passato: prova con un giorno futuro.'
-        : humanReadError(error, {
+        : refusal ?? humanReadError(error, {
           failed: 'Ricerca non riuscita. Riprova più tardi.',
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
@@ -1927,13 +2331,12 @@ export function createCalendarioView(deps) {
   /** @param {any} draft */
   function renderDraft(draft) {
     const box = el(doc, 'div', { className: 'cal-draft' });
-    // backlog:65ed7430 — a day-only draft has no startsAt: name its Rome day
-    // instead of '?'. Noon UTC always falls on the same Rome day (+1/+2).
-    const dayLabel = draft?.startsAt != null
-      ? romeShortDay(draft.startsAt)
-      : (typeof draft?.day === 'string' ? romeShortDay(`${draft.day}T12:00:00Z`) : null);
+    // backlog:5fbebe8559e9 + backlog:65ed7430: one «when» line for every
+    // draft shape — a day without a time reads «orario da scegliere»,
+    // never «00:00» and never «?».
+    const when = draftWhen(draft);
     box.appendChild(el(doc, 'p', {
-      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${dayLabel ?? '?'} ${romeTime(draft.startsAt) ?? ''}–${romeTime(draft.endsAt) ?? ''}`,
+      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
     return box;
@@ -2073,6 +2476,7 @@ export function createCalendarioView(deps) {
    * @param {{teamMemberId?: unknown, startsAt?: unknown, endsAt?: unknown}} slot
    */
   async function confirmSlot(slot) {
+    await ensureServices();
     const member = typeof slot?.teamMemberId === 'string' ? slot.teamMemberId : '';
     const startsAt = typeof slot?.startsAt === 'string' ? slot.startsAt : '';
     const endsAt = typeof slot?.endsAt === 'string' ? slot.endsAt : '';
@@ -2086,7 +2490,7 @@ export function createCalendarioView(deps) {
       spaceId: readSpace(),
       subject: { resource: customer.resource, id: customer.id, owner: 'host' },
       teamMemberId: member,
-      serviceKey: manualValue('serviceKey'),
+      serviceKey: serviceKeyFor(manualValue('serviceKey'), state.services),
       priceCents: priceToCents(manualValue('price')),
       currency: 'EUR',
       startsAt,
@@ -2095,27 +2499,76 @@ export function createCalendarioView(deps) {
       sourceKey: `calendario:${member}:${startsAt}:${customer.id === '' ? 'senza-cliente' : customer.id}`,
       source: { package: 'host', action: 'calendar-book' },
     };
+    state.confirmed = null;
+    state.serviceError = '';
+    // Same in-flight rule as the manual Conferma (review #657): the queued
+    // write can take a while, the stale draft note never stays on screen.
+    state.draftNote = '';
+    state.aiNote = 'Prenotazione in corso…';
+    renderAll();
     try {
       const booked = await client.request('/api/appointments/confirm', {
         method: 'POST',
         body: { ...claim, confirmed: true },
       });
       if (booked?.decision === 'booked') {
-        state.confirmed = booked.appointment ?? claim;
-        state.selection = null;
-        state.proposals = [];
-        state.aiNote = '';
-        state.bookingNote = '';
+        markBooked(booked.appointment ?? claim);
       } else {
         state.aiNote = 'Registrata come proposta: lo spazio non fissa in automatico.';
       }
     } catch (error) {
-      state.aiNote = humanWriteError(error, {
-        failed: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.',
-        notComposed: 'Il calendario non è composto in questo spazio.',
-      });
+      const refusal = calendarRefusalText(error);
+      if (refusal !== null && isServiceRefusal(error)) {
+        // The cause is the service field: say it there, and point at it here.
+        state.serviceError = refusal;
+        state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+      } else {
+        state.aiNote = humanWriteError(error, {
+          failed: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
+      }
     }
     renderAll();
+    reloadAfterBooking();
+  }
+
+  /** @param {unknown} error */
+  function isServiceRefusal(error) {
+    const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+    return record.code === 'BO_APPOINTMENT_SERVICE_REFUSED' || record.details?.field === 'serviceKey';
+  }
+
+  /**
+   * Production 07/11: after a «booked» answer the form still read «Bozza
+   * pronta: premi Conferma…» and the phrase card kept its draft. A booking
+   * is a done state: every draft note, proposal and form value goes, the
+   * form stays open on «Prenotato: <persona> · <giorno ora>», and the grid
+   * moves to the booked day's week so the event shows once the week reloads.
+   * @param {any} appointment
+   */
+  function markBooked(appointment) {
+    state.confirmed = appointment;
+    state.selection = null;
+    state.draft = null;
+    state.draftNote = '';
+    state.draftFill = null;
+    state.proposals = [];
+    state.aiNote = '';
+    state.bookingNote = '';
+    state.serviceError = '';
+    state.manual = null;
+    state.customerPick = null;
+    state.manualOpen = true;
+    const day = romeDayKey(appointment?.startsAt);
+    if (day && !state.weekKeys.includes(day)) {
+      state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
+      state.week = null;
+    }
+  }
+
+  /** Reload the week after a booking, so the new event paints on the grid. */
+  function reloadAfterBooking() {
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0 && state.confirmed) void loadWeek(members);
   }
@@ -2237,6 +2690,15 @@ export function createCalendarioView(deps) {
       className: 'lede',
       text: 'Compila e premi «Proponi»: niente è scritto finché non premi «Conferma».',
     }));
+    // The done state leads the panel (production 07/11): after «booked» the
+    // operator reads what was booked first, never a stale draft note.
+    if (state.confirmed) {
+      panel.appendChild(el(doc, 'p', {
+        className: 'cal-ok',
+        attrs: { role: 'status', 'data-role': 'booked' },
+        text: `Prenotato: ${memberLabelFor(state.confirmed.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(state.confirmed.startsAt) ?? ''} ${romeTime(state.confirmed.startsAt) ?? ''}.`,
+      }));
+    }
     const form = el(doc, 'div', { className: 'cal-form' });
     // The customer is picked by name from the search, never typed as an id
     // or a resource (owner 29/10): the search block below owns the pick, so
@@ -2270,6 +2732,18 @@ export function createCalendarioView(deps) {
       });
       inputs[name] = input;
       form.appendChild(input);
+      if (name === 'serviceKey' && state.serviceError) {
+        // Production 07/11: a typed service the listino does not know read
+        // «Riprova più tardi». The cause is this field: say it right here.
+        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
+        input.setAttribute('aria-invalid', 'true');
+        input.addEventListener('input', () => {
+          state.serviceError = '';
+          hint.setAttribute('class', 'field-error hidden');
+          input.setAttribute('aria-invalid', 'false');
+        });
+        form.appendChild(hint);
+      }
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -2293,15 +2767,14 @@ export function createCalendarioView(deps) {
       if (draft.notes) inputs.notes.value = String(draft.notes);
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
-      const dayKey = typeof draft.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)
-        ? draft.day
-        : romeDayKey(draft.startsAt);
+      const dayKey = draftDayKey(draft);
       if (dayKey) inputs.date.value = dayKey;
-      // backlog:65ed7430 — a day-only draft carries no hour: clear start/end
-      // so a stale hour from an earlier edit is never booked as stated.
-      if (draft.startsAt === undefined) inputs.start.value = '';
+      // A day-only draft (a Rome-midnight start, or `day` with no startsAt)
+      // leaves the hours to choose: clear them, so neither 00:00 nor a stale
+      // hour from an earlier edit is ever booked as stated (backlog:65ed7430).
+      if (draftDayOnly(draft) || draft.startsAt === undefined) inputs.start.value = '';
       else if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
-      if (draft.endsAt === undefined) inputs.end.value = '';
+      if (draftDayOnly(draft) || draft.endsAt === undefined) inputs.end.value = '';
       else if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
       // The draft has been absorbed into the visible form: snapshot it, so
       // a later re-render keeps the draft values instead of replaying them
@@ -2322,12 +2795,6 @@ export function createCalendarioView(deps) {
     form.appendChild(confirm);
     panel.appendChild(form);
     if (state.bookingNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.bookingNote }));
-    if (state.confirmed) {
-      panel.appendChild(el(doc, 'p', {
-        className: 'cal-ok',
-        text: `Prenotato: ${memberLabelFor(state.confirmed.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(state.confirmed.startsAt) ?? ''} ${romeTime(state.confirmed.startsAt) ?? ''}.`,
-      }));
-    }
     return panel;
   }
 
@@ -2362,7 +2829,7 @@ export function createCalendarioView(deps) {
         spaceId: readSpace(),
         subject: { resource: customer.resource, id: customer.id, owner: 'host' },
         teamMemberId: member,
-        serviceKey: read('serviceKey'),
+        serviceKey: serviceKeyFor(read('serviceKey'), state.services),
         priceCents,
         currency: 'EUR',
         startsAt,
@@ -2452,6 +2919,7 @@ export function createCalendarioView(deps) {
 
   /** @param {any} inputs @param {boolean} confirm */
   async function submitBooking(inputs, confirm) {
+    await ensureServices();
     const { claim } = claimFrom(inputs);
     // The manual form is the source of truth for this submit: remember every
     // raw value (draft-derived ones included) so the re-render after propose
@@ -2464,12 +2932,17 @@ export function createCalendarioView(deps) {
     }
     state.draftFill = null;
     state.confirmed = null;
+    state.serviceError = '';
     const missing = missingManualFields(inputs);
     if (missing.length > 0) {
       state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
       renderAll();
       return;
     }
+    // The queued write can take a while on the pilot: the stale «Bozza
+    // pronta» never stays on screen while Conferma is in flight.
+    state.bookingNote = confirm ? 'Prenotazione in corso…' : 'Controllo lo slot…';
+    renderAll();
     try {
       if (!confirm) {
         const proposed = await client.request('/api/appointments/propose', {
@@ -2491,22 +2964,26 @@ export function createCalendarioView(deps) {
         body: { ...claim, confirmed: true },
       });
       if (booked?.decision === 'booked') {
-        state.confirmed = booked.appointment ?? claim;
-        state.selection = null;
-        state.bookingNote = '';
-        state.draftFill = null;
+        markBooked(booked.appointment ?? claim);
       } else {
         state.bookingNote = 'Registrata come proposta: lo spazio non fissa in automatico.';
       }
     } catch (error) {
-      state.bookingNote = humanWriteError(error, {
-        failed: 'Prenotazione non riuscita. Riprova più tardi.',
-        notComposed: 'Il calendario non è composto in questo spazio.',
-      });
+      if (isServiceRefusal(error)) {
+        // The cause is the service field: the sentence sits under it, and
+        // the panel note says what to do, never «Riprova più tardi».
+        console.warn('bo-calendario booking refused:', String(error?.code ?? 'unknown'), `spaceId=${readSpace()}`);
+        state.serviceError = calendarRefusalText(error) ?? '';
+        state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      } else {
+        state.bookingNote = humanWriteError(error, {
+          failed: 'Prenotazione non riuscita. Riprova più tardi.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
+      }
     }
     renderAll();
-    const members = parseMemberFilter(state.memberFilter);
-    if (members.length > 0 && state.confirmed) void loadWeek(members);
+    reloadAfterBooking();
   }
 
   async function render() {

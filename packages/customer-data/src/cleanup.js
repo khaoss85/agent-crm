@@ -3,7 +3,7 @@
 import { AppError, normalizeActor } from '../../core/index.js';
 import { CUSTOMER_SCAN_LIMIT, PHONE_BEARING_SYSTEMS } from './customers.js';
 import { emailShape, normalizeCompanyName } from './normalize.js';
-import { recordCandidatePairs } from './sender.js';
+import { isNoCompany, recordCandidatePairs } from './sender.js';
 import {
   deciding,
   optional,
@@ -240,6 +240,10 @@ export function createCleanupProposals({ database, modules, policy, names, follo
     const byCompanyName = new Map();
     for (const subject of subjects) {
       if (subject.resource !== 'company' || !subject.label) continue;
+      // Every contact without Azienda has its own «Senza azienda»
+      // placeholder (production 07/11): same name by design, never a
+      // duplicate suspect.
+      if (isNoCompany({ name: subject.label })) continue;
       const normalized = normalizeCompanyName(subject.label);
       if (!byCompanyName.has(normalized)) byCompanyName.set(normalized, []);
       byCompanyName.get(normalized).push(subject);

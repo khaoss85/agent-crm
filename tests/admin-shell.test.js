@@ -36,6 +36,7 @@ test('sidebar voices are the prototype voices, in Italian', () => {
     'Clienti',
     'Pipeline',
     'Calendario',
+    'Agenti',
     'Sequenze',
     'Reporting',
     'Nuovo modulo',
@@ -43,7 +44,11 @@ test('sidebar voices are the prototype voices, in Italian', () => {
   ]);
   const groups = Object.fromEntries(SHELL_ITEMS.map((item) => [item.id, item.group]));
   assert.equal(groups.oggi, 'home');
-  for (const id of ['clienti', 'pipeline', 'calendario', 'sequenze']) assert.equal(groups[id], 'native');
+  for (const id of ['clienti', 'pipeline', 'calendario', 'agenti', 'sequenze']) assert.equal(groups[id], 'native');
+  // backlog:33782ba68747: Agenti take Sequenze's sidebar place; Sequenze
+  // keep their route but no sidebar voice.
+  assert.equal(SHELL_ITEMS.find((item) => item.id === 'sequenze').nav, false);
+  assert.notEqual(SHELL_ITEMS.find((item) => item.id === 'agenti').nav, false);
   assert.equal(groups.reporting, 'custom');
   assert.equal(groups['nuovo-modulo'], 'custom');
   assert.equal(groups.impostazioni, 'settings');
@@ -280,6 +285,7 @@ test('a composed schema envelope links every delivered screen (backlog:42fd49b8)
   }
   assert.equal(byId.sequenze.available, false, 'sequenze has no admin screen yet');
   assert.equal(byId.sequenze.route, null);
+  assert.equal(byId.agenti.available, false, 'agenti need the agents package composed');
   // BO-F3: Calendario ships its screen now.
   for (const id of ['reporting', 'nuovo-modulo', 'calendario']) {
     assert.equal(byId[id].available, true, `${id} links its delivered screen`);
@@ -797,4 +803,20 @@ test('the Stato sync badge renders on all four Impostazioni tabs', () => {
       .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge')).length,
     0, `${activeId} lights no badge on an unknown count`);
   }
+});
+
+test('Agenti link their screen only when the agents package publishes create-agent (backlog:33782ba68747)', () => {
+  const composed = shellNavInput({
+    domains: { agents: { resources: ['teammate-agent'], operations: [{ name: 'create-agent', appMethod: 'createTeammateAgent' }] } },
+  });
+  assert.equal(composed.agentsAvailable, true);
+  const on = buildShellNav(composed).find((item) => item.id === 'agenti');
+  assert.equal(on.available, true);
+  assert.equal(on.route, '#/agenti');
+  assert.equal(on.label, 'Agenti');
+  const without = shellNavInput({ domains: { agents: { resources: ['teammate-agent'], operations: [] } } });
+  assert.equal(without.agentsAvailable, false);
+  const off = buildShellNav(without).find((item) => item.id === 'agenti');
+  assert.equal(off.available, false);
+  assert.equal(off.route, null);
 });

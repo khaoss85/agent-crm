@@ -7,6 +7,8 @@ import {
   observedDirections,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
+  NO_COMPANY_NAME,
+  shownCompanyName,
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
@@ -1642,6 +1644,52 @@ test('714433c2: Modifica opens the edit form and Salva PATCHes the contact, then
   assert.ok(mount.textContent.includes('Dettagli'), 'the re-read card shows Dettagli again');
 });
 
+test('Dettagli › Modifica › Salva sends ONE PATCH, however many times it fires (production 07/11)', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => pending.then(() => ({ ok: true })));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  save.dispatch('click');
+  save.dispatch('click');
+  await flushClicks();
+  save.dispatch('click');
+  assert.equal(save.disabled, true, 'Salva is off while the PATCH is in flight');
+  release();
+  await flushClicks(8);
+  const patches = client.writes.filter((write) => write.method === 'PATCH');
+  assert.equal(patches.length, 1, 'one PATCH /contacts/<id> for one Salva');
+  assert.equal(patches[0].path, '/api/contacts/c1');
+});
+
+test('a contact typed without Azienda shows no Azienda on the scheda (production 07/11)', async () => {
+  assert.equal(NO_COMPANY_NAME, 'Senza azienda', 'the same reserved name customer-data writes');
+  assert.equal(shownCompanyName({ company: { id: 'k0', name: 'Senza azienda' } }), null);
+  assert.equal(shownCompanyName({ company: { id: 'k1', name: 'Palestra Esempio' } }), 'Palestra Esempio');
+  assert.equal(shownCompanyName({ company: null }), null);
+  const card = { ...CARD, company: { id: 'k0', name: NO_COMPANY_NAME } };
+  const mount = await renderCard(stubClient({ card, profile: OPPORTUNITY_ONLY_PROFILE }));
+  assert.ok(!mount.textContent.includes(NO_COMPANY_NAME), 'the reserved company never reads as an Azienda');
+  const facts = mount.findAll('span').filter((node) => node.getAttribute('class') === 'bo-scheda-fact-label');
+  assert.ok(!facts.some((node) => node.textContent === 'Azienda'), 'no Azienda row for it');
+});
+
+test('two renders racing paint one scheda, so there is one Dettagli Salva', async () => {
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client: base });
+  await Promise.all([view.renderCard('contact', 'c1'), view.renderCard('contact', 'c1')]);
+  const panels = mount.childNodes.filter((node) => node.getAttribute?.('class') === 'bo-scheda');
+  assert.equal(panels.length, 1, 'only the newest render lands');
+  const edits = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'edit-details');
+  assert.equal(edits.length, 1, 'one Modifica, so one form and one Salva');
+});
+
 test('714433c2: Annulla drops the edits with no write and re-reads the card', async () => {
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
   const client = recordingClient(base);
@@ -1807,6 +1855,39 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   }, 'the appointment pick names the same record');
 });
 
+test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
+  const pickFor = async (card, profile) => {
+    const map = new Map();
+    const storage = {
+      getItem: (key) => (map.has(key) ? map.get(key) : null),
+      setItem: (key, value) => { map.set(key, String(value)); },
+      removeItem: (key) => { map.delete(key); },
+    };
+    const doc = createFakeDocument();
+    const mount = createMount();
+    await createCustomerCardView({ doc, mount, client: stubClient({ card, profile }), storage, navigate: () => {} })
+      .renderCard('contact', 'c1');
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer').dispatch('click');
+    return JSON.parse(storage.getItem('accordo.bo.customer-pick.offer'));
+  };
+  const ownProfile = {
+    ...OPPORTUNITY_ONLY_PROFILE,
+    identity: {
+      ...OPPORTUNITY_ONLY_PROFILE.identity,
+      company: null,
+      contact: { ...OPPORTUNITY_ONLY_PROFILE.identity.contact, companyId: 'k-own' },
+    },
+  };
+  // The card API names no company for the placeholder (customer-data profile).
+  const viaApi = await pickFor({ ...CARD, company: null }, ownProfile);
+  assert.deepEqual(viaApi.company, { id: 'k-own', name: 'Guido Presti' },
+    'the offer files under the contact own placeholder, read as the person');
+  // An older server still naming the placeholder: same pick, never its name.
+  const viaOld = await pickFor({ ...CARD, company: { id: 'k-own', name: NO_COMPANY_NAME } }, ownProfile);
+  assert.deepEqual(viaOld.company, { id: 'k-own', name: 'Guido Presti' });
+  assert.equal(shownCompanyName({ company: { name: '  SENZA   azienda ' } }), null, 'same normalization as the server');
+});
+
 // Backlog e9b4fc2f: «Scrivi» opens the composer inside the scheda with the
 // customer's own channels. Email is linked (Gmail), WhatsApp has the number
 // but no linked connection — it reads switched off with its Connettori link.
@@ -1814,7 +1895,9 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
 // the preselected recipient, never a caller-supplied address.
 const COMPOSER_CONNECTORS = {
   connectors: [
-    { channel: 'email', status: 'active', connectionKey: 'gmail-1' },
+    // A real connection row always names its account (readSyncState):
+    // review #648 — a linked Email with no valid sender is not sendable.
+    { channel: 'email', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra-esempio.it' },
     { channel: 'instagram', status: 'active', connectionKey: 'ig-1' },
   ],
 };
@@ -2152,6 +2235,105 @@ test('a935af6a6d19: with Gmail linked in the profile Email is connected and show
   assert.equal(send.getAttribute('disabled'), null, 'Invia is available on the Gmail-linked Email');
 });
 
+// Voce eaa84ccafc53: the pilot merges the profile mailbox into the
+// connections as an active email row. The «Da» row names that mailbox and
+// the `profile:` connection key never reads as text.
+const fromValueOf = (panel) => {
+  const row = panel.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-composer-row'
+    && node.childNodes[0]?.textContent === 'Da');
+  return row ? row.childNodes[1].textContent : null;
+};
+
+test('eaa84ccafc53: a profile-sourced email row fills «Da» with its mailbox', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: ' studio@palestra.it ', status: 'active', source: 'profile' }] },
+      profile: null,
+    }),
+  });
+  assert.equal(fromValueOf(panel), 'studio@palestra.it', 'Da names the linked mailbox');
+  assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the connection key never reads as text');
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null);
+});
+
+test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; a key never does', async () => {
+  const old = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  assert.equal(fromValueOf(old.panel), 'daniele.pelleri@gmail.com', 'the old shape is unchanged');
+  const keyOnly = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: 'profile:gmail', status: 'active' }] },
+      profile: null,
+    }),
+  });
+  assert.equal(fromValueOf(keyOnly.panel), '', 'a key posing as an account is never a sender');
+  assert.ok(!keyOnly.panel.textContent.toLowerCase().includes('profile:'));
+});
+
+// Review #648 P1: the synthetic profile row is no channel connection — its
+// `profile:` key never travels in the send payload; the server derives the
+// route from the space mailbox.
+test('review #648: a profile-sourced email row sends no connectionKey', async () => {
+  for (const row of [
+    { connectionKey: 'profile:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' },
+    { connectionKey: 'PROFILE:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active' },
+  ]) {
+    const client = composerClient({ connectors: { connectors: [row] } });
+    const { panel } = await openComposerMount({ client });
+    assert.equal(fromValueOf(panel), 'studio@palestra.it');
+    await typeAndSend(panel, 'Ciao Guido');
+    assert.equal(client.posts.length, 1, `${row.connectionKey}: the send goes out`);
+    assert.equal(client.posts[0].channel, 'email');
+    assert.equal('connectionKey' in client.posts[0], false, `${row.connectionKey}: the synthetic key is never sent`);
+  }
+  // A real connection still sends its own key.
+  const real = composerClient();
+  const { panel } = await openComposerMount({ client: real });
+  await typeAndSend(panel, 'Ciao Guido');
+  assert.equal(real.posts[0].connectionKey, 'gmail-1', 'a real connection keeps its route');
+});
+
+// Review #648 giro 2 P1: with the synthetic profile row listed first and a
+// real email connection after it, the real row routes the send and names
+// «Da» — never the synthetic key, never a «Da» the route does not send from.
+test('review #648 giro 2: a real email connection wins over the synthetic profile row, whatever the order', async () => {
+  for (const syntheticKey of ['profile:gmail', 'PROFILE:Gmail']) {
+    const client = composerClient({
+      connectors: { connectors: [
+        { connectionKey: syntheticKey, channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' },
+        { connectionKey: 'real-123', channel: 'email', account: 'reale@studio.it', status: 'active' },
+      ] },
+    });
+    const { panel } = await openComposerMount({ client });
+    assert.equal(fromValueOf(panel), 'reale@studio.it', `${syntheticKey}: «Da» names the mailbox the route sends from`);
+    await typeAndSend(panel, 'Ciao Guido');
+    assert.equal(client.posts.length, 1);
+    assert.equal(client.posts[0].connectionKey, 'real-123', `${syntheticKey}: the send queues on the real route`);
+    assert.ok(!panel.textContent.toLowerCase().includes('profile:'));
+  }
+});
+
+// Review #648 P1/P2: «connected» implies a valid sender. A linked Email row
+// with no mailbox, or a key (any case) posing as one, reads off with the
+// Connettori link — never an enabled channel with an empty «Da».
+test('review #648: a linked Email without a valid sender is not sendable', async () => {
+  for (const account of ['', '   ', 'PROFILE:gmail', 'Profile:Gmail', 'gmail-1']) {
+    const client = composerClient({
+      connectors: { connectors: [{ connectionKey: 'gmail-1', channel: 'email', account, status: 'active' }] },
+    });
+    const { panel } = await openComposerMount({ client });
+    const email = panel.findAll('input').find((node) => node.getAttribute('name') === 'composer-channel' && node.getAttribute('value') === 'email');
+    assert.equal(email.getAttribute('disabled'), 'disabled', `account «${account}»: Email is off`);
+    const off = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+    assert.ok(off && off.textContent.includes('Email (guido@palestra-esempio.it)'), `account «${account}»: the off line names Email`);
+    assert.ok(off.findAll('a').some((node) => node.getAttribute('data-action') === 'composer-connectors'), 'with its Collega in Connettori link');
+    assert.equal(composerSendButton(panel).getAttribute('disabled'), 'disabled', 'nothing to send on');
+    assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the key never reads as text');
+  }
+});
+
 // Voce a935af6a6d19 (acceptance 2): a channel with no link anywhere — no
 // channel connection and no profile Gmail — reads off with its Collega link.
 test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async () => {
@@ -2455,6 +2637,32 @@ test('434cc39a: the scheda reads the space fields with this customer values', as
   assert.ok(text.includes('Campi personalizzati'), 'the section reads');
   assert.ok(text.includes('Amico'), 'the space field reads on the scheda');
   assert.ok(text.includes('sì'), 'the stored value reads');
+});
+
+test('the scheda shows a saved Sì/No value from the bare array the server answers (production 07/11)', async () => {
+  // Space 2f07eeb9: GET fields/values answered 200 with this exact bare
+  // array, and the scheda still showed «Amico verifica L1 —».
+  const defs = [{ key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [], createdBy: 'u1' }];
+  const values = [{
+    key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [],
+    createdBy: 'u1', value: 'sì', updatedAt: '2026-11-07T16:23:09.466Z', updatedBy: 'u1',
+  }];
+  const client = stubClient({
+    onRequest: (path) => {
+      if (path === '/api/customer-data/fields') return defs;
+      if (path.startsWith('/api/customer-data/fields/values')) return values;
+      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD : TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      throw new Error(`unexpected request ${path}`);
+    },
+  });
+  const mount = await renderCard(client);
+  const row = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-fact'
+    && node.textContent.startsWith('Amico verifica L1'));
+  assert.ok(row, 'the field row reads');
+  assert.equal(row.childNodes[1].textContent, 'sì', 'the saved value reads, never «—»');
 });
 
 test('434cc39a: an edit rewrites the single row and re-reads', async () => {

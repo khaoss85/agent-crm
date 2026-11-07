@@ -504,6 +504,22 @@ export function phoneRefusalText(error) {
   return isItalianSentence(record.message) ? String(record.message).trim() : own;
 }
 
+/**
+ * The reserved company a contact typed without Azienda sits under
+ * (customer-data `NO_COMPANY_NAME`, production 07/11): the core needs a
+ * company behind every contact, the scheda shows none.
+ */
+export const NO_COMPANY_NAME = 'Senza azienda';
+
+/** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
+export function shownCompanyName(card) {
+  const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
+  // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
+  const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
+  if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  return name;
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -513,6 +529,8 @@ export function createCustomerCardView(deps) {
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
   const { client } = bindAdminMutations(deps.client, deps);
+  /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
+  const detailsInFlight = new Set();
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
@@ -682,7 +700,7 @@ export function createCustomerCardView(deps) {
     const segments = [city, origin === null ? null : `via ${origin}`, follow === null ? null : `la segue ${follow}`]
       .filter((segment) => segment !== null);
     if (segments.length > 0) meta.appendChild(el('span', 'bo-scheda-sub', segments.join(' · ')));
-    else if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    else if (shownCompanyName(card)) meta.appendChild(el('span', 'bo-scheda-sub', shownCompanyName(card)));
     titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);
@@ -702,13 +720,21 @@ export function createCustomerCardView(deps) {
     // The offer form files under a company: a company pick is its own
     // company, a contact pick rides the linked one (null when the scheda
     // knows none — the offer form then says so honestly).
-    const companyId = typeof card?.company?.id === 'string' && card.company.id !== '' ? card.company.id : null;
-    const companyName = typeof card?.company?.name === 'string' && card.company.name.trim() !== ''
-      ? card.company.name.trim()
-      : null;
+    // Review #654: a contact typed without Azienda shows no company (the
+    // card API names none for its «no company» placeholder). Its offer is
+    // still filed under the contact's own placeholder — the one id the core
+    // accepts beside this contact, shared with no other customer — and the
+    // offer form reads the person's name, never «Senza azienda».
+    const shown = shownCompanyName(card);
+    const companyId = shown !== null && typeof card?.company?.id === 'string' && card.company.id !== ''
+      ? card.company.id : null;
+    const ownCompanyId = typeof navCtx?.contactCompanyId === 'string' && navCtx.contactCompanyId !== ''
+      ? navCtx.contactCompanyId : null;
     const company = resource === 'company'
       ? { id, name }
-      : (companyId !== null && companyName !== null ? { id: companyId, name: companyName } : null);
+      : (companyId !== null
+        ? { id: companyId, name: shown }
+        : (shown === null && ownCompanyId !== null ? { id: ownCompanyId, name } : null));
     return { resource, id, name, company };
   }
 
@@ -725,6 +751,10 @@ export function createCustomerCardView(deps) {
    *   connects Email (backlog:a935af6a6d19)
    */
   function composerChannelsFor(card, connections, profile) {
+    /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
+    const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+    /** The pilot's profile mailbox merged as a connection row: never a route. */
+    const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
     // Voce a935af6a6d19: the profile Google link counts for Email. The
     // Connettori screen links channel connections (one row per account),
@@ -756,18 +786,44 @@ export function createCustomerCardView(deps) {
     };
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
-      const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      // A real channel connection is preferred over the pilot's synthetic
+      // profile row, whatever their order (review #648, giro 2): the real
+      // row's key is a route readSyncState knows and its account is the
+      // mailbox that route sends from, so «Da» and the route agree. The
+      // synthetic row only stands in when it is the sole active one.
+      const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
+      const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
       // queues on); the profile Gmail mailbox only fills the gap, with no
       // key — the server still needs its own email connection to send.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
+      // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
+      // connections as an active email row (`profile:gmail`). Its account is
+      // the mailbox the «Da» row names; without one the profile Gmail still
+      // fills it. A connection key is never a sender: a `profile:` handle
+      // (any case) or the row's own key posing as an account counts as
+      // missing.
+      const liveAccount = channel === 'email' && live !== null && typeof live.account === 'string'
+        && live.account.trim() !== '' && !isProfileKey(live.account)
+        && live.account.trim() !== String(live.connectionKey ?? '').trim()
+        ? live.account.trim() : null;
+      const sender = liveAccount ?? (gmailLinked ? gmailSender : null);
+      // The synthetic profile row is no channel connection: its key is not
+      // a route the send queues on, so it is never sent (the server derives
+      // the route from the space's own mailbox).
+      const synthetic = live !== null && isSyntheticRow(live);
+      // «Connected» implies a sender for Email: a linked row that names no
+      // valid mailbox reads off with its Connettori link, never an enabled
+      // channel with an empty «Da».
+      const linked = live !== null || gmailLinked;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
-        connected: live !== null || gmailLinked,
-        connectionKey: live?.connectionKey ?? null,
-        sender: gmailLinked ? gmailSender : null,
+        connected: linked && (channel !== 'email' || sender !== null),
+        connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
+          && live.connectionKey !== '' ? live.connectionKey : null,
+        sender,
       });
     });
   }
@@ -1793,7 +1849,7 @@ export function createCustomerCardView(deps) {
       box.appendChild(row);
     };
     fact('Nome', card?.name ?? '—');
-    if (card?.company?.name) fact('Azienda', card.company.name);
+    if (shownCompanyName(card)) fact('Azienda', shownCompanyName(card));
     fact('Email', card?.email ?? 'non disponibile');
     // Voce 1a066ddfe42a: plain Italian empty states; the English card reasons
     // stay in the API response, never on screen.
@@ -1897,10 +1953,17 @@ export function createCustomerCardView(deps) {
     row.appendChild(cancel);
     box.appendChild(row);
     box.appendChild(error);
+    // Production 07/11: one Salva sent PATCH /contacts/<id> twice. The
+    // guard is the view's, not this form's: a second handler, a second form
+    // on the same contact (a re-render that raced) or a double tap all find
+    // the PATCH already in flight and send nothing.
+    const flightKey = `PATCH contact ${contact.id}`;
     let busy = false;
     save.addEventListener('click', async () => {
-      if (busy) return;
+      if (busy || detailsInFlight.has(flightKey)) return;
       busy = true;
+      detailsInFlight.add(flightKey);
+      save.disabled = true;
       error.textContent = '';
       try {
         await client.request(`/api/contacts/${encodeURIComponent(contact.id)}`, {
@@ -1911,13 +1974,16 @@ export function createCustomerCardView(deps) {
             email: emailInput.value,
           }),
         });
+        detailsInFlight.delete(flightKey);
         toast('Dati salvati');
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
         toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
       } finally {
+        detailsInFlight.delete(flightKey);
         busy = false;
+        save.disabled = false;
       }
     });
     cancel.addEventListener('click', async () => {
@@ -2754,7 +2820,13 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
+  // Two renders racing (a route plus a re-read after a save) must not both
+  // land: only the newest paints, so the scheda never holds two Dettagli
+  // forms whose Salva would both write.
+  let cardRenderToken = 0;
+
   async function renderCard(resource, id) {
+    const renderToken = ++cardRenderToken;
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     channelFilter = 'all';
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
@@ -2766,6 +2838,8 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    if (renderToken !== cardRenderToken) return;
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
@@ -2802,7 +2876,9 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card, { resource, id });
+    section(left, '', quickActions, card, {
+      resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
+    });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the

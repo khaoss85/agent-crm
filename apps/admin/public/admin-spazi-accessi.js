@@ -43,6 +43,7 @@
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
+import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -391,6 +392,8 @@ export function createSpaziAccessiView(deps) {
     roles: null,
     /** @type {Array<any>|null} team rows, or null when unread */
     members: null,
+    /** @type {Array<any>|null} this space's agents (backlog:33782ba68747), null when unread */
+    agents: null,
     /** @type {string|null} why the team is not shown */
     membersUnavailable: null,
     /** @type {Array<any>|null} override rows, or null when unread */
@@ -522,6 +525,9 @@ export function createSpaziAccessiView(deps) {
           failed: 'Il team non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi: niente \u00E8 stato inventato al suo posto.',
         });
     }
+    // backlog:33782ba68747: agents sit beside people; a failed or absent
+    // read leaves the Team exactly as it was.
+    state.agents = await loadSpaceAgents(client, space);
     try {
       const answer = await client.request(
         `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
@@ -829,6 +835,8 @@ export function createSpaziAccessiView(deps) {
       list.appendChild(item);
     }
     section.appendChild(list);
+    const agentRows = renderTeamAgentRows(doc, state.agents);
+    if (agentRows) section.appendChild(agentRows);
 
     const invite = el(doc, 'div', { cls: `bo-spazi-invite${state.inviteOpen || state.refusal !== null ? ' open' : ''}` });
     invite.appendChild(el(doc, 'h4', { text: 'Invita persona' }));

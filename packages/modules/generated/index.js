@@ -51,6 +51,12 @@ import { createSpacePackageModule } from '../space-package/src/index.js';
 import * as spacePackageMigrationSource from '../space-package/src/migration.js';
 import { createSpacePermissionOverrideModule } from '../space-permission-override/src/index.js';
 import * as spacePermissionOverrideMigrationSource from '../space-permission-override/src/migration.js';
+import { createTeammateAgentModule } from '../teammate-agent/src/index.js';
+import * as teammateAgentMigrationSource from '../teammate-agent/src/migration.js';
+import { createTeammateAssignmentModule } from '../teammate-assignment/src/index.js';
+import * as teammateAssignmentMigrationSource from '../teammate-assignment/src/migration.js';
+import { createTeammateRunModule } from '../teammate-run/src/index.js';
+import * as teammateRunMigrationSource from '../teammate-run/src/migration.js';
 import { createWorkActivityModule } from '../work-activity/src/index.js';
 import * as workActivityMigrationSource from '../work-activity/src/migration.js';
 import { createWorkTaskModule } from '../work-task/src/index.js';
@@ -101,6 +107,9 @@ export const generatedModules = [
   { name: 'space-ai-proposal', createModule: createSpaceAiProposalModule, migrations: migrationsOf(spaceAiProposalMigrationSource, 'spaceAiProposal', 'space-ai-proposal') },
   { name: 'space-package', createModule: createSpacePackageModule, migrations: migrationsOf(spacePackageMigrationSource, 'spacePackage', 'space-package') },
   { name: 'space-permission-override', createModule: createSpacePermissionOverrideModule, migrations: migrationsOf(spacePermissionOverrideMigrationSource, 'spacePermissionOverride', 'space-permission-override') },
+  { name: 'teammate-agent', createModule: createTeammateAgentModule, migrations: migrationsOf(teammateAgentMigrationSource, 'teammateAgent', 'teammate-agent') },
+  { name: 'teammate-assignment', createModule: createTeammateAssignmentModule, migrations: migrationsOf(teammateAssignmentMigrationSource, 'teammateAssignment', 'teammate-assignment') },
+  { name: 'teammate-run', createModule: createTeammateRunModule, migrations: migrationsOf(teammateRunMigrationSource, 'teammateRun', 'teammate-run') },
   { name: 'work-activity', createModule: createWorkActivityModule, migrations: migrationsOf(workActivityMigrationSource, 'workActivity', 'work-activity') },
   { name: 'work-task', createModule: createWorkTaskModule, migrations: migrationsOf(workTaskMigrationSource, 'workTask', 'work-task') },
 ];

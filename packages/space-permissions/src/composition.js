@@ -33,6 +33,13 @@ import { buildSetPermissionAction, isUniqueConflict, requireIdentifiedActor } fr
  */
 const PACKAGE_UNITS = Object.freeze([
   {
+    // backlog:33782ba68747: the teammate agents behind the «Agenti» screen.
+    name: 'agents', kind: 'package', label: 'Agenti',
+    blurb: 'Colleghi digitali con un ruolo: ricevono incarichi e chiedono il tuo ok prima di agire.',
+    modules: Object.freeze(['teammate-agent', 'teammate-assignment', 'teammate-run']),
+    demo: 'teammate-agent',
+  },
+  {
     name: 'appointments', kind: 'package', label: 'Appuntamenti',
     blurb: 'Prenotazioni in Accordo, sincronizzate con Google Calendar.',
     modules: Object.freeze([]), demo: null,
