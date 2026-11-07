@@ -191,15 +191,20 @@ const durationParts = (sec) => {
 };
 
 /**
- * Voce 59def6cb805d (C17): the sync-row arrow of the prototype
- * (`↔/←/→ <canale> · <stato>`). Inbound `←`, outbound `→`; a passage with
- * no recorded direction carries no arrow instead of an invented one.
+ * Dan 07/11: the conversation reads like a chat, so the writer of an
+ * outbound passage reads as a name, never as a handle. A slug handle
+ * (`coach-guido`, `elena`) becomes `Coach Guido` / `Elena`; an e-mail keeps
+ * its local part; anything that is not a human handle reads as null and the
+ * caller says «il team».
+ * @param {unknown} value
  */
-const syncArrow = (direction) => {
-  if (direction === 'inbound') return '← ';
-  if (direction === 'outbound') return '→ ';
-  return '';
-};
+export function teamName(value) {
+  if (!isHumanHandle(value)) return null;
+  const text = String(value).trim();
+  const local = text.includes('@') ? text.slice(0, text.indexOf('@')) : text;
+  if (!/^[a-zà-ÿ]+([._-][a-zà-ÿ]+)*$/i.test(local)) return text;
+  return local.split(/[._-]/).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
 
 /**
  * Own-property label lookup: a hostile or unknown key (`constructor`,
@@ -2118,8 +2123,8 @@ export function createCustomerCardView(deps) {
           // Dan 06/11: «ho aggiunto una nota ma non si vede» — the note
           // reads as a note at a glance: its own mark and a paper tone.
           const when = timeParts(item?.occurredAt);
-          const author = isHumanHandle(item?.teamAuthorId)
-            ? `da ${String(item.teamAuthorId).trim()}` : 'dal team';
+          const author = teamName(item?.teamAuthorId) !== null
+            ? `da ${teamName(item.teamAuthorId)}` : 'dal team';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
@@ -2136,13 +2141,23 @@ export function createCustomerCardView(deps) {
         }
         const channelKey = String(item?.channel ?? '').trim().toLowerCase();
         const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
-        row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
         const isOutbound = String(item?.direction ?? '') === 'outbound';
+        // Dan 07/11: «inviato e ricevuto sarebbe più chiaro a destra e
+        // sinistra, come una conversazione». Received passages sit on the
+        // left, the team's on the right, each in its own bubble; the channel
+        // badge stays on the outer edge so the filter chips still read.
+        row.setAttribute('class', `bo-scheda-entry ${isOutbound ? 'bo-scheda-entry-out' : 'bo-scheda-entry-in'}`);
+        row.setAttribute('data-direction', isOutbound ? 'out' : 'in');
+        row.setAttribute('aria-label', isOutbound ? 'Inviato' : 'Ricevuto');
+        row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
+        const bubble = el('div', 'bo-scheda-bubble');
+        // The side already says the direction: the head names channel,
+        // person and hour once (it used to repeat the channel three times).
         const who = isOutbound
-          ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')
-          : (item?.remoteHandle ? `da ${item.remoteHandle}` : 'ricevuto');
+          ? (teamName(item?.teamAuthorId) ?? 'il team')
+          : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== '' ? item.remoteHandle.trim() : null);
         // Voce 59def6cb805d (C17): the day already heads the group, so the
-        // card shows the hour only (`<hh:mm>`) beside channel and direction.
+        // card shows the hour only (`<hh:mm>`).
         const when = timeParts(item?.occurredAt);
         const entryHead = el('p', 'bo-scheda-entry-head');
         // «Da leggere»: an unread passage (unreadInboundAt, the same rule
@@ -2152,19 +2167,19 @@ export function createCustomerCardView(deps) {
           row.setAttribute('data-unread', 'true');
           entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
         }
-        entryHead.appendChild(el('span', undefined,
-          when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
-        row.appendChild(entryHead);
+        entryHead.appendChild(el('span', undefined, [channelLabel(item?.channel), who, when].filter(Boolean).join(' · ')));
+        bubble.appendChild(entryHead);
+        const outcome = typeof item?.sync === 'string' && item.sync !== '' ? syncLabel(item.sync) : null;
         if (item?.entry === 'call') {
           // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
           // audio URL in the data no player is rendered (never a dead one).
           const dur = durationParts(item?.durationSec);
-          row.appendChild(el('p', undefined,
-            dur ? `chiamata ${isOutbound ? 'in uscita' : 'in entrata'} · ${dur}` : `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`));
+          bubble.appendChild(el('p', 'bo-scheda-entry-body',
+            [`chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`, dur, outcome].filter(Boolean).join(' · ')));
         } else if (typeof item?.body === 'string' && item.body !== '') {
           const text = readableText(item.body);
           const bodyNode = el('p', 'bo-scheda-entry-body', text);
-          row.appendChild(bodyNode);
+          bubble.appendChild(bodyNode);
           if (text.length > ENTRY_FOLD_CHARS) {
             bodyNode.setAttribute('data-folded', 'true');
             const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
@@ -2175,15 +2190,21 @@ export function createCustomerCardView(deps) {
               bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
               more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
             });
-            row.appendChild(more);
+            bubble.appendChild(more);
           }
         }
         const attachment = attachmentNode(item?.attachment);
-        if (attachment) row.appendChild(attachment);
-        // Voce 59def6cb805d (C17): the sync row of the prototype,
-        // `←/→ <canale> · <stato>`.
-        row.appendChild(el('p', 'bo-scheda-sync',
-          `${syncArrow(item?.direction)}${channelLabel(item?.channel)} · ${syncLabel(item?.sync)}`));
+        if (attachment) bubble.appendChild(attachment);
+        // The delivery state reads only where it says something: under the
+        // team's messages (inviato, consegnato, letto, non consegnato) and
+        // under a received one only when it is not the plain «ricevuto».
+        const plainReceived = !isOutbound && String(item?.sync ?? '') === 'received';
+        if (item?.entry !== 'call' && outcome && !plainReceived) {
+          const state = el('p', 'bo-scheda-sync', outcome);
+          state.setAttribute('data-sync', String(item.sync));
+          bubble.appendChild(state);
+        }
+        row.appendChild(bubble);
         list.appendChild(row);
       }
       if (ordered.length > visible.length) {

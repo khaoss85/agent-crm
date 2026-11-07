@@ -6,6 +6,7 @@ import {
   mergeLinkedIdentities,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
+  teamName,
 } from '../apps/admin/public/admin-customer-card.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
@@ -266,8 +267,8 @@ test('the scheda renders three columns: actions, identities with motivation, tim
 
   // Center: every passage with channel, direction and sync state.
   assert.ok(text.includes('WhatsApp'), 'channel label');
-  assert.ok(text.includes('inviato da elena'), 'outbound direction with author');
-  assert.ok(text.includes('da +39 333 1234567'), 'inbound direction with peer');
+  assert.ok(text.includes('WhatsApp · Elena'), 'outbound passage names its writer');
+  assert.ok(text.includes('WhatsApp · +39 333 1234567'), 'inbound passage names its peer');
   assert.ok(text.includes('consegnato'), 'message delivery state');
   assert.ok(text.includes('completata'), 'call outcome');
 
@@ -991,13 +992,15 @@ test('59def6cb805d: the timeline reads like the prototype (C14, C16, C17, C19)',
   assert.ok(days.includes('MARTEDÌ 20 OTTOBRE 2026'), 'the day reads uppercase');
   assert.ok(!days.some((day) => day !== day.toUpperCase()), 'no lowercase day header');
 
-  // C17: every card names channel, direction detail and `<hh:mm>`, and the
-  // sync row reads `←/→ <canale> · <stato>`.
-  assert.ok(text.includes('WhatsApp · da +39 333 1234567 · 11:00'), 'inbound card with its hour');
-  assert.ok(text.includes('WhatsApp · inviato da elena · 11:05'), 'outbound card with its hour');
-  assert.ok(text.includes('← WhatsApp · ricevuto'), 'inbound sync row with its arrow');
-  assert.ok(text.includes('→ WhatsApp · consegnato'), 'outbound sync row with its arrow');
-  assert.ok(text.includes('→ Telefono · completata'), 'call sync row with its arrow and outcome');
+  // C17, rivisto da Dan 07/11 (chat): every bubble names channel, person
+  // and `<hh:mm>` once; the side says the direction, the state reads only
+  // where it says something.
+  assert.ok(text.includes('WhatsApp · +39 333 1234567 · 11:00'), 'inbound bubble with its hour');
+  assert.ok(text.includes('WhatsApp · Elena · 11:05'), 'outbound bubble with its hour');
+  assert.ok(!text.includes('ricevuto'), 'a plain received passage carries no state line');
+  assert.ok(text.includes('consegnato'), 'the outbound bubble reads its delivery state');
+  assert.ok(text.includes('· completata'), 'the call reads its outcome on its own line');
+  assert.ok(!/[←→] (WhatsApp|Telefono) ·/.test(text), 'the old arrow rows that repeated the channel are gone');
 
   // C19: the call duration reads `<m:ss>`, never raw seconds.
   assert.ok(text.includes('chiamata in uscita · 6:12'), '372 seconds read as 6:12');
@@ -2623,7 +2626,7 @@ test('the timeline shows the newest 20 first and opens older ones on demand', as
     occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
   }));
   const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items } } }));
-  const shown = () => mount.findAll('div').filter((node) => node.getAttribute('class') === 'bo-scheda-entry').map((node) => node.getAttribute('data-entry'));
+  const shown = () => mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-entry')).map((node) => node.getAttribute('data-entry'));
   assert.equal(shown().length, 20, 'one page');
   assert.equal(shown()[0], 'm44', 'newest first');
   const older = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'timeline-older');
@@ -3010,7 +3013,7 @@ test('Dan 06/11: notes read as notes, with a Note chip and one chip per writer',
   const noteRow = mount.findAll('div').find((node) => node.getAttribute('data-entry') === 'n1');
   assert.ok(String(noteRow.getAttribute('class')).includes('bo-scheda-entry-note'), 'a note has its own look');
   assert.ok(noteRow.textContent.includes('✎'), 'and its own mark');
-  assert.ok(noteRow.textContent.includes('Nota · da dan'), 'the writer reads');
+  assert.ok(noteRow.textContent.includes('Nota · da Dan'), 'the writer reads');
 
   assert.equal(chipOf('note').textContent, 'Note · 3', 'the Note chip counts the notes');
   assert.equal(chipOf('note:dan'), undefined, 'writer chips show only under Note');
@@ -3061,4 +3064,41 @@ test('review #617: a cut cronologia counts the notes as a floor, and a note body
   assert.equal(noteChip.textContent, 'Note · 1+', 'older notes may sit past the page');
   const body = mount.findAll('p').find((node) => String(node.getAttribute('class')).includes('bo-scheda-note-body'));
   assert.equal(body.textContent, 'Prezzo "speciale" & prova gratuita', 'entities decoded, invisible marks dropped');
+});
+
+
+// Dan 07/11: «inviato e ricevuto sarebbe più chiaro a destra / sinistra,
+// come una conversazione».
+test('Dan 07/11: the conversation reads like a chat — received left, sent right', async () => {
+  const items = [
+    { entry: 'message', id: 'in1', channel: 'whatsapp', direction: 'inbound', sync: 'received', body: 'Vorrei una lezione di prova', remoteHandle: '+39 000 000 004', occurredAt: '2026-11-07T10:51:00.000Z' },
+    { entry: 'message', id: 'out1', channel: 'whatsapp', direction: 'outbound', sync: 'delivered', body: 'Certo, ti preparo una proposta', teamAuthorId: 'coach-guido', occurredAt: '2026-11-07T10:52:00.000Z' },
+    { entry: 'message', id: 'out2', channel: 'email', direction: 'outbound', sync: 'failed', body: 'Ecco la proposta', teamAuthorId: null, occurredAt: '2026-11-07T10:53:00.000Z' },
+  ];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 3, truncated: false, items } } }));
+  const row = (id) => mount.findAll('div').find((node) => node.getAttribute('data-entry') === id);
+  assert.equal(row('in1').getAttribute('data-direction'), 'in');
+  assert.ok(String(row('in1').getAttribute('class')).includes('bo-scheda-entry-in'), 'received sits on the left');
+  assert.equal(row('out1').getAttribute('data-direction'), 'out');
+  assert.ok(String(row('out1').getAttribute('class')).includes('bo-scheda-entry-out'), 'sent sits on the right');
+  const bubble = (id) => row(id).findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-bubble');
+  assert.ok(bubble('in1') && bubble('out1'), 'each passage has its own bubble');
+  assert.ok(bubble('out1').textContent.includes('WhatsApp · Coach Guido · '), 'the writer reads as a name, never as a slug');
+  assert.ok(!mount.textContent.includes('coach-guido'), 'no raw handle on the page');
+  assert.ok(bubble('out2').textContent.includes('Email · il team · '), 'an unnamed writer reads «il team»');
+  const state = bubble('out2').findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-sync');
+  assert.equal(state.textContent, 'non consegnato');
+  assert.equal(state.getAttribute('data-sync'), 'failed', 'a failed send is marked for its warning colour');
+  assert.ok(!bubble('in1').textContent.includes('ricevuto'), 'a plain received passage has no state line');
+  assert.equal((bubble('in1').textContent.match(/WhatsApp/g) ?? []).length, 1, 'the channel reads once per bubble');
+});
+
+test('teamName turns handles into names and refuses ids', () => {
+  assert.equal(teamName('coach-guido'), 'Coach Guido');
+  assert.equal(teamName('elena'), 'Elena');
+  assert.equal(teamName('mario.rossi@esempio.it'), 'Mario Rossi');
+  assert.equal(teamName('Daniele Pelleri'), 'Daniele Pelleri');
+  assert.equal(teamName('8d8f1d4d-25c1-4641-8836-267581100b32'), null);
+  assert.equal(teamName('user-12345'), null);
+  assert.equal(teamName(''), null);
 });
