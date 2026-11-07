@@ -480,6 +480,20 @@ export function phoneRefusalText(error) {
   return isItalianSentence(record.message) ? String(record.message).trim() : own;
 }
 
+/**
+ * The reserved company a contact typed without Azienda sits under
+ * (customer-data `NO_COMPANY_NAME`, production 07/11): the core needs a
+ * company behind every contact, the scheda shows none.
+ */
+export const NO_COMPANY_NAME = 'Senza azienda';
+
+/** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
+export function shownCompanyName(card) {
+  const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
+  if (name === '' || name.normalize('NFC').toLowerCase() === NO_COMPANY_NAME.toLowerCase()) return null;
+  return name;
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -489,6 +503,8 @@ export function createCustomerCardView(deps) {
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
   const { client } = bindAdminMutations(deps.client, deps);
+  /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
+  const detailsInFlight = new Set();
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
@@ -658,7 +674,7 @@ export function createCustomerCardView(deps) {
     const segments = [city, origin === null ? null : `via ${origin}`, follow === null ? null : `la segue ${follow}`]
       .filter((segment) => segment !== null);
     if (segments.length > 0) meta.appendChild(el('span', 'bo-scheda-sub', segments.join(' · ')));
-    else if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    else if (shownCompanyName(card)) meta.appendChild(el('span', 'bo-scheda-sub', shownCompanyName(card)));
     titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);
@@ -1742,7 +1758,7 @@ export function createCustomerCardView(deps) {
       box.appendChild(row);
     };
     fact('Nome', card?.name ?? '—');
-    if (card?.company?.name) fact('Azienda', card.company.name);
+    if (shownCompanyName(card)) fact('Azienda', shownCompanyName(card));
     fact('Email', card?.email ?? 'non disponibile');
     // Voce 1a066ddfe42a: plain Italian empty states; the English card reasons
     // stay in the API response, never on screen.
@@ -1846,10 +1862,17 @@ export function createCustomerCardView(deps) {
     row.appendChild(cancel);
     box.appendChild(row);
     box.appendChild(error);
+    // Production 07/11: one Salva sent PATCH /contacts/<id> twice. The
+    // guard is the view's, not this form's: a second handler, a second form
+    // on the same contact (a re-render that raced) or a double tap all find
+    // the PATCH already in flight and send nothing.
+    const flightKey = `PATCH contact ${contact.id}`;
     let busy = false;
     save.addEventListener('click', async () => {
-      if (busy) return;
+      if (busy || detailsInFlight.has(flightKey)) return;
       busy = true;
+      detailsInFlight.add(flightKey);
+      save.disabled = true;
       error.textContent = '';
       try {
         await client.request(`/api/contacts/${encodeURIComponent(contact.id)}`, {
@@ -1860,13 +1883,16 @@ export function createCustomerCardView(deps) {
             email: emailInput.value,
           }),
         });
+        detailsInFlight.delete(flightKey);
         toast('Dati salvati');
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
         toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
       } finally {
+        detailsInFlight.delete(flightKey);
         busy = false;
+        save.disabled = false;
       }
     });
     cancel.addEventListener('click', async () => {
@@ -2642,7 +2668,13 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
+  // Two renders racing (a route plus a re-read after a save) must not both
+  // land: only the newest paints, so the scheda never holds two Dettagli
+  // forms whose Salva would both write.
+  let cardRenderToken = 0;
+
   async function renderCard(resource, id) {
+    const renderToken = ++cardRenderToken;
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     channelFilter = 'all';
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
@@ -2654,6 +2686,8 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    if (renderToken !== cardRenderToken) return;
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));

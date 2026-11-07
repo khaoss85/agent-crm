@@ -228,6 +228,22 @@ export function createPolicyReader({ modules, names, core }) {
 }
 
 /**
+ * The reserved company behind a contact that names no company (production
+ * 07/11). The core schema requires a company for every contact, so the
+ * import keeps one per space under this name instead of inventing one from
+ * the email domain; customer reads and the backoffice treat it as «no
+ * company». Plain Italian on purpose: wherever a screen still lists it (the
+ * Aziende table), it says the truth.
+ */
+export const NO_COMPANY_NAME = 'Senza azienda';
+
+/** Whether a company record is the reserved «no company» one. @param {unknown} company */
+export function isNoCompany(company) {
+  const name = /** @type {any} */ (company)?.name;
+  return typeof name === 'string' && name.normalize('NFC').trim().toLowerCase() === NO_COMPANY_NAME.toLowerCase();
+}
+
+/**
  * Create the Company/Contact one resolved row names, through the core
  * adapters — never through raw SQL. Shared with the import apply path so a
  * sender-created contact is byte-for-byte the contact an import would have
@@ -236,8 +252,10 @@ export function createPolicyReader({ modules, names, core }) {
  * @param {any} core
  * @param {{email: string|null, firstName: string|null, lastName: string|null, companyName: string|null, domain: string|null}} row
  * @param {any} actor
+ * @param {{companyFromEmail?: boolean}} [options] `companyFromEmail: false`
+ *   (the import apply) never derives a company from the email domain.
  */
-export async function createSubjectForRow(core, row, actor) {
+export async function createSubjectForRow(core, row, actor, options = {}) {
   if (!core || typeof core.createCompany !== 'function') {
     throw new AppError('customer-data cannot create records without the core adapters', {
       code: 'CUSTOMER_DATA_CORE_UNAVAILABLE', status: 500,
@@ -250,10 +268,22 @@ export async function createSubjectForRow(core, row, actor) {
     const fallback = leadNamesForEmail(row.email);
     // A contact needs a company: reuse the named one when it exists, else
     // create it. Both go through the adapters, never through raw SQL.
-    const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
-    const company = companies.length === 1
-      ? companies[0]
-      : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
+    let company;
+    if (!row.companyName && options.companyFromEmail === false) {
+      // Production 07/11: a customer typed or imported with no Azienda got
+      // the email domain as its company («esempio.invalid»). The core still
+      // needs a company behind a contact, so every such contact joins the
+      // space's one reserved NO_COMPANY_NAME company — never one derived
+      // from the email — and the screens read it as no company at all.
+      const reserved = await core.findCompaniesByNormalizedName(NO_COMPANY_NAME);
+      company = reserved[0]
+        ?? await core.createCompany({ name: NO_COMPANY_NAME, domain: null }, { actor });
+    } else {
+      const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
+      company = companies.length === 1
+        ? companies[0]
+        : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
+    }
     const contact = await core.createContact({
       companyId: company.id,
       firstName: row.firstName ?? fallback.firstName,

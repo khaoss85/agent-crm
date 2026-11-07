@@ -511,7 +511,9 @@ export function createCustomerDataOperations({ database, modules, events, config
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
   async function createSubjectFor(row, actor) {
-    return createSubjectForRow(core, row, actor);
+    // An empty Azienda stays empty (production 07/11): the import never
+    // turns the email domain into a company.
+    return createSubjectForRow(core, row, actor, { companyFromEmail: false });
   }
 
   async function recordExternalIdentity(row, subject, runId, actor) {

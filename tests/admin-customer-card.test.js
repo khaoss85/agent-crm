@@ -6,6 +6,8 @@ import {
   mergeLinkedIdentities,
   offerStageTargets,
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
+  NO_COMPANY_NAME,
+  shownCompanyName,
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
@@ -1641,6 +1643,52 @@ test('714433c2: Modifica opens the edit form and Salva PATCHes the contact, then
   assert.ok(mount.textContent.includes('Dettagli'), 'the re-read card shows Dettagli again');
 });
 
+test('Dettagli › Modifica › Salva sends ONE PATCH, however many times it fires (production 07/11)', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => pending.then(() => ({ ok: true })));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  save.dispatch('click');
+  save.dispatch('click');
+  await flushClicks();
+  save.dispatch('click');
+  assert.equal(save.disabled, true, 'Salva is off while the PATCH is in flight');
+  release();
+  await flushClicks(8);
+  const patches = client.writes.filter((write) => write.method === 'PATCH');
+  assert.equal(patches.length, 1, 'one PATCH /contacts/<id> for one Salva');
+  assert.equal(patches[0].path, '/api/contacts/c1');
+});
+
+test('a contact typed without Azienda shows no Azienda on the scheda (production 07/11)', async () => {
+  assert.equal(NO_COMPANY_NAME, 'Senza azienda', 'the same reserved name customer-data writes');
+  assert.equal(shownCompanyName({ company: { id: 'k0', name: 'Senza azienda' } }), null);
+  assert.equal(shownCompanyName({ company: { id: 'k1', name: 'Palestra Esempio' } }), 'Palestra Esempio');
+  assert.equal(shownCompanyName({ company: null }), null);
+  const card = { ...CARD, company: { id: 'k0', name: NO_COMPANY_NAME } };
+  const mount = await renderCard(stubClient({ card, profile: OPPORTUNITY_ONLY_PROFILE }));
+  assert.ok(!mount.textContent.includes(NO_COMPANY_NAME), 'the reserved company never reads as an Azienda');
+  const facts = mount.findAll('span').filter((node) => node.getAttribute('class') === 'bo-scheda-fact-label');
+  assert.ok(!facts.some((node) => node.textContent === 'Azienda'), 'no Azienda row for it');
+});
+
+test('two renders racing paint one scheda, so there is one Dettagli Salva', async () => {
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client: base });
+  await Promise.all([view.renderCard('contact', 'c1'), view.renderCard('contact', 'c1')]);
+  const panels = mount.childNodes.filter((node) => node.getAttribute?.('class') === 'bo-scheda');
+  assert.equal(panels.length, 1, 'only the newest render lands');
+  const edits = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'edit-details');
+  assert.equal(edits.length, 1, 'one Modifica, so one form and one Salva');
+});
+
 test('714433c2: Annulla drops the edits with no write and re-reads the card', async () => {
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
   const client = recordingClient(base);
@@ -2454,6 +2502,32 @@ test('434cc39a: the scheda reads the space fields with this customer values', as
   assert.ok(text.includes('Campi personalizzati'), 'the section reads');
   assert.ok(text.includes('Amico'), 'the space field reads on the scheda');
   assert.ok(text.includes('sì'), 'the stored value reads');
+});
+
+test('the scheda shows a saved Sì/No value from the bare array the server answers (production 07/11)', async () => {
+  // Space 2f07eeb9: GET fields/values answered 200 with this exact bare
+  // array, and the scheda still showed «Amico verifica L1 —».
+  const defs = [{ key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [], createdBy: 'u1' }];
+  const values = [{
+    key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [],
+    createdBy: 'u1', value: 'sì', updatedAt: '2026-11-07T16:23:09.466Z', updatedBy: 'u1',
+  }];
+  const client = stubClient({
+    onRequest: (path) => {
+      if (path === '/api/customer-data/fields') return defs;
+      if (path.startsWith('/api/customer-data/fields/values')) return values;
+      if (path.startsWith('/api/customer-hub/')) return path.includes('/card/') ? CARD : TIMELINE;
+      if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      throw new Error(`unexpected request ${path}`);
+    },
+  });
+  const mount = await renderCard(client);
+  const row = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-fact'
+    && node.textContent.startsWith('Amico verifica L1'));
+  assert.ok(row, 'the field row reads');
+  assert.equal(row.childNodes[1].textContent, 'sì', 'the saved value reads, never «—»');
 });
 
 test('434cc39a: an edit rewrites the single row and re-reads', async () => {
