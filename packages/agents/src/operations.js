@@ -10,8 +10,6 @@ import {
   AGENT_TIMER_ACTOR,
   RUN_TERMINAL,
   agentRunKey,
-  assertAgentTransition,
-  assertAssignmentTransition,
   assertRunTransition,
   checkAgentInput,
   checkAssignmentInput,
@@ -221,8 +219,13 @@ async function withApprovalLock(key, fn) {
  * sweep waits, then re-reads the ledger with the first sweep's finalized
  * cost already counted. Assignments of different agents (or spaces) use
  * different keys and still run independently. Cross-process writers do
- * NOT serialize here — the UNIQUE slot claim plus the post-execution
- * allowance gate stay as the storage-level guard for those.
+ * NOT serialize here, and the UNIQUE slot claim only guards same-slot
+ * races. Across processes the cap holds through the reservation in
+ * storage: every started claim of a capped agent carries its estimate as
+ * `costCents`, the ledger counts it, and each sweep re-checks the ledger
+ * after its own claim landed (see runDue). Two claims racing across
+ * processes both see each other and both record `capped` — fail-closed,
+ * never past the cap.
  */
 const agentCapChains = new Map();
 
@@ -310,14 +313,6 @@ export function createAgentOperations(options = {}) {
     const row = (await agents().listWhere({ spaceId, sourceKey: agentSourceKey }))[0] ?? null;
     if (!row) {
       throw new AppError('Unknown agent in this space', { code: 'AGENT_UNKNOWN', status: 404 });
-    }
-    return row;
-  }
-
-  async function loadAssignment(spaceId, assignmentSourceKey) {
-    const row = (await assignments().listWhere({ spaceId, sourceKey: assignmentSourceKey }))[0] ?? null;
-    if (!row) {
-      throw new AppError('Unknown assignment in this space', { code: 'AGENT_ASSIGNMENT_UNKNOWN', status: 404 });
     }
     return row;
   }
@@ -487,7 +482,11 @@ export function createAgentOperations(options = {}) {
    * is still recorded with agent, assignment, cost and outcome.
    * Per-assignment work for one agent holds that agent's same-process
    * chain, so concurrent sweeps cannot both pass the gate on a stale
-   * `spent` snapshot and execute past the monthly cap.
+   * `spent` snapshot and execute past the monthly cap. Across processes,
+   * a capped agent's claim reserves its estimate on the ledger and the
+   * sweep re-checks the ledger after the claim, before `execute`.
+   * One broken assignment never stops the sweep: its error is counted as
+   * `skipped` with an `errors[]` entry and the next assignment runs.
    */
   async function runDue(request) {
     const record = request && typeof request === 'object' ? request : {};
@@ -507,156 +506,195 @@ export function createAgentOperations(options = {}) {
       advanced: 0, proposed: 0, applied: 0, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [],
     };
     for (const assignment of due) {
-      // P1 monthly-cap race: the cap gate, slot claim, execute and finalize
-      // for one agent hold that agent's chain, so two concurrent sweeps
-      // covering different assignments of one capped agent cannot both pass
-      // the gate on the same stale `spent` snapshot and execute past the
-      // cap. The loser waits, then re-reads the ledger with the winner's
-      // finalized cost already counted. Assignments of different agents (or
-      // spaces) use different keys and proceed independently.
-      await withAgentCapLock(`${assignment.spaceId}:${assignment.agentSourceKey}`, async () => {
-      const spaceId = assignment.spaceId;
-      const agent = await loadAgent(spaceId, assignment.agentSourceKey);
-      if (agent.status !== 'active') return;
-      const { startedAt, runKey } = slotOf(assignment, at);
-      const base = {
-        spaceId,
-        agentSourceKey: agent.sourceKey,
-        assignmentSourceKey: assignment.sourceKey,
-        startedAt,
-        decidedAt: now(),
-        actorType: actor.type,
-        actorId: actor.id,
-        sourcePackage: AGENTS_DOMAIN,
-        sourceAction: 'run-due',
-      };
-      // 1. Cap gate first: a capped agent runs only against a positive
-      // estimate, and the estimate is the allowance. Unknown cost never runs.
-      if (agent.spendingCapCents !== null && agent.spendingCapCents !== undefined) {
-        const estimate = requireCostEstimate(agent.spendingCapCents, assignment.costPerRunCents);
-        const spent = await monthSpent(spaceId, agent.sourceKey, at);
-        if (spent + estimate > agent.spendingCapCents) {
-          let cappedClaim = null;
+      try {
+        // P1 monthly-cap race: the cap gate, slot claim, execute and finalize
+        // for one agent hold that agent's chain, so two concurrent sweeps
+        // covering different assignments of one capped agent cannot both pass
+        // the gate on the same stale `spent` snapshot and execute past the
+        // cap. The loser waits, then re-reads the ledger with the winner's
+        // finalized cost already counted. Assignments of different agents (or
+        // spaces) use different keys and proceed independently.
+        await withAgentCapLock(`${assignment.spaceId}:${assignment.agentSourceKey}`, async () => {
+          const spaceId = assignment.spaceId;
+          const agent = await loadAgent(spaceId, assignment.agentSourceKey);
+          if (agent.status !== 'active') return;
+          const { startedAt, runKey } = slotOf(assignment, at);
+          const base = {
+            spaceId,
+            agentSourceKey: agent.sourceKey,
+            assignmentSourceKey: assignment.sourceKey,
+            startedAt,
+            decidedAt: now(),
+            actorType: actor.type,
+            actorId: actor.id,
+            sourcePackage: AGENTS_DOMAIN,
+            sourceAction: 'run-due',
+          };
+          // 1. Cap gate first: a capped agent runs only against a positive
+          // estimate, and the estimate is the allowance. Unknown cost never runs.
+          if (agent.spendingCapCents !== null && agent.spendingCapCents !== undefined) {
+            const estimate = requireCostEstimate(agent.spendingCapCents, assignment.costPerRunCents);
+            const spent = await monthSpent(spaceId, agent.sourceKey, at);
+            if (spent + estimate > agent.spendingCapCents) {
+              let cappedClaim = null;
+              try {
+                cappedClaim = await runs().createManaged({
+                  ...base,
+                  sourceKey: runKey,
+                  costCents: 0,
+                  outcome: 'capped',
+                  note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
+                }, { actor });
+                void cappedClaim;
+              } catch (error) {
+                if (!isWinnerConflict(error)) throw error;
+                // A concurrent capped sweep claimed the same slot: replay the
+                // winner (or take over its stale started claim) instead of
+                // crashing runDue.
+                const lost = await replayLostRace(spaceId, runKey, assignment, startedAt, summary, actor);
+                if (lost.handled) return;
+                cappedClaim = lost.claim;
+                // A stolen stale claim finalizes conditionally: if its sweep
+                // woke up and recorded first, the winner stands and this sweep
+                // replays it instead of overwriting it.
+                await finalizeClaim(spaceId, runKey, cappedClaim, {
+                  costCents: 0,
+                  outcome: 'capped',
+                  note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
+                }, 'capped', assignment, startedAt, summary, actor);
+                // finalizeClaim already counted and advanced: never fall
+                // through to the outer capped/advanced increment below.
+                return;
+              }
+              summary.capped += 1;
+              summary.advanced += 1;
+              await advanceAssignment(assignment, startedAt);
+              return;
+            }
+          }
+          const capped = agent.spendingCapCents !== null && agent.spendingCapCents !== undefined;
+          const estimate = Number.isInteger(assignment.costPerRunCents) ? assignment.costPerRunCents : 0;
+          // 2. Claim the slot before executing: overlapping sweeps serialize on
+          // the UNIQUE run key. The loser replays or skips, never re-executes.
+          // A capped agent's claim reserves its estimate on the ledger
+          // (`costCents` of the started row): every other sweep, in any
+          // process, counts it before executing. Finalize replaces it with the
+          // actual cost (0 on failure).
+          let claim = null;
           try {
-            cappedClaim = await runs().createManaged({
+            claim = await runs().createManaged({
               ...base,
               sourceKey: runKey,
-              costCents: 0,
-              outcome: 'capped',
-              note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
+              costCents: capped ? estimate : 0,
+              outcome: 'started',
+              note: 'Slot claimed, execution not yet recorded.',
             }, { actor });
-            void cappedClaim;
           } catch (error) {
             if (!isWinnerConflict(error)) throw error;
-            // A concurrent capped sweep claimed the same slot: replay the
-            // winner (or take over its stale started claim) instead of
-            // crashing runDue.
             const lost = await replayLostRace(spaceId, runKey, assignment, startedAt, summary, actor);
             if (lost.handled) return;
-            cappedClaim = lost.claim;
-            // A stolen stale claim finalizes conditionally: if its sweep
-            // woke up and recorded first, the winner stands and this sweep
-            // replays it instead of overwriting it.
-            await finalizeClaim(spaceId, runKey, cappedClaim, {
+            claim = lost.claim;
+          }
+          // This claim's own reservation, already on the ledger.
+          const reserved = typeof claim?.costCents === 'number' && Number.isFinite(claim.costCents) && claim.costCents > 0
+            ? claim.costCents
+            : 0;
+          // 2b. Re-check the cap with this claim's reservation stored: a sweep
+          // of another process may have reserved between the gate above and
+          // this claim. Everything else on the ledger (finalized costs and
+          // in-flight reservations) plus this estimate must fit; otherwise the
+          // slot records `capped` and nothing executes. Two claims racing
+          // across processes both see each other here: fail-closed.
+          if (capped) {
+            const others = (await monthSpent(spaceId, agent.sourceKey, at)) - reserved;
+            if (others + estimate > agent.spendingCapCents) {
+              await finalizeClaim(spaceId, runKey, claim, {
+                costCents: 0,
+                outcome: 'capped',
+                note: `Monthly cap reached: spent or reserved ${others}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
+              }, 'capped', assignment, startedAt, summary, actor);
+              return;
+            }
+          }
+          // 3. Execute, then finalize the claimed row. A crash between the
+          // claim and the finalize leaves a `started` row the next sweep
+          // reclaims after the lease — the work runs again, the evidence stays
+          // one row per slot.
+          let checked;
+          try {
+            checked = checkExecuteResult(await execute({ agent, assignment }));
+          } catch (error) {
+            await finalizeClaim(spaceId, runKey, claim, {
               costCents: 0,
-              outcome: 'capped',
-              note: `Monthly cap reached: spent ${spent}c of ${agent.spendingCapCents}c, this run would cost ${estimate}c.`,
-            }, 'capped', assignment, startedAt, summary, actor);
-            // finalizeClaim already counted and advanced: never fall
-            // through to the outer capped/advanced increment below.
+              outcome: 'failed',
+              note: sanitizeFailure(error, spaceId),
+            }, 'failed', assignment, startedAt, summary, actor);
+            summary.errors.push({
+              assignmentSourceKey: assignment.sourceKey,
+              spaceId,
+              code: error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN',
+            });
             return;
           }
-          summary.capped += 1;
-          summary.advanced += 1;
-          await advanceAssignment(assignment, startedAt);
-          return;
-        }
-      }
-      // 2. Claim the slot before executing: overlapping sweeps serialize on
-      // the UNIQUE run key. The loser replays or skips, never re-executes.
-      let claim = null;
-      try {
-        claim = await runs().createManaged({
-          ...base,
-          sourceKey: runKey,
-          costCents: 0,
-          outcome: 'started',
-          note: 'Slot claimed, execution not yet recorded.',
-        }, { actor });
-      } catch (error) {
-        if (!isWinnerConflict(error)) throw error;
-        const lost = await replayLostRace(spaceId, runKey, assignment, startedAt, summary, actor);
-        if (lost.handled) return;
-        claim = lost.claim;
-      }
-      // 3. Execute, then finalize the claimed row. A crash between the
-      // claim and the finalize leaves a `started` row the next sweep
-      // reclaims after the lease — the work runs again, the evidence stays
-      // one row per slot.
-      let checked;
-      try {
-        checked = checkExecuteResult(await execute({ agent, assignment }));
-      } catch (error) {
-        await finalizeClaim(spaceId, runKey, claim, {
-          costCents: 0,
-          outcome: 'failed',
-          note: sanitizeFailure(error, spaceId),
-        }, 'failed', assignment, startedAt, summary, actor);
-        summary.errors.push({
-          assignmentSourceKey: assignment.sourceKey,
-          spaceId,
-          code: error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN',
-        });
-        return;
-      }
-      const costCents = checkCostCents(checked.costCents, 'result.costCents') ?? 0;
-      const capped = agent.spendingCapCents !== null && agent.spendingCapCents !== undefined;
-      const estimate = Number.isInteger(assignment.costPerRunCents) ? assignment.costPerRunCents : 0;
-      // Post-execution allowance: the executor reports its own actual
-      // cost, so the pre-execution estimate cannot hold the cap alone. A
-      // run whose actual cost no longer fits the remaining allowance is
-      // recorded as `capped` — the true cost stays on the ledger (later
-      // sweeps stop here too), but its proposals/artifact are dropped and
-      // nothing is proposed or stored from an over-cap run.
-      if (capped) {
-        const spentNow = await monthSpent(spaceId, agent.sourceKey, at);
-        const allowance = agent.spendingCapCents - spentNow;
-        if (costCents > allowance) {
+          const costCents = checkCostCents(checked.costCents, 'result.costCents') ?? 0;
+          // Post-execution allowance: the executor reports its own actual
+          // cost, so the pre-execution estimate cannot hold the cap alone. A
+          // run whose actual cost no longer fits the remaining allowance is
+          // recorded as `capped` — the true cost stays on the ledger (later
+          // sweeps stop here too), but its proposals/artifact are dropped and
+          // nothing is proposed or stored from an over-cap run.
+          if (capped) {
+            // The ledger still holds this claim's own reservation: the
+            // allowance is the cap minus everything else.
+            const spentNow = (await monthSpent(spaceId, agent.sourceKey, at)) - reserved;
+            const allowance = agent.spendingCapCents - spentNow;
+            if (costCents > allowance) {
+              await finalizeClaim(spaceId, runKey, claim, {
+                costCents,
+                outcome: 'capped',
+                note: `Monthly cap stopped this run after execution: actual cost ${costCents}c exceeds the remaining allowance ${allowance}c of ${agent.spendingCapCents}c (estimate was ${estimate}c). Proposals/artifact not stored.`,
+              }, 'capped', assignment, startedAt, summary, actor);
+              return;
+            }
+          }
+          const overrun = capped && costCents > estimate
+            ? ` Actual cost ${costCents}c exceeded the ${estimate}c estimate.`
+            : '';
+          if (checked.kind === 'proposals') {
+            await finalizeClaim(spaceId, runKey, claim, {
+              costCents,
+              outcome: 'proposed',
+              proposals: JSON.stringify(checked.proposals),
+              note: `${checked.proposals.length} action proposal(s) waiting for human approval.${overrun}`,
+            }, 'proposed', assignment, startedAt, summary, actor);
+            return;
+          }
+          const previous = await runs().listWhere({ spaceId, assignmentSourceKey: assignment.sourceKey });
+          let version = 1;
+          for (const row of previous) {
+            if (row && Number.isInteger(row.artifactVersion) && row.artifactVersion >= version) {
+              version = row.artifactVersion + 1;
+            }
+          }
           await finalizeClaim(spaceId, runKey, claim, {
             costCents,
-            outcome: 'capped',
-            note: `Monthly cap stopped this run after execution: actual cost ${costCents}c exceeds the remaining allowance ${allowance}c of ${agent.spendingCapCents}c (estimate was ${estimate}c). Proposals/artifact not stored.`,
-          }, 'capped', assignment, startedAt, summary, actor);
-          return;
-        }
+            outcome: 'artifact',
+            artifact: JSON.stringify(checked.artifact),
+            artifactVersion: version,
+            ...(overrun === '' ? {} : { note: overrun.trim() }),
+          }, 'artifacts', assignment, startedAt, summary, actor);
+        });
+      } catch (error) {
+        // One broken assignment (dangling agent, missing estimate, a
+        // storage hiccup) never stops the sweep: count it, keep the code
+        // and space only (no message, no secrets), go on with the next.
+        summary.skipped += 1;
+        summary.errors.push({
+          assignmentSourceKey: typeof assignment?.sourceKey === 'string' ? assignment.sourceKey : null,
+          spaceId: typeof assignment?.spaceId === 'string' ? assignment.spaceId : null,
+          code: error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN',
+        });
       }
-      const overrun = capped && costCents > estimate
-        ? ` Actual cost ${costCents}c exceeded the ${estimate}c estimate.`
-        : '';
-      if (checked.kind === 'proposals') {
-        await finalizeClaim(spaceId, runKey, claim, {
-          costCents,
-          outcome: 'proposed',
-          proposals: JSON.stringify(checked.proposals),
-          note: `${checked.proposals.length} action proposal(s) waiting for human approval.${overrun}`,
-        }, 'proposed', assignment, startedAt, summary, actor);
-        return;
-      }
-      const previous = await runs().listWhere({ spaceId, assignmentSourceKey: assignment.sourceKey });
-      let version = 1;
-      for (const row of previous) {
-        if (row && Number.isInteger(row.artifactVersion) && row.artifactVersion >= version) {
-          version = row.artifactVersion + 1;
-        }
-      }
-      await finalizeClaim(spaceId, runKey, claim, {
-        costCents,
-        outcome: 'artifact',
-        artifact: JSON.stringify(checked.artifact),
-        artifactVersion: version,
-        ...(overrun === '' ? {} : { note: overrun.trim() }),
-      }, 'artifacts', assignment, startedAt, summary, actor);
-      });
     }
     return summary;
   }
@@ -739,7 +777,8 @@ export function createAgentOperations(options = {}) {
       const proposals = raw.map((proposal) => checkProposal(proposal));
       // Claim the run before any side effect: the claim lands only while
       // the row still carries the exact note read above. A live claim or
-      // live progress heartbeat from another approver refuses with a
+      // live progress heartbeat from another approver (including one at
+      // done == total, still before its final write) refuses with a
       // retryable 409; a stale one is taken over and resumes from its
       // heartbeat instead of replaying applied proposals.
       const nowMs = Date.parse(now());
@@ -747,7 +786,7 @@ export function createAgentOperations(options = {}) {
       const ageMs = marker === null ? null : nowMs - marker.atMs;
       const live = marker !== null && Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= AGENT_APPROVAL_LEASE_MS
         && (marker.kind === 'claim'
-          || (marker.kind === 'progress' && marker.total === proposals.length && marker.done < marker.total));
+          || (marker.kind === 'progress' && marker.total === proposals.length && marker.done <= marker.total));
       if (live) {
         throw new AppError('Another approval of this run is in progress: retry', {
           code: 'AGENT_APPROVAL_IN_PROGRESS', status: 409,
@@ -755,11 +794,13 @@ export function createAgentOperations(options = {}) {
       }
       // Resume where a previous attempt stopped: a stale progress
       // heartbeat means its approver is gone; a stopped marker means its
-      // attempt returned a failure and nothing is applying behind it.
+      // attempt returned a failure and nothing is applying behind it. A
+      // stale `done == total` heartbeat applied everything and only missed
+      // the final write: resume at the end, re-apply nothing.
       let start = 0;
       if (marker !== null && (marker.kind === 'progress' || marker.kind === 'stopped')
         && marker.total === proposals.length
-        && Number.isInteger(marker.done) && marker.done > 0 && marker.done < marker.total) {
+        && Number.isInteger(marker.done) && marker.done > 0 && marker.done <= marker.total) {
         start = marker.done;
       }
       const claimText = approvalClaimNote(actor.id, nowMs);
@@ -831,33 +872,5 @@ export function createAgentOperations(options = {}) {
     });
   }
 
-  async function pauseAgent(request) {
-    const record = request && typeof request === 'object' ? request : {};
-    const actor = requireAgentActor(record.actor, 'Pausing an agent');
-    const spaceId = checkSpaceId(record.spaceId);
-    const agent = await loadAgent(spaceId, record.agentSourceKey);
-    assertAgentTransition(agent.status, 'pause');
-    await agents().applyManaged(
-      agent.id,
-      { status: 'paused' },
-      { actor },
-    );
-    return { agent: (await agents().listWhere({ spaceId, sourceKey: agent.sourceKey }))[0] };
-  }
-
-  async function pauseAssignment(request) {
-    const record = request && typeof request === 'object' ? request : {};
-    const actor = requireAgentActor(record.actor, 'Pausing an assignment');
-    const spaceId = checkSpaceId(record.spaceId);
-    const assignment = await loadAssignment(spaceId, record.assignmentSourceKey);
-    assertAssignmentTransition(assignment.status, 'pause');
-    await assignments().applyManaged(
-      assignment.id,
-      { status: 'paused' },
-      { actor },
-    );
-    return { assignment: (await assignments().listWhere({ spaceId, sourceKey: assignment.sourceKey }))[0] };
-  }
-
-  return { createAgent, createAssignment, runDue, approveRun, pauseAgent, pauseAssignment };
+  return { createAgent, createAssignment, runDue, approveRun };
 }

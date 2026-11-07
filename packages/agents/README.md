@@ -20,7 +20,13 @@ approval — or a versioned artifact that needs none.
   of channels, work or commercial writes).
 - The agent's monthly cap (cents, calendar month) is checked before the
   `execute` seam runs: over the cap the run is recorded as `capped`, says
-  so in its note, costs nothing and never executes.
+  so in its note, costs nothing and never executes. A capped agent's slot
+  claim reserves its estimate on the ledger and the sweep re-checks the cap
+  after the claim, so concurrent sweeps — in one process or several — never
+  execute past the cap (two claims racing across processes both record
+  `capped`: fail-closed).
+- One broken due assignment never stops the sweep: it counts as `skipped`
+  with an `errors[]` entry (assignment, space, code) and the sweep goes on.
 - Every run — due, capped, failed, proposed, applied, artifact — is a row
   with agent, assignment, cost and outcome.
 
@@ -30,5 +36,9 @@ approval — or a versioned artifact that needs none.
   space, the backoffice UI and the worker-side `execute`/`applyAction`
   deployment (pilot worker) — the package exposes the seams, the deployment
   plugs them.
+- Pausing an agent or an assignment: the `paused` status exists in the
+  manifests, but no operation sets it yet.
+- A bound on the `execute` seam: a hung executor holds its agent's
+  same-process chain until it returns.
 - A real AI planner: `plan` is the seam; the built-in parser covers daily,
   weekly, monthly and once in Italian.

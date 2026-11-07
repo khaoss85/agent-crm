@@ -786,3 +786,190 @@ test('a failed execution keeps a sanitized diagnostic with code and space', asyn
   assert.match(rows[0].note, /presti/);
   assert.doesNotMatch(rows[0].note, /sk-live-abc/);
 });
+
+test('two sweeps from two processes never execute past the monthly cap', async () => {
+  const { ops, modules } = compose();
+  // A second module instance has its own in-memory agent chains: the
+  // same-process lock does not serialize it, exactly like another process
+  // sharing the database. Only the ledger reservation can hold the cap.
+  const other = await import('../packages/agents/src/operations.js?process=b');
+  const opsB = other.createAgentOperations({ modules, now: () => MON_07 });
+  await makeAgent(ops, { sourceKey: 'ag-two-procs', spendingCapCents: 100 });
+  for (const sourceKey of ['as-proc-a', 'as-proc-b']) {
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey,
+      agentSourceKey: 'ag-two-procs',
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+      costPerRunCents: 60,
+    });
+  }
+  let executions = 0;
+  let executing;
+  const started = new Promise((resolve) => { executing = resolve; });
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const execute = async () => {
+    executions += 1;
+    if (executions === 1) {
+      executing();
+      await held;
+    }
+    return { kind: 'artifact', costCents: 60, artifact: { n: executions } };
+  };
+  const sweepA = ops.runDue({ actor: SYSTEM, at: MON_0801, execute });
+  await started;
+  // Process B sweeps while A is still executing its first slot.
+  const sweepB = await opsB.runDue({ actor: SYSTEM, at: MON_0801, execute });
+  release();
+  const sweepAResult = await sweepA;
+  assert.equal(executions, 1, 'the reservation of A stops B before execute');
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, agentSourceKey: 'ag-two-procs' });
+  assert.equal(rows.length, 2, 'one row per slot');
+  assert.deepEqual(rows.map((row) => row.outcome).sort(), ['artifact', 'capped']);
+  const spent = rows.reduce((total, row) => total + row.costCents, 0);
+  assert.ok(spent <= 100, `ledger holds ${spent}c against a 100c cap`);
+  assert.equal(sweepB.artifacts, 0);
+  assert.equal(sweepAResult.artifacts, 1);
+});
+
+test('a claim that meets a reservation landed after the gate records capped and never executes', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'ag-window', spendingCapCents: 100 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-window',
+    agentSourceKey: 'ag-window',
+    phrase: 'ogni giorno il report',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 60,
+  });
+  // Another process passes the same gate (spent 0) and stores its 60c
+  // reservation just before this sweep's claim lands.
+  const real = modules.get('teammate-run').service;
+  let injected = false;
+  const racing = new Proxy(real, {
+    get(target, prop) {
+      if (prop === 'createManaged') {
+        return async (data, opts) => {
+          if (!injected && data.outcome === 'started') {
+            injected = true;
+            await target.createManaged({
+              ...data,
+              sourceKey: `run:as-elsewhere:${SLOT_0800}`,
+              assignmentSourceKey: 'as-elsewhere',
+              costCents: 60,
+            }, opts);
+          }
+          return target.createManaged(data, opts);
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const racingModules = new Map(modules);
+  racingModules.set('teammate-run', { service: racing });
+  const opsRace = createAgentOperations({ modules: racingModules, now: () => MON_07 });
+  let executions = 0;
+  const summary = await opsRace.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => { executions += 1; return { kind: 'artifact', costCents: 60, artifact: {} }; },
+  });
+  assert.equal(injected, true);
+  assert.equal(executions, 0, 'the re-check after the claim stops the run');
+  assert.equal(summary.capped, 1);
+  const row = (await real.listWhere({ spaceId: SPACE, sourceKey: `run:as-window:${SLOT_0800}` }))[0];
+  assert.equal(row.outcome, 'capped');
+  assert.equal(row.costCents, 0, 'the capped slot releases its reservation');
+  assert.match(row.note, /reserved 60c of 100c/);
+});
+
+test('a broken assignment does not stop the sweep', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops);
+  // A dangling assignment written out of band: its agent does not exist.
+  await modules.get('teammate-assignment').service.createManaged({
+    sourceKey: 'as-ghost',
+    spaceId: SPACE,
+    agentSourceKey: 'ag-ghost',
+    phrase: 'ogni lunedì il report vendite',
+    cadence: 'weekly',
+    weekday: 1,
+    timeOfDay: '08:00',
+    nextRunAt: SLOT_0800,
+    status: 'active',
+    decidedAt: MON_07,
+    actorType: USER.type,
+    actorId: USER.id,
+    sourcePackage: 'agents',
+    sourceAction: 'create-assignment',
+  }, { actor: USER });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-healthy',
+    agentSourceKey: 'ag-vendite',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+  });
+  let executions = 0;
+  const summary = await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => { executions += 1; return { kind: 'artifact', costCents: 1, artifact: {} }; },
+  });
+  assert.equal(executions, 1, 'the healthy assignment still runs');
+  assert.equal(summary.artifacts, 1);
+  assert.equal(summary.skipped, 1);
+  assert.deepEqual(summary.errors, [{ assignmentSourceKey: 'as-ghost', spaceId: SPACE, code: 'AGENT_UNKNOWN' }]);
+});
+
+test('a progress heartbeat at done == total stays live for the lease, then finalizes without re-applying', async () => {
+  const { ops, modules } = compose();
+  const { AGENT_APPROVAL_LEASE_MS } = await import('../packages/agents/src/agents.js');
+  await makeAgent(ops, { sourceKey: 'ag-done' });
+  for (const sourceKey of ['as-done-live', 'as-done-stale']) {
+    await ops.createAssignment({
+      actor: USER,
+      spaceId: SPACE,
+      sourceKey,
+      agentSourceKey: 'ag-done',
+      phrase: 'ogni giorno il report',
+      plan: { cadence: 'daily', timeOfDay: '08:00' },
+    });
+  }
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 1,
+      proposals: [{ action: 'draft-report', payload: {} }, { action: 'notify-owner', payload: {} }],
+    }),
+  });
+  const service = modules.get('teammate-run').service;
+  const liveKey = `run:as-done-live:${SLOT_0800}`;
+  const staleKey = `run:as-done-stale:${SLOT_0800}`;
+  const liveRow = (await service.listWhere({ spaceId: SPACE, sourceKey: liveKey }))[0];
+  await service.applyManaged(liveRow.id, { note: `approval-progress 2/2 ${Date.parse(MON_07)}` }, { actor: SYSTEM });
+  const staleRow = (await service.listWhere({ spaceId: SPACE, sourceKey: staleKey }))[0];
+  const staleAt = Date.parse(MON_07) - AGENT_APPROVAL_LEASE_MS - 1000;
+  await service.applyManaged(staleRow.id, { note: `approval-progress 2/2 ${staleAt}` }, { actor: SYSTEM });
+  let appliedCalls = 0;
+  const applyAction = async () => { appliedCalls += 1; return { ok: true }; };
+  // Live: the other approver applied everything and is about to finalize.
+  await assert.rejects(
+    () => ops.approveRun({ actor: USER, spaceId: SPACE, runSourceKey: liveKey, applyAction }),
+    (error) => error.code === 'AGENT_APPROVAL_IN_PROGRESS',
+  );
+  // Stale: everything was applied, only the final write is missing.
+  const stale = await ops.approveRun({ actor: USER, spaceId: SPACE, runSourceKey: staleKey, applyAction });
+  assert.equal(stale.run.outcome, 'applied');
+  assert.equal(appliedCalls, 0, 'no proposal is applied twice');
+});
