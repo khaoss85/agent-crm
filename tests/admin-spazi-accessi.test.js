@@ -64,7 +64,7 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
         return { items: members };
       }
       if (path.startsWith('/api/spine/memberships/') && path.endsWith('/suspend')) {
-        const subject = decodeURIComponent(path.split('/')[3]);
+        const subject = decodeURIComponent(path.split('/')[4]);
         const found = members.find((row) => row.subject === subject);
         if (!found) throw Object.assign(new Error('no such member'), { code: 'NOT_FOUND' });
         members.splice(members.indexOf(found), 1);
@@ -171,7 +171,7 @@ test('space cards name the operator role, hostile names stay text', () => {
     role: 'owner',
   });
   assert.equal(cards.length, 1);
-  assert.equal(cards[0].role, 'Proprietario');
+  assert.equal(cards[0].role, 'Titolare', 'the same word the shell prints under the space name');
   assert.equal(cards[0].roleKnown, true);
   assert.equal(cards[0].active, true);
   assert.equal(spaceRoleLabel('operator'), 'Operatore');
@@ -247,7 +247,7 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   const rendered = text(mount);
   assert.match(rendered, /Spazi di lavoro/);
   assert.match(rendered, /Stai lavorando qui/);
-  assert.match(rendered, /Tu: Proprietario/);
+  assert.match(rendered, /Tu: Titolare/);
   assert.match(rendered, /Team dell\u2019organizzazione/);
   assert.match(rendered, /intera organizzazione/);
   assert.match(rendered, /marco/);
@@ -820,4 +820,94 @@ test('the invite toggle closes the inline form and aria-expanded tracks menu or 
   await flush();
   assert.ok(!formOpen(), 'the toggle closes the inline form again');
   assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'collapsed once menu and form are both closed');
+});
+
+// backlog:6b44b0e9fcdf — Spazi e accessi like prototype 08: one team row per
+// person (prod 07/11 listed «Daniele Pelleri» twice: the adopted broker
+// member and the Google one), name over email, and the card foot.
+
+const byClassIn = (mount, tag, cls) => mount.findAll(tag)
+  .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(cls));
+
+test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name alone never merges', () => {
+  const rows = buildTeamRows([
+    { subject: 'broker|dan', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: ' DAN@esempio.invalid ' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Rossi' },
+    { subject: 'google|8', role: 'observer', status: 'active', displayName: 'Marco Rossi' },
+  ]);
+  assert.equal(rows.length, 3, 'Daniele is one row; the two email-less homonyms stay two people');
+  const dan = rows.find((row) => row.name === 'Daniele Pelleri');
+  assert.deepEqual(dan.subjects, ['broker|dan', 'google|42'], 'the row keeps every subject, nothing merges server-side');
+  assert.deepEqual(dan.removable, ['broker|dan', 'google|42']);
+  assert.equal(dan.email, 'dan@esempio.invalid');
+  assert.equal(dan.initials, 'DP', 'initials follow the person name');
+  assert.equal(dan.role, 'Titolare', 'a person holding two roles shows the stronger one');
+  assert.equal(dan.status, 'attivo');
+  assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2);
+  // Without enrichment the row reads exactly as before.
+  const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
+  assert.equal(bare.name, 'marco');
+  assert.equal(bare.email, null);
+  assert.equal(bare.initials, 'MA');
+  // A suspended subject is not suspended twice.
+  const [half] = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'suspended', email: 'x@esempio.invalid' },
+    { subject: 'b', role: 'owner', status: 'active', email: 'x@esempio.invalid' },
+  ]);
+  assert.deepEqual(half.removable, ['b']);
+  assert.equal(half.status, 'attivo', 'a person with one live subject is active');
+});
+
+test('6b44b0e9fcdf: the team paints one row per person with name over email, and removal suspends each subject', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.invalid' },
+  ];
+  const calls = [];
+  const { mount, view: v } = view({ client: stubClient({ members, calls }) });
+  await v.render();
+  await flush();
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.deepEqual(names, ['Daniele Pelleri', 'Marco Ferri'], 'Daniele appears once');
+  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|42'), 'no technical subject on screen');
+  const emails = byClassIn(mount, 'div', 'bo-spazi-email');
+  assert.deepEqual(emails.map((node) => node.textContent), ['dan@esempio.invalid', 'marco@esempio.invalid']);
+  assert.equal(emails[0].getAttribute('title'), 'dan@esempio.invalid', 'the full address survives the ellipsis');
+  assert.match(text(mount), /2 persone/, 'the card statistic counts people, not subjects');
+
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Daniele Pelleri'));
+  await remove.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Rimuovere Daniele Pelleri dal team\?/);
+  const reason = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della rimozione di Daniele Pelleri');
+  reason.value = 'prova';
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma rimozione').listeners.click[0]();
+  await flush(30);
+  const suspended = calls.filter((call) => call.path.endsWith('/suspend')).map((call) => call.path);
+  assert.deepEqual(suspended, [
+    `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
+    `/api/spine/memberships/${encodeURIComponent('google|42')}/suspend`,
+  ], 'each subject of the person is suspended through the spine route');
+});
+
+test('6b44b0e9fcdf: the card foot pairs Tu: <ruolo> with the badge or Apri; a description shows only when the space carries one', async () => {
+  const spaces = [
+    { id: 'spazio-1', name: 'Negozio', initials: 'NE', description: 'Abbigliamento · Torino' },
+    { id: 'spazio-2', name: 'Palestra', initials: 'PA' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members: [{ subject: 'marco', role: 'operator', status: 'active' }] }), spaces, active: 'spazio-1' });
+  await v.render();
+  await flush();
+  const feet = byClassIn(mount, 'div', 'bo-spazi-foot');
+  assert.equal(feet.length, 2, 'one foot per space card');
+  assert.equal(feet[0].textContent, 'Tu: TitolareStai lavorando qui');
+  assert.equal(feet[1].textContent, 'Tu: TitolareApri');
+  const open = feet[1].findAll('button')[0];
+  assert.ok((open.getAttribute('class') ?? '').split(/\s+/).includes('ui-btn-primary'), 'Apri is the system primary button');
+  const descriptions = byClassIn(mount, 'div', 'bo-spazi-desc').map((node) => node.textContent);
+  assert.deepEqual(descriptions, ['Abbigliamento · Torino'], 'no description is invented for the space without one');
+  const cards = byClassIn(mount, 'div', 'bo-spazi-card');
+  assert.ok((cards.at(-1).getAttribute('class') ?? '').includes('bo-spazi-adder'), 'the dashed adder stays last');
 });
