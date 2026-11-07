@@ -92,7 +92,7 @@ export const TENANT_STRATEGY = 'one-tenant-per-instance';
  * A tenant id is a bounded slug and nothing else. Not a path, not a URL, not a
  * name — a slug, because everything else has an escape in it somewhere.
  */
-const TENANT_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const TENANT_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
 
 /** What this strategy does and does not promise, published verbatim. */
 export const TENANT_LIMITATIONS = Object.freeze([
@@ -122,7 +122,7 @@ export function assertTenantId(tenantId) {
     // Deliberately does not echo the input: a rejected path fragment is exactly
     // the string you do not want appearing in a log a human later greps.
     throw new ValidationError(
-      'a tenant id must be lowercase letters, digits and hyphens, starting with a letter or digit, at most 63 characters',
+      'a tenant id must be lowercase letters, digits and hyphens, starting with a letter, at most 63 characters',
       { field: 'tenantId' },
     );
   }
