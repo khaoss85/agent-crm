@@ -1441,5 +1441,13 @@ test('Dan 06/11: a Lista row opens the offer detail, by its name link or the row
   assert.deepEqual(hashes, ['#/offerte/b'], 'a click on the row opens that offer');
   rows[1].dispatch('click', { target: rows[1], metaKey: true });
   assert.deepEqual(hashes, ['#/offerte/b'], 'a modified click is left to the browser');
+  // Review #614: selecting text on a row (to copy it) never opens the offer.
+  let selected = 'Bagno';
+  doc.getSelection = () => ({ isCollapsed: selected === '', toString: () => selected });
+  rows[1].dispatch('click', { target: rows[1] });
+  assert.deepEqual(hashes, ['#/offerte/b'], 'a click that ends a text selection stays on the list');
+  selected = '';
+  rows[1].dispatch('click', { target: rows[1] });
+  assert.deepEqual(hashes, ['#/offerte/b', '#/offerte/b'], 'with the selection gone the row opens again');
   assert.equal(rows[1].findAll('a')[0].textContent, 'Bagno <b>x</b>', 'a hostile name stays text');
 });

@@ -808,6 +808,10 @@ export function createPipelineBoard(deps) {
           // follows it, never a selection drag or a modified click.
           if (event?.target?.closest?.('a')) return;
           if (event?.metaKey || event?.ctrlKey || event?.shiftKey) return;
+          // Review #614: a click that ends a text selection (copying a
+          // name or a value) stays on the list; the name link still opens.
+          const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+          if (selection && selection.isCollapsed === false && String(selection) !== '') return;
           if (typeof deps.navigate === 'function') deps.navigate(href);
         });
       } else {
