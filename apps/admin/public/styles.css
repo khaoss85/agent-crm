@@ -266,6 +266,10 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pipeline-table th, .pipeline-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .pipeline-table th { font-size: 11px; color: var(--dim); }
+.pipeline-table tr[data-openable="true"] { cursor: pointer; transition: background-color .12s ease; }
+.pipeline-table tbody tr[data-openable="true"]:hover { background: var(--surface-soft); }
+.pipeline-row-link { color: inherit; font-weight: 600; text-decoration: none; }
+.pipeline-row-link:hover, .pipeline-row-link:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 .pipeline-card .card-owner, .pipeline-card .card-close { margin: 2px 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 /* Supervisor design pass: Pipeline like prototype 06. */
 .pipeline-board-panel.panel { border: none; background: transparent; box-shadow: none; padding: 0; }
