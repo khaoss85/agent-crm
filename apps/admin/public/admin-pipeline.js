@@ -118,13 +118,30 @@ const CREATED_OPTIONS = [
   { value: '30d', label: 'Ultimi 30 giorni' },
 ];
 
+/** How long a stage move may stay in flight before the card says it is not confirmed yet. */
+export const MOVE_PENDING_MS = 15000;
+const MOVE_IN_FLIGHT = 'Spostamento in corso…';
+const MOVE_UNCONFIRMED = 'Non ancora confermato';
+
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
   const toast = deps.toast ?? (() => {});
+  // The pending pause of a queued stage move (production 07/11: on the
+  // pilot a move rides the operation queue and the card sat aria-busy for
+  // minutes with no word). Injectable like the composer's send wait, so
+  // tests run it without real time.
+  // The default timer never holds a Node process open (unref is a no-op
+  // name in the browser, where setTimeout answers a number).
+  const wait = typeof deps.wait === 'function'
+    ? deps.wait
+    : (ms) => new Promise((resolve) => {
+      const timer = /** @type {any} */ (setTimeout(resolve, ms));
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
 
   /** Guard against stale async responses overwriting a newer board. */
   let renderToken = 0;
@@ -210,12 +227,20 @@ export function createPipelineBoard(deps) {
       }
       return;
     }
+    // Review #657: a drop rides the card's own move — the same lock,
+    // «Spostamento in corso…» and pending «Non ancora confermato» + Riprova
+    // as Sposta, so a queued move never reads as a failure.
+    const controls = cardNodes.get(recordId);
+    if (controls && typeof controls.move === 'function') {
+      await controls.move(toStage);
+      return;
+    }
     try {
       await postMove(pipeline, recordId, fromStage, toStage);
       toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
       await renderBoard(pipeline.name); // re-render: server state is the truth
     } catch (error) {
-      toast(moveFailureText(error), true);
+      toast(isMovePending(error) ? `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.` : moveFailureText(error), true);
     }
   }
 
@@ -859,6 +884,12 @@ export function createPipelineBoard(deps) {
     return pipeline.stages.find((stage) => stage.key === key)?.label ?? key;
   }
 
+  /** A move the server still holds: the queue answered BO_CRM_PENDING. A bare 504 is a failure, not a queue. */
+  function isMovePending(error) {
+    const record = error !== null && typeof error === 'object' ? error : {};
+    return record.code === 'BO_CRM_PENDING';
+  }
+
   function moveFailureText(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
@@ -1006,6 +1037,18 @@ export function createPipelineBoard(deps) {
     }
     const moveButton = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button' } });
     const errorNode = el(doc, 'small', { class: 'field-error hidden' });
+    // The card's own status line while a move is in flight: «Spostamento in
+    // corso…», then «Non ancora confermato» with Riprova once the pending
+    // read times out. Riprova re-reads the board — never a second POST: a
+    // move that landed meanwhile would only answer a stale-stage refusal.
+    const statusNode = el(doc, 'small', { class: 'card-status hidden', attrs: { role: 'status', 'aria-live': 'polite' } });
+    const retryButton = el(doc, 'button', { class: 'small secondary hidden', text: 'Riprova', attrs: { type: 'button', 'data-action': 'move-retry' } });
+    retryButton.addEventListener('click', () => { void renderBoard(pipeline.name); });
+    const showStatus = (text, retry) => {
+      statusNode.textContent = text;
+      statusNode.setAttribute('class', text ? 'card-status' : 'card-status hidden');
+      retryButton.setAttribute('class', retry ? 'small secondary' : 'small secondary hidden');
+    };
 
     // Voce 96e7b579: Vinta and Persa never post straight from Sposta or a
     // drop. They reveal the Conferma panel — the question names the offer
@@ -1038,15 +1081,32 @@ export function createPipelineBoard(deps) {
       errorNode.setAttribute('class', 'field-error hidden');
       confirmError.textContent = '';
       confirmError.setAttribute('class', 'field-error hidden');
+      showStatus(MOVE_IN_FLIGHT, false);
+      let settled = false;
+      void wait(MOVE_PENDING_MS).then(() => {
+        if (!settled) showStatus(MOVE_UNCONFIRMED, true);
+      });
       try {
         await postMove(pipeline, record.id, stage.key, toStage, reason);
+        settled = true;
         toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
         await renderBoard(pipeline.name); // re-render: server state is the truth
       } catch (error) {
+        settled = true;
+        if (isMovePending(error)) {
+          // Still queued on the server: the outcome is unknown, never
+          // «non riuscito». The move stays locked (review #657): only
+          // Riprova, a board re-read, is offered — a second POST would
+          // queue a duplicate or meet a stale-stage refusal.
+          console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
+          showStatus(MOVE_UNCONFIRMED, true);
+          return;
+        }
         busy = false;
         moveButton.disabled = false;
         moveButton.setAttribute('aria-busy', 'false');
         confirmYes.disabled = false;
+        showStatus('', false);
         errorNode.textContent = moveFailureText(error);
         errorNode.setAttribute('class', 'field-error');
       }
@@ -1092,9 +1152,14 @@ export function createPipelineBoard(deps) {
     controls.appendChild(select);
     controls.appendChild(moveButton);
     controls.appendChild(errorNode);
+    controls.appendChild(statusNode);
+    controls.appendChild(retryButton);
     card.appendChild(controls);
     card.appendChild(confirmBox);
-    cardNodes.set(String(record.id), { select, errorNode, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError });
+    cardNodes.set(String(record.id), {
+      select, errorNode, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      move: (toStage) => doPost(toStage, undefined),
+    });
     card.__move = submit; // test hook
     card.__select = select;
     card.__reason = confirmReason;

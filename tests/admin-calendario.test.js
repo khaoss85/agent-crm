@@ -6,9 +6,13 @@ import assert from 'node:assert/strict';
 import {
   channelOf,
   createCalendarioView,
+  calendarRefusalText,
   dayHead,
   displayKeys,
+  draftDayKey,
+  draftDayOnly,
   draftMinutes,
+  draftWhen,
   dropHeldOverlaps,
   filterPhraseProposals,
   GRID_START_MINUTES,
@@ -26,10 +30,12 @@ import {
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
+  serviceKeyFor,
   serviceLabel,
   slotInGrid,
   statusWord,
   teamRows,
+  weekCovers,
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
@@ -95,7 +101,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined, catalog = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined, catalog = null, failPhraseWith = null } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -122,6 +128,7 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
         throw notFound();
       }
       if (path === '/api/appointments/confirm' && failConfirmWith) throw failConfirmWith;
+      if (path === '/api/appointments/phrase' && failPhraseWith) throw failPhraseWith;
       if (path === '/api/appointments/propose' || path === '/api/appointments/confirm') {
         const body = payload({ body: options.body });
         if (path === '/api/appointments/propose') {
@@ -429,7 +436,9 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   assert.ok(suggest, 'the phrase feeds a slot search');
   assert.ok(suggest.path.includes('teamMemberIds=marco'), 'the drafted person is searched');
   assert.ok(suggest.path.includes('slotMinutes=30'), 'the drafted duration is searched');
-  assert.ok(suggest.path.includes('from=2026-10-18T22'), 'the search covers the shown week');
+  // Production 07/11: the drafted day bounds the search (Rome Thu 22 Oct).
+  assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search covers the drafted day');
+  assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and only that day');
   // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
   const list = mount.querySelector('.cal-slots');
   assert.ok(list, 'the proposal rows render');
@@ -522,8 +531,8 @@ test('zero slots say so in plain words', async () => {
     await new Promise((resolve) => setImmediate(resolve));
   }
   assert.ok(
-    texts(mount, 'p').includes('Nessuno slot libero questa settimana, prova con altri giorni.'),
-    'the spec sentence, no code',
+    texts(mount, 'p').includes('Nessuno slot libero quel giorno, prova con un altro giorno.'),
+    'the spec sentence for the drafted day, no code',
   );
   assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal rows, only the manual Conferma');
 });
@@ -3139,7 +3148,7 @@ test('a phrase step held under one identity is never proposed under the other', 
   assert.ok(suggest, 'the phrase feeds a slot search');
   assert.ok(suggest.path.includes('google%7Cg1'), 'every identity the human holds is searched');
   assert.ok(
-    texts(mount, 'p').includes('Nessuno slot libero questa settimana, prova con altri giorni.'),
+    texts(mount, 'p').includes('Nessuno slot libero quel giorno, prova con un altro giorno.'),
     'the step held under coach-guido is not offered as free under google|g1',
   );
   assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal rows, only the manual Conferma');
@@ -3605,4 +3614,545 @@ test('review #646 r3: a pager move during the search leaves its answer unpublish
   await flushAll();
   assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal of the old week lands on the new one');
   assert.ok(!mount.findAll('button').some((node) => (node.textContent ?? '').startsWith('✦ Proposta')), 'no ghost either');
+});
+
+// ---- Production verification 07/11 (supervisor/difetti-agenda) ----
+
+const flushMany = async (n = 9) => {
+  for (let round = 0; round < n; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+};
+const manualButton = (mount, label) => mount.querySelector('.cal-manual').findAll('button')
+  .find((node) => node.textContent === label);
+
+// e) After «booked» the form read «Bozza pronta: premi Conferma…» and the
+// phrase card kept its draft: a booking is a done state.
+test('a booked Conferma clears every draft and shows «Prenotato» with the week reloaded', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    phrase: { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  await pickCustomerByName(mount, 'Ada');
+  byName().price.value = '45.00';
+  manualButton(mount, 'Proponi').dispatch('click');
+  await flushMany();
+  assert.ok(mount.textContent.includes('Bozza pronta: premi «Conferma»'), 'propose answers a draft first');
+  const weekReads = client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length;
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 1);
+  assert.ok(!mount.textContent.includes('Bozza'), 'no draft line survives the booking');
+  const booked = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'booked');
+  assert.ok(booked, 'the done state paints');
+  assert.equal(booked.textContent, 'Prenotato: marco · 22 ott 18:00.');
+  assert.equal(mount.querySelector('.cal-slots'), null, 'the proposals are gone');
+  assert.equal(byName().serviceKey.value, '', 'the form is cleared for the next booking');
+  assert.ok(
+    client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length > weekReads,
+    'the week reloads so the new event paints',
+  );
+});
+
+// f) A typed service the listino does not know: the pilot answers 400
+// BO_APPOINTMENT_SERVICE_REFUSED; the operator read «Riprova più tardi».
+test('a service outside the listino is named under the field, never «Riprova più tardi»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const refused = Object.assign(new Error('Calendar change refused'), { status: 400, code: 'BO_APPOINTMENT_SERVICE_REFUSED' });
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]), failConfirmWith: refused });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'massaggio speciale';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  const hint = mount.findAll('small').find((node) => node.getAttribute('data-role') === 'service-error');
+  assert.ok(hint, 'the refusal sits under the service field');
+  assert.ok(hint.textContent.startsWith('Scegli un servizio dal listino'), hint.textContent);
+  assert.equal(byName().serviceKey.getAttribute('aria-invalid'), 'true');
+  assert.ok(!mount.textContent.includes('Riprova più tardi'), 'no generic retry for a refusal with a cause');
+  assert.ok(!mount.textContent.includes('Calendar change refused'), 'no English server message');
+  assert.equal(byName().serviceKey.value, 'massaggio speciale', 'the typed value stays to correct');
+});
+
+test('serviceKeyFor sends the listino key for a typed catalog name, the text otherwise', () => {
+  const names = new Map([['lezione-prova', 'Lezione prova'], ['taglio', 'Taglio']]);
+  assert.equal(serviceKeyFor('Lezione prova', names), 'lezione-prova');
+  assert.equal(serviceKeyFor('  taglio ', names), 'taglio');
+  assert.equal(serviceKeyFor('Massaggio', names), 'Massaggio', 'an unknown name goes as typed, the server refuses it');
+  assert.equal(serviceKeyFor('Taglio', null), 'Taglio', 'no catalog read: unchanged');
+  assert.ok(calendarRefusalText({ code: 'VALIDATION_ERROR', details: { field: 'serviceKey' } }).startsWith('Scegli un servizio dal listino'),
+    'the framework validation on the field reads the same');
+  assert.equal(calendarRefusalText({ code: 'BO_APPOINTMENT_CONFIRM_REFUSED' }), null, 'other refusals keep their generic sentence');
+});
+
+// i) «Fissa con una frase» with the AI off read «Ricerca non riuscita».
+for (const code of ['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']) {
+  test(`AI off (${code}) points at the manual form and disables the phrase box`, async () => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ failPhraseWith: Object.assign(new Error('Calendar phrase refused'), { status: 502, code }) });
+    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    await flushMany();
+    assert.ok(texts(mount, 'p').includes('L’AI è spenta in questo spazio: usa il modulo qui sotto.'));
+    assert.ok(!mount.textContent.includes('Ricerca non riuscita'));
+    assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'the phrase box is off');
+    const find = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
+    assert.equal(find.getAttribute('disabled'), 'true', 'the search button is off');
+  });
+}
+
+// j) «trova 45 minuti con Daniele giovedì» drafted «12 nov 00:00–00:30»
+// and the slots started on Monday.
+test('a day-only phrase searches that day for the stated minutes and never paints 00:00', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    // Rome midnight of Thursday 22 Oct (CEST): the model's answer for «giovedì».
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-21T22:00:00.000Z', endsAt: '2026-10-21T22:30:00.000Z', durationMinutes: 45 },
+    slots: [
+      { startsAt: '2026-10-21T07:00:00.000Z', endsAt: '2026-10-21T07:45:00.000Z' },
+      { startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-20T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
+  assert.ok(suggest.path.includes('slotMinutes=45'), 'the stated minutes, not the padded 30');
+  assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search starts on the named day');
+  assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and ends with it');
+  const draftLine = mount.querySelector('.cal-draft').textContent;
+  assert.ok(draftLine.includes('gio 22 ott · orario da scegliere · 45 minuti'), draftLine);
+  assert.ok(!mount.querySelector('.cal-rail').textContent.includes('00:00'), 'no midnight hour anywhere in the rail');
+  const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
+  assert.deepEqual(rows, ['22 ott · 10:00–10:45'], 'only the named day is proposed');
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  assert.equal(field('date').value, '2026-10-22', 'the day prefills');
+  assert.equal(field('start').value, '', 'the hour stays to choose');
+  assert.equal(field('end').value, '', 'the end stays to choose');
+});
+
+test('draft helpers: a midnight start is a day, not a time', () => {
+  const dayOnly = { startsAt: '2026-11-11T23:00:00.000Z', endsAt: '2026-11-11T23:30:00.000Z', durationMinutes: 45 };
+  assert.equal(draftDayOnly(dayOnly), true);
+  assert.equal(draftDayKey(dayOnly), '2026-11-12');
+  assert.equal(draftMinutes(dayOnly), 45, 'the stated minutes win over the padded end');
+  assert.equal(draftWhen(dayOnly), 'gio 12 nov · orario da scegliere · 45 minuti');
+  const timed = { startsAt: '2026-11-12T09:00:00.000Z', endsAt: '2026-11-12T09:45:00.000Z' };
+  assert.equal(draftDayOnly(timed), false);
+  assert.equal(draftWhen(timed), '12 nov 10:00–10:45');
+  assert.equal(draftWhen({ durationMinutes: 45 }), '45 minuti', 'no day: the minutes only');
+  assert.equal(draftDayKey({ durationMinutes: 45 }), null);
+});
+
+// e) The pilot confirm can poll for ~50 s: the form never keeps «Bozza
+// pronta: premi «Conferma»» on screen while Conferma is in flight.
+test('Conferma in flight replaces the draft note with «Prenotazione in corso…»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/appointments/confirm') {
+        base.calls.push({ path, method: options.method ?? 'GET', body: options.body });
+        return new Promise(() => {}); // the queue never answers
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  manualButton(mount, 'Proponi').dispatch('click');
+  await flushMany();
+  assert.ok(mount.querySelector('.cal-manual').textContent.includes('Bozza pronta'), 'propose answers a draft first');
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  const panel = mount.querySelector('.cal-manual').textContent;
+  assert.ok(panel.includes('Prenotazione in corso…'), panel);
+  assert.ok(!panel.includes('Bozza'), 'the stale draft note is gone while Conferma runs');
+});
+
+test('AI off is remembered for its own space only', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'space-a';
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  const client = stubClient({ failPhraseWith: Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'LLM_SPACE_DISABLED' }) });
+  const view = createCalendarioView({ doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'off in space A');
+  space = 'space-b';
+  await view.render();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
+});
+
+// Review #657 P1: a phrase naming a day outside the shown week moved the
+// grid and nulled the week before the held-overlap guard ran, so a booked
+// step in that week was proposed on top of its booking.
+test('a cross-week phrase never proposes a step held in the named week', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const nextWeek = {
+    from: '2026-10-26T00:00:00.000Z',
+    to: '2026-11-02T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'n1', status: 'booked', teamMemberId: 'marco', serviceKey: 'taglio',
+        startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', label: 'Ada' },
+      }],
+    }],
+  };
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-29T10:00:00.000Z', endsAt: '2026-10-29T10:45:00.000Z' },
+    slots: [
+      { startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z' },
+      { startsAt: '2026-10-29T13:00:00.000Z', endsAt: '2026-10-29T13:45:00.000Z' },
+    ],
+  });
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week') && path.includes('from=2026-10-2') && !path.includes('from=2026-10-18')) {
+        base.calls.push({ path, method: 'GET' });
+        await new Promise((resolve) => setImmediate(resolve)); // the week answers after a beat
+        return nextWeek;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(14);
+  const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
+  assert.deepEqual(rows, ['29 ott · 14:00–14:45'], 'the step booked at 10:00 Rome is not proposed');
+});
+
+// Review #657 P2: the slot/ghost Conferma kept «Bozza pronta» on screen
+// while the pilot queue held the write.
+test('a proposal Conferma in flight says «Prenotazione in corso…», never the stale draft note', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/appointments/confirm') return new Promise(() => {}); // the queue never answers
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  await pickCustomerByName(mount, 'Ada');
+  assert.ok(mount.querySelector('.cal-ai').textContent.includes('Bozza pronta'), 'the draft note shows first');
+  mount.querySelector('.cal-slots').findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await flushMany();
+  const card = mount.querySelector('.cal-ai').textContent;
+  assert.ok(card.includes('Prenotazione in corso…'), card);
+  assert.ok(!card.includes('Bozza pronta'), 'the stale draft note is gone while Conferma runs');
+});
+
+// Review #657 (second round) P1: with nobody named the moved week was never
+// loaded and the held-overlap guard ran against nothing.
+const NEXT_WEEK_HELD = {
+  from: '2026-10-26T00:00:00.000Z',
+  to: '2026-11-02T00:00:00.000Z',
+  members: [{
+    teamMemberId: 'marco',
+    appointments: [{
+      id: 'n1', status: 'booked', teamMemberId: 'marco', serviceKey: 'taglio',
+      startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z',
+      subject: { resource: 'contact', id: 'c1', owner: 'host', label: 'Ada' },
+    }],
+  }],
+};
+const crossWeekClient = (weekAnswer) => {
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-29T10:00:00.000Z', endsAt: '2026-10-29T10:45:00.000Z' },
+    slots: [
+      { startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z' },
+      { startsAt: '2026-10-29T13:00:00.000Z', endsAt: '2026-10-29T13:45:00.000Z' },
+    ],
+  });
+  return {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week')) {
+        base.calls.push({ path, method: 'GET' });
+        return weekAnswer();
+      }
+      return base.request(path, options);
+    },
+  };
+};
+
+test('a cross-week phrase with nobody named still guards the held bookings', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = crossWeekClient(() => NEXT_WEEK_HELD);
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(14);
+  const read = client.calls.find((call) => call.path.startsWith('/api/appointments/team-week'));
+  assert.ok(read && read.path.includes('teamMemberIds=marco'), 'the searched person week is read for the guard');
+  const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
+  assert.deepEqual(rows, ['29 ott · 14:00–14:45'], 'the step booked at 10:00 Rome is not proposed');
+});
+
+test('a cross-week phrase whose week cannot be read proposes nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = crossWeekClient(() => { throw Object.assign(new Error('down'), { status: 502, code: 'UNKNOWN' }); });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(14);
+  assert.equal(mount.querySelector('.cal-slots'), null, 'fail closed: no proposal against unknown bookings');
+  assert.ok(texts(mount, 'p').includes('Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.'));
+});
+
+// Review #657 (second round) P2: an unavailable AI backend is not «AI off in
+// this space» — the phrase box stays usable for a retry.
+test('APPOINTMENTS_AI_UNAVAILABLE keeps the phrase box and never says the AI is off', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ failPhraseWith: Object.assign(new Error('unavailable'), { status: 503, code: 'APPOINTMENTS_AI_UNAVAILABLE' }) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  assert.ok(!mount.textContent.includes('L’AI è spenta'), 'a transient outage is not a space switch');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'the phrase box stays usable');
+  assert.equal(calendarRefusalText({ code: 'APPOINTMENTS_AI_UNAVAILABLE' }), null);
+});
+
+// Review #657 gap: with nobody named, a phrase day inside the shown week
+// had no loaded week either, and the guard ran against nothing.
+test('a same-week phrase with nobody named still guards the held bookings', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
+    // WEEK holds marco 16:00–16:30Z on 22 Oct: that step is never proposed.
+    slots: [
+      { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+      { startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' },
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(14);
+  const read = client.calls.find((call) => call.path.startsWith('/api/appointments/team-week'));
+  assert.ok(read && read.path.includes('teamMemberIds=marco'), 'the searched person week is read for the guard');
+  const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
+  assert.deepEqual(rows, ['22 ott · 15:00–15:30'], 'the held 18:00 Rome step is not proposed');
+});
+
+test('a same-week phrase whose week cannot be read proposes nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' }],
+  });
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week')) throw Object.assign(new Error('down'), { status: 502, code: 'UNKNOWN' });
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(14);
+  assert.equal(mount.querySelector('.cal-slots'), null, 'fail closed: no proposal against unknown bookings');
+  assert.ok(texts(mount, 'p').includes('Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.'));
+});
+
+test('weekCovers trusts a loaded week only when it lists every searched identity', () => {
+  const week = { members: [{ teamMemberId: 'marco', appointments: [] }] };
+  assert.equal(weekCovers(week, ['marco']), true);
+  assert.equal(weekCovers(week, ['marco', 'google|g1']), false, 'a missing sibling identity is not covered');
+  assert.equal(weekCovers(null, ['marco']), false);
+  assert.equal(weekCovers(week, []), false);
+});
+
+// Review #657 round 4 P2: a Conferma racing the first catalog read sent the
+// raw product name and was refused.
+test('a typed catalog name books its listino key even before the catalog was read', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    catalog: { products: [{ sku: 'lezione-prova', name: 'Lezione prova' }] },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'Lezione prova';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  const confirm = client.calls.find((call) => call.path === '/api/appointments/confirm');
+  assert.ok(confirm, 'the booking is sent');
+  assert.equal(payload(confirm).serviceKey, 'lezione-prova', 'the catalog name resolves to its key');
+});
+
+// Review #657 round 4 P2: AI off is remembered for every space that said so.
+test('AI off stays remembered for each space, not only the last one', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'space-a';
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  const client = stubClient({ failPhraseWith: Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'LLM_SPACE_DISABLED' }) });
+  const view = createCalendarioView({ doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  const refuse = async () => {
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    await flushMany();
+  };
+  await view.render();
+  await refuse();
+  space = 'space-b';
+  await view.render();
+  await refuse();
+  space = 'space-a';
+  await view.render();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'space A is still off');
+});
+
+// Review #657 round 5 P1: a pager move while the named week preloads made
+// the held guard read the paged week and propose a held step.
+test('a pager move during the cross-week preload never proposes against the wrong week', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const namedWeek = {
+    from: '2026-10-26T00:00:00.000Z',
+    to: '2026-11-02T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'n1', status: 'booked', teamMemberId: 'marco', serviceKey: 'taglio',
+        startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', label: 'Ada' },
+      }],
+    }],
+  };
+  const pagedWeek = { from: '2026-11-02T00:00:00.000Z', to: '2026-11-09T00:00:00.000Z', members: [{ teamMemberId: 'marco', appointments: [] }] };
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', startsAt: '2026-10-29T10:00:00.000Z', endsAt: '2026-10-29T10:45:00.000Z' },
+    slots: [
+      { startsAt: '2026-10-29T09:00:00.000Z', endsAt: '2026-10-29T09:45:00.000Z' },
+      { startsAt: '2026-10-29T13:00:00.000Z', endsAt: '2026-10-29T13:45:00.000Z' },
+    ],
+  });
+  let holdNamed = false;
+  let releaseNamed = () => {};
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week') && holdNamed) {
+        holdNamed = false;
+        base.calls.push({ path, method: 'GET' });
+        await new Promise((resolve) => { releaseNamed = resolve; });
+        return namedWeek;
+      }
+      if (path.startsWith('/api/appointments/team-week') && path.includes('2026-11-0')) {
+        base.calls.push({ path, method: 'GET' });
+        return pagedWeek;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await flushMany();
+  holdNamed = true;
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany();
+  // The operator pages forward while the named week is still loading.
+  mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Settimana dopo').dispatch('click');
+  await flushMany();
+  releaseNamed();
+  await flushMany(14);
+  const rows = (mount.querySelector('.cal-slots')?.findAll('span') ?? []).map((node) => node.textContent);
+  assert.ok(!rows.includes('29 ott · 10:00–10:45'), `the held 10:00 Rome step is never proposed (${rows.join(' | ')})`);
 });

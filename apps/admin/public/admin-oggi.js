@@ -32,6 +32,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { nameFromProfile } from './admin-labels.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -743,14 +744,31 @@ export function waitedFor(value, now = new Date()) {
   return days === 1 ? 'da ieri' : `da ${days} giorni`;
 }
 
+/** `resource:id` of an inbox subject, the key profile names are read under; null without one. */
+export function inboxSubjectKey(subject) {
+  const resource = nonEmptyText(subject?.subjectResource);
+  const id = nonEmptyText(subject?.subjectId);
+  return resource && id ? `${resource}:${id}` : null;
+}
+
+/** A stored subject label that names someone: the generic «Cliente» placeholder does not. */
+function realLabel(value) {
+  const text = nonEmptyText(value);
+  return text && text.toLowerCase() !== 'cliente' ? text : null;
+}
+
 /**
  * The «Da rispondere» inbox (MVP Presti, Dan 04/11): the conversations whose
  * latest message is the customer's, newest first. One row per conversation,
  * never per message; a conversation the team answered last is not waiting.
- * The label is the stored subject snapshot, never an id.
- * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number }} input
+ * The name is the customer's (production 07/11: every row read «Cliente»,
+ * because the channel syncs store no subject label): the resolved profile
+ * name, else the stored subject snapshot, else the sender handle the
+ * message kept (e-mail, number, @handle) — never an id and never the
+ * generic «Cliente».
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null> }} input
  */
-export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT } = {}) {
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {} } = {}) {
   const byId = new Map();
   for (const conversation of conversations) {
     if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
@@ -777,12 +795,20 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectResource: message.subjectResource ?? conversation?.subjectResource,
       subjectId: message.subjectId ?? conversation?.subjectId,
     };
+    const subjectKey = inboxSubjectKey(subject);
+    const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
+      ?? realLabel(conversation?.subjectLabel)
+      ?? realLabel(message.subjectLabel)
+      ?? nonEmptyText(message.remoteHandle)
+      ?? nonEmptyText(conversation?.remoteHandle)
+      ?? 'Contatto senza nome';
     waiting.push({
       id: conversationId,
       at,
       channel,
-      mono: channelTile(channel) ?? badgeInitials(conversation?.subjectLabel),
-      name: nonEmptyText(conversation?.subjectLabel) ?? nonEmptyText(message.subjectLabel) ?? 'Cliente',
+      subjectKey,
+      mono: channelTile(channel) ?? badgeInitials(name),
+      name,
       preview: briefSnippet(message.body, 110) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
       when: [waitedFor(message.occurredAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject(subject),
@@ -925,6 +951,34 @@ async function readModulePage(client, module, filters = {}) {
 }
 
 /**
+ * The customer name of every shown «Da rispondere» row (production 07/11:
+ * the channel syncs store no subject label, so every row read «Cliente»).
+ * One read-only profile per shown subject — at most the inbox limit —
+ * settled together; a refused or unknown profile leaves the row on its
+ * stored label or sender handle, never an error on Oggi.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readInboxNames(client, messages, conversations, now) {
+  const { rows } = buildInbox({ messages, conversations, now });
+  const keys = [...new Set(rows.map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  /** @type {Record<string, string>} */
+  const names = {};
+  const settled = await Promise.allSettled(keys.map(async (key) => {
+    const cut = key.indexOf(':');
+    const resource = key.slice(0, cut);
+    const id = key.slice(cut + 1);
+    const profile = await client.request(`/api/customer-data/profile/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`);
+    return { key, name: nameFromProfile(profile) };
+  }));
+  for (const result of settled) {
+    if (result.status === 'fulfilled' && result.value.name) names[result.value.key] = result.value.name;
+  }
+  return names;
+}
+
+/**
  * Load everything Oggi renders. Never throws for a missing package: each
  * section carries its own availability.
  * @param {{ request: (path: string) => Promise<any> }} client
@@ -946,6 +1000,8 @@ export async function loadOggiData(client, now = new Date()) {
     inboxAvailable: false,
     inboxMessages: [],
     inboxConversations: [],
+    /** Customer names of the shown inbox rows, by `resource:id` (profile reads). */
+    inboxNames: {},
     next: null,
   };
   let domains = {};
@@ -1012,6 +1068,9 @@ export async function loadOggiData(client, now = new Date()) {
       noteReadFailure('inbox', messages.reason);
     }
     if (conversations.status === 'fulfilled') outcome.inboxConversations = conversations.value;
+    if (outcome.inboxAvailable) {
+      outcome.inboxNames = await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now);
+    }
   }
   outcome.next = nextAppointment(outcome.appointments, now);
   if (outcome.next != null && domains.interactions != null) {
@@ -1562,7 +1621,7 @@ export function createOggiView(deps) {
         inbox: !last.inboxComposed
           ? null
           : last.inboxAvailable
-            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, now: lastMeta.now }) }
+            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now }) }
             : { available: false, total: 0, rows: [] },
         missing,
         connections: last.connections,
@@ -1702,7 +1761,7 @@ export function createOggiView(deps) {
           interactionsAvailable: false, tasks: [], appointments: [], connections: [],
           profile: null,
           briefMessages: [], briefCalls: [], next: null,
-          inboxAvailable: false, inboxMessages: [], inboxConversations: [],
+          inboxAvailable: false, inboxMessages: [], inboxConversations: [], inboxNames: {},
         };
       }
       paint();
