@@ -906,7 +906,8 @@ export function createSyncView(deps) {
     main.appendChild(head);
     main.appendChild(el(doc, 'p', 'bo-sync-hero-sub', indicator.detail));
     hero.appendChild(main);
-    hero.appendChild(indicator.tone === 'empty' ? renderHeroConnect() : renderHeroPull(activity, syncing));
+    const action = indicator.tone === 'empty' ? renderHeroConnect() : renderHeroPull(activity, syncing);
+    if (action !== null) hero.appendChild(action);
     box.appendChild(hero);
     if (readOnly()) {
       box.appendChild(el(doc, 'p', 'bo-sync-note', 'Sola lettura (Osservatore): i pulsanti di azione sono nascosti.'));
@@ -947,15 +948,13 @@ export function createSyncView(deps) {
 
   // Nothing linked: the hero's action is the first connection, never a
   // pull with nothing to pull. Observers get no action at all.
+  // Observers get no anchor at all (review #647 P1): the link's own
+  // `display` would beat a `hidden` attribute and paint it anyway.
   function renderHeroConnect() {
+    if (readOnly()) return null;
     const link = el(doc, 'a', 'ui-btn ui-btn-cta bo-sync-hero-pull bo-sync-hero-connect', 'Collega un canale');
     link.setAttribute('href', '#/connettori');
     link.setAttribute('data-action', 'collega');
-    if (readOnly()) {
-      link.setAttribute('hidden', '');
-      link.setAttribute('aria-hidden', 'true');
-      return link;
-    }
     link.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       go('#/connettori');
@@ -1069,11 +1068,14 @@ export function createSyncView(deps) {
   // the prototype names the channel, never the binding handle.
   function renderTable(box, activity) {
     const rows = syncChannelTable(activity);
-    const connected = rows
-      .filter((row) => row.connected && SYNC_CHANNELS.some((fixed) => fixed.id === row.channel)).length;
+    // Same rows as the hero's `linked` (review #647 P2): a linked channel
+    // outside the fixed nine (SMS, Telegram) is a row of the table, so it
+    // counts and so does its place — «1 di 10», never «0 di 9» beside a
+    // hero that is right to call it linked.
+    const connected = rows.filter((row) => row.connected).length;
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
-    cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${connected} di 9 collegati`));
+    cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${connected} di ${rows.length} collegati`));
     box.appendChild(cardHead);
     const wrap = el(doc, 'div', 'bo-sync-tablewrap');
     const table = doc.createElement('table');

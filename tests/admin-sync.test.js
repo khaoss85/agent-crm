@@ -13,6 +13,7 @@
  * channels package, or on a failed read.
  */
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
@@ -1037,9 +1038,47 @@ test('3a3e6eaf: an observer with nothing linked sees the state but no action', a
   await view.render();
   await flush();
   assert.ok(mount.textContent.includes('Nessun canale collegato'));
+  // Review #647 P1: an author `display` beats the `hidden` attribute, so an
+  // observer gets no anchor at all — nothing a stylesheet could repaint.
   const connect = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-connect'));
-  assert.equal(connect?.getAttribute('hidden'), '', 'read-only hides the call to action');
+  assert.equal(connect, undefined, 'read-only renders no call to action');
+  assert.ok(!mount.textContent.includes('Collega un canale'), 'no Collega text for an observer');
+  assert.ok(mount.textContent.includes('Sola lettura (Osservatore)'), 'the read-only note stays');
 });
+
+// Review #647 P1: every hero control that hides through `hidden` must not
+// carry an author `display` the attribute cannot beat.
+test('#647: the stylesheet never lets a hidden hero control show', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  for (const selector of ['.bo-sync-hero-pull', '.bo-sync-hero-connect']) {
+    const escaped = selector.replace(/[.]/g, '\\.');
+    const shows = new RegExp(`${escaped}\\s*\\{[^}]*display\\s*:\\s*(?!none)`).test(css);
+    if (!shows) continue;
+    assert.ok(new RegExp(`${escaped}\\[hidden\\]\\s*\\{[^}]*display\\s*:\\s*none`).test(css),
+      `${selector} sets display, so ${selector}[hidden] must set display:none`);
+  }
+});
+
+// Review #647 P2: a channel outside the fixed nine (SMS, Telegram) is a
+// linked row; the hero and the card count must tell the same story.
+for (const channel of ['sms', 'telegram']) {
+  test(`#647: only ${channel} linked — the hero and the count agree`, async () => {
+    const only = { activity: activityOf({
+      connections: [entryOf({ connectionKey: `${channel}-1`, channel, adapter: channel, account: null })],
+    }) };
+    const indicator = syncIndicator(only.activity, NOW);
+    const { mount, view } = renderView({ client: only });
+    await view.render();
+    await flush();
+    const text = mount.textContent;
+    const count = /(\d+) di (\d+) collegati/.exec(text);
+    assert.ok(count, 'the card shows a count');
+    assert.equal(Number(count[1]) > 0, indicator.tone !== 'empty',
+      `hero «${indicator.title}» and «${count[0]}» tell the same story`);
+    assert.equal(count[0], '1 di 10 collegati', 'the extra linked row counts, and so does its place');
+    assert.ok(!text.includes('Nessun canale collegato'), 'a linked row is never «nessun canale»');
+  });
+}
 
 test('3a3e6eaf C15-C16: all clear hides the section, the count sits beside Canali', async () => {
   const { mount, view } = renderView();

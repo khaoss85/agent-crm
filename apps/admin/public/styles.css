@@ -1441,6 +1441,7 @@ select.bo-spazi-input { flex: none; }
 .bo-sync-row-off .bo-sync-namewrap, .bo-sync-row-off td:nth-child(2), .bo-sync-row-off td:nth-child(3) { opacity: .6; }
 .bo-sync-channels .bo-sync-table .bo-sync-fix-action { background: var(--muted); border-color: var(--muted); color: var(--paper); padding: 5px 12px; font-size: 12px; }
 .bo-sync-hero-connect { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.bo-sync-hero-connect[hidden] { display: none; }
 .bo-sync-hero-dot-empty { background: var(--line-dashed); }
 .bo-sync-live .bo-sync-note { padding: 0 20px 18px; }
 .bo-sync-live .bo-sync-feed { gap: 0; padding: 0 20px 6px; }
