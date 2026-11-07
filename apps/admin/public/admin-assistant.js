@@ -2110,7 +2110,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.mention = { typed, status: 'loading', space };
     render();
     const agents = await loadSpaceAgents(client, space);
-    if (state.mention === null || state.mention.typed !== typed) return;
+    // A newer question or a space switch meanwhile wins (review #661 P3).
+    if (state.mention === null || state.mention.typed !== typed || state.mention.space !== space) return;
     if (agents === null) {
       state.mention = { typed, status: 'unavailable', space };
     } else {
@@ -2149,7 +2150,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       pendingAttempt = null;
       mention.status = 'done';
       mention.message = `Fatto: ${mention.agent.name} ha l’incarico «${mention.instruction}» (${made ? describeSchedule(made).toLowerCase() : 'registrato'}).`;
-      notify(`Incarico dato a ${mention.agent.name}`);
+      // A card cancelled meanwhile stays quiet (review #661 P3).
+      if (state.mention === mention) notify(`Incarico dato a ${mention.agent.name}`);
     } catch (error) {
       if (isPhraseUnclear(error)) {
         mention.status = 'unclear';
@@ -2226,6 +2228,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         actions.appendChild(go);
         const cancel = el(doc, 'button', 'bo-assistant-cancel', 'Annulla');
         cancel.setAttribute('type', 'button');
+        cancel.disabled = mention.busy === true;
         cancel.addEventListener('click', () => { state.mention = null; render(); });
         actions.appendChild(cancel);
         box.appendChild(actions);

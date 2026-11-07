@@ -549,6 +549,10 @@ export function buildRouter(app) {
       throw new NotFoundError('Operation', 'teammate agents');
     }
     const spaceId = typeof query.spaceId === 'string' ? query.spaceId.trim() : '';
+    // Same shape rule as the package's checkSpaceId (review #661 P3).
+    if (spaceId.length > 128 || /[\u0000-\u001f\u007f]/.test(spaceId)) {
+      throw new ValidationError('spaceId must be an id of at most 128 characters', { field: 'spaceId' });
+    }
     return {
       agents: AGENT_CATALOG.map((entry) => ({
         ...entry,
@@ -563,8 +567,10 @@ export function buildRouter(app) {
     }
     const input = stripServerControlledKeys(recordInput(body));
     const spaceId = typeof input.spaceId === 'string' ? input.spaceId.trim() : '';
-    const entry = AGENT_CATALOG.find((candidate) => candidate.slug === input.slug);
-    if (!entry) throw new NotFoundError('Catalogue agent', String(input.slug ?? ''));
+    const slug = typeof input.slug === 'string' ? input.slug.trim().toLowerCase() : '';
+    const entry = AGENT_CATALOG.find((candidate) => candidate.slug === slug);
+    // The refusal echoes at most a short slug, never the raw input (review #661 P3).
+    if (!entry) throw new NotFoundError('Catalogue agent', slug.slice(0, 64));
     if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
     return respond(201, await app.createTeammateAgent({
       spaceId,

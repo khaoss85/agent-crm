@@ -138,3 +138,21 @@ test('review #661: an agent of one space cannot be instructed under another spac
     app.close();
   }
 });
+
+test('review #661 giro 2 P3: a padded or capitalised slug finds its agent; an oversized space id is refused', async () => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  try {
+    await withServer(app, async (base) => {
+      const padded = await post(base, '/api/agents/create', { spaceId: 'presti', slug: '  Riaggancio ' });
+      assert.equal(padded.status, 201);
+      assert.equal(padded.body.agent.name, 'Riaggancio');
+      const unknown = await post(base, '/api/agents/create', { spaceId: 'presti', slug: 'x'.repeat(5000) });
+      assert.equal(unknown.status, 404);
+      assert.ok(JSON.stringify(unknown.body).length < 1000, 'the refusal never echoes the raw input');
+      const long = await fetch(`${base}/api/agents/catalog?spaceId=${'s'.repeat(200)}`, { headers: USER_HEADERS });
+      assert.equal(long.status, 400);
+    });
+  } finally {
+    app.close();
+  }
+});

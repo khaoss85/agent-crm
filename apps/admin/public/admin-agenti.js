@@ -75,7 +75,7 @@ function text(value) {
  * @param {any} assignment
  */
 export function describeSchedule(assignment) {
-  const time = typeof assignment?.timeOfDay === 'string' && /^\d{2}:\d{2}$/.test(assignment.timeOfDay)
+  const time = typeof assignment?.timeOfDay === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(assignment.timeOfDay)
     ? ` alle ${assignment.timeOfDay}`
     : '';
   switch (assignment?.cadence) {
@@ -162,10 +162,20 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
       spentCents,
       spentLabel: formatAmount(spentCents, 'EUR'),
       assignments: own,
-      pending: runs.filter((run) => run && run.agentSourceKey === key && run.outcome === 'proposed').length,
+      pending: runs.filter((run) => isDaFareRun(run) && run.agentSourceKey === key).length,
     });
   }
   return cards;
+}
+
+/**
+ * One predicate for «waits in Da fare» (review #661): a proposed run with a
+ * readable key. The card counter and the Da fare list both use it, so the
+ * count never disagrees with the list.
+ * @param {any} run
+ */
+export function isDaFareRun(run) {
+  return Boolean(run && typeof run === 'object' && run.outcome === 'proposed' && text(run.sourceKey) !== null);
 }
 
 /**
@@ -207,14 +217,18 @@ export function buildDaFare({ runs = [], agents = [], assignments = [] }) {
   const names = new Map(agents.map((row) => [row?.sourceKey, text(row?.name)]));
   const phrases = new Map(assignments.map((row) => [row?.sourceKey, text(row?.phrase)]));
   return runs
-    .filter((run) => run && run.outcome === 'proposed' && text(run.sourceKey) !== null)
+    .filter(isDaFareRun)
     .slice()
     .sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')))
     .map((run) => {
       let lines = [];
       let unreadable = false;
       try {
-        const parsed = JSON.parse(typeof run.proposals === 'string' ? run.proposals : '[]');
+        // Already-parsed arrays read as they are; any other shape is
+        // unreadable, never an empty list (review #661 P3).
+        const parsed = Array.isArray(run.proposals)
+          ? run.proposals
+          : JSON.parse(typeof run.proposals === 'string' ? run.proposals : (run.proposals == null ? '[]' : 'not-json'));
         lines = Array.isArray(parsed) ? parsed.map(proposalLine) : [];
         if (!Array.isArray(parsed)) unreadable = true;
       } catch {
@@ -248,6 +262,8 @@ export function findMentionedAgent(line, agents = []) {
   const typed = typeof line === 'string' ? line.trim() : '';
   if (!typed.startsWith('@')) return null;
   const rest = typed.slice(1);
+  // A bare «@» names nobody: not a mention (review #661 P3).
+  if (rest.trim() === '') return null;
   const candidates = agents
     .filter((row) => text(row?.name) !== null && text(row?.sourceKey) !== null)
     .slice()
@@ -484,6 +500,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     drafts: new Map(),
     /** slug being added, or null */
     adding: /** @type {string | null} */ (null),
+    /** @type {Map<string, string>} Idempotency-Key per (space, slug) add */
+    addKeys: new Map(),
     addError: '',
     notice: '',
   };
@@ -513,17 +531,25 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   async function addFromCatalog(slug) {
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
     if (state.adding !== null || !state.space) return;
     state.adding = slug;
     state.addError = '';
     state.notice = '';
     paint();
     try {
+      // One key per (space, slug) until it succeeds (review #661 P3).
+      const keyId = `${state.space}\u0000${slug}`;
+      if (!state.addKeys.has(keyId)) state.addKeys.set(keyId, issueAdminKey());
       const answer = await bound.request('/api/agents/create', {
         method: 'POST',
         body: { spaceId: state.space, slug },
-        idempotencyKey: issueAdminKey(),
+        idempotencyKey: state.addKeys.get(keyId),
       });
+      state.addKeys.delete(keyId);
       const name = typeof answer?.agent?.name === 'string' ? answer.agent.name : 'L’agente';
       state.notice = answer?.duplicate === true ? `${name} era già nel tuo team.` : `${name} è entrato nel tuo team.`;
       state.adding = null;
@@ -539,6 +565,12 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   async function sendInstruction(agent, once = false) {
+    // Review #661: the shell space may have changed under this screen.
+    // Never write to the space left behind: repaint on the active one.
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
     const draft = draftOf(agent.sourceKey);
     const phrase = draft.text.trim();
     if (draft.busy || phrase === '' || !state.space) return;

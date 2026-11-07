@@ -339,6 +339,21 @@ export function spaceMenuItems(spaces, activeId) {
 }
 
 /**
+ * Whether the open screen must re-render when the operator switches space
+ * (review #661): every screen that reads or writes space-scoped rows. The
+ * card shows space-scoped calls, Stato sync pulls for one space, the
+ * mounted home greets with the space name, and Agenti / Sequenze read and
+ * write the space's agents and sequences — left alone they would keep the
+ * space just left behind.
+ * @param {unknown} view the routed view id
+ * @param {{ mounted?: boolean }} [options]
+ */
+export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
+  if (view === 'dashboard') return mounted === true;
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze';
+}
+
+/**
  * Build the sidebar model: fixed prototype voices plus the user's custom
  * modules (opt-in bundles are the "personalizzati" group). BO-F6-01: kernel
  * generated tables (channel inbox rows, import state, quality rows and the

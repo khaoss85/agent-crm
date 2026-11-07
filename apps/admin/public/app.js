@@ -441,6 +441,7 @@ import {
   readSpaces,
   renderSettingsPanel,
   renderUnknownRoute,
+  rerendersOnSpaceSwitch,
   resolveBadgeSpaceId,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
@@ -910,7 +911,8 @@ if (boSidebar && boTopbar) {
       // re-renders with the new space so its controls never submit a pull
       // for the space just left behind.
       const openView = targetForHash(window.location.hash || '#/').view;
-      if (openView === 'customer-card' || openView === 'sync' || (MOUNTED && openView === 'dashboard')) route();
+      // Agenti and Sequenze too (review #661): rerendersOnSpaceSwitch.
+      if (rerendersOnSpaceSwitch(openView, { mounted: MOUNTED })) route();
     },
     win: typeof window !== 'undefined' ? window : null,
   });

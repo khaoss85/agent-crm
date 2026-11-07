@@ -16,7 +16,9 @@ import {
   findMentionedAgent,
   renderTeamAgentRows,
   spentThisMonthCents,
+  isDaFareRun,
 } from '../apps/admin/public/admin-agenti.js';
+import { rerendersOnSpaceSwitch } from '../apps/admin/public/admin-shell.js';
 import { createAssistantPanel, ASSISTANT_STATUS_PATH } from '../apps/admin/public/admin-assistant.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 
@@ -459,4 +461,62 @@ test('review #661 P3: «capped» needs a row past the page; an unreadable clock 
   }
   const runs = [{ agentSourceKey: 'a', decidedAt: '2026-11-02T08:00:00.000Z', costCents: 40 }];
   assert.equal(spentThisMonthCents(runs, 'a', 'not-a-date'), 0);
+});
+
+test('review #661 giro 2 P2: the card counter and Da fare agree — a proposed run without a key counts nowhere', () => {
+  const runs = [
+    { agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'proposed', startedAt: '2026-11-06T09:00:00.000Z', proposals: '[]' },
+    { sourceKey: 'r-ok', agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'proposed', startedAt: '2026-11-06T10:00:00.000Z', proposals: '[]' },
+  ];
+  const [card] = buildAgentCards({ agents: [RIAGGANCIO], runs, nowIso: NOW });
+  const items = buildDaFare({ agents: [RIAGGANCIO], runs });
+  assert.equal(card.pending, items.length);
+  assert.equal(card.pending, 1);
+  assert.equal(isDaFareRun(runs[0]), false);
+});
+
+test('review #661 giro 2 P2: after a space switch the screen never writes to the space left behind', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient();
+  let space = 'presti';
+  const view = createAgentiView({ doc, mount, client, spaceId: () => space, now: () => NOW });
+  await view.render();
+  await flush();
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'ogni lunedì ricontrolla i lead';
+  input.dispatch('input', {});
+  space = 'altro';
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing posted for the old space');
+  assert.equal(view.state.space, 'altro', 'the screen repainted on the active space');
+  const add = mount.querySelector('button[data-slug="pulizia-contatti"]');
+  space = 'terzo';
+  add.dispatch('click', {});
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0);
+  assert.equal(view.state.space, 'terzo');
+});
+
+test('review #661 giro 2 P2: switching space re-renders Agenti and Sequenze like the other space-scoped screens', () => {
+  for (const view of ['agenti', 'sequenze', 'customer-card', 'sync']) assert.equal(rerendersOnSpaceSwitch(view), true, view);
+  assert.equal(rerendersOnSpaceSwitch('dashboard', { mounted: true }), true);
+  assert.equal(rerendersOnSpaceSwitch('dashboard'), false);
+  assert.equal(rerendersOnSpaceSwitch('reporting'), false);
+});
+
+test('review #661 giro 2 P3: out-of-range times, a bare «@» and parsed proposal arrays', () => {
+  assert.equal(describeSchedule({ cadence: 'daily', timeOfDay: '99:99' }), 'Ogni giorno');
+  assert.equal(findMentionedAgent('@', [RIAGGANCIO]), null);
+  assert.equal(findMentionedAgent('@   ', [RIAGGANCIO]), null);
+  const [parsed, odd] = buildDaFare({
+    agents: [RIAGGANCIO],
+    runs: [
+      { sourceKey: 'r-a', agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'proposed', startedAt: '2026-11-06T10:00:00.000Z', proposals: [{ action: 'send', payload: { summary: 'Ciao Giulia' } }] },
+      { sourceKey: 'r-b', agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'proposed', startedAt: '2026-11-06T09:00:00.000Z', proposals: 42 },
+    ],
+  });
+  assert.deepEqual(parsed.lines, ['Ciao Giulia']);
+  assert.equal(odd.unreadable, true);
 });
