@@ -3147,3 +3147,16 @@ test('review #626: direction reads aloud, no direction stays neutral, writer chi
   assert.ok(chip, 'a chip per writer');
   assert.ok(chip.textContent.includes('da Coach Guido'), 'the chip reads the name, never the handle');
 });
+
+// Voce 785428ec3de0: a customer with no union reads no technical line under
+// Identità collegate — no «nessuna unione registrata», no lone
+// «scheda principale» row; a real union still reads its schede.
+test('785428ec3de0: Identità collegate says nothing technical for a single scheda', async () => {
+  const single = await renderCard(stubClient({ profile: PROFILE_BARE }));
+  const text = single.textContent;
+  assert.ok(!text.includes('nessuna unione'), 'no «nessuna unione registrata»');
+  assert.ok(!text.includes('una sola scheda'), 'no technical single-scheda line');
+  assert.ok(!text.includes('scheda principale'), 'no lone principal row without a union');
+  const linked = await renderCard(stubClient());
+  assert.ok(linked.textContent.includes('della stessa persona'), 'a real union still reads its schede');
+});

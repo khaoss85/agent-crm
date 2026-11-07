@@ -93,6 +93,15 @@ const CURRENCY_RE = /^[A-Z]{3}$/;
 // the WhatsApp adapter's `TEMPLATE_NAME`/`TEMPLATE_LANGUAGE`, and the
 // recipient is an E.164 number the adapter canonicalizes strictly.
 const SPACE_ID_RE = /^[a-z][a-z0-9-]{0,62}$/;
+/**
+ * Voce 785428ec3de0: a shared-host space is named by its workspace id, a
+ * lowercase UUID, and about two in three of those start with a digit, which
+ * the slug rule refused («spaceId must be a lowercase slug…») — every call
+ * read of such a space failed. A canonical lowercase UUID is accepted beside
+ * the slug; nothing else widens.
+ */
+const SPACE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const isSpaceId = (value) => SPACE_ID_RE.test(value) || SPACE_UUID_RE.test(value);
 const TEMPLATE_NAME_RE = /^[a-z0-9_]{1,64}$/;
 const TEMPLATE_LANGUAGE_RE = /^[a-z]{2}(?:_[A-Z]{2})?$/;
 const RECIPIENT_RE = /^\+[0-9][0-9 .\-()/]{3,}$/;
@@ -624,8 +633,8 @@ export function validateReminderChannel(value, remindAt) {
   }
   const channel = /** @type {any} */ (value);
   const spaceId = safeText(channel.spaceId, 'reminderChannel.spaceId', 63);
-  if (!SPACE_ID_RE.test(spaceId)) {
-    throw new ValidationError('reminderChannel.spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter)', {
+  if (!isSpaceId(spaceId)) {
+    throw new ValidationError('reminderChannel.spaceId must be a lowercase slug (letters, digits, hyphens, starting with a letter) or a workspace id', {
       field: 'reminderChannel.spaceId',
     });
   }
