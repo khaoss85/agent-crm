@@ -610,7 +610,8 @@ test('interactions conforms to the domain-package contract it ships', () => {
     dir: join(repoRoot, 'packages/interactions'),
     expected: {
       name: 'interactions',
-      version: 1,
+      // 2 since backlog:998f7f2221b4: mark-customer-read joined the surface.
+      version: 2,
       resources: ['conversation', 'interaction-message', 'interaction-call', 'conversation-assignment', 'conversation-read', 'conversation-thread-key'],
       actions: ['conversation.assign', 'conversation.close', 'conversation.mark-read', 'conversation.open-opportunity', 'interaction-message.advance'],
       requires: [],
@@ -1474,4 +1475,56 @@ test('9e003582: la capability readFlags risponde per il membro, null senza stato
   const bare = createInteractionTimelineCapability({}).create({ modules: new Map() });
   assert.equal(await bare.readFlags({ type: 'user', id: 'guido' }, entries), null,
     'without the watermark table no read state answers');
+});
+
+
+// backlog:998f7f2221b4: agent-crm#620 added mark-customer-read to the declared
+// surface, so the package moved to version 2. Spaces in production were
+// composed with version 1. The kernel persists only policy identities in
+// definition_versions (PackageRegistry.persistFingerprints, plus the packages
+// that bring their own persistFingerprints); interactions has no policies and
+// none of its own, so a database booted with @1 must boot again with @2,
+// keep its rows and never answer DEFINITION_VERSION_DRIFT.
+test('998f7f2221b4: a database booted with interactions@1 boots again with @2, no drift, rows kept', async (t) => {
+  const dbRoot = mkdtempSync(join(tmpdir(), 'accordo-interactions-upgrade-'));
+  t.after(() => rmSync(dbRoot, { recursive: true, force: true }));
+  const dbPath = join(dbRoot, 'upgrade.sqlite');
+
+  // Version 1: the surface before #620, without mark-customer-read.
+  const rootV1 = project(t, { withWork: false });
+  writeFileSync(join(rootV1, 'packages/domains/generated/index.js'), [
+    "import { createInteractionsPackage } from '../../interactions/src/index.js';",
+    'const current = createInteractionsPackage();',
+    'export const generatedDomains = [{',
+    '  ...current,',
+    '  version: 1,',
+    "  operations: current.operations.filter((operation) => operation.name !== 'mark-customer-read'),",
+    '}];',
+    '',
+  ].join('\n'));
+  const v1 = await boot(rootV1, dbPath);
+  assert.equal(v1.app.domains.metadata().interactions.version, 1, 'the first boot composes interactions@1');
+  assert.equal(typeof v1.app.markCustomerRead, 'undefined', '@1 has no mark-customer-read');
+  const { openConversation } = await interactionsFrom(rootV1);
+  const opened = await openConversation({ modules: v1.app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:upgrade', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  await v1.close();
+
+  // Version 2 on the same database file.
+  const rootV2 = project(t, { withWork: false });
+  const v2 = await boot(rootV2, dbPath);
+  t.after(() => v2.close());
+  assert.equal(v2.app.domains.metadata().interactions.version, 2, 'the second boot composes interactions@2');
+  assert.equal(typeof v2.app.markCustomerRead, 'function', '@2 serves mark-customer-read');
+  const rows = v2.app.database.raw
+    .prepare("SELECT type, name, version FROM definition_versions WHERE name = 'interactions' OR type LIKE '%interactions%'")
+    .all();
+  assert.deepEqual(rows, [], 'no interactions identity is registered, so no version of it can drift');
+  const { openConversation: openAgain } = await interactionsFrom(rootV2);
+  const replay = await openAgain({ modules: v2.app.modules, actor: ACTOR }, {
+    sourceKey: 'wa:thread:upgrade', subject: SUBJECT, channel: 'whatsapp', source: SOURCE,
+  });
+  assert.equal(replay.replayed, true, 'the conversation written under @1 is still there under @2');
+  assert.equal(replay.conversation.id, opened.conversation.id);
 });

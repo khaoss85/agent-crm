@@ -290,7 +290,11 @@ export function createInteractionsPackage(options = {}) {
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: INTERACTIONS_DOMAIN,
-    version: 1,
+    // Version 2 (backlog:998f7f2221b4): agent-crm#620 added the
+    // `mark-customer-read` operation to the declared surface. Version 1 is
+    // the surface before it, as registered in the pilot's fingerprint
+    // baseline; a changed surface takes a new version, never the old one.
+    version: 2,
     label: 'Customer messages and calls',
     description:
       'Native message and call evidence: one conversation thread per customer across channels, inbound and outbound '
