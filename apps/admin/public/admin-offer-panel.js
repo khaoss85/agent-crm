@@ -99,7 +99,8 @@ export function openOfferPanel(deps) {
 
   // The offer files under a company: without one the window says so and
   // offers no form that the server would refuse.
-  if (company === null) {
+  // Review #616 (P3): any company without an id blocks, not only null.
+  if (company == null || typeof company.id !== 'string' || company.id === '') {
     body.appendChild(el('p', 'bo-offer-blocked',
       'Per creare un’offerta il cliente deve avere un’azienda: aggiungila in Dettagli, poi riprova.'));
     return panel;
@@ -135,9 +136,13 @@ export function openOfferPanel(deps) {
   const inputs = {};
   /** @type {Record<string, any>} */
   const errors = {};
+  /** @type {Record<string, any>} */
+  const labels = {};
   const field = (name, label, { type = 'text', placeholder = '', wide = false, inputmode = null } = {}) => {
     const wrap = el('label', `bo-offer-field${wide ? ' bo-offer-field-wide' : ''}`);
-    wrap.appendChild(el('span', 'bo-offer-label', label));
+    const labelNode = el('span', 'bo-offer-label', label);
+    wrap.appendChild(labelNode);
+    labels[name] = labelNode;
     const input = el('input', 'bo-offer-input');
     input.setAttribute('type', type);
     input.setAttribute('name', `offer-${name}`);
@@ -159,6 +164,15 @@ export function openOfferPanel(deps) {
 
   // The value follows the catalog total until the person types one.
   let valueTyped = false;
+  // Review #616 (P1): the currency the AI drafted the value in. Chosen
+  // catalog chips in one currency still decide; without them the AI's
+  // currency files the offer, and only without either it is EUR.
+  /** @type {string | null} */
+  let draftCurrency = null;
+  const setDraftCurrency = (code) => {
+    draftCurrency = code;
+    labels.value.textContent = code === null || code === 'EUR' ? 'Valore (€)' : `Valore (${code})`;
+  };
   inputs.value.addEventListener('input', () => { valueTyped = String(inputs.value.value ?? '').trim() !== ''; });
 
   // ---- Catalog chips -------------------------------------------------
@@ -173,6 +187,19 @@ export function openOfferPanel(deps) {
   body.appendChild(catalogBox);
   /** @type {Array<{offer: any, checkbox: {checked: boolean}, qtyInput: any, chip: any, wrap: any}>} */
   const picks = [];
+  // Review #616 (P2): Compila may answer before the catalog does. The
+  // offers the AI chose wait here and are pressed once the chips exist.
+  let catalogReady = false;
+  /** @type {null | {ids: Set<string>, keepValue: boolean}} */
+  let pendingWanted = null;
+  /** Presses the AI-chosen chips; answers how many matched the catalog. */
+  const applyWanted = ({ ids, keepValue }) => {
+    const matched = picks.filter((pick) => ids.has(String(pick.offer.offerId))).length;
+    if (matched === 0) return 0;
+    if (!keepValue) valueTyped = false;
+    for (const pick of picks) choose(pick, ids.has(String(pick.offer.offerId)));
+    return matched;
+  };
   const refreshTotal = () => {
     const total = selectedProductTotal(picks);
     if (total === null) {
@@ -230,10 +257,24 @@ export function openOfferPanel(deps) {
       }
     }
     catalogBox.setAttribute('data-empty', picks.length > 0 ? 'false' : 'true');
+    catalogReady = true;
+    if (pendingWanted !== null) {
+      const wanted = pendingWanted;
+      pendingWanted = null;
+      if (applyWanted(wanted) === 0) say('I prodotti scelti dall’AI non sono nel catalogo: sceglili qui sotto se servono.', before !== null);
+    }
   };
   client.request('/api/catalog/products?active=true').then(
     (catalog) => { if (!gone()) paintCatalog(catalog); },
-    () => { /* no catalog, or not readable: the value is typed by hand */ },
+    () => {
+      // No catalog, or not readable: the value is typed by hand, and the
+      // products the AI chose cannot be pressed.
+      catalogReady = true;
+      if (pendingWanted !== null && !gone()) {
+        pendingWanted = null;
+        say('Il catalogo non si è potuto leggere: i prodotti scelti dall’AI vanno aggiunti a mano.', before !== null);
+      }
+    },
   );
 
   // The referente defaults to the person writing the offer.
@@ -248,7 +289,7 @@ export function openOfferPanel(deps) {
   body.appendChild(generalError);
 
   // ---- AI fill -------------------------------------------------------
-  /** @type {null | {title: string, value: string, expiry: string, picks: boolean[], valueTyped: boolean}} */
+  /** @type {null | {title: string, value: string, expiry: string, picks: boolean[], valueTyped: boolean, currency: string | null}} */
   let before = null;
   let aiBusy = false;
   const say = (sentence, undo = false) => {
@@ -266,6 +307,8 @@ export function openOfferPanel(deps) {
       inputs.value.value = before.value;
       inputs.expiry.value = before.expiry;
       valueTyped = before.valueTyped;
+      pendingWanted = null;
+      setDraftCurrency(before.currency);
       picks.forEach((pick, index) => choose(pick, before?.picks[index] === true));
       if (!before.valueTyped) inputs.value.value = before.value;
       before = null;
@@ -301,7 +344,11 @@ export function openOfferPanel(deps) {
       const cents = Number.isSafeInteger(answer?.valueCents) && answer.valueCents >= 0 ? answer.valueCents : null;
       const day = dayOf(answer?.expectedCloseDate);
       const wanted = new Set(Array.isArray(answer?.catalogOfferIds) ? answer.catalogOfferIds.map(String) : []);
-      if (draftTitle === '' && cents === null && day === '' && wanted.size === 0) {
+      const rawCurrency = typeof answer?.currency === 'string' ? answer.currency.trim().toUpperCase() : '';
+      const currency = /^[A-Z]{3}$/.test(rawCurrency) ? rawCurrency : null;
+      const unmatched = catalogReady && wanted.size > 0
+        && !picks.some((pick) => wanted.has(String(pick.offer.offerId)));
+      if (draftTitle === '' && cents === null && day === '' && (wanted.size === 0 || unmatched)) {
         say('L’AI non ha trovato cosa compilare: prova a dirlo in un altro modo.');
         return;
       }
@@ -312,20 +359,26 @@ export function openOfferPanel(deps) {
           expiry: String(inputs.expiry.value ?? ''),
           picks: picks.map((pick) => pick.checkbox.checked),
           valueTyped,
+          currency: draftCurrency,
         };
       }
       if (draftTitle !== '') inputs.title.value = draftTitle;
       if (day !== '') inputs.expiry.value = day;
+      pendingWanted = null;
       if (wanted.size > 0) {
-        valueTyped = false;
-        for (const pick of picks) choose(pick, wanted.has(String(pick.offer.offerId)));
+        const ask = { ids: wanted, keepValue: cents !== null };
+        if (catalogReady) applyWanted(ask);
+        else pendingWanted = ask;
       }
       if (cents !== null) {
         inputs.value.value = centsToField(cents);
         valueTyped = true;
+        setDraftCurrency(currency);
       }
       go.textContent = 'Ricompila';
-      say('Compilata dall’AI: controlla i campi prima di creare.', true);
+      say(unmatched
+        ? 'Compilata dall’AI, ma i prodotti scelti non sono nel catalogo: controlla i campi prima di creare.'
+        : 'Compilata dall’AI: controlla i campi prima di creare.', true);
     } catch (error) {
       if (gone()) return;
       const code = error?.code ?? null;
@@ -404,7 +457,7 @@ export function openOfferPanel(deps) {
           ...(navCtx.resource === 'contact' ? { contactId: navCtx.id } : {}),
           name,
           valueCents: cents,
-          currency: currencies.size === 1 ? [...currencies][0] : 'EUR',
+          currency: currencies.size === 1 ? [...currencies][0] : (draftCurrency ?? 'EUR'),
           ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
           owner,
         }),

@@ -259,3 +259,82 @@ test('euroToCents reads plain euro amounts only', () => {
   assert.equal(euroToCents('-5'), null);
   assert.equal(euroToCents(''), null);
 });
+
+// Review #616 (P1): the AI value keeps the currency the AI drafted it in.
+test('review #616: an AI value in USD files the offer in USD; a chosen EUR chip still decides', async () => {
+  const client = fakeClient({ draft: { title: 'Pacchetto US', valueCents: 32000, currency: 'usd' } });
+  const { panel } = await open({ client });
+  aiInput(panel).value = 'pacchetto a 320 dollari';
+  byAction(panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  assert.match(panel.textContent, /Valore \(USD\)/, 'the value names its currency');
+  await panel.__submit();
+  assert.equal(client.creates()[0].body.currency, 'USD', 'never EUR by default over the AI currency');
+  assert.equal(client.creates()[0].body.valueCents, 32000);
+
+  const second = fakeClient({ draft: { title: 'Pacchetto', valueCents: 32000, currency: 'USD' } });
+  const other = await open({ client: second });
+  chip(other.panel, 'pt10').dispatch('click');
+  aiInput(other.panel).value = 'pacchetto a 320';
+  byAction(other.panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  await other.panel.__submit();
+  assert.equal(second.creates()[0].body.currency, 'EUR', 'the chosen chips in one currency decide');
+});
+
+test('review #616: Annulla after an AI currency puts the euro back', async () => {
+  const client = fakeClient({ draft: { valueCents: 32000, currency: 'USD' } });
+  const { panel } = await open({ client });
+  aiInput(panel).value = '320 dollari';
+  byAction(panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  byAction(panel, 'offer-ai-undo').dispatch('click');
+  assert.match(panel.textContent, /Valore \(€\)/);
+  input(panel, 'title').value = 'A mano';
+  input(panel, 'value').value = '100';
+  await panel.__submit();
+  assert.equal(client.creates()[0].body.currency, 'EUR');
+});
+
+// Review #616 (P2): Compila answering before the catalog never loses the
+// offers the AI chose.
+test('review #616: AI-chosen offers wait for a slow catalog, then are pressed and priced', async () => {
+  let release;
+  const held = new Promise((resolve) => { release = () => resolve(CATALOG); });
+  const client = fakeClient({ catalog: held, draft: { title: 'Pacchetto 10 PT', catalogOfferIds: ['pt10'] } });
+  const { panel } = await open({ client });
+  assert.equal(chip(panel, 'pt10'), undefined, 'the catalog is still loading');
+  aiInput(panel).value = 'il pacchetto da 10';
+  byAction(panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  release();
+  await flush();
+  assert.equal(chip(panel, 'pt10').getAttribute('aria-pressed'), 'true', 'the AI choice lands once the chips exist');
+  assert.equal(input(panel, 'value').value, '350.00', 'and prices the offer');
+});
+
+test('review #616: AI-chosen offers the catalog does not have are said, never claimed as filled', async () => {
+  const client = fakeClient({ draft: { catalogOfferIds: ['ghost'] } });
+  const { panel } = await open({ client });
+  input(panel, 'value').value = '200';
+  input(panel, 'value').dispatch('input');
+  aiInput(panel).value = 'il prodotto fantasma';
+  byAction(panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  assert.doesNotMatch(panel.textContent, /Compilata dall’AI: controlla/);
+  assert.match(panel.textContent, /non ha trovato cosa compilare/);
+  chip(panel, 'prova').dispatch('click');
+  assert.equal(input(panel, 'value').value, '200', 'the typed value is still the person’s');
+});
+
+// Review #616 (P3): an undefined company blocks like null.
+test('review #616: a customer whose company is undefined gets the honest block, no form', async () => {
+  const doc = createFakeDocument();
+  const host = createMount();
+  const panel = openOfferPanel({
+    doc, host, client: fakeClient(), issueKey: () => 'k', card: { name: 'Guido' },
+    navCtx: { resource: 'contact', id: 'c1' }, company: undefined, spaceId: 'presti',
+  });
+  assert.match(panel.textContent, /deve avere un’azienda/);
+  assert.equal(panel.findAll('input').length, 0);
+});
