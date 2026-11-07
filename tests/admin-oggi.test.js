@@ -1,6 +1,7 @@
 import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import {
   ADVISOR_ACTION_LIMIT,
@@ -568,7 +569,7 @@ test('full home renders every section with clickable sources', () => {
   assert.ok(!buttons.some((button) => button.textContent === 'Annulla'), 'no undo while open');
 
   mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
-  assert.ok(mount.textContent.includes('1 di 2'), 'progress counts the postponed suggestion');
+  assert.ok(mount.textContent.includes('0 di 2'), 'a postponed card is not «fatta» (prototype bar counts done only)');
   assert.ok(mount.textContent.includes('Rimandato a domani'), 'the postponed card names its state');
   // A durable deferral moved the due date for real: no session undo may
   // imply it was cancelled (Codex P2 on #380).
@@ -577,10 +578,10 @@ test('full home renders every section with clickable sources', () => {
 
   // The prep suggestion postpones session-only: its Annulla stays honest.
   mount.querySelector('button[data-triage="postpone"]').dispatch('click', {});
-  assert.ok(mount.textContent.includes('2 di 2'), 'progress counts both decisions');
+  assert.ok(mount.textContent.includes('0 di 2'), 'postponing is still not doing');
   assert.ok(mount.querySelector('button[data-triage="undo"]'), 'undo appears for the session-only postpone');
   mount.querySelector('button[data-triage="undo"]').dispatch('click', {});
-  assert.ok(mount.textContent.includes('1 di 2'), 'undo restores the session suggestion');
+  assert.ok(mount.querySelector('button[data-triage="execute"]'), 'undo restores the session suggestion');
 
   mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
   assert.deepEqual(seen, ['exec:bo04:appointment:appt-1'], 'the prep run navigates');
@@ -1034,7 +1035,7 @@ function oggiFakeClient(state) {
   };
 }
 
-test('Oggi view completes a task with a fresh read, then drops its row', async () => {
+test('Oggi view completes a task with a fresh read, then keeps its row as done (C12)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
@@ -1045,8 +1046,18 @@ test('Oggi view completes a task with a fresh read, then drops its row', async (
   mount.querySelector('button[data-triage="execute"]').dispatch('click', {});
   await settle(() => client.posts.length > 0);
   assert.ok(client.posts[0].path.endsWith('/records/task-1/actions/complete'), 'same server action as Work');
-  await settle(() => !mount.textContent.includes('Richiama per il preventivo'));
+  // backlog:9c7d1477a8d4: like the prototype the completed card stays,
+  // struck through with its confirmation, and the bar counts it — but with
+  // no Annulla: the work package has no reopen, so an undo would lie.
+  await settle(() => mount.textContent.includes('1 di 2 fatte'));
+  const row = mount.findAll('div').find((node) => node.getAttribute('data-action') === 'bo04:followup:task-1');
+  assert.ok(row, 'the completed row stays on screen');
+  assert.equal(row.getAttribute('data-state'), 'done');
+  assert.ok(row.textContent.includes('Richiama per il preventivo') && row.textContent.includes('✓ Fatto'));
+  assert.equal(row.findAll('button').length, 0, 'no undo on a durable completion');
   assert.ok(mount.textContent.includes('Prepara la call'), 'the prep row survives on its own record');
+  const rows = mount.findAll('div').filter((node) => node.getAttribute('data-action'));
+  assert.equal(rows[0], row, 'the completed card keeps its place');
 });
 
 test('Oggi view postpones through the work-task action, then keeps the open row', async () => {
@@ -1157,4 +1168,106 @@ test('Da rispondere renders its rows, the empty line and the unreadable line', a
   assert.ok(draw({ available: true, total: 0, rows: [] }).mount.textContent.includes('Nessun messaggio aspetta una risposta'));
   assert.ok(draw({ available: false, total: 0, rows: [] }).mount.textContent.includes('non si sono potuti leggere'));
   assert.ok(!draw(null).mount.textContent.includes('Da rispondere'), 'without interactions composed the section is absent');
+});
+
+/**
+ * Oggi come il prototipo (backlog:9c7d1477a8d4): the checklist items the
+ * earlier slices left open — C12 (done row struck through with its
+ * confirmation), C14 («Hai finito» once nothing is open), C23 (no technical
+ * wording) and the prototype's attenuated past agenda row.
+ */
+
+const homeFor = (triage, extra = {}) => {
+  const { actions } = buildAdvisorActions({ tasks: [TASK_OPEN], appointments: [APPT_TODAY], now: OGGI_NOW });
+  return {
+    recap: 'x', actions, triage, agenda: [], brief: null, missing: [],
+    availability: { work: true, appointments: true, channels: true },
+    events: { onPostpone: () => {}, onUndo: () => {}, onExecute: () => {} },
+    ...extra,
+  };
+};
+const drawHome = (home) => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({ doc, mount, userName: 'Elena', now: new Date(2026, 9, 19, 9), home });
+  return mount;
+};
+const rowFor = (mount, id) => mount.findAll('div').find((node) => node.getAttribute('data-action') === id);
+
+test('C12: a done card is struck through, confirms in green and offers Annulla', () => {
+  const mount = drawHome(homeFor({ 'bo04:appointment:appt-1': 'done' }));
+  const row = rowFor(mount, 'bo04:appointment:appt-1');
+  assert.equal(row.getAttribute('data-state'), 'done');
+  assert.ok(row.textContent.includes('✓ Fatto'), 'the confirmation reads like the prototype');
+  assert.ok(row.findAll('button').some((button) => button.textContent === 'Annulla'), 'the session decision can be undone');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bo-oggi-row\[data-state="done"\] \.bo-oggi-title \{[^}]*line-through/, 'the done title is struck through');
+});
+
+test('C8: «fatte» counts done cards only, like the prototype bar', () => {
+  assert.deepEqual(advisorProgress([{ id: 'a' }, { id: 'b' }], { a: 'postpone' }), { handled: 0, total: 2 });
+  assert.deepEqual(advisorProgress([{ id: 'a' }, { id: 'b' }], { a: 'postpone', b: 'done' }), { handled: 1, total: 2 });
+  assert.ok(drawHome(homeFor({ 'bo04:followup:task-1': 'postpone' })).textContent.includes('0 di 2 fatte'));
+});
+
+test('C14: «Hai finito» appears once no card is open, the decided cards stay listed', () => {
+  const open = drawHome(homeFor({ 'bo04:followup:task-1': 'postpone' }));
+  assert.ok(!open.textContent.includes('Hai finito per oggi'), 'one card still open');
+  const mount = drawHome(homeFor({ 'bo04:followup:task-1': 'postpone', 'bo04:appointment:appt-1': 'done' }));
+  assert.ok(mount.textContent.includes('✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'), 'the postponed card stays, attenuated');
+  assert.ok(mount.textContent.includes('Rimandato a domani'));
+});
+
+test('C23: missing packages and stale data read in plain Italian, never technical', async () => {
+  const mount = drawHome(homeFor({}, { actions: [], availability: { work: false, appointments: false, channels: false } }));
+  assert.doesNotMatch(mount.textContent, /compost|NOT_FOUND|undefined/i);
+  await assert.rejects(
+    executeAdvisorAction(
+      { request: async () => ({ ...TASK_OPEN, status: 'completed' }) },
+      { record: { module: 'work-task', id: 'task-1' }, snapshot: { status: 'open', dueAt: TASK_OPEN.dueAt } },
+      async () => ({}),
+    ),
+    (error) => {
+      assert.equal(error.code, 'OGGI_STALE_RECORD');
+      assert.deepEqual(error.details.fields, ['status'], 'the drifted fields stay in the details');
+      assert.doesNotMatch(error.message, /status|dueAt|\(/, 'no field name reaches the screen');
+      return true;
+    },
+  );
+});
+
+test('agenda: a past appointment of today renders attenuated, like the prototype', () => {
+  const early = { ...APPT_TODAY, id: 'appt-0', startsAt: '2026-10-19T06:30:00.000Z' }; // 08:30 in Rome
+  const agenda = buildTodayAgenda([early, APPT_TODAY], OGGI_NOW);
+  assert.deepEqual(agenda.map((row) => row.past), [true, false]);
+  const mount = drawHome(homeFor({}, { agenda }));
+  const rows = mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').includes('bo-oggi-agenda-row'));
+  assert.deepEqual(rows.map((row) => row.getAttribute('data-state') ?? null), ['past', null]);
+});
+
+test('C2: on Oggi the Oggi voice is the only active one', () => {
+  const doc = createFakeDocument();
+  const sidebar = createMount();
+  createShellView({
+    doc, sidebar, topbar: createMount(),
+    spaces: [{ id: 'prova', name: 'Spazio di prova', initials: 'SP' }],
+    user: { name: 'Operatore', email: 'op@example.it' },
+    screenId: 'oggi', screenLabel: 'Oggi', navigate: () => {}, win: null,
+  }).update({ items: buildShellNav({ customerDataAvailable: true }), activeScreenId: 'oggi', screenLabel: 'Oggi' });
+  const active = sidebar.findAll('a').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('active'));
+  assert.equal(active.length, 1);
+  assert.equal(active[0].getAttribute('href'), '#/');
+  assert.equal(active[0].getAttribute('aria-current'), 'page');
+});
+
+test('C16: the agenda card links «Apri il calendario →» to the calendar', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  renderOggi({ doc, mount, userName: 'Elena', navigate: (hash) => seen.push(hash), now: new Date(2026, 9, 19, 9), home: homeFor({}, { agenda: buildTodayAgenda([APPT_TODAY], OGGI_NOW) }) });
+  const link = mount.findAll('a').find((node) => node.textContent === 'Apri il calendario →');
+  assert.equal(link.getAttribute('href'), '#/calendario');
+  link.dispatch('click', { preventDefault: () => {} });
+  assert.deepEqual(seen, ['#/calendario']);
 });
