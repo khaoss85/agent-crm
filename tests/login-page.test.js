@@ -43,6 +43,14 @@ test('f9680c478410: the exported page ships no form, no stylesheet and no script
   assert.ok(!/<script[\s>]/.test(page), 'no script at all, hence no script src');
 });
 
+test('27a0b924: the production page keeps the staircase, the phone layout and a visible focus', () => {
+  assert.ok(page.includes('.login-msg:nth-child(4){margin-left:60px}'), 'the four rows step to the right (C5)');
+  assert.ok(!/class="login-msg" style=/.test(page), 'the stagger lives in the style, not on the rows');
+  assert.match(page, /@media \(max-width:520px\)\{\.login-story\{padding:32px 28px;[^}]*min-height:0\}/,
+    'at 390 the story uses the side margins and no desktop height (C20-C21)');
+  assert.ok(page.includes('.login-google:focus-visible{outline:2px solid #176b2a'), 'keyboard focus is visible on Google');
+});
+
 test('f9680c478410: the exported page leaks no machinery and asks no password', () => {
   assert.ok(!/type="password"/.test(page), 'no password field, ever');
   assert.ok(!/password/i.test(page.replace('Niente password', '')), 'no password anywhere');
