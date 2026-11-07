@@ -1848,6 +1848,39 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep-rows.panel { margin-top: 4px; border-radius: 16px; border: 1px solid var(--line-soft); box-shadow: none; }
 .bo-rep-rows .panel-heading h2 { font-size: 18px; }
 .bo-rep-rows > .lede { font-size: 13px; }
+/* backlog:c3e66b36ddb7 — Reporting like prototype 09: filters beside the
+   title, funnel steps, forecast head, violet «Cosa noto», dark code tree. */
+.bo-rep-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 20px; }
+.bo-rep-header > .bo-rep-top { min-width: 0; }
+.bo-rep-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.bo-rep-people { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bo-rep-person.ui-chip { min-width: 34px; height: 34px; padding: 0 9px; border-radius: 99px; border: 1.5px solid transparent; background: var(--surface-soft); color: var(--ink); font-family: var(--mono); font-size: 11px; font-weight: 700; cursor: pointer; }
+.bo-rep-person.ui-chip:hover { border-color: var(--line); }
+.bo-rep-person.ui-chip.active { border-color: var(--ink); background: var(--surface); }
+.bo-preventivi .bo-rep-step { display: grid; gap: 6px; margin-top: 12px; }
+.bo-rep-step-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
+.bo-rep-step-name { font-weight: 600; }
+.bo-rep-step-value { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.bo-rep-step-track { height: 24px; border-radius: 6px; background: var(--surface-soft); overflow: hidden; }
+.bo-rep-step-fill { height: 100%; border-radius: 6px; background: var(--accord); }
+.bo-rep-grid > .pipeline-forecast .bo-rep-head h3 { margin: 0; font-size: 16px; color: var(--ink); }
+.bo-rep-amount { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+.bo-rep-grid > .bo-rep-full + .bo-rep-wide { grid-row: span 2; }
+.bo-rep-grid > .bo-rep-narrow:last-child { background: var(--surface); border-color: var(--line-soft); }
+.bo-rep-grid > .bo-cosa-noto { background: var(--agent-card); border-color: var(--agent-line); }
+.bo-cosa-noto-title { margin: 0 0 4px; font-size: 14px; font-weight: 700; color: var(--agent-ink); }
+.bo-cosa-noto-item { margin: 0; padding: 12px 0; border-top: 1px solid var(--agent-line); font-size: 14px; line-height: 1.5; color: var(--ink); }
+.bo-cosa-noto-cta.ui-btn { margin-top: 4px; background: var(--agent-ink); color: var(--paper); }
+.bo-codice-title { margin: 0 0 12px; font-size: 16px; font-weight: 700; color: var(--ink); }
+.panel pre.bo-codice-tree { display: grid; gap: 3px; margin: 0 0 12px; padding: 14px 16px; border-radius: 10px; background: var(--ink); color: var(--paper); overflow-x: auto; }
+.panel pre.bo-codice-tree code { font-family: var(--mono); font-size: 12px; white-space: pre; background: transparent; color: var(--paper); padding: 0; }
+.bo-codice > .lede { font-size: 12.5px; color: var(--muted); }
+.panel pre.bo-codice-prompt { margin: 10px 0; }
+.panel pre.bo-codice-prompt code { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11.5px; }
+.bo-codice .actions .ui-btn { padding: 8px 12px; border-radius: 9px; font-size: 13px; }
+@media (max-width: 900px) {
+  .bo-rep-grid > .bo-rep-full + .bo-rep-wide { grid-row: auto; }
+}
 
 /* Pipeline, passaggio 4 (supervisore): la card resta quella del prototipo; il
    «Sposta in» serve a tastiera e touch, non si vede col mouse (si trascina). */
