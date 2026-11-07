@@ -2105,3 +2105,29 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-timeline .bo-scheda-bubble .bo-scheda-sync[data-sync="failed"] { color: var(--danger); font-weight: 600; }
 .bo-scheda-bubble .bo-scheda-allegato { max-width: 100%; border-radius: 10px; }
 @media (max-width: 560px) { .bo-scheda-bubble { max-width: 86%; } }
+
+/* B5 — real phone pass (backlog:d7c78e9cdf53): send from the scheda, book
+ * without dragging, no zoom and no sideways scroll on a 390px phone. */
+@media (max-width: 700px) {
+  /* The inline new-appointment form (phone, no popover): its customer search
+   * kept `.cal-form input`'s 12px left padding, so the magnifier sat on the
+   * placeholder. Same 36px the popover already gives it; desktop untouched. */
+  .cal-form .ui-search .ui-search-input { padding-left: 36px; }
+  /* iOS Safari zooms the page when a field under 16px takes focus, and the
+   * page stays zoomed (sideways scroll included): on a phone every typed
+   * field reads at 16px. `!important` because the desktop sizes ride
+   * component selectors of every specificity; the rule only lifts the floor
+   * on narrow screens, desktop sizes are untouched. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px !important; }
+  /* The stacked new-appointment form: search and person pickers take the
+   * full row like the other fields instead of a half-width box. */
+  .cal-form .ui-search, .cal-form .ui-select { display: flex; flex: 1 1 100%; width: 100%; }
+}
+@media (max-width: 700px) {
+  /* `touch-action: none` (kept for the press-and-drag) swallowed every swipe
+   * on the stacked phone week, so a finger on the grid could not scroll the
+   * page. Pan stays the browser's: a tap still opens the 30-minute slot form
+   * (pointerdown + pointerup), a swipe scrolls and cancels the pick. Scoped
+   * to the stacked layout only: a wide touch screen keeps the drag. */
+  .cal-day { touch-action: manipulation; }
+}

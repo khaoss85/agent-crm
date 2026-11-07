@@ -453,6 +453,28 @@ export function createShellView({
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
 
+  /**
+   * B5 (backlog:d7c78e9cdf53): on a phone the nav is one horizontal strip
+   * (styles.css, max-width 700px) and a voice past the edge reads cut — the
+   * Calendario pill showed as «Cal». Scroll the strip, never the page, just
+   * enough to bring the active voice in (nearest edge); a voice already
+   * fully in view leaves the strip where it is. A no-op where the strip does
+   * not overflow (desktop column) or where there is no layout (tests).
+   * @param {any} nav
+   */
+  function revealActiveVoice(nav) {
+    const current = typeof nav.querySelector === 'function' ? nav.querySelector('a[aria-current="page"]') : null;
+    if (!current || typeof current.getBoundingClientRect !== 'function' || typeof nav.getBoundingClientRect !== 'function') return;
+    if (!(nav.scrollWidth > nav.clientWidth)) return;
+    const box = nav.getBoundingClientRect();
+    const voice = current.getBoundingClientRect();
+    const left = voice.left - box.left;
+    const right = left + voice.width;
+    if (left >= 0 && right <= box.width) return;
+    const delta = left < 0 ? left : right - box.width;
+    nav.scrollLeft = Math.max(0, nav.scrollLeft + delta);
+  }
+
   function renderSidebar() {
     clearMount(sidebar);
     const space = activeSpace();
@@ -552,6 +574,7 @@ export function createShellView({
     nav.setAttribute('aria-label', 'Sezioni');
     appendGroups(nav, ['home', 'native', 'custom']);
     sidebar.appendChild(nav);
+    revealActiveVoice(nav);
 
     const addWrap = el(doc, 'div', 'bo-add');
     const addButton = el(doc, 'button', 'bo-add-button', '+ Nuovo modulo');
