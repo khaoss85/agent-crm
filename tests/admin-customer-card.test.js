@@ -2727,3 +2727,258 @@ test('da leggere: badge and mark-read share one rule — no direction or no date
   assert.deepEqual(lit, ['ok'], 'only what mark-read can reach lights up');
   assert.deepEqual(marks.map((mark) => mark.upTo), ['2026-11-06T09:00:00.000Z']);
 });
+
+// Composer agentico (Dan 05/11): «Chiedi all'AI» writes the text from a
+// prompt through POST /api/customer-hub/messages/draft; it never sends.
+function draftClient(answer) {
+  const inner = composerClient();
+  const drafts = [];
+  return {
+    posts: inner.posts,
+    drafts,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages/draft') {
+        enforceAdminWriteGate(path, options);
+        drafts.push(JSON.parse(options.body));
+        if (answer instanceof Error) throw answer;
+        return answer;
+      }
+      return inner.request(path, options);
+    },
+  };
+}
+const aiParts = (panel) => ({
+  input: panel.findAll('input').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-input')),
+  go: panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-generate'),
+  area: panel.findAll('textarea')[0],
+  subject: panel.findAll('input').find((node) => String(node.getAttribute('class') ?? '').includes('composer-subject')),
+});
+
+test('composer AI: a prompt fills message and empty subject, editable, and nothing is sent', async () => {
+  const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
+  const { panel, toasts } = await openComposerMount({ client });
+  const { input, go, area, subject } = aiParts(panel);
+  assert.ok(input && go, 'the AI row sits in the composer');
+  assert.equal(go.textContent, 'Genera');
+  input.value = 'ricordagli la prova di giovedì';
+  go.dispatch('click');
+  await flushComposer();
+  assert.deepEqual(client.drafts, [{ spaceId: 'presti', contactId: 'c1', channel: 'email', prompt: 'ricordagli la prova di giovedì' }]);
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.');
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.equal(go.textContent, 'Rigenera');
+  assert.match(panel.textContent, /rileggila e modificala prima di inviare/);
+  assert.equal(client.posts.length, 0, 'the draft never sends');
+  assert.deepEqual(toasts, []);
+});
+
+test('composer AI: existing text is replaced with an Annulla that restores it once', async () => {
+  const client = draftClient({ body: 'Testo dell’AI' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area, subject } = aiParts(panel);
+  area.value = 'Il mio testo';
+  subject.value = 'Oggetto mio';
+  input.value = 'più cortese';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, 'Testo dell’AI');
+  assert.equal(subject.value, 'Oggetto mio', 'a subject the person wrote is never overwritten');
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla is offered');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+});
+
+test('composer AI: an empty prompt asks for words and sends no request', async () => {
+  const client = draftClient({ body: 'x' });
+  const { panel } = await openComposerMount({ client });
+  const { go } = aiParts(panel);
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts.length, 0);
+  assert.match(panel.textContent, /Scrivi cosa vuoi dire al cliente/);
+});
+
+test('composer AI: AI off or route missing turns the row into one honest line', async () => {
+  const cases = [
+    [Object.assign(new Error('off'), { status: 503, code: 'LLM_SPACE_DISABLED' }), /non è attiva in questo spazio/],
+    [Object.assign(new Error('no key'), { status: 503, code: 'LLM_SECRET_UNAVAILABLE' }), /non è ancora configurata/],
+    [Object.assign(new Error('nope'), { status: 405 }), /non è ancora disponibile qui/],
+  ];
+  for (const [error, sentence] of cases) {
+    const client = draftClient(error);
+    const { panel } = await openComposerMount({ client });
+    const { input, go } = aiParts(panel);
+    input.value = 'scrivi tu';
+    const logged = [];
+    const realError = console.error;
+    console.error = (...args) => { logged.push(args); };
+    try {
+      go.dispatch('click');
+      await flushComposer();
+    } finally {
+      console.error = realError;
+    }
+    assert.equal(logged.length, 1, 'AI off leaves one line for the operator');
+    assert.equal(logged[0][0], '[bo] AI spenta nel composer');
+    assert.deepEqual(Object.keys(logged[0][1]).sort(), ['code', 'spaceId', 'status']);
+    assert.equal(logged[0][1].code, error.code ?? null);
+    assert.equal(logged[0][1].status, error.status);
+    assert.ok(!JSON.stringify(logged).includes('scrivi tu'), 'the prompt never reaches the log');
+    assert.match(panel.textContent, sentence);
+    assert.equal(aiParts(panel).go, undefined, 'no dead Genera button stays');
+    assert.ok(aiParts(panel).area, 'the message field stays for writing by hand');
+    assert.ok(!panel.textContent.includes(error.code ?? 'LLM_'), 'no code on screen');
+  }
+});
+
+test('review #599 P2: an AI draft that lands after close and reopen never overwrites the new typing', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const inner = composerClient();
+  const client = {
+    posts: inner.posts,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages/draft') {
+        enforceAdminWriteGate(path, options);
+        await pending;
+        return { body: 'Testo vecchio dell’AI' };
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.input.value = 'scrivi tu';
+  first.go.dispatch('click');
+  await flushComposer(2);
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const area = reopened.findAll('textarea')[0];
+  area.value = 'IBAN per il bonifico';
+  area.dispatch?.('input');
+  release();
+  await flushComposer();
+  assert.equal(area.value, 'IBAN per il bonifico', 'the visible text keeps the new typing');
+  reopened.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const third = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.equal(third.findAll('textarea')[0].value, 'IBAN per il bonifico', 'the shared draft kept the new typing, not the stale AI text');
+});
+
+test('review #599 P2: Annulla restores the subject the AI filled, and the shared draft drops it', async () => {
+  const client = draftClient({ subject: 'S-AI', body: 'B' });
+  const { mount, panel } = await openComposerMount({ client });
+  const { input, go, area, subject } = aiParts(panel);
+  area.value = 'A';
+  area.dispatch?.('input');
+  input.value = 'più cortese';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(subject.value, 'S-AI');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo').dispatch('click');
+  assert.equal(area.value, 'A');
+  assert.equal(subject.value, '', 'the AI subject is undone too');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const again = aiParts(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'));
+  assert.equal(again.area.value, 'A');
+  assert.equal(again.subject.value, '', 'the shared draft kept the undo');
+});
+
+test('review #599 P2: closing after Genera keeps the way back to the person’s text across reopen', async () => {
+  const client = draftClient({ body: 'Testo AI' });
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.area.value = 'Il mio testo';
+  first.area.dispatch?.('input');
+  first.input.value = 'riscrivi';
+  first.go.dispatch('click');
+  await flushComposer();
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const parts = aiParts(reopened);
+  assert.equal(parts.area.value, 'Testo AI', 'the AI draft comes back');
+  const undo = reopened.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla is still offered after reopen');
+  undo.dispatch('click');
+  assert.equal(parts.area.value, 'Il mio testo', 'the original text is never lost');
+});
+
+test('review #599 P3: the prompt is cut to 500 characters before it leaves', async () => {
+  const client = draftClient({ body: 'ok' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'x'.repeat(800);
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts[0].prompt.length, 500);
+});
+
+const chooseChannel = (panel, channel) => {
+  const radio = panel.findAll('input').find((node) => node.getAttribute('name') === 'composer-channel'
+    && (node.getAttribute('value') ?? node.value) === channel);
+  assert.ok(radio, `the ${channel} chip exists`);
+  assert.equal(radio.getAttribute('disabled'), null, `${channel} is usable`);
+  radio.checked = true;
+  radio.dispatch('change');
+};
+
+test('review #599 P2 (round 3): Annulla on another channel still drops the AI subject for Email', async () => {
+  const client = draftClient({ subject: 'S-AI', body: 'B' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  area.value = 'A';
+  input.value = 'più cortese';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(aiParts(panel).subject.value, 'S-AI');
+  chooseChannel(panel, 'instagram');
+  assert.equal(aiParts(panel).subject, undefined, 'Instagram has no subject field');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo').dispatch('click');
+  assert.equal(aiParts(panel).area.value, 'A');
+  chooseChannel(panel, 'email');
+  assert.equal(aiParts(panel).subject.value, '', 'the undone AI subject never comes back');
+});
+
+test('review #599 P3: a 400 says to write the prompt shorter and Genera stays', async () => {
+  const client = draftClient(Object.assign(new Error('bad'), { status: 400, code: 'BO_DRAFT_REFUSED' }));
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.match(panel.textContent, /scrivila più breve e con parole tue/);
+  assert.ok(aiParts(panel).go, 'Genera stays for another try');
+  assert.ok(!panel.textContent.includes('BO_DRAFT_REFUSED'), 'no code on screen');
+});
+
+test('review #599 P3: with no connected channel Genera asks no draft and says why', async () => {
+  const inner = draftClient({ body: 'x' });
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return { connectors: [] };
+      if (path === '/api/profile') return { member: {}, connections: { available: true, reason: null, items: [] } };
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  if (!go) {
+    assert.match(panel.textContent, /Nessun canale collegato/, 'without channels the composer says so');
+    return;
+  }
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
+  assert.match(panel.textContent, /Nessun canale collegato/);
+});

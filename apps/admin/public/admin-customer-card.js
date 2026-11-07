@@ -1037,6 +1037,8 @@ export function createCustomerCardView(deps) {
     close.setAttribute('aria-label', 'Chiudi');
     close.setAttribute('data-action', 'composer-close');
     close.addEventListener('click', () => {
+      // Closing supersedes this composer: pending loads and AI drafts stop.
+      composerGeneration += 1;
       if (panel.parentNode) panel.parentNode.removeChild(panel);
     });
     head.appendChild(minimize);
@@ -1076,6 +1078,159 @@ export function createCustomerCardView(deps) {
     });
   }
 
+  /**
+   * «Chiedi all'AI» (Dan 05/11: the composer is agentic — a prompt writes
+   * the text, as an alternative to writing it from scratch). The prompt goes
+   * to `POST /api/customer-hub/messages/draft` { spaceId, contactId, channel,
+   * prompt } → { subject?, body }: the server drafts from the customer's
+   * own history through the space LLM gate and never sends. The draft lands
+   * in the message field, editable; the previous text can be restored once
+   * with «Annulla»; Invia stays the person's click. AI off (503
+   * LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without the
+   * route (404/405) turns the row into one honest line, never a dead button.
+   */
+  const COMPOSER_PROMPT_MAX = 500;
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
+    const row = el('div', 'bo-composer-ai');
+    // The composer generation this row was built in: Scrivi again, ✕ or Esc
+    // supersede it (openComposer bumps the counter on every opening).
+    const born = composerGeneration;
+    const stale = () => born !== composerGeneration || row.isConnected === false;
+    const mark = el('span', 'bo-composer-ai-mark', '✦');
+    mark.setAttribute('aria-hidden', 'true');
+    const prompt = el('input', 'bo-composer-ai-input');
+    prompt.setAttribute('type', 'text');
+    prompt.setAttribute('aria-label', 'Chiedi all’AI di scrivere il messaggio');
+    prompt.setAttribute('placeholder', 'Chiedi all’AI: «conferma la prova di giovedì, tono amichevole»');
+    prompt.setAttribute('maxlength', String(COMPOSER_PROMPT_MAX));
+    const go = el('button', 'bo-composer-ai-go', 'Genera');
+    go.setAttribute('type', 'button');
+    go.setAttribute('data-action', 'composer-ai-generate');
+    const line = el('p', 'bo-composer-ai-line', '');
+    line.setAttribute('aria-live', 'polite');
+    const field = el('div', 'bo-composer-ai-field');
+    field.appendChild(mark);
+    field.appendChild(prompt);
+    field.appendChild(go);
+    row.appendChild(field);
+    row.appendChild(line);
+    let busy = false;
+    // The person's own text before the first AI draft (review #599 P2): kept
+    // with the shared per-customer draft, so Annulla survives ✕/Esc and a
+    // reopen, and restores the subject too.
+    const off = (sentence) => {
+      while (row.firstChild) row.removeChild(row.firstChild);
+      row.setAttribute('data-off', 'true');
+      row.appendChild(el('p', 'bo-composer-ai-off', sentence));
+    };
+    const say = (sentence, undo = false) => {
+      while (line.firstChild) line.removeChild(line.firstChild);
+      line.textContent = '';
+      if (sentence === '') return;
+      line.appendChild(el('span', undefined, sentence));
+      if (undo) {
+        const back = el('button', 'bo-composer-ai-undo', 'Annulla');
+        back.setAttribute('type', 'button');
+        back.setAttribute('data-action', 'composer-ai-undo');
+        back.addEventListener('click', () => {
+          const kept = baseline();
+          if (kept === null) return;
+          text.value = kept.text;
+          // Muse P2 on #599: with no subject field mounted (channel switched
+          // to WhatsApp) the undone subject goes to the shared draft, so the
+          // AI subject never comes back when Email returns.
+          restoreSubject(kept.subject);
+          setBaseline(null);
+          changed();
+          go.textContent = 'Genera';
+          say('Testo di prima ripristinato.');
+        });
+        line.appendChild(el('span', undefined, ' · '));
+        line.appendChild(back);
+      }
+    };
+    async function generate() {
+      if (busy) return;
+      const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
+      const picked = channel();
+      if (words === '') {
+        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
+        return;
+      }
+      if (picked === null) {
+        say('Nessun canale collegato: l’AI scrive per il canale scelto.');
+        return;
+      }
+      busy = true;
+      go.setAttribute('disabled', 'disabled');
+      go.textContent = 'Scrivo…';
+      say('');
+      try {
+        const answer = await client.request('/api/customer-hub/messages/draft', {
+          method: 'POST',
+          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+        });
+        // Review #599 P2: the composer may have been closed or reopened while
+        // the AI wrote. A stale answer never touches a detached form nor the
+        // shared per-customer draft.
+        if (stale()) return;
+        const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
+        if (drafted === '') {
+          say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
+          return;
+        }
+        const subjectField = subject();
+        // Regenerating keeps the person's original, never a previous AI draft.
+        if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
+        text.value = drafted.slice(0, 2000);
+        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
+        if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
+        changed();
+        go.textContent = 'Rigenera';
+        const kept = baseline();
+        say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
+        if (typeof text.focus === 'function') text.focus();
+      } catch (error) {
+        if (stale()) return;
+        const code = error?.code ?? null;
+        const status = error?.status ?? null;
+        const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
+        // The operator sees why the row went quiet; never the person's prompt.
+        if (aiOff && typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
+        }
+        if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
+        else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
+        else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');
+        else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
+        else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
+      } finally {
+        busy = false;
+        if (row.getAttribute('data-off') !== 'true') {
+          go.removeAttribute?.('disabled');
+          if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
+        }
+      }
+    }
+    go.addEventListener('click', () => { void generate(); });
+    // Reopened after an AI draft: the way back to the person's text stays.
+    const kept = baseline();
+    if (kept !== null) {
+      go.textContent = 'Rigenera';
+      say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept.text.trim() !== '' || kept.subject.trim() !== '');
+    }
+    prompt.addEventListener?.('keydown', (event) => {
+      if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
+        event.preventDefault?.();
+        // The composer's Cmd/Ctrl+Invio still means Invia; plain Invio in
+        // the prompt means Genera, never a send.
+        event.stopPropagation?.();
+        void generate();
+      }
+    });
+    return row;
+  }
+
   // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
   // close the window, the typed text and subject stay here and come back
   // when the composer reopens on the same customer. Cleared only by a send
@@ -1094,11 +1249,12 @@ export function createCustomerCardView(deps) {
     // Keyed by space too: a draft never crosses into another workspace
     // (Muse P2 on #588), the same boundary the send payload keeps.
     const draftKey = `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
-    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '' };
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '', aiBefore: null };
     const keepDraft = () => {
       const subject = subjectInput !== null ? subjectInput.value : draft.subject;
-      if (text.value === '' && subject === '') composerDrafts.delete(draftKey);
-      else composerDrafts.set(draftKey, { text: text.value, subject });
+      const aiBefore = draft.aiBefore ?? null;
+      if (text.value === '' && subject === '' && aiBefore === null) composerDrafts.delete(draftKey);
+      else composerDrafts.set(draftKey, { text: text.value, subject, aiBefore });
       draft.subject = subject;
     };
     const channels = composerChannelsFor(card, connections, profile);
@@ -1199,6 +1355,19 @@ export function createCustomerCardView(deps) {
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
+    const ai = composerAiRow({
+      spaceId, navCtx, text,
+      channel: () => (selected !== null ? selected.channel : null),
+      subject: () => subjectInput,
+      restoreSubject: (value) => {
+        if (subjectInput !== null) subjectInput.value = value;
+        else draft.subject = value;
+      },
+      changed: keepDraft,
+      baseline: () => draft.aiBefore ?? null,
+      setBaseline: (value) => { draft.aiBefore = value; keepDraft(); },
+    });
+    body.appendChild(ai);
     body.appendChild(text);
     body.appendChild(err);
     foot.appendChild(send);
@@ -1221,6 +1390,7 @@ export function createCustomerCardView(deps) {
       panel.__composerKeys = true;
       panel.addEventListener?.('keydown', (event) => {
         if (event.key === 'Escape') {
+          composerGeneration += 1;
           if (panel.parentNode) panel.parentNode.removeChild(panel);
         } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault?.();
