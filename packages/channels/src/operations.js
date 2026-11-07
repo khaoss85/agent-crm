@@ -7,6 +7,7 @@ import {
   TRANSACTION_PROOF,
   ValidationError,
   canonicalJobPayload,
+  causeTokens,
   createDurableJobStore,
   normalizeError,
   nowIso,
@@ -2546,7 +2547,7 @@ export function createChannelOperations(deps) {
   }
 
   /** Record one terminal send failure. Never the raw payload, never a secret. */
-  async function recordDeadLetter({ spaceId, connectionKey, idempotencyKey, jobId, errorCode, payloadFingerprint, attempts }) {
+  async function recordDeadLetter({ spaceId, connectionKey, idempotencyKey, jobId, errorCode, payloadFingerprint, attempts, timelineLeftAsSent = false }) {
     const now = nowIso();
     const service = letters();
     const sourceKey = boundedKey('ch-dl', idempotencyKey);
@@ -2558,7 +2559,10 @@ export function createChannelOperations(deps) {
       sourceKey, spaceId, connectionKey, idempotencyKey, jobId,
       phase: 'send', errorCode, payloadFingerprint, attempts,
       firstFailedAt: now, lastFailedAt: now,
-      state: 'open', stateReason: 'bounded attempts exhausted',
+      state: 'open',
+      stateReason: timelineLeftAsSent
+        ? 'bounded attempts exhausted; timeline row left as sent (advance to failed refused)'
+        : 'bounded attempts exhausted',
     }, { actor: SYSTEM() });
   }
 
@@ -2600,12 +2604,15 @@ export function createChannelOperations(deps) {
    * loggable text and stays out of the timeline. Without an
    * `advanceMessage` on the composed log (older compositions) nothing is
    * written: the dead letter stays the only record, exactly as before.
+   * A refused advance never fails silently either: the cause is logged and
+   * the caller is told the row stayed `sent`, so the dead letter names the
+   * leftover instead of the card showing a ghost delivery.
    */
-  async function logFailedSendTimeline({ timeline, connection, adapter, message, idempotencyKey, errorCode }) {
+  async function logFailedSendTimeline({ spaceId, timeline, connection, adapter, message, idempotencyKey, errorCode }) {
     const text = typeof message?.text === 'string' ? message.text : '';
-    if (text === '') return null;
-    if (timeline === null || timeline === undefined || connection === null || connection === undefined) return null;
-    if (typeof interactionLog?.advanceMessage !== 'function') return null;
+    if (text === '') return { row: null, timelineLeftAsSent: false };
+    if (timeline === null || timeline === undefined || connection === null || connection === undefined) return { row: null, timelineLeftAsSent: false };
+    if (typeof interactionLog?.advanceMessage !== 'function') return { row: null, timelineLeftAsSent: false };
     const keyHash = createHash('sha256').update(idempotencyKey, 'utf8').digest('hex');
     const explicit = typeof timeline.conversationId === 'string' ? timeline.conversationId : null;
     const conversationId = resolveSentConversationId({
@@ -2630,9 +2637,25 @@ export function createChannelOperations(deps) {
       source: { package: CHANNEL_TIMELINE_SOURCE_PACKAGE, action: CHANNEL_TIMELINE_SOURCE_ACTION },
     });
     const row = logged?.message ?? null;
-    if (!row || row.status === 'failed') return row;
-    const advanced = await interactionLog.advanceMessage(row, 'failed', errorCode);
-    return advanced?.message ?? row;
+    if (!row || row.status === 'failed') return { row, timelineLeftAsSent: false };
+    // The row above commits as `sent`: a refused advance must never leave
+    // that ghost silently. Name the cause (name/code only, never the body)
+    // and report the leftover, so the dead letter says the timeline stayed
+    // `sent` instead of the card showing a delivery that never happened.
+    try {
+      const advanced = await interactionLog.advanceMessage(row, 'failed', errorCode);
+      return { row: advanced?.message ?? row, timelineLeftAsSent: false };
+    } catch (advanceError) {
+      const cause = normalizeError(advanceError);
+      const tokens = causeTokens(cause);
+      console.error(
+        `[accordo] channels send timeline advance to failed refused: `
+        + `cause=${cause.code} (${tokens?.name ?? cause.name}) spaceId=${spaceId} `
+        + `connectionKey=${connection?.sourceKey ?? connection?.id ?? 'unknown'} `
+        + `idempotencyKey=${idempotencyKey} rowId=${row?.id ?? 'unknown'}`,
+      );
+      return { row, timelineLeftAsSent: true };
+    }
   }
 
   async function logSentTimeline({ timeline, connection, adapter, message, providerMessageId, providerThreadId, idempotencyKey }) {
@@ -2681,25 +2704,36 @@ export function createChannelOperations(deps) {
           // of the failure living only in the dead letter the card never
           // reads. Best-effort beside the letter — the letter stays the
           // record of the failure, never the row.
+          let timelineLeftAsSent = false;
           try {
             const failedTimeline = body.timeline && typeof body.timeline === 'object' && !Array.isArray(body.timeline)
               ? body.timeline : null;
             if (failedTimeline !== null && interactionLog !== null) {
-              await logFailedSendTimeline({
-                timeline: failedTimeline, connection, adapter, message,
+              const logged = await logFailedSendTimeline({
+                spaceId, timeline: failedTimeline, connection, adapter, message,
                 idempotencyKey, errorCode: code,
               });
+              timelineLeftAsSent = logged?.timelineLeftAsSent === true;
             }
-          } catch {
+          } catch (timelineError) {
             // The dead letter below stays the record: a timeline write that
             // refuses (a replayed failed row, an uncomposed log) never
-            // renames the failure.
+            // renames the failure. The cause is logged, never swallowed:
+            // error name/code plus tenant and send keys, never the body.
+            const cause = normalizeError(timelineError);
+            const tokens = causeTokens(cause);
+            console.error(
+              `[accordo] channels send timeline write refused: `
+              + `cause=${cause.code} (${tokens?.name ?? cause.name}) spaceId=${spaceId} `
+              + `connectionKey=${connectionKey || 'unknown'} idempotencyKey=${idempotencyKey || 'unknown'}`,
+            );
           }
           const letter = await recordDeadLetter({
             spaceId, connectionKey, idempotencyKey,
             jobId: job.id, errorCode: code,
             payloadFingerprint: fingerprintPayload(JSON.stringify(body)),
             attempts: job.attempt,
+            timelineLeftAsSent,
           });
           throw new AppError(`Channel send failed terminally (${code}); see dead letter ${letter.id}`, {
             code: 'JOB_HANDLER_FAILED', status: 500,
