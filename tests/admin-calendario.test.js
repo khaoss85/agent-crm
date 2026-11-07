@@ -151,7 +151,12 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
         if (suggestGroups !== undefined) return { from: '', to: '', slotMinutes: 30, members: suggestGroups };
         return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots }] };
       }
-      if (path === '/api/appointments/phrase') return { draft: phrase, dryRun: false, spaceId: 'locale' };
+      // A queue of drafts answers one phrase per call, so a test can run two
+      // phrases in a row (backlog:65ed7430: timed, then day-only).
+      if (path === '/api/appointments/phrase') {
+        const next = Array.isArray(phrase) ? (phrase.length > 0 ? phrase.shift() : null) : phrase;
+        return { draft: next, dryRun: false, spaceId: 'locale' };
+      }
       if (path === '/api/appointments/propose') {
         return { decision: 'confirm-required', draft: options.body, spaceId: 'locale', permission: 'book-appointments' };
       }
@@ -460,6 +465,45 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   assert.equal(form.date.value, '2026-10-22');
   assert.equal(form.start.value, '16:00');
   assert.equal(form.end.value, '16:30');
+});
+
+test('a day-only phrase clears a stale hour and names the day on the card (backlog:65ed7430)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const timed = {
+    teamMemberId: 'marco',
+    serviceKey: 'taglio',
+    startsAt: '2026-10-22T16:00:00.000Z',
+    endsAt: '2026-10-22T16:30:00.000Z',
+  };
+  const dayOnly = { teamMemberId: 'marco', day: '2026-10-22' };
+  const client = stubClient({ phrase: [timed, dayOnly], slots: [] });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  byName().members.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  const flush = async (n = 7) => {
+    for (let round = 0; round < n; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  await flush();
+  mount.querySelector('textarea[name="phrase"]').value = 'giovedì alle 18 con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flush();
+  assert.equal(byName().start.value, '18:00', 'the timed phrase fills the hour');
+  mount.querySelector('textarea[name="phrase"]').value = 'giovedì con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flush();
+  const form = byName();
+  assert.equal(form.date.value, '2026-10-22', 'the day-only draft keeps the day');
+  assert.equal(form.start.value, '', 'a day-only draft never keeps a stale hour');
+  assert.equal(form.end.value, '', 'a day-only draft never keeps a stale end');
+  const card = mount.querySelector('.cal-draft');
+  assert.ok(card, 'the draft card renders for a day-only draft');
+  assert.ok(card.textContent.includes('gio 22 ott · orario da scegliere'), `the card names the day, never "?": ${card.textContent}`);
+  assert.ok(!card.textContent.includes('?'), 'no unknown-date mark on a day-only card');
 });
 
 test('a proposal Conferma books through confirm with the manual claim', async () => {
@@ -3768,6 +3812,12 @@ test('draft helpers: a midnight start is a day, not a time', () => {
   assert.equal(draftWhen(timed), '12 nov 10:00–10:45');
   assert.equal(draftWhen({ durationMinutes: 45 }), '45 minuti', 'no day: the minutes only');
   assert.equal(draftDayKey({ durationMinutes: 45 }), null);
+  // backlog:65ed7430 — the server names a stated day as `day` with no
+  // startsAt: same day-only contract, same words, search bound to the day.
+  const statedDay = { teamMemberId: 'marco', day: '2026-10-22' };
+  assert.equal(draftDayOnly(statedDay), true, 'a stated day with no startsAt is a day, not a time');
+  assert.equal(draftDayKey(statedDay), '2026-10-22', 'the search stays bound to the stated day');
+  assert.equal(draftWhen(statedDay), 'gio 22 ott · orario da scegliere · 30 minuti');
 });
 
 // e) The pilot confirm can poll for ~50 s: the form never keeps «Bozza
