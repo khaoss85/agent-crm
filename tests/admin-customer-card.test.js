@@ -3085,3 +3085,72 @@ test('a slower older re-read never overwrites a newer one', async () => {
   await older;
   assert.equal(mount.firstChild, shown, 'the newer scheda stays');
 });
+
+// Review #612: the in-place swap must never throw away what the person is
+// typing in the scheda when a re-read comes from elsewhere (an Invia).
+test('review #612: a note being typed survives a re-read of the same scheda', async () => {
+  const client = recordingClient(stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  const noteField = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  noteField().value = 'Richiamare giovedì';
+
+  await view.renderCard('contact', 'c1');
+  assert.equal(noteField().value, 'Richiamare giovedì', 'the half-written note is still there');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1);
+  assert.equal(noteField().value, '', 'a saved note leaves the field empty, never copied back');
+});
+
+test('review #612: an open Dettagli form keeps its edits through a re-read, and closes on Salva', async () => {
+  const client = recordingClient(stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('firstName').value = 'Guidino';
+  byName('email').value = 'nuova@esempio.invalid';
+
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-details'), 'the form is still open');
+  assert.equal(byName('firstName').value, 'Guidino', 'the typed name stays');
+  assert.equal(byName('email').value, 'nuova@esempio.invalid', 'the typed email stays');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1);
+  assert.equal(client.writes[0].body.firstName, 'Guidino');
+  assert.ok(!mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-details'), 'Salva closes the form');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'edit-details'), 'Modifica is back');
+});
+
+test('review #612: a phone number being typed survives a re-read, Annulla closes the panel', async () => {
+  const client = recordingClient(stubClient({ card: { ...CARD, phone: CARD_BARE.phone } }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-phone').dispatch('click');
+  const phoneField = () => mount.findAll('input').find((node) => node.getAttribute('type') === 'tel');
+  phoneField().value = '+39333000111';
+
+  await view.renderCard('contact', 'c1');
+  assert.equal(phoneField()?.value, '+39333000111', 'the half-typed number is still there');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-phone').dispatch('click');
+  await flushClicks();
+  assert.equal(phoneField(), undefined, 'Annulla closes the panel for good');
+});
+
+test('review #612: another customer never inherits the previous one\'s typing', async () => {
+  const client = recordingClient(stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'solo per c1';
+  await view.renderCard('contact', 'c2');
+  assert.equal(mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value ?? '', '');
+});

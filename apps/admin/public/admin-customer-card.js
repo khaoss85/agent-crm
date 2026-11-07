@@ -483,6 +483,28 @@ export function createCustomerCardView(deps) {
   let shownKey = null;
   let shownSides = [];
   let renderSeq = 0;
+  // Review #612: what the person was typing in the scheda on screen (a note,
+  // the open Dettagli form, a phone number) when a re-read swaps it. The new
+  // scheda is built with it, so an Invia elsewhere never wipes their text.
+  let pendingDrafts = null;
+
+  function readDrafts(root) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+    const drafts = {};
+    const note = root.querySelector('input[name="noteBody"]');
+    if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    if (root.querySelector('button[data-action="save-details"]')) {
+      drafts.details = {};
+      for (const name of ['firstName', 'lastName', 'email']) {
+        const input = root.querySelector(`input[name="${name}"]`);
+        if (input && typeof input.value === 'string') drafts.details[name] = input.value;
+      }
+    }
+    const phonePanel = root.querySelector('div[data-phone="open"]');
+    const phone = phonePanel ? phonePanel.querySelector('input') : null;
+    if (phone) drafts.phone = typeof phone.value === 'string' ? phone.value : '';
+    return Object.keys(drafts).length > 0 ? drafts : null;
+  }
 
   // Voce 908f2eb9bbfb: one slow or failing read must never fail the whole
   // scheda. Every read settles on its own: the card stays the identity
@@ -757,6 +779,11 @@ export function createCustomerCardView(deps) {
         openPhonePanel(box, navCtx);
       });
       row.appendChild(add);
+      if (pendingDrafts && typeof pendingDrafts.phone === 'string') {
+        openPhonePanel(box, navCtx);
+        const typed = box.querySelector('div[data-phone="open"]')?.querySelector('input');
+        if (typed) typed.value = pendingDrafts.phone;
+      }
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -824,6 +851,7 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone }),
         });
         toast('Telefono salvato');
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
         err.textContent = humanReadError(error, { failed: 'Numero non salvato. Riprova più tardi.' });
@@ -832,6 +860,7 @@ export function createCustomerCardView(deps) {
       }
     });
     cancel.addEventListener('click', async () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
       await renderCard(navCtx.resource, navCtx.id);
     });
   }
@@ -1737,6 +1766,15 @@ export function createCustomerCardView(deps) {
       };
       edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
       box.appendChild(edit);
+      if (pendingDrafts && pendingDrafts.details) {
+        const typed = pendingDrafts.details;
+        renderDetailsForm(box, card, contact, editCtx, restore);
+        for (const name of Object.keys(typed)) {
+          const input = box.querySelector(`input[name="${name}"]`);
+          if (input) input.value = typed[name];
+        }
+        return;
+      }
     }
     // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
     // It opens the BO-F0-04 bar with this customer already in the context —
@@ -1814,6 +1852,7 @@ export function createCustomerCardView(deps) {
           }),
         });
         toast('Dati salvati');
+        if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
@@ -2169,6 +2208,7 @@ export function createCustomerCardView(deps) {
       noteInput.setAttribute('name', 'noteBody');
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
+      if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
       const noteButton = el('button', undefined, 'Aggiungi nota');
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
@@ -2184,6 +2224,7 @@ export function createCustomerCardView(deps) {
             body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
           });
           toast('Nota aggiunta');
+          noteInput.value = '';
           await renderCard(noteCtx.resource, noteCtx.id);
         } catch (error) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
@@ -2578,6 +2619,24 @@ export function createCustomerCardView(deps) {
       if (error && error.status === 404) return null;
       throw error;
     });
+    pendingDrafts = key === shownKey ? readDrafts(mount) : null;
+    try {
+      buildAndShow(key, resource, id, {
+        card, timeline, timelineError, profile, profileError,
+        enrichment, enrichmentError, calls, callsError,
+        fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment,
+      });
+    } finally {
+      pendingDrafts = null;
+    }
+    markRead(resource, id, timeline);
+  }
+
+  function buildAndShow(key, resource, id, {
+    card, timeline, timelineError, profile, profileError,
+    enrichment, enrichmentError, calls, callsError,
+    fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment,
+  }) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -2630,7 +2689,6 @@ export function createCustomerCardView(deps) {
     grid.appendChild(right);
     panel.appendChild(grid);
     show(panel, key, [left, right]);
-    markRead(resource, id, timeline);
   }
 
   /**
