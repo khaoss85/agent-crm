@@ -471,9 +471,38 @@ export function createShellView({
     menuToggle.setAttribute('aria-label', state.drawerOpen ? 'Chiudi il menu' : 'Apri il menu');
   }
 
+  /** The sidebar's own landmark label, restored when the drawer closes. */
+  let landmarkLabel = null;
+
+  /**
+   * The drawer's focusable controls in document order: links with an href
+   * and enabled buttons, skipping closed menus (`.hidden` subtrees). A tree
+   * walk, so it reads the same in a browser and in the test DOM.
+   */
+  function drawerFocusables() {
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.childNodes ?? []) {
+        if (child.classList?.contains?.('hidden')) continue;
+        const tag = String(child.tagName ?? '').toLowerCase();
+        if ((tag === 'a' && child.getAttribute('href')) || (tag === 'button' && !child.disabled)) out.push(child);
+        walk(child);
+      }
+    };
+    walk(sidebar);
+    return out;
+  }
+
   function openDrawer() {
     state.drawerOpen = true;
     sidebar.classList.add('bo-drawer-open');
+    // A modal drawer: announced as the «Menu» dialog, the page behind it
+    // locked until it closes (the lock rule lives in the phone block only).
+    landmarkLabel = sidebar.getAttribute('aria-label');
+    sidebar.setAttribute('role', 'dialog');
+    sidebar.setAttribute('aria-modal', 'true');
+    sidebar.setAttribute('aria-label', 'Menu');
+    doc.body?.classList?.add('bo-scroll-lock');
     paintToggle();
     // Focus moves into the drawer: its first control is the space switcher.
     const first = sidebar.querySelector('button');
@@ -485,6 +514,11 @@ export function createShellView({
     if (!state.drawerOpen) return;
     state.drawerOpen = false;
     sidebar.classList.remove('bo-drawer-open');
+    sidebar.removeAttribute('role');
+    sidebar.removeAttribute('aria-modal');
+    if (landmarkLabel === null) sidebar.removeAttribute('aria-label');
+    else sidebar.setAttribute('aria-label', landmarkLabel);
+    doc.body?.classList?.remove('bo-scroll-lock');
     paintToggle();
     if (refocus && menuToggle !== null && typeof menuToggle.focus === 'function') menuToggle.focus();
   }
@@ -746,6 +780,23 @@ export function createShellView({
       if (event == null) return;
       if (event.key === 'Escape' && state.drawerOpen) {
         closeDrawer({ refocus: true });
+        return;
+      }
+      // Focus trap: Tab and Shift+Tab cycle inside the open drawer.
+      if (event.key === 'Tab' && state.drawerOpen) {
+        const focusables = drawerFocusables();
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const current = doc.activeElement ?? null;
+        const inside = current !== null && sidebar.contains(current);
+        const wrapTo = event.shiftKey === true
+          ? (!inside || current === first ? last : null)
+          : (!inside || current === last ? first : null);
+        if (wrapTo !== null) {
+          if (typeof event.preventDefault === 'function') event.preventDefault();
+          wrapTo.focus();
+        }
         return;
       }
       const isShortcut = event.metaKey === true || event.ctrlKey === true;
