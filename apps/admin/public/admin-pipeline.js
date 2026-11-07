@@ -786,10 +786,37 @@ export function createPipelineBoard(deps) {
     table.appendChild(head);
     const body = el(doc, 'tbody');
     const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
+    // Dan 06/11: a row of the Lista opens the offer like Apri on the Kanban
+    // card — the name is the link (keyboard, new tab), the whole row clicks.
+    const detailed = pipeline.module === 'opportunity';
     for (const record of visible) {
       const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
-      row.appendChild(el(doc, 'td', { text: String(record.name ?? record.id) }));
+      const name = String(record.name ?? record.id);
+      if (detailed) {
+        const href = `#/offerte/${encodeURIComponent(String(record.id))}`;
+        const cell = el(doc, 'td');
+        cell.appendChild(el(doc, 'a', {
+          class: 'pipeline-row-link',
+          text: name,
+          attrs: { href, 'data-action': 'open-offer' },
+        }));
+        row.appendChild(cell);
+        row.setAttribute('data-openable', 'true');
+        row.addEventListener('click', (event) => {
+          // The link navigates on its own; a click elsewhere on the row
+          // follows it, never a selection drag or a modified click.
+          if (event?.target?.closest?.('a')) return;
+          if (event?.metaKey || event?.ctrlKey || event?.shiftKey) return;
+          // Review #614: a click that ends a text selection (copying a
+          // name or a value) stays on the list; the name link still opens.
+          const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+          if (selection && selection.isCollapsed === false && String(selection) !== '') return;
+          if (typeof deps.navigate === 'function') deps.navigate(href);
+        });
+      } else {
+        row.appendChild(el(doc, 'td', { text: name }));
+      }
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);

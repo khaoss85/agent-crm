@@ -1,0 +1,19 @@
+{
+  "manifestVersion": 1,
+  "name": "teammate-agent",
+  "description": "One teammate agent of one space (backlog:8986f4459f0f): a named agent with a role and working instructions plus an optional monthly spending cap in cents. Every row is managed: an agent exists only through the agents package create operation. (backlog:8986f4459f0f)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "name", "type": "string", "writable": "managed" },
+    { "name": "role", "type": "string", "writable": "managed" },
+    { "name": "instructions", "type": "string", "writable": "managed" },
+    { "name": "spendingCapCents", "type": "integer", "writable": "managed", "required": false },
+    { "name": "status", "type": "enum", "values": ["active", "paused"], "default": "active", "writable": "managed" },
+    { "name": "decidedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}

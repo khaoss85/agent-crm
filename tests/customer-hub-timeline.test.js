@@ -587,3 +587,48 @@ test('9e003582: la scheda chiede i flag alla capability, senza lettore ogni read
   assert.equal(ragged.readState.available, false, 'a ragged answer never shifts a verdict');
   assert.deepEqual(ragged.entries.items.map((row) => row.read), [null, null]);
 });
+
+test('voce 908f2eb9bbfb: the provider reads start together with the profile, not behind it', async () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  let releaseProfile;
+  const profileGate = new Promise((resolve) => { releaseProfile = resolve; });
+  const started = [];
+  const base = {
+    subject: { resource: 'contact', id: 'c1' },
+    readProfile: () => { started.push('profile'); return profileGate; },
+    readConversations: () => { started.push('conversations'); return Promise.resolve([]); },
+    readTimeline: () => { started.push('timeline'); return Promise.resolve({ entries: [] }); },
+    readSchedule: () => { started.push('schedule'); return Promise.resolve([]); },
+  };
+  const pending = readCustomerTimeline(base);
+  // Flush every queued microtask: with the profile still gated, every reader
+  // that starts only behind it would still be missing here.
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  for (const name of ['profile', 'conversations', 'timeline', 'schedule']) {
+    assert.ok(started.includes(name), `the ${name} read started while the profile was still pending`);
+  }
+  releaseProfile(profile);
+  const timeline = await pending;
+  assert.equal(timeline.conversations.available, true, 'the joined providers still shape');
+  assert.equal(timeline.entries.available, true);
+  assert.equal(timeline.appointments.available, true);
+});
+
+test('voce 908f2eb9bbfb: a failing profile still wins over a failing provider', async () => {
+  const profileError = Object.assign(new Error('pool esaurito'), { status: 503 });
+  const providerError = Object.assign(new Error('provider rotto'), { status: 500 });
+  await assert.rejects(
+    readCustomerTimeline({
+      subject: { resource: 'contact', id: 'c1' },
+      readProfile: async () => { throw profileError; },
+      readConversations: async () => { throw providerError; },
+      readTimeline: async () => ({ entries: [] }),
+      readSchedule: async () => [],
+    }),
+    (error) => error === profileError,
+    'the ghost record stays NOT_FOUND even when a provider fails too',
+  );
+});

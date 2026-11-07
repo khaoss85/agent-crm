@@ -13,7 +13,7 @@ import {
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
-import { belongsToCustomer, canonicalClusterFor, profileFor } from './profile.js';
+import { belongsToCustomer, canonicalClusterFor, coalescedProfileFor } from './profile.js';
 import { createPolicyReader, createSubjectForRow, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
@@ -293,7 +293,7 @@ export function createCustomerDataOperations({ database, modules, events, config
       if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
         throw new ValidationError('a profile read needs a subject resource and id', { field: 'id' });
       }
-      return profileFor({ modules, core, names, subject: { resource, id } });
+      return coalescedProfileFor({ modules, core, names, subject: { resource, id } });
     },
 
     /**

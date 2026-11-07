@@ -1415,3 +1415,39 @@ test('ef92f728: only the opportunity board offers Apri', async () => {
   await board.renderBoard('staged-module');
   assert.equal(apriButton(mount), undefined, 'a staged module card has no Apri');
 });
+
+// Dan 06/11: in the Lista view a row never opened the offer. The name is
+// now the link to the detail and the rest of the row follows it.
+test('Dan 06/11: a Lista row opens the offer detail, by its name link or the row', async () => {
+  const records = [record('a', 'discovery', { name: 'Cucina per Giulia' }), record('b', 'demo', { name: 'Bagno <b>x</b>' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const hashes = [];
+  const board = createPipelineBoard({
+    doc, mount, client: navigableClient(records), navigate: (hash) => hashes.push(hash),
+  });
+  await board.renderBoard('b2b-sales');
+  mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
+  const list = mount.findAll('div').find((node) => node.getAttribute('data-listview') === 'records');
+  const rows = list.findAll('tr').filter((row) => row.getAttribute('data-record') !== null);
+
+  const link = rows[0].findAll('a')[0];
+  assert.ok(link, 'the offer name is a link');
+  assert.equal(link.getAttribute('href'), '#/offerte/a', 'it points at the offer detail');
+  assert.equal(link.textContent, 'Cucina per Giulia');
+  assert.equal(rows[0].getAttribute('data-openable'), 'true');
+
+  rows[1].dispatch('click', { target: rows[1] });
+  assert.deepEqual(hashes, ['#/offerte/b'], 'a click on the row opens that offer');
+  rows[1].dispatch('click', { target: rows[1], metaKey: true });
+  assert.deepEqual(hashes, ['#/offerte/b'], 'a modified click is left to the browser');
+  // Review #614: selecting text on a row (to copy it) never opens the offer.
+  let selected = 'Bagno';
+  doc.getSelection = () => ({ isCollapsed: selected === '', toString: () => selected });
+  rows[1].dispatch('click', { target: rows[1] });
+  assert.deepEqual(hashes, ['#/offerte/b'], 'a click that ends a text selection stays on the list');
+  selected = '';
+  rows[1].dispatch('click', { target: rows[1] });
+  assert.deepEqual(hashes, ['#/offerte/b', '#/offerte/b'], 'with the selection gone the row opens again');
+  assert.equal(rows[1].findAll('a')[0].textContent, 'Bagno <b>x</b>', 'a hostile name stays text');
+});
