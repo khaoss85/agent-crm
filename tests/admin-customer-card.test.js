@@ -3102,3 +3102,38 @@ test('teamName turns handles into names and refuses ids', () => {
   assert.equal(teamName('user-12345'), null);
   assert.equal(teamName(''), null);
 });
+
+test('review #626: direction reads aloud, no direction stays neutral, writer chips use names, state case is normalized', async () => {
+  const items = [
+    { entry: 'message', id: 'in1', channel: 'whatsapp', direction: 'inbound', sync: 'received', body: 'Ciao', remoteHandle: '+39 000 000 004', occurredAt: '2026-11-07T10:51:00.000Z' },
+    { entry: 'message', id: 'out1', channel: 'email', direction: 'outbound', sync: 'FAILED', body: 'Ecco la proposta', teamAuthorId: 'coach-guido', occurredAt: '2026-11-07T10:52:00.000Z' },
+    { entry: 'message', id: 'x1', channel: 'whatsapp', direction: null, sync: 'received', body: 'Senza direzione', occurredAt: '2026-11-07T10:53:00.000Z' },
+    { entry: 'call', id: 'x2', channel: 'phone', direction: 'sideways', sync: 'completed', durationSec: 30, occurredAt: '2026-11-07T10:54:00.000Z' },
+    { entry: 'note', id: 'n1', body: 'Nota di Guido', teamAuthorId: 'coach-guido', occurredAt: '2026-11-07T10:55:00.000Z' },
+    { entry: 'note', id: 'n2', body: 'Nota di Elena', teamAuthorId: 'elena', occurredAt: '2026-11-07T10:56:00.000Z' },
+  ];
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: items.length, truncated: false, items } } }));
+  const row = (id) => mount.findAll('div').find((node) => node.getAttribute('data-entry') === id);
+  const srText = (id) => row(id).findAll('span').filter((node) => node.getAttribute('class') === 'sr-only').map((node) => node.textContent).join('');
+  // 1) the side is visual only: a screen reader hears the direction.
+  assert.equal(srText('in1'), 'Ricevuto. ');
+  assert.equal(srText('out1'), 'Inviato. ');
+  assert.equal(row('in1').getAttribute('aria-label'), null, 'no aria-label on a role-less div');
+  // 2) no recorded direction is never guessed.
+  for (const id of ['x1', 'x2']) {
+    assert.equal(row(id).getAttribute('data-direction'), 'none', `${id} sits in the middle`);
+    assert.ok(String(row(id).getAttribute('class')).includes('bo-scheda-entry-none'));
+    assert.equal(srText(id), '', `${id} names no direction`);
+  }
+  assert.ok(row('x2').textContent.includes('chiamata · 0:30'), 'a call without direction says neither in uscita nor in entrata');
+  assert.ok(!row('x2').textContent.includes('in entrata') && !row('x2').textContent.includes('in uscita'));
+  // 4) the state key is normalized before it drives the warning colour.
+  const state = row('out1').findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-sync');
+  assert.equal(state.getAttribute('data-sync'), 'failed');
+  assert.equal(state.textContent, 'non consegnato');
+  // 3) the writer chips under Note read names, like the notes.
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'note').dispatch('click');
+  const chip = mount.findAll('button').find((node) => node.getAttribute('data-author') === 'coach-guido');
+  assert.ok(chip, 'a chip per writer');
+  assert.ok(chip.textContent.includes('da Coach Guido'), 'the chip reads the name, never the handle');
+});

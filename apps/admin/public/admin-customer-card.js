@@ -2028,7 +2028,7 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${author}`;
+          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             shownCount = TIMELINE_PAGE;
@@ -2141,14 +2141,18 @@ export function createCustomerCardView(deps) {
         }
         const channelKey = String(item?.channel ?? '').trim().toLowerCase();
         const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
-        const isOutbound = String(item?.direction ?? '') === 'outbound';
+        const directionRaw = String(item?.direction ?? '');
+        const isOutbound = directionRaw === 'outbound';
+        const isInbound = directionRaw === 'inbound';
         // Dan 07/11: «inviato e ricevuto sarebbe più chiaro a destra e
         // sinistra, come una conversazione». Received passages sit on the
         // left, the team's on the right, each in its own bubble; the channel
-        // badge stays on the outer edge so the filter chips still read.
-        row.setAttribute('class', `bo-scheda-entry ${isOutbound ? 'bo-scheda-entry-out' : 'bo-scheda-entry-in'}`);
-        row.setAttribute('data-direction', isOutbound ? 'out' : 'in');
-        row.setAttribute('aria-label', isOutbound ? 'Inviato' : 'Ricevuto');
+        // badge stays on the outer edge so the filter chips still read. A
+        // passage with no recorded direction is never guessed: it sits in
+        // the middle, neutral, and says nothing about who wrote it.
+        const side = isOutbound ? 'out' : isInbound ? 'in' : 'none';
+        row.setAttribute('class', `bo-scheda-entry bo-scheda-entry-${side}`);
+        row.setAttribute('data-direction', side);
         row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
         const bubble = el('div', 'bo-scheda-bubble');
         // The side already says the direction: the head names channel,
@@ -2160,6 +2164,9 @@ export function createCustomerCardView(deps) {
         // card shows the hour only (`<hh:mm>`).
         const when = timeParts(item?.occurredAt);
         const entryHead = el('p', 'bo-scheda-entry-head');
+        // The side is visual only: a screen reader hears the direction as
+        // the first word of the bubble (review #626).
+        if (side !== 'none') entryHead.appendChild(el('span', 'sr-only', isOutbound ? 'Inviato. ' : 'Ricevuto. '));
         // «Da leggere»: an unread passage (unreadInboundAt, the same rule
         // mark-read uses) lights up with «Nuovo» for this visit. Without the
         // field nothing changes — the server may not serve read state yet.
@@ -2175,7 +2182,7 @@ export function createCustomerCardView(deps) {
           // audio URL in the data no player is rendered (never a dead one).
           const dur = durationParts(item?.durationSec);
           bubble.appendChild(el('p', 'bo-scheda-entry-body',
-            [`chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`, dur, outcome].filter(Boolean).join(' · ')));
+            [isOutbound ? 'chiamata in uscita' : isInbound ? 'chiamata in entrata' : 'chiamata', dur, outcome].filter(Boolean).join(' · ')));
         } else if (typeof item?.body === 'string' && item.body !== '') {
           const text = readableText(item.body);
           const bodyNode = el('p', 'bo-scheda-entry-body', text);
@@ -2198,10 +2205,11 @@ export function createCustomerCardView(deps) {
         // The delivery state reads only where it says something: under the
         // team's messages (inviato, consegnato, letto, non consegnato) and
         // under a received one only when it is not the plain «ricevuto».
-        const plainReceived = !isOutbound && String(item?.sync ?? '') === 'received';
+        const syncKey = String(item?.sync ?? '').trim().toLowerCase();
+        const plainReceived = isInbound && syncKey === 'received';
         if (item?.entry !== 'call' && outcome && !plainReceived) {
           const state = el('p', 'bo-scheda-sync', outcome);
-          state.setAttribute('data-sync', String(item.sync));
+          state.setAttribute('data-sync', syncKey);
           bubble.appendChild(state);
         }
         row.appendChild(bubble);

@@ -2092,6 +2092,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-timeline .bo-scheda-entry-in,
 .bo-scheda-timeline .bo-scheda-entry-out { display: flex; align-items: flex-end; gap: 10px; }
 .bo-scheda-timeline .bo-scheda-entry-out { flex-direction: row-reverse; }
+.bo-scheda-timeline .bo-scheda-entry-none { display: flex; align-items: flex-end; justify-content: center; gap: 10px; }
+.bo-scheda-timeline .bo-scheda-entry-none > .bo-scheda-chan { flex: none; width: 30px; height: 30px; border-radius: 9px; font-size: 9.5px; }
+.bo-scheda-entry-none .bo-scheda-bubble { border-radius: 16px; background: var(--surface-soft); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .bo-scheda-timeline .bo-scheda-entry-in > .bo-scheda-chan,
 .bo-scheda-timeline .bo-scheda-entry-out > .bo-scheda-chan { flex: none; width: 30px; height: 30px; border-radius: 9px; font-size: 9.5px; }
 .bo-scheda-bubble { min-width: 0; max-width: min(78%, 640px); display: flex; flex-direction: column; gap: 4px; padding: 10px 14px 11px; border: 1px solid var(--line-soft); border-radius: 16px 16px 16px 5px; background: var(--surface); }
