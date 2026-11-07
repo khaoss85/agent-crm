@@ -291,7 +291,7 @@ const DEMO_PROFILE = {
   identity: { company: { id: 'co1', name: 'Palestra Esempio' }, contact: { id: 'c1', email: 'guido@palestra-esempio.it' } },
   externalIdentities: [],
   opportunities: { available: true, count: 1, countIsComplete: true, items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi' }], truncated: false },
-  quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi' }], truncated: false },
+  quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi', amountCents: 32000, currency: 'EUR' }], truncated: false },
   orders: { available: false, reason: 'not composed', items: null, count: null },
   contracts: { available: false, reason: 'not composed', items: null, count: null },
   subscriptions: { available: false, reason: 'not composed', items: null, count: null },
@@ -357,8 +357,10 @@ const DEMO_WEEK = {
   ],
 };
 
+// The first slot sits beside the held taglio, never on it: a proposal that
+// overlaps the person's own booking is dropped (backlog:5fbebe8559e9).
 const DEMO_SLOTS = [
-  { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+  { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
   { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
 ];
 
@@ -473,6 +475,25 @@ const DEMO_CATALOG = {
         sourcePricingModel: 'manual:flat_fee', tiers: [],
       }],
     }],
+    unit: 'pacchetto', maxDiscountBps: 1000,
+  }, {
+    // backlog:b44fe65ac3e5: the summary counts one Stripe product, so the
+    // photographed rows carry it too — the Stripe block and the Fonte chips
+    // never disagree on camera.
+    productId: 'p2', sku: 'YOGA-MESE', name: 'Abbonamento Yoga',
+    description: 'Ingressi illimitati.', category: 'abbonamenti', source: 'stripe-test',
+    priceReadOnly: true, active: true, version: 1, unit: 'mese',
+    offers: [{
+      offerId: 'o2', name: 'Abbonamento Yoga — Canone mensile', active: true,
+      currency: 'EUR', quoteEligible: true, unsupportedReason: null,
+      components: [{
+        key: 'canone', label: 'Canone mensile',
+        chargeType: 'recurring', pricingModel: 'per_unit',
+        interval: 'month', intervalCount: 1, unitAmountCents: 4900,
+        flatAmountCents: null, externalPriceId: 'price_yoga_mese',
+        sourcePricingModel: 'stripe:recurring.per_unit', tiers: [],
+      }],
+    }],
   }],
   summary: { manual: 1, byProvider: { 'stripe-test': 1 }, stripeConnected: true },
 };
@@ -504,9 +525,13 @@ const DEMO_SPACES = [
   { id: 'spazio-2', name: 'Palestra centro', initials: 'PA' },
 ];
 
+// The roster as the pilot enriches it (displayName/email beside each opaque
+// subject). Elena holds two subjects — an adopted broker member and her
+// Google one — and the screen paints one row for her (backlog:6b44b0e9fcdf).
 const DEMO_MEMBERS = [
-  { subject: 'owner-1', role: 'owner', status: 'active' },
-  { subject: 'marco', role: 'operator', status: 'active' },
+  { subject: 'broker|owner-1', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
+  { subject: 'google|1001', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'Elena@studioaurora.it' },
+  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it' },
 ];
 
 // The connectors screen (BO-F6-02): every catalog channel has a composed
@@ -884,10 +909,18 @@ document.title = 'pipeline-ready';`;
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(DEMO_WEEK)};
 const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
-const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z', notes: 'taglio per Ada' };
+const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z', notes: 'taglio per Ada' };
 const client = {
   async request(path) {
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
+    // Block titles read the catalog service names (backlog:5fbebe8559e9);
+    // the demo has no customer profiles, so the row labels name them.
+    if (path.startsWith('/api/catalog/products')) {
+      return { products: [{ sku: 'taglio', name: 'Taglio' }, { sku: 'barba', name: 'Barba' }] };
+    }
+    if (path.startsWith('/api/customer-data/profile/')) {
+      throw Object.assign(new Error('no profile'), { code: 'NOT_FOUND', status: 404 });
+    }
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
       return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
@@ -1468,7 +1501,7 @@ export function assertProbe(name, probe) {
     case 'calendario': {
       if (probe.days !== 5) throw new Error(`calendario: the probe holds ${String(probe.days)} day columns, expected 5`);
       const events = Array.isArray(probe.events) ? probe.events : [];
-      if (!events.includes('taglio')) {
+      if (!events.some((text) => /^taglio\b/i.test(String(text)))) {
         throw new Error('calendario: the probe lists no week events (expected taglio)');
       }
       if (typeof probe.lede !== 'string' || !probe.lede.includes('ott')) {

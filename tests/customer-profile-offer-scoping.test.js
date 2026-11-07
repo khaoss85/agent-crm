@@ -46,6 +46,10 @@ test('a contact-scoped offer shows on its contact card only, a company-scoped on
     { companyId: company.id, name: 'Pacchetto sede', valueCents: 5000, currency: 'EUR', owner: 'rep' },
     { actor: ACTOR });
   insertQuote(db, 'quote-co-1', companyOpportunity.id, 'draft');
+  // Voce 59def6cb805d (C25): a one-time quote carries its server total; a
+  // quote with recurring groups carries none.
+  db.prepare('UPDATE quotes SET one_time_net_cents = ?, recurring_group_count = ? WHERE id = ?').run(27500, 0, 'quote-ada-1');
+  db.prepare('UPDATE quotes SET one_time_net_cents = ?, recurring_group_count = ? WHERE id = ?').run(9000, 1, 'quote-co-1');
 
   const adaProfile = await app.readCustomerProfile({ actor: ACTOR, resource: 'contact', id: ada.id });
   assert.deepEqual(
@@ -59,6 +63,13 @@ test('a contact-scoped offer shows on its contact card only, a company-scoped on
   const adaQuote = adaProfile.quotes.items.find((item) => item.id === 'quote-ada-1');
   assert.equal(adaQuote.opportunityId, adaOpportunity.id, 'a quote item names the opportunity it was made for');
   assert.equal(adaQuote.opportunityName, 'Pacchetto Ada', 'a quote item carries its opportunity name for the scheda');
+  assert.equal(adaQuote.amountCents, 27500, 'a one-time quote carries its server total');
+  assert.equal(adaQuote.currency, 'EUR');
+  const companyQuote = adaProfile.quotes.items.find((item) => item.id === 'quote-co-1');
+  assert.equal(companyQuote.amountCents, null, 'a quote with recurring groups carries no single total');
+  const adaOpportunityItem = adaProfile.opportunities.items.find((item) => item.id === adaOpportunity.id);
+  assert.equal(adaOpportunityItem.amountCents, 10000, 'an opportunity carries its value');
+  assert.equal(adaOpportunityItem.currency, 'EUR');
 
   const beaProfile = await app.readCustomerProfile({ actor: ACTOR, resource: 'contact', id: bea.id });
   assert.deepEqual(

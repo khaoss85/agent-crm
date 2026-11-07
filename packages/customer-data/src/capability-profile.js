@@ -1,7 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
-import { profileFor } from './profile.js';
+import { coalescedProfileFor } from './profile.js';
 import { resolvedNames } from './store.js';
 
 /**
@@ -54,7 +54,7 @@ export function createCustomerProfileCapability(config) {
           if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
             throw new ValidationError('a profile read needs a subject resource and id', { field: 'id' });
           }
-          return await profileFor({ modules, core, names, subject: { resource, id } });
+          return await coalescedProfileFor({ modules, core, names, subject: { resource, id } });
         },
       });
     },

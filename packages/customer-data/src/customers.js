@@ -1,7 +1,7 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
-import { CHANNEL_SYSTEMS } from './sender.js';
+import { CHANNEL_SYSTEMS, isNoCompany } from './sender.js';
 
 /**
  * **The customer list (BO-F1-05): one page of customers, server-side.**
@@ -396,7 +396,9 @@ export function shapeCustomerRow(subject, reads = {}) {
     customerListContract: CUSTOMER_LIST_CONTRACT,
     subject: Object.freeze({ resource, id }),
     name, resource, id,
-    company: company ? Object.freeze({ id: company.id, name: company.name }) : null,
+    // The reserved «no company» behind a contact typed without Azienda
+    // reads as no company (production 07/11), never as a company name.
+    company: company && !(contact && isNoCompany(company)) ? Object.freeze({ id: company.id, name: company.name }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),

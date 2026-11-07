@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 1,
+  "name": "teammate-assignment",
+  "description": "One assignment of one teammate agent (backlog:8986f4459f0f): the original human phrase plus the machine schedule it became (cadence and next run). Created from a phrase with an explicit plan (the fake-AI seam) or the built-in Italian parser; an unclear phrase refuses instead of guessing. (backlog:8986f4459f0f)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "agentSourceKey", "type": "string", "index": true, "writable": "managed" },
+    { "name": "phrase", "type": "string", "writable": "managed" },
+    { "name": "cadence", "type": "enum", "values": ["daily", "weekly", "monthly", "once"], "writable": "managed" },
+    { "name": "weekday", "type": "integer", "writable": "managed", "required": false },
+    { "name": "timeOfDay", "type": "string", "writable": "managed", "required": false },
+    { "name": "runAt", "type": "timestamp", "writable": "managed", "required": false },
+    { "name": "nextRunAt", "type": "timestamp", "writable": "managed" },
+    { "name": "lastRunAt", "type": "timestamp", "writable": "managed", "required": false },
+    { "name": "costPerRunCents", "type": "integer", "writable": "managed", "required": false },
+    { "name": "status", "type": "enum", "values": ["active", "paused", "completed"], "default": "active", "writable": "managed" },
+    { "name": "decidedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}

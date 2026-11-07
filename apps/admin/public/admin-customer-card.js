@@ -1,11 +1,12 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { SYNC_LABELS } from './admin-labels.js';
 import {
   addFieldForm,
   defineField,
@@ -94,17 +95,7 @@ export function isDefinitiveRefusal(error) {
 }
 const SEND_RESUME_ROUNDS = 40;
 
-/** Delivery/sync state, inbound or outbound, in the operator's words. */
-const SYNC_LABELS = Object.freeze({
-  received: 'ricevuto',
-  sent: 'inviato',
-  delivered: 'consegnato',
-  read: 'letto',
-  failed: 'non consegnato',
-  completed: 'completata',
-  missed: 'persa',
-  'no-answer': 'senza risposta',
-});
+// Delivery/sync state words: shared with the assistant panel (admin-labels.js).
 
 /**
  * Voce cc525cd6a3c5: the quote and opportunity-fallback stages share the
@@ -191,15 +182,22 @@ const durationParts = (sec) => {
 };
 
 /**
- * Voce 59def6cb805d (C17): the sync-row arrow of the prototype
- * (`↔/←/→ <canale> · <stato>`). Inbound `←`, outbound `→`; a passage with
- * no recorded direction carries no arrow instead of an invented one.
+ * Dan 07/11: the conversation reads like a chat, so the writer of an
+ * outbound passage reads as a name, never as a handle. A slug handle
+ * (`coach-guido`, `elena`) becomes `Coach Guido` / `Elena`; an e-mail keeps
+ * its local part; anything that is not a human handle reads as null and the
+ * caller says «il team».
+ * @param {unknown} value
  */
-const syncArrow = (direction) => {
-  if (direction === 'inbound') return '← ';
-  if (direction === 'outbound') return '→ ';
-  return '';
-};
+export function teamName(value) {
+  if (!isHumanHandle(value)) return null;
+  const text = String(value).trim();
+  const isEmail = text.includes('@');
+  // An e-mail never shows its domain: the local part, without a `+tag`.
+  const local = isEmail ? text.slice(0, text.indexOf('@')).split('+')[0] : text;
+  if (!/^[a-zà-ÿ]+([._-][a-zà-ÿ]+)*$/i.test(local)) return isEmail ? (local === '' ? null : local) : text;
+  return local.split(/[._-]/).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
 
 /**
  * Own-property label lookup: a hostile or unknown key (`constructor`,
@@ -398,6 +396,30 @@ export function mergeLinkedIdentities(timeline) {
 }
 
 /**
+ * Voce 59def6cb805d (C10): the directions observed per channel on the
+ * customer's passages — `{in, out}` by lowercase system. Evidence only: a
+ * direction nobody recorded is never assumed.
+ * @param {any} timeline the read-customer-timeline answer
+ * @returns {Map<string, {in: boolean, out: boolean}>}
+ */
+export function observedDirections(timeline) {
+  /** @type {Map<string, {in: boolean, out: boolean}>} */
+  const seen = new Map();
+  const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  for (const entry of entries) {
+    const system = String(entry?.channel ?? '').toLowerCase();
+    if (system === '') continue;
+    const direction = String(entry?.direction ?? '');
+    if (direction !== 'inbound' && direction !== 'outbound') continue;
+    const current = seen.get(system) ?? { in: false, out: false };
+    if (direction === 'inbound') current.in = true;
+    else current.out = true;
+    seen.set(system, current);
+  }
+  return seen;
+}
+
+/**
  * «Da leggere»: the one rule for an unread passage, shared by the «Nuovo»
  * badge and by mark-read so the two never disagree — an inbound message the
  * server names unread, with a date mark-read can reach (`upTo`). A passage
@@ -438,6 +460,66 @@ export function readableText(value) {
     .trim();
 }
 
+/** «Aggiungi telefono»: the Italian reason for each refusal the server names. */
+const PHONE_REFUSALS = Object.freeze({
+  400: 'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567',
+  404: 'Il cliente non è più in questo spazio: ricarica la scheda',
+  409: 'Questo numero è già collegato a un altro cliente',
+});
+const PHONE_SAVE_FAILED = 'Numero non salvato. Riprova più tardi.';
+/** The /bo edge's generic refusal: Italian, but it says nothing the operator can act on. */
+const GENERIC_PANEL_REFUSAL = 'Scrittura del pannello rifiutata';
+
+/**
+ * Whether a server message is an Italian sentence the operator can read:
+ * the /bo edge answers its refusals in Italian, the standalone framework
+ * in English, and a code or path never reaches the screen.
+ * @param {unknown} message
+ */
+function isItalianSentence(message) {
+  if (typeof message !== 'string') return false;
+  const text = message.trim();
+  if (text === '' || text.length > 240 || text === GENERIC_PANEL_REFUSAL) return false;
+  if (/[_/{}<>]|\b[A-Z]{2,}_[A-Z]/.test(text)) return false;
+  return /[àèéìòù]|\b(il|lo|la|non|un|una|questo|questa|già|del|della|di|per|scrivilo|ricarica)\b/i.test(text);
+}
+
+/**
+ * Production 07/11 (pilot #426): «Aggiungi telefono» always said «Numero
+ * non salvato…». A 400 (bad format), 404 (customer gone) or 409 (number
+ * held by another customer) now reads its own reason — the server's Italian
+ * sentence when it sends one, else the same reason in our words; anything
+ * else (unknown, 5xx, network) keeps the generic retry line.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function phoneRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status
+    : (record.code === 'PHONE_ALREADY_HELD' ? 409 : null);
+  const own = status === null ? undefined : PHONE_REFUSALS[/** @type {400|404|409} */ (status)];
+  if (own === undefined) {
+    return humanReadError(error, { failed: PHONE_SAVE_FAILED });
+  }
+  humanReadError(error, { failed: own });
+  return isItalianSentence(record.message) ? String(record.message).trim() : own;
+}
+
+/**
+ * The reserved company a contact typed without Azienda sits under
+ * (customer-data `NO_COMPANY_NAME`, production 07/11): the core needs a
+ * company behind every contact, the scheda shows none.
+ */
+export const NO_COMPANY_NAME = 'Senza azienda';
+
+/** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
+export function shownCompanyName(card) {
+  const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
+  // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
+  const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
+  if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  return name;
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -447,6 +529,8 @@ export function createCustomerCardView(deps) {
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
   const { client } = bindAdminMutations(deps.client, deps);
+  /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
+  const detailsInFlight = new Set();
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
@@ -467,6 +551,15 @@ export function createCustomerCardView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  // Azioni rapide: the prototype's stroke icon above the label, drawn as a
+  // real SVG element. A CSS data: mask is blocked by the host CSP
+  // (default-src 'self'), so the icons of #627 never painted in production.
+  const tile = (label, icon) => {
+    const node = el('button', 'bo-scheda-tile');
+    node.appendChild(uiIcon(doc, icon));
+    node.appendChild(el('span', undefined, label));
+    return node;
+  };
   const link = (href, text, action) => {
     const node = el('a', undefined, text);
     node.setAttribute('href', href);
@@ -607,7 +700,7 @@ export function createCustomerCardView(deps) {
     const segments = [city, origin === null ? null : `via ${origin}`, follow === null ? null : `la segue ${follow}`]
       .filter((segment) => segment !== null);
     if (segments.length > 0) meta.appendChild(el('span', 'bo-scheda-sub', segments.join(' · ')));
-    else if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    else if (shownCompanyName(card)) meta.appendChild(el('span', 'bo-scheda-sub', shownCompanyName(card)));
     titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);
@@ -627,13 +720,21 @@ export function createCustomerCardView(deps) {
     // The offer form files under a company: a company pick is its own
     // company, a contact pick rides the linked one (null when the scheda
     // knows none — the offer form then says so honestly).
-    const companyId = typeof card?.company?.id === 'string' && card.company.id !== '' ? card.company.id : null;
-    const companyName = typeof card?.company?.name === 'string' && card.company.name.trim() !== ''
-      ? card.company.name.trim()
-      : null;
+    // Review #654: a contact typed without Azienda shows no company (the
+    // card API names none for its «no company» placeholder). Its offer is
+    // still filed under the contact's own placeholder — the one id the core
+    // accepts beside this contact, shared with no other customer — and the
+    // offer form reads the person's name, never «Senza azienda».
+    const shown = shownCompanyName(card);
+    const companyId = shown !== null && typeof card?.company?.id === 'string' && card.company.id !== ''
+      ? card.company.id : null;
+    const ownCompanyId = typeof navCtx?.contactCompanyId === 'string' && navCtx.contactCompanyId !== ''
+      ? navCtx.contactCompanyId : null;
     const company = resource === 'company'
       ? { id, name }
-      : (companyId !== null && companyName !== null ? { id: companyId, name: companyName } : null);
+      : (companyId !== null
+        ? { id: companyId, name: shown }
+        : (shown === null && ownCompanyId !== null ? { id: ownCompanyId, name } : null));
     return { resource, id, name, company };
   }
 
@@ -650,6 +751,10 @@ export function createCustomerCardView(deps) {
    *   connects Email (backlog:a935af6a6d19)
    */
   function composerChannelsFor(card, connections, profile) {
+    /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
+    const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+    /** The pilot's profile mailbox merged as a connection row: never a route. */
+    const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
     // Voce a935af6a6d19: the profile Google link counts for Email. The
     // Connettori screen links channel connections (one row per account),
@@ -681,18 +786,44 @@ export function createCustomerCardView(deps) {
     };
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
-      const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      // A real channel connection is preferred over the pilot's synthetic
+      // profile row, whatever their order (review #648, giro 2): the real
+      // row's key is a route readSyncState knows and its account is the
+      // mailbox that route sends from, so «Da» and the route agree. The
+      // synthetic row only stands in when it is the sole active one.
+      const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
+      const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
       // queues on); the profile Gmail mailbox only fills the gap, with no
       // key — the server still needs its own email connection to send.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
+      // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
+      // connections as an active email row (`profile:gmail`). Its account is
+      // the mailbox the «Da» row names; without one the profile Gmail still
+      // fills it. A connection key is never a sender: a `profile:` handle
+      // (any case) or the row's own key posing as an account counts as
+      // missing.
+      const liveAccount = channel === 'email' && live !== null && typeof live.account === 'string'
+        && live.account.trim() !== '' && !isProfileKey(live.account)
+        && live.account.trim() !== String(live.connectionKey ?? '').trim()
+        ? live.account.trim() : null;
+      const sender = liveAccount ?? (gmailLinked ? gmailSender : null);
+      // The synthetic profile row is no channel connection: its key is not
+      // a route the send queues on, so it is never sent (the server derives
+      // the route from the space's own mailbox).
+      const synthetic = live !== null && isSyntheticRow(live);
+      // «Connected» implies a sender for Email: a linked row that names no
+      // valid mailbox reads off with its Connettori link, never an enabled
+      // channel with an empty «Da».
+      const linked = live !== null || gmailLinked;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
-        connected: live !== null || gmailLinked,
-        connectionKey: live?.connectionKey ?? null,
-        sender: gmailLinked ? gmailSender : null,
+        connected: linked && (channel !== 'email' || sender !== null),
+        connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
+          && live.connectionKey !== '' ? live.connectionKey : null,
+        sender,
       });
     });
   }
@@ -728,7 +859,7 @@ export function createCustomerCardView(deps) {
       // one the card says so and falls back to `tel:`, never logging a call
       // the CRM never placed. A hostile value stays text in the title: the
       // href is built only from the fallback branch below, never here.
-      const call = el('button', 'bo-scheda-tile', 'Chiama');
+      const call = tile('Chiama', 'telefono');
       call.setAttribute('type', 'button');
       call.setAttribute('data-action', 'call-customer');
       call.setAttribute('title', `Chiama ${phone}`);
@@ -741,7 +872,7 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
       // Voce 105563eea902: the empty state offers its own cure — the
       // operator holds the number here, through POST /api/customer-hub/phone.
-      const add = el('button', 'bo-scheda-tile', 'Aggiungi telefono');
+      const add = tile('Aggiungi telefono', 'telefono-piu');
       add.setAttribute('type', 'button');
       add.setAttribute('data-action', 'add-phone');
       add.setAttribute('title', 'Salva il numero del cliente per chiamarlo dalla scheda');
@@ -756,7 +887,7 @@ export function createCustomerCardView(deps) {
     if (writable.length === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
     } else {
-      const write = el('button', 'bo-scheda-tile', 'Scrivi');
+      const write = tile('Scrivi', 'messaggio');
       write.setAttribute('type', 'button');
       write.setAttribute('data-action', 'compose-message');
       write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
@@ -818,7 +949,8 @@ export function createCustomerCardView(deps) {
         toast('Telefono salvato');
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
-        err.textContent = humanReadError(error, { failed: 'Numero non salvato. Riprova più tardi.' });
+        // The typed number stays in the field: the operator corrects it.
+        err.textContent = phoneRefusalText(error);
       } finally {
         busy = false;
       }
@@ -1037,6 +1169,8 @@ export function createCustomerCardView(deps) {
     close.setAttribute('aria-label', 'Chiudi');
     close.setAttribute('data-action', 'composer-close');
     close.addEventListener('click', () => {
+      // Closing supersedes this composer: pending loads and AI drafts stop.
+      composerGeneration += 1;
       if (panel.parentNode) panel.parentNode.removeChild(panel);
     });
     head.appendChild(minimize);
@@ -1076,6 +1210,159 @@ export function createCustomerCardView(deps) {
     });
   }
 
+  /**
+   * «Chiedi all'AI» (Dan 05/11: the composer is agentic — a prompt writes
+   * the text, as an alternative to writing it from scratch). The prompt goes
+   * to `POST /api/customer-hub/messages/draft` { spaceId, contactId, channel,
+   * prompt } → { subject?, body }: the server drafts from the customer's
+   * own history through the space LLM gate and never sends. The draft lands
+   * in the message field, editable; the previous text can be restored once
+   * with «Annulla»; Invia stays the person's click. AI off (503
+   * LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without the
+   * route (404/405) turns the row into one honest line, never a dead button.
+   */
+  const COMPOSER_PROMPT_MAX = 500;
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
+    const row = el('div', 'bo-composer-ai');
+    // The composer generation this row was built in: Scrivi again, ✕ or Esc
+    // supersede it (openComposer bumps the counter on every opening).
+    const born = composerGeneration;
+    const stale = () => born !== composerGeneration || row.isConnected === false;
+    const mark = el('span', 'bo-composer-ai-mark', '✦');
+    mark.setAttribute('aria-hidden', 'true');
+    const prompt = el('input', 'bo-composer-ai-input');
+    prompt.setAttribute('type', 'text');
+    prompt.setAttribute('aria-label', 'Chiedi all’AI di scrivere il messaggio');
+    prompt.setAttribute('placeholder', 'Chiedi all’AI: «conferma la prova di giovedì, tono amichevole»');
+    prompt.setAttribute('maxlength', String(COMPOSER_PROMPT_MAX));
+    const go = el('button', 'bo-composer-ai-go', 'Genera');
+    go.setAttribute('type', 'button');
+    go.setAttribute('data-action', 'composer-ai-generate');
+    const line = el('p', 'bo-composer-ai-line', '');
+    line.setAttribute('aria-live', 'polite');
+    const field = el('div', 'bo-composer-ai-field');
+    field.appendChild(mark);
+    field.appendChild(prompt);
+    field.appendChild(go);
+    row.appendChild(field);
+    row.appendChild(line);
+    let busy = false;
+    // The person's own text before the first AI draft (review #599 P2): kept
+    // with the shared per-customer draft, so Annulla survives ✕/Esc and a
+    // reopen, and restores the subject too.
+    const off = (sentence) => {
+      while (row.firstChild) row.removeChild(row.firstChild);
+      row.setAttribute('data-off', 'true');
+      row.appendChild(el('p', 'bo-composer-ai-off', sentence));
+    };
+    const say = (sentence, undo = false) => {
+      while (line.firstChild) line.removeChild(line.firstChild);
+      line.textContent = '';
+      if (sentence === '') return;
+      line.appendChild(el('span', undefined, sentence));
+      if (undo) {
+        const back = el('button', 'bo-composer-ai-undo', 'Annulla');
+        back.setAttribute('type', 'button');
+        back.setAttribute('data-action', 'composer-ai-undo');
+        back.addEventListener('click', () => {
+          const kept = baseline();
+          if (kept === null) return;
+          text.value = kept.text;
+          // Muse P2 on #599: with no subject field mounted (channel switched
+          // to WhatsApp) the undone subject goes to the shared draft, so the
+          // AI subject never comes back when Email returns.
+          restoreSubject(kept.subject);
+          setBaseline(null);
+          changed();
+          go.textContent = 'Genera';
+          say('Testo di prima ripristinato.');
+        });
+        line.appendChild(el('span', undefined, ' · '));
+        line.appendChild(back);
+      }
+    };
+    async function generate() {
+      if (busy) return;
+      const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
+      const picked = channel();
+      if (words === '') {
+        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
+        return;
+      }
+      if (picked === null) {
+        say('Nessun canale collegato: l’AI scrive per il canale scelto.');
+        return;
+      }
+      busy = true;
+      go.setAttribute('disabled', 'disabled');
+      go.textContent = 'Scrivo…';
+      say('');
+      try {
+        const answer = await client.request('/api/customer-hub/messages/draft', {
+          method: 'POST',
+          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+        });
+        // Review #599 P2: the composer may have been closed or reopened while
+        // the AI wrote. A stale answer never touches a detached form nor the
+        // shared per-customer draft.
+        if (stale()) return;
+        const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
+        if (drafted === '') {
+          say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
+          return;
+        }
+        const subjectField = subject();
+        // Regenerating keeps the person's original, never a previous AI draft.
+        if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
+        text.value = drafted.slice(0, 2000);
+        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
+        if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
+        changed();
+        go.textContent = 'Rigenera';
+        const kept = baseline();
+        say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
+        if (typeof text.focus === 'function') text.focus();
+      } catch (error) {
+        if (stale()) return;
+        const code = error?.code ?? null;
+        const status = error?.status ?? null;
+        const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
+        // The operator sees why the row went quiet; never the person's prompt.
+        if (aiOff && typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
+        }
+        if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
+        else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
+        else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');
+        else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
+        else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
+      } finally {
+        busy = false;
+        if (row.getAttribute('data-off') !== 'true') {
+          go.removeAttribute?.('disabled');
+          if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
+        }
+      }
+    }
+    go.addEventListener('click', () => { void generate(); });
+    // Reopened after an AI draft: the way back to the person's text stays.
+    const kept = baseline();
+    if (kept !== null) {
+      go.textContent = 'Rigenera';
+      say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept.text.trim() !== '' || kept.subject.trim() !== '');
+    }
+    prompt.addEventListener?.('keydown', (event) => {
+      if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
+        event.preventDefault?.();
+        // The composer's Cmd/Ctrl+Invio still means Invia; plain Invio in
+        // the prompt means Genera, never a send.
+        event.stopPropagation?.();
+        void generate();
+      }
+    });
+    return row;
+  }
+
   // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
   // close the window, the typed text and subject stay here and come back
   // when the composer reopens on the same customer. Cleared only by a send
@@ -1094,11 +1381,12 @@ export function createCustomerCardView(deps) {
     // Keyed by space too: a draft never crosses into another workspace
     // (Muse P2 on #588), the same boundary the send payload keeps.
     const draftKey = `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
-    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '' };
+    const draft = composerDrafts.get(draftKey) ?? { text: '', subject: '', aiBefore: null };
     const keepDraft = () => {
       const subject = subjectInput !== null ? subjectInput.value : draft.subject;
-      if (text.value === '' && subject === '') composerDrafts.delete(draftKey);
-      else composerDrafts.set(draftKey, { text: text.value, subject });
+      const aiBefore = draft.aiBefore ?? null;
+      if (text.value === '' && subject === '' && aiBefore === null) composerDrafts.delete(draftKey);
+      else composerDrafts.set(draftKey, { text: text.value, subject, aiBefore });
       draft.subject = subject;
     };
     const channels = composerChannelsFor(card, connections, profile);
@@ -1127,6 +1415,12 @@ export function createCustomerCardView(deps) {
     text.addEventListener?.('input', keepDraft);
     const foot = el('div', 'bo-composer-foot');
     const limitHint = el('span', 'bo-composer-limit', 'Massimo 2000 caratteri');
+    // Voce 59def6cb805d (C22): the prototype's channel note beside Invia.
+    const channelHint = el('span', 'bo-composer-hint', '');
+    // Voce 59def6cb805d (C21): the placeholder names the customer by first
+    // name and the chosen channel, like the prototype.
+    const firstName = typeof card?.name === 'string' ? (card.name.trim().split(/\s+/)[0] ?? '') : '';
+    const sendLabel = () => (selected !== null ? `Invia su ${selected.label}` : 'Invia');
     const err = el('p', 'field-error', '');
     const send = el('button', 'primary', 'Invia');
     send.setAttribute('type', 'button');
@@ -1141,6 +1435,11 @@ export function createCustomerCardView(deps) {
         row.chip.setAttribute('data-selected', row.entry === entry ? 'true' : 'false');
       }
       toLine.textContent = entry.recipient;
+      text.setAttribute('placeholder', firstName !== ''
+        ? `Scrivi a ${firstName} su ${entry.label}…`
+        : `Scrivi su ${entry.label}…`);
+      if (send.getAttribute('aria-busy') !== 'true') send.textContent = sendLabel();
+      channelHint.textContent = `parte da ${entry.label} · resta anche lì`;
       const sender = typeof entry.sender === 'string' && entry.sender !== '' ? entry.sender : '';
       fromValue.textContent = sender;
       fromRow.setAttribute('data-empty', sender === '' ? 'true' : 'false');
@@ -1194,14 +1493,29 @@ export function createCustomerCardView(deps) {
       offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
       offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     }
+    body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
     if (offLinked.length > 0) body.appendChild(offLine);
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
+    const ai = composerAiRow({
+      spaceId, navCtx, text,
+      channel: () => (selected !== null ? selected.channel : null),
+      subject: () => subjectInput,
+      restoreSubject: (value) => {
+        if (subjectInput !== null) subjectInput.value = value;
+        else draft.subject = value;
+      },
+      changed: keepDraft,
+      baseline: () => draft.aiBefore ?? null,
+      setBaseline: (value) => { draft.aiBefore = value; keepDraft(); },
+    });
+    body.appendChild(ai);
     body.appendChild(text);
     body.appendChild(err);
     foot.appendChild(send);
+    foot.appendChild(channelHint);
     foot.appendChild(limitHint);
     panel.appendChild(body);
     panel.appendChild(foot);
@@ -1221,6 +1535,7 @@ export function createCustomerCardView(deps) {
       panel.__composerKeys = true;
       panel.addEventListener?.('keydown', (event) => {
         if (event.key === 'Escape') {
+          composerGeneration += 1;
           if (panel.parentNode) panel.parentNode.removeChild(panel);
         } else if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault?.();
@@ -1233,7 +1548,7 @@ export function createCustomerCardView(deps) {
     send.addEventListener('click', () => { void doSend(); });
     const setBusy = (on) => {
       busy = on;
-      send.textContent = on ? 'Invio…' : 'Invia';
+      send.textContent = on ? 'Invio…' : sendLabel();
       if (on) send.setAttribute('disabled', 'disabled');
       else send.removeAttribute?.('disabled');
       send.setAttribute('aria-busy', on ? 'true' : 'false');
@@ -1369,7 +1684,7 @@ export function createCustomerCardView(deps) {
     const pick = customerPickFor(navCtx, card);
     // Voce c2793930850a: the creation voices are tiles like Chiama and
     // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
-    const offer = el('button', 'bo-scheda-tile', 'Nuova offerta');
+    const offer = tile('Nuova offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
     offer.addEventListener('click', () => {
@@ -1377,7 +1692,7 @@ export function createCustomerCardView(deps) {
       navigate('#/modules/opportunity/new');
     });
     row.appendChild(offer);
-    const appointment = el('button', 'bo-scheda-tile', 'Nuovo appuntamento');
+    const appointment = tile('Nuovo appuntamento', 'appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
     appointment.addEventListener('click', () => {
@@ -1441,6 +1756,7 @@ export function createCustomerCardView(deps) {
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
+    const directions = observedDirections(timeline);
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -1451,13 +1767,29 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', undefined, row.externalId == null
         ? ` ${channelLabel(system)} · senza identificativo`
         : ` ${channelLabel(system)} · ${row.externalId}`));
+      // Voce 59def6cb805d (C10): the prototype's sync line, from what the
+      // passages on this channel prove — both directions seen reads
+      // «↔ sincronizzato», received only «← in entrata», sent only
+      // «→ in uscita». A channel with no directed passage says nothing.
+      // Review #650 (P2): the directions come from the entries page, so on
+      // a truncated read a single direction is not exhaustive — the other
+      // may sit on a later page. Both seen is proven either way; one seen
+      // names the partial list, the same honesty standard as the count.
+      const seen = directions.get(system);
+      const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+      const sync = seen?.in && seen?.out ? '↔ sincronizzato'
+        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
+      if (sync) line.appendChild(el('span', 'bo-scheda-identity-sync', sync));
       box.appendChild(line);
     }
-    const members = Array.isArray(cluster.members) ? cluster.members : [];
-    box.appendChild(el('p', 'bo-muted',
-      cluster.linked === true
-        ? `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`
-        : 'una sola scheda: nessuna unione registrata'));
+    // Voce 785428ec3de0: a customer with no union reads nothing here — no
+    // technical line, no lone «scheda principale» row. The union block shows
+    // only when several schede are linked as the same person.
+    const members = cluster.linked === true && Array.isArray(cluster.members) ? cluster.members : [];
+    if (cluster.linked === true) {
+      box.appendChild(el('p', 'bo-muted',
+        `${members.length} ${members.length === 1 ? 'scheda' : 'schede'} della stessa persona`));
+    }
     for (const member of members) {
       const line = el('p', 'bo-scheda-identity');
       line.setAttribute('data-member', `${member?.resource ?? ''}:${member?.id ?? ''}`);
@@ -1517,7 +1849,7 @@ export function createCustomerCardView(deps) {
       box.appendChild(row);
     };
     fact('Nome', card?.name ?? '—');
-    if (card?.company?.name) fact('Azienda', card.company.name);
+    if (shownCompanyName(card)) fact('Azienda', shownCompanyName(card));
     fact('Email', card?.email ?? 'non disponibile');
     // Voce 1a066ddfe42a: plain Italian empty states; the English card reasons
     // stay in the API response, never on screen.
@@ -1621,10 +1953,17 @@ export function createCustomerCardView(deps) {
     row.appendChild(cancel);
     box.appendChild(row);
     box.appendChild(error);
+    // Production 07/11: one Salva sent PATCH /contacts/<id> twice. The
+    // guard is the view's, not this form's: a second handler, a second form
+    // on the same contact (a re-render that raced) or a double tap all find
+    // the PATCH already in flight and send nothing.
+    const flightKey = `PATCH contact ${contact.id}`;
     let busy = false;
     save.addEventListener('click', async () => {
-      if (busy) return;
+      if (busy || detailsInFlight.has(flightKey)) return;
       busy = true;
+      detailsInFlight.add(flightKey);
+      save.disabled = true;
       error.textContent = '';
       try {
         await client.request(`/api/contacts/${encodeURIComponent(contact.id)}`, {
@@ -1635,13 +1974,16 @@ export function createCustomerCardView(deps) {
             email: emailInput.value,
           }),
         });
+        detailsInFlight.delete(flightKey);
         toast('Dati salvati');
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
         toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
       } finally {
+        detailsInFlight.delete(flightKey);
         busy = false;
+        save.disabled = false;
       }
     });
     cancel.addEventListener('click', async () => {
@@ -1816,22 +2158,57 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
     const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
+    // Dan 06/11: the notes get their own chip — «Note · N» — and, once
+    // there, one chip per writer («da dan», «dal team»).
+    const notes = entries.filter((item) => item?.entry === 'note');
+    const noteAuthor = (item) => (isHumanHandle(item?.teamAuthorId) ? String(item.teamAuthorId).trim() : '');
+    const authors = [...new Set(notes.map(noteAuthor))];
     const chips = el('p', 'bo-scheda-chips');
+    const chip = (label, key, active, onPick) => {
+      const node = el('button', undefined, label);
+      node.setAttribute('type', 'button');
+      node.setAttribute('data-channel', key);
+      if (active) node.setAttribute('data-active', 'true');
+      node.addEventListener('click', onPick);
+      return node;
+    };
     const drawChips = () => {
       while (chips.firstChild) chips.removeChild(chips.firstChild);
+      const pick = (key) => () => {
+        channelFilter = key;
+        noteAuthorFilter = null;
+        shownCount = TIMELINE_PAGE;
+        drawChips();
+        drawList();
+      };
       for (const key of ['all', ...channels]) {
-        const chip = el('button', undefined, key === 'all' ? 'Tutti' : channelLabel(key));
-        chip.setAttribute('data-channel', key);
-        if (channelFilter === key) chip.setAttribute('data-active', 'true');
-        chip.addEventListener('click', () => {
-          channelFilter = key;
-          shownCount = TIMELINE_PAGE;
-          drawChips();
-          drawList();
-        });
-        chips.appendChild(chip);
+        chips.appendChild(chip(key === 'all' ? 'Tutti' : channelLabel(key), key, channelFilter === key, pick(key)));
+      }
+      if (notes.length > 0) {
+        // Review #617: a cut cronologia may hold older notes past the page,
+        // so the count reads as a floor («3+»), never an exact total.
+        const partial = timeline?.entries?.truncated === true;
+        const noteChip = chip(`Note · ${notes.length}${partial ? '+' : ''}`, 'note', channelFilter === 'note', pick('note'));
+        noteChip.setAttribute('class', 'bo-scheda-chip-note');
+        chips.appendChild(noteChip);
+      }
+      if (channelFilter === 'note' && authors.length > 1) {
+        const byAuthor = el('span', 'bo-scheda-chips-authors');
+        for (const author of authors) {
+          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
+          const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
+            noteAuthorFilter = noteAuthorFilter === author ? null : author;
+            shownCount = TIMELINE_PAGE;
+            drawChips();
+            drawList();
+          });
+          node.setAttribute('data-author', author === '' ? 'team' : author);
+          byAuthor.appendChild(node);
+        }
+        chips.appendChild(byAuthor);
       }
     };
+    let noteAuthorFilter = null;
     const list = el('div', 'bo-scheda-timeline');
     // Voce 32820692: the timeline entry carries the attachment reference
     // the host logged, and the card shows it — a thumbnail for photos, a
@@ -1869,12 +2246,21 @@ export function createCustomerCardView(deps) {
       // `Tutti` only — a channel filter shows that channel's passages alone.
       // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
       // a 5.600px page. «Mostra precedenti» opens the next page below.
-      const filtered = entries.filter((item) => channelFilter === 'all' || String(item?.channel ?? '') === channelFilter);
+      const filtered = entries.filter((item) => {
+        if (channelFilter === 'all') return true;
+        if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
+        return String(item?.channel ?? '') === channelFilter;
+      });
       const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
       const visible = ordered.slice(0, shownCount);
       if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
+        if (channelFilter === 'note') {
+          list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessuna nota qui'));
+          list.appendChild(el('p', 'bo-muted', 'Scrivi una nota qui sotto: resta nella cronologia del cliente.'));
+          return;
+        }
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
         list.appendChild(el('p', 'bo-muted', 'Prova un altro canale oppure scrivi il primo messaggio qui sotto.'));
         return;
@@ -1901,28 +2287,57 @@ export function createCustomerCardView(deps) {
           // line — it is a statement about the customer, not a passage.
           // The writer reads when the row names a human handle, like the
           // outbound passages above; markup in the body stays text.
+          // Dan 06/11: «ho aggiunto una nota ma non si vede» — the note
+          // reads as a note at a glance: its own mark and a paper tone.
           const when = timeParts(item?.occurredAt);
-          const author = isHumanHandle(item?.teamAuthorId)
-            ? `da ${String(item.teamAuthorId).trim()}` : 'dal team';
-          row.appendChild(el('p', 'bo-scheda-entry-head',
+          const author = teamName(item?.teamAuthorId) !== null
+            ? `da ${teamName(item.teamAuthorId)}` : 'dal team';
+          row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
+          const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
+          mark.setAttribute('aria-hidden', 'true');
+          row.appendChild(mark);
+          const paper = el('div', 'bo-scheda-note-paper');
+          paper.appendChild(el('p', 'bo-scheda-entry-head',
             when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
           if (typeof item?.body === 'string' && item.body !== '') {
-            row.appendChild(el('p', undefined, item.body));
+            paper.appendChild(el('p', 'bo-scheda-note-body', readableText(item.body)));
           }
+          row.appendChild(paper);
           list.appendChild(row);
           continue;
         }
         const channelKey = String(item?.channel ?? '').trim().toLowerCase();
         const known = Object.hasOwn(CARD_CHANNEL_MARKS, channelKey);
+        const directionRaw = String(item?.direction ?? '');
+        const isOutbound = directionRaw === 'outbound';
+        const isInbound = directionRaw === 'inbound';
+        // Dan 07/11: «inviato e ricevuto sarebbe più chiaro a destra e
+        // sinistra, come una conversazione». Received passages sit on the
+        // left, the team's on the right, each in its own bubble; the channel
+        // badge stays on the outer edge so the filter chips still read. A
+        // passage with no recorded direction is never guessed: it sits in
+        // the middle, neutral, and says nothing about who wrote it.
+        const side = isOutbound ? 'out' : isInbound ? 'in' : 'none';
+        row.setAttribute('class', `bo-scheda-entry bo-scheda-entry-${side}`);
+        row.setAttribute('data-direction', side);
         row.appendChild(el('span', `bo-scheda-chan bo-tile-${known ? channelKey : 'other'}`, known ? CARD_CHANNEL_MARKS[channelKey] : '·'));
-        const isOutbound = String(item?.direction ?? '') === 'outbound';
+        const bubble = el('div', 'bo-scheda-bubble');
+        // The side already says the direction: the head names channel,
+        // person and hour once (it used to repeat the channel three times).
         const who = isOutbound
-          ? (isHumanHandle(item?.teamAuthorId) ? `inviato da ${String(item.teamAuthorId).trim()}` : 'inviato dal team')
-          : (item?.remoteHandle ? `da ${item.remoteHandle}` : 'ricevuto');
+          ? (teamName(item?.teamAuthorId) ?? 'il team')
+          : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
+            ? item.remoteHandle.trim()
+            // Review #626 giro 2: a received passage without a handle still
+            // names its direction for sighted readers, like main did.
+            : (isInbound ? 'ricevuto' : null));
         // Voce 59def6cb805d (C17): the day already heads the group, so the
-        // card shows the hour only (`<hh:mm>`) beside channel and direction.
+        // card shows the hour only (`<hh:mm>`).
         const when = timeParts(item?.occurredAt);
         const entryHead = el('p', 'bo-scheda-entry-head');
+        // The side is visual only: a screen reader hears the direction as
+        // the first word of the bubble (review #626).
+        if (side !== 'none') entryHead.appendChild(el('span', 'sr-only', isOutbound ? 'Inviato. ' : 'Ricevuto. '));
         // «Da leggere»: an unread passage (unreadInboundAt, the same rule
         // mark-read uses) lights up with «Nuovo» for this visit. Without the
         // field nothing changes — the server may not serve read state yet.
@@ -1930,19 +2345,19 @@ export function createCustomerCardView(deps) {
           row.setAttribute('data-unread', 'true');
           entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
         }
-        entryHead.appendChild(el('span', undefined,
-          when ? `${channelLabel(item?.channel)} · ${who} · ${when}` : `${channelLabel(item?.channel)} · ${who}`));
-        row.appendChild(entryHead);
+        entryHead.appendChild(el('span', undefined, [channelLabel(item?.channel), who, when].filter(Boolean).join(' · ')));
+        bubble.appendChild(entryHead);
+        const outcome = typeof item?.sync === 'string' && item.sync !== '' ? syncLabel(item.sync) : null;
         if (item?.entry === 'call') {
           // Voce 59def6cb805d (C19): the duration reads `<m:ss>`; with no
           // audio URL in the data no player is rendered (never a dead one).
           const dur = durationParts(item?.durationSec);
-          row.appendChild(el('p', undefined,
-            dur ? `chiamata ${isOutbound ? 'in uscita' : 'in entrata'} · ${dur}` : `chiamata ${isOutbound ? 'in uscita' : 'in entrata'}`));
+          bubble.appendChild(el('p', 'bo-scheda-entry-body',
+            [isOutbound ? 'chiamata in uscita' : isInbound ? 'chiamata in entrata' : 'chiamata', dur, outcome].filter(Boolean).join(' · ')));
         } else if (typeof item?.body === 'string' && item.body !== '') {
           const text = readableText(item.body);
           const bodyNode = el('p', 'bo-scheda-entry-body', text);
-          row.appendChild(bodyNode);
+          bubble.appendChild(bodyNode);
           if (text.length > ENTRY_FOLD_CHARS) {
             bodyNode.setAttribute('data-folded', 'true');
             const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
@@ -1953,15 +2368,22 @@ export function createCustomerCardView(deps) {
               bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
               more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
             });
-            row.appendChild(more);
+            bubble.appendChild(more);
           }
         }
         const attachment = attachmentNode(item?.attachment);
-        if (attachment) row.appendChild(attachment);
-        // Voce 59def6cb805d (C17): the sync row of the prototype,
-        // `←/→ <canale> · <stato>`.
-        row.appendChild(el('p', 'bo-scheda-sync',
-          `${syncArrow(item?.direction)}${channelLabel(item?.channel)} · ${syncLabel(item?.sync)}`));
+        if (attachment) bubble.appendChild(attachment);
+        // The delivery state reads only where it says something: under the
+        // team's messages (inviato, consegnato, letto, non consegnato) and
+        // under a received one only when it is not the plain «ricevuto».
+        const syncKey = String(item?.sync ?? '').trim().toLowerCase();
+        const plainReceived = isInbound && syncKey === 'received';
+        if (item?.entry !== 'call' && outcome && !plainReceived) {
+          const state = el('p', 'bo-scheda-sync', outcome);
+          state.setAttribute('data-sync', syncKey);
+          bubble.appendChild(state);
+        }
+        row.appendChild(bubble);
         list.appendChild(row);
       }
       if (ordered.length > visible.length) {
@@ -2024,7 +2446,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function nextSteps(box, profile, profileError = null) {
+  function nextSteps(box, profile, profileError = null, stepCtx = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no next steps".
     if (profileError) {
@@ -2044,7 +2466,43 @@ export function createCustomerCardView(deps) {
     }
     for (const task of tasks.slice(0, 5)) {
       const name = typeof task?.name === 'string' && task.name !== '' ? task.name : 'attività';
-      box.appendChild(el('p', 'bo-scheda-step', name));
+      // Voce 59def6cb805d (C24): the prototype's circular check before each
+      // step. It completes the real work task through the work-task
+      // `complete` action (the same path Oggi uses), then re-reads the card:
+      // the list is the server's, never an optimistic copy. Without an id or
+      // a card context the step stays plain text.
+      const taskId = typeof task?.id === 'string' && task.id !== '' ? task.id : null;
+      if (taskId === null || !stepCtx || typeof stepCtx.resource !== 'string' || typeof stepCtx.id !== 'string') {
+        box.appendChild(el('p', 'bo-scheda-step', name));
+        continue;
+      }
+      const row = el('div', 'bo-scheda-step bo-scheda-step-row');
+      const check = el('button', 'bo-scheda-step-check', '');
+      check.setAttribute('type', 'button');
+      check.setAttribute('data-action', 'complete-step');
+      check.setAttribute('aria-label', `Segna come fatto: ${name}`);
+      check.setAttribute('title', 'Segna come fatto');
+      let busy = false;
+      check.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        check.setAttribute('aria-busy', 'true');
+        try {
+          await client.request(`/api/modules/work-task/records/${encodeURIComponent(taskId)}/actions/complete`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+          toast(`Fatto: ${name}`);
+          await renderCard(stepCtx.resource, stepCtx.id);
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Passo non aggiornato. Riprova più tardi.' }), true);
+          busy = false;
+          check.setAttribute('aria-busy', 'false');
+        }
+      });
+      row.appendChild(check);
+      row.appendChild(el('span', undefined, name));
+      box.appendChild(row);
     }
     return true;
   }
@@ -2102,12 +2560,20 @@ export function createCustomerCardView(deps) {
     // storia) — the line is a link to #/quotes/<id>. An opportunity without
     // a quote has no detail screen, so its fallback line stays plain text.
     const quoteId = fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // Voce 59def6cb805d (C25): the prototype's big amount, read from the
+    // server total the profile carries — never summed here. No figure (a
+    // recurring quote, a record without a value, an empty draft) shows none.
+    const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
+      && typeof first?.currency === 'string' && first.currency !== ''
+      ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
     if (quoteId === null) {
       box.appendChild(line);
+      if (amount) box.appendChild(amount);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', `#/quotes/${encodeURIComponent(quoteId)}`);
       link.appendChild(line);
+      if (amount) link.appendChild(amount);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -2230,10 +2696,27 @@ export function createCustomerCardView(deps) {
     }
     const endTime = timeParts(next?.endsAt);
     const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
-    const when = endTime && endTime !== timeParts(next?.startsAt)
-      ? (sameDay ? `${start}–${endTime}` : `${start} – ${dateTimeParts(next?.endsAt)}`)
-      : start;
+    // Voce 59def6cb805d (C26): the prototype card — a title, then
+    // `<giorno> · <orari>`. The title is the booked service (its listino key
+    // made readable) with the team member when the handle reads as a name;
+    // the row names the long Rome day. No place and no Google sync line:
+    // the booking records neither, so none is written.
+    const service = serviceTitle(next?.serviceKey);
+    const member = teamName(next?.teamMemberId);
+    box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
+    const day = dayParts(next?.startsAt);
+    const startTime = timeParts(next?.startsAt);
+    const hours = endTime && endTime !== startTime ? `${startTime}–${endTime}` : startTime;
+    const when = day && sameDay
+      ? `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${hours}`
+      : (endTime && endTime !== startTime ? `${start} – ${dateTimeParts(next?.endsAt)}` : start);
     box.appendChild(el('p', 'bo-scheda-appt', when));
+  }
+
+  /** A listino key made readable («lezione-prova» → «Lezione prova»), never the raw slug. */
+  function serviceTitle(serviceKey) {
+    const words = typeof serviceKey === 'string' ? serviceKey.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
   }
 
   const SIGNAL_LABELS = Object.freeze({
@@ -2337,7 +2820,13 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
+  // Two renders racing (a route plus a re-read after a save) must not both
+  // land: only the newest paints, so the scheda never holds two Dettagli
+  // forms whose Salva would both write.
+  let cardRenderToken = 0;
+
   async function renderCard(resource, id) {
+    const renderToken = ++cardRenderToken;
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     channelFilter = 'all';
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
@@ -2349,6 +2838,8 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    if (renderToken !== cardRenderToken) return;
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
@@ -2385,7 +2876,9 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card, { resource, id });
+    section(left, '', quickActions, card, {
+      resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
+    });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
@@ -2415,7 +2908,7 @@ export function createCustomerCardView(deps) {
       section(right, 'bo-scheda-ai', aiSummary, calls);
       section(right, '', callsBox, calls);
     }
-    section(right, '', nextSteps, profile, profileError);
+    section(right, '', nextSteps, profile, profileError, { resource, id });
     section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError);
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);

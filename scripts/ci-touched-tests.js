@@ -75,14 +75,18 @@
  *   against a 270 s bound) — past the cap the same warned fallback runs.
  *
  * The run itself splits past a dozen files into up to four parallel parts
- * (see `shardCountFor`/`shardTests`/`runTestShards`): agent-crm#621 (an
+ * (see `shardCountFor`/`testJobs`/`runTestShards`): agent-crm#621 (an
  * outbox change selecting 235 tests) ran the warned fallback as one
  * sequential `node --test` process and timed out past 270 s with no test
  * failing. A dozen files or fewer run exactly as before (one process,
- * `--test-concurrency=2`); past that each part runs one file at a time and
- * the parts run together, so a core-wide fan-in still fits the bound. The
- * timeout still fails red — never green without running — and now names
- * the files that remained, so the cause reads from the log.
+ * `--test-concurrency=2`); past that the parts pull one file at a time
+ * from one shared queue, so a core-wide fan-in still fits the bound. Fixed
+ * round-robin slices did not: #621 then timed out again with "2 of 4
+ * parts" done — two slices held most of the slow files while the other
+ * two parts had finished and sat idle. The timeout still fails red — never
+ * green without running — and names the files that remained; each file's,
+ * each part's and the run's elapsed time are logged, so the cause reads
+ * from the log.
  *
  * The default fast suite is the PR's own changed test files — always
  * relevant, self-maintaining, and small by construction. It is not the
@@ -937,92 +941,126 @@ export function shardCountFor(
 }
 
 /**
- * Split the sorted `tests` into `shardCount` round-robin parts: the
- * slowest files spread across the parts instead of landing in one chunk.
- * Pure: unit-tested.
+ * The jobs a run of `tests` over `partCount` parts pulls from its shared
+ * queue, in order. One part keeps the old single step: one job over every
+ * file, `--test-concurrency=2`. Several parts get one job per file, run one
+ * file at a time, so a part that finishes a fast file takes the next one
+ * instead of idling: agent-crm#621 split its 50-file fallback round-robin
+ * into four fixed parts, two of them held most of the slow files, and the
+ * run timed out at 270 s with "2 of 4 parts" done and every test green
+ * while the other two parts sat idle. Pure: unit-tested.
+ *
+ * @returns {{ files: string[], concurrency: number }[]}
  */
-export function shardTests(
+export function testJobs(
   /** @type {string[]} */ tests,
-  /** @type {number} */ shardCount,
+  /** @type {number} */ partCount,
 ) {
-  const count = Math.max(1, Math.floor(shardCount));
-  /** @type {string[][]} */
-  const shards = Array.from({ length: count }, () => []);
-  tests.forEach((test, index) => {
-    shards[index % count].push(test);
-  });
-  return shards.filter((shard) => shard.length > 0);
+  if (tests.length === 0) return [];
+  if (Math.max(1, Math.floor(partCount)) === 1) return [{ files: [...tests], concurrency: 2 }];
+  return tests.map((file) => ({ files: [file], concurrency: 1 }));
 }
 
 /**
- * Run the test parts together, each as its own `node --test` process over
- * its files. One part runs exactly like the old sequential step
- * (`--test-concurrency=2`); several parts run one file at a time each, so
- * at most `MAX_SHARDS` files run at once. Every part's output streams live
- * tagged with its part (`[touched 1/4]`), so a failure still attributes to
- * its files. Past `timeoutSec` the unfinished parts die by SIGKILL and the
- * run resolves timed out naming the files that remained — the gate fails
- * red, never green without running, and the cause reads from the log.
+ * Run `tests` in `parts` parallel parts that pull from one shared queue
+ * (`testJobs`): each part starts a `node --test` process for its next job
+ * as soon as its previous one exits, so at most `parts` files run at once
+ * and the run ends about when the total work divided by the parts is done
+ * (or when its slowest file is, if that is longer) — never when the
+ * unluckiest fixed slice is. Every part's output streams live tagged with
+ * its part (`[touched 1/4]`), each file's elapsed time is logged, and so is
+ * each part's and the whole run's, so the cause of a slow run reads from
+ * the log. Past `timeoutSec` the running processes die by SIGKILL and the
+ * run resolves timed out naming every file not finished — the gate fails
+ * red, never green without running.
  *
  * Resolves (never rejects) to `{ status, timedOut, remaining,
- * completedShards, elapsedSec }`: `status` is the first nonzero part exit
- * code, or 0 when every part passed; `remaining` lists the files of the
- * parts still running at the timeout. `cwd` is the repository root; the
- * parts inherit this process's environment (including
- * `ACCORDO_TEST_POSTGRES` and `ACCORDO_PG_TEST_URL`), minus
- * `NODE_TEST_CONTEXT` so a part is always a fresh top-level runner.
+ * completedShards, elapsedSec, partSec }`: `status` is the first nonzero
+ * exit code, or 0 when every file passed; `remaining` lists the files
+ * running or still queued at the timeout; `completedShards` counts the
+ * parts that drained; `partSec` is each part's busy time. `cwd` is the
+ * repository root; the processes inherit this process's environment
+ * (including `ACCORDO_TEST_POSTGRES` and `ACCORDO_PG_TEST_URL`), minus
+ * `NODE_TEST_CONTEXT` so each is always a fresh top-level runner.
  *
- * @returns {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number }>}
+ * @returns {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[] }>}
  */
 export function runTestShards(
-  /** @type {string[][]} */ shards,
-  /** @type {{ timeoutSec: number, cwd: string, nodePath?: string }} */ options,
+  /** @type {string[]} */ tests,
+  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string }} */ options,
 ) {
-  /** @type {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number }>} */
+  const jobs = testJobs(tests, options.parts);
+  const parts = Math.min(Math.max(1, Math.floor(options.parts)), Math.max(1, jobs.length));
+  /** @type {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[] }>} */
   const done = new Promise((resolve) => {
     const started = Date.now();
     const elapsedSec = () => (Date.now() - started) / 1000;
-    /** @type {boolean[]} */
-    const finished = shards.map(() => false);
-    if (shards.length === 0) {
-      resolve({ status: 0, timedOut: false, remaining: [], completedShards: 0, elapsedSec: elapsedSec() });
+    /** @type {number[]} */
+    const partSec = Array.from({ length: parts }, () => 0);
+    if (jobs.length === 0) {
+      resolve({ status: 0, timedOut: false, remaining: [], completedShards: 0, elapsedSec: elapsedSec(), partSec: [] });
       return;
     }
-    /** @type {import('node:child_process').ChildProcess[]} */
-    const children = [];
-    let pending = shards.length;
+    /** @type {Set<import('node:child_process').ChildProcess>} */
+    const children = new Set();
+    /** @type {boolean[]} */
+    const jobDone = jobs.map(() => false);
+    let next = 0;
+    let drained = 0;
     let firstFailure = 0;
     let settled = false;
     const settle = (
-      /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number }} */ result,
+      /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[] }} */ result,
     ) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve(result);
     };
-    const remaining = () => shards.filter((_, index) => !finished[index]).flat();
-    const completedShards = () => finished.filter(Boolean).length;
     const timer = setTimeout(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
         } catch {
-          // Already gone: its close handler settles the count below.
+          // Already gone.
         }
       }
       settle({
         status: 1,
         timedOut: true,
-        remaining: remaining(),
-        completedShards: completedShards(),
+        remaining: jobs.filter((_, index) => !jobDone[index]).flatMap((job) => job.files),
+        completedShards: drained,
         elapsedSec: elapsedSec(),
+        partSec: partSec.map((sec) => Math.round(sec * 10) / 10),
       });
     }, options.timeoutSec * 1000);
-    shards.forEach((files, index) => {
-      const tag = `touched ${index + 1}/${shards.length}`;
-      const concurrency = shards.length === 1 ? '2' : '1';
-      process.stdout.write(`ci-touched-tests: part ${tag} starting (${files.length} file(s)).\n`);
+    const startNext = (/** @type {number} */ part) => {
+      const tag = `touched ${part + 1}/${parts}`;
+      if (settled) return;
+      if (next >= jobs.length) {
+        drained += 1;
+        process.stdout.write(`ci-touched-tests: part ${tag} finished in ${partSec[part].toFixed(1)}s.\n`);
+        if (drained === parts) {
+          const run = elapsedSec();
+          process.stdout.write(
+            `ci-touched-tests: ran ${tests.length} test file(s) in ${parts} part(s) in ${run.toFixed(1)}s `
+              + `(part busy times: ${partSec.map((sec) => `${sec.toFixed(1)}s`).join(', ')}).\n`,
+          );
+          settle({
+            status: firstFailure,
+            timedOut: false,
+            remaining: [],
+            completedShards: drained,
+            elapsedSec: run,
+            partSec: partSec.map((sec) => Math.round(sec * 10) / 10),
+          });
+        }
+        return;
+      }
+      const index = next;
+      next += 1;
+      const { files, concurrency } = jobs[index];
+      const jobStarted = Date.now();
       // A part is a fresh top-level runner: without this a `node --test`
       // parent lends its `NODE_TEST_CONTEXT=child-v8` to the part, and the
       // part exits 0 without running anything (a silent green the gate must
@@ -1034,7 +1072,7 @@ export function runTestShards(
         ['--no-warnings', '--test', `--test-concurrency=${concurrency}`, '--test-reporter=spec', ...files],
         { cwd: options.cwd, env: partEnv },
       );
-      children.push(child);
+      children.add(child);
       let tail = '';
       const tagged = (/** @type {Buffer|string} */ chunk) => {
         tail += String(chunk);
@@ -1046,27 +1084,24 @@ export function runTestShards(
       if (child.stderr !== null) child.stderr.on('data', tagged);
       child.on('error', () => {
         // A spawn failure carries no exit code: the close handler below
-        // settles the count and the part counts as failed.
+        // counts the job as failed.
       });
       child.on('close', (code) => {
+        children.delete(child);
+        if (settled) return;
         if (tail !== '') process.stdout.write(`[${tag}] ${tail}\n`);
         tail = '';
-        finished[index] = true;
-        pending -= 1;
+        jobDone[index] = true;
+        const sec = (Date.now() - jobStarted) / 1000;
+        partSec[part] += sec;
         const status = code ?? 1;
         if (status !== 0 && firstFailure === 0) firstFailure = status;
-        process.stdout.write(`ci-touched-tests: part ${tag} finished (${files.length} file(s), exit ${status}).\n`);
-        if (pending === 0) {
-          settle({
-            status: firstFailure,
-            timedOut: false,
-            remaining: [],
-            completedShards: completedShards(),
-            elapsedSec: elapsedSec(),
-          });
-        }
+        const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
+        process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
+        startNext(part);
       });
-    });
+    };
+    for (let part = 0; part < parts; part += 1) startNext(part);
   });
   return done;
 }
@@ -1473,19 +1508,21 @@ async function main() {
   // failing). A dozen files or fewer run exactly as before — same flags as
   // `npm test`, two files at a time, keeping peak memory inside what the
   // shared 16 GB runner survived (ci.yml) — at the price of wall time this
-  // step bounds with its timeout instead. Past that each part runs one file
-  // at a time and the parts run together (at most four files at once, beside
-  // the other `ci-fast.sh` lanes on the 12-core Linux runner). The bound
-  // yields to the selection phase so select-plus-run always fits the step
-  // wrapper; the floor of a minute still runs at least one slow file.
+  // step bounds with its timeout instead. Past that the parts pull one file
+  // at a time from a shared queue (at most four files at once, beside the
+  // other `ci-fast.sh` lanes), so no part idles while another still holds a
+  // fixed slice of slow files (agent-crm#621 again: round-robin slices, two
+  // parts done, two still busy at 270 s). The bound yields to the selection
+  // phase so select-plus-run always fits the step wrapper; the floor of a
+  // minute still runs at least one slow file.
   const runBudget = runBudgetSec(options.timeoutSec, selectionElapsedSec);
-  const shards = shardTests(plan.tests, shardCountFor(plan.tests.length));
-  if (shards.length > 1) {
+  const parts = shardCountFor(plan.tests.length);
+  if (parts > 1) {
     process.stdout.write(
-      `ci-touched-tests: running ${plan.tests.length} test file(s) in ${shards.length} parallel part(s).\n`,
+      `ci-touched-tests: running ${plan.tests.length} test file(s) in ${parts} parallel part(s) sharing one queue, bound ${runBudget}s.\n`,
     );
   }
-  const run = await runTestShards(shards, { timeoutSec: runBudget, cwd: root });
+  const run = await runTestShards(plan.tests, { parts, timeoutSec: runBudget, cwd: root });
   if (run.timedOut) {
     const what = plan.kind === 'fallback' ? 'default fast suite' : 'selected run';
     process.stderr.write(
@@ -1495,7 +1532,7 @@ async function main() {
     process.stdout.write(
       `::error::ci-touched-tests: ${what} timed out after ${runBudget}s with `
         + `${run.remaining.length} file(s) remaining: ${run.remaining.join(', ') || '(none reported)'}. `
-        + `Completed ${run.completedShards} of ${shards.length} part(s).\n`,
+        + `Completed ${run.completedShards} of ${parts} part(s); part busy times: ${run.partSec.map((sec) => `${sec}s`).join(', ')}.\n`,
     );
     process.exit(1);
   }

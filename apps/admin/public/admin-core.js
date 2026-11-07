@@ -321,8 +321,12 @@ export function parseModuleRoute(hash) {
   // authorization are a single screen — there is nothing to drill into,
   // because there is no credential to show.
   if (rawParts.length === 1 && rawParts[0] === 'spine') return { view: 'spine' };
-  // Customer data routes: #/customer-data and #/customer-data/<resource>/<id>
-  // (ADR-037). Same canonical discipline as every other route here.
+  // Customer data routes: #/customer-data (the Clienti list) and the old
+  // profile path #/customer-data/<resource>/<id> (ADR-037). The old path
+  // opens the customer scheda (backlog:6542f55ecf8d): the package-scoped
+  // profile page spoke English and showed raw ids, so an old bookmark or a
+  // typed URL lands on the same view as #/customer-card/<resource>/<id>.
+  // Same canonical discipline as every other route here.
   if (rawParts.length && rawParts[0] === 'customer-data') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length === 1) return { view: 'customer-data' };
@@ -331,7 +335,7 @@ export function parseModuleRoute(hash) {
     const subjectId = safeDecode(rawParts[2]);
     if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
     if (subjectId === null || subjectId === '') return { view: 'invalid' };
-    return { view: 'customer-profile', resource, subjectId };
+    return { view: 'customer-card', resource, subjectId };
   }
   // Customer import route: #/import-clienti (backlog:80b25fb0). The governed
   // JSON import and quality queues live here, not below the Clienti table:
@@ -346,12 +350,15 @@ export function parseModuleRoute(hash) {
   // stays a separate tool on #/import-clienti.
   if (rawParts.length && rawParts[0] === 'clienti') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    // #/clienti alone is the natural Italian name of the Clienti list
+    // (backlog:55985e25ddd2): it opens #/customer-data, never an error.
+    if (rawParts.length === 1) return { view: 'customer-data' };
     if (rawParts.length === 2 && rawParts[1] === 'nuovo') return { view: 'customer-new' };
     return { view: 'invalid' };
   }
   // Customer scheda route: #/customer-card/<resource>/<id> (BO-F1-06). The
   // three-column customer view, a read-only projection over the hub. Same
-  // canonical discipline as the profile route above.
+  // canonical discipline as the customer-data route above.
   if (rawParts.length && rawParts[0] === 'customer-card') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length !== 3) return { view: 'invalid' };
@@ -566,6 +573,24 @@ export function formatAmount(minorUnits, currency) {
   const code = String(currency ?? '').trim();
   const unit = code === 'EUR' ? '€' : code;
   return `${sign}${number} ${unit}`.trim();
+}
+
+const ROME_DAY = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
+
+/**
+ * «20 nov 2026» for a stored day (YYYY-MM-DD) or ISO timestamp, or null when
+ * absent/unparseable (Dan 06/11: dates read like a person writes them, never
+ * as a raw ISO timestamp). A bare day is a calendar day and keeps its date;
+ * a timestamp is an instant and reads as the Rome calendar day, so
+ * `2026-08-05T22:30:00Z` is «6 ago 2026».
+ * @param {unknown} value
+ */
+export function italianDay(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
+  if (Number.isNaN(time)) return null;
+  return ROME_DAY.format(new Date(time)).replace('.', '');
 }
 
 /**

@@ -1,7 +1,7 @@
 // @ts-check
 
 import {
-  AppError, ConflictError, ValidationError, normalizeActor,
+  AppError, ConflictError, ValidationError, normalizeActor, normalizeCompanyName,
 } from '../../core/index.js';
 import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
@@ -222,9 +222,34 @@ export function createPolicyReader({ modules, names, core }) {
     },
     async companiesByName(name) {
       if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
-      return await core.findCompaniesByNormalizedName(name);
+      // A «no company» placeholder belongs to one contact: never a match
+      // for another row (review #654, giro 4).
+      return (await core.findCompaniesByNormalizedName(name)).filter((company) => !isNoCompany(company));
     },
   };
+}
+
+/**
+ * The placeholder company behind a contact that names no company
+ * (production 07/11). The core schema requires a company for every contact,
+ * so the import gives such a contact its OWN placeholder under this name —
+ * never a company derived from the email domain, and never one row shared
+ * between customers (or spaces): an offer filed under it stays this
+ * customer's. Customer reads (list, profile, card) read it as «no company»,
+ * and the cleanup scan never pairs two of them as duplicates.
+ */
+export const NO_COMPANY_NAME = 'Senza azienda';
+
+const NO_COMPANY_NORMALIZED = normalizeCompanyName(NO_COMPANY_NAME);
+
+/**
+ * Whether a company record is a «no company» placeholder. One predicate for
+ * every reader, on the same normalization the company lookup uses.
+ * @param {unknown} company
+ */
+export function isNoCompany(company) {
+  const name = /** @type {any} */ (company)?.name;
+  return typeof name === 'string' && normalizeCompanyName(name) === NO_COMPANY_NORMALIZED;
 }
 
 /**
@@ -236,8 +261,10 @@ export function createPolicyReader({ modules, names, core }) {
  * @param {any} core
  * @param {{email: string|null, firstName: string|null, lastName: string|null, companyName: string|null, domain: string|null}} row
  * @param {any} actor
+ * @param {{companyFromEmail?: boolean}} [options] `companyFromEmail: false`
+ *   (the import apply) never derives a company from the email domain.
  */
-export async function createSubjectForRow(core, row, actor) {
+export async function createSubjectForRow(core, row, actor, options = {}) {
   if (!core || typeof core.createCompany !== 'function') {
     throw new AppError('customer-data cannot create records without the core adapters', {
       code: 'CUSTOMER_DATA_CORE_UNAVAILABLE', status: 500,
@@ -250,10 +277,26 @@ export async function createSubjectForRow(core, row, actor) {
     const fallback = leadNamesForEmail(row.email);
     // A contact needs a company: reuse the named one when it exists, else
     // create it. Both go through the adapters, never through raw SQL.
-    const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
-    const company = companies.length === 1
-      ? companies[0]
-      : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
+    let company;
+    // An explicit «Senza azienda» names no company (review #654, giro 4):
+    // it takes the contact's own placeholder, never another customer's.
+    const reservedName = Boolean(row.companyName) && isNoCompany({ name: row.companyName });
+    if ((!row.companyName && options.companyFromEmail === false) || reservedName) {
+      // Production 07/11: a customer typed or imported with no Azienda got
+      // the email domain as its company («esempio.invalid»). The core still
+      // needs a company behind a contact, so the contact gets its own
+      // NO_COMPANY_NAME placeholder — never a name derived from the email,
+      // never a row another customer or space shares. An explicit domain
+      // column stays on it as evidence (review #654).
+      company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null }, { actor });
+    } else {
+      const companies = row.companyName
+        ? (await core.findCompaniesByNormalizedName(row.companyName)).filter((found) => !isNoCompany(found))
+        : [];
+      company = companies.length === 1
+        ? companies[0]
+        : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
+    }
     const contact = await core.createContact({
       companyId: company.id,
       firstName: row.firstName ?? fallback.firstName,

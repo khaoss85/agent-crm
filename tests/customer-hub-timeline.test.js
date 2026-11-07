@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readCustomerTimeline, shapeCustomerTimeline } from '../packages/customer-hub/src/timeline.js';
 import { boot, project } from './helpers/customer-data-project.js';
+import { createHttpServer } from '../apps/server/src/http-server.js';
 import { moduleAlreadyPresent } from './helpers/apply-module.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -234,6 +235,22 @@ test('every passage carries its channel, direction and sync state', async (t) =>
   for (const item of timeline.entries.items) {
     assert.ok(item.occurredAt, `${item.id} carries its timestamp for day grouping`);
   }
+
+  // backlog:ea463d6ff10d: the composed operation forwards the cursor, so
+  // the same four passages read newest first, two at a time.
+  const first = await app.readCustomerTimeline({ resource: 'contact', id: contact.id, limit: 2 });
+  assert.deepEqual(first.entries.items.map((item) => item.channel), ['phone', 'instagram']);
+  assert.equal(first.entries.total, 4);
+  assert.equal(typeof first.entries.nextCursor, 'string');
+  const second = await app.readCustomerTimeline({ resource: 'contact', id: contact.id, limit: '2', before: first.entries.nextCursor });
+  assert.deepEqual(second.entries.items.map((item) => [item.channel, item.direction]), [['whatsapp', 'outbound'], ['whatsapp', 'inbound']]);
+  assert.equal(second.entries.nextCursor, null, 'the last page says so');
+  assert.equal(second.conversations.count, 2, 'the other sections read as in the full timeline');
+  // Review #639: an explicit null before/limit is no page request — the
+  // composed operation keeps the legacy read.
+  const nulls = await app.readCustomerTimeline({ resource: 'contact', id: contact.id, before: null, limit: null });
+  assert.deepEqual(nulls.entries, timeline.entries, 'null before/limit read the legacy entries');
+  assert.equal('nextCursor' in nulls.entries, false);
 });
 
 test('reading the timeline creates no record anywhere', async (t) => {
@@ -586,4 +603,234 @@ test('9e003582: la scheda chiede i flag alla capability, senza lettore ogni read
   const ragged = await readCustomerTimeline({ ...base, readFlags: async () => 'no' });
   assert.equal(ragged.readState.available, false, 'a ragged answer never shifts a verdict');
   assert.deepEqual(ragged.entries.items.map((row) => row.read), [null, null]);
+});
+
+test('voce 908f2eb9bbfb: the provider reads start together with the profile, not behind it', async () => {
+  const profile = {
+    identity: { contact: { firstName: 'Guido', lastName: 'Presti', email: 'guido@palestra-esempio.it' }, company: null },
+    externalIdentities: [],
+  };
+  let releaseProfile;
+  const profileGate = new Promise((resolve) => { releaseProfile = resolve; });
+  const started = [];
+  const base = {
+    subject: { resource: 'contact', id: 'c1' },
+    readProfile: () => { started.push('profile'); return profileGate; },
+    readConversations: () => { started.push('conversations'); return Promise.resolve([]); },
+    readTimeline: () => { started.push('timeline'); return Promise.resolve({ entries: [] }); },
+    readSchedule: () => { started.push('schedule'); return Promise.resolve([]); },
+  };
+  const pending = readCustomerTimeline(base);
+  // Flush every queued microtask: with the profile still gated, every reader
+  // that starts only behind it would still be missing here.
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  for (const name of ['profile', 'conversations', 'timeline', 'schedule']) {
+    assert.ok(started.includes(name), `the ${name} read started while the profile was still pending`);
+  }
+  releaseProfile(profile);
+  const timeline = await pending;
+  assert.equal(timeline.conversations.available, true, 'the joined providers still shape');
+  assert.equal(timeline.entries.available, true);
+  assert.equal(timeline.appointments.available, true);
+});
+
+test('voce 908f2eb9bbfb: a failing profile still wins over a failing provider', async () => {
+  const profileError = Object.assign(new Error('pool esaurito'), { status: 503 });
+  const providerError = Object.assign(new Error('provider rotto'), { status: 500 });
+  await assert.rejects(
+    readCustomerTimeline({
+      subject: { resource: 'contact', id: 'c1' },
+      readProfile: async () => { throw profileError; },
+      readConversations: async () => { throw providerError; },
+      readTimeline: async () => ({ entries: [] }),
+      readSchedule: async () => [],
+    }),
+    (error) => error === profileError,
+    'the ghost record stays NOT_FOUND even when a provider fails too',
+  );
+});
+
+// backlog:ea463d6ff10d — the cronologia read newest first, a page at a time.
+// With 42 e-mails the legacy read cut the oldest past ENTRY_LIMIT; the
+// cursor read reaches every entry, with no gap and no duplicate even when
+// several entries share the same instant.
+
+const PAGE_PROFILE = {
+  identity: { contact: { firstName: 'A', lastName: 'B', email: 'a@b.it' }, company: null },
+  externalIdentities: [],
+};
+
+function pagedShape(entries, page) {
+  return shapeCustomerTimeline({
+    profile: PAGE_PROFILE, threads: [], history: { entries }, schedule: [],
+    subject: { resource: 'contact', id: 'c1' }, page,
+  });
+}
+
+function mail(id, occurredAt) {
+  return {
+    entry: 'message', id, conversationId: 't1', channel: 'email', direction: 'inbound',
+    status: 'received', body: `mail ${id}`, remoteHandle: 'cliente@esempio.invalid', occurredAt,
+  };
+}
+
+/** Walk every page from the newest and return the pages read. */
+function readAllPages(entries, limit) {
+  const pages = [];
+  let before;
+  for (let guard = 0; guard < 20; guard += 1) {
+    const page = {};
+    if (before !== undefined) page.before = before;
+    if (limit !== undefined) page.limit = limit;
+    const { entries: section } = pagedShape(entries, page);
+    pages.push(section);
+    if (section.nextCursor === null) return pages;
+    before = section.nextCursor;
+  }
+  throw new Error('the cursor never reached the end');
+}
+
+test('ea463d6ff10d: 45 entries read as three pages 20/20/5, newest first, no gap nor duplicate', () => {
+  // Shuffled provider order on purpose: the page order comes from the
+  // rows' (occurredAt, id), never from the order the provider handed them.
+  const entries = Array.from({ length: 45 }, (_, index) => mail(`m${index}`,
+    new Date(Date.UTC(2026, 10, 1, 8, index)).toISOString()));
+  entries.reverse();
+  entries.push(entries.shift());
+  const pages = readAllPages(entries, undefined);
+  assert.deepEqual(pages.map((page) => page.items.length), [20, 20, 5], 'default limit is 20');
+  assert.deepEqual(pages.map((page) => page.total), [45, 45, 45]);
+  assert.deepEqual(pages.map((page) => page.count), [45, 45, 45]);
+  assert.deepEqual(pages.map((page) => page.truncated), [true, true, false]);
+  assert.equal(pages[2].nextCursor, null);
+  const ids = pages.flatMap((page) => page.items.map((item) => item.id));
+  assert.equal(new Set(ids).size, 45, 'no duplicate');
+  assert.deepEqual(ids, Array.from({ length: 45 }, (_, index) => `m${44 - index}`), 'every entry, newest first');
+});
+
+test('ea463d6ff10d: entries sharing the same instant still page with no gap nor duplicate', () => {
+  // Groups of 7 on the same instant, so page boundaries fall inside a
+  // group; ids whose string order differs from their numeric order.
+  const entries = Array.from({ length: 45 }, (_, index) => mail(`e${index}`,
+    new Date(Date.UTC(2026, 10, 1, 8, Math.floor(index / 7))).toISOString()));
+  const pages = readAllPages(entries, 20);
+  assert.deepEqual(pages.map((page) => page.items.length), [20, 20, 5]);
+  const ids = pages.flatMap((page) => page.items.map((item) => item.id));
+  assert.equal(new Set(ids).size, 45, 'no duplicate');
+  assert.deepEqual([...ids].sort(), entries.map((entry) => entry.id).sort(), 'no gap');
+  const keys = pages.flatMap((page) => page.items.map((item) => [item.occurredAt, item.id]));
+  for (let index = 1; index < keys.length; index += 1) {
+    const [prevAt, prevId] = keys[index - 1];
+    const [at, id] = keys[index];
+    assert.ok(prevAt > at || (prevAt === at && prevId > id), `occurredAt desc, then id desc at ${index}`);
+  }
+
+  // Every entry on one instant: the id alone carries the order.
+  const flat = Array.from({ length: 45 }, (_, index) => mail(`f${index}`, '2026-11-01T08:00:00.000Z'));
+  const flatPages = readAllPages(flat, 20);
+  assert.deepEqual(flatPages.map((page) => page.items.length), [20, 20, 5]);
+  assert.equal(new Set(flatPages.flatMap((page) => page.items.map((item) => item.id))).size, 45);
+});
+
+test('ea463d6ff10d: before is strictly older than (occurredAt, id), notes and calls page too', () => {
+  const entries = [
+    mail('a', '2026-11-01T08:00:00.000Z'),
+    { entry: 'call', id: 'b', channel: 'phone', direction: 'outbound', outcome: 'completed', occurredAt: '2026-11-01T09:00:00.000Z' },
+    { entry: 'work-note', kind: 'note', id: 'c', body: 'Richiamare', actorId: 'dan', occurredAt: '2026-11-01T09:00:00.000Z' },
+    { entry: 'work-note', kind: 'task_created', id: 'x', occurredAt: '2026-11-01T10:00:00.000Z' },
+    mail('d', '2026-11-01T10:00:00.000Z'),
+  ];
+  const all = pagedShape(entries, { limit: 50 }).entries;
+  assert.deepEqual(all.items.map((item) => item.id), ['d', 'c', 'b', 'a'], 'task rows stay out, as in the full read');
+  assert.equal(all.total, 4);
+  assert.equal(all.nextCursor, null);
+  const older = pagedShape(entries, { before: '2026-11-01T09:00:00.000Z|c' }).entries;
+  assert.deepEqual(older.items.map((item) => item.id), ['b', 'a'], 'the cursor row itself is never repeated');
+  const unknown = pagedShape(entries, { before: '2026-11-01T09:30:00.000Z|zzz' }).entries;
+  assert.deepEqual(unknown.items.map((item) => item.id), ['c', 'b', 'a'], 'a cursor needs no matching row');
+  const page = pagedShape(entries, { limit: 1 }).entries;
+  assert.equal(page.nextCursor, '2026-11-01T10:00:00.000Z|d', 'the cursor names the last row read');
+});
+
+test('ea463d6ff10d: a malformed cursor or limit refuses with a ValidationError', () => {
+  const entries = [mail('a', '2026-11-01T08:00:00.000Z')];
+  const refused = (page) => assert.throws(() => pagedShape(entries, page),
+    (error) => error.code === 'VALIDATION_ERROR' && error.status === 400, JSON.stringify(page));
+  refused({ before: 'garbage' });
+  refused({ before: 'not-a-date|a' });
+  refused({ before: '2026-11-01T08:00:00.000Z|' });
+  refused({ before: '' });
+  refused({ before: 42 });
+  refused({ limit: 0 });
+  refused({ limit: -3 });
+  refused({ limit: 2.5 });
+  refused({ limit: 'x' });
+  refused({ limit: '' });
+  const capped = pagedShape(Array.from({ length: 60 }, (_, index) => mail(`m${index}`,
+    new Date(Date.UTC(2026, 10, 1, 8, index)).toISOString())), { limit: 500 }).entries;
+  assert.equal(capped.items.length, 50, 'a limit above 50 reads at most 50');
+});
+
+test('ea463d6ff10d: without the new params the legacy read stays oldest first with ENTRY_LIMIT', async () => {
+  const entries = Array.from({ length: 51 }, (_, index) => mail(`m${index}`,
+    new Date(Date.UTC(2026, 10, 1, 8, index)).toISOString()));
+  const legacy = pagedShape(entries, undefined).entries;
+  assert.equal(legacy.items.length, 50);
+  assert.equal(legacy.items[0].id, 'm1');
+  assert.equal(legacy.items.at(-1).id, 'm50');
+  assert.equal(legacy.truncated, true);
+  assert.equal(legacy.count, 51);
+  assert.equal('nextCursor' in legacy, false, 'the legacy shape is unchanged');
+  assert.equal('total' in legacy, false);
+  const reader = {
+    subject: { resource: 'contact', id: 'c1' },
+    readProfile: async () => PAGE_PROFILE,
+    readConversations: async () => [],
+    readTimeline: async () => ({ entries }),
+    readSchedule: async () => [],
+  };
+  const viaRead = await readCustomerTimeline(reader);
+  assert.deepEqual(viaRead.entries, legacy);
+  const paged = await readCustomerTimeline({ ...reader, page: { limit: 20 } });
+  assert.equal(paged.entries.items[0].id, 'm50');
+  assert.equal(paged.entries.items.length, 20);
+});
+
+async function getTimeline(t, path) {
+  const calls = [];
+  const app = {
+    async readCustomerTimeline(params) {
+      calls.push({ ...params });
+      return { entries: [] };
+    },
+  };
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
+    headers: { 'x-actor-type': 'user', 'x-actor-id': 'scheda-route' },
+  });
+  await response.json();
+  return { status: response.status, calls };
+}
+
+test('ea463d6ff10d: the route forwards before and limit only when the client asks for a page', async (t) => {
+  const legacy = await getTimeline(t, '/api/customer-hub/timeline/contact/c1');
+  assert.equal(legacy.status, 200);
+  assert.equal('before' in legacy.calls[0], false, 'a legacy client reads the legacy timeline');
+  assert.equal('limit' in legacy.calls[0], false);
+  const cursor = '2026-11-01T08:00:00.000Z|m7';
+  const paged = await getTimeline(t, `/api/customer-hub/timeline/contact/c1?limit=20&before=${encodeURIComponent(cursor)}`);
+  assert.equal(paged.status, 200);
+  assert.equal(paged.calls[0].before, cursor);
+  assert.equal(paged.calls[0].limit, '20');
+  assert.equal(paged.calls[0].actor?.id, 'scheda-route');
+  // Review #639: empty values are absent — the legacy read, never a page.
+  const empty = await getTimeline(t, '/api/customer-hub/timeline/contact/c1?before=&limit=');
+  assert.equal(empty.status, 200);
+  assert.equal('before' in empty.calls[0], false, '?before= is no cursor');
+  assert.equal('limit' in empty.calls[0], false, '?limit= is no page size');
 });

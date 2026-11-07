@@ -13,6 +13,7 @@ import { createAccordoApp } from '../packages/app/src/index.js';
 import { createAdminShellMount } from '../packages/app/src/admin-mount.js';
 import {
   BO_UPDATE_NOTICE,
+  BO_UPDATE_UNSAVED_NOTICE,
   BO_VERSION_POLL_MS,
   checkBundleVersion,
   currentBundleName,
@@ -265,8 +266,21 @@ test('checkBundleVersion never reloads on its own: clean or dirty, only the noti
   assert.equal(deferred, 'deferred');
   assert.equal(dirtyReloads, 0);
   assert.equal(dirtyDoc._state.banner.textContent, BO_UPDATE_NOTICE);
+  // 49bd3657: with text unsent the first press only warns in Italian, the
+  // second press reloads — a reload never takes a draft by surprise.
   dirtyDoc._state.banner.click();
-  assert.equal(dirtyReloads, 1, 'the operator confirms the waiting update');
+  assert.equal(dirtyReloads, 0, 'the first press with unsent text never reloads');
+  assert.equal(dirtyDoc._state.banner.textContent, BO_UPDATE_UNSAVED_NOTICE);
+  dirtyDoc._state.banner.click();
+  assert.equal(dirtyReloads, 1, 'the second press confirms the reload');
+});
+
+test('49bd3657: the notice speaks Italian and offers Ricarica', () => {
+  assert.equal(BO_UPDATE_NOTICE, 'È disponibile una nuova versione · Ricarica');
+  assert.ok(/salvalo/.test(BO_UPDATE_UNSAVED_NOTICE) && /ricaricare/.test(BO_UPDATE_UNSAVED_NOTICE));
+  for (const text of [BO_UPDATE_NOTICE, BO_UPDATE_UNSAVED_NOTICE]) {
+    assert.ok(!/\b(update|reload|new version|refresh)\b/i.test(text), `no English: ${text}`);
+  }
 });
 
 test('a CSS-only release shows the notice', async () => {

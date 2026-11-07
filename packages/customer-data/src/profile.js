@@ -1,6 +1,7 @@
 // @ts-check
 
 import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
+import { isNoCompany } from './sender.js';
 import { deriveCustomerStatus } from './customer-status.js';
 
 /**
@@ -95,6 +96,49 @@ export async function canonicalClusterFor({ modules, names, subject }) {
 }
 
 /**
+ * Concurrent reads of one subject share one in-flight computation.
+ *
+ * A scheda opens three reads that all compute the same profile (the card,
+ * the timeline and the direct profile) at the same instant. Run side by
+ * side they are three full computations over the same pool, which is how the
+ * intermittent STORAGE_UNAVAILABLE (503) on `customer-data/profile` was born.
+ * Reads that arrive while one computation for their subject is still running
+ * share it instead: the profile is read-only and frozen, so sharing changes
+ * nothing but the load. Nothing is cached past the computation — the next
+ * read after it settles computes again, so a write followed by a re-read
+ * never sees a stale answer. A shared failure clears too: every sharer gets
+ * the same rejection, and the next read retries from scratch.
+ *
+ * Scoped per modules view (one bucket per caller modules object, held
+ * weakly), so two applications in one process never share a read.
+ */
+const inflightByModules = new WeakMap();
+
+/**
+ * @param {{modules: any, core: any, names: any, subject: {resource: string, id: string}}} input
+ */
+export function coalescedProfileFor({ modules, core, names, subject }) {
+  const key = JSON.stringify([subject?.resource ?? null, subject?.id ?? null]);
+  let bucket = inflightByModules.get(modules);
+  if (!bucket) {
+    bucket = new Map();
+    inflightByModules.set(modules, bucket);
+  }
+  const running = bucket.get(key);
+  if (running) return running;
+  const task = profileFor({ modules, core, names, subject });
+  // Clearing on settle (success or failure) is what keeps this a
+  // singleflight rather than a cache: attach before sharing so a failure
+  // with no sharer left behind still clears instead of sticking.
+  task.then(
+    () => { if (bucket.get(key) === task) bucket.delete(key); },
+    () => { if (bucket.get(key) === task) bucket.delete(key); },
+  );
+  bucket.set(key, task);
+  return task;
+}
+
+/**
  * The profile for one subject.
  *
  * @param {{modules: any, core: any, names: any, subject: {resource: string, id: string}}} input
@@ -142,6 +186,9 @@ export async function profileFor({ modules, core, names, subject }) {
   const companyIds = new Set(cluster.members.filter((m) => m.resource === 'company').map((m) => m.id));
   const contactIds = new Set(cluster.members.filter((m) => m.resource === 'contact').map((m) => m.id));
   if (identity.company?.id) companyIds.add(identity.company.id);
+  // The contact's own «no company» placeholder reads as no company, but an
+  // offer filed under it is still this customer's.
+  if (identity.contact?.companyId) companyIds.add(identity.contact.companyId);
   if (identity.contact?.id) contactIds.add(identity.contact.id);
 
   // The customer's own opportunities are resolved first, because a quote names
@@ -280,6 +327,17 @@ async function readOneSection(section, { modules, references, subject, opportuni
         opportunityName: row.opportunityId != null
           ? (opportunityNames.get(row.opportunityId) ?? null)
           : null,
+        // Voce 59def6cb805d (C25): the amount the owning record already
+        // holds, server-computed — the scheda never sums anything. A quote
+        // with recurring groups has no single one-time total, so it carries
+        // none (null), never a partial figure.
+        amountCents: Number.isSafeInteger(row.oneTimeNetCents) && row.recurringGroupCount === 0
+          ? row.oneTimeNetCents : null,
+        currency: typeof row.currency === 'string' ? row.currency : null,
+      } : {}),
+      ...(section.key === 'opportunities' ? {
+        amountCents: Number.isSafeInteger(row.valueCents) ? row.valueCents : null,
+        currency: typeof row.currency === 'string' ? row.currency : null,
       } : {}),
     }))),
     truncated: rows.length > 50,
@@ -302,9 +360,17 @@ async function readIdentity({ modules, subject, cluster }) {
     contact = await read(contacts, canonical.id);
     if (contact?.companyId) company = await read(companies, contact.companyId);
   }
+  // A contact typed without Azienda sits under its own «no company»
+  // placeholder (production 07/11): the profile — and the card and timeline
+  // that read it — names no company for it. The contact still carries its
+  // companyId, the one id an offer for this customer is filed under.
+  const shownCompany = company && !(contact && isNoCompany(company)) ? company : null;
   return Object.freeze({
-    company: company ? Object.freeze({ id: company.id, name: company.name, domain: company.domain ?? null }) : null,
-    contact: contact ? Object.freeze({ id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName }) : null,
+    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name, domain: shownCompany.domain ?? null }) : null,
+    contact: contact ? Object.freeze({
+      id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName,
+      companyId: typeof contact.companyId === 'string' && contact.companyId !== '' ? contact.companyId : null,
+    }) : null,
     note: company || contact ? null : 'the canonical record for this subject could not be read from the host application',
   });
 }

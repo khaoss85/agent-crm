@@ -300,9 +300,12 @@ not an objective (measured ~290 s on CI run 39124350674, about half the
 budget). The touched-tests selection additionally enforces its own
 60-second budget and its 270-second run bound, the run bound yielding to
 the selection's elapsed time so the two always fit inside the shared total —
-past a dozen files the run splits into up to four parallel parts, so a
-core-wide fan-in still fits the bound, and a run that still times out fails
-red naming the files that remained;
+past a dozen files the run splits into up to four parallel parts that pull
+one file at a time from a shared queue (fixed round-robin slices left two
+parts idle while two others timed out on agent-crm#621), so a core-wide
+fan-in still fits the bound, and a run that still times out fails red
+naming the files that remained; each file's, part's and the run's elapsed
+time are logged;
 each phase prints its own elapsed time and the script prints the total on
 success, so the bound stays readable in the log. A phase that cannot fit
 the shared budget does not get a longer budget — it gets split, or moved

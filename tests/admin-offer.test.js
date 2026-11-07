@@ -133,6 +133,7 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-offer-amount');
   assert.equal(amount?.textContent, '27.500 €', 'the value leads the page with the Italian thousands separator');
   assert.equal(fact('Chiusura prevista'), '20 nov 2026', 'the close date reads in Italian');
+  assert.equal(fact('Creata da'), 'maria', 'who created the deal reads from its creation event');
   assert.equal(fact('Creata il'), '2 ott 2026', 'the creation day reads in Italian');
   assert.equal(fact('Ultima modifica'), '28 ott 2026', 'the update day reads in Italian');
   assert.ok(text.includes('chiusura prevista 20 nov 2026'), 'the close date sits under the value');
@@ -151,6 +152,8 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   // A UUID actor is a technical id, never a name; a named actor paints.
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID in visible text');
   assert.ok(text.includes('utente'), 'the UUID actor degrades to a generic word');
+  assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
+  assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
   // The quote opens in the quote page, never inline.
   const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q1');
   assert.ok(link, 'the quote links to its page');
