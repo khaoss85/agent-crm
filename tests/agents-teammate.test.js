@@ -1118,6 +1118,63 @@ function asyncRunService(realManifest) {
   };
 }
 
+test('a stale claim taken over across the month boundary spends the new month', async () => {
+  // A sweep claimed the 31 January slot at 23:50 UTC and crashed before
+  // finalizing. The worker restarts on 1 February and takes over the stale
+  // claim: the February execution must spend the February cap, not January's.
+  const FEB_01 = '2026-02-01T08:01:00.000Z';
+  const { ops, modules } = compose(FEB_01);
+  await makeAgent(ops, { sourceKey: 'ag-stale-feb', spendingCapCents: 100 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-stale-feb',
+    agentSourceKey: 'ag-stale-feb',
+    phrase: 'ogni giorno il report',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 60,
+  });
+  const queued = (await modules.get('teammate-assignment').service.listWhere({ spaceId: SPACE, sourceKey: 'as-stale-feb' }))[0];
+  await modules.get('teammate-assignment').service.applyManaged(
+    queued.id, { nextRunAt: '2026-01-31T08:00:00.000Z' }, { actor: SYSTEM },
+  );
+  await modules.get('teammate-run').service.createManaged({
+    sourceKey: 'run:as-stale-feb:2026-01-31T08:00:00.000Z',
+    spaceId: SPACE,
+    agentSourceKey: 'ag-stale-feb',
+    assignmentSourceKey: 'as-stale-feb',
+    startedAt: '2026-01-31T08:00:00.000Z',
+    decidedAt: '2026-01-31T23:50:00.000Z',
+    actorType: 'system',
+    actorId: 'agent-sweep',
+    sourcePackage: 'agents',
+    sourceAction: 'run-due',
+    costCents: 60,
+    outcome: 'started',
+    note: 'Slot claimed, execution not yet recorded.',
+  }, { actor: SYSTEM });
+  let executions = 0;
+  const summary = await ops.runDue({
+    actor: SYSTEM,
+    at: FEB_01,
+    execute: async () => {
+      executions += 1;
+      return { kind: 'artifact', costCents: 60, artifact: { feb: true } };
+    },
+  });
+  assert.equal(executions, 1);
+  assert.equal(summary.artifacts, 1);
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: 'run:as-stale-feb:2026-01-31T08:00:00.000Z' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].outcome, 'artifact');
+  assert.equal(rows[0].decidedAt, FEB_01, 'the takeover executes now, so it spends the new month');
+  const febSpend = (await modules.get('teammate-run').service.listWhere({ spaceId: SPACE, agentSourceKey: 'ag-stale-feb' }))
+    .filter((row) => typeof row.decidedAt === 'string' && row.decidedAt >= '2026-02-01T00:00:00.000Z')
+    .reduce((total, row) => total + row.costCents, 0);
+  assert.equal(febSpend, 60);
+});
+
 test('conditional run writes hold on async (PostgreSQL-like) storage', async () => {
   const FEB_01 = '2026-02-01T08:01:00.000Z';
   const base = compose(FEB_01);
