@@ -725,6 +725,10 @@ export function createCustomerCardView(deps) {
    *   connects Email (backlog:a935af6a6d19)
    */
   function composerChannelsFor(card, connections, profile) {
+    /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
+    const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+    /** The pilot's profile mailbox merged as a connection row: never a route. */
+    const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
     // Voce a935af6a6d19: the profile Google link counts for Email. The
     // Connettori screen links channel connections (one row per account),
@@ -756,18 +760,44 @@ export function createCustomerCardView(deps) {
     };
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
-      const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      // A real channel connection is preferred over the pilot's synthetic
+      // profile row, whatever their order (review #648, giro 2): the real
+      // row's key is a route readSyncState knows and its account is the
+      // mailbox that route sends from, so «Da» and the route agree. The
+      // synthetic row only stands in when it is the sole active one.
+      const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
+      const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
       // queues on); the profile Gmail mailbox only fills the gap, with no
       // key — the server still needs its own email connection to send.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
+      // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
+      // connections as an active email row (`profile:gmail`). Its account is
+      // the mailbox the «Da» row names; without one the profile Gmail still
+      // fills it. A connection key is never a sender: a `profile:` handle
+      // (any case) or the row's own key posing as an account counts as
+      // missing.
+      const liveAccount = channel === 'email' && live !== null && typeof live.account === 'string'
+        && live.account.trim() !== '' && !isProfileKey(live.account)
+        && live.account.trim() !== String(live.connectionKey ?? '').trim()
+        ? live.account.trim() : null;
+      const sender = liveAccount ?? (gmailLinked ? gmailSender : null);
+      // The synthetic profile row is no channel connection: its key is not
+      // a route the send queues on, so it is never sent (the server derives
+      // the route from the space's own mailbox).
+      const synthetic = live !== null && isSyntheticRow(live);
+      // «Connected» implies a sender for Email: a linked row that names no
+      // valid mailbox reads off with its Connettori link, never an enabled
+      // channel with an empty «Da».
+      const linked = live !== null || gmailLinked;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
-        connected: live !== null || gmailLinked,
-        connectionKey: live?.connectionKey ?? null,
-        sender: gmailLinked ? gmailSender : null,
+        connected: linked && (channel !== 'email' || sender !== null),
+        connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
+          && live.connectionKey !== '' ? live.connectionKey : null,
+        sender,
       });
     });
   }

@@ -1814,7 +1814,9 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
 // the preselected recipient, never a caller-supplied address.
 const COMPOSER_CONNECTORS = {
   connectors: [
-    { channel: 'email', status: 'active', connectionKey: 'gmail-1' },
+    // A real connection row always names its account (readSyncState):
+    // review #648 — a linked Email with no valid sender is not sendable.
+    { channel: 'email', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra-esempio.it' },
     { channel: 'instagram', status: 'active', connectionKey: 'ig-1' },
   ],
 };
@@ -2150,6 +2152,105 @@ test('a935af6a6d19: with Gmail linked in the profile Email is connected and show
   assert.ok(links.length > 0, 'the truly unlinked channels still link to Connettori');
   const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
   assert.equal(send.getAttribute('disabled'), null, 'Invia is available on the Gmail-linked Email');
+});
+
+// Voce eaa84ccafc53: the pilot merges the profile mailbox into the
+// connections as an active email row. The «Da» row names that mailbox and
+// the `profile:` connection key never reads as text.
+const fromValueOf = (panel) => {
+  const row = panel.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-composer-row'
+    && node.childNodes[0]?.textContent === 'Da');
+  return row ? row.childNodes[1].textContent : null;
+};
+
+test('eaa84ccafc53: a profile-sourced email row fills «Da» with its mailbox', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: ' studio@palestra.it ', status: 'active', source: 'profile' }] },
+      profile: null,
+    }),
+  });
+  assert.equal(fromValueOf(panel), 'studio@palestra.it', 'Da names the linked mailbox');
+  assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the connection key never reads as text');
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null);
+});
+
+test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; a key never does', async () => {
+  const old = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
+  });
+  assert.equal(fromValueOf(old.panel), 'daniele.pelleri@gmail.com', 'the old shape is unchanged');
+  const keyOnly = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: 'profile:gmail', status: 'active' }] },
+      profile: null,
+    }),
+  });
+  assert.equal(fromValueOf(keyOnly.panel), '', 'a key posing as an account is never a sender');
+  assert.ok(!keyOnly.panel.textContent.toLowerCase().includes('profile:'));
+});
+
+// Review #648 P1: the synthetic profile row is no channel connection — its
+// `profile:` key never travels in the send payload; the server derives the
+// route from the space mailbox.
+test('review #648: a profile-sourced email row sends no connectionKey', async () => {
+  for (const row of [
+    { connectionKey: 'profile:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' },
+    { connectionKey: 'PROFILE:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active' },
+  ]) {
+    const client = composerClient({ connectors: { connectors: [row] } });
+    const { panel } = await openComposerMount({ client });
+    assert.equal(fromValueOf(panel), 'studio@palestra.it');
+    await typeAndSend(panel, 'Ciao Guido');
+    assert.equal(client.posts.length, 1, `${row.connectionKey}: the send goes out`);
+    assert.equal(client.posts[0].channel, 'email');
+    assert.equal('connectionKey' in client.posts[0], false, `${row.connectionKey}: the synthetic key is never sent`);
+  }
+  // A real connection still sends its own key.
+  const real = composerClient();
+  const { panel } = await openComposerMount({ client: real });
+  await typeAndSend(panel, 'Ciao Guido');
+  assert.equal(real.posts[0].connectionKey, 'gmail-1', 'a real connection keeps its route');
+});
+
+// Review #648 giro 2 P1: with the synthetic profile row listed first and a
+// real email connection after it, the real row routes the send and names
+// «Da» — never the synthetic key, never a «Da» the route does not send from.
+test('review #648 giro 2: a real email connection wins over the synthetic profile row, whatever the order', async () => {
+  for (const syntheticKey of ['profile:gmail', 'PROFILE:Gmail']) {
+    const client = composerClient({
+      connectors: { connectors: [
+        { connectionKey: syntheticKey, channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' },
+        { connectionKey: 'real-123', channel: 'email', account: 'reale@studio.it', status: 'active' },
+      ] },
+    });
+    const { panel } = await openComposerMount({ client });
+    assert.equal(fromValueOf(panel), 'reale@studio.it', `${syntheticKey}: «Da» names the mailbox the route sends from`);
+    await typeAndSend(panel, 'Ciao Guido');
+    assert.equal(client.posts.length, 1);
+    assert.equal(client.posts[0].connectionKey, 'real-123', `${syntheticKey}: the send queues on the real route`);
+    assert.ok(!panel.textContent.toLowerCase().includes('profile:'));
+  }
+});
+
+// Review #648 P1/P2: «connected» implies a valid sender. A linked Email row
+// with no mailbox, or a key (any case) posing as one, reads off with the
+// Connettori link — never an enabled channel with an empty «Da».
+test('review #648: a linked Email without a valid sender is not sendable', async () => {
+  for (const account of ['', '   ', 'PROFILE:gmail', 'Profile:Gmail', 'gmail-1']) {
+    const client = composerClient({
+      connectors: { connectors: [{ connectionKey: 'gmail-1', channel: 'email', account, status: 'active' }] },
+    });
+    const { panel } = await openComposerMount({ client });
+    const email = panel.findAll('input').find((node) => node.getAttribute('name') === 'composer-channel' && node.getAttribute('value') === 'email');
+    assert.equal(email.getAttribute('disabled'), 'disabled', `account «${account}»: Email is off`);
+    const off = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+    assert.ok(off && off.textContent.includes('Email (guido@palestra-esempio.it)'), `account «${account}»: the off line names Email`);
+    assert.ok(off.findAll('a').some((node) => node.getAttribute('data-action') === 'composer-connectors'), 'with its Collega in Connettori link');
+    assert.equal(composerSendButton(panel).getAttribute('disabled'), 'disabled', 'nothing to send on');
+    assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the key never reads as text');
+  }
 });
 
 // Voce a935af6a6d19 (acceptance 2): a channel with no link anywhere — no
