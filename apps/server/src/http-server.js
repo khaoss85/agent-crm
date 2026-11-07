@@ -1028,7 +1028,11 @@ export function buildRouter(app) {
     // execution time, so a send approved here can still refuse there.
     let lastInboundAt = null;
     if (channel === 'whatsapp' && templateMessage === null && typeof app.readCustomerTimeline === 'function') {
-      lastInboundAt = await latestWhatsAppInboundAt(app, { resource: input.resource, id: String(input.id ?? '') });
+      lastInboundAt = await latestWhatsAppInboundAt(
+        app,
+        { resource: input.resource, id: String(input.id ?? '') },
+        { spaceId, connectionKey: connection.connectionKey },
+      );
       const refusal = refuseWhatsAppFreeText({ lastInboundAt });
       if (refusal !== null) {
         throw new AppError(refusal, { code: 'CHANNEL_TEMPLATE_REQUIRED', status: 422 });
@@ -2204,18 +2208,50 @@ async function latestEmailThread(app, subject) {
  * the composer window rule reads. Only a recorded inbound passage opens
  * the window — an outbound, a note, or a missing instant never does, so
  * the composer fails closed to templates instead of guessing.
+ *
+ * The read walks the complete history newest-first through the timeline
+ * cursor (`limit` + `nextCursor`), never the capped display slice: an
+ * in-window inbound buried under newer notes, calls or other-channel rows
+ * still opens the window, the way the queue's full inbox scan allows it
+ * (review rev-agent-crm-653-109e03ad P1). The space and the resolved
+ * connection travel with the read, so a scoping host answers for this
+ * send's connection instead of a cross-space projection; hosts that do
+ * not scope yet answer as before. The queue stays the execution
+ * authority: it re-resolves the window from the inbox at send time.
  */
-async function latestWhatsAppInboundAt(app, subject) {
-  const timeline = await app.readCustomerTimeline({ resource: subject.resource, id: subject.id });
-  const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+async function latestWhatsAppInboundAt(app, subject, scope = {}) {
+  const spaceId = typeof scope.spaceId === 'string' ? scope.spaceId : '';
+  const connectionKey = typeof scope.connectionKey === 'string' ? scope.connectionKey : '';
   let latest = null;
   let latestMs = -1;
-  for (const row of items) {
-    if (row?.entry !== 'message' || row?.channel !== 'whatsapp' || row?.direction !== 'inbound') continue;
-    const at = typeof row?.occurredAt === 'string' ? row.occurredAt : null;
-    const ms = at === null ? NaN : Date.parse(at);
-    if (!Number.isFinite(ms)) continue;
-    if (ms > latestMs) { latestMs = ms; latest = at; }
+  let before = null;
+  const seenCursors = new Set();
+  // The cursor strictly descends, so the loop always ends: a missing or
+  // repeated cursor, an empty page, or a host that never pages stops it.
+  // The 100-page ceiling (5000 rows) only guards a pathological host.
+  for (let page = 0; page < 100; page += 1) {
+    const timeline = await app.readCustomerTimeline({
+      resource: subject.resource,
+      id: subject.id,
+      ...(spaceId === '' ? {} : { spaceId }),
+      ...(connectionKey === '' ? {} : { connectionKey }),
+      limit: 50,
+      ...(before === null ? {} : { before }),
+    });
+    const entries = timeline?.entries ?? null;
+    const items = Array.isArray(entries?.items) ? entries.items : [];
+    for (const row of items) {
+      if (row?.entry !== 'message' || row?.channel !== 'whatsapp' || row?.direction !== 'inbound') continue;
+      const at = typeof row?.occurredAt === 'string' ? row.occurredAt : null;
+      const ms = at === null ? NaN : Date.parse(at);
+      if (!Number.isFinite(ms)) continue;
+      if (ms > latestMs) { latestMs = ms; latest = at; }
+    }
+    const next = typeof entries?.nextCursor === 'string' && entries.nextCursor !== '' ? entries.nextCursor : null;
+    if (next === null || seenCursors.has(next)) break;
+    seenCursors.add(next);
+    if (items.length === 0) break;
+    before = next;
   }
   return latest;
 }

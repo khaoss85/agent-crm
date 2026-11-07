@@ -160,6 +160,70 @@ test('97cba17c: a template on email refuses, only WhatsApp sends one', async (t)
   assert.equal(queued.length, 0);
 });
 
+/**
+ * A host that pages like production (backlog:ea463d6ff10d): without
+ * `limit` it answers the legacy display read (latest 50, oldest first,
+ * no cursor); with `limit`/`before` it answers newest-first pages with
+ * `nextCursor`. Rows are oldest first, like the provider read.
+ */
+function pagingApp({ rows = [], queued = [] } = {}) {
+  const cursorOf = (row) => `${row.occurredAt}|${row.id}`;
+  const calls = [];
+  const app = stubApp({ queued });
+  app.timelineCalls = calls;
+  app.readCustomerTimeline = async (params) => {
+    calls.push({ ...params });
+    const limit = typeof params?.limit === 'number' ? params.limit : null;
+    if (limit === null) {
+      return { entries: { items: rows.slice(Math.max(0, rows.length - 50)) } };
+    }
+    const ordered = [...rows].reverse();
+    let start = 0;
+    if (typeof params?.before === 'string' && params.before !== '') {
+      const at = ordered.findIndex((row) => cursorOf(row) === params.before);
+      start = at < 0 ? ordered.length : at + 1;
+    }
+    const items = ordered.slice(start, start + limit);
+    const last = items.at(-1);
+    const nextCursor = start + limit < ordered.length && last !== undefined ? cursorOf(last) : null;
+    return { entries: { items, nextCursor } };
+  };
+  return app;
+}
+
+const note = (id, occurredAt) => ({ id, entry: 'note', channel: null, direction: null, occurredAt });
+
+test('97cba17c: an in-window inbound buried under 59 newer notes still queues', async (t) => {
+  const queued = [];
+  const rows = [
+    { id: 'wa-buried', entry: 'message', channel: 'whatsapp', direction: 'inbound', conversationId: 'wa:+390200000001', occurredAt: recentIso(3600_000) },
+    ...Array.from({ length: 59 }, (_, index) => note(`n-${index}`, recentIso(3600_000 - (index + 1) * 60_000))),
+  ];
+  const app = pagingApp({ rows, queued });
+  const { status } = await postMessage(t, app, { ...BASE, messageKey: 'k-wa-buried', text: 'Ciao, sono Marco.' });
+  assert.equal(status, 201);
+  assert.equal(queued.length, 1);
+  assert.ok(app.timelineCalls.length >= 2, 'the route followed the cursor past the capped display slice');
+  assert.equal(typeof app.timelineCalls[1].before, 'string');
+  assert.equal(app.timelineCalls[0].spaceId, 'presti');
+  assert.equal(app.timelineCalls[0].connectionKey, WA_KEY);
+});
+
+test('97cba17c: a stale inbound buried under 59 newer notes still refuses', async (t) => {
+  const queued = [];
+  const rows = [
+    { id: 'wa-stale', entry: 'message', channel: 'whatsapp', direction: 'inbound', conversationId: 'wa:+390200000001', occurredAt: recentIso(25 * 3600_000) },
+    ...Array.from({ length: 59 }, (_, index) => note(`m-${index}`, recentIso(25 * 3600_000 - (index + 1) * 60_000))),
+  ];
+  const { status, payload } = await postMessage(t, pagingApp({ rows, queued }), {
+    ...BASE, messageKey: 'k-wa-stale', text: 'Ciao, sono Marco.',
+  });
+  assert.equal(status, 422);
+  assert.equal(payload?.error?.code, 'CHANNEL_TEMPLATE_REQUIRED');
+  assert.match(payload?.error?.message ?? '', /24 ore/);
+  assert.equal(queued.length, 0);
+});
+
 test('97cba17c: a template the queue does not approve refuses in Italian', async (t) => {
   const queued = [];
   const { status, payload } = await postMessage(t, stubApp({
