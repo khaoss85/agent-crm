@@ -57,7 +57,9 @@ export function isPersonalizzazioneTab(tab) {
  */
 export function bannerFor(tab) {
   if (tab === 'skill') return 'Le skill insegnano all\u2019AI come lavorare nel tuo studio: la Prova non scrive nulla.';
-  if (tab === 'connettori') return 'Collega i canali una volta sola: i nuovi messaggi entrano da soli nelle schede.';
+  // backlog:34672b9f5a1f: the prototype's Connettori shows no line under
+  // the toolbar — the hero carries the message — so the tab has no banner.
+  if (tab === 'connettori') return '';
   return 'Un pacchetto mette insieme capacità del framework per il tuo settore: attivalo per questo spazio.';
 }
 
@@ -246,6 +248,13 @@ export function heroStep(index, delta) {
 }
 
 /** Shown when the space may not manage connectors: no codes, no detail. */
+/**
+ * How a custom package comes to be, in the operator's words
+ * (backlog:34672b9f5a1f): never a CLI command, a docs path or a story id on
+ * screen. Same path the shell's «Nuovo modulo › Crea con l'AI» names.
+ */
+export const PACKAGE_AUTHORING_MESSAGE = 'Un pacchetto nuovo lo prepara il tuo agente di coding, come pacchetto separato: descrivilo nella barra AI.';
+
 export const CONNECTORS_PERMISSION_MESSAGE = 'Chiedi al titolare di collegare questo canale.';
 
 /** Shown when the space may not manage skills: no codes, no detail. */
@@ -315,10 +324,6 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['DM, risposte alle storie e commenti ai post.', 'di Meta · ↔ bidirezionale']),
       },
       {
-        key: 'telegram', label: 'Telegram', chip: 'TG', channel: 'telegram',
-        lines: Object.freeze(['Messaggi da chat e bot Telegram.', 'di Telegram · ↔ bidirezionale']),
-      },
-      {
         key: 'facebook', label: 'Facebook', chip: 'FB', channel: 'facebook',
         lines: Object.freeze(['Messenger e lead dalle inserzioni.', 'di Meta · ↔ bidirezionale']),
       },
@@ -333,6 +338,13 @@ export const CONNETTORI_SECTIONS = Object.freeze([
       {
         key: 'telefono', label: 'Telefono', chip: 'TEL', channel: 'voice',
         lines: Object.freeze(['Chiamate in entrata e in uscita, con trascrizione AI.', 'di Accordo · ↔ bidirezionale']),
+      },
+      // Telegram (backlog:2a5651e1933d) is a live catalog channel the
+      // prototype predates: it follows the prototype's six, so their order
+      // stays the prototype's.
+      {
+        key: 'telegram', label: 'Telegram', chip: 'TG', channel: 'telegram',
+        lines: Object.freeze(['Messaggi da chat e bot Telegram.', 'di Telegram · ↔ bidirezionale']),
       },
     ]),
   },
@@ -448,7 +460,10 @@ export function createPersonalizzazioneView(deps) {
     tab: 'connettori',
     view: 'scopri',
     query: '',
-    sort: 'nome',
+    // backlog:34672b9f5a1f: Connettori opens on «Più usati», the first voice
+    // of Ordina per — the catalog order, which is the prototype's order.
+    // Other tabs coerce it to 'nome' on entry (renderTabs).
+    sort: 'piu-usati',
     stato: 'tutti',
     hero: 0,
     /** @type {Array<any> | null} */ units: null,
@@ -713,9 +728,11 @@ export function createPersonalizzazioneView(deps) {
     installToolbarMenuCloser(doc);
     const wrap = el(doc, 'div', { cls: 'ui-conn-addwrap' });
     const toggle = uiButton(doc, {
-      variant: 'cta', label: 'Aggiungi ▾',
+      variant: 'cta', label: '+ Aggiungi',
       attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': 'false' },
     });
+    // Spec C8: «+ Aggiungi» with its arrow — the library chevron.
+    toggle.appendChild(uiIcon(doc, 'chevron'));
     toggle.disabled = state.busy;
     const menu = el(doc, 'div', { cls: 'ui-conn-addmenu ui-add-menu hidden', attrs: { role: 'menu' } });
     /** @type {{ wrap: any, close: () => void }} */
@@ -835,14 +852,15 @@ export function createPersonalizzazioneView(deps) {
       sort.addEventListener('change', () => { state.sort = String(sort.value === 'stato' ? 'stato' : 'nome'); renderList(); });
       bar.appendChild(sort);
       // The green CTA opens where a unit is added: the module factory note
-      // for packages, the skill note.
-      const add = uiButton(doc, { variant: 'cta', label: 'Aggiungi ▾', attrs: { type: 'button' } });
+      // for packages, the skill note. It opens no menu, so it carries no
+      // dropdown chevron: only the Connettori CTA, which has one, does.
+      const add = uiButton(doc, { variant: 'cta', label: '+ Aggiungi', attrs: { type: 'button' } });
       add.disabled = state.busy;
       add.addEventListener('click', () => {
         if (state.tab === 'skill') {
-          say('Le skill personalizzate arrivano con BO-F4-02: intanto copia il prompt dalla Prova di una skill.');
+          say('Le skill personalizzate non sono ancora disponibili: intanto copia il prompt dalla Prova di una skill.');
         } else {
-          say('I pacchetti personalizzati si creano con `accordo module:create` (vedi docs/MODULE_FACTORY.md).');
+          say(PACKAGE_AUTHORING_MESSAGE);
         }
       });
       bar.appendChild(add);
@@ -850,8 +868,8 @@ export function createPersonalizzazioneView(deps) {
     const total = el(doc, 'span', { text: pluralize(count, 'voce', 'voci'), cls: 'muted' });
     bar.appendChild(total);
     box.appendChild(bar);
-    const banner = el(doc, 'p', { text: bannerFor(state.tab), cls: 'banner' });
-    box.appendChild(banner);
+    const tip = bannerFor(state.tab);
+    if (tip !== '') box.appendChild(el(doc, 'p', { text: tip, cls: 'banner' }));
   }
 
   function renderList() {
@@ -1030,7 +1048,7 @@ export function createPersonalizzazioneView(deps) {
     dev.appendChild(el(doc, 'p', { text: 'Hai un settore con esigenze sue? Impacchetta capacità esistenti.', cls: 'muted' }));
     const go = el(doc, 'button', { text: 'Come pubblicare un pacchetto', attrs: { type: 'button' } });
     go.addEventListener('click', () => {
-      say('I pacchetti personalizzati si creano con `accordo module:create` (vedi docs/MODULE_FACTORY.md).');
+      say(PACKAGE_AUTHORING_MESSAGE);
     });
     dev.appendChild(go);
     box.appendChild(dev);
@@ -1110,7 +1128,8 @@ export function createPersonalizzazioneView(deps) {
   function renderConnettoriHero(box) {
     const slide = CONNETTORI_HERO[heroStep(state.hero, 0)];
     const hero = el(doc, 'section', { cls: 'ui-hero', attrs: { 'aria-label': slide.title, 'aria-roledescription': 'carousel' } });
-    const prev = uiButton(doc, { variant: 'secondary', small: true, label: '‹', attrs: { type: 'button', 'aria-label': 'Precedente' } });
+    const prev = uiButton(doc, { variant: 'secondary', small: true, attrs: { type: 'button', 'aria-label': 'Precedente' } });
+    prev.appendChild(uiIcon(doc, 'chevron'));
     prev.addEventListener('click', () => { state.hero = heroStep(state.hero, -1); renderList(); });
     hero.appendChild(prev);
     const copy = el(doc, 'div', { cls: 'ui-hero-copy' });
@@ -1142,22 +1161,27 @@ export function createPersonalizzazioneView(deps) {
     const tiles = el(doc, 'div', { cls: 'ui-hero-tiles', attrs: { 'aria-hidden': 'true' } });
     for (const chip of (Array.isArray(slide.tiles) ? slide.tiles : [])) tiles.appendChild(uiChannelChip(doc, chip));
     hero.appendChild(tiles);
-    const next = uiButton(doc, { variant: 'secondary', small: true, label: '›', attrs: { type: 'button', 'aria-label': 'Successiva' } });
+    const next = uiButton(doc, { variant: 'secondary', small: true, attrs: { type: 'button', 'aria-label': 'Successiva' } });
+    next.appendChild(uiIcon(doc, 'chevron'));
     next.addEventListener('click', () => { state.hero = heroStep(state.hero, 1); renderList(); });
     hero.appendChild(next);
-    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { role: 'tablist', 'aria-label': 'Slide in evidenza' } });
+    // Plain buttons, not a tablist: the dots only move the carousel, so
+    // they carry no tab semantics (no tabpanel, no arrow-key roving); the
+    // active one says so with aria-current.
+    const dots = el(doc, 'div', { cls: 'ui-hero-dots', attrs: { role: 'group', 'aria-label': 'Slide in evidenza' } });
     CONNETTORI_HERO.forEach((entry, index) => {
       const dot = el(doc, 'button', {
         text: '•',
         cls: `ui-hero-dot${index === heroStep(state.hero, 0) ? ' on' : ''}`,
-        attrs: { type: 'button', role: 'tab', 'aria-label': `Vai alla slide ${index + 1}: ${entry.title}` },
+        attrs: { type: 'button', 'aria-label': `Vai alla scheda ${index + 1}` },
       });
       if (index === heroStep(state.hero, 0)) dot.setAttribute('aria-current', 'true');
       dot.addEventListener('click', () => { state.hero = index; renderList(); });
       dots.appendChild(dot);
     });
-    hero.appendChild(dots);
     box.appendChild(hero);
+    // Spec C12: the dots sit in their own row under the dark panel.
+    box.appendChild(dots);
   }
 
   /** @param {any} box @param {{ section: any, cards: Array<{ entry: any, state: string }> }} group */
@@ -1217,7 +1241,18 @@ export function createPersonalizzazioneView(deps) {
       });
       article.appendChild(uiChannelChip(doc, card.entry.chip));
       const body = el(doc, 'div', { cls: 'ui-conn-body' });
-      body.appendChild(el(doc, 'strong', { text: card.entry.label, cls: 'ui-conn-label' }));
+      // The prototype's name row: the name and the curated mark — only on
+      // a catalog channel Accordo curates. The non-catalog fallbacks
+      // (Google Calendar, Stripe: channel null) are not verified by
+      // Accordo, so they carry no mark.
+      const title = el(doc, 'div', { cls: 'ui-conn-title' });
+      title.appendChild(el(doc, 'strong', { text: card.entry.label, cls: 'ui-conn-label' }));
+      if (typeof card.entry.channel === 'string' && CONNETTORI_CATALOG_CHANNELS.has(card.entry.channel)) {
+        const mark = el(doc, 'span', { cls: 'ui-conn-verified', attrs: { role: 'img', 'aria-label': 'Verificato da Accordo', title: 'Verificato da Accordo' } });
+        mark.appendChild(uiIcon(doc, 'check'));
+        title.appendChild(mark);
+      }
+      body.appendChild(title);
       for (const line of card.entry.lines) {
         body.appendChild(el(doc, 'p', { text: line, cls: 'ui-conn-lines' }));
       }
