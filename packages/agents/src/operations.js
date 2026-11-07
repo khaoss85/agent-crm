@@ -104,6 +104,7 @@ function runStorageSeam(runService) {
     proposals: columnOf('proposals'),
     artifact: columnOf('artifact'),
     artifactVersion: columnOf('artifactVersion'),
+    decidedAt: columnOf('decidedAt'),
   };
   const syncApi = storage?.sync;
   const syncMutation = syncApi
@@ -137,7 +138,7 @@ async function conditionalRunWrite(runService, id, patch, expect, actor) {
   const { manifest, columns, syncApi } = runStorageSeam(runService);
   const at = nowIso();
   const values = [];
-  for (const field of ['outcome', 'note', 'costCents', 'proposals', 'artifact', 'artifactVersion']) {
+  for (const field of ['outcome', 'note', 'costCents', 'proposals', 'artifact', 'artifactVersion', 'decidedAt']) {
     if (patch[field] !== undefined) values.push({ column: columns[field], value: patch[field] });
   }
   if (values.length === 0) throw new AppError('A conditional run write needs a patch', {
@@ -449,11 +450,14 @@ export function createAgentOperations(options = {}) {
    * so a concurrent capped sweep that stole a stale claim (or any other
    * writer) cannot be overwritten silently. The winner's row stands and
    * this sweep replays it; nobody's evidence is lost, nobody's is forged.
-   * Counts the sweep's outcome bucket and advances past the slot.
+   * The execution instant is refreshed (`decidedAt` is now): a stale claim
+   * taken over across the month boundary spends the new month's cap, not
+   * the old one. Counts the sweep's outcome bucket and advances past the
+   * slot.
    */
   async function finalizeClaim(spaceId, runKey, claim, patch, bucket, assignment, startedAt, summary, actor) {
     const won = await conditionalRunWrite(
-      runs(), claim.id, patch, { outcome: claim.outcome, note: claim.note }, actor,
+      runs(), claim.id, { ...patch, decidedAt: now() }, { outcome: claim.outcome, note: claim.note }, actor,
     );
     if (won) {
       summary[bucket] += 1;
@@ -595,8 +599,14 @@ export function createAgentOperations(options = {}) {
             if (lost.handled) return;
             claim = lost.claim;
           }
-          // This claim's own reservation, already on the ledger.
+          // This claim's own reservation, already on the ledger — but only
+          // when the claim was decided this month. A taken-over stale claim
+          // from last month is not in this month's ledger yet (it counts
+          // when this sweep finalizes it with a fresh decidedAt), so
+          // subtracting it would deflate the gate below zero.
+          const monthStartMs = Date.parse(monthStartIso(at));
           const reserved = typeof claim?.costCents === 'number' && Number.isFinite(claim.costCents) && claim.costCents > 0
+            && typeof claim?.decidedAt === 'string' && Date.parse(claim.decidedAt) >= monthStartMs
             ? claim.costCents
             : 0;
           // 2b. Re-check the cap with this claim's reservation stored: a sweep
@@ -676,12 +686,15 @@ export function createAgentOperations(options = {}) {
               version = row.artifactVersion + 1;
             }
           }
+          // An artifact row never keeps the claim note: without an overrun
+          // the note is cleared (null), so no "Slot claimed..." line ever
+          // survives on a finished artifact row.
           await finalizeClaim(spaceId, runKey, claim, {
             costCents,
             outcome: 'artifact',
             artifact: JSON.stringify(checked.artifact),
             artifactVersion: version,
-            ...(overrun === '' ? {} : { note: overrun.trim() }),
+            note: overrun === '' ? null : overrun.trim(),
           }, 'artifacts', assignment, startedAt, summary, actor);
         });
       } catch (error) {
