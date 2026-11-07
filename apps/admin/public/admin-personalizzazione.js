@@ -816,7 +816,12 @@ export function createPersonalizzazioneView(deps) {
     });
     search.value = state.query;
     search.addEventListener('input', () => { state.query = String(search.value ?? ''); renderList(); });
-    bar.appendChild(search);
+    // The lens is a real SVG element beside the field: a CSS data: image is
+    // blocked by the host CSP (default-src 'self'), so it never painted.
+    const searchWrap = el(doc, 'span', { cls: 'search-wrap' });
+    searchWrap.appendChild(uiIcon(doc, 'search'));
+    searchWrap.appendChild(search);
+    bar.appendChild(searchWrap);
     if (state.tab === 'connettori') {
       renderConnettoriMenu(bar, {
         name: 'Stato', icon: 'filtri',
