@@ -1464,9 +1464,11 @@ test('9e003582: la capability readFlags risponde per il membro, null senza stato
     { conversationId: first.conversation.id, direction: 'inbound', occurredAt: '2026-09-15T10:02:00.000Z' },
     { conversationId: first.conversation.id, direction: 'outbound', occurredAt: '2026-09-15T10:03:00.000Z' },
     { conversationId: null, direction: 'inbound', occurredAt: '2026-09-15T10:01:00.000Z' },
+    { conversationId: first.conversation.id, entry: 'call', direction: 'inbound', occurredAt: '2026-09-15T10:02:00.000Z' },
   ];
-  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'guido' }, entries), [true, false, null, null]);
-  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'maria' }, entries), [false, false, null, null],
+  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'guido' }, entries), [true, false, null, null, null],
+    'an inbound call never carries a read verdict, like the list badge');
+  assert.deepEqual(await timeline.readFlags({ type: 'user', id: 'maria' }, entries), [false, false, null, null, null],
     'a member who never marked still has every inbound unread');
   assert.equal(await timeline.readFlags({ type: 'anonymous' }, entries), null);
   const bare = createInteractionTimelineCapability({}).create({ modules: new Map() });

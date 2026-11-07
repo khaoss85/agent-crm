@@ -1662,6 +1662,7 @@ export async function readEntryFlags({ modules, moduleNames }, actor, entries) {
   if (watermarks === null) return null;
   const rows = Array.isArray(entries) ? entries : [];
   return Object.freeze(rows.map((row) => {
+    if (row?.entry === 'call') return null;
     if (row?.direction !== 'inbound') return null;
     if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') return null;
     const watermark = watermarks.get(String(row.conversationId)) ?? null;
