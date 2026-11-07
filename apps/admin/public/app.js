@@ -83,6 +83,14 @@ const submissions = createSubmissionController({
 // the local behavior: there is no login to land on.
 function leaveForSpaceLogin(target) {
   if (typeof target !== 'string' || target === '') return;
+  // backlog:5a40c73e54aa (B4): the page is about to be thrown away — keep
+  // the text typed into the open view so the return from the login offers
+  // it back instead of losing it.
+  try {
+    captureDrafts({ root: moduleView, hash: window.location.hash, storage: window.sessionStorage });
+  } catch {
+    // Keeping a draft is best-effort; leaving for the login must not fail.
+  }
   try {
     // Replace, not assign: the dead shell must not stay in history, or the
     // back button would return to it and bounce forward again.
@@ -423,6 +431,7 @@ import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
+import { captureDrafts, pendingDraftRoute, restoreDrafts } from './admin-draft-keep.js';
 import { CLIENTI_IMPORT_ROUTE, createCustomerListView } from './admin-clienti.js';
 import { CLIENTI_NUOVO_ROUTE, createCustomerFormView } from './admin-cliente-nuovo.js';
 import { createCustomerDataView } from './admin-customer-data.js';
@@ -1085,6 +1094,19 @@ function targetForHash(hash) {
 }
 
 async function route() {
+  // backlog:5a40c73e54aa (B4): the login may land on the home instead of
+  // the scheda the operator was writing in; go back there once so the kept
+  // text is offered where it was typed.
+  try {
+    const home = window.location.hash === '' || window.location.hash === '#' || window.location.hash === '#/';
+    const back = home ? pendingDraftRoute({ storage: window.sessionStorage }) : null;
+    if (back) {
+      window.location.hash = back;
+      return;
+    }
+  } catch {
+    // Without storage there is nothing to go back to.
+  }
   const hash = window.location.hash || '#/';
   if (targetForHash(hash).view === 'settings') {
     clientiListView.invalidate();
@@ -1222,6 +1244,15 @@ async function route() {
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);
     else if (target.view === 'marketing') await marketingView.renderProposalList();
     else if (target.view === 'marketing-proposal') await marketingView.renderProposalDetail(target.proposalId);
+    // backlog:5a40c73e54aa (B4): back from the login on the same route, the
+    // text the lost session would have thrown away is filled in again.
+    let restored = 0;
+    try {
+      restored = restoreDrafts({ root: moduleView, hash: window.location.hash, storage: window.sessionStorage });
+    } catch {
+      restored = 0;
+    }
+    if (restored > 0) toast('Ho ripreso il testo che non era stato salvato: controllalo e salva di nuovo.');
   } catch (error) {
     toast(error.message, true);
   }
