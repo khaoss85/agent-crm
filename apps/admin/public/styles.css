@@ -628,6 +628,29 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   .bo-main > .bo-topbar + * { margin-top: 18px; }
   .bo-crumb { white-space: normal; }
 }
+.bo-menu-toggle, .bo-phonebar-space { display: none; }
+@media (max-width: 560px) {
+  /* design: shell telefono (oggi.md C26) — the sidebar hides behind the ☰
+   * button and opens as a drawer over the page. The top bar names the space
+   * exactly where the sidebar switcher sat (badge, name, role) with ☰ on
+   * the right; path and AI bar follow. Ink scrim from --shadow-pop: no new
+   * colour. */
+  .bo-sidebar { display: none; }
+  .bo-sidebar.bo-drawer-open {
+    display: flex; position: fixed; top: 0; left: 0; bottom: 0; z-index: 40;
+    width: min(300px, 86vw); height: 100vh; height: 100dvh; max-height: none; overflow-y: auto;
+    border-right: 1px solid var(--line); border-bottom: none;
+    box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
+  }
+  .bo-drawer-open .bo-nav { flex-direction: column; overflow-x: visible; padding-bottom: 0; }
+  .bo-drawer-open .bo-nav-header { display: block; }
+  .bo-drawer-open .bo-nav-item { white-space: normal; flex: initial; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; padding-top: 14px; padding-bottom: 8px; }
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-crumb, .bo-ai { grid-column: 1 / -1; }
+  .bo-main > .bo-topbar + * { margin-top: 6px; }
+  .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
+}
 
 /*
  * Customer scheda (BO-F1-06): three columns like the prototype — quick
