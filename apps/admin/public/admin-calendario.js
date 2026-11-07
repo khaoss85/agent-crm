@@ -574,9 +574,9 @@ function romeWeekdayShort(value) {
 /**
  * The listino key a typed service names: the key itself when typed, or
  * the key of the one catalog product whose name the operator typed
- * («Lezione prova» → `lezione-prova`). Anything else is sent as typed and
- * the server answers BO_APPOINTMENT_SERVICE_REFUSED — painted in Italian
- * under the field (production 07/11).
+ * («Lezione prova» → `lezione-prova`). Anything else travels as typed when
+ * its shape is sendable and the server decides; an unsendable shape never
+ * leaves the form (servicePresendError, production 07/11).
  * @param {unknown} typed @param {Map<string, string> | null | undefined} names sku → name
  */
 export function serviceKeyFor(typed, names) {
@@ -586,6 +586,31 @@ export function serviceKeyFor(typed, names) {
   const wanted = text.toLowerCase();
   const hits = [...names.entries()].filter(([, name]) => String(name).trim().toLowerCase() === wanted);
   return hits.length === 1 ? hits[0][0] : text;
+}
+
+/**
+ * The sendable shape of the service the claim carries: the framework books
+ * the listino product key (lowercase slug, letters, digits, hyphens, at most
+ * 48 characters — `packages/appointments` SERVICE_KEY_RE), and the pilot
+ * /bo route refuses anything else with BO_APPOINTMENT_SERVICE_REFUSED before
+ * the queue. Mirrored here so the form blocks a hand-typed service that
+ * could never book instead of sending it to a 400.
+ */
+const BOOKING_SERVICE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
+
+/**
+ * The Italian sentence blocking a hand-typed service before any request, or
+ * null when the mapped key is sendable (backlog:9a853f44: a hand-written
+ * service either books or is stopped here with a clear message — never a
+ * 400 with «Riprova più tardi»). Empty stays null: a missing service is the
+ * required-fields check's job, and the slot Conferma keeps its server
+ * refusal for it. Pure and DOM-free, unit-tested without a browser.
+ * @param {unknown} serviceKey the mapped claim value (serviceKeyFor first)
+ */
+export function servicePresendError(serviceKey) {
+  if (typeof serviceKey !== 'string' || serviceKey === '') return null;
+  if (BOOKING_SERVICE_KEY_RE.test(serviceKey)) return null;
+  return 'Scegli un servizio dal listino: questo servizio non c’è.';
 }
 
 /**
@@ -2488,6 +2513,16 @@ export function createCalendarioView(deps) {
     };
     state.confirmed = null;
     state.serviceError = '';
+    const presend = servicePresendError(claim.serviceKey);
+    if (presend !== null) {
+      // A typed service the server could never book (backlog:9a853f44,
+      // production 07/11): said under the field before anything is sent —
+      // never a 400 with «Riprova più tardi».
+      state.serviceError = presend;
+      state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+      renderAll();
+      return;
+    }
     // Same in-flight rule as the manual Conferma (review #657): the queued
     // write can take a while, the stale draft note never stays on screen.
     state.draftNote = '';
@@ -2919,6 +2954,16 @@ export function createCalendarioView(deps) {
     const missing = missingManualFields(inputs);
     if (missing.length > 0) {
       state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      renderAll();
+      return;
+    }
+    const presend = servicePresendError(claim.serviceKey);
+    if (presend !== null) {
+      // Same rule as the slot Conferma above (backlog:9a853f44): one
+      // function, both callers — a typed service the server could never
+      // book never leaves the form, on Proponi or Conferma alike.
+      state.serviceError = presend;
+      state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
       renderAll();
       return;
     }
