@@ -6,6 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { SYNC_LABELS } from './admin-labels.js';
 import {
   addFieldForm,
   defineField,
@@ -94,17 +95,7 @@ export function isDefinitiveRefusal(error) {
 }
 const SEND_RESUME_ROUNDS = 40;
 
-/** Delivery/sync state, inbound or outbound, in the operator's words. */
-const SYNC_LABELS = Object.freeze({
-  received: 'ricevuto',
-  sent: 'inviato',
-  delivered: 'consegnato',
-  read: 'letto',
-  failed: 'non consegnato',
-  completed: 'completata',
-  missed: 'persa',
-  'no-answer': 'senza risposta',
-});
+// Delivery/sync state words: shared with the assistant panel (admin-labels.js).
 
 /**
  * Voce cc525cd6a3c5: the quote and opportunity-fallback stages share the
