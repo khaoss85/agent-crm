@@ -819,31 +819,49 @@ export function apiFailure(status, payload) {
 /**
  * The request id of a queued answer the shell can read back (production
  * 07/11: the phrase POST answered 504 BO_PHRASE_PENDING after 51.9 s while
- * a GET with its requestId answered the ready draft in 0.3 s). Any
- * `*_PENDING` code carrying a requestId qualifies; anything else is null.
+ * a GET with its requestId answered the ready draft in 0.3 s). Only the
+ * one queued code the route offers counts (review #664), never any
+ * `*_PENDING`: an unrelated refusal stays a refusal.
  * @param {unknown} error the rejection from `client.request`
+ * @param {string} expectedCode the route's queued code, e.g. `BO_PHRASE_PENDING`
  * @returns {string | null}
  */
-export function pendingRequestId(error) {
+export function pendingRequestId(error, expectedCode) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const id = typeof record.requestId === 'string' ? record.requestId : '';
+  return typeof expectedCode === 'string' && record.code === expectedCode && id !== '' ? id : null;
+}
+
+/**
+ * Whether a failed read-back is worth reading again (review #664): a
+ * network fault, a gateway or server hiccup, a timeout or a rate limit. A
+ * 4xx refusal, an AI-off code (the pilot forwards LLM_* at 502) and a
+ * cancelled or unshapable outcome are final.
+ * @param {unknown} error
+ */
+function transientReadFailure(error) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
-  const id = typeof record.requestId === 'string' ? record.requestId : '';
-  return /_PENDING$/.test(code) && id !== '' ? id : null;
+  if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === null || status === 0) return true;
+  return status >= 500 || status === 408 || status === 425 || status === 429;
 }
 
 /**
  * Read a queued request back on its own path (`GET <path>?requestId=`), the
  * resume the pilot offers for its queued writes: never a second POST. Waits
- * `everyMs` before each read, up to `rounds` reads. Answers `{answer}` when
- * the request settled, `{error}` on a refusal that is not «still pending»,
- * `{pending, requestId}` when it is still queued after the last read, and
- * `{stale: true}` when the caller's view moved on meanwhile.
+ * `everyMs` before each read, up to `rounds` reads; a transient read
+ * failure keeps the same request and reads again (review #664). Answers
+ * `{answer}` when the request settled, `{error}` on a final refusal,
+ * `{pending, requestId}` when it is still queued (or unreadable) after the
+ * last read, and `{stale: true}` when the caller's view moved on meanwhile.
  * @param {{request: (path: string, options?: any) => Promise<any>}} client
  * @param {string} path the queued route, e.g. `/api/appointments/phrase`
  * @param {string} requestId the id the 504 carried
- * @param {{wait: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, stale?: () => boolean}} options
+ * @param {{expectedCode: string, wait: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, stale?: () => boolean}} options
  */
-export async function readBackPending(client, path, requestId, { wait, everyMs = 3000, rounds = 20, stale = () => false }) {
+export async function readBackPending(client, path, requestId, { expectedCode, wait, everyMs = 3000, rounds = 20, stale = () => false }) {
   let id = requestId;
   for (let round = 0; round < rounds; round += 1) {
     await wait(everyMs);
@@ -854,9 +872,21 @@ export async function readBackPending(client, path, requestId, { wait, everyMs =
       return { answer };
     } catch (error) {
       if (stale()) return { stale: true };
-      const next = pendingRequestId(error);
-      if (next === null) return { error };
-      id = next;
+      const next = pendingRequestId(error, expectedCode);
+      if (next !== null) {
+        id = next;
+        continue;
+      }
+      if (transientReadFailure(error)) {
+        const record = /** @type {any} */ (error);
+        console.warn('[bo] rilettura in coda non riuscita, riprovo', {
+          code: typeof record?.code === 'string' ? record.code : 'UNKNOWN',
+          status: typeof record?.status === 'number' ? record.status : null,
+          requestId: id,
+        });
+        continue;
+      }
+      return { error };
     }
   }
   return { pending: true, requestId: id };

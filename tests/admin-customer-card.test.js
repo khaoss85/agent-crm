@@ -3966,3 +3966,30 @@ test('composer AI: a draft still queued after a minute says so in Italian and Ge
   assert.equal(client.reads.length, 21);
   assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì.');
 });
+
+// Review #664 P1: a transient read failure kept the draft request, never a new POST.
+test('composer AI: a transient read-back failure keeps reading the same queued draft', async () => {
+  const inner = pendingDraftClient({ readyAfter: 2 });
+  let failed = false;
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    reads: inner.reads,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/customer-hub/messages/draft?requestId=') && !failed) {
+        failed = true;
+        inner.reads.push(path);
+        throw Object.assign(new Error('Bad Gateway'), { status: 502, code: 'UNKNOWN' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer(30);
+  assert.equal(client.drafts.length, 1, 'one POST only');
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì.', 'the ready draft lands after the hiccup');
+  assert.ok(!panel.textContent.includes('Bad Gateway'));
+});

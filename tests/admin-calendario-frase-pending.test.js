@@ -19,8 +19,11 @@ const ENGLISH = 'Calendar phrase pending: poll ?requestId, do not resubmit';
 const DRAFT = { teamMemberId: 'marco', startsAt: '2026-10-22T12:00:00.000Z', endsAt: '2026-10-22T12:30:00.000Z' };
 const pending = () => Object.assign(new Error(ENGLISH), { status: 504, code: 'BO_PHRASE_PENDING', requestId: 'req-1' });
 
-/** @param {{readyAfter?: number}} options reads that stay pending before the draft is ready */
-function phraseClient({ readyAfter = 1 } = {}) {
+/**
+ * @param {{readyAfter?: number, readFailures?: Array<any>, postError?: any}} options reads that stay
+ *   pending before the draft is ready; errors the first reads throw instead; the POST's own refusal
+ */
+function phraseClient({ readyAfter = 1, readFailures = [], postError = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -28,9 +31,10 @@ function phraseClient({ readyAfter = 1 } = {}) {
       enforceAdminWriteGate(path, options);
       const method = options.method ?? 'GET';
       calls.push({ path, method });
-      if (path === '/api/appointments/phrase' && method === 'POST') throw pending();
+      if (path === '/api/appointments/phrase' && method === 'POST') throw postError ?? pending();
       if (path.startsWith('/api/appointments/phrase?requestId=')) {
         const reads = calls.filter((call) => call.path.startsWith('/api/appointments/phrase?requestId=')).length;
+        if (reads <= readFailures.length) throw readFailures[reads - 1];
         if (reads < readyAfter) throw pending();
         return { draft: DRAFT, dryRun: false, spaceId: 'locale' };
       }
@@ -56,11 +60,13 @@ async function search(view, mount) {
   mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi').dispatch('click');
 }
 
-test('pendingRequestId reads any *_PENDING code carrying a requestId', () => {
-  assert.equal(pendingRequestId(pending()), 'req-1');
-  assert.equal(pendingRequestId({ code: 'BO_DRAFT_PENDING', requestId: 'r2' }), 'r2');
-  assert.equal(pendingRequestId({ code: 'BO_PHRASE_PENDING' }), null, 'no id, nothing to read back');
-  assert.equal(pendingRequestId({ code: 'BO_PHRASE_STATUS_FAILED', requestId: 'r3' }), null);
+test('pendingRequestId reads only the route own queued code with a requestId (review #664)', () => {
+  assert.equal(pendingRequestId(pending(), 'BO_PHRASE_PENDING'), 'req-1');
+  assert.equal(pendingRequestId({ code: 'BO_DRAFT_PENDING', requestId: 'r2' }, 'BO_DRAFT_PENDING'), 'r2');
+  assert.equal(pendingRequestId({ code: 'BO_DRAFT_PENDING', requestId: 'r2' }, 'BO_PHRASE_PENDING'), null, 'another route code is not ours');
+  assert.equal(pendingRequestId({ code: 'BO_CLAIM_PENDING', requestId: 'r4' }, 'BO_PHRASE_PENDING'), null, 'an unrelated *_PENDING stays a refusal');
+  assert.equal(pendingRequestId({ code: 'BO_PHRASE_PENDING' }, 'BO_PHRASE_PENDING'), null, 'no id, nothing to read back');
+  assert.equal(pendingRequestId({ code: 'BO_PHRASE_STATUS_FAILED', requestId: 'r3' }, 'BO_PHRASE_PENDING'), null);
 });
 
 test('a queued phrase says «Sto cercando…» while it is read back', async () => {
@@ -111,4 +117,74 @@ test('a phrase still queued after a minute says so in Italian, and Riprova reads
   assert.equal(reads(client).length, PHRASE_RESUME_ROUNDS + 1);
   assert.ok(reads(client).at(-1).path.endsWith('requestId=req-1'), 'the same request id');
   assert.ok(mount.querySelector('.cal-draft'), 'the draft paints once ready');
+});
+
+// Review #664 P1: one transient read failure ended the resume with «Ricerca
+// non riuscita» and lost the requestId.
+test('a transient read-back failure keeps reading the same request', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    readyAfter: 3,
+    readFailures: [
+      Object.assign(new Error('Gateway Timeout'), { status: 504, code: 'UNKNOWN' }),
+      Object.assign(new Error('Failed to fetch'), { code: 'UNKNOWN' }),
+    ],
+  });
+  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush(40);
+  assert.equal(posts(client).length, 1, 'never a second POST');
+  assert.equal(reads(client).length, 3, 'read again after the hiccups');
+  assert.ok(reads(client).every((call) => call.path.endsWith('requestId=req-1')));
+  assert.ok(mount.querySelector('.cal-draft'), 'the ready draft paints');
+  assert.ok(!mount.textContent.includes('Ricerca non riuscita'));
+});
+
+test('a final refusal during the read-back ends it in Italian (AI off)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    readyAfter: 5,
+    readFailures: [Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'LLM_SPACE_DISABLED' })],
+  });
+  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush(30);
+  assert.equal(reads(client).length, 1, 'AI off is final, not read again');
+  assert.ok(mount.textContent.includes('L’AI è spenta in questo spazio'), mount.textContent);
+  assert.ok(!mount.textContent.includes('Calendar phrase refused'));
+});
+
+// Review #664 P2: Riprova resumed the old request under the live, edited phrase.
+test('Riprova resumes the request with the phrase that asked it, not a later edit', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({ readyAfter: PHRASE_RESUME_ROUNDS + 1 });
+  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush(120);
+  const field = mount.querySelector('textarea[name="phrase"]');
+  field.value = 'trova 60 minuti con sara venerdì';
+  field.dispatch('input');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'phrase-resume').dispatch('click');
+  await flush(30);
+  assert.equal(posts(client).length, 1, 'the edit is not POSTed by Riprova');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').value, 'trova 30 minuti con marco giovedì',
+    'the draft paints under the phrase that asked it');
+});
+
+// Review #664 P2: only the route's queued code is a queue.
+test('an unrelated *_PENDING refusal on the POST is never read back', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({
+    postError: Object.assign(new Error('Claim pending elsewhere'), { status: 409, code: 'BO_CLAIM_PENDING', requestId: 'trace-1' }),
+  });
+  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush(20);
+  assert.equal(reads(client).length, 0, 'no read-back loop on a refusal');
+  assert.ok(!mount.textContent.includes('Sto cercando'), 'the card does not pretend to wait');
+  assert.ok(!mount.textContent.includes('Claim pending elsewhere'), 'never the English message');
 });

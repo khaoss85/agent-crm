@@ -1379,7 +1379,7 @@ export function createCustomerCardView(deps) {
               body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
             });
           } catch (error) {
-            requestId = pendingRequestId(error);
+            requestId = pendingRequestId(error, 'BO_DRAFT_PENDING');
             if (requestId === null) throw error;
           }
         }
@@ -1387,6 +1387,7 @@ export function createCustomerCardView(deps) {
           if (stale()) return;
           say('Scrivo ancora… la bozza arriva tra poco.');
           const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
+            expectedCode: 'BO_DRAFT_PENDING',
             wait, everyMs: 3000, rounds: 20, stale,
           });
           if (read.stale) return;

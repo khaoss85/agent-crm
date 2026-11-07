@@ -952,7 +952,7 @@ export function createCalendarioView(deps) {
     aiOff: new Set(),
     /** The phrase POST was queued and is being read back: the card says «Sto cercando…». */
     phraseWaiting: false,
-    /** The queued phrase request still pending after the read-back, for Riprova (never a new POST). @type {string|null} */
+    /** The queued phrase request still pending after the read-back and the phrase that asked it, for Riprova (never a new POST). @type {{requestId: string, phrase: string}|null} */
     phrasePending: null,
     /** Live manual form nodes, so a slot Conferma books the claim the operator sees. @type {any} */
     manualNodes: null,
@@ -2154,9 +2154,12 @@ export function createCalendarioView(deps) {
     if (!state.aiLoading && state.phrasePending) {
       // Still queued after the read-back: Riprova reads the SAME request
       // back, never a new POST (the pilot parses each POST again).
-      const pendingId = state.phrasePending;
+      // The phrase that produced the request rides with it (review #664):
+      // an edit after the timeout never paints that request's draft under
+      // other words — Riprova restores the asked phrase with its answer.
+      const queued = state.phrasePending;
       const retry = el(doc, 'button', { className: 'small secondary', text: 'Riprova', attrs: { type: 'button', 'data-action': 'phrase-resume' } });
-      retry.addEventListener('click', () => void submitAi(state.phrase, { resumeId: pendingId }));
+      retry.addEventListener('click', () => void submitAi(queued.phrase, { resumeId: queued.requestId }));
       panel.appendChild(retry);
     }
     if (state.draft) panel.appendChild(renderDraft(state.draft));
@@ -2230,13 +2233,14 @@ export function createCalendarioView(deps) {
           body: { spaceId: readSpace(), phrase: state.phrase },
         });
       } catch (error) {
-        requestId = pendingRequestId(error);
+        requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
         if (requestId === null) throw error;
       }
     }
     state.phraseWaiting = true;
     renderAll();
     const read = await readBackPending(client, '/api/appointments/phrase', requestId, {
+      expectedCode: 'BO_PHRASE_PENDING',
       wait, everyMs: PHRASE_RESUME_EVERY_MS, rounds: PHRASE_RESUME_ROUNDS, stale: () => seq !== phraseSeq,
     });
     if (read.stale) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
@@ -2367,7 +2371,7 @@ export function createCalendarioView(deps) {
         // Never «Ricerca non riuscita» on an answer that may be ready: say
         // it is slow, and offer Riprova on the same request.
         console.warn('bo-calendario phrase still pending:', `requestId=${String(record.requestId ?? '')}`, `spaceId=${readSpace()}`);
-        state.phrasePending = typeof record.requestId === 'string' ? record.requestId : null;
+        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: state.phrase } : null;
         state.aiNote = 'La ricerca sta impiegando più del previsto.';
         return;
       }
