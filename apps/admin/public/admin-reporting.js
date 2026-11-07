@@ -186,7 +186,13 @@ export function downloadCsv({ doc, filename, content }) {
   const anchor = doc.createElement('a');
   anchor.setAttribute('href', url);
   anchor.setAttribute('download', filename);
+  // Production checklist 30/10: «Esporta CSV» must download. A detached
+  // anchor is ignored by some browsers (Firefox), so the link joins the
+  // page for the click and leaves right after.
+  const host = doc.body ?? null;
+  if (host && typeof host.appendChild === 'function') host.appendChild(anchor);
   if (typeof anchor.click === 'function') anchor.click();
+  if (host && anchor.parentNode === host && typeof host.removeChild === 'function') host.removeChild(anchor);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 /**
@@ -329,7 +335,7 @@ export function reportingSummary(rows) {
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
@@ -426,21 +432,37 @@ export function createReportingView(deps) {
   }
 
   function pill(label, active, onPick) {
-    const button = el(doc, 'button', { class: active ? 'small primary' : 'small secondary', text: label });
+    const button = el(doc, 'button', { class: `ui-chip bo-rep-person${active ? ' active' : ''}`, text: label });
+    button.setAttribute('type', 'button');
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
     button.setAttribute('data-active', active ? 'true' : 'false');
     button.addEventListener('click', onPick);
     return button;
   }
 
   function dashboardFilters(section, model) {
-    const filters = el(doc, 'div', { class: 'actions' });
-    for (const option of periodOptions()) {
-      filters.appendChild(pill(option.label, dashboard.period === option.value, () => {
-        dashboard.period = option.value;
+    // Prototype 09: the filters sit beside the title — the period as a
+    // segmented control (one option active), then «Tutti» and one round
+    // sigla per person. Months, not Settimana/Mese/Trimestre: the registry
+    // groups exact close dates and the dashboard buckets them per month,
+    // so a week or quarter view would be a number nobody computed.
+    const filters = el(doc, 'div', { class: 'bo-rep-filters' });
+    const periods = uiSegmented(doc, periodOptions().map((option) => ({
+      id: option.value, label: option.label, active: dashboard.period === option.value,
+    })));
+    periods.setAttribute('aria-label', 'Periodo');
+    for (const option of periods.childNodes) {
+      const value = option.getAttribute('data-seg');
+      option.setAttribute('data-active', dashboard.period === value ? 'true' : 'false');
+      option.addEventListener('click', () => {
+        dashboard.period = String(value);
         renderReporting();
-      }));
+      });
     }
-    filters.appendChild(pill('Tutti', dashboard.owner === '', () => {
+    filters.appendChild(periods);
+    const people = el(doc, 'div', { class: 'bo-rep-people' });
+    filters.appendChild(people);
+    people.appendChild(pill('Tutti', dashboard.owner === '', () => {
       dashboard.owner = '';
       renderReporting();
     }));
@@ -456,7 +478,7 @@ export function createReportingView(deps) {
       sigla.setAttribute('title', String(owner));
       sigla.setAttribute('aria-label', String(owner));
       sigla.setAttribute('data-owner', String(owner));
-      filters.appendChild(sigla);
+      people.appendChild(sigla);
     }
     section.appendChild(filters);
   }
@@ -568,10 +590,49 @@ export function createReportingView(deps) {
     return panel;
   }
 
+  /**
+   * «Preventivi» as in prototype 09: per stage the name with `<n> ·
+   * <importo>` on one line and a full-width bar under it. No percentage
+   * inside the bars: the stages are where each quote sits today, not a
+   * cohort followed from sending to payment, so a «% dall'invio» would be
+   * a conversion rate nobody measured.
+   */
+  function funnelCard(section, model) {
+    const panel = el(doc, 'section', { class: 'panel bo-preventivi' });
+    const head = el(doc, 'div', { class: 'bo-rep-head' });
+    head.appendChild(el(doc, 'h3', { text: 'Preventivi' }));
+    head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: 'dall’invio al pagamento' }));
+    panel.appendChild(head);
+    const max = Math.max(0, ...model.funnel.map((entry) => entry.count));
+    for (const entry of model.funnel) {
+      const row = el(doc, 'div', { class: 'bo-rep-step' });
+      const line = el(doc, 'div', { class: 'bo-rep-step-line' });
+      line.appendChild(el(doc, 'span', { class: 'bo-rep-step-name', text: entry.label }));
+      line.appendChild(el(doc, 'span', { class: 'bo-rep-step-value', text: `${entry.count} · ${formatMoney(entry.minor, model.currency)}` }));
+      row.appendChild(line);
+      const track = el(doc, 'div', { class: 'bo-rep-step-track' });
+      const fill = el(doc, 'div', { class: 'bo-rep-step-fill' });
+      fill.setAttribute('style', `width:${barWidth(entry.count, max)};`);
+      track.appendChild(fill);
+      row.appendChild(track);
+      panel.appendChild(row);
+    }
+    section.appendChild(panel);
+    return panel;
+  }
+
   function forecastPanel(section, model) {
     const forecast = model.forecast;
     const panel = el(doc, 'div', { class: 'pipeline-forecast' });
-    panel.appendChild(el(doc, 'h3', { text: `Previsione di ${model.periodLabel}` }));
+    // Prototype 09: the title on the left, «Obiettivo <importo>» on the
+    // right. Without a goal the right side stays empty and the note below
+    // says how to set one.
+    const head = el(doc, 'div', { class: 'bo-rep-head' });
+    head.appendChild(el(doc, 'h3', { text: `Previsione di ${model.periodLabel}` }));
+    if (Number.isInteger(forecast.targetMinor) && forecast.targetMinor >= 0) {
+      head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: `Obiettivo ${formatMoney(forecast.targetMinor, model.currency)}` }));
+    }
+    panel.appendChild(head);
     const scale = Math.max(
       forecast.targetMinor ?? 0,
       forecast.bestMinor,
@@ -606,22 +667,27 @@ export function createReportingView(deps) {
       'background:var(--accord);opacity:0.45;',
       'background:repeating-linear-gradient(45deg,var(--stripe) 0 6px,transparent 6px 12px);',
     ];
+    // Each legend voice carries its amount, as in the prototype («Chiuse
+    // 78.850 €», «Probabili +34.750 €», «Se chiudi tutto +23.170 €»).
+    const amounts = [
+      formatMoney(forecast.closedMinor, model.currency),
+      `+${formatMoney(forecast.probableMinor, model.currency)}`,
+      `+${formatMoney(forecast.bestMinor, model.currency)}`,
+    ];
     FORECAST_LEGEND.forEach((label, index) => {
       const dot = el(doc, 'span');
       dot.setAttribute('style', `display:inline-block;width:10px;height:10px;border-radius:99px;margin-right:6px;${swatches[index]}`);
       const item = el(doc, 'span', { text: label });
-      item.setAttribute('style', 'margin-right:14px;font-size:13px;');
+      item.setAttribute('style', 'margin-right:4px;font-size:13px;');
+      const amount = el(doc, 'strong', { class: 'bo-rep-amount', text: amounts[index] });
       const wrap = el(doc, 'span');
-      wrap.setAttribute('style', 'display:inline-flex;align-items:center;');
+      wrap.setAttribute('style', 'display:inline-flex;align-items:center;margin-right:16px;');
       wrap.appendChild(dot);
       wrap.appendChild(item);
+      wrap.appendChild(amount);
       legend.appendChild(wrap);
     });
     panel.appendChild(legend);
-    panel.appendChild(el(doc, 'p', {
-      class: 'forecast-total',
-      text: `Chiuse ${formatMoney(forecast.closedMinor, model.currency)} · probabili +${formatMoney(forecast.probableMinor, model.currency)} · se chiudi tutto +${formatMoney(forecast.bestMinor, model.currency)}`,
-    }));
     // On-track status against the obiettivo (C13): rendered only when the
     // payload carries integer amounts and a target, never invented.
     const status = forecastStatus(forecast, model.currency);
@@ -631,14 +697,25 @@ export function createReportingView(deps) {
     // The stima line is the acceptance contract: the number below is
     // arithmetic over history, never a promise.
     panel.appendChild(el(doc, 'p', { class: 'lede', text: `✦ ${forecast.label}: ${forecast.method}` }));
-    panel.appendChild(el(doc, 'p', { class: 'lede', text: forecast.note }));
+    // The goal already reads in the head; the note stays only when there is
+    // no goal, to say how to set one.
+    if (!(Number.isInteger(forecast.targetMinor) && forecast.targetMinor >= 0)) {
+      panel.appendChild(el(doc, 'p', { class: 'lede', text: forecast.note }));
+    }
     section.appendChild(panel);
     return panel;
   }
 
   function teamTable(section, model) {
-    const panel = el(doc, 'section', { class: 'panel' });
-    panel.appendChild(el(doc, 'h3', { text: `Team e vendite · ${model.periodLabel}` }));
+    const panel = el(doc, 'section', { class: 'panel bo-team-vendite' });
+    // Prototype 09: «Team e vendite» with the period on the right. The
+    // columns are the registry's (quotes, open value, won, rate): calls,
+    // follow-ups, appointments and reply time have no declared metric yet.
+    const head = el(doc, 'div', { class: 'bo-rep-head' });
+    head.appendChild(el(doc, 'h3', { text: 'Team e vendite' }));
+    const periodText = String(model.periodLabel ?? '');
+    head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: periodText.charAt(0).toUpperCase() + periodText.slice(1) }));
+    panel.appendChild(head);
     if ((model.team ?? []).length === 0) {
       panel.appendChild(el(doc, 'div', { class: 'empty', text: 'Nessun preventivo in questa vista.' }));
       section.appendChild(panel);
@@ -671,14 +748,16 @@ export function createReportingView(deps) {
   }
 
   function insightsPanel(section, model) {
-    const panel = el(doc, 'section', { class: 'panel' });
-    panel.appendChild(el(doc, 'p', { class: 'kicker', text: '✦ Cosa noto' }));
+    // Prototype 09: the violet AI card, one observation per row.
+    const panel = el(doc, 'section', { class: 'panel bo-cosa-noto' });
+    panel.appendChild(el(doc, 'p', { class: 'bo-cosa-noto-title', text: '✦ Cosa noto' }));
     for (const insight of model.insights ?? []) {
-      panel.appendChild(el(doc, 'p', { class: 'lede', text: insight.text }));
+      panel.appendChild(el(doc, 'p', { class: 'bo-cosa-noto-item', text: insight.text }));
     }
     // The proposal is revealed client-side with zero requests: there is no
     // write surface behind it, so it can propose but never reassign by itself.
-    const propose = el(doc, 'button', { class: 'primary', text: 'Proponi ridistribuzione dei lead' });
+    const propose = el(doc, 'button', { class: 'ui-btn ui-btn-small bo-cosa-noto-cta', text: 'Proponi ridistribuzione dei lead' });
+    propose.setAttribute('type', 'button');
     propose.setAttribute('data-action', 'proponi-ridistribuzione');
     propose.addEventListener('click', () => {
       // No double reveal: a second click changes nothing.
@@ -711,15 +790,17 @@ export function createReportingView(deps) {
    * visual system through `el` (legacy `secondary` maps to `ui-btn`).
    */
   function codePanel(section, model) {
-    const panel = el(doc, 'section', { class: 'panel' });
-    panel.appendChild(el(doc, 'p', { class: 'kicker', text: 'Questo modulo è codice tuo' }));
+    const panel = el(doc, 'section', { class: 'panel bo-codice' });
+    panel.appendChild(el(doc, 'p', { class: 'bo-codice-title', text: 'Questo modulo è codice tuo' }));
+    // Prototype 09: the module's files in a dark code block, the folder
+    // first and its files indented under it.
+    const tree = el(doc, 'pre', { class: 'bo-codice-tree' });
+    REPORTING_CODE_FILES.forEach((file, index) => {
+      tree.appendChild(el(doc, 'code', { text: index === 0 ? file : `  ${file}` }));
+    });
+    panel.appendChild(tree);
     panel.appendChild(el(doc, 'p', { class: 'lede', text: REPORTING_CODE_LEDE }));
-    const list = el(doc, 'ul');
-    for (const file of REPORTING_CODE_FILES) {
-      list.appendChild(el(doc, 'li', { text: file }));
-    }
-    panel.appendChild(list);
-    const prompt = el(doc, 'pre');
+    const prompt = el(doc, 'pre', { class: 'bo-codice-prompt' });
     prompt.appendChild(el(doc, 'code', { text: REPORTING_PROMPT_TEXT }));
     panel.appendChild(prompt);
     const actions = el(doc, 'div', { class: 'actions' });
@@ -742,6 +823,10 @@ export function createReportingView(deps) {
     csv.setAttribute('data-action', 'esporta-csv');
     csv.addEventListener('click', () => {
       download({ doc, filename: model.csv.filename, content: model.csv.content });
+      // Spec: the export shows a confirmation, once.
+      if (csv.getAttribute('data-done') === 'true') return;
+      csv.setAttribute('data-done', 'true');
+      panel.appendChild(el(doc, 'p', { class: 'lede', text: `CSV scaricato: ${model.csv.filename}.` }));
     });
     actions.appendChild(csv);
     panel.appendChild(actions);
@@ -749,7 +834,7 @@ export function createReportingView(deps) {
     return panel;
   }
 
-  async function renderDashboard(host) {
+  async function renderDashboard(host, filtersHost = host) {
     let model = null;
     try {
       model = await client.request(dashboardPath({ period: dashboard.period, owner: dashboard.owner || null }));
@@ -772,7 +857,7 @@ export function createReportingView(deps) {
       }));
       return;
     }
-    dashboardFilters(host, model);
+    dashboardFilters(filtersHost, model);
     if (model.truncated) {
       host.appendChild(el(doc, 'p', { class: 'lede', text: 'Dati parziali: oltre 1000 righe lette, i totali sono troncati.' }));
     }
@@ -795,9 +880,7 @@ export function createReportingView(deps) {
     const tag = (panel, cls) => { if (panel && panel.classList) panel.classList.add(cls); };
     const eur = (minor) => formatMoney(minor, model.currency);
     tag(channelsCard(grid, model), 'bo-rep-wide');
-    tag(barChart(grid, 'Preventivi', 'dall\u2019invio al pagamento', model.funnel.map((entry) => ({
-      label: entry.label, minor: entry.count, text: `${entry.count} · ${eur(entry.minor)}`,
-    }))), 'bo-rep-narrow');
+    tag(funnelCard(grid, model), 'bo-rep-narrow');
     tag(barChart(grid, 'Valore per fase', 'valore aperto per fase', model.valueByStage.map((entry) => ({
       label: entry.label, minor: entry.minor, text: eur(entry.minor),
     }))), 'bo-rep-third');
@@ -816,7 +899,7 @@ export function createReportingView(deps) {
   async function renderReporting() {
     const token = ++renderToken;
     clear();
-    mount.appendChild(el(doc, 'p', { class: 'empty', text: 'Loading…' }));
+    mount.appendChild(el(doc, 'p', { class: 'empty', text: 'Sto preparando il report…' }));
     let rows = null;
     let loadError = null;
     try {
@@ -851,6 +934,9 @@ export function createReportingView(deps) {
     if (token !== renderToken) return;
     clear();
     const dashHost = el(doc, 'div', { class: 'bo-rep' });
+    // Prototype 09: title block on the left, period and person filters on
+    // the right; they wrap under the title on narrow screens.
+    const header = el(doc, 'div', { class: 'bo-rep-header' });
     const top = el(doc, 'div', { class: 'bo-rep-top' });
     top.appendChild(el(doc, 'p', { class: 'kicker', text: 'Modulo personalizzato' }));
     top.appendChild(el(doc, 'h1', { class: 'bo-rep-title', text: 'Reporting' }));
@@ -862,8 +948,9 @@ export function createReportingView(deps) {
       badges.appendChild(el(doc, 'span', { class: 'badge', text: badge }));
     }
     top.appendChild(badges);
-    dashHost.appendChild(top);
-    await renderDashboard(dashHost);
+    header.appendChild(top);
+    dashHost.appendChild(header);
+    await renderDashboard(dashHost, header);
     if (token !== renderToken) return;
     mount.appendChild(dashHost);
     const panel = kicker('Reporting', 'Righe del report');
@@ -883,7 +970,8 @@ export function createReportingView(deps) {
     if (rows === null) {
       panel.appendChild(el(doc, 'div', {
         class: 'empty',
-        text: 'Reporting non composto in questo spazio: nessun dato inventato. Crea il bundle con + Nuovo modulo.',
+        // Production checklist 30/10: no «non composto» on this screen.
+        text: 'Le righe del report non ci sono ancora in questo spazio: nessun dato inventato. Aggiungile con + Nuovo modulo.',
       }));
       nuovoModuloButton(panel);
       mount.appendChild(panel);
