@@ -6,7 +6,7 @@
  * workspace login (`/w/<spazio>/`, served by the pilot from this
  * framework's export) paint the same "01 Login" screen of the Accordo
  * Backoffice prototype: the dark story column («Ogni conversazione, un
- * solo cliente.») beside «Bentornata» with «Continua con Google».
+ * solo cliente.») beside «Rieccoti» with «Continua con Google».
  *
  * Single source on purpose: the story section, the greeting header and
  * the Google entry live here as the only copy. `backofficeLoginHtml()`
@@ -87,13 +87,13 @@ export function loginStoryHtml() {
     '          <p class="lede">Instagram, email, telefono e WhatsApp confluiscono in un&#x2019;unica scheda. L&#x2019;AI tiene il filo, tu decidi.</p>',
     '        </div>',
     '        <div class="login-thread" aria-hidden="true">',
-    '          <div class="login-msg"><span class="chan" style="background:#fde4ee;color:#a3184d">IG</span><span class="text">Fate anche consulenze a Milano?</span><time>ven</time></div>',
-    '          <div class="login-msg"><span class="chan" style="background:#ecebe4;color:#171912;font-size:11px">@</span><span class="text">Info ristrutturazione cucina</span><time>09:10</time></div>',
-    '          <div class="login-msg"><span class="chan" style="background:#efe9da;color:#5a4a1a;font-size:9px">TEL</span><span class="text">Chiamata in entrata · 6:12</span><time>09:47</time></div>',
-    '          <div class="login-msg"><span class="chan" style="background:#dcf8e6;color:#0b6b33">WA</span><span class="text">Giovedì alle 15 va benissimo!</span><time>10:20</time></div>',
+    '          <div class="login-msg"><span class="chan" style="background:#fde4ee;color:#a3184d">IG</span><span class="text">Posso provare una lezione gratuita?</span><time>ven</time></div>',
+    '          <div class="login-msg"><span class="chan" style="background:#ecebe4;color:#171912;font-size:11px">@</span><span class="text">Info abbonamento mensile</span><time>09:10</time></div>',
+    '          <div class="login-msg"><span class="chan" style="background:#efe9da;color:#5a4a1a;font-size:9px">TEL</span><span class="text">Chiamata in entrata · 3:12</span><time>09:47</time></div>',
+    '          <div class="login-msg"><span class="chan" style="background:#dcf8e6;color:#0b6b33">WA</span><span class="text">Giovedì alle 18 va benissimo!</span><time>10:20</time></div>',
     '          <div class="login-card">',
     '            <span class="avatar">GR</span>',
-    '            <div class="who"><strong>Giulia Romano</strong><small>Prima call giovedì 15:00 con Marco</small></div>',
+    '            <div class="who"><strong>Giulia Romano</strong><small>Lezione di prova giovedì 18:00 con coach Marco</small></div>',
     '            <span class="dot"></span>',
     '          </div>',
     '        </div>',
@@ -102,14 +102,14 @@ export function loginStoryHtml() {
 }
 
 /**
- * The «Accedi» / «Bentornata» header above the sign-in entries,
+ * The «Accedi» / «Rieccoti» header above the sign-in entries,
  * byte-shared with the backoffice page.
  */
 export function loginGreetingHtml() {
   return [
     '          <div>',
     '            <p class="login-eyebrow">Accedi</p>',
-    '            <h2>Bentornata</h2>',
+    '            <h2>Rieccoti</h2>',
     '            <p class="lede">Ritrova clienti, conversazioni e agenda del team dove li hai lasciati.</p>',
     '          </div>',
   ].join('\n');
