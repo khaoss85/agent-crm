@@ -40,6 +40,9 @@ import {
   touchedTestDistances,
   nearestFirst,
   fillNearest,
+  runTestShards,
+  shardCountFor,
+  shardTests,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -1668,4 +1671,87 @@ test('the fill never passes the file budget and never repeats a planned test', (
   assert.deepEqual(fillNearest(['tests/a.test.js', 'tests/g.test.js'], ranked, 3), ['tests/b.test.js']);
   assert.deepEqual(fillNearest(['tests/g.test.js'], ranked, 1), []);
   assert.deepEqual(fillNearest([], ranked, 10), ranked);
+});
+
+test('shardCountFor keeps small runs on one part and caps large ones', () => {
+  // agent-crm#621: an outbox change selecting 235 tests ran as one
+  // sequential process and timed out past 270 s with no test failing.
+  assert.equal(shardCountFor(0), 1);
+  assert.equal(shardCountFor(1), 1);
+  assert.equal(shardCountFor(12), 1);
+  assert.equal(shardCountFor(13), 2);
+  assert.equal(shardCountFor(24), 2);
+  assert.equal(shardCountFor(25), 3);
+  assert.equal(shardCountFor(50), 4);
+  assert.equal(shardCountFor(235), 4);
+});
+
+test('shardTests spreads round-robin with no loss and no duplication', () => {
+  const tests = ['a', 'b', 'c', 'd', 'e'].map((name) => `tests/${name}.test.js`);
+  assert.deepEqual(shardTests(tests, 2), [
+    ['tests/a.test.js', 'tests/c.test.js', 'tests/e.test.js'],
+    ['tests/b.test.js', 'tests/d.test.js'],
+  ]);
+  assert.deepEqual(shardTests(tests, 1), [tests]);
+  assert.deepEqual(shardTests([], 4), []);
+  assert.deepEqual(shardTests(['tests/a.test.js'], 4), [['tests/a.test.js']]);
+  const many = Array.from({ length: 50 }, (_, index) => `tests/t${String(index).padStart(2, '0')}.test.js`);
+  const shards = shardTests(many, 4);
+  assert.equal(shards.length, 4);
+  assert.deepEqual(shards.map((shard) => shard.length), [13, 13, 12, 12]);
+  assert.deepEqual(shards.flat().sort(), many);
+});
+
+/** A scratch directory with the given test files, removed afterwards. */
+const scratchTests = (/** @type {Record<string, string>} */ files) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-shards-'));
+  for (const [name, content] of Object.entries(files)) writeFileSync(join(dir, name), content);
+  return dir;
+};
+
+test('runTestShards runs the parts together and passes', async () => {
+  const dir = scratchTests({
+    'a.test.js': "import test from 'node:test';\ntest('a passes', () => {});\n",
+    'b.test.js': "import test from 'node:test';\ntest('b passes', () => {});\n",
+  });
+  try {
+    const result = await runTestShards([['a.test.js'], ['b.test.js']], { timeoutSec: 120, cwd: dir });
+    assert.equal(result.timedOut, false);
+    assert.deepEqual(result.remaining, []);
+    assert.equal(result.status, 0);
+    assert.equal(result.completedShards, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runTestShards fails red when a part fails, without timing out', async () => {
+  const dir = scratchTests({
+    'a.test.js': "import test from 'node:test';\ntest('a passes', () => {});\n",
+    'b.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('b fails', () => { assert.equal(1, 2); });\n",
+  });
+  try {
+    const result = await runTestShards([['a.test.js'], ['b.test.js']], { timeoutSec: 120, cwd: dir });
+    assert.equal(result.timedOut, false);
+    assert.deepEqual(result.remaining, []);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.completedShards, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runTestShards times out naming the files that remained', async () => {
+  const dir = scratchTests({
+    'slow.test.js': "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n",
+  });
+  try {
+    const result = await runTestShards([['slow.test.js']], { timeoutSec: 3, cwd: dir });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['slow.test.js']);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.completedShards, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
