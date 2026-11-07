@@ -2202,11 +2202,13 @@ async function latestWhatsAppInboundAt(app, subject) {
   const timeline = await app.readCustomerTimeline({ resource: subject.resource, id: subject.id });
   const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
   let latest = null;
+  let latestMs = -1;
   for (const row of items) {
     if (row?.entry !== 'message' || row?.channel !== 'whatsapp' || row?.direction !== 'inbound') continue;
     const at = typeof row?.occurredAt === 'string' ? row.occurredAt : null;
-    if (at === null || !Number.isFinite(Date.parse(at))) continue;
-    if (latest === null || at > latest) latest = at;
+    const ms = at === null ? NaN : Date.parse(at);
+    if (!Number.isFinite(ms)) continue;
+    if (ms > latestMs) { latestMs = ms; latest = at; }
   }
   return latest;
 }
