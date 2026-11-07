@@ -1479,8 +1479,23 @@ select.bo-spazi-input { flex: none; }
 .plist .ui-hero-text { font-size: 15px; }
 .plist .ui-hero-tiles .ui-chip { width: 64px; height: 64px; display: grid; place-items: center; padding: 0; border-radius: 14px; font-size: 13px; }
 .plist .ui-hero-tiles .ui-chip:nth-child(even) { transform: translateY(12px); width: 52px; height: 52px; }
-/* No carousel controls behind the dots: the hero is one static banner. */
-.plist .ui-hero-dots { display: none; }
+/* Carousel controls like the prototype (backlog:34672b9f5a1f, spec C12):
+ * round see-through arrows on the panel's sides, the dots in their own row
+ * under it — the active one wide and dark, the others small and grey. */
+.plist .ui-hero-eyebrow { text-transform: uppercase; opacity: .75; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"], .plist .ui-hero > .ui-btn[aria-label="Successiva"] {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; min-height: 0; padding: 0;
+  display: grid; place-items: center; border: none; border-radius: 50%; background: rgba(255, 253, 247, .14);
+  color: var(--paper); box-shadow: none; font-size: 20px; line-height: 1; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"] { left: 14px; }
+/* The library chevron points down: turned into ‹ and ›. */
+.plist .ui-hero > .ui-btn[aria-label="Precedente"] .ui-icon { transform: rotate(90deg); }
+.plist .ui-hero > .ui-btn[aria-label="Successiva"] .ui-icon { transform: rotate(-90deg); }
+.plist .ui-hero > .ui-btn[aria-label="Successiva"] { right: 14px; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"]:hover, .plist .ui-hero > .ui-btn[aria-label="Successiva"]:hover { background: rgba(255, 253, 247, .24); }
+.plist .ui-hero-dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+.plist .ui-hero-dot { width: 6px; height: 6px; min-height: 0; padding: 0; border: none; border-radius: 99px; background: var(--line); font-size: 0; line-height: 0; color: transparent; cursor: pointer; box-shadow: none; transition: width .2s; }
+.plist .ui-hero-dot.on { width: 22px; background: var(--ink); }
 .plist .ui-conn-head { align-items: center; margin: 40px 0 14px; }
 .plist .ui-conn-head h3 { font-size: 18px; letter-spacing: -.01em; }
 .plist .ui-conn-count { padding: 1px 7px; border-radius: 99px; background: var(--surface-soft); }
@@ -1492,6 +1507,28 @@ select.bo-spazi-input { flex: none; }
 .plist .ui-conn-lines + .ui-conn-lines { font-size: 12.5px; color: var(--dim); }
 .plist .ui-conn-state .ui-btn { width: 32px; height: 32px; padding: 0; border-radius: 9px; font-size: 18px; }
 .plist .ui-conn-state .ui-badge { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; font-size: 16px; }
+/* Cards like the prototype: the action sits top-right, the name row carries
+ * the curated mark. */
+.plist .ui-conn-card { align-items: flex-start; }
+.ui-conn-title { display: flex; align-items: center; gap: 6px; }
+.ui-conn-verified { display: inline-grid; place-items: center; width: 15px; height: 15px; border: 1.5px solid var(--dim); border-radius: 50%; color: var(--dim); flex: none; }
+.ui-conn-verified .ui-icon { width: 9px; height: 9px; stroke-width: 3; }
+/* Toolbar like the prototype: the search wears its lens, filter and sort are
+ * bare icon-buttons, the CTA reads «+ Aggiungi» with its chevron. */
+.bo-perso-bar .search.ui-field { padding-left: 34px; background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6a5a' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4'/%3E%3C/svg%3E") no-repeat 12px center / 15px 15px; }
+.bo-perso-bar .ui-conn-menuwrap > .ui-btn { width: 36px; height: 36px; min-height: 0; padding: 0; display: grid; place-items: center; border: none; border-radius: 9px; background: transparent; box-shadow: none; }
+.bo-perso-bar .ui-conn-menuwrap > .ui-btn:hover, .bo-perso-bar .ui-conn-menuwrap > .ui-btn[aria-expanded="true"] { background: var(--line-soft); }
+.bo-perso-bar .ui-btn-cta { display: inline-flex; align-items: center; gap: 6px; }
+.bo-perso-bar .ui-btn-cta .ui-icon { width: 15px; height: 15px; }
+@media (max-width: 700px) {
+  /* On a phone the arrows leave the text alone: they sit together at the
+   * panel's bottom right, the copy keeps the full width. */
+  .plist .ui-hero { padding: 26px 22px 70px; }
+  .plist .ui-hero > .ui-btn[aria-label="Precedente"], .plist .ui-hero > .ui-btn[aria-label="Successiva"] { top: auto; bottom: 18px; transform: none; }
+  .plist .ui-hero > .ui-btn[aria-label="Precedente"] { left: auto; right: 62px; }
+  .plist .ui-hero > .ui-btn[aria-label="Successiva"] { right: 18px; }
+  .plist .ui-hero-title { font-size: 30px; }
+}
 
 /*
  * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
