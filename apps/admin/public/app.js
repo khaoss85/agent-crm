@@ -4,6 +4,7 @@ import { resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
+import { createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -18,6 +19,10 @@ const MOUNTED = isSpaceMount(ADMIN_BASE);
 const boMain = document.querySelector('.bo-main');
 const dashboardView = document.querySelector('#view-dashboard');
 const moduleView = document.querySelector('#view-module');
+// Every view gets its own gated handle on the shared mount: only the routed
+// view can paint, so a late read from a screen already left lands nowhere
+// (admin-navigation.js). The router paints its own screens on moduleView.
+const mountGate = createMountGate(moduleView);
 // Standalone only: the served HTML carries no demo markup, so the demo
 // chrome is rendered here, before any ref below is captured.
 const demoRefs = MOUNTED
@@ -81,8 +86,25 @@ const submissions = createSubmissionController({
 // on the space login — never on the development identity with "not
 // composed" states (a cached page outliving its session). Standalone keeps
 // the local behavior: there is no login to land on.
+/**
+ * The space a kept draft is bound to (review #634): the same active space
+ * every space-scoped read and write uses. Called at run time only, after the
+ * shell's space state is initialized.
+ */
+function draftSpace() {
+  return shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+}
+
 function leaveForSpaceLogin(target) {
   if (typeof target !== 'string' || target === '') return;
+  // backlog:5a40c73e54aa (B4): the page is about to be thrown away — keep
+  // the text typed into the open view so the return from the login offers
+  // it back instead of losing it.
+  try {
+    captureDrafts({ root: moduleView, hash: window.location.hash, space: draftSpace(), storage: window.sessionStorage });
+  } catch {
+    // Keeping a draft is best-effort; leaving for the login must not fail.
+  }
   try {
     // Replace, not assign: the dead shell must not stay in history, or the
     // back button would return to it and bounce forward again.
@@ -143,6 +165,9 @@ const moduleClient = {
       // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
       // and claimId on the error, so the composer reads it back.
       const error = apiFailure(response.status, payload);
+      // A followed login redirect still throws: carry the signal so the
+      // calling view can tell a lost session from a refused write.
+      if (followedLogin) Object.assign(error, { redirected: true });
       if (MOUNTED && !followedLogin) {
         leaveForSpaceLogin(sessionLostTarget({
           status: response.status,
@@ -158,7 +183,12 @@ const moduleClient = {
         // fetch no longer flags (or a host that answered HTML directly).
         leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
       }
-      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+      // A 200 that is not JSON still throws: carry which login-page shape
+      // it was, so the calling view reads it like the shell just did.
+      const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+      if (followedLogin) Object.assign(invalid, { redirected: true });
+      else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
+      throw invalid;
     }
     return payload;
   },
@@ -424,8 +454,9 @@ import { createCatalogView, commercialBlock } from './admin-catalog.js';
 import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
+import { captureDrafts, pendingDraftRoute, restoreDrafts } from './admin-draft-keep.js';
 import { CLIENTI_IMPORT_ROUTE, createCustomerListView } from './admin-clienti.js';
-import { CLIENTI_NUOVO_ROUTE, createCustomerFormView } from './admin-cliente-nuovo.js';
+import { CLIENTI_NUOVO_ROUTE, createCustomerFormView, tabDraftStorage } from './admin-cliente-nuovo.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
@@ -471,7 +502,7 @@ const shellStorage = guardedStorage();
 
 const moduleAdmin = createModuleAdmin({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned(['list', 'new', 'detail']),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -483,7 +514,7 @@ const moduleAdmin = createModuleAdmin({
 
 const pipelineBoard = createPipelineBoard({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('pipeline'),
   client: moduleClient,
   submissions,
   toast,
@@ -501,7 +532,7 @@ const pipelineBoard = createPipelineBoard({
 // while every mutation still goes through the same server actions.
 const offerDetail = createOfferDetail({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('offer-detail'),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -509,7 +540,7 @@ const offerDetail = createOfferDetail({
 
 const quoteView = createQuoteView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned(['quotes', 'quote-detail']),
   client: moduleClient,
   submissions,
   spaceName: () => currentSpaceName(),
@@ -521,7 +552,7 @@ const quoteView = createQuoteView({
 // otherwise the view itself says so.
 const catalogView = createCatalogView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('catalog'),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   // Voce 19c2e22a64a1 (1): the Stato sync badge on the Catalogo tab row
@@ -539,7 +570,7 @@ const catalogView = createCatalogView({
 // section renders only while the server publishes the work package.
 const workView = createWorkView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned(['work', 'work-task']),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -550,7 +581,7 @@ const workView = createWorkView({
 // package.
 const marketingView = createMarketingView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned(['marketing', 'marketing-proposal']),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -561,7 +592,7 @@ const marketingView = createMarketingView({
 // customer-hub package; otherwise the view itself says so.
 const customerCardView = createCustomerCardView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('customer-card'),
   client: moduleClient,
   toast,
   navigate: (hash) => { window.location.hash = hash; },
@@ -585,7 +616,7 @@ const customerCardView = createCustomerCardView({
 // itself never writes. The import stays a separate tool on #/import-clienti.
 const clientiListView = createCustomerListView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('customer-data'),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
@@ -606,11 +637,19 @@ const clientiListView = createCustomerListView({
 // governed import-apply operation as the tool, then lands on the scheda.
 const customerFormView = createCustomerFormView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('customer-new'),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
+  // B4 (backlog:5a40c73e54aa): the half-written customer survives the login
+  // round-trip in the tab store, and returns after sign-in. Tab-scoped (never
+  // the shared shell storage), keyed by space and operator, so another
+  // space, operator or restart never reads it.
+  storage: shellStorage,
+  draftStorage: tabDraftStorage() ?? shellStorage,
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  operator: () => shellUser?.email ?? null,
 });
 
 // Clienti import tool (ADR-037, backlog:80b25fb0, restyle backlog:5b164ab5):
@@ -621,7 +660,7 @@ const customerFormView = createCustomerFormView({
 // feeds the page breadcrumb («<spazio> / Clienti / Importa»).
 const customerDataView = createCustomerDataView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('customer-import'),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -637,7 +676,7 @@ const customerDataView = createCustomerDataView({
 // missing security screen reads as "fine" and it is not.
 const spineView = createSpineView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('spine'),
   client: moduleClient,
   submissions,
 });
@@ -653,7 +692,7 @@ const spineView = createSpineView({
 // the view itself says so.
 const connectorsView = createConnectorsView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('connectors'),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -667,7 +706,7 @@ const connectorsView = createConnectorsView({
 // through the existing record action (hidden for observers, like Stato sync).
 const connectorDetailView = createConnectorDetailView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('connector-detail'),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -683,7 +722,7 @@ const connectorDetailView = createConnectorDetailView({
 // Same shape as the connectors view above; owns no storage and no write.
 const syncView = createSyncView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('sync'),
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -706,7 +745,7 @@ const syncView = createSyncView({
 // the browser.
 const reportingView = createReportingView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned(['reporting', 'nuovo-modulo']),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   onAskAi: (screenId, description) => {
@@ -721,7 +760,7 @@ const reportingView = createReportingView({
 // week is real. The space rides the shell storage like the connectors view.
 const calendarioView = createCalendarioView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('calendario'),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
@@ -733,7 +772,7 @@ const calendarioView = createCalendarioView({
 // catalog; otherwise the view itself says so.
 const personalizzazioneView = createPersonalizzazioneView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('personalizzazione'),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
@@ -747,7 +786,7 @@ const personalizzazioneView = createPersonalizzazioneView({
 // connector detail; owns no write (activation stays in Personalizzazione).
 const skillDetailView = createSkillDetailView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('skill-detail'),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
@@ -759,7 +798,7 @@ const skillDetailView = createSkillDetailView({
 // source); picking one here switches the same active space everywhere.
 const spaziAccessiView = createSpaziAccessiView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('spazi-accessi'),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   spaces: () => shellSpaces,
@@ -778,7 +817,7 @@ const spaziAccessiView = createSpaziAccessiView({
 // The member is read lazily: the session profile is resolved just below.
 const profiloView = createProfiloView({
   doc: document,
-  mount: moduleView,
+  mount: mountGate.owned('profilo'),
   client: moduleClient,
   member: () => shellUser,
 });
@@ -881,6 +920,8 @@ let shellItems = buildShellNav();
 let oggiView = null;
 /** The Sequenze screen, created once per session under a space mount. */
 let sequenzeView = null;
+/** Navigation sequence: a render that settles after a newer navigation is stale. */
+let navSeq = 0;
 let shellFixCount = null;
 let shellCustomerData = false;
 
@@ -1085,8 +1126,25 @@ function targetForHash(hash) {
 }
 
 async function route() {
+  // backlog:5a40c73e54aa (B4): the login may land on the home instead of
+  // the scheda the operator was writing in; go back there once so the kept
+  // text is offered where it was typed.
+  try {
+    const home = window.location.hash === '' || window.location.hash === '#' || window.location.hash === '#/';
+    const back = home ? pendingDraftRoute({ storage: window.sessionStorage, space: draftSpace() }) : null;
+    if (back) {
+      window.location.hash = back;
+      return;
+    }
+  } catch {
+    // Without storage there is nothing to go back to.
+  }
   const hash = window.location.hash || '#/';
+  const navToken = ++navSeq;
   if (targetForHash(hash).view === 'settings') {
+    // The panel paints synchronously on the real mount: no view handle
+    // may paint over it.
+    mountGate.activate(null);
     clientiListView.invalidate();
     // backlog:607f33ee: same shared-mount race as below — a late async
     // view must not repaint the settings panel just opened.
@@ -1115,6 +1173,18 @@ async function route() {
     return;
   }
   syncShell(target);
+  // The breadcrumb just moved: the old screen leaves the shared mount now,
+  // in the same tick, and the new screen shows its loading state until its
+  // own paint replaces it. Only the routed view's handle can paint from
+  // here on, so a slower screen left behind never paints over this one.
+  // The router's own screens (unknown route, component catalog) paint
+  // synchronously on the real mount and own no handle.
+  const routedView = target.view === 'invalid' || target.view === 'componenti' ? null : target.view;
+  mountGate.activate(routedView);
+  const screenLabel = shellScreenFor(target)?.label;
+  const loadingLine = routedView !== null && (routedView !== 'dashboard' || MOUNTED)
+    ? paintScreenLoading({ doc: document, mount: moduleView, label: screenLabel })
+    : null;
   // backlog:80b25fb0: the list paints straight into the shared mount, so a
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
@@ -1142,7 +1212,7 @@ async function route() {
     if (!oggiView) {
       oggiView = createOggiView({
         doc: document,
-        mount: moduleView,
+        mount: mountGate.owned('dashboard'),
         client: moduleClient,
         navigate: (next) => { window.location.hash = next; },
       });
@@ -1199,7 +1269,7 @@ async function route() {
       if (!sequenzeView) {
         sequenzeView = createSequenzeView({
           doc: document,
-          mount: moduleView,
+          mount: mountGate.owned('sequenze'),
           client: moduleClient,
           submissions,
           storage: shellStorage,
@@ -1222,8 +1292,30 @@ async function route() {
     else if (target.view === 'work-task') await workView.renderTask(target.taskId);
     else if (target.view === 'marketing') await marketingView.renderProposalList();
     else if (target.view === 'marketing-proposal') await marketingView.renderProposalDetail(target.proposalId);
+    // backlog:5a40c73e54aa (B4): back from the login on the same route, the
+    // text the lost session would have thrown away is filled in again.
+    let restored = 0;
+    try {
+      restored = restoreDrafts({ root: moduleView, hash: window.location.hash, space: draftSpace(), storage: window.sessionStorage });
+    } catch {
+      restored = 0;
+    }
+    if (restored > 0) toast('Ho ripreso il testo che non era stato salvato: controllalo e salva di nuovo.');
   } catch (error) {
+    if (navToken !== navSeq) {
+      // A screen already left: its handle was inert and the operator is on
+      // another screen, so no toast there — but the failure stays
+      // diagnosable (sanitized cause and view, never the payload).
+      const cause = error instanceof Error ? error.name : (error?.code ?? 'unknown');
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('bo-nav stale view failed:', cause, error?.code ?? null, target.view);
+      }
+      return;
+    }
     toast(error.message, true);
+    // The loading line painted for this screen must not hang on: an honest
+    // note with Riprova replaces it while nothing else painted.
+    paintScreenFailure({ doc: document, mount: moduleView, loading: loadingLine, label: screenLabel, onRetry: () => { void route(); } });
   }
 }
 

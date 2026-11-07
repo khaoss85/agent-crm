@@ -23,6 +23,7 @@ import {
   createReportingView,
   currentPeriod,
   dashboardPath,
+  downloadCsv,
   forecastStatus,
   formatMoney,
   isDashboardPayload,
@@ -30,6 +31,8 @@ import {
   periodOptions,
 } from '../apps/admin/public/admin-reporting.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { METRIC_DEFINITIONS } from '../packages/analytics/src/index.js';
+import { dashboardSpecs } from '../packages/analytics/src/dashboard.js';
 
 const MODEL = {
   period: '2026-10',
@@ -538,7 +541,7 @@ test('obiettivo 20.000 € renders as 20.000 € with the honest gap (backlog:1c
   const { mount, view } = harness();
   await view.renderReporting();
   const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
-  assert.ok(text.includes('Obiettivo 20.000,00 €.'), 'the obiettivo shows euros, never cents');
+  assert.ok(text.includes(`Obiettivo ${formatMoney(2000000, 'EUR')}`), 'the obiettivo shows euros, never cents');
   assert.ok(!text.includes('2.000.000'), 'cents are never shown as euros');
   assert.ok(
     text.includes(`✦ Ti mancano ${formatMoney(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
@@ -636,4 +639,132 @@ test('the dashboard grid carries the six-column layout classes', async () => {
     ['bo-rep-narrow'],
     ['bo-rep-narrow'],
   ], 'channels wide, three thirds, forecast full, team wide beside insights');
+});
+
+// backlog:c3e66b36ddb7 — Reporting like prototype 09, on registry data only.
+
+const classesOf = (node) => String(node.getAttribute('class') ?? '').split(/\s+/);
+const byClass = (mount, tag, cls) => mount.findAll(tag).filter((node) => classesOf(node).includes(cls));
+
+test('c3e66b36ddb7: every number comes from the declared analytics registry, read through one route', async () => {
+  // The dashboard compiles only declared registry entries…
+  const specs = dashboardSpecs({ period: '2026-10', owner: null, currency: 'EUR' });
+  for (const spec of Object.values(specs)) {
+    assert.ok(Object.hasOwn(METRIC_DEFINITIONS, spec.metric), `${spec.metric} is a declared registry metric`);
+  }
+  // …and the screen reads numbers from nowhere else: the dashboard route
+  // (registry) and the operator's own report rows, never another query.
+  const { view, requests } = harness();
+  await view.renderReporting();
+  const sources = new Set(requests.map((path) => path.split('?')[0]));
+  assert.deepEqual([...sources].sort(), ['/api/modules/reporting/records', '/api/reporting/dashboard']);
+});
+
+test('c3e66b36ddb7: filters sit beside the title — one active period, Tutti and the person sigle', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const [header] = byClass(mount, 'div', 'bo-rep-header');
+  assert.ok(header, 'the header row renders');
+  const [filters] = byClass(header, 'div', 'bo-rep-filters');
+  assert.ok(filters, 'the filters live in the header, beside the title');
+  const segments = filters.findAll('button').filter((node) => classesOf(node).includes('ui-seg'));
+  assert.equal(segments.length, 3, 'three period options in a segmented control');
+  assert.equal(segments.filter((node) => classesOf(node).includes('active')).length, 1, 'one period active at a time');
+  const people = filters.findAll('button').filter((node) => classesOf(node).includes('bo-rep-person'));
+  assert.deepEqual(people.map((node) => node.textContent), ['Tutti', 'A', 'B']);
+  assert.equal(people[0].getAttribute('aria-pressed'), 'true', 'Tutti is the active persona by default');
+});
+
+test('c3e66b36ddb7: the funnel lists each stage with n · amount over a full bar, never an invented percentage', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const [funnel] = byClass(mount, 'section', 'bo-preventivi');
+  assert.ok(funnel);
+  const steps = byClass(funnel, 'div', 'bo-rep-step-line').map((node) => node.textContent);
+  const eur = (minor) => formatMoney(minor, 'EUR');
+  assert.deepEqual(steps, [`Qualifica3 · ${eur(14500)}`, `Trattativa2 · ${eur(10000)}`, `Vinte2 · ${eur(14000)}`]);
+  assert.ok(!/%/.test(funnel.textContent), 'stage counts are a snapshot: no conversion percentage is claimed');
+});
+
+test('c3e66b36ddb7: the forecast names its goal in the head, carries amounts in the legend and stays labelled as an estimate', async () => {
+  const { mount, view } = harness();
+  await view.renderReporting();
+  const forecast = mount.findAll('div').find((node) => classesOf(node).includes('pipeline-forecast'));
+  const head = byClass(forecast, 'div', 'bo-rep-head')[0];
+  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${formatMoney(2000000, 'EUR')}`);
+  const amounts = byClass(forecast, 'strong', 'bo-rep-amount').map((node) => node.textContent);
+  assert.deepEqual(amounts, [formatMoney(14000, 'EUR'), `+${formatMoney(9333, 'EUR')}`, `+${formatMoney(14000, 'EUR')}`]);
+  assert.match(forecast.textContent, /✦ Stima: .*non è una promessa/, 'the heuristic is labelled, never a promise');
+  assert.equal((forecast.textContent.match(/Obiettivo/g) ?? []).length, 1, 'the goal is said once, in the head');
+});
+
+test('c3e66b36ddb7: «Cosa noto» is the violet card and still only proposes', async () => {
+  const { mount, view, requests } = harness();
+  await view.renderReporting();
+  const [card] = byClass(mount, 'section', 'bo-cosa-noto');
+  assert.ok(card, 'the insights wear the AI card');
+  assert.deepEqual(byClass(card, 'p', 'bo-cosa-noto-item').map((node) => node.textContent), [MODEL.insights[0].text]);
+  const before = requests.length;
+  card.findAll('button')[0].dispatch('click', {});
+  await tick();
+  assert.equal(requests.length, before, 'the proposal never writes: no request leaves the screen');
+  assert.match(card.textContent, /non sposta nulla da sola/);
+});
+
+test('c3e66b36ddb7: the code card shows the module tree and Esporta CSV confirms the download', async () => {
+  const { mount, view, downloads } = harness();
+  await view.renderReporting();
+  const [card] = byClass(mount, 'section', 'bo-codice');
+  const [tree] = byClass(card, 'pre', 'bo-codice-tree');
+  assert.deepEqual(tree.findAll('code').map((node) => node.textContent.trim()), [...REPORTING_CODE_FILES]);
+  const csv = card.findAll('button').find((node) => node.textContent === 'Esporta CSV');
+  csv.dispatch('click', {});
+  await tick();
+  assert.equal(downloads.length, 1);
+  assert.match(card.textContent, /CSV scaricato: reporting-2026-10\.csv\./);
+  csv.dispatch('click', {});
+  await tick();
+  assert.equal(downloads.length, 2, 'a second click downloads again');
+  assert.equal((card.textContent.match(/CSV scaricato/g) ?? []).length, 1, 'the confirmation shows once');
+});
+
+test('c3e66b36ddb7: the browser download joins the page for the click, then leaves it', () => {
+  const doc = createFakeDocument();
+  const body = createMount();
+  const seen = [];
+  const anchors = [];
+  const fakeDoc = {
+    ...doc,
+    body,
+    createElement: (tag) => {
+      const node = doc.createElement(tag);
+      node.click = () => seen.push({ attached: node.parentNode === body, href: node.getAttribute('href'), name: node.getAttribute('download') });
+      anchors.push(node);
+      return node;
+    },
+  };
+  downloadCsv({ doc: /** @type {any} */ (fakeDoc), filename: 'reporting-2026-10.csv', content: 'a;b\n' });
+  assert.equal(seen.length, 1, 'the link is clicked once');
+  assert.equal(seen[0].attached, true, 'the link is in the page when clicked (Firefox ignores detached links)');
+  assert.equal(seen[0].name, 'reporting-2026-10.csv');
+  assert.ok(String(seen[0].href).startsWith('blob:'), 'the CSV travels as a blob URL');
+  assert.equal(body.childNodes.includes(anchors[0]), false, 'the link leaves the page right after');
+});
+
+test('c3e66b36ddb7: the loading state speaks Italian', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const view = createReportingView({
+    doc,
+    mount,
+    client: { request: async () => { await gate; return { items: [] }; } },
+    navigate: () => {},
+    log: () => {},
+  });
+  const pending = view.renderReporting();
+  assert.equal(mount.textContent, 'Sto preparando il report…');
+  release();
+  await pending;
 });

@@ -27,7 +27,7 @@ const page = loginPageHtml({ googleHref });
 test('f9680c478410: the exported page paints the prototype login screen', () => {
   for (const text of [
     'Ogni conversazione, un solo cliente.',
-    'Bentornata',
+    'Rieccoti',
     'Continua con Google',
     'Accedi — Accordo',
   ]) {
@@ -97,7 +97,7 @@ test('f9680c478410: login.html and the function share markup, never duplicate it
   assert.equal(BACKOFFICE_GOOGLE_HREF, '/auth/google', 'the backoffice entry stays the deployment path the tests pin');
   const onDisk = readFileSync(join(root, 'apps/admin/public/login.html'), 'utf8');
   assert.equal(onDisk, backofficeLoginHtml(), 'login.html is generated from the module: regenerate, never hand-edit');
-  for (const fragment of ['Ogni conversazione, un solo cliente.', 'Bentornata', 'Continua con Google']) {
+  for (const fragment of ['Ogni conversazione, un solo cliente.', 'Rieccoti', 'Continua con Google']) {
     assert.ok(onDisk.includes(fragment), `login.html keeps the shared fragment: ${fragment}`);
   }
 });

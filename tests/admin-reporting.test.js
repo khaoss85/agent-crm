@@ -158,7 +158,8 @@ test('reporting screen without the bundle says so honestly, never blank', async 
   });
   await view.renderReporting();
   const empties = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
-  assert.match(empties, /non composto/, 'the screen names the missing bundle instead of faking rows');
+  assert.match(empties, /non ci sono ancora/, 'the screen names the missing bundle instead of faking rows');
+  assert.doesNotMatch(empties, /non composto/, 'production checklist 30/10: no «non composto» on Reporting');
   const nuovo = mount.findAll('button').find((node) => node.textContent === '+ Nuovo modulo');
   assert.ok(nuovo, 'the entry point stays even without the bundle');
   nuovo.dispatch('click', {});
@@ -194,7 +195,7 @@ test('a 500 (or auth, or network) failure is an error state with a log line, nev
     await view.renderReporting();
     const text = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
     assert.match(text, /non disponibile/, `${failure.label}: the screen names the failure, got ${JSON.stringify(text)}`);
-    assert.doesNotMatch(text, /non composto/, `${failure.label}: a real failure is never the not-composed state`);
+    assert.doesNotMatch(text, /non ci sono ancora/, `${failure.label}: a real failure is never the not-composed state`);
     assert.equal(logged.length, 1, `${failure.label}: the cause is logged once`);
     assert.equal(logged[0][0], 'reporting records request failed');
     const cause = logged[0][1];
@@ -222,7 +223,8 @@ test('a 404 stays the honest not-composed state with no error log', async () => 
   });
   await view.renderReporting();
   const text = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
-  assert.match(text, /non composto/, 'the 404 names the missing bundle instead of faking rows');
+  assert.match(text, /non ci sono ancora/, 'the 404 names the missing bundle instead of faking rows');
+  assert.doesNotMatch(text, /non composto/, 'production checklist 30/10: no «non composto» on Reporting');
   assert.deepEqual(logged, [], 'a 404 is expected setup state, not a logged error');
 });
 
@@ -250,7 +252,7 @@ test('a 200 without an items array is a load error, never "not composed"', async
     await view.renderReporting();
     const text = [...mount.findAll('p'), ...mount.findAll('div')].map((node) => node.textContent).join(' ');
     assert.match(text, /non disponibile/, `body ${JSON.stringify(body)}: the screen names the failure, got ${JSON.stringify(text)}`);
-    assert.doesNotMatch(text, /non composto/, `body ${JSON.stringify(body)}: a 200 without rows is never the not-composed state`);
+    assert.doesNotMatch(text, /non ci sono ancora/, `body ${JSON.stringify(body)}: a 200 without rows is never the not-composed state`);
     assert.equal(logged.length, 1, `body ${JSON.stringify(body)}: the cause is logged once`);
     assert.equal(logged[0][0], 'reporting records request failed');
     assert.deepEqual(logged[0][1], { name: 'Error', status: 200, code: null });

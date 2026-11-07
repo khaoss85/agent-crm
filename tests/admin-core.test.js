@@ -13,6 +13,7 @@ import {
   displayTitle,
   parseModuleRoute,
   SUPPORTED_ADMIN_CONTRACT,
+  italianDay,
 } from '../apps/admin/public/admin-core.js';
 
 test('humanizeLabel handles camelCase, snake_case and acronyms', () => {
@@ -280,4 +281,17 @@ test('apiFailure without ids, or with a non-JSON body, carries none', () => {
   assert.equal(html.code, 'UNKNOWN');
   assert.equal(html.message, 'Request failed (502)');
   assert.equal(apiFailure(504, { requestId: '', claimId: 7 }).requestId, undefined);
+});
+
+test('italianDay: a bare day keeps its date, an instant reads as the Rome calendar day', () => {
+  assert.equal(italianDay('2026-11-20'), '20 nov 2026');
+  assert.equal(italianDay('2026-08-05T12:00:00.000Z'), '5 ago 2026');
+  // 22:30 UTC is 00:30 the next day in Rome (CEST).
+  assert.equal(italianDay('2026-08-05T22:30:00.000Z'), '6 ago 2026');
+  // 23:30 UTC in winter is 00:30 the next day in Rome (CET).
+  assert.equal(italianDay('2026-12-31T23:30:00.000Z'), '1 gen 2027');
+  assert.equal(italianDay('2026-08-05T00:30:00+02:00'), '5 ago 2026');
+  assert.equal(italianDay(''), null);
+  assert.equal(italianDay('non una data'), null);
+  assert.equal(italianDay(undefined), null);
 });

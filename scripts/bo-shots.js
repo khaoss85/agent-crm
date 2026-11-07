@@ -291,7 +291,7 @@ const DEMO_PROFILE = {
   identity: { company: { id: 'co1', name: 'Palestra Esempio' }, contact: { id: 'c1', email: 'guido@palestra-esempio.it' } },
   externalIdentities: [],
   opportunities: { available: true, count: 1, countIsComplete: true, items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi' }], truncated: false },
-  quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi' }], truncated: false },
+  quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi', amountCents: 32000, currency: 'EUR' }], truncated: false },
   orders: { available: false, reason: 'not composed', items: null, count: null },
   contracts: { available: false, reason: 'not composed', items: null, count: null },
   subscriptions: { available: false, reason: 'not composed', items: null, count: null },
@@ -473,6 +473,25 @@ const DEMO_CATALOG = {
         sourcePricingModel: 'manual:flat_fee', tiers: [],
       }],
     }],
+    unit: 'pacchetto', maxDiscountBps: 1000,
+  }, {
+    // backlog:b44fe65ac3e5: the summary counts one Stripe product, so the
+    // photographed rows carry it too — the Stripe block and the Fonte chips
+    // never disagree on camera.
+    productId: 'p2', sku: 'YOGA-MESE', name: 'Abbonamento Yoga',
+    description: 'Ingressi illimitati.', category: 'abbonamenti', source: 'stripe-test',
+    priceReadOnly: true, active: true, version: 1, unit: 'mese',
+    offers: [{
+      offerId: 'o2', name: 'Abbonamento Yoga — Canone mensile', active: true,
+      currency: 'EUR', quoteEligible: true, unsupportedReason: null,
+      components: [{
+        key: 'canone', label: 'Canone mensile',
+        chargeType: 'recurring', pricingModel: 'per_unit',
+        interval: 'month', intervalCount: 1, unitAmountCents: 4900,
+        flatAmountCents: null, externalPriceId: 'price_yoga_mese',
+        sourcePricingModel: 'stripe:recurring.per_unit', tiers: [],
+      }],
+    }],
   }],
   summary: { manual: 1, byProvider: { 'stripe-test': 1 }, stripeConnected: true },
 };
@@ -504,9 +523,13 @@ const DEMO_SPACES = [
   { id: 'spazio-2', name: 'Palestra centro', initials: 'PA' },
 ];
 
+// The roster as the pilot enriches it (displayName/email beside each opaque
+// subject). Elena holds two subjects — an adopted broker member and her
+// Google one — and the screen paints one row for her (backlog:6b44b0e9fcdf).
 const DEMO_MEMBERS = [
-  { subject: 'owner-1', role: 'owner', status: 'active' },
-  { subject: 'marco', role: 'operator', status: 'active' },
+  { subject: 'broker|owner-1', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
+  { subject: 'google|1001', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'Elena@studioaurora.it' },
+  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it' },
 ];
 
 // The connectors screen (BO-F6-02): every catalog channel has a composed

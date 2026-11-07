@@ -377,6 +377,14 @@ test('Connettori opens by default with the prototype copy, filtered badges and a
   const search = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Cerca');
   assert.ok(search, 'the search field renders');
   assert.equal(search.getAttribute('placeholder'), 'Cerca', 'the placeholder is the prototype verbatim (spec C8)');
+  // The lens is a real SVG element in the field wrapper: a CSS data: image is
+  // blocked by the host CSP and would break the «no data: url» stylesheet test.
+  const wrap = search.parentNode;
+  assert.ok(String(wrap.getAttribute('class') ?? '').split(/\s+/).includes('search-wrap'), 'the field sits in its wrapper');
+  const lens = wrap.findAll('svg')[0];
+  assert.ok(lens && String(lens.getAttribute('class')).split(/\s+/).includes('ui-icon-search'), 'the wrapper carries svg.ui-icon-search');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(!/url\(["']?data:/.test(css), 'no data: url in the stylesheet — the host CSP would block it');
   const badges = mount.findAll('span').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('ui-conn-count'));
   assert.deepEqual(badges.map((node) => node.textContent), ['7', '3'], 'badges count the visible cards (spec C13-C14)');
   view.test.state.query = 'stripe';

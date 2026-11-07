@@ -647,6 +647,14 @@ export {
 } from './adapter.js';
 export { createChannelOperations, resolveSentConversationId } from './operations.js';
 export { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from './composer-text.js';
+export {
+  COMPOSER_WINDOW_SKEW_MS,
+  WHATSAPP_COMPOSER_FREE,
+  WHATSAPP_COMPOSER_TEMPLATE_ONLY,
+  describeWhatsAppComposer,
+  proposableWhatsAppTemplates,
+  refuseWhatsAppFreeText,
+} from './composer-window.js';
 export { runChannelAdapterKit, CHANNEL_KIT_CHECKS } from './kit.js';
 export { createFixtureChannelAdapter, fixtureEnvelopeEvent, fixtureWebhookHeaders, fixtureEventBody } from './fixture.js';
 export {
