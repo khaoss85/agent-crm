@@ -143,6 +143,9 @@ const moduleClient = {
       // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
       // and claimId on the error, so the composer reads it back.
       const error = apiFailure(response.status, payload);
+      // A followed login redirect still throws: carry the signal so the
+      // calling view can tell a lost session from a refused write.
+      if (followedLogin) Object.assign(error, { redirected: true });
       if (MOUNTED && !followedLogin) {
         leaveForSpaceLogin(sessionLostTarget({
           status: response.status,
@@ -158,7 +161,12 @@ const moduleClient = {
         // fetch no longer flags (or a host that answered HTML directly).
         leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
       }
-      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+      // A 200 that is not JSON still throws: carry which login-page shape
+      // it was, so the calling view reads it like the shell just did.
+      const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+      if (followedLogin) Object.assign(invalid, { redirected: true });
+      else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
+      throw invalid;
     }
     return payload;
   },
@@ -425,7 +433,7 @@ import { createWorkView } from './admin-work.js';
 import { createMarketingView } from './admin-marketing.js';
 import { createCustomerCardView } from './admin-customer-card.js';
 import { CLIENTI_IMPORT_ROUTE, createCustomerListView } from './admin-clienti.js';
-import { CLIENTI_NUOVO_ROUTE, createCustomerFormView } from './admin-cliente-nuovo.js';
+import { CLIENTI_NUOVO_ROUTE, createCustomerFormView, tabDraftStorage } from './admin-cliente-nuovo.js';
 import { createCustomerDataView } from './admin-customer-data.js';
 import { createConnectorsView } from './admin-connectors.js';
 import { createConnectorDetailView } from './admin-connector-detail.js';
@@ -611,6 +619,14 @@ const customerFormView = createCustomerFormView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
+  // B4 (backlog:5a40c73e54aa): the half-written customer survives the login
+  // round-trip in the tab store, and returns after sign-in. Tab-scoped (never
+  // the shared shell storage), keyed by space and operator, so another
+  // space, operator or restart never reads it.
+  storage: shellStorage,
+  draftStorage: tabDraftStorage() ?? shellStorage,
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  operator: () => shellUser?.email ?? null,
 });
 
 // Clienti import tool (ADR-037, backlog:80b25fb0, restyle backlog:5b164ab5):
