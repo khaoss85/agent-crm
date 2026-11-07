@@ -1316,6 +1316,8 @@ select.bo-spazi-input { flex: none; }
 .cal-day-head .cal-today { display: inline-block; background: var(--ink); color: var(--paper); border-radius: 999px; min-width: 44px; padding: 2px 8px; font-weight: 700; }
 .cal-day { position: relative; display: grid; grid-template-rows: repeat(18, minmax(30px, auto)); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
 .cal-day:last-child { border-right: 1px solid var(--line); }
+/* backlog:5fbebe8559e9: the compact empty-day row exists only on the phone stack. */
+.cal-day-compact { display: none; }
 .cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
@@ -1377,6 +1379,26 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions { flex-shrink: 1; flex-wrap: wrap; width: auto; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
+  /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
+   * detail, «Fissa con una frase», the week, Team, the manual form, online
+   * booking — so the grid is not pushed under every rail card. The rail
+   * dissolves into the column and each card takes its place by order. */
+  .cal-layout { display: flex; flex-direction: column; gap: 14px; }
+  .cal-layout > .cal-rail { display: contents; }
+  .cal-rail > [data-role="event-detail"] { order: 1; }
+  .cal-rail > .cal-ai { order: 2; }
+  .cal-layout > .cal-main { order: 3; }
+  .cal-rail > .cal-team { order: 4; }
+  .cal-rail > .cal-manual { order: 5; }
+  .cal-rail > .cal-booking { order: 6; }
+  /* backlog:5fbebe8559e9: an empty day is one compact row (day, «Nessun
+   * appuntamento», «+ Prenota») instead of a 540px empty timeline; a day
+   * with blocks keeps its hours at a shorter row height. */
+  .cal-grid .cal-day.is-empty, .cal-grid .cal-day-head.is-empty { display: none; }
+  .cal-grid .cal-day-compact { display: flex; align-items: center; gap: 10px; grid-column: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
+  .cal-day-compact-name { font-weight: 700; text-transform: capitalize; }
+  .cal-day-compact > span:not(.cal-day-compact-name) { color: var(--muted); flex: 1; min-width: 0; }
+  .cal-grid .cal-day { grid-template-rows: repeat(18, minmax(22px, auto)); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
 }
 
 /*

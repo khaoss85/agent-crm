@@ -9,7 +9,9 @@ import {
   dayHead,
   displayKeys,
   draftMinutes,
+  dropHeldOverlaps,
   filterPhraseProposals,
+  GRID_START_MINUTES,
   gridRowsFor,
   lanesFor,
   memberColorIndex,
@@ -24,7 +26,9 @@ import {
   resolveMemberName,
   romeMinutes,
   romeWeekKeys,
+  serviceLabel,
   slotInGrid,
+  statusWord,
   teamRows,
   weekLabel,
   weekWindow,
@@ -91,7 +95,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined, catalog = null } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -107,6 +111,10 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
       if (failWith) throw failWith;
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profiles && Object.hasOwn(profiles, path)) return profiles[path];
+        throw notFound();
+      }
+      if (path.startsWith('/api/catalog/products')) {
+        if (catalog) return catalog;
         throw notFound();
       }
       if (path.startsWith('/api/customer-data/customers')) {
@@ -295,13 +303,14 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(heads[4].textContent.includes('ven 23'), 'C13: five work days, Mon..Fri');
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
   assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
-  assert.ok(texts(mount, 'strong').includes('taglio'));
-  // Cancelled rows stay listed with their status.
-  assert.ok(texts(mount, 'span').includes('cancelled'));
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
+  // Cancelled rows stay listed with their status, in Italian (C14).
+  assert.ok(texts(mount, 'span').includes('annullato'));
+  assert.ok(!texts(mount, 'span').includes('cancelled'), 'C14: never the raw English status');
   // No customer control paints before a selection: the card owns it (fetta 5).
   assert.equal(mount.findAll('a').length, 0);
   // Selecting the block opens the card, and the card buttons at the scheda.
-  const block = mount.findAll('button').find((node) => node.textContent.includes('taglio'));
+  const block = mount.findAll('button').find((node) => /taglio/i.test(node.textContent));
   assert.ok(block, 'the taglio block is a button');
   block.dispatch('click');
   const open = mount.findAll('button').find((node) => node.textContent === 'Apri scheda cliente');
@@ -350,8 +359,9 @@ test('hostile notes and subjects are inert text, never markup', async () => {
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  const strongs = mount.findAll('strong').map((node) => node.textContent);
-  assert.ok(strongs.some((text) => text.includes('<img src=x')));
+  // The notes moved from the block title to the detail card (backlog:5fbebe8559e9).
+  mount.findAll('button').find((node) => /barba/i.test(node.textContent)).dispatch('click');
+  assert.ok(texts(mount, 'p').some((text) => text.includes('<img src=x')));
   assert.equal(mount.findAll('img').length, 0);
 });
 
@@ -389,11 +399,11 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   const draft = {
     teamMemberId: 'marco',
     serviceKey: 'taglio',
-    startsAt: '2026-10-22T16:00:00.000Z',
-    endsAt: '2026-10-22T16:30:00.000Z',
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T14:30:00.000Z',
     notes: 'taglio per Ada',
   };
-  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
   // so the view clock must still see them as future — same Oct 19–25 week.
@@ -423,13 +433,13 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
   const list = mount.querySelector('.cal-slots');
   assert.ok(list, 'the proposal rows render');
-  assert.ok(list.textContent.includes('22 ott · 18:00–18:30'), 'C5: the row names the Rome slot');
+  assert.ok(list.textContent.includes('22 ott · 16:00–16:30'), 'C5: the row names the Rome slot');
   const confirms = list.findAll('button').filter((node) => node.textContent === 'Conferma');
   assert.equal(confirms.length, 1, 'C5: one Conferma per row');
   // C5: one dashed ghost per slot on its Rome day, clickable to confirm.
   const grid = mount.querySelector('.cal-grid');
-  assert.ok(grid && grid.textContent.includes('✦ Proposta 18:00'), 'C5: the ghost names the Rome time');
-  const ghost = mount.findAll('button').find((node) => node.textContent === '✦ Proposta 18:00');
+  assert.ok(grid && grid.textContent.includes('✦ Proposta 16:00'), 'C5: the ghost names the Rome time');
+  const ghost = mount.findAll('button').find((node) => node.textContent === '✦ Proposta 16:00');
   assert.ok((ghost.getAttribute('class') ?? '').split(/\s+/).includes('bo-add-button'), 'the ghost reuses the shared dashed control');
   // The draft still prefills the manual form (Rome wall time back into the inputs).
   // The filter names marco, so the person is the team choice, not a typed id.
@@ -439,8 +449,8 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   assert.equal(person.value, 'marco', 'the draft person is the chosen one');
   assert.equal(form.serviceKey.value, 'taglio');
   assert.equal(form.date.value, '2026-10-22');
-  assert.equal(form.start.value, '18:00');
-  assert.equal(form.end.value, '18:30');
+  assert.equal(form.start.value, '16:00');
+  assert.equal(form.end.value, '16:30');
 });
 
 test('a proposal Conferma books through confirm with the manual claim', async () => {
@@ -449,10 +459,12 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   const draft = {
     teamMemberId: 'marco',
     serviceKey: 'taglio',
-    startsAt: '2026-10-22T16:00:00.000Z',
-    endsAt: '2026-10-22T16:30:00.000Z',
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T14:30:00.000Z',
   };
-  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  // A free step beside the held taglio (16:00Z): review #646 P2 reads the
+  // searched person's week even before one is painted.
+  const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
   const client = stubClient({
     phrase: draft,
     slots,
@@ -484,11 +496,11 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   const body = payload(confirms[0]);
   assert.equal(body.confirmed, true);
   assert.equal(body.teamMemberId, 'marco');
-  assert.equal(body.startsAt, '2026-10-22T16:00:00.000Z');
-  assert.equal(body.endsAt, '2026-10-22T16:30:00.000Z');
+  assert.equal(body.startsAt, '2026-10-22T14:00:00.000Z');
+  assert.equal(body.endsAt, '2026-10-22T14:30:00.000Z');
   assert.equal(body.priceCents, 4500);
   assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
-  assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T16:00:00.000Z:c1');
+  assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T14:00:00.000Z:c1');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
@@ -536,10 +548,12 @@ test('a failed Conferma names the manual form, never a code', async () => {
   const mount = createMount();
   const draft = {
     teamMemberId: 'marco',
-    startsAt: '2026-10-22T16:00:00.000Z',
-    endsAt: '2026-10-22T16:30:00.000Z',
+    startsAt: '2026-10-22T14:00:00.000Z',
+    endsAt: '2026-10-22T14:30:00.000Z',
   };
-  const slots = [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }];
+  // A free step beside the held taglio (16:00Z): review #646 P2 reads the
+  // searched person's week even before one is painted.
+  const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
   const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
@@ -728,7 +742,10 @@ test('conferma books directly: no propose call on the confirm path', async () =>
 // so): a slot starting outside 09:00–18:00 never lands on another hour's row.
 test('slotInGrid keeps the painted 09:00–18:00 hours, nothing else', () => {
   assert.equal(slotInGrid('2026-10-22T07:00:00.000Z', '2026-10-22T07:30:00.000Z'), true, '09:00 Rome starts inside');
-  assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), true, '18:00 Rome starts inside');
+  assert.equal(slotInGrid('2026-10-22T15:30:00.000Z', '2026-10-22T16:00:00.000Z'), true, '17:30 Rome is the last row');
+  // backlog:5fbebe8559e9: 18:00 is the bottom edge, not a row — painting it
+  // clamped the «✦ Proposta 18:00» ghost onto the 17:30 row.
+  assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), false, '18:00 Rome is the bottom edge');
   assert.equal(slotInGrid('2026-10-22T17:00:00.000Z', '2026-10-22T17:30:00.000Z'), false, '19:00 Rome stays outside');
   assert.equal(slotInGrid('2026-10-22T06:59:00.000Z', '2026-10-22T07:30:00.000Z'), false, '08:59 Rome stays outside');
   assert.equal(slotInGrid('2026-10-22T16:00:00.000Z', '2026-10-22T16:00:00.000Z'), false, 'an empty slot never paints');
@@ -1119,7 +1136,7 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   // clamps to the last row; barba Fri 11:00–11:30 Rome sits on row 5.
   const blocks = mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-event'));
   assert.equal(blocks.length, 2, 'two held events paint two blocks');
-  const taglio = blocks.find((node) => node.textContent.includes('taglio'));
+  const taglio = blocks.find((node) => /taglio/i.test(node.textContent));
   assert.ok(taglio.getAttribute('style').includes('grid-row: 18 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
   // The barba row carries hostile notes, which become its title (inert text):
   // find it by its Rome time, Fri 11:00–11:30.
@@ -1172,7 +1189,7 @@ test('selecting a block opens the detail card and × deselects it', async () => 
   await new Promise((resolve) => setImmediate(resolve));
   const findCards = () => mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail');
   assert.equal(findCards().length, 0, 'no card before a selection');
-  const findBlock = () => mount.findAll('button').find((node) => node.textContent.includes('taglio'));
+  const findBlock = () => mount.findAll('button').find((node) => /taglio/i.test(node.textContent));
   const block = findBlock();
   assert.ok(block, 'the taglio block is a button');
   block.dispatch('click');
@@ -1180,7 +1197,7 @@ test('selecting a block opens the detail card and × deselects it', async () => 
   const selected = findBlock();
   const card = findCards()[0];
   assert.ok(card, 'C6: the click opens the detail card');
-  assert.ok(card.textContent.includes('taglio'), 'C6: the card carries the title');
+  assert.ok(/taglio/i.test(card.textContent), 'C6: the card carries the title');
   assert.ok(card.textContent.includes('Giovedì 22 ott · 18:00–18:30'), 'C6: the card carries the day · time row');
   assert.ok(card.textContent.includes('marco, Ada'), 'C6: the card names the participants');
   assert.ok(selected.getAttribute('class').includes('cal-selected'), 'C9: the selected block reads selected');
@@ -1190,10 +1207,10 @@ test('selecting a block opens the detail card and × deselects it', async () => 
   close.dispatch('click');
   assert.equal(findCards().length, 0, 'C9: × hides the card');
   // A second click on the block toggles the selection off as well.
-  const reopen = mount.findAll('button').find((node) => node.textContent.includes('taglio'));
+  const reopen = mount.findAll('button').find((node) => /taglio/i.test(node.textContent));
   reopen.dispatch('click');
   assert.equal(findCards().length, 1);
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   assert.equal(findCards().length, 0, 'clicking the selected block deselects it');
 });
 
@@ -1326,7 +1343,7 @@ test('the detail card opens the customer card for linked events only', async () 
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   // The profile read fires once, read-only, on selection.
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
@@ -1370,7 +1387,7 @@ test('the detail card hides the customer button without a linked customer', asyn
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the card opens for the team-only event');
   assert.equal(
@@ -1423,7 +1440,7 @@ test('the channel pill is fail-closed with the resolved customer name', async ()
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
@@ -1488,14 +1505,14 @@ test('overlapping profile reads cache under their own keys', async () => {
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
-  mount.findAll('button').find((node) => node.textContent.includes('barba')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
+  mount.findAll('button').find((node) => /barba/i.test(node.textContent)).dispatch('click');
   releaseProfiles();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   // Back to the first event: its late answer cached under its own key.
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card.textContent.includes('marco, Nome-c1'), 'the first name survives the second selection');
@@ -1543,7 +1560,7 @@ test('the detail card falls back honestly when the profile is unavailable', asyn
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
@@ -1589,7 +1606,7 @@ test('a late profile answer never repaints over the customer card', async () => 
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   // The customer card takes the shared mount, like renderCard does: it
   // clears the calendar wrap and paints its own node.
   while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1625,6 +1642,7 @@ test('an unexpected profile failure is logged with the space, never the message'
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
+      if (path.startsWith('/api/catalog/products')) throw Object.assign(new Error('no catalog'), { code: 'NOT_FOUND', status: 404 });
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
         // No roster on this double: the spine is uncomposed here, an
@@ -1656,14 +1674,16 @@ test('an unexpected profile failure is logged with the space, never the message'
     clickButton(mount, 'Mostra settimana');
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
-    mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+    mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
     assert.ok(card.textContent.includes('Ada'), 'the row label still falls back');
-    assert.equal(warnings.length, 1, 'one diagnostic: neither silence nor a screen');
-    const flat = warnings[0].map(String).join(' ');
+    // backlog:5fbebe8559e9: the week reads each linked customer once for
+    // the block titles (c1, c2) — one diagnostic per failed read.
+    assert.equal(warnings.length, 2, 'one diagnostic per failed read: neither silence nor a screen');
+    const flat = warnings.map((entry) => entry.map(String).join(' ')).join(' ');
     assert.ok(flat.includes('bo-calendario'), 'the log is scoped to the calendar');
     assert.ok(flat.includes('UPSTREAM_BOOM'), 'the sanitized code travels');
     assert.ok(flat.includes('space-9'), 'the active space travels');
@@ -1680,6 +1700,7 @@ test('a missing profile stays silent while the card falls back', async () => {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
+      if (path.startsWith('/api/catalog/products')) throw Object.assign(new Error('no catalog'), { code: 'NOT_FOUND', status: 404 });
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
         // No roster on this double: the spine is uncomposed here, an
@@ -1705,7 +1726,7 @@ test('a missing profile stays silent while the card falls back', async () => {
     clickButton(mount, 'Mostra settimana');
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
-    mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+    mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -1805,18 +1826,18 @@ test('the Team card toggles one row per named member and filters the grid', asyn
   assert.ok(teamToggles(mount).every((node) => node.getAttribute('aria-pressed') === 'true'));
   assert.ok(teamToggles(mount).some((node) => node.textContent.includes('MA') && node.textContent.includes('marco')));
   assert.ok(teamToggles(mount).some((node) => node.textContent.includes('SA') && node.textContent.includes('sara')));
-  assert.ok(texts(mount, 'strong').includes('taglio'));
-  assert.ok(texts(mount, 'strong').includes('piega'));
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
+  assert.ok(texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 
   const callsBefore = client.calls.length;
   teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
   assert.equal(client.calls.length, callsBefore, 'C11: filtering needs no reload');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the active member stays');
-  assert.ok(!texts(mount, 'strong').includes('piega'), 'C11: the deselected member disappears');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the active member stays');
+  assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'C11: the deselected member disappears');
   assert.equal(teamToggles(mount).find((node) => node.textContent.includes('sara')).getAttribute('aria-pressed'), 'false');
 
   teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
-  assert.ok(texts(mount, 'strong').includes('piega'), 'C11: reselecting brings them back');
+  assert.ok(texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'C11: reselecting brings them back');
   assert.equal(teamToggles(mount).find((node) => node.textContent.includes('sara')).getAttribute('aria-pressed'), 'true');
 });
 
@@ -1833,11 +1854,11 @@ test('hiding the selected block member closes the detail card', async () => {
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  mount.findAll('button').find((node) => node.textContent.includes('piega')).dispatch('click');
+  mount.findAll('button').find((node) => /piega/i.test(node.textContent)).dispatch('click');
   assert.ok(mount.findAll('button').some((node) => node.textContent === '×'), 'the detail card opens');
   teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
   assert.ok(!mount.findAll('button').some((node) => node.textContent === '×'), 'hiding the member closes the card');
-  assert.ok(!texts(mount, 'strong').includes('piega'));
+  assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 });
 
 // backlog:df55cf25 (E2E 01/11): one row per person with the real name, never
@@ -2038,7 +2059,7 @@ test('the Team card shows the roster names and loads its week with no typing', a
   const teamWeek = client.calls.find((call) => String(call.path).startsWith('/api/appointments/team-week'));
   assert.ok(teamWeek, 'the roster week loads on mount');
   assert.ok(String(teamWeek.path).includes('marco') && String(teamWeek.path).includes('sara'), 'the whole roster is listed, never typed');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the roster blocks paint');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the roster blocks paint');
   assert.equal(
     mount.findAll('input').filter((node) => node.getAttribute('name') === 'members').length,
     0,
@@ -2092,7 +2113,7 @@ test('the Team card merges one human across roster subjects', async () => {
   assert.ok(!painted.includes('github|48571113'), 'no technical subject id on screen');
   assert.ok(!painted.includes('google|1049abc'), 'no technical subject id on screen');
   assert.ok(!painted.includes('dan@example.com'), 'the mailbox is one person, not a second row');
-  mount.findAll('button').find((node) => node.textContent.includes('taglio')).dispatch('click');
+  mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the detail card opens');
   assert.ok(card.textContent.includes('Dan, Ada'), 'the card names the person and the customer');
@@ -2161,7 +2182,7 @@ test('a partially-listed person hides with no reload', async () => {
   clickButton(mount, 'Mostra settimana');
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the named identity paints');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the named identity paints');
   releaseMembers();
   for (let round = 0; round < 6; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2171,11 +2192,11 @@ test('a partially-listed person hides with no reload', async () => {
   const callsBefore = weekCalls();
   teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
   assert.equal(weekCalls(), callsBefore, 'a listed person hides with no reload');
-  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the person blocks disappear');
+  assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the person blocks disappear');
   assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
   teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
   assert.equal(weekCalls(), callsBefore, 'showing again needs no reload either');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the person blocks come back');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the person blocks come back');
 });
 
 // backlog:df55cf25 (review P2 on #549): a block and its toggle always match
@@ -2253,11 +2274,13 @@ test('email-less homonyms toggle and book the right human', async () => {
   assert.equal(toggles.length, 2, 'two humans are two toggles');
   assert.ok(toggles.some((node) => node.textContent.includes('Rossi (1)')), 'the first human paints');
   assert.ok(toggles.some((node) => node.textContent.includes('Rossi (2)')), 'the second human paints');
-  const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n');
+  // One separator between the groups too: «+ Prenota» glued to the next
+  // span would read «Prenota19» and fake an «a1».
+  const painted = [...texts(mount, 'button'), ...texts(mount, 'span')].join('\n');
   assert.ok(!painted.includes('a1') && !painted.includes('a2'), 'no technical subject id on screen');
   toggles.find((node) => node.textContent.includes('Rossi (1)')).dispatch('click');
-  assert.ok(!texts(mount, 'strong').includes('taglio'), 'hiding the first hides only its blocks');
-  assert.ok(texts(mount, 'strong').includes('barba'), 'the second human stays');
+  assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'hiding the first hides only its blocks');
+  assert.ok(texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'the second human stays');
   const options = mount.querySelector('select[name="teamMemberId"]').findAll('option')
     .map((node) => node.textContent);
   assert.ok(options.includes('Rossi (1)') && options.includes('Rossi (2)'), 'the choice names both humans distinctly');
@@ -2311,7 +2334,7 @@ test('a hidden partially-listed person stays hidden after a reload', async () =>
   }
   assert.equal(teamToggles(mount).length, 1, 'Dan is one row');
   teamToggles(mount).find((node) => node.textContent.includes('Dan')).dispatch('click');
-  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the person blocks disappear');
+  assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the person blocks disappear');
   clickButton(mount, 'Oggi');
   for (let round = 0; round < 6; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2319,8 +2342,8 @@ test('a hidden partially-listed person stays hidden after a reload', async () =>
   const weekCalls = client.calls.filter((call) => String(call.path).startsWith('/api/appointments/team-week'));
   const last = decodeURIComponent(String(weekCalls[weekCalls.length - 1]?.path ?? ''));
   assert.ok(last.includes('github|1') && last.includes('google|2'), 'the reload asks for every subject of the listed person');
-  assert.ok(!texts(mount, 'strong').includes('taglio'), 'the named identity stays hidden');
-  assert.ok(!texts(mount, 'strong').includes('barba'), 'the sibling identity stays hidden too');
+  assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the named identity stays hidden');
+  assert.ok(!texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'the sibling identity stays hidden too');
   assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
 });
 
@@ -2430,12 +2453,12 @@ test('the roster week filters on toggle with no reload', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(texts(mount, 'strong').includes('piega'), 'both roster weeks paint');
+  assert.ok(texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'both roster weeks paint');
   const callsBefore = client.calls.length;
   teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
   assert.equal(client.calls.length, callsBefore, 'filtering needs no reload');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the active member stays');
-  assert.ok(!texts(mount, 'strong').includes('piega'), 'the deselected roster member disappears');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the active member stays');
+  assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'the deselected roster member disappears');
 });
 
 // Without a connected calendar the week panel says how to connect it, with
@@ -2475,7 +2498,7 @@ test('a disconnected calendar shows the Profilo way in the week panel', async ()
   assert.ok(go, 'a way into Profilo paints');
   go.dispatch('click');
   assert.deepEqual(seen, ['#/profilo'], 'the way lands on Profilo');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the local week still paints under the notice');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the local week still paints under the notice');
 });
 
 // A connected calendar shows no connect notice: the week is the whole story.
@@ -2503,7 +2526,7 @@ test('a connected calendar shows no connect notice', async () => {
   const body = texts(mount, 'p').join('\n');
   assert.ok(!body.includes('non è collegato'), 'no connect notice when connected');
   assert.ok(!mount.findAll('button').some((node) => node.textContent.includes('Vai al Profilo')), 'no Profilo detour when connected');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the week paints');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the week paints');
 });
 
 // An unreadable profile stays silent: unknown is not "not connected", so no
@@ -2521,7 +2544,7 @@ test('an unreadable profile keeps the old week with no notice', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const body = texts(mount, 'p').join('\n');
   assert.ok(!body.includes('non è collegato'), 'no notice on an unknown connection');
-  assert.ok(texts(mount, 'strong').includes('taglio'), 'the typed week still paints');
+  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the typed week still paints');
 });
 
 // A refused member list keeps the opaque named toggles: no error where the
@@ -3193,4 +3216,393 @@ test('rankPhraseProposals puts the painted hours first, night stays behind (back
   );
   assert.deepEqual(rankPhraseProposals([night]), [night], 'a night-only week still proposes honestly');
   assert.deepEqual(rankPhraseProposals('nope'), [], 'non-lists stay empty');
+});
+
+// backlog:5fbebe8559e9 — completion like the prototype, plus the production
+// defects the Mac session saw on 07/11.
+
+const flushAll = async (n = 8) => {
+  for (let round = 0; round < n; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+};
+
+async function showWeek(mount, members = 'marco') {
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = members;
+  clickButton(mount, 'Mostra settimana');
+  await flushAll();
+}
+
+function eventBlocks(mount) {
+  return mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-event'));
+}
+
+test('serviceLabel names the catalog product, else the readable key, never the raw slug', () => {
+  const names = new Map([['lezione-prova', 'Lezione di prova']]);
+  assert.equal(serviceLabel('lezione-prova', names), 'Lezione di prova');
+  assert.equal(serviceLabel('LEZIONE-PROVA', names), 'Lezione di prova', 'the listino key compares case-blind');
+  assert.equal(serviceLabel('lezione-prova', null), 'Lezione prova', 'no catalog: the key made readable');
+  assert.equal(serviceLabel('taglio_donna', new Map()), 'Taglio donna');
+  assert.equal(serviceLabel('', names), 'Appuntamento');
+  assert.equal(serviceLabel(undefined, names), 'Appuntamento');
+});
+
+test('statusWord says a dead booking in Italian, never the raw English status (C14)', () => {
+  assert.equal(statusWord('cancelled'), 'annullato');
+  assert.equal(statusWord('done'), 'svolto');
+  assert.equal(statusWord('no-show'), 'non presentato');
+  assert.equal(statusWord('weird'), 'non attivo');
+  assert.equal(statusWord('toString'), 'non attivo');
+});
+
+test('a block names service and customer like the prototype, never the raw key (defect 07/11)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        ...WEEK.members[0].appointments[0],
+        serviceKey: 'lezione-prova',
+        subject: { resource: 'contact', id: 'c7', owner: 'host', ownerPackage: null },
+      }],
+    }],
+  };
+  const client = stubClient({
+    week,
+    catalog: { products: [{ sku: 'lezione-prova', name: 'Lezione di prova' }] },
+    profiles: { '/api/customer-data/profile/contact/c7': { identity: { contact: { firstName: 'Mario', lastName: 'Rossi' } } } },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  const titles = texts(mount, 'strong');
+  assert.ok(titles.includes('Lezione di prova · Mario Rossi'), `the block reads service · customer: ${JSON.stringify(titles)}`);
+  assert.ok(!mount.textContent.includes('lezione-prova'), 'the raw listino key never paints');
+  // One catalog read and one profile read per customer serve every repaint.
+  const reads = (prefix) => client.calls.filter((call) => call.path.startsWith(prefix)).length;
+  assert.equal(reads('/api/catalog/products'), 1);
+  assert.equal(reads('/api/customer-data/profile/contact/c7'), 1);
+  eventBlocks(mount)[0].dispatch('click');
+  await flushAll();
+  assert.equal(reads('/api/customer-data/profile/contact/c7'), 1, 'the detail card reuses the cached name');
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(card.textContent.includes('Lezione di prova · Mario Rossi'), 'C6: the card title matches the block');
+});
+
+test('without a catalog or a name the block keeps the readable service alone', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        ...WEEK.members[0].appointments[0],
+        serviceKey: 'lezione-prova',
+        subject: { resource: 'contact', id: 'c8', owner: 'host', ownerPackage: null },
+      }],
+    }],
+  };
+  const view = createCalendarioView({ doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  assert.ok(texts(mount, 'strong').includes('Lezione prova'), JSON.stringify(texts(mount, 'strong')));
+  assert.ok(!texts(mount, 'strong').some((text) => text.includes('c8')), 'a customer id is never a name');
+});
+
+test('a draft without a time names the duration, never «? –» (defect 07/11)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = { teamMemberId: 'Daniele', durationMinutes: 45 };
+  const client = stubClient({ phrase: draft, slots: [], suggestGroups: [{ teamMemberId: 'Daniele', slots: [] }] });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con Daniele';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  const lines = texts(mount, 'p');
+  assert.ok(lines.includes('Bozza: Daniele · 45 minuti'), JSON.stringify(lines));
+  assert.ok(!lines.some((text) => text.startsWith('Bozza') && text.includes('?')), 'no question mark stands in for a time');
+});
+
+test('dropHeldOverlaps keeps only slots clear of the person own held bookings', () => {
+  const week = {
+    members: [
+      { teamMemberId: 'marco', appointments: [
+        { status: 'booked', startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T09:00:00.000Z' },
+        { status: 'cancelled', startsAt: '2026-10-22T10:00:00.000Z', endsAt: '2026-10-22T11:00:00.000Z' },
+      ] },
+      { teamMemberId: 'sara', appointments: [
+        { status: 'confirmed', startsAt: '2026-10-22T12:00:00.000Z', endsAt: '2026-10-22T13:00:00.000Z' },
+      ] },
+    ],
+  };
+  const slots = [
+    { startsAt: '2026-10-22T08:30:00.000Z', endsAt: '2026-10-22T09:15:00.000Z' },
+    { startsAt: '2026-10-22T09:00:00.000Z', endsAt: '2026-10-22T09:45:00.000Z' },
+    { startsAt: '2026-10-22T10:00:00.000Z', endsAt: '2026-10-22T10:45:00.000Z' },
+    { startsAt: '2026-10-22T12:00:00.000Z', endsAt: '2026-10-22T12:45:00.000Z' },
+    { startsAt: 'nope', endsAt: '2026-10-22T12:45:00.000Z' },
+  ];
+  assert.deepEqual(dropHeldOverlaps(slots, week, ['marco']).map((slot) => slot.startsAt), [
+    '2026-10-22T09:00:00.000Z', '2026-10-22T10:00:00.000Z', '2026-10-22T12:00:00.000Z',
+  ], 'touching is free, a cancelled row frees its time, another person never blocks');
+  assert.deepEqual(dropHeldOverlaps(null, week, ['marco']), []);
+});
+
+test('a proposal on top of a held booking is never offered (defect 07/11)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = { teamMemberId: 'marco', durationMinutes: 30 };
+  // 16:00Z is the held taglio (18:00 Rome); 14:00Z is free.
+  const slots = [
+    { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
+  ];
+  const view = createCalendarioView({ doc, mount, client: stubClient({ phrase: draft, slots }), now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  const list = mount.querySelector('.cal-slots');
+  assert.ok(list.textContent.includes('22 ott · 16:00–16:30'));
+  assert.ok(!list.textContent.includes('18:00'), 'the held 18:00 step is not proposed');
+  assert.equal(list.findAll('button').length, 1);
+});
+
+test('lanes follow the painted rows: touching blocks that share a row sit side by side', () => {
+  // 10:00–10:45 and 10:45–11:30 Rome both cover the 10:30 row.
+  const held = { startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' };
+  const ghost = { startsAt: '2026-10-22T08:45:00.000Z', endsAt: '2026-10-22T09:30:00.000Z' };
+  const later = { startsAt: '2026-10-22T10:00:00.000Z', endsAt: '2026-10-22T10:30:00.000Z' };
+  const lanes = lanesFor([held, ghost, later]);
+  assert.notEqual(lanes.get(held).lane, lanes.get(ghost).lane);
+  assert.equal(lanes.get(later).lane, 0, 'a block on free rows takes the first lane');
+});
+
+test('ghosts never paint over a booking or over each other (defect 07/11)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = { teamMemberId: 'marco', durationMinutes: 45 };
+  // Thursday 22 Oct, Rome = UTC+2: two contiguous 45-minute steps whose
+  // painted rows overlap (16:00–16:45 and 16:45–17:30), beside sara's piega
+  // at 16:00–16:30 on the same day.
+  const slots = [
+    { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:45:00.000Z' },
+    { startsAt: '2026-10-22T14:45:00.000Z', endsAt: '2026-10-22T15:30:00.000Z' },
+  ];
+  const view = createCalendarioView({ doc, mount, client: stubClient({ week: WEEK_TWO, phrase: draft, slots }), now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount, 'marco, sara');
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  const ghosts = mount.findAll('button').filter((node) => (node.textContent ?? '').startsWith('✦ Proposta'));
+  assert.equal(ghosts.length, 2);
+  const piega = eventBlocks(mount).find((node) => /piega/i.test(node.textContent));
+  const column = (node) => /grid-column: (\d+)/.exec(node.getAttribute('style') ?? '')?.[1];
+  const first = ghosts.find((node) => node.textContent === '✦ Proposta 16:00');
+  const second = ghosts.find((node) => node.textContent === '✦ Proposta 16:45');
+  // The 16:00 ghost shares the 16:00 row with piega; the two ghosts share
+  // the 16:30 row: each pair sits in different lanes.
+  assert.notEqual(column(first), column(piega), 'the ghost sits beside the booking');
+  assert.notEqual(column(first), column(second), 'the ghosts sit beside each other');
+  assert.ok(ghosts.every((node) => !(node.getAttribute('style') ?? '').includes('1 / -1')), 'no ghost spans the whole day');
+});
+
+test('C16: a week with zero events keeps days and hours, no technical message', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const empty = { ...WEEK, members: [{ teamMemberId: 'marco', appointments: [] }] };
+  const view = createCalendarioView({ doc, mount, client: stubClient({ week: empty }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  const byClass = (name) => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(name));
+  assert.equal(byClass('cal-day').length, 5);
+  assert.equal(byClass('cal-hour').length, 10);
+  assert.equal(eventBlocks(mount).length, 0);
+  const grid = mount.querySelector('.cal-week');
+  assert.doesNotMatch(grid.textContent, /NOT_FOUND|non composto|error|undefined|null/i);
+});
+
+test('an empty day carries a compact row with «+ Prenota» for the phone stack', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  const classesOf = (node) => (node.getAttribute('class') ?? '').split(/\s+/);
+  const byClass = (name) => mount.findAll('div').filter((node) => classesOf(node).includes(name));
+  // WEEK holds Thu (taglio) and Fri (barba): Mon–Wed are empty.
+  const compact = byClass('cal-day-compact');
+  assert.deepEqual(compact.map((node) => node.getAttribute('data-day')), ['2026-10-19', '2026-10-20', '2026-10-21']);
+  assert.ok(compact[0].textContent.includes('lun 19'));
+  assert.ok(compact[0].textContent.includes('Nessun appuntamento'));
+  // Desktop still paints five timelines; the empty ones carry the marker the
+  // phone CSS collapses, the days with blocks never do.
+  const days = byClass('cal-day');
+  assert.equal(days.length, 5);
+  assert.deepEqual(days.map((node) => classesOf(node).includes('is-empty')), [true, true, true, false, false]);
+  const book = compact[1].findAll('button').find((node) => node.textContent === '+ Prenota');
+  assert.ok(book, 'the compact row books that day');
+  book.dispatch('click');
+  await flushAll();
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  assert.equal(field('date').value, '2026-10-20', '«+ Prenota» opens the form on that day');
+  assert.equal(field('start').value, '', 'no hour is invented');
+});
+
+// Review #646 (Muse, head 60594fa5).
+
+test('review #646 P2: GRID_START_MINUTES stays exported beside the grid geometry', () => {
+  assert.equal(GRID_START_MINUTES, 9 * 60);
+});
+
+test('review #646 P1: «+ Prenota» drops the times of an earlier slot', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  // An earlier pick set Thursday 16:00–16:30 in the form.
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  field('date').value = '2026-10-22';
+  field('date').dispatch('input');
+  field('start').value = '16:00';
+  field('start').dispatch('input');
+  field('end').value = '16:30';
+  field('end').dispatch('input');
+  const compact = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'));
+  compact[1].findAll('button').find((node) => node.textContent === '+ Prenota').dispatch('click');
+  await flushAll();
+  assert.equal(field('date').value, '2026-10-20', 'the tapped day');
+  assert.equal(field('start').value, '', 'never the earlier start');
+  assert.equal(field('end').value, '', 'never the earlier end');
+});
+
+test('review #646 P1: after a phrase draft filled the form, «+ Prenota» keeps person and service, never its day and hour', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const draft = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' };
+  const view = createCalendarioView({
+    doc, mount, client: stubClient({ phrase: draft, slots: [] }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await showWeek(mount);
+  mount.querySelector('textarea[name="phrase"]').value = 'taglio con marco giovedì alle 16';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  assert.equal(field('start').value, '16:00', 'the draft filled the form');
+  const compact = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'));
+  compact[0].findAll('button').find((node) => node.textContent === '+ Prenota').dispatch('click');
+  await flushAll();
+  assert.equal(field('date').value, '2026-10-19', 'the tapped day wins over the draft day');
+  assert.equal(field('start').value, '', 'the draft hour is not carried to another day');
+  assert.equal(field('end').value, '');
+  assert.equal(field('serviceKey').value, 'taglio', 'the draft service is kept');
+});
+
+test('review #646 P2: the held guard reads the searched person, not only the painted week', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const sara = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'sara',
+      appointments: [{ ...WEEK_TWO.members[1].appointments[0] }],
+    }],
+  };
+  const base = stubClient({
+    phrase: { teamMemberId: 'sara', durationMinutes: 30 },
+    suggestGroups: [{ teamMemberId: 'sara', slots: [
+      // 14:00Z is sara's held piega; 13:00Z is free.
+      { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
+      { startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' },
+    ] }],
+  });
+  const weeks = [];
+  const client = {
+    ...base,
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/team-week')) {
+        weeks.push(path);
+        if (path.includes('teamMemberIds=sara')) return sara;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount, 'marco');
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con sara';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  assert.ok(weeks.some((path) => path.includes('teamMemberIds=sara')), 'the searched person week is read');
+  const list = mount.querySelector('.cal-slots');
+  assert.ok(list.textContent.includes('22 ott · 15:00–15:30'), list.textContent);
+  assert.ok(!list.textContent.includes('16:00–16:30'), 'the step on sara\'s held piega is never offered');
+});
+
+// Review #646 round 3 (Muse, head f20a1081).
+
+test('review #646 r3: a day whose only bookings are hidden never reads «Nessun appuntamento»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // marco holds Thursday, sara only Wednesday 21 Oct (16:00 Rome).
+  const week = {
+    ...WEEK_TWO,
+    members: [
+      WEEK_TWO.members[0],
+      { teamMemberId: 'sara', appointments: [{ ...WEEK_TWO.members[1].appointments[0], startsAt: '2026-10-21T14:00:00.000Z', endsAt: '2026-10-21T14:30:00.000Z' }] },
+    ],
+  };
+  const view = createCalendarioView({ doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount, 'marco, sara');
+  const compactDays = () => mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'))
+    .map((node) => node.getAttribute('data-day'));
+  assert.ok(!compactDays().includes('2026-10-21'), 'Wednesday holds sara');
+  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'sara is hidden');
+  assert.ok(!compactDays().includes('2026-10-21'), 'a hidden booking still holds its day: no compact «Nessun appuntamento»');
+  assert.deepEqual(compactDays(), ['2026-10-19', '2026-10-20', '2026-10-23'], 'truly empty days stay compact');
+});
+
+test('review #646 r3: a pager move during the search leaves its answer unpublished', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({
+    phrase: { teamMemberId: 'marco', durationMinutes: 30 },
+    slots: [{ startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' }],
+  });
+  const client = {
+    ...base,
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/appointments/suggest-slots')) await gate;
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushAll();
+  mount.findAll('button').find((node) => node.textContent === '›').dispatch('click');
+  await flushAll();
+  release();
+  await flushAll();
+  assert.equal(mount.querySelector('.cal-slots'), null, 'no proposal of the old week lands on the new one');
+  assert.ok(!mount.findAll('button').some((node) => (node.textContent ?? '').startsWith('✦ Proposta')), 'no ghost either');
 });
