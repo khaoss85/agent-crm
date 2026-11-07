@@ -697,19 +697,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
  * of the 2x2 — at the same height, so all four tiles read equal. */
 .bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; }
 .bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 4px 10px; font-size: 12px; line-height: 1.25; overflow-wrap: normal; word-break: keep-all; hyphens: none; }
-/* Dan 07/11: the quick-action tiles wear the prototype's stroke icons
- * (Chiama, Scrivi, Offerta, Appuntamento), drawn as a mask so they take the
- * text colour in light and dark, instead of the text glyphs ☎ ✉ ◈ ◷. */
-.bo-scheda-tile[data-action="call-customer"]::before,
-.bo-scheda-tile[data-action="add-phone"]::before,
-.bo-scheda-tile[data-action="compose-message"]::before,
-.bo-scheda-tile[data-action="new-offer"]::before,
-.bo-scheda-tile[data-action="new-appointment"]::before { content: ""; align-self: center; width: 18px; height: 18px; background-color: currentColor; -webkit-mask: var(--qa-icon) center / contain no-repeat; mask: var(--qa-icon) center / contain no-repeat; }
-.bo-scheda-tile[data-action="call-customer"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="add-phone"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2M18 3v6M15 6h6'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="compose-message"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h16v11H9l-5 4z'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="new-offer"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="new-appointment"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 6h14v13H5zM5 10h14M9 4v4M15 4v4'/%3E%3C/svg%3E"); }
+/* Azioni rapide: the prototype's stroke icon is a real SVG (uiIcon) above
+ * the label — a CSS data: mask is blocked by the host CSP. */
+.bo-scheda-tile > .ui-icon { align-self: center; width: 18px; height: 18px; flex: none; }
 /* Voce d525f4aa48b2: the AI voice in Dettagli wears the assistant's violet,
  * like the ✦ summary card — same tokens, no new visual identity. */
 button.bo-scheda-tile { font-size: 12px; padding: 12px 4px 10px; overflow-wrap: normal; word-break: keep-all; }
@@ -802,6 +792,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-oggi-actions { display: flex; flex-direction: column; gap: 10px; }
 .bo-oggi-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line-soft); }
 .bo-oggi-row[data-state] { opacity: .55; }
+/* backlog:9c7d1477a8d4 (C12): a done card is struck through, its confirmation green, like the prototype. */
+.bo-oggi-row[data-state="done"] .bo-oggi-title { text-decoration: line-through; }
+.bo-oggi-row[data-state="done"] .bo-oggi-state { color: var(--accent); }
 .bo-oggi-mono { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; font-family: var(--mono); font-size: 11px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-oggi-body { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .bo-oggi-title { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
@@ -829,6 +822,7 @@ a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-ai h3 { font-size: 13px; color: var(--agent-ink); }
 .bo-oggi-agenda { display: flex; flex-direction: column; }
 .bo-oggi-agenda-row { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--line-faint); font-size: 14px; font-weight: 600; }
+.bo-oggi-agenda-row[data-state="past"] { opacity: .5; }
 .bo-oggi-agenda-row > a { min-width: 0; overflow-wrap: anywhere; color: var(--ink); text-decoration: none; }
 .bo-oggi-more { margin-top: auto; padding-top: 8px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .bo-oggi-time { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--ink); }
@@ -840,6 +834,7 @@ a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-sources a { color: inherit; text-decoration: none; font-weight: 400; }
 .bo-oggi-invite { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px; border: 1px dashed var(--line-dashed); font-size: 14px; font-weight: 400; color: var(--muted); text-decoration: none; }
 .bo-oggi-invite:hover { border-color: var(--ink); color: var(--ink); }
+.bo-oggi-invite strong { flex: none; white-space: nowrap; }
 
 @media (max-width: 700px) {
   .bo-oggi-btns { width: 100%; }
@@ -1479,8 +1474,23 @@ select.bo-spazi-input { flex: none; }
 .plist .ui-hero-text { font-size: 15px; }
 .plist .ui-hero-tiles .ui-chip { width: 64px; height: 64px; display: grid; place-items: center; padding: 0; border-radius: 14px; font-size: 13px; }
 .plist .ui-hero-tiles .ui-chip:nth-child(even) { transform: translateY(12px); width: 52px; height: 52px; }
-/* No carousel controls behind the dots: the hero is one static banner. */
-.plist .ui-hero-dots { display: none; }
+/* Carousel controls like the prototype (backlog:34672b9f5a1f, spec C12):
+ * round see-through arrows on the panel's sides, the dots in their own row
+ * under it — the active one wide and dark, the others small and grey. */
+.plist .ui-hero-eyebrow { text-transform: uppercase; opacity: .75; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"], .plist .ui-hero > .ui-btn[aria-label="Successiva"] {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; min-height: 0; padding: 0;
+  display: grid; place-items: center; border: none; border-radius: 50%; background: rgba(255, 253, 247, .14);
+  color: var(--paper); box-shadow: none; font-size: 20px; line-height: 1; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"] { left: 14px; }
+/* The library chevron points down: turned into ‹ and ›. */
+.plist .ui-hero > .ui-btn[aria-label="Precedente"] .ui-icon { transform: rotate(90deg); }
+.plist .ui-hero > .ui-btn[aria-label="Successiva"] .ui-icon { transform: rotate(-90deg); }
+.plist .ui-hero > .ui-btn[aria-label="Successiva"] { right: 14px; }
+.plist .ui-hero > .ui-btn[aria-label="Precedente"]:hover, .plist .ui-hero > .ui-btn[aria-label="Successiva"]:hover { background: rgba(255, 253, 247, .24); }
+.plist .ui-hero-dots { display: flex; justify-content: center; gap: 6px; margin-top: 12px; }
+.plist .ui-hero-dot { width: 6px; height: 6px; min-height: 0; padding: 0; border: none; border-radius: 99px; background: var(--line); font-size: 0; line-height: 0; color: transparent; cursor: pointer; box-shadow: none; transition: width .2s; }
+.plist .ui-hero-dot.on { width: 22px; background: var(--ink); }
 .plist .ui-conn-head { align-items: center; margin: 40px 0 14px; }
 .plist .ui-conn-head h3 { font-size: 18px; letter-spacing: -.01em; }
 .plist .ui-conn-count { padding: 1px 7px; border-radius: 99px; background: var(--surface-soft); }
@@ -1492,6 +1502,28 @@ select.bo-spazi-input { flex: none; }
 .plist .ui-conn-lines + .ui-conn-lines { font-size: 12.5px; color: var(--dim); }
 .plist .ui-conn-state .ui-btn { width: 32px; height: 32px; padding: 0; border-radius: 9px; font-size: 18px; }
 .plist .ui-conn-state .ui-badge { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 9px; font-size: 16px; }
+/* Cards like the prototype: the action sits top-right, the name row carries
+ * the curated mark. */
+.plist .ui-conn-card { align-items: flex-start; }
+.ui-conn-title { display: flex; align-items: center; gap: 6px; }
+.ui-conn-verified { display: inline-grid; place-items: center; width: 15px; height: 15px; border: 1.5px solid var(--dim); border-radius: 50%; color: var(--dim); flex: none; }
+.ui-conn-verified .ui-icon { width: 9px; height: 9px; stroke-width: 3; }
+/* Toolbar like the prototype: the search wears its lens, filter and sort are
+ * bare icon-buttons, the CTA reads «+ Aggiungi» with its chevron. */
+.bo-perso-bar .search.ui-field { padding-left: 34px; background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6a5a' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4'/%3E%3C/svg%3E") no-repeat 12px center / 15px 15px; }
+.bo-perso-bar .ui-conn-menuwrap > .ui-btn { width: 36px; height: 36px; min-height: 0; padding: 0; display: grid; place-items: center; border: none; border-radius: 9px; background: transparent; box-shadow: none; }
+.bo-perso-bar .ui-conn-menuwrap > .ui-btn:hover, .bo-perso-bar .ui-conn-menuwrap > .ui-btn[aria-expanded="true"] { background: var(--line-soft); }
+.bo-perso-bar .ui-btn-cta { display: inline-flex; align-items: center; gap: 6px; }
+.bo-perso-bar .ui-btn-cta .ui-icon { width: 15px; height: 15px; }
+@media (max-width: 700px) {
+  /* On a phone the arrows leave the text alone: they sit together at the
+   * panel's bottom right, the copy keeps the full width. */
+  .plist .ui-hero { padding: 26px 22px 70px; }
+  .plist .ui-hero > .ui-btn[aria-label="Precedente"], .plist .ui-hero > .ui-btn[aria-label="Successiva"] { top: auto; bottom: 18px; transform: none; }
+  .plist .ui-hero > .ui-btn[aria-label="Precedente"] { left: auto; right: 62px; }
+  .plist .ui-hero > .ui-btn[aria-label="Successiva"] { right: 18px; }
+  .plist .ui-hero-title { font-size: 30px; }
+}
 
 /*
  * Product catalog (BO-F2-04 rules, BO-F2-05 table): the Stripe state, the
@@ -2115,3 +2147,29 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-timeline .bo-scheda-bubble .bo-scheda-sync[data-sync="failed"] { color: var(--danger); font-weight: 600; }
 .bo-scheda-bubble .bo-scheda-allegato { max-width: 100%; border-radius: 10px; }
 @media (max-width: 560px) { .bo-scheda-bubble { max-width: 86%; } }
+
+/* B5 — real phone pass (backlog:d7c78e9cdf53): send from the scheda, book
+ * without dragging, no zoom and no sideways scroll on a 390px phone. */
+@media (max-width: 700px) {
+  /* The inline new-appointment form (phone, no popover): its customer search
+   * kept `.cal-form input`'s 12px left padding, so the magnifier sat on the
+   * placeholder. Same 36px the popover already gives it; desktop untouched. */
+  .cal-form .ui-search .ui-search-input { padding-left: 36px; }
+  /* iOS Safari zooms the page when a field under 16px takes focus, and the
+   * page stays zoomed (sideways scroll included): on a phone every typed
+   * field reads at 16px. `!important` because the desktop sizes ride
+   * component selectors of every specificity; the rule only lifts the floor
+   * on narrow screens, desktop sizes are untouched. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px !important; }
+  /* The stacked new-appointment form: search and person pickers take the
+   * full row like the other fields instead of a half-width box. */
+  .cal-form .ui-search, .cal-form .ui-select { display: flex; flex: 1 1 100%; width: 100%; }
+}
+@media (max-width: 700px) {
+  /* `touch-action: none` (kept for the press-and-drag) swallowed every swipe
+   * on the stacked phone week, so a finger on the grid could not scroll the
+   * page. Pan stays the browser's: a tap still opens the 30-minute slot form
+   * (pointerdown + pointerup), a swipe scrolls and cancels the pick. Scoped
+   * to the stacked layout only: a wide touch screen keeps the drag. */
+  .cal-day { touch-action: manipulation; }
+}

@@ -3160,3 +3160,21 @@ test('785428ec3de0: Identità collegate says nothing technical for a single sche
   const linked = await renderCard(stubClient());
   assert.ok(linked.textContent.includes('della stessa persona'), 'a real union still reads its schede');
 });
+
+// #627 followed up: the quick-action icons are real SVG elements, never a CSS
+// data: mask — the host CSP (default-src 'self') blocks data: images, so the
+// masked icons never painted in production.
+test('Azioni rapide: every tile carries its stroke icon as an SVG element, and the label stays the text', async () => {
+  const mount = await renderCard(stubClient());
+  const tiles = mount.findAll('button').filter((node) => String(node.getAttribute('class') ?? node.className ?? '').split(/\s+/).includes('bo-scheda-tile'));
+  assert.ok(tiles.length >= 3, 'the quick actions render');
+  for (const node of tiles) {
+    const icon = node.findAll('svg')[0];
+    assert.ok(icon, `${node.textContent} has an icon`);
+    assert.match(String(icon.getAttribute('class')), /ui-icon ui-icon-(telefono|telefono-piu|messaggio|offerta|appuntamento)/);
+    assert.equal(icon.getAttribute('aria-hidden'), 'true', 'decorative: the label names the action');
+  }
+  assert.ok(tiles.some((node) => node.textContent === 'Scrivi'), 'the label is still the whole text');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(!/url\(["']?data:/.test(css), 'no data: url in the stylesheet — the host CSP would block it');
+});

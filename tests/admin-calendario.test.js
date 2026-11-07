@@ -2904,6 +2904,48 @@ test('a plain click on an empty slot is half an hour', async () => {
   assert.equal(pick?.textContent, '16:30–17:00');
 });
 
+// backlog:d7c78e9cdf53 (B5, real phone): on the stacked phone week the
+// grid lets the browser pan (styles.css lifts touch-action there), so a
+// finger has two outcomes. A tap — touch pointerdown then pointerup on an
+// empty slot, no move — opens the filled 30-minute form; a swipe makes the
+// browser take the gesture (pointercancel) and nothing opens.
+async function phoneWeek() {
+  const mount = createMount();
+  const view = createCalendarioView({ doc: createFakeDocument(), mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const col = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'))[1];
+  col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 366, bottom: 360, height: 360, width: 366 });
+  const hasPop = () => mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop'));
+  const pick = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
+  return { mount, col, hasPop, pick };
+}
+
+test('phone: a tap on an empty slot opens the 30-minute form, no drag needed', async () => {
+  const { mount, col, hasPop, pick } = await phoneWeek();
+  col.dispatch('pointerdown', { button: 0, pointerType: 'touch', pointerId: 7, clientY: 45, target: col, preventDefault() {} }); // 10:00
+  col.dispatch('pointerup', { pointerType: 'touch', pointerId: 7, target: col });
+  assert.equal(pick()?.textContent, '10:00–10:30', 'the tapped half hour is chosen');
+  assert.ok(hasPop(), 'the Nuovo appuntamento form opens');
+  const value = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name)?.value;
+  assert.equal(value('date'), '2026-10-20');
+  assert.equal(value('start'), '10:00');
+  assert.equal(value('end'), '10:30');
+});
+
+test('phone: a swipe over the grid (pointercancel) opens nothing and leaves no pick', async () => {
+  const { col, hasPop, pick } = await phoneWeek();
+  col.dispatch('pointerdown', { button: 0, pointerType: 'touch', pointerId: 8, clientY: 45, target: col, preventDefault() {} });
+  col.dispatch('pointercancel', { pointerType: 'touch', pointerId: 8, target: col });
+  col.dispatch('pointerup', { pointerType: 'touch', pointerId: 8, target: col });
+  assert.equal(pick(), undefined, 'no slot stays chosen');
+  assert.ok(!hasPop(), 'no form opens');
+  // (The live drag block leaves via Element.remove(), which the fake DOM
+  // lacks; the cancel itself is what this test pins: no pick, no form.)
+});
+
 // backlog:49bd3657b0f8: the view keeps the typed phrase in module state
 // across re-renders, so after the shell routes away the DOM check would
 // read a clean page while the draft survives. Leaving mirrors it into the
