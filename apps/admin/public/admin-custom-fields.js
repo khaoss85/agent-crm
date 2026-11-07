@@ -22,11 +22,29 @@ export const CUSTOM_FIELD_TYPE_LABELS = Object.freeze({
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
+/**
+ * The list a read answers: the bare array the framework route returns, or
+ * the array under `field` of an enveloped answer. The array check comes
+ * first on purpose (production 07/11): `answer.values` on a bare array is
+ * `Array.prototype.values`, a function, so `answer?.values ?? answer` read
+ * every saved value as an empty list and the scheda showed «—».
+ * @param {unknown} answer @param {string[]} fields
+ */
+function listFrom(answer, fields) {
+  if (Array.isArray(answer)) return answer;
+  if (!answer || typeof answer !== 'object') return [];
+  for (const field of fields) {
+    const entry = /** @type {any} */ (answer)[field];
+    if (Array.isArray(entry)) return entry;
+  }
+  return [];
+}
+
 /** Every defined field of the space, `[]` on an older server without the route. */
 export async function fetchFieldDefs(client) {
   try {
     const answer = await client.request('/api/customer-data/fields');
-    return asArray(answer?.definitions ?? answer?.fields ?? answer);
+    return listFrom(answer, ['definitions', 'fields']);
   } catch (error) {
     if (error && (error.status === 404 || error?.code === 'NOT_FOUND')) return [];
     throw error;
@@ -50,7 +68,7 @@ export async function fetchFieldValues(client, resource, id) {
     const answer = await client.request(
       `/api/customer-data/fields/values?resource=${encodeURIComponent(resource)}&id=${encodeURIComponent(id)}`,
     );
-    return asArray(answer?.values ?? answer);
+    return listFrom(answer, ['values']);
   } catch (error) {
     if (error && (error.status === 404 || error?.code === 'NOT_FOUND')) return [];
     throw error;
@@ -97,9 +115,13 @@ export async function applyPhrase(client, { customer, fields }) {
  * refused note warns, never blocks the created customer.
  */
 export async function postSubjectNote(client, { resource, id, text }) {
+  // Exactly the scheda's «Aggiungi nota» shape: the note travels as `body`
+  // (the framework's record-subject-note input). `text` was refused by the
+  // /bo edge (400 BO_CRM_BODY_REFUSED, production 07/11) and by the
+  // framework itself, so every Nuovo cliente note was lost.
   return client.request('/api/customer-hub/notes', {
     method: 'POST',
-    body: JSON.stringify({ resource, id, text }),
+    body: JSON.stringify({ resource, id, body: text }),
   });
 }
 
@@ -107,9 +129,28 @@ export async function postSubjectNote(client, { resource, id, text }) {
 export function formatCustomValue(def, value) {
   if (value === null || value === undefined || String(value) === '') return null;
   if ((def?.type ?? def?.fieldType) === 'si-no') {
-    return String(value).toLowerCase() === 'sì' || String(value).toLowerCase() === 'si' ? 'sì' : 'no';
+    const word = siNoWord(value);
+    return word === '' ? String(value) : word;
   }
   return String(value);
+}
+
+const SI_WORDS = new Set(['sì', 'si', 'yes', 'true', '1']);
+const NO_WORDS = new Set(['no', 'false', '0']);
+
+/**
+ * The canonical form the server stores for a Sì/No field ('sì' or 'no'),
+ * read from whatever an older answer carried (true/false, 'yes', 'si');
+ * '' when the value is none of them.
+ * @param {unknown} value
+ */
+export function siNoWord(value) {
+  if (value === true) return 'sì';
+  if (value === false) return 'no';
+  const word = String(value ?? '').normalize('NFC').trim().toLowerCase();
+  if (SI_WORDS.has(word)) return 'sì';
+  if (NO_WORDS.has(word)) return 'no';
+  return '';
 }
 
 /**
@@ -131,7 +172,7 @@ export function fieldControl(el, def, value = null) {
       option.setAttribute('value', optionValue);
       control.appendChild(option);
     }
-    control.value = value === 'sì' || value === true ? 'sì' : value === 'no' || value === false ? 'no' : '';
+    control.value = value === null || value === undefined ? '' : siNoWord(value);
   } else if (type === 'scelta') {
     control = el('select', 'ui-field');
     const empty = el('option', undefined, '—');
