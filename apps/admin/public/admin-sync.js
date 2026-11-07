@@ -214,13 +214,19 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
     + (entry !== null && typeof entry === 'object' && entry.inbox !== null && typeof entry.inbox === 'object'
       && Number.isSafeInteger(entry.inbox.received) && entry.inbox.received > 0 ? entry.inbox.received : 0), 0);
   const tempo = syncing ? 'in corso…' : (lastAt === null ? null : syncAgo(lastAt, nowMs));
-  const detail = entries.length === 0
-    ? 'Nessun connettore collegato: collega il primo da Connettori.'
+  // Voce 3a3e6eaf: with no channel linked nothing can be "all synced" —
+  // the headline says so and the hero offers Collega instead of a pull.
+  const linked = syncChannelTable(activity, nowMs).some((row) => row.connected);
+  const detail = !linked
+    ? 'Collega il primo canale: messaggi ed eventi arriveranno qui.'
     : tempo === null
       ? 'Ancora nessun movimento registrato.'
       : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
   if (syncing) {
     return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: total };
+  }
+  if (!linked) {
+    return { tone: 'empty', title: 'Nessun canale collegato', detail, count: total };
   }
   if (total > 0) {
     return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: total };
@@ -900,7 +906,7 @@ export function createSyncView(deps) {
     main.appendChild(head);
     main.appendChild(el(doc, 'p', 'bo-sync-hero-sub', indicator.detail));
     hero.appendChild(main);
-    hero.appendChild(renderHeroPull(activity, syncing));
+    hero.appendChild(indicator.tone === 'empty' ? renderHeroConnect() : renderHeroPull(activity, syncing));
     box.appendChild(hero);
     if (readOnly()) {
       box.appendChild(el(doc, 'p', 'bo-sync-note', 'Sola lettura (Osservatore): i pulsanti di azione sono nascosti.'));
@@ -937,6 +943,24 @@ export function createSyncView(deps) {
       void syncAll(keys);
     });
     return button;
+  }
+
+  // Nothing linked: the hero's action is the first connection, never a
+  // pull with nothing to pull. Observers get no action at all.
+  function renderHeroConnect() {
+    const link = el(doc, 'a', 'ui-btn ui-btn-cta bo-sync-hero-pull bo-sync-hero-connect', 'Collega un canale');
+    link.setAttribute('href', '#/connettori');
+    link.setAttribute('data-action', 'collega');
+    if (readOnly()) {
+      link.setAttribute('hidden', '');
+      link.setAttribute('aria-hidden', 'true');
+      return link;
+    }
+    link.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      go('#/connettori');
+    });
+    return link;
   }
 
   function renderRouteLink(card, label, route) {
@@ -976,11 +1000,13 @@ export function createSyncView(deps) {
     const locked = readOnly();
     // BO-F6-16: the section names its count like the prototype
     // (`Da sistemare <n>`); the quiet banner is the prototype wording.
-    box.appendChild(el(doc, 'h3', undefined, total === 0 ? 'Da sistemare' : `Da sistemare ${total}`));
     if (total === 0 && state.candidatesError === null) {
-      box.appendChild(el(doc, 'p', 'bo-sync-note', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
+      // Prototype: with nothing open the section hides and the quiet
+      // banner stands alone (C15).
+      box.appendChild(el(doc, 'p', 'bo-sync-note bo-sync-allclear', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
       return;
     }
+    box.appendChild(el(doc, 'h3', undefined, total === 0 ? 'Da sistemare' : `Da sistemare ${total}`));
     const list = el(doc, 'div', 'bo-sync-fixes');
     for (const card of grants) {
       const node = el(doc, 'div', 'bo-sync-fix bo-sync-fix-grant');
@@ -1045,8 +1071,10 @@ export function createSyncView(deps) {
     const rows = syncChannelTable(activity);
     const connected = rows
       .filter((row) => row.connected && SYNC_CHANNELS.some((fixed) => fixed.id === row.channel)).length;
-    box.appendChild(el(doc, 'h3', undefined, 'Canali'));
-    box.appendChild(el(doc, 'p', 'bo-sync-count', `${connected} di 9 collegati`));
+    const cardHead = el(doc, 'div', 'bo-sync-cardhead');
+    cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
+    cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${connected} di 9 collegati`));
+    box.appendChild(cardHead);
     const wrap = el(doc, 'div', 'bo-sync-tablewrap');
     const table = doc.createElement('table');
     table.setAttribute('class', 'bo-sync-table');
@@ -1060,6 +1088,8 @@ export function createSyncView(deps) {
     for (const row of rows) {
       const ago = row.lastAt === null ? null : syncAgo(row.lastAt);
       const line = doc.createElement('tr');
+      // An unlinked row reads dimmed, its Collega stays at full strength.
+      if (!row.connected) line.setAttribute('class', 'bo-sync-row-off');
       const name = doc.createElement('td');
       name.setAttribute('class', 'bo-sync-name');
       const nameWrap = el(doc, 'div', 'bo-sync-namewrap');
