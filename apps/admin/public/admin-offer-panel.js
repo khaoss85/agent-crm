@@ -173,7 +173,14 @@ export function openOfferPanel(deps) {
     draftCurrency = code;
     labels.value.textContent = code === null || code === 'EUR' ? 'Valore (€)' : `Valore (${code})`;
   };
-  inputs.value.addEventListener('input', () => { valueTyped = String(inputs.value.value ?? '').trim() !== ''; });
+  inputs.value.addEventListener('input', () => {
+    valueTyped = String(inputs.value.value ?? '').trim() !== '';
+    // An emptied value drops the AI currency and lets the chips price it.
+    if (!valueTyped && draftCurrency !== null) {
+      setDraftCurrency(null);
+      refreshTotal();
+    }
+  });
 
   // ---- Catalog chips -------------------------------------------------
   const catalogBox = el('div', 'bo-offer-catalog');
@@ -192,6 +199,8 @@ export function openOfferPanel(deps) {
   let catalogReady = false;
   /** @type {null | {ids: Set<string>, keepValue: boolean}} */
   let pendingWanted = null;
+  /** Set once Crea offerta exists: disables it while pendingWanted waits. */
+  let syncCreate = () => {};
   /** Presses the AI-chosen chips; answers how many matched the catalog. */
   const applyWanted = ({ ids, keepValue }) => {
     const matched = picks.filter((pick) => ids.has(String(pick.offer.offerId))).length;
@@ -215,7 +224,12 @@ export function openOfferPanel(deps) {
       return;
     }
     totalLine.textContent = `Totale prodotti ${formatAmount(total.total, total.currency)}`;
-    if (!valueTyped) inputs.value.value = centsToField(total.total);
+    if (!valueTyped) {
+      inputs.value.value = centsToField(total.total);
+      // Review #616 round 3: this value is the chips' total, in their
+      // currency; an earlier AI currency no longer describes it.
+      setDraftCurrency(null);
+    }
   };
   const choose = (pick, on) => {
     pick.checkbox.checked = on;
@@ -261,7 +275,9 @@ export function openOfferPanel(deps) {
     if (pendingWanted !== null) {
       const wanted = pendingWanted;
       pendingWanted = null;
+      syncCreate();
       if (applyWanted(wanted) === 0) say('I prodotti scelti dall’AI non sono nel catalogo: sceglili qui sotto se servono.', before !== null);
+      else say('Compilata dall’AI: controlla i campi prima di creare.', before !== null);
     }
   };
   client.request('/api/catalog/products?active=true').then(
@@ -272,6 +288,7 @@ export function openOfferPanel(deps) {
       catalogReady = true;
       if (pendingWanted !== null && !gone()) {
         pendingWanted = null;
+        syncCreate();
         say('Il catalogo non si è potuto leggere: i prodotti scelti dall’AI vanno aggiunti a mano.', before !== null);
       }
     },
@@ -308,6 +325,7 @@ export function openOfferPanel(deps) {
       inputs.expiry.value = before.expiry;
       valueTyped = before.valueTyped;
       pendingWanted = null;
+      syncCreate();
       setDraftCurrency(before.currency);
       picks.forEach((pick, index) => choose(pick, before?.picks[index] === true));
       if (!before.valueTyped) inputs.value.value = before.value;
@@ -376,6 +394,11 @@ export function openOfferPanel(deps) {
         setDraftCurrency(currency);
       }
       go.textContent = 'Ricompila';
+      syncCreate();
+      if (pendingWanted !== null) {
+        say('Compilata dall’AI: aspetto il catalogo per i prodotti scelti…', true);
+        return;
+      }
       say(unmatched
         ? 'Compilata dall’AI, ma i prodotti scelti non sono nel catalogo: controlla i campi prima di creare.'
         : 'Compilata dall’AI: controlla i campi prima di creare.', true);
@@ -429,6 +452,10 @@ export function openOfferPanel(deps) {
   let creating = false;
   async function submit() {
     if (creating) return;
+    if (pendingWanted !== null) {
+      generalError.textContent = 'Aspetto il catalogo per i prodotti scelti dall’AI, poi puoi creare.';
+      return;
+    }
     clearErrors();
     const name = String(inputs.title.value ?? '').trim();
     const cents = euroToCents(inputs.value.value);
@@ -442,6 +469,13 @@ export function openOfferPanel(deps) {
     if (owner === '') { errors.owner.textContent = 'Scrivi chi la segue.'; bad = true; }
     if (expiry !== '' && Number.isNaN(Date.parse(expiry))) { errors.expiry.textContent = 'La data non è valida.'; bad = true; }
     if (currencies.size > 1) { generalError.textContent = 'I prodotti scelti hanno valute diverse.'; bad = true; }
+    // Review #616 round 3 (P1): a value the AI drafted in one currency is
+    // never filed under the chips' other currency.
+    const chipCurrency = currencies.size === 1 ? [...currencies][0] : null;
+    if (draftCurrency !== null && chipCurrency !== null && chipCurrency !== draftCurrency) {
+      generalError.textContent = `Il valore è in ${draftCurrency}, i prodotti scelti in ${chipCurrency}: togli i prodotti, oppure svuota il valore e lo calcolano i prodotti.`;
+      bad = true;
+    }
     if (bad) return;
     creating = true;
     create.setAttribute('disabled', 'disabled');
@@ -482,6 +516,13 @@ export function openOfferPanel(deps) {
     }
   }
   create.addEventListener('click', submit);
+  // Review #616 round 3 (P2): while the AI's catalog choice waits for the
+  // catalog, the filed value and currency are not settled yet.
+  syncCreate = () => {
+    if (creating || gone()) return;
+    if (pendingWanted !== null) create.setAttribute('disabled', 'disabled');
+    else create.removeAttribute('disabled');
+  };
   panel.__submit = submit; // test hook
 
   if (deps.spaceId !== null && typeof prompt.focus === 'function') prompt.focus();

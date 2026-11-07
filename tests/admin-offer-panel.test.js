@@ -261,7 +261,7 @@ test('euroToCents reads plain euro amounts only', () => {
 });
 
 // Review #616 (P1): the AI value keeps the currency the AI drafted it in.
-test('review #616: an AI value in USD files the offer in USD; a chosen EUR chip still decides', async () => {
+test('review #616: an AI value in USD files the offer in USD; EUR chips chosen before never relabel it', async () => {
   const client = fakeClient({ draft: { title: 'Pacchetto US', valueCents: 32000, currency: 'usd' } });
   const { panel } = await open({ client });
   aiInput(panel).value = 'pacchetto a 320 dollari';
@@ -279,7 +279,58 @@ test('review #616: an AI value in USD files the offer in USD; a chosen EUR chip 
   byAction(other.panel, 'offer-ai-fill').dispatch('click');
   await flush();
   await other.panel.__submit();
-  assert.equal(second.creates()[0].body.currency, 'EUR', 'the chosen chips in one currency decide');
+  // Review #616 round 3: USD 320 under EUR chips is a mismatch, said and
+  // never filed as EUR 320.
+  assert.equal(second.creates().length, 0, 'nothing is filed under the wrong currency');
+  assert.match(other.panel.textContent, /Il valore è in USD, i prodotti scelti in EUR/);
+});
+
+// Review #616 round 3 (P1): EUR chips pressed after an AI value in USD.
+test('review #616 round 3: an AI USD value is never filed as EUR after an EUR chip is pressed', async () => {
+  const client = fakeClient({ draft: { title: 'Pacchetto US', valueCents: 32000, currency: 'USD' } });
+  const { panel } = await open({ client });
+  aiInput(panel).value = 'pacchetto a 320 dollari';
+  byAction(panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  chip(panel, 'pt10').dispatch('click');
+  assert.equal(input(panel, 'value').value, '320.00', 'the AI value stays');
+  await panel.__submit();
+  assert.equal(client.creates().length, 0, 'USD 320 is never filed as EUR 320');
+  assert.match(panel.textContent, /Il valore è in USD, i prodotti scelti in EUR/);
+
+  // Emptying the value lets the chips price it, in their own currency.
+  input(panel, 'value').value = '';
+  input(panel, 'value').dispatch('input');
+  assert.equal(input(panel, 'value').value, '350.00');
+  assert.match(panel.textContent, /Valore \(€\)/);
+  await panel.__submit();
+  assert.equal(client.creates().length, 1);
+  assert.equal(client.creates()[0].body.currency, 'EUR');
+  assert.equal(client.creates()[0].body.valueCents, 35000);
+});
+
+// Review #616 round 3 (P2): Crea offerta waits for the AI's catalog choice.
+test('review #616 round 3: Crea offerta waits while the AI-chosen offers wait for the catalog', async () => {
+  let release;
+  const held = new Promise((resolve) => { release = () => resolve(CATALOG); });
+  const client = fakeClient({ catalog: held, draft: { title: 'Pacchetto 10 PT', catalogOfferIds: ['pt10'] } });
+  const { panel } = await open({ client });
+  input(panel, 'owner').value = 'Elena';
+  aiInput(panel).value = 'il pacchetto da 10';
+  byAction(panel, 'offer-ai-fill').dispatch('click');
+  await flush();
+  assert.equal(byAction(panel, 'offer-create').getAttribute('disabled'), 'disabled', 'Crea offerta waits');
+  assert.match(panel.textContent, /aspetto il catalogo/);
+  await panel.__submit();
+  assert.equal(client.creates().length, 0, 'nothing is filed before the selection settles');
+
+  release();
+  await flush();
+  assert.equal(byAction(panel, 'offer-create').getAttribute('disabled'), null, 'Crea offerta is back');
+  assert.match(panel.textContent, /Compilata dall’AI: controlla i campi/);
+  await panel.__submit();
+  assert.equal(client.creates().length, 1);
+  assert.equal(client.creates()[0].body.valueCents, 35000, 'priced by the chip the AI chose');
 });
 
 test('review #616: Annulla after an AI currency puts the euro back', async () => {
