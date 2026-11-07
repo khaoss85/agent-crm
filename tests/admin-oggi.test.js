@@ -195,8 +195,9 @@ test('sidebar under a space mount shows the Italian voices and links the deliver
     win: null,
   }).update({ items, activeScreenId: 'oggi', screenLabel: 'Oggi' });
   const text = sidebar.textContent;
+  // backlog:33782ba68747: Agenti took Sequenze's sidebar place.
   for (const voice of ['Spazio di prova', 'Oggi', 'Clienti', 'Pipeline', 'Calendario',
-    'Sequenze', 'Moduli nativi', 'Moduli personalizzati', '+ Nuovo modulo',
+    'Agenti', 'Moduli nativi', 'Moduli personalizzati', '+ Nuovo modulo',
     'Impostazioni']) {
     assert.ok(text.includes(voice), `sidebar shows ${voice}`);
   }

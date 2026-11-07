@@ -953,6 +953,66 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 }
 
 /*
+ * Agenti (backlog:33782ba68747): the Sequenze page frame (.bo-seq / -top /
+ * -title) with agent cards in the violet «agent» authority, a Da fare list
+ * and the catalogue tiles. Cards flow in an auto-fill grid and stack in one
+ * column on a phone; the talk form keeps input and button on one row and
+ * wraps under 420px. No new tokens.
+ */
+.bo-agenti-section { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.bo-agenti-section > h3, .bo-agenti-sectionhead h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.bo-agenti-sectionhead { display: flex; align-items: center; gap: 10px; }
+.bo-agenti-count { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 99px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--pending-soft); color: var(--pending-ink); }
+.bo-agent-grid, .bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.bo-agent-card, .bo-catalog-item, .bo-dafare-item { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
+.bo-agent-card { border-color: var(--agent-line); }
+.bo-agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.bo-agent-avatar { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--agent-soft); color: var(--agent-ink); }
+.bo-agent-avatar-sm { width: 34px; height: 34px; border-radius: 10px; font-size: 12px; }
+.bo-agent-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bo-agent-name { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-role { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
+.bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
+.bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
+.bo-agent-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.bo-agent-fact { min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--paper); }
+.bo-agent-fact dt { margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.bo-agent-fact dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.bo-agent-assignment { padding: 8px 10px; border-left: 3px solid var(--agent-line); }
+.bo-agent-phrase { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.bo-agent-when { margin: 2px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.bo-agent-noassign { margin: 0; }
+.bo-agent-talk { display: flex; gap: 8px; align-items: center; }
+.bo-agent-talk .bo-agent-input { flex: 1; min-width: 0; }
+.bo-agent-talk .ui-btn { flex: none; }
+.bo-agent-unclear { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--pending-soft); color: var(--pending-ink); font-size: 13px; line-height: 1.45; }
+.bo-agent-unclear p { margin: 0; }
+.bo-agent-done { margin: 0; font-size: 13px; font-weight: 700; color: var(--accent); }
+.bo-agent-tip, .bo-agenti-legacy { margin: 0; font-size: 13px; }
+.bo-dafare-list { display: flex; flex-direction: column; gap: 10px; }
+.bo-dafare-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.bo-dafare-when { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.bo-dafare-phrase { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-dafare-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; overflow-wrap: anywhere; }
+.bo-dafare-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.bo-dafare-actions .ui-btn[disabled] { opacity: .55; cursor: not-allowed; }
+.bo-dafare-note { margin: 0; }
+.bo-catalog-text { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.bo-catalog-example { margin: 0; font-size: 12.5px; color: var(--agent-ink); overflow-wrap: anywhere; }
+.bo-catalog-item > .ui-btn, .bo-catalog-item > .ui-badge { align-self: flex-start; margin-top: auto; }
+.bo-agent-team { display: grid; }
+.bo-agent-team-title { margin: 0; padding: 14px 20px 6px; border-top: 1px solid var(--line-faint); font-size: 13px; color: var(--muted); }
+.bo-agent-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line-faint); }
+.bo-agent-team-link { font-size: 12px; color: var(--muted); }
+@media (max-width: 420px) {
+  .bo-agent-talk { flex-wrap: wrap; }
+  .bo-agent-talk .ui-btn { flex: 1 1 100%; }
+  .bo-agent-facts { grid-template-columns: 1fr 1fr; }
+}
+
+/*
  * Spazi e accessi (BO-F0-06): space cards, team rows with invite and
  * two-step removal, and the five AI switches with their one-line meaning.
  * Same tokens, radii and row idiom as the settings rows above — no new

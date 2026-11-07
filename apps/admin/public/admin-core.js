@@ -239,7 +239,11 @@ export function shellNavInput(envelope) {
   const customerDataAvailable = customerData?.metadata?.customerDataContract === 1
     || customerData?.customerDataContract === 1;
   const sequencesAvailable = envelope?.domains?.sequences?.sequencesContract === 1;
-  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, modulesSupported };
+  // backlog:33782ba68747: Agenti need the agents package's create-agent
+  // operation, published in its domain block's operations list.
+  const agentOps = envelope?.domains?.agents?.operations;
+  const agentsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-agent');
+  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, modulesSupported };
 }
 
 /**
@@ -388,6 +392,13 @@ export function parseModuleRoute(hash) {
   // dettaglio of the selected sequence. Same canonical discipline as every
   // other route here; anything else under the prefix is invalid, not a
   // lookup, so a hostile hash never becomes a request path.
+  // Agents route: #/agenti (backlog:33782ba68747). One screen, same
+  // canonical discipline: anything under the prefix is invalid.
+  if (rawParts.length && rawParts[0] === 'agenti') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'agenti' };
+  }
   if (rawParts.length && rawParts[0] === 'sequenze') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length !== 1) return { view: 'invalid' };

@@ -29,6 +29,7 @@ import { createMagicLinkPackage, createMemoryMagicLinkStore } from '../../magic-
 import { createSequencesPackage } from '../../sequences/src/index.js';
 import { createWorkPackage } from '../../work/src/index.js';
 import { createReengagementPackage } from '../../reengagement/src/index.js';
+import { createAgentsPackage } from '../../agents/src/index.js';
 
 const workDefinition = createWorkPackage();
 
@@ -49,4 +50,10 @@ export const generatedDomains = [
   // and owns no records, so it composes with no seams: the host worker
   // injects the wording edge when it needs drafted knocks.
   createReengagementPackage(),
+  // backlog:33782ba68747: the teammate agents behind the «Agenti» screen.
+  // Composed with no seams: agents and assignments are created through the
+  // package operations; the deployment plugs the execute/applyAction seams
+  // (and the space-permission gate) when it runs agents, so until then no
+  // run happens and no proposal is approved here.
+  createAgentsPackage(),
 ];

@@ -310,6 +310,27 @@ export function createAgentOperations(options = {}) {
   const assignments = () => trusted(modules, 'teammate-assignment');
   const runs = () => trusted(modules, 'teammate-run');
 
+  /**
+   * Create one row keyed by a caller source key, replaying the winner when a
+   * concurrent create of the same key got there first (review #661): two
+   * double-submitted creates both pass the listWhere check, and the loser
+   * answers `duplicate: true` instead of failing on the unique key. A key
+   * already taken in ANOTHER space is a typed refusal, never a replay of a
+   * row the caller's space does not own.
+   */
+  async function createOrReplay(service, spaceId, sourceKey, row, actor) {
+    try {
+      return { duplicate: false, row: await service.createManaged(row, { actor }) };
+    } catch (error) {
+      if (!isWinnerConflict(error)) throw error;
+      const winner = (await service.listWhere({ spaceId, sourceKey }))[0] ?? null;
+      if (winner) return { duplicate: true, row: winner };
+      throw new AppError('This source key is already taken outside this space', {
+        code: 'AGENT_SOURCE_KEY_TAKEN', status: 409,
+      });
+    }
+  }
+
   async function loadAgent(spaceId, agentSourceKey) {
     const row = (await agents().listWhere({ spaceId, sourceKey: agentSourceKey }))[0] ?? null;
     if (!row) {
@@ -331,7 +352,7 @@ export function createAgentOperations(options = {}) {
     const at = now();
     const existing = (await agents().listWhere({ spaceId: input.spaceId, sourceKey: input.sourceKey }))[0] ?? null;
     if (existing) return { duplicate: true, agent: existing };
-    const agent = await agents().createManaged({
+    const made = await createOrReplay(agents(), input.spaceId, input.sourceKey, {
       sourceKey: input.sourceKey,
       spaceId: input.spaceId,
       name: input.name,
@@ -344,8 +365,8 @@ export function createAgentOperations(options = {}) {
       actorId: actor.id,
       sourcePackage: AGENTS_DOMAIN,
       sourceAction: 'create-agent',
-    }, { actor });
-    return { duplicate: false, agent };
+    }, actor);
+    return { duplicate: made.duplicate, agent: made.row };
   }
 
   /**
@@ -366,7 +387,7 @@ export function createAgentOperations(options = {}) {
     const nextRunAt = schedule.cadence === 'once' && schedule.runAt ? schedule.runAt : computeNextRun(schedule, at);
     const existing = (await assignments().listWhere({ spaceId: input.spaceId, sourceKey: input.sourceKey }))[0] ?? null;
     if (existing) return { duplicate: true, assignment: existing };
-    const assignment = await assignments().createManaged({
+    const made = await createOrReplay(assignments(), input.spaceId, input.sourceKey, {
       sourceKey: input.sourceKey,
       spaceId: input.spaceId,
       agentSourceKey: input.agentSourceKey,
@@ -383,8 +404,8 @@ export function createAgentOperations(options = {}) {
       actorId: actor.id,
       sourcePackage: AGENTS_DOMAIN,
       sourceAction: 'create-assignment',
-    }, { actor });
-    return { duplicate: false, assignment };
+    }, actor);
+    return { duplicate: made.duplicate, assignment: made.row };
   }
 
   async function advanceAssignment(assignment, from) {
