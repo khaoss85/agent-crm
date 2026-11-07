@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -386,7 +386,7 @@ export function createQuoteView(deps) {
     if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
       totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
-    totalsPanel.appendChild(el('p', 'quote-totals-note', 'Importi calcolati dal server di Accordo. I periodi non si sommano mai: una tantum e ricorrenti restano separati, senza totali annui.'));
+    totalsPanel.appendChild(el('p', 'quote-totals-note', 'Una tantum e importi ricorrenti restano separati: non si sommano tra loro.'));
 
     const errorLine = el('small', 'field-error', '');
     side.appendChild(errorLine);
@@ -548,7 +548,6 @@ export function createQuoteView(deps) {
     if (quote.status === 'pending_approval') {
       const decidePanel = el('div', 'quote-decide');
       decidePanel.appendChild(el('h3', undefined, 'In attesa di approvazione'));
-      decidePanel.appendChild(el('p', 'muted', 'Le decisioni sono prese come utente Admin locale; i ruoli veri arrivano con il Production Spine.'));
       const reasonInput = el('input');
       reasonInput.setAttribute('placeholder', 'Motivo della decisione (obbligatorio per rifiutare)');
       const approveButton = el('button', undefined, 'Approva');
@@ -615,6 +614,7 @@ export function createQuoteView(deps) {
       if (status === 'completed') return 'Completata';
       if (status === 'declined') return 'Rifiutata';
       if (status === 'voided') return 'Annullata';
+      if (status === 'failed') return 'Non riuscita';
       return '—';
     };
     const signerStatusLabel = (status) => {
@@ -655,7 +655,7 @@ export function createQuoteView(deps) {
 
     if (!envelope) {
       const form = el('div', 'signature-request');
-      form.appendChild(el('p', 'muted', 'L’invio per la firma è un effetto esterno reale: serve un utente umano. Questo è un confine di attore umano, non un controllo di ruoli commerciali o legali — i ruoli veri arrivano con il Production Spine.'));
+      form.appendChild(el('p', 'muted', 'Il preventivo parte davvero verso il firmatario: controlla nome ed email prima di inviarlo.'));
       const providerSelect = el('select');
       for (const provider of (signatureBlock(schema).providers ?? [])) {
         const option = el('option', undefined, `${provider.label} (v${provider.version})`);
@@ -699,12 +699,19 @@ export function createQuoteView(deps) {
     const state = el('div', 'signature-envelope');
     state.setAttribute('data-envelope', envelope.id);
     state.setAttribute('data-status', envelope.status);
+    // Voce ef92f728: the owner reads the state and who handles the signature.
+    // Provider ids, hashes and formats are evidence for audits, not words for
+    // the owner: they stay on the node as data attributes, never as text.
+    state.setAttribute('data-provider-envelope', String(envelope.providerEnvelopeId ?? ''));
+    state.setAttribute('data-document-hash', String(envelope.documentHash ?? ''));
+    state.setAttribute('data-document-format', String(envelope.documentFormat ?? ''));
+    state.setAttribute('data-signature-provider', String(envelope.provider ?? ''));
+    state.setAttribute('data-signature-version', String(envelope.providerVersion ?? ''));
+    const providerLabel = (signatureBlock(schema).providers ?? [])
+      .find((provider) => provider?.name === envelope.provider)?.label;
     for (const [label, value] of [
       ['Stato', envelopeStatusLabel(envelope.status)],
-      ['Fornitore', `${envelope.provider} v${envelope.providerVersion}`],
-      ['Busta del fornitore', envelope.providerEnvelopeId ?? '—'],
-      ['Impronta del documento', envelope.documentHash],
-      ['Formato del documento', envelope.documentFormat],
+      ['Servizio di firma', typeof providerLabel === 'string' && providerLabel !== '' ? providerLabel : 'servizio esterno'],
     ]) {
       const row = el('p', 'signature-fact');
       row.appendChild(el('strong', undefined, `${label}: `));
@@ -720,7 +727,13 @@ export function createQuoteView(deps) {
         : envelope.providerEnvelopeId
           ? 'Il fornitore HA accettato questa busta; solo il passo locale dopo è fallito. Riconcilia per riprendere l’esito.'
           : 'Non si sa se il fornitore ha accettato questa busta. Riconcilia per scoprirlo — mai chiedere una seconda firma.';
-      state.appendChild(el('p', 'signature-failure', `La fase ${envelope.failurePhase} non è riuscita (${envelope.failureCode}). ${outcome}`));
+      // Phase and code are for the log, never for the owner (backlog:9da124e5).
+      state.setAttribute('data-failure-code', String(envelope.failureCode));
+      state.setAttribute('data-failure-phase', String(envelope.failurePhase ?? ''));
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] firma non riuscita', { phase: envelope.failurePhase ?? null, code: envelope.failureCode });
+      }
+      state.appendChild(el('p', 'signature-failure', `L’invio per la firma non è andato a buon fine. ${outcome}`));
     }
     if (!TERMINAL.includes(envelope.status)) {
       const reconcileButton = el('button', undefined, 'Riconcilia con il fornitore');
@@ -736,7 +749,8 @@ export function createQuoteView(deps) {
     for (const signer of signers.filter((row) => row.envelopeId === envelope.id).sort((a, b) => (a.signingOrder ?? 0) - (b.signingOrder ?? 0))) {
       const row = el('p', 'signature-signer');
       row.setAttribute('data-signer', signer.signerKey);
-      row.textContent = `${signer.signingOrder}. ${signer.name} <${signer.email}> · ${signer.role} · ${signerStatusLabel(signer.status)}`;
+      const role = typeof signer.role === 'string' && signer.role.trim() !== '' ? ` · ${signer.role}` : '';
+      row.textContent = `${signer.signingOrder}. ${signer.name} · ${signer.email}${role} · ${signerStatusLabel(signer.status)}`;
       signerList.appendChild(row);
     }
     panel.appendChild(signerList);
@@ -745,21 +759,22 @@ export function createQuoteView(deps) {
     if (artifact) {
       const evidence = el('div', 'signed-artifact');
       evidence.setAttribute('data-artifact', artifact.id);
-      evidence.appendChild(el('h4', undefined, 'Prova del documento firmato'));
+      // Voce ef92f728: ids, hashes and the storage reference stay on the node
+      // as evidence; the owner reads when the document was signed.
+      evidence.setAttribute('data-provider-artifact', String(artifact.providerArtifactId ?? ''));
+      evidence.setAttribute('data-document-hash', String(artifact.documentHash ?? ''));
+      evidence.setAttribute('data-artifact-hash', String(artifact.artifactHash ?? ''));
+      evidence.setAttribute('data-storage-ref', String(artifact.storageRef ?? ''));
+      evidence.appendChild(el('h4', undefined, 'Documento firmato'));
       for (const [label, value] of [
-        ['Artefatto del fornitore', artifact.providerArtifactId ?? '—'],
-        ['Impronta del documento', artifact.documentHash],
-        ['Impronta dell’artefatto', artifact.artifactHash ?? '—'],
-        ['Tipo', artifact.mimeType ?? '—'],
-        ['Completato il', artifact.completedAt ?? '—'],
-        ['Riferimento', artifact.storageRef ?? '—'],
+        ['Firmato il', italianDay(artifact.completedAt) ?? '—'],
       ]) {
         const row = el('p', 'artifact-fact');
         row.appendChild(el('strong', undefined, `${label}: `));
         row.appendChild(el('span', undefined, String(value ?? '—')));
         evidence.appendChild(row);
       }
-      evidence.appendChild(el('p', 'muted', 'I byte dell’artefatto restano dal fornitore: qui si registrano impronte, metadati e un riferimento. Nessuna garanzia di conservazione a lungo termine, e non è una firma legalmente qualificata.'));
+      evidence.appendChild(el('p', 'muted', 'Il documento firmato resta presso il servizio di firma: qui ne teniamo traccia. Nessuna garanzia di conservazione a lungo termine, e non è una firma legalmente qualificata.'));
       panel.appendChild(evidence);
     }
 
@@ -769,8 +784,8 @@ export function createQuoteView(deps) {
       orderPanel.setAttribute('data-order', order.id);
       orderPanel.appendChild(el('h3', undefined, 'Ordine'));
       const idRow = el('p', 'order-fact');
-      idRow.appendChild(el('strong', undefined, 'Ordine: '));
-      idRow.appendChild(el('span', undefined, `Ordine · ${orderStatusLabel(order.status)} · accettato il ${order.acceptedAt ?? '—'}`));
+      idRow.appendChild(el('strong', undefined, 'Stato: '));
+      idRow.appendChild(el('span', undefined, `${orderStatusLabel(order.status)} · accettato il ${italianDay(order.acceptedAt) ?? '—'}`));
       orderPanel.appendChild(idRow);
       for (const total of orderTotals.filter((row) => row.orderId === order.id)) {
         const row = el('p', 'order-total');
@@ -780,7 +795,7 @@ export function createQuoteView(deps) {
           : `Ricorrente ogni ${total.intervalCount} ${periodLabel(total.intervalCount, total.interval)}: ${money(total.netAmountCents, total.currency)} netto`;
         orderPanel.appendChild(row);
       }
-      orderPanel.appendChild(el('p', 'muted', 'Le cifre dell’ordine sono copiate dalla versione firmata e mai ricalcolate dal catalogo attuale. I periodi non si sommano mai e non si ricava nessuna cifra annualizzata o di contratto. In questa fase non esiste nessuno stato di fatturazione, fattura, pagamento o evasione.'));
+      orderPanel.appendChild(el('p', 'muted', 'Gli importi dell’ordine sono quelli della versione firmata, mai ricalcolati dal listino attuale. Una tantum e importi ricorrenti restano separati.'));
       panel.appendChild(orderPanel);
       // Contract activation (Milestone 12) lives in the optional contracts
       // domain package: it renders only when the server publishes that domain.
