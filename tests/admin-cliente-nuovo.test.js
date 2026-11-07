@@ -12,10 +12,12 @@ import {
   createCustomerFormView,
   isNewCustomerSessionLoss,
   newCustomerDraftKey,
+  normalizeResumeEmail,
   normalizeTelefono,
   readNewCustomerDraft,
   saveNewCustomerDraft,
   splitNome,
+  stepNeedsRun,
   tabDraftStorage,
   validateCustomerForm,
 } from '../apps/admin/public/admin-cliente-nuovo.js';
@@ -725,6 +727,206 @@ test('a phone typed after the rescue is linked, not skipped (backlog:5a40c73e54a
   assert.equal(notesOf(client).length, 2, 'the failed note is retried once it can succeed');
   assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
   assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
+test('stepNeedsRun reruns on value change, never on step state alone (backlog:5a40c73e54aa)', () => {
+  const table = [
+    // [done, step, before, now, expected, why]
+    [[], 'phone', '', '+393331234567', true, 'a step that never ran still runs'],
+    [['phone'], 'phone', '', '+393331234567', true, 'a phone typed after the rescue runs even when done'],
+    [['phone'], 'phone', '+393331234567', '+393331234567', false, 'an unchanged phone is not relinked'],
+    [[], 'note', '', 'nota lunga', true, 'a note that never ran still runs'],
+    [['note'], 'note', 'nota lunga', 'nota lunga', false, 'an unchanged note is not reposted'],
+    [['note'], 'note', 'nota lunga', 'nota cambiata', true, 'an edited note runs even when done'],
+    [['custom'], 'custom', 'sì', 'no', true, 'a custom value changed after the rescue is written'],
+    [['custom'], 'custom', 'sì', 'sì', false, 'an unchanged custom value is not rewritten'],
+    [[], 'custom', '', '', false, 'an empty input never runs'],
+    [['custom'], 'custom', '', '', false, 'an empty input never runs, even when done'],
+  ];
+  for (const [steps, step, before, now, expected, why] of table) {
+    assert.equal(stepNeedsRun(new Set(steps), step, before, now), expected, why);
+  }
+  assert.equal(stepNeedsRun(null, 'phone', '', '+393331234567'), true, 'no done set still runs a live input');
+  assert.equal(stepNeedsRun(null, 'phone', '', ''), false, 'no done set skips an empty input');
+});
+
+test('normalizeResumeEmail trims and folds case on both sides (backlog:5a40c73e54aa)', () => {
+  assert.equal(normalizeResumeEmail('Mario@Esempio.it '), normalizeResumeEmail('mario@esempio.it'));
+  assert.equal(normalizeResumeEmail('  A@B.IT'), 'a@b.it');
+  assert.equal(normalizeResumeEmail(null), '');
+});
+
+test('a nome changed after the rescue is written back with an update, never dropped (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let notes = 0;
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    if (path === '/api/contacts/c9') return { id: 'c9', firstName: 'Mario', lastName: 'Bianchi' };
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  setValue(rendered.mount, 'nome', 'Mario Bianchi');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'no second apply: the scheda is not duplicated');
+  const patches = client.calls.filter((call) => call.path === '/api/contacts/c9');
+  assert.equal(patches.length, 1, 'the edited nome is written back with one contact update');
+  assert.equal(patches[0].method, 'PATCH');
+  assert.deepEqual(patches[0].body, { firstName: 'Mario', lastName: 'Bianchi' });
+  assert.equal(notesOf(client).length, 2, 'the failed note is still retried');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
+  assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
+test('an azienda changed after the rescue is declared, never dropped silently (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let notes = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'azienda', 'Palestra Esempio');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  setValue(rendered.mount, 'azienda', 'Palestra Nuova');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'no second apply: the scheda is not duplicated');
+  assert.equal(client.calls.filter((call) => call.path === '/api/contacts/c9').length, 0, 'no contact update for an unchanged nome');
+  assert.ok(rendered.notes.some((note) => note.includes('azienda')), 'the warning names the azienda that was not saved');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save still lands on the scheda');
+  assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
+test('a rescued email with trailing space and case still resumes instead of re-applying (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let notes = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'Mario@Esempio.it ');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'whitespace and case never defeat the resume');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
+});
+
+test('a custom value changed after the rescue is saved even when custom was done (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let values = 0;
+  let notes = 0;
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') {
+      return { definitions: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] };
+    }
+    if (path === '/api/customer-data/fields/value') {
+      values += 1;
+      return { value: { key: body.key, value: body.value } };
+    }
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  const control = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  control.value = 'sì';
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  const kept = readNewCustomerDraft(store);
+  assert.ok(kept?.done.includes('custom'), 'custom completed before the session died');
+  control.value = 'no';
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(valuesOf(client).length, 2, 'the changed custom value is written, not skipped for the step state');
+  assert.deepEqual(valuesOf(client)[1].body, { resource: 'contact', id: 'c9', key: 'amico', value: 'no' });
+  assert.equal(appliesOf(client).length, 1, 'no second apply: the scheda is not duplicated');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
+  assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
+test('an unchanged custom value is not rewritten after the rescue (backlog:5a40c73e54aa)', async () => {
+  const store = memoryStore();
+  let values = 0;
+  let notes = 0;
+  const client = stubClient((path, body) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') {
+      return { definitions: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] };
+    }
+    if (path === '/api/customer-data/fields/value') {
+      values += 1;
+      return { value: { key: body.key, value: body.value } };
+    }
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  const control = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  control.value = 'sì';
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(valuesOf(client).length, 1, 'the unchanged custom value is not rewritten');
+  assert.equal(notesOf(client).length, 2, 'the failed note is still retried');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c9', 'the resumed save lands on the scheda');
 });
 
 test('a generic failure keeps its own error and stores no draft', async () => {

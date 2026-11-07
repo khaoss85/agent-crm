@@ -110,6 +110,23 @@ const validDone = (value) => (
   Array.isArray(value) ? value.filter((step) => DRAFT_STEPS.includes(step)) : []
 );
 
+/**
+ * The custom key/value pairs on screen when the session died. Comparison
+ * only: the resume writes the live input, never this snapshot, so the
+ * snapshot stays uncut (no silent tail loss) while keys stay bounded.
+ */
+const validCustomSnapshot = (value) => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const snapshot = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (Object.keys(snapshot).length >= 100) break;
+    if (typeof key !== 'string' || key === '' || key.length > 200) continue;
+    if (typeof entry !== 'string') continue;
+    snapshot[key] = entry;
+  }
+  return snapshot;
+};
+
 /** @param {unknown} raw */
 function parseDraft(raw) {
   if (typeof raw !== 'string' || raw === '') return null;
@@ -132,6 +149,7 @@ function parseDraft(raw) {
     by: typeof parsed.by === 'string' && parsed.by !== '' ? parsed.by : null,
     created: validCreated(parsed.created),
     done: validDone(parsed.done),
+    custom: validCustomSnapshot(parsed.custom),
   };
   const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
   if (texts.every((value) => value === '') && draft.created === null) return null;
@@ -177,7 +195,7 @@ export function readNewCustomerDraft(storage, scope) {
  * @param {{ getItem?: unknown, setItem?: unknown, removeItem?: unknown } | null | undefined} storage
  * @param {{ nome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values
  * @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} [scope]
- * @param {{ created?: unknown, done?: unknown } | null | undefined} [extra]
+ * @param {{ created?: unknown, done?: unknown, custom?: unknown } | null | undefined} [extra]
  */
 export function saveNewCustomerDraft(storage, values, scope, extra) {
   try {
@@ -193,6 +211,7 @@ export function saveNewCustomerDraft(storage, values, scope, extra) {
       by: operator,
       created,
       done: validDone(extra?.done),
+      custom: validCustomSnapshot(extra?.custom),
       savedAt: Date.now(),
     };
     const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
@@ -230,6 +249,26 @@ export function isNewCustomerSessionLoss(error) {
   if (status === 401) return true;
   if (status === 403 && isSessionLostCode(error?.code)) return true;
   return false;
+}
+
+/**
+ * Resume identity, both sides normalized the same way: a trailing space
+ * from a phone keyboard or a different case never defeats the resume.
+ */
+export function normalizeResumeEmail(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+/**
+ * One gate for every post-creation step (B4, backlog:5a40c73e54aa): a step
+ * reruns when its live input is non-empty and the step never completed or
+ * the input changed since the rescue — never on the step state alone, so
+ * text typed after the rescue is written instead of silently dropped.
+ */
+export function stepNeedsRun(doneSet, step, before, now) {
+  if (String(now ?? '').trim() === '') return false;
+  if (!(doneSet instanceof Set) || !doneSet.has(step)) return true;
+  return String(before ?? '').trim() !== String(now ?? '').trim();
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -528,10 +567,28 @@ export function createCustomerFormView(deps) {
     // draft). A step skipped because its input was empty is never marked
     // done, so text typed after the rescue still runs on the next Salva
     // instead of being silently dropped.
+    // The custom values on screen when the session died, for the resume to
+    // compare against: the draft keeps them so a value typed or changed
+    // after the rescue is written even when the custom step was done.
+    const snapshotCustomValues = () => {
+      const snapshot = {};
+      for (const entry of customControls) {
+        const key = entry?.control?.getAttribute?.('data-field-key');
+        if (typeof key !== 'string' || key === '') continue;
+        try {
+          snapshot[key] = String(entry.read() ?? '').trim();
+        } catch {
+          // An unreadable control keeps no snapshot: the resume reruns it.
+        }
+      }
+      return snapshot;
+    };
+
     const rescueSessionLoss = (err, { subject = null, done = [] } = {}) => {
       if (!isNewCustomerSessionLoss(err)) return false;
       if (token !== renderToken) return true;
-      saveNewCustomerDraft(drafts, currentValues(), draftScope(), { created: subject, done });
+      saveNewCustomerDraft(drafts, currentValues(), draftScope(),
+        { created: subject, done, custom: snapshotCustomValues() });
       const kept = subject === null ? SESSION_KEPT_MESSAGE : SESSION_CREATED_MESSAGE;
       setErrors({ general: kept });
       notify(kept);
@@ -548,19 +605,58 @@ export function createCustomerFormView(deps) {
       save.disabled = true;
       try {
         const cleanEmail = values.email.trim();
+        const cleanNome = values.nome.trim();
         const cleanAzienda = values.azienda.trim();
-        // Resume: the customer already exists from a session-loss rescue and
-        // the identity on screen is unchanged — reuse the subject and rerun
-        // only the steps that never completed, never a second apply.
+        // Resume: the customer may already exist from a session-loss rescue.
+        // Identity is the full creation triple — email normalized (trimmed,
+        // case-insensitive) plus nome and azienda — never the email alone, so
+        // edits typed after the rescue are never silently dropped.
         const resumed = readNewCustomerDraft(drafts, draftScope());
-        const resumable = resumed?.created !== null && resumed?.created !== undefined
-          && resumed.email === cleanEmail ? resumed : null;
+        const sameSubjectEmail = resumed?.created !== null && resumed?.created !== undefined
+          && normalizeResumeEmail(resumed.email) === cleanEmail.toLowerCase();
+        const kept = sameSubjectEmail ? resumed : null;
+        const sameIdentity = kept !== null
+          && String(kept.nome ?? '').trim() === cleanNome
+          && String(kept.azienda ?? '').trim() === cleanAzienda;
         let subject;
         let done = new Set();
         let warning = null;
-        if (resumable !== null) {
-          subject = resumable.created;
-          done = new Set(resumable.done);
+        let updateWarning = null;
+        if (sameIdentity) {
+          // Nothing changed: reuse the subject and rerun only the steps that
+          // never completed, never a second apply.
+          subject = kept.created;
+          done = new Set(kept.done);
+        } else if (kept !== null && kept.created.resource === 'contact') {
+          // Same customer, edited base fields: reuse the subject and write
+          // the edits back instead of a second apply the server would only
+          // match without updating. Nome goes through the scheda's governed
+          // contact update; Azienda has no update route in the codebase
+          // (CompanyService creates, gets and lists only), so a changed
+          // azienda is declared, never dropped silently. DECISION (to be
+          // confirmed): keep the explicit azienda warning until a governed
+          // company rename exists.
+          subject = kept.created;
+          done = new Set(kept.done);
+          if (String(kept.nome ?? '').trim() !== cleanNome) {
+            const { firstName, lastName } = splitNome(values.nome);
+            const namePatch = lastName !== '' ? { firstName, lastName } : { firstName };
+            try {
+              await client.request(`/api/contacts/${encodeURIComponent(subject.id)}`, {
+                method: 'PATCH',
+                body: JSON.stringify(namePatch),
+              });
+              if (token !== renderToken) return;
+            } catch (err) {
+              if (rescueSessionLoss(err, { subject, done: [...done] })) return;
+              if (token !== renderToken) return;
+              updateWarning = 'Il cliente è creato, ma il nuovo nome non si è salvato: cambialo dalla scheda.';
+            }
+          }
+          if (String(kept.azienda ?? '').trim() !== cleanAzienda) {
+            const aziendaWarning = 'Il cliente è già creato e l\u2019azienda cambiata non si è salvata: la scheda mostra quella precedente.';
+            updateWarning = updateWarning === null ? aziendaWarning : `${updateWarning} ${aziendaWarning}`;
+          }
         } else {
           const { firstName, lastName } = splitNome(values.nome);
           const row = { firstName };
@@ -591,9 +687,8 @@ export function createCustomerFormView(deps) {
         // Never skip a phone the operator typed after the rescue: the kept
         // draft holds the rescued input, so a live input that differs reruns
         // the link even when an old draft claims the step is done.
-        const phoneChanged = resumable !== null
-          && normalizeTelefono(resumable.telefono ?? '') !== phone;
-        if (phone !== '' && cleanEmail !== '' && (!done.has('phone') || phoneChanged)) {
+        const rescuedPhone = kept !== null ? normalizeTelefono(kept.telefono ?? '') : '';
+        if (cleanEmail !== '' && stepNeedsRun(done, 'phone', rescuedPhone, phone)) {
           try {
             const linked = await linkPhone(phone, cleanEmail, subject);
             if (token !== renderToken) return;
@@ -606,28 +701,30 @@ export function createCustomerFormView(deps) {
           }
         }
         // Custom values, one governed write per touched field; a refused
-        // value warns with the field's own Italian error, never blocks.
-        if (!done.has('custom')) {
-          for (const entry of customControls) {
-            const key = entry.control.getAttribute('data-field-key');
-            const typed = entry.read().trim();
-            if (typed === '') continue;
-            try {
-              await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
-            } catch (err) {
-              if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
-              entry.setError(String(err?.message ?? 'Valore non valido.'));
-              if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
-            }
-            if (token !== renderToken) return;
+        // value warns with the field's own Italian error, never blocks. A
+        // rescued done=custom skips only the values that are still the
+        // rescued ones: anything typed or changed after the rescue runs,
+        // never dropped for the step state.
+        const rescuedCustom = kept !== null ? validCustomSnapshot(kept.custom) : {};
+        for (const entry of customControls) {
+          const rawKey = entry.control.getAttribute('data-field-key');
+          const key = typeof rawKey === 'string' ? rawKey : '';
+          const typed = entry.read().trim();
+          if (!stepNeedsRun(done, 'custom', rescuedCustom[key] ?? '', typed)) continue;
+          try {
+            await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
+          } catch (err) {
+            if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
+            entry.setError(String(err?.message ?? 'Valore non valido.'));
+            if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
           }
-          completedNow.add('custom');
+          if (token !== renderToken) return;
         }
+        completedNow.add('custom');
         // The note through the single writer: it lands in the cronologia.
         const noteText = String(nota.value ?? '').trim();
-        const noteChanged = resumable !== null
-          && String(resumable.nota ?? '').trim() !== noteText;
-        if (noteText !== '' && (!done.has('note') || noteChanged)) {
+        const rescuedNote = kept !== null ? String(kept.nota ?? '').trim() : '';
+        if (stepNeedsRun(done, 'note', rescuedNote, noteText)) {
           try {
             await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
           } catch (err) {
@@ -636,6 +733,9 @@ export function createCustomerFormView(deps) {
             if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
           }
         }
+        // Base-field edits written back above join the part-step warnings so
+        // a later step failure can never overwrite them into silence.
+        if (updateWarning !== null) warning = warning === null ? updateWarning : `${warning} ${updateWarning}`;
         clearNewCustomerDraft(drafts, draftScope());
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
         if (warning !== null) notify(warning);
