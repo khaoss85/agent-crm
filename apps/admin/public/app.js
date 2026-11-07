@@ -81,13 +81,22 @@ const submissions = createSubmissionController({
 // on the space login — never on the development identity with "not
 // composed" states (a cached page outliving its session). Standalone keeps
 // the local behavior: there is no login to land on.
+/**
+ * The space a kept draft is bound to (review #634): the same active space
+ * every space-scoped read and write uses. Called at run time only, after the
+ * shell's space state is initialized.
+ */
+function draftSpace() {
+  return shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+}
+
 function leaveForSpaceLogin(target) {
   if (typeof target !== 'string' || target === '') return;
   // backlog:5a40c73e54aa (B4): the page is about to be thrown away — keep
   // the text typed into the open view so the return from the login offers
   // it back instead of losing it.
   try {
-    captureDrafts({ root: moduleView, hash: window.location.hash, storage: window.sessionStorage });
+    captureDrafts({ root: moduleView, hash: window.location.hash, space: draftSpace(), storage: window.sessionStorage });
   } catch {
     // Keeping a draft is best-effort; leaving for the login must not fail.
   }
@@ -1099,7 +1108,7 @@ async function route() {
   // text is offered where it was typed.
   try {
     const home = window.location.hash === '' || window.location.hash === '#' || window.location.hash === '#/';
-    const back = home ? pendingDraftRoute({ storage: window.sessionStorage }) : null;
+    const back = home ? pendingDraftRoute({ storage: window.sessionStorage, space: draftSpace() }) : null;
     if (back) {
       window.location.hash = back;
       return;
@@ -1248,7 +1257,7 @@ async function route() {
     // text the lost session would have thrown away is filled in again.
     let restored = 0;
     try {
-      restored = restoreDrafts({ root: moduleView, hash: window.location.hash, storage: window.sessionStorage });
+      restored = restoreDrafts({ root: moduleView, hash: window.location.hash, space: draftSpace(), storage: window.sessionStorage });
     } catch {
       restored = 0;
     }

@@ -8,9 +8,12 @@
  * login and the page is thrown away: a long note typed into the scheda used to
  * vanish with it. Before leaving, the shell copies the text the operator typed
  * into the open view — named, visible text fields only — into this tab's
- * sessionStorage, keyed by the hash route. After the login brings the operator
- * back to the same route, the fields are filled again (only where still empty)
- * and the shell says so, so the operator saves again.
+ * sessionStorage, keyed by the hash route and bound to the active space. After
+ * the login brings the operator back to the same route in the same space, the
+ * fields are filled again (only where still empty) and the shell says so, so
+ * the operator saves again. A copy from another space never fills a field nor
+ * moves the operator (review #634): sessionStorage outlives a space change in
+ * the same tab, and one space's text must never be saved into another's.
  *
  * Bounds: at most MAX_FIELDS fields of at most MAX_CHARS characters, never a
  * password, hidden, file or checkbox input, and the copy expires after
@@ -45,13 +48,36 @@ function textField(node) {
   return { name, node };
 }
 
+/** @param {unknown} value */
+function spaceKey(value) {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/**
+ * Read the kept copy: null when there is none, it is malformed or stale.
+ * @param {any} storage
+ * @param {number} now
+ */
+function readKept(storage, now) {
+  const raw = storage.getItem(DRAFT_KEEP_KEY);
+  if (typeof raw !== 'string' || raw === '') return { saved: null, stale: false };
+  const saved = JSON.parse(raw);
+  if (!saved || typeof saved !== 'object' || !Array.isArray(saved.fields)
+    || typeof saved.at !== 'number' || now - saved.at > MAX_AGE_MS || now < saved.at) {
+    return { saved: null, stale: true };
+  }
+  return { saved, stale: false };
+}
+
 /**
  * Copy the typed text of the open view before the page is thrown away.
- * @param {{root: any, hash: string, storage: any, now?: number}} input
+ * Without an active space nothing is kept: a copy must name its space.
+ * @param {{root: any, hash: string, space: unknown, storage: any, now?: number}} input
  * @returns {number} how many fields were kept
  */
-export function captureDrafts({ root, hash, storage, now = Date.now() }) {
-  if (!root || !storage || typeof hash !== 'string' || hash === '') return 0;
+export function captureDrafts({ root, hash, space, storage, now = Date.now() }) {
+  const owner = spaceKey(space);
+  if (!root || !storage || typeof hash !== 'string' || hash === '' || owner === null) return 0;
   /** @type {Array<{name: string, value: string}>} */
   const fields = [];
   for (const node of walk(root)) {
@@ -64,7 +90,7 @@ export function captureDrafts({ root, hash, storage, now = Date.now() }) {
   }
   if (fields.length === 0) return 0;
   try {
-    storage.setItem(DRAFT_KEEP_KEY, JSON.stringify({ hash, at: now, fields }));
+    storage.setItem(DRAFT_KEEP_KEY, JSON.stringify({ hash, space: owner, at: now, fields }));
   } catch {
     return 0;
   }
@@ -74,28 +100,27 @@ export function captureDrafts({ root, hash, storage, now = Date.now() }) {
 /**
  * Fill the kept text back into the view the login returned to. A field the
  * operator already typed into is never overwritten. The copy is dropped once
- * used, or when it is stale; a copy for another route waits for that route.
- * @param {{root: any, hash: string, storage: any, now?: number}} input
+ * it filled something, or when it is stale; a copy for another route or
+ * another space waits (until it expires) and fills nothing.
+ * @param {{root: any, hash: string, space: unknown, storage: any, now?: number}} input
  * @returns {number} how many fields were filled
  */
-export function restoreDrafts({ root, hash, storage, now = Date.now() }) {
+export function restoreDrafts({ root, hash, space, storage, now = Date.now() }) {
   if (!root || !storage || typeof hash !== 'string') return 0;
-  let saved;
-  try {
-    const raw = storage.getItem(DRAFT_KEEP_KEY);
-    if (typeof raw !== 'string' || raw === '') return 0;
-    saved = JSON.parse(raw);
-  } catch {
-    return 0;
-  }
   const drop = () => {
     try { storage.removeItem(DRAFT_KEEP_KEY); } catch { /* nothing to drop */ }
   };
-  if (!saved || typeof saved !== 'object' || !Array.isArray(saved.fields)
-    || typeof saved.at !== 'number' || now - saved.at > MAX_AGE_MS || now < saved.at) {
-    drop();
+  let kept;
+  try {
+    kept = readKept(storage, now);
+  } catch {
     return 0;
   }
+  if (kept.stale) drop();
+  const saved = kept.saved;
+  if (!saved) return 0;
+  const owner = spaceKey(space);
+  if (owner === null || saved.space !== owner) return 0;
   if (saved.hash !== hash) return 0;
   const byName = new Map();
   for (const node of walk(root)) {
@@ -110,29 +135,33 @@ export function restoreDrafts({ root, hash, storage, now = Date.now() }) {
     node.value = entry.value.slice(0, MAX_CHARS);
     filled += 1;
   }
-  // Used once: a later visit to the same route starts clean. A route that
-  // did not show the field (a closed form) keeps nothing either — the copy
-  // was for this one return.
-  drop();
+  // Used once it was offered back: a later visit to the same route starts
+  // clean. A render that offered no empty field (a closed form, a field
+  // already filled) consumes nothing — the copy stays until it expires, so
+  // a later complete render can still restore it (review #634).
+  if (filled > 0) drop();
   return filled;
 }
 
 /**
- * The route a fresh kept draft belongs to, or null. The login may land the
- * operator on the shell's home (`#/` or no hash) instead of the scheda they
- * were on; the shell then goes back to that route once, so the draft can be
- * filled in where it was typed.
- * @param {{storage: any, now?: number}} input
+ * The route a fresh kept draft of this space belongs to, or null. The login
+ * may land the operator on the shell's home (`#/` or no hash) instead of the
+ * scheda they were on; the shell then goes back to that route once, so the
+ * draft can be filled in where it was typed. Once: the copy is marked, so a
+ * copy that outlives the return (nothing to fill yet) never bounces the
+ * operator off the home again. A copy of another space never redirects.
+ * @param {{storage: any, space: unknown, now?: number}} input
  * @returns {string | null}
  */
-export function pendingDraftRoute({ storage, now = Date.now() }) {
+export function pendingDraftRoute({ storage, space, now = Date.now() }) {
   if (!storage) return null;
+  const owner = spaceKey(space);
+  if (owner === null) return null;
   try {
-    const raw = storage.getItem(DRAFT_KEEP_KEY);
-    if (typeof raw !== 'string' || raw === '') return null;
-    const saved = JSON.parse(raw);
-    if (!saved || typeof saved.hash !== 'string' || !saved.hash.startsWith('#/')
-      || typeof saved.at !== 'number' || now - saved.at > MAX_AGE_MS || now < saved.at) return null;
+    const { saved } = readKept(storage, now);
+    if (!saved || typeof saved.hash !== 'string' || !saved.hash.startsWith('#/')) return null;
+    if (saved.space !== owner || saved.returned === true) return null;
+    storage.setItem(DRAFT_KEEP_KEY, JSON.stringify({ ...saved, returned: true }));
     return saved.hash;
   } catch {
     return null;
