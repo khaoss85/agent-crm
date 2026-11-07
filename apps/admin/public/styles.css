@@ -697,19 +697,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
  * of the 2x2 — at the same height, so all four tiles read equal. */
 .bo-scheda-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 6px; }
 .bo-scheda-tile { flex-direction: column; align-items: stretch; gap: 6px; min-height: 76px; min-width: 0; padding: 12px 4px 10px; font-size: 12px; line-height: 1.25; overflow-wrap: normal; word-break: keep-all; hyphens: none; }
-/* Dan 07/11: the quick-action tiles wear the prototype's stroke icons
- * (Chiama, Scrivi, Offerta, Appuntamento), drawn as a mask so they take the
- * text colour in light and dark, instead of the text glyphs ☎ ✉ ◈ ◷. */
-.bo-scheda-tile[data-action="call-customer"]::before,
-.bo-scheda-tile[data-action="add-phone"]::before,
-.bo-scheda-tile[data-action="compose-message"]::before,
-.bo-scheda-tile[data-action="new-offer"]::before,
-.bo-scheda-tile[data-action="new-appointment"]::before { content: ""; align-self: center; width: 18px; height: 18px; background-color: currentColor; -webkit-mask: var(--qa-icon) center / contain no-repeat; mask: var(--qa-icon) center / contain no-repeat; }
-.bo-scheda-tile[data-action="call-customer"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="add-phone"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2M18 3v6M15 6h6'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="compose-message"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h16v11H9l-5 4z'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="new-offer"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6'/%3E%3C/svg%3E"); }
-.bo-scheda-tile[data-action="new-appointment"] { --qa-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 6h14v13H5zM5 10h14M9 4v4M15 4v4'/%3E%3C/svg%3E"); }
+/* Azioni rapide: the prototype's stroke icon is a real SVG (uiIcon) above
+ * the label — a CSS data: mask is blocked by the host CSP. */
+.bo-scheda-tile > .ui-icon { align-self: center; width: 18px; height: 18px; flex: none; }
 /* Voce d525f4aa48b2: the AI voice in Dettagli wears the assistant's violet,
  * like the ✦ summary card — same tokens, no new visual identity. */
 button.bo-scheda-tile { font-size: 12px; padding: 12px 4px 10px; overflow-wrap: normal; word-break: keep-all; }
