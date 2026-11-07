@@ -271,7 +271,7 @@ Setup: compose a project with the `work` package, apply `work-task.module.json` 
 19. The queue's display bound is **disclosed** when it bites: 141 tasks exist, 100 render, the screen says so.
 20. Every control has an accessible name and takes keyboard focus, and every text input carries a durable `aria-label` — **not** a placeholder, which vanishes the moment the user types.
 21. No failed resource, no 5xx, no uncaught JavaScript error, no console error and no dialog across the run — including from the new filter query string.
-22. Six malformed `#/work` hashes each render "That module route is not valid."; a trailing slash canonicalises to the queue, exactly as `#/quotes/` and `#/modules/<name>/` do; an absent id is an explained failure, not a crash.
+22. Six malformed `#/work` hashes each render «Questa pagina non esiste.» with the «Vai a Oggi» link; a trailing slash canonicalises to the queue, exactly as `#/quotes/` and `#/modules/<name>/` do; an absent id is an explained failure, not a crash.
 23. The timeline is subject-scoped, oldest-first, and states that it is not the audit log and that nothing on it was sent.
 24. The package's own limitation text and every `notModeled` item render verbatim on both views.
 25. A failed load is explained on screen and its **Retry** actually recovers the queue.

@@ -410,6 +410,7 @@ import {
   loadFixCount,
   readSpaces,
   renderSettingsPanel,
+  renderUnknownRoute,
   resolveBadgeSpaceId,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
@@ -1167,14 +1168,7 @@ async function route() {
   }
   if (onDashboard) return;
   if (target.view === 'invalid') {
-    moduleView.textContent = '';
-    const box = document.createElement('div');
-    box.className = 'panel';
-    const message = document.createElement('p');
-    message.className = 'empty';
-    message.textContent = 'That module route is not valid.';
-    box.appendChild(message);
-    moduleView.appendChild(box);
+    renderUnknownRoute({ doc: document, mount: moduleView });
     return;
   }
   try {
