@@ -116,3 +116,21 @@ test('the backoffice hides exactly the placeholder customer-data writes (one nam
     assert.equal(shownCompanyName({ company: { name } }) === null, isNoCompany({ name }), JSON.stringify(name));
   }
 });
+
+test('review #654 giro 4: an explicit «Senza azienda» never reuses another customer placeholder', async (t) => {
+  const { app } = scene(t);
+  const first = await applyOne(app, { firstName: 'Anna', email: 'anna@uno.invalid' });
+  const anna = await app.services.contacts.get(first.receipts[0].subject.id);
+  for (const [index, companyName] of ['Senza azienda', '  SENZA   azienda '].entries()) {
+    const next = await applyOne(app, { firstName: `Bruno${index}`, email: `bruno${index}@due.invalid`, companyName });
+    assert.equal(next.receipts[0].outcome, 'accepted');
+    const bruno = await app.services.contacts.get(next.receipts[0].subject.id);
+    assert.notEqual(bruno.companyId, anna.companyId, `${JSON.stringify(companyName)} gets its own placeholder, never Anna's`);
+    assert.equal(isNoCompany(await app.services.companies.get(bruno.companyId)), true);
+  }
+  // A company-only row with the reserved name never matches a placeholder.
+  const companyOnly = await applyOne(app, { companyName: 'Senza azienda', externalId: 'X-1' }, 'crm-export');
+  const receipt = companyOnly.receipts[0];
+  assert.notEqual(receipt.reasonCode, 'MATCHED_EXISTING', 'no match onto a contact placeholder');
+  assert.notEqual(receipt.subject?.id, anna.companyId);
+});

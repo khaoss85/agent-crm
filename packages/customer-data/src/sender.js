@@ -222,7 +222,9 @@ export function createPolicyReader({ modules, names, core }) {
     },
     async companiesByName(name) {
       if (!core || typeof core.findCompaniesByNormalizedName !== 'function') return [];
-      return await core.findCompaniesByNormalizedName(name);
+      // A «no company» placeholder belongs to one contact: never a match
+      // for another row (review #654, giro 4).
+      return (await core.findCompaniesByNormalizedName(name)).filter((company) => !isNoCompany(company));
     },
   };
 }
@@ -276,7 +278,10 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     // A contact needs a company: reuse the named one when it exists, else
     // create it. Both go through the adapters, never through raw SQL.
     let company;
-    if (!row.companyName && options.companyFromEmail === false) {
+    // An explicit «Senza azienda» names no company (review #654, giro 4):
+    // it takes the contact's own placeholder, never another customer's.
+    const reservedName = Boolean(row.companyName) && isNoCompany({ name: row.companyName });
+    if ((!row.companyName && options.companyFromEmail === false) || reservedName) {
       // Production 07/11: a customer typed or imported with no Azienda got
       // the email domain as its company («esempio.invalid»). The core still
       // needs a company behind a contact, so the contact gets its own
@@ -285,7 +290,9 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
       // column stays on it as evidence (review #654).
       company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null }, { actor });
     } else {
-      const companies = row.companyName ? await core.findCompaniesByNormalizedName(row.companyName) : [];
+      const companies = row.companyName
+        ? (await core.findCompaniesByNormalizedName(row.companyName)).filter((found) => !isNoCompany(found))
+        : [];
       company = companies.length === 1
         ? companies[0]
         : await core.createCompany({ name: row.companyName ?? deriveCompanyName(row), domain: row.domain ?? null }, { actor });
