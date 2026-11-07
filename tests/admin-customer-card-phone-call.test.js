@@ -124,8 +124,62 @@ test('105563eea902: an empty number never posts, a refused one stays Italian', a
   button(refusedMount, 'add-phone').listeners.click[0]();
   refusedMount.findAll('input')[0].value = '+393331234567';
   await button(refusedMount, 'save-phone').listeners.click[0]();
-  assert.ok(refusedMount.textContent.includes('Numero non salvato. Riprova più tardi.'),
-    'the refusal reads Italian, never the code');
+  assert.ok(refusedMount.textContent.includes('Questo numero è già collegato a un altro cliente'),
+    'the refusal reads its Italian reason, never the code or the English message');
+  assert.ok(!refusedMount.textContent.includes('held'), 'no English server text on screen');
+});
+
+/**
+ * Pilot #426: POST /bo/api/customer-hub/phone answers 400/404/409 with an
+ * Italian sentence. The panel reads that sentence (production 07/11 it
+ * always said «Numero non salvato…»), keeps the typed number, and keeps the
+ * generic retry line for anything else.
+ */
+const refusedWith = async (failure, typed = '+393331234567') => {
+  const client = stubClient({ onPost: { phone: () => { throw failure; } } });
+  const mount = await renderCard(client);
+  button(mount, 'add-phone').listeners.click[0]();
+  const input = mount.findAll('input')[0];
+  input.value = typed;
+  await button(mount, 'save-phone').listeners.click[0]();
+  const error = mount.findAll('p').find((node) => node.getAttribute('class') === 'field-error');
+  return { client, mount, input, error };
+};
+
+const failure = (status, code, message) => Object.assign(new Error(message), { status, code });
+
+test('Aggiungi telefono: a 409 shows the server reason and keeps the typed number', async () => {
+  const { error, input, client } = await refusedWith(
+    failure(409, 'PHONE_ALREADY_HELD', 'Questo numero è già collegato a un altro cliente'));
+  assert.equal(client.posts.length, 1);
+  assert.equal(error.textContent, 'Questo numero è già collegato a un altro cliente');
+  assert.equal(input.value, '+393331234567', 'the typed number stays for the correction');
+});
+
+test('Aggiungi telefono: a 400 shows the server format hint', async () => {
+  const message = 'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567';
+  const { error, input } = await refusedWith(failure(400, 'VALIDATION_ERROR', message), '333 12');
+  assert.equal(error.textContent, message);
+  assert.equal(input.value, '333 12', 'the typed number stays for the correction');
+});
+
+test('Aggiungi telefono: a 404 says the customer is gone; an English or generic message reads our Italian', async () => {
+  const gone = await refusedWith(failure(404, 'PHONE_SUBJECT_NOT_FOUND', 'Il cliente non è più in questo spazio: ricarica la scheda'));
+  assert.equal(gone.error.textContent, 'Il cliente non è più in questo spazio: ricarica la scheda');
+  const english = await refusedWith(failure(400, 'VALIDATION_ERROR', 'phone must be E.164'));
+  assert.equal(english.error.textContent,
+    'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567');
+  const generic = await refusedWith(failure(400, 'BO_CRM_BODY_REFUSED', 'Scrittura del pannello rifiutata'));
+  assert.equal(generic.error.textContent,
+    'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567');
+});
+
+test('Aggiungi telefono: unknown and 5xx failures keep the generic retry line', async () => {
+  const down = await refusedWith(failure(503, 'BO_BRIDGE_NOT_CONFIGURED', 'Scrittura del pannello rifiutata'));
+  assert.equal(down.error.textContent, 'Numero non salvato. Riprova più tardi.');
+  const network = await refusedWith(new Error('Failed to fetch'));
+  assert.equal(network.error.textContent, 'Numero non salvato. Riprova più tardi.');
+  assert.equal(network.input.value, '+393331234567');
 });
 
 test('105563eea902: without a linked voice Chiama says so and falls back to tel:, logging nothing', async () => {
