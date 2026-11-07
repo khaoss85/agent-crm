@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
@@ -393,6 +393,30 @@ export function mergeLinkedIdentities(timeline) {
     available,
     complete: available && !truncated,
   });
+}
+
+/**
+ * Voce 59def6cb805d (C10): the directions observed per channel on the
+ * customer's passages — `{in, out}` by lowercase system. Evidence only: a
+ * direction nobody recorded is never assumed.
+ * @param {any} timeline the read-customer-timeline answer
+ * @returns {Map<string, {in: boolean, out: boolean}>}
+ */
+export function observedDirections(timeline) {
+  /** @type {Map<string, {in: boolean, out: boolean}>} */
+  const seen = new Map();
+  const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  for (const entry of entries) {
+    const system = String(entry?.channel ?? '').toLowerCase();
+    if (system === '') continue;
+    const direction = String(entry?.direction ?? '');
+    if (direction !== 'inbound' && direction !== 'outbound') continue;
+    const current = seen.get(system) ?? { in: false, out: false };
+    if (direction === 'inbound') current.in = true;
+    else current.out = true;
+    seen.set(system, current);
+  }
+  return seen;
 }
 
 /**
@@ -1290,6 +1314,12 @@ export function createCustomerCardView(deps) {
     text.addEventListener?.('input', keepDraft);
     const foot = el('div', 'bo-composer-foot');
     const limitHint = el('span', 'bo-composer-limit', 'Massimo 2000 caratteri');
+    // Voce 59def6cb805d (C22): the prototype's channel note beside Invia.
+    const channelHint = el('span', 'bo-composer-hint', '');
+    // Voce 59def6cb805d (C21): the placeholder names the customer by first
+    // name and the chosen channel, like the prototype.
+    const firstName = typeof card?.name === 'string' ? (card.name.trim().split(/\s+/)[0] ?? '') : '';
+    const sendLabel = () => (selected !== null ? `Invia su ${selected.label}` : 'Invia');
     const err = el('p', 'field-error', '');
     const send = el('button', 'primary', 'Invia');
     send.setAttribute('type', 'button');
@@ -1304,6 +1334,11 @@ export function createCustomerCardView(deps) {
         row.chip.setAttribute('data-selected', row.entry === entry ? 'true' : 'false');
       }
       toLine.textContent = entry.recipient;
+      text.setAttribute('placeholder', firstName !== ''
+        ? `Scrivi a ${firstName} su ${entry.label}…`
+        : `Scrivi su ${entry.label}…`);
+      if (send.getAttribute('aria-busy') !== 'true') send.textContent = sendLabel();
+      channelHint.textContent = `parte da ${entry.label} · resta anche lì`;
       const sender = typeof entry.sender === 'string' && entry.sender !== '' ? entry.sender : '';
       fromValue.textContent = sender;
       fromRow.setAttribute('data-empty', sender === '' ? 'true' : 'false');
@@ -1357,6 +1392,7 @@ export function createCustomerCardView(deps) {
       offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
       offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     }
+    body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
     if (offLinked.length > 0) body.appendChild(offLine);
     body.appendChild(fromRow);
@@ -1378,6 +1414,7 @@ export function createCustomerCardView(deps) {
     body.appendChild(text);
     body.appendChild(err);
     foot.appendChild(send);
+    foot.appendChild(channelHint);
     foot.appendChild(limitHint);
     panel.appendChild(body);
     panel.appendChild(foot);
@@ -1410,7 +1447,7 @@ export function createCustomerCardView(deps) {
     send.addEventListener('click', () => { void doSend(); });
     const setBusy = (on) => {
       busy = on;
-      send.textContent = on ? 'Invio…' : 'Invia';
+      send.textContent = on ? 'Invio…' : sendLabel();
       if (on) send.setAttribute('disabled', 'disabled');
       else send.removeAttribute?.('disabled');
       send.setAttribute('aria-busy', on ? 'true' : 'false');
@@ -1618,6 +1655,7 @@ export function createCustomerCardView(deps) {
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
+    const directions = observedDirections(timeline);
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -1628,6 +1666,13 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', undefined, row.externalId == null
         ? ` ${channelLabel(system)} · senza identificativo`
         : ` ${channelLabel(system)} · ${row.externalId}`));
+      // Voce 59def6cb805d (C10): the prototype's sync line, from what the
+      // passages on this channel prove — both directions seen reads
+      // «↔ sincronizzato», received only «← in entrata», sent only
+      // «→ in uscita». A channel with no directed passage says nothing.
+      const seen = directions.get(system);
+      const sync = seen?.in && seen?.out ? '↔ sincronizzato' : seen?.in ? '← in entrata' : seen?.out ? '→ in uscita' : null;
+      if (sync) line.appendChild(el('span', 'bo-scheda-identity-sync', sync));
       box.appendChild(line);
     }
     // Voce 785428ec3de0: a customer with no union reads nothing here — no
@@ -2284,7 +2329,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function nextSteps(box, profile, profileError = null) {
+  function nextSteps(box, profile, profileError = null, stepCtx = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no next steps".
     if (profileError) {
@@ -2304,7 +2349,43 @@ export function createCustomerCardView(deps) {
     }
     for (const task of tasks.slice(0, 5)) {
       const name = typeof task?.name === 'string' && task.name !== '' ? task.name : 'attività';
-      box.appendChild(el('p', 'bo-scheda-step', name));
+      // Voce 59def6cb805d (C24): the prototype's circular check before each
+      // step. It completes the real work task through the work-task
+      // `complete` action (the same path Oggi uses), then re-reads the card:
+      // the list is the server's, never an optimistic copy. Without an id or
+      // a card context the step stays plain text.
+      const taskId = typeof task?.id === 'string' && task.id !== '' ? task.id : null;
+      if (taskId === null || !stepCtx || typeof stepCtx.resource !== 'string' || typeof stepCtx.id !== 'string') {
+        box.appendChild(el('p', 'bo-scheda-step', name));
+        continue;
+      }
+      const row = el('div', 'bo-scheda-step bo-scheda-step-row');
+      const check = el('button', 'bo-scheda-step-check', '');
+      check.setAttribute('type', 'button');
+      check.setAttribute('data-action', 'complete-step');
+      check.setAttribute('aria-label', `Segna come fatto: ${name}`);
+      check.setAttribute('title', 'Segna come fatto');
+      let busy = false;
+      check.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        check.setAttribute('aria-busy', 'true');
+        try {
+          await client.request(`/api/modules/work-task/records/${encodeURIComponent(taskId)}/actions/complete`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+          toast(`Fatto: ${name}`);
+          await renderCard(stepCtx.resource, stepCtx.id);
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Passo non aggiornato. Riprova più tardi.' }), true);
+          busy = false;
+          check.setAttribute('aria-busy', 'false');
+        }
+      });
+      row.appendChild(check);
+      row.appendChild(el('span', undefined, name));
+      box.appendChild(row);
     }
     return true;
   }
@@ -2362,12 +2443,20 @@ export function createCustomerCardView(deps) {
     // storia) — the line is a link to #/quotes/<id>. An opportunity without
     // a quote has no detail screen, so its fallback line stays plain text.
     const quoteId = fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // Voce 59def6cb805d (C25): the prototype's big amount, read from the
+    // server total the profile carries — never summed here. No figure (a
+    // recurring quote, a record without a value, an empty draft) shows none.
+    const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
+      && typeof first?.currency === 'string' && first.currency !== ''
+      ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
     if (quoteId === null) {
       box.appendChild(line);
+      if (amount) box.appendChild(amount);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', `#/quotes/${encodeURIComponent(quoteId)}`);
       link.appendChild(line);
+      if (amount) link.appendChild(amount);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -2490,10 +2579,27 @@ export function createCustomerCardView(deps) {
     }
     const endTime = timeParts(next?.endsAt);
     const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
-    const when = endTime && endTime !== timeParts(next?.startsAt)
-      ? (sameDay ? `${start}–${endTime}` : `${start} – ${dateTimeParts(next?.endsAt)}`)
-      : start;
+    // Voce 59def6cb805d (C26): the prototype card — a title, then
+    // `<giorno> · <orari>`. The title is the booked service (its listino key
+    // made readable) with the team member when the handle reads as a name;
+    // the row names the long Rome day. No place and no Google sync line:
+    // the booking records neither, so none is written.
+    const service = serviceTitle(next?.serviceKey);
+    const member = teamName(next?.teamMemberId);
+    box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
+    const day = dayParts(next?.startsAt);
+    const startTime = timeParts(next?.startsAt);
+    const hours = endTime && endTime !== startTime ? `${startTime}–${endTime}` : startTime;
+    const when = day && sameDay
+      ? `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${hours}`
+      : (endTime && endTime !== startTime ? `${start} – ${dateTimeParts(next?.endsAt)}` : start);
     box.appendChild(el('p', 'bo-scheda-appt', when));
+  }
+
+  /** A listino key made readable («lezione-prova» → «Lezione prova»), never the raw slug. */
+  function serviceTitle(serviceKey) {
+    const words = typeof serviceKey === 'string' ? serviceKey.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
   }
 
   const SIGNAL_LABELS = Object.freeze({
@@ -2675,7 +2781,7 @@ export function createCustomerCardView(deps) {
       section(right, 'bo-scheda-ai', aiSummary, calls);
       section(right, '', callsBox, calls);
     }
-    section(right, '', nextSteps, profile, profileError);
+    section(right, '', nextSteps, profile, profileError, { resource, id });
     section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError);
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);

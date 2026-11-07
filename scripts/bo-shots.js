@@ -291,7 +291,7 @@ const DEMO_PROFILE = {
   identity: { company: { id: 'co1', name: 'Palestra Esempio' }, contact: { id: 'c1', email: 'guido@palestra-esempio.it' } },
   externalIdentities: [],
   opportunities: { available: true, count: 1, countIsComplete: true, items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi' }], truncated: false },
-  quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi' }], truncated: false },
+  quotes: { available: true, count: 1, countIsComplete: true, items: [{ id: 'q1', status: 'sent', name: 'Preventivo 10 ingressi', amountCents: 32000, currency: 'EUR' }], truncated: false },
   orders: { available: false, reason: 'not composed', items: null, count: null },
   contracts: { available: false, reason: 'not composed', items: null, count: null },
   subscriptions: { available: false, reason: 'not composed', items: null, count: null },
