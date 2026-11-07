@@ -1927,8 +1927,13 @@ export function createCalendarioView(deps) {
   /** @param {any} draft */
   function renderDraft(draft) {
     const box = el(doc, 'div', { className: 'cal-draft' });
+    // backlog:65ed7430 — a day-only draft has no startsAt: name its Rome day
+    // instead of '?'. Noon UTC always falls on the same Rome day (+1/+2).
+    const dayLabel = draft?.startsAt != null
+      ? romeShortDay(draft.startsAt)
+      : (typeof draft?.day === 'string' ? romeShortDay(`${draft.day}T12:00:00Z`) : null);
     box.appendChild(el(doc, 'p', {
-      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(draft.startsAt) ?? '?'} ${romeTime(draft.startsAt) ?? ''}–${romeTime(draft.endsAt) ?? ''}`,
+      text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${dayLabel ?? '?'} ${romeTime(draft.startsAt) ?? ''}–${romeTime(draft.endsAt) ?? ''}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
     return box;
@@ -2292,8 +2297,12 @@ export function createCalendarioView(deps) {
         ? draft.day
         : romeDayKey(draft.startsAt);
       if (dayKey) inputs.date.value = dayKey;
-      if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
-      if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
+      // backlog:65ed7430 — a day-only draft carries no hour: clear start/end
+      // so a stale hour from an earlier edit is never booked as stated.
+      if (draft.startsAt === undefined) inputs.start.value = '';
+      else if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
+      if (draft.endsAt === undefined) inputs.end.value = '';
+      else if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
       // The draft has been absorbed into the visible form: snapshot it, so
       // a later re-render keeps the draft values instead of replaying them
       // over the operator's own edits. A pipe outsider never painted, so an

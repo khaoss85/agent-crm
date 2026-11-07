@@ -2052,17 +2052,20 @@ function romeDayKeyOfInstant(iso) {
 
 /**
  * The Rome wall-clock time of an instant as 'HH:MM', null when unparsable —
- * the same shape the admin calendar paints, so the check below refuses what
- * the operator would see. A lone midnight (backlog:65ed7430) is the invented
- * shape: the model writes it either as 00:00Z or as 00:00 on the Rome clock.
+ * the same shape the admin calendar paints (hour12:false, like its own
+ * romeWallToIso), so the check below refuses what the operator would see. A
+ * lone midnight (backlog:65ed7430) is 00:00 on the Rome clock only: 00:00Z is
+ * 01:00/02:00 in Rome, a stated early hour, never an invented midnight.
  *
  * @param {string} iso
  */
 function romeClockOfInstant(iso) {
   try {
-    const clock = new Intl.DateTimeFormat('it-IT', {
-      timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit',
+    const seen = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(new Date(iso));
+    // Some ICU builds paint midnight as 24:00: same wall time, one spelling.
+    const clock = seen === '24:00' ? '00:00' : seen;
     return /^\d{2}:\d{2}$/.test(clock) ? clock : null;
   } catch {
     return null;
@@ -2076,9 +2079,9 @@ function romeClockOfInstant(iso) {
  * future day instead of proposing the past. A draft naming a day but no
  * time rides `day` (backlog:65ed7430): an invented midnight is never
  * accepted as a stated hour, so when both ride they must name the same Rome
- * day or the draft is unusable — and a midnight with no day is refused even
- * when it names a future instant, because the prompt alone cannot stop the
- * model from writing 00:00 for a missing hour.
+ * day or the draft is unusable — and a Rome midnight with no day is refused
+ * even when it names a future instant, because the prompt alone cannot stop
+ * the model from writing 00:00 for a missing hour.
  */
 function extractPhraseDraft(text, nowMs) {
   const fenced = String(text ?? '').replace(/```(?:json)?/gi, '').trim();
@@ -2130,12 +2133,12 @@ function extractPhraseDraft(text, nowMs) {
       }
     }
     if (draft.startsAt !== undefined && draft.day === undefined) {
-      const instant = new Date(draft.startsAt);
-      const romeMidnight = romeClockOfInstant(draft.startsAt) === '00:00';
-      const zuluMidnight = instant.getUTCHours() === 0 && instant.getUTCMinutes() === 0;
-      if (romeMidnight || zuluMidnight) {
+      // backlog:65ed7430 — the Rome wall clock only: a lone 00:00 in Rome is
+      // an invented midnight, while a lone 00:00Z is 01:00/02:00 in Rome, a
+      // stated early hour that must stay bookable.
+      if (romeClockOfInstant(draft.startsAt) === '00:00') {
         throw new ValidationError(
-          'draft.startsAt at 00:00 with no draft.day is an invented midnight, never a stated time: '
+          'draft.startsAt at 00:00 Europe/Rome with no draft.day is an invented midnight, never a stated time: '
           + 'a stated midnight rides with its day (backlog:65ed7430)',
           { field: 'draft.startsAt' },
         );

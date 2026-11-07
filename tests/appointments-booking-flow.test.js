@@ -649,15 +649,26 @@ test('the phrase returns a day field when the sentence names no time (backlog:65
     },
     'a day and an instant on different Rome days disagree and are refused',
   );
-  for (const text of ['{"startsAt": "2026-10-22T00:00:00.000Z"}', '{"startsAt": "2026-10-21T22:00:00.000Z"}']) {
-    await assert.rejects(
-      withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì con Guido' }),
-      (error) => {
-        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
-        return true;
-      },
-      `a lone midnight without day is never a stated hour: ${text}`,
-    );
+  // backlog:65ed7430 — one midnight rule on the Rome wall clock only: a lone
+  // 00:00 in Rome is an invented midnight, while a lone 00:00Z is a stated
+  // early hour (02:00 in October, 01:00 in November) that stays bookable.
+  await assert.rejects(
+    withText('{"startsAt": "2026-10-21T22:00:00.000Z"}').parseBookingPhrase({
+      spaceId: 'spazio-prova', phrase: 'giovedì con Guido',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+      return true;
+    },
+    'a lone 00:00 on the Rome clock without day is never a stated hour',
+  );
+  for (const [text, phrase] of [
+    ['{"teamMemberId": "coach-guido", "startsAt": "2026-10-22T00:00:00.000Z"}', 'giovedì alle 2 di notte con Guido'],
+    ['{"teamMemberId": "coach-guido", "startsAt": "2026-11-05T00:00:00.000Z"}', 'giovedì alle 1 di notte con Guido'],
+  ]) {
+    const early = await withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase });
+    assert.equal(early.draft.day, undefined, `a stated early hour needs no day: ${text}`);
+    assert.equal(early.draft.startsAt, JSON.parse(text).startsAt, `a stated early hour stays bookable: ${text}`);
   }
   const midnight = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22", "startsAt": "2026-10-21T22:00:00.000Z"}')
     .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì a mezzanotte con Guido' });
