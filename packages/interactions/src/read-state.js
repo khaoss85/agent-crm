@@ -1,14 +1,14 @@
 // @ts-check
 
-import { ANONYMOUS_ACTOR } from './actor.js';
+import { ANONYMOUS_ACTOR } from '../../core/index.js';
 
 /**
  * **Team read state: the one rule for "unread".**
  *
- * The watermark table (`conversation-read` in the interactions package) is
- * the only read memory: one row per conversation and member names the
- * instant up to which that member has seen the thread. Everything derived —
- * an inbound message's `read` flag on the timeline, a customer row's
+ * The watermark table (`conversation-read`, owned by this package) is the
+ * only read memory: one row per conversation and member names the instant
+ * up to which that member has seen the thread. Everything derived — an
+ * inbound message's `read` flag on the scheda timeline, a customer row's
  * `unreadCount` on the list, the `da-leggere` view — asks this one function,
  * so the scheda badge and the list badge can never disagree about the same
  * message. The rule:
@@ -25,10 +25,10 @@ import { ANONYMOUS_ACTOR } from './actor.js';
  * as unread only when nothing was ever marked — a mark always names an
  * instant it can reach, so a dateless row can never light up forever.
  *
- * Generic: nothing here knows about any package, table or route. The member
- * id vocabulary is the interactions package's (`validateMemberId` there);
- * here an actor id that does not fit it simply names no member, and reads
- * without a member omit read state instead of inventing it.
+ * Generic: nothing here knows about any other package, table or route. The
+ * member id vocabulary is this package's (`validateMemberId`); here an
+ * actor id that does not fit it simply names no member, and reads without
+ * a member omit read state instead of inventing it.
  * @param {{direction?: unknown, occurredAt?: unknown}} message
  * @param {unknown} watermark the member's `lastReadAt` on the message's conversation, if any
  */
@@ -44,8 +44,8 @@ export function isInboundUnread(message, watermark) {
  * Count one subject's unread inbound messages from rows already in hand,
  * against one member's watermarks. Pure: the caller did the batched reads
  * (the list already holds every message), so this never touches storage.
- * The rule is `isInboundUnread` above, the same one the timeline's `read`
- * flag answers — a row's `unreadCount` is exactly the number of its entries
+ * The rule is `isInboundUnread` above, the same one the scheda's `read`
+ * flags answer — a row's `unreadCount` is exactly the number of its entries
  * the scheda would badge.
  *
  * Only message rows count: a call row never does, even when it names a

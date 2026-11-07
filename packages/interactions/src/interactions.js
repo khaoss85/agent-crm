@@ -2,8 +2,9 @@
 
 import {
   AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
-  requireActor, optionalIsoDate, isInboundUnread,
+  requireActor, optionalIsoDate,
 } from '../../core/index.js';
+import { actorMemberId, countUnreadForSubject, isInboundUnread } from './read-state.js';
 
 /**
  * **Interactions — the native message and call records.**
@@ -1604,8 +1605,8 @@ export async function unreadCount({ modules, moduleNames }, conversationId, memb
   if (!found) throw new NotFoundError('conversation', id);
   const watermark = (await reads.listWhere({ conversationId: id, memberId: member }))[0]?.lastReadAt ?? null;
   const inbound = await messages.listWhere({ conversationId: id, direction: 'inbound' });
-  // The one unread rule (core `isInboundUnread`): every caller of the
-  // watermark counts the same messages, never a local copy of the compare.
+  // The one unread rule beside it: every caller of the watermark counts
+  // the same messages, never a local copy of the compare.
   const unread = inbound.filter((row) => isInboundUnread(row, watermark)).length;
   return Object.freeze({ conversationId: id, memberId: member, unread, lastReadAt: watermark });
 }
@@ -1632,11 +1633,11 @@ export async function watermarksForMember({ modules, moduleNames }, memberId) {
   return byConversation;
 }
 
-// The subject-level unread count lives in the core beside the one unread
-// rule (`isInboundUnread`): the customer list counts with it without
-// importing this package, and this package re-exports it so existing
-// callers keep one import. One rule, one counter, every caller.
-export { countUnreadForSubject } from '../../core/index.js';
+// The one unread rule and its counters live beside the watermark table they
+// read, so every caller counts the same messages: the unread rule, the
+// per-subject counter and the actor-to-member mapping this package shares
+// with the readers that shape read state without owning the table.
+export { actorMemberId, countUnreadForSubject, isInboundUnread } from './read-state.js';
 
 /**
  * Mark one customer's inbound messages read up to an instant: every open or
