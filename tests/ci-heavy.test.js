@@ -41,6 +41,51 @@ test('the installed core lock wins and reads the server policy without sourcing 
   }
 });
 
+function fakeLock(dir, file) {
+  const path = join(dir, file);
+  writeFileSync(path, '#!/bin/bash\necho "lock=$0 args=$*"\nenv | grep ^HEAVY_JOB_ | sort\n');
+  chmodSync(path, 0o755);
+  return path;
+}
+
+test('without the core lock an explicit ACCORDO_HEAVY_JOB is still the lock', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-ci-heavy-'));
+  try {
+    const custom = fakeLock(dir, 'custom.sh');
+    const out = run({ ACCORDO_CORE_HEAVY_JOB: join(dir, 'none'), ACCORDO_HEAVY_JOB: custom });
+    assert.match(out, new RegExp(`^lock=${custom} args=accordo ci-fast -- echo step-ran$`, 'm'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a missing policy file still runs the core lock', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-ci-heavy-'));
+  try {
+    const core = fakeLock(dir, 'core.sh');
+    const out = run({ ACCORDO_CORE_HEAVY_JOB: core, ACCORDO_HEAVY_JOB_CONF: join(dir, 'absent.conf') });
+    assert.match(out, /args=accordo ci-fast -- echo step-ran/);
+    assert.doesNotMatch(out, /HEAVY_JOB_SLOTS=/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the last policy line counts without a newline and a malformed key is skipped', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'accordo-ci-heavy-'));
+  try {
+    const core = fakeLock(dir, 'core.sh');
+    const conf = join(dir, 'policy.conf');
+    writeFileSync(conf, 'HEAVY_JOB_bad-key=1\nHEAVY_JOB_=2\nHEAVY_JOB_SLOTS=2');
+    const out = run({ ACCORDO_CORE_HEAVY_JOB: core, ACCORDO_HEAVY_JOB_CONF: conf });
+    assert.match(out, /^HEAVY_JOB_SLOTS=2$/m);
+    assert.match(out, /args=accordo ci-fast -- echo step-ran/);
+    assert.doesNotMatch(out, /bad-key/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('without the core lock nor a lock script the step runs as before', () => {
   const dir = mkdtempSync(join(tmpdir(), 'accordo-ci-heavy-'));
   try {
