@@ -8,7 +8,7 @@
     "pre_extraction_evidence": 8
   },
   "domain": "commercial-operations",
-  "fingerprint": "12592285d1cbf5c492e02f619914df9b1f1375aa0107141080670f042d92719f",
+  "fingerprint": "3b674ad926ee740e57eecc107511aadf8b104f4e0e9b6a55707d9b93815e8011",
   "legacyCharacterizationContract": 1,
   "limitations": [
     {
@@ -1105,11 +1105,14 @@
       "id": "architecture.quote-actions-advertised",
       "note": null,
       "observed": [
+        "accept-link",
         "add-line",
         "approve",
+        "link-info",
         "reject",
         "remove-line",
         "revise",
+        "share-link",
         "submit",
         "update-line"
       ],
@@ -4548,10 +4551,10 @@
     "packages/commercial/modules/quote-version-total.module.json": "9ea4af6efc5ff7e506b7f7b78c7440e9be603507d6d0246904b7b384bb1a88e2",
     "packages/commercial/modules/quote-version.module.json": "b3a209f5f45c1486f942e145437e69f091cd3bd77972485386607af0dc5f3bc9",
     "packages/commercial/modules/quote.module.json": "08a6d9a8e48d2d412837a8a52c6fae22520b3add5a82275901ce4754c31386b0",
-    "packages/commercial/src/actions.js": "7da2bdf9e719ad1703e64858e9b981fdc7ed7c84a07d65439d939609ffd0f160",
+    "packages/commercial/src/actions.js": "3c68534820ee8b9897b106baf8cd978ca47d21ef49998727a1bb2a0833d1af4a",
     "packages/commercial/src/capability.js": "f1b35c2dbd53d906fdfb8ecb9ffa34d79c24f35f5706810b7933341ab6184763",
     "packages/commercial/src/catalog-sync.js": "db9e03169726b7a8f2134cff4323fca5a284d4f018df84bdda4590bb557c6664",
-    "packages/commercial/src/index.js": "8e04eb2c00ab5d94eb79463b76a21dc6737662f01d2f95060b45c3cd3cd3740e",
+    "packages/commercial/src/index.js": "35c28039c452f774892c4ad3f1c4204ce35777decbb96d6f192092731cd0ca76",
     "packages/commercial/src/manual-catalog.js": "5606488e604fc3f160e6fbc2114432adaceb041f79e1c0bece6ed7df3d047fdb",
     "packages/commercial/src/money.js": "84c569c6e3d9270e25a9fb440675c01063d61f6a4d12a71734309b1f20bb5496",
     "packages/commercial/src/offer-draft.js": "8cfe05bb97c5dddf2972a09461ee3e93eca0e36ef72352884271c169b575c0ba",

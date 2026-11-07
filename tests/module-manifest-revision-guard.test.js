@@ -75,6 +75,7 @@ const RECORDED = Object.freeze({
   "quote-version-total": { revision: 1, sqlite: "1f801091de1c1a25633d7c4be3858629e2fa26d555febc3f2134df30a36c572f", pg: "b8830b2fc0fc7cc20c68e285696b4f8dec091d407dde86a41bfe036decb7886a" },
   "quote-version": { revision: 1, sqlite: "521f4ea1dc6d1ecbb96957b158c529cbed20c2ffffc073ebef44b9750e28159b", pg: "4f0fef746b3178793ee0e11c6d8090eb171c7ea25f3ba577f953afd39864eed2" },
   "quote": { revision: 1, sqlite: "e77c292ea6a809fcf5ee9e0001b883148fc2a68340eda47dc9b750f6114106db", pg: "ae8cdd06674f5ea895355cc64c94644df8d310449c4c0be9bb1084bd2dd27cd2" },
+  "quote-share": { revision: 1, sqlite: "6cdbb92fc471ea5616cdf2a655580edd04afae9ba181d62898f0c0f43370f054", pg: "55bc9a1405cf48797972ad1169d82273b539540f964399c5e05b1f1cea7eca9d" },
   "commercial-contract": { revision: 2, sqlite: "461a12a2279c801460d6cd2034f90bb9eb48049fba12647564061ce0012e4b43", pg: "c9db074e6e65ce4383b317eb3705d53ed41cbea510796d67dd305ba5f3ed1bcb" },
   "contract-activation": { revision: 2, sqlite: "32373dde9a63179bb6a290cdf316b61142d94058348a68c43bae25b7e931c4bb", pg: "c2dd2e56e56ddb3b5c779e8c2077f1248a18923c7453b02ed202667844b0cbb0" },
   "contract-line": { revision: 1, sqlite: "aef4381bd0b96accb67dcf1589cc8a9b790f70555c17d38846a6cee6e14362f8", pg: "d3d6ba5a55b72ca2bf2d97c3f945de03354e1ec344bbf0858bd4b2b1c054267f" },

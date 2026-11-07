@@ -1,0 +1,65 @@
+{
+  "manifestVersion": 1,
+  "name": "quote-share",
+  "description": "One public-link share per approved quote version (A5 offerta via link). The token is the only credential: whoever holds it reads the frozen version and accepts it. The accepted price is the immutable quote version, never the live catalog.",
+  "fields": [
+    {
+      "name": "quoteId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "quoteVersionId",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "versionNumber",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "token",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "values": [
+        "active",
+        "accepted"
+      ],
+      "default": "active",
+      "writable": "managed"
+    },
+    {
+      "name": "expiresAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "acceptedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "acceptCount",
+      "type": "integer",
+      "writable": "managed"
+    },
+    {
+      "name": "createdBy",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}
