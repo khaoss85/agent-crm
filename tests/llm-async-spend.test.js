@@ -221,3 +221,67 @@ test('a broken spend seam refuses before the provider is touched', async (t) => 
   assert.equal(code, 'LLM_STORAGE_INVALID');
   assert.equal(api.calls(), 0, 'no provider call was paid for a broken seam');
 });
+
+test('a receipt failure rolls the spend back: zero spend without receipt', async (t) => {
+  const { app, api, ops } = await composedLlmApp(t);
+  const auditTable = app.modules.get('llm-call-audit').service.manifest.table;
+  // The reviewer's scenario (backlog:1943c161 P1): the claim UPDATE lands,
+  // then the domain receipt INSERT fails. On the portable facade the claim
+  // runs through `mutationAsync` on sync storage, whose savepoint used to
+  // release before the async continuations ran — the spend stayed committed
+  // with no receipt. The poisoned tx fails only the receipt insert.
+  const receiptFails = {
+    get(name) {
+      const entry = app.modules.get(name);
+      if (name !== 'llm-usage-day') return entry;
+      const service = entry.service;
+      const realMutationAsync = service.mutationAsync.bind(service);
+      return {
+        ...entry,
+        service: {
+          ...service,
+          async mutationAsync(fn) {
+            return realMutationAsync(async (tx) => {
+              // The tx handle is frozen, so a shadowing assignment over its
+              // prototype would throw before any statement: spread it into a
+              // fresh handle whose `execute` fails only the receipt insert.
+              const realExecute = tx.execute.bind(tx);
+              const poisoned = {
+                ...tx,
+                execute: (statement) => {
+                  if (statement?.kind === 'insert' && statement?.table === auditTable) {
+                    throw new Error('injected llm receipt failure');
+                  }
+                  return realExecute(statement);
+                },
+              };
+              return fn(poisoned);
+            });
+          },
+        },
+      };
+    },
+    list: () => app.modules.list(),
+    schema: () => app.modules.schema(),
+  };
+  let failure = null;
+  try {
+    await ops.complete({
+      actor: ACTOR,
+      spaceId: 'presti',
+      purpose: 'free-question',
+      messages: [{ role: 'user', content: 'ciao' }],
+      maxTokens: 64,
+    }, receiptFails);
+  } catch (error) {
+    failure = error;
+  }
+  assert.ok(failure, 'the receipt failure surfaces to the caller');
+  assert.equal(api.calls(), 1, 'the provider answered once before the receipt failed');
+  const usage = await app.operations.run('read-llm-usage', { actor: ACTOR, spaceId: 'presti' });
+  assert.equal(usage.length, 1, 'the day row exists');
+  assert.equal(usage[0].calls, 0, 'the spend rolled back with its receipt');
+  assert.equal(usage[0].inputTokens + usage[0].outputTokens, 0, 'no tokens landed without receipt');
+  const audit = await app.operations.run('read-llm-audit', { actor: ACTOR, spaceId: 'presti' });
+  assert.equal(audit.length, 0, 'no half receipt landed');
+});
