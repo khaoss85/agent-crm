@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, requireQuantity } from '../../core/index.js';
+import { applyDiscount, checkedAdd, checkedMultiply } from './money.js';
 
 /**
  * AI-suggested offer draft from one operator sentence (backlog:7847b4cf,
@@ -41,6 +42,13 @@ export const MAX_OFFER_DRAFT_PROMPT_CHARS = 500;
 export const MAX_OFFER_DRAFT_TITLE_CHARS = 120;
 /** At most this many lines per draft: the operator checks each one. */
 export const MAX_OFFER_DRAFT_LINES = 10;
+/**
+ * At most this many active offers travel in the prompt, like the excerpt
+ * bound of quote-suggest: the model only ever chooses among listed offers,
+ * so the eligible catalog is capped once, before the prompt and the domain
+ * both read it.
+ */
+export const MAX_OFFER_DRAFT_PROMPT_OFFERS = 50;
 
 /** @param {unknown} value @param {string} field — non-empty bounded text */
 function requireText(value, field, max) {
@@ -156,11 +164,15 @@ export function effectiveDiscountCeiling(offerMaxDiscountBps, policyMaxDiscountB
 }
 
 export function buildOfferDraftMessages({ prompt, offers, policy }) {
-  const caps = offers
-    .map((offer) => effectiveDiscountCeiling(offer.maxDiscountBps, policy.maxDiscountBps))
-    .filter((cap) => cap !== null && cap !== undefined);
-  const ceiling = caps.length === 0 ? null : Math.min(...caps);
-  const offerLines = offers.map((offer) => {
+  // The space ceiling is the space policy's own: a per-offer allowance binds
+  // only its own line (shown beside that offer below), so the message never
+  // shows the minimum of the two as if it were the space rule.
+  const ceiling = policy.maxDiscountBps ?? null;
+  // The prompt never carries more than MAX_OFFER_DRAFT_PROMPT_OFFERS: the
+  // model only ever chooses among listed offers, and the caller caps the
+  // eligible catalog to the same fifty, so the two agree on what drafts.
+  const listed = offers.slice(0, MAX_OFFER_DRAFT_PROMPT_OFFERS);
+  const offerLines = listed.map((offer) => {
     const price = offer.priceCents === null ? 'prezzo a listino' : `${offer.priceCents} cent`;
     const cap = effectiveDiscountCeiling(offer.maxDiscountBps, policy.maxDiscountBps);
     return `- ${offer.offerId}${offer.name ? ` — ${offer.name}` : ''} (${price}`
@@ -252,7 +264,7 @@ export async function suggestOfferDraft({
   prompt, offers, policy = null, complete, maxTokens = 1024,
 }) {
   const sentence = normalizePrompt(prompt);
-  const catalog = normalizeOffers(offers ?? []);
+  const catalog = normalizeOffers(offers ?? []).slice(0, MAX_OFFER_DRAFT_PROMPT_OFFERS);
   const spacePolicy = normalizePolicy(policy);
   if (catalog.length === 0) {
     return Object.freeze({
@@ -350,13 +362,13 @@ export async function suggestOfferDraft({
   }
   // The money is computed here from catalog prices, never taken from the
   // model: a line without a catalog price keeps the draft honest by
-  // leaving the total out rather than guessing it. Integer arithmetic all
-  // the way down (basis points in, cents out), truncated like the domain
-  // applyDiscount(): money never travels as a float, and an overflow keeps
-  // the total out rather than emitting a rounded-up lie. A total is only
-  // emitted when every accepted line shares one currency that the space
-  // policy does not contradict: mixed or relabelled currencies leave both
-  // valueCents and currency out rather than sending a mislabelled total.
+  // leaving the total out rather than guessing it. Each line nets through
+  // the one domain rounding rule, money.applyDiscount() — the draft owns no
+  // rounding formula of its own — and an overflow keeps the total out rather
+  // than emitting a rounded-up lie. A total is only emitted when every
+  // accepted line shares one currency that the space policy does not
+  // contradict: mixed or relabelled currencies leave both valueCents and
+  // currency out rather than sending a mislabelled total.
   const acceptedCurrencies = accepted.map(({ offer: id }) => offerById.get(id)?.currency ?? null);
   const unanimousCurrency = acceptedCurrencies.length > 0 && acceptedCurrencies.every((currency) => currency !== null && currency === acceptedCurrencies[0])
     ? /** @type {string} */ (acceptedCurrencies[0])
@@ -369,12 +381,16 @@ export async function suggestOfferDraft({
     && currencySupported
     && accepted.every(({ offer: id }) => offerById.get(id)?.priceCents !== null)
   ) {
-    const scaled = accepted.reduce((total, { offer: id, quantity, discountBps }) => {
-      const price = BigInt(/** @type {number} */ (offerById.get(id)?.priceCents));
-      return total + ((price * BigInt(quantity) * BigInt(10_000 - discountBps)) / 10_000n);
-    }, 0n);
-    if (scaled <= BigInt(Number.MAX_SAFE_INTEGER)) {
-      valueCents = Number(scaled);
+    try {
+      let total = 0;
+      for (const { offer: id, quantity, discountBps } of accepted) {
+        const price = /** @type {number} */ (offerById.get(id)?.priceCents);
+        const list = checkedMultiply(price, quantity, 'offer draft list');
+        total = checkedAdd(total, applyDiscount(list, discountBps).netAmountCents, 'offer draft total');
+      }
+      valueCents = total;
+    } catch {
+      valueCents = null;
     }
   }
   const currency = currencySupported ? unanimousCurrency : null;

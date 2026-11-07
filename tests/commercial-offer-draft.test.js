@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import {
   OFFER_DRAFT_PURPOSE,
   MAX_OFFER_DRAFT_PROMPT_CHARS,
+  MAX_OFFER_DRAFT_PROMPT_OFFERS,
   buildOfferDraftMessages,
   suggestOfferDraft,
 } from '../packages/commercial/src/offer-draft.js';
+import { applyDiscount } from '../packages/commercial/src/money.js';
 
 /**
  * AI-suggested offer draft from one operator sentence (backlog:7847b4cf,
@@ -210,13 +212,37 @@ test('offer draft: the tighter ceiling wins on both sides', async () => {
   );
 });
 
-test('offer draft: the draft total truncates like the domain, never rounds up', async () => {
-  const result = await suggestOfferDraft({
+test('offer draft: the draft total nets through applyDiscount, the one rounding rule', async () => {
+  // One table holds every rounding case of the earlier rounds and this one:
+  // each draft total equals list minus the truncated discount amount, never
+  // the per-line floor of list * (10000 - bps) / 10000, which reads one cent
+  // low whenever the discount does not divide evenly.
+  const cases = [
+    { priceCents: 1, quantity: 1, discountBps: 5000 },
+    { priceCents: 3, quantity: 1, discountBps: 3333 },
+    { priceCents: 999, quantity: 1, discountBps: 5000 },
+    { priceCents: 5000, quantity: 1, discountBps: 1000 },
+    { priceCents: 3900, quantity: 2, discountBps: 0 },
+  ];
+  for (const { priceCents, quantity, discountBps } of cases) {
+    const result = await suggestOfferDraft({
+      prompt: 'offerta',
+      offers: [{ offerId: 'offer:case', priceCents, currency: 'EUR' }],
+      complete: async () => validAnswer({ lines: [{ offerId: 'offer:case', quantity, discountBps }] }),
+    });
+    const expected = applyDiscount(priceCents * quantity, discountBps).netAmountCents;
+    assert.equal(
+      result.draft.valueCents,
+      expected,
+      `${priceCents} x ${quantity} at ${discountBps} bps nets ${expected}`,
+    );
+  }
+  const penny = await suggestOfferDraft({
     prompt: 'offerta',
     offers: [{ offerId: 'offer:penny', priceCents: 1, currency: 'EUR' }],
     complete: async () => validAnswer({ lines: [{ offerId: 'offer:penny', quantity: 1, discountBps: 5000 }] }),
   });
-  assert.equal(result.draft.valueCents, 0, 'truncated (1 * 5000) / 10000, like applyDiscount, not rounded to 1');
+  assert.equal(penny.draft.valueCents, 1, 'one cent at 50% off nets 1: list minus a truncated zero discount');
 });
 
 test('offer draft: a priced line without a currency never joins a single-currency total', async () => {
@@ -256,6 +282,38 @@ test('offer draft: a misshapen closing date refuses even with zero accepted line
     }),
   });
   assert.ok(!('expectedCloseDate' in validEmpty.draft), 'a valid date still stays out of an empty draft');
+});
+
+test('offer draft: the prompt carries at most 50 active offers', async () => {
+  assert.equal(MAX_OFFER_DRAFT_PROMPT_OFFERS, 50, 'the prompt bound is fifty');
+  const offers = Array.from({ length: 55 }, (_, index) => ({
+    offerId: `offer:item-${index}`,
+    priceCents: 1000,
+    currency: 'EUR',
+  }));
+  const messages = buildOfferDraftMessages({ prompt: 'offerta', offers, policy: {} });
+  assert.ok(!messages[1].content.includes('offer:item-54'), 'the 55th offer never reaches the prompt');
+  assert.match(messages[1].content, /offer:item-49/, 'the first fifty still travel');
+  const result = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers,
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:item-54' }] }),
+  });
+  assert.deepEqual(
+    result.refused.map(({ code }) => code),
+    ['OFFER_DRAFT_UNKNOWN_OFFER'],
+    'beyond the fifty the model never saw, a line refuses as unknown',
+  );
+});
+
+test('offer draft: the message shows the space ceiling, not the tightest line', async () => {
+  const messages = buildOfferDraftMessages({
+    prompt: 'offerta',
+    offers: [{ offerId: 'offer:x', priceCents: 10000, currency: 'EUR', maxDiscountBps: 500 }],
+    policy: { maxDiscountBps: 2000 },
+  });
+  assert.match(messages[1].content, /20%/, 'the space ceiling of 2000 bps travels as its own number');
+  assert.doesNotMatch(messages[1].content, /Sconto massimo di spazio: 5%/, 'no minimum poses as the space rule');
 });
 
 test('offer draft: a 100% line with no ceiling refuses without an approval flow', async () => {
