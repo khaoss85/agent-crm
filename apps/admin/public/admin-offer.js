@@ -13,6 +13,7 @@
 import { elFor } from './admin-ui.js';
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { parseEuroToCents } from './admin-catalog.js';
+import { offerStageLabel } from './admin-labels.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -114,15 +115,13 @@ export function createOfferDetail(deps) {
 
   const money = (cents, currency) => formatAmount(cents, currency);
 
-  /** Italian label of the record's pipeline stage, or an em dash. */
+  /**
+   * Italian label of the record's stage, or an em dash. Backlog
+   * a551982c06eb: the same words as the scheda and the Pipeline board
+   * (offerStageLabel in admin-labels.js).
+   */
   function stageLabel(schema, record) {
-    const pipelines = Array.isArray(schema?.pipelines) ? schema.pipelines : [];
-    const key = record.pipelineStage ?? record.stage;
-    for (const pipeline of pipelines) {
-      const stage = (pipeline?.stages ?? []).find((candidate) => candidate?.key === key);
-      if (stage) return stage.label ?? '—';
-    }
-    return '—';
+    return offerStageLabel(schema?.pipelines, record) ?? '—';
   }
 
   /**
