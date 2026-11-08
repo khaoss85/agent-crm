@@ -650,3 +650,21 @@ test('cf365ada15b9: the detail says import and connection states in Italian', ()
     assert.ok(!lines.some((line) => /\bactive\b/.test(line)), 'no raw «active»');
   }
 });
+
+test('24a57904a428: the detail read carries the live space, whatever storage says', async () => {
+  for (const stored of ['', 'altro-spazio']) {
+    const doc = createFakeDocument();
+    const mount = createMount(doc);
+    const calls = [];
+    const view = createConnectorDetailView({
+      doc, mount, client: stubClient({ calls }),
+      storage: { getItem: () => stored, setItem: () => {} },
+      spaceId: () => 'presti',
+      navigate: () => {},
+    });
+    await view.render('whatsapp');
+    await flush();
+    const reads = calls.filter((path) => String(path).startsWith('/api/connectors?'));
+    assert.deepEqual(reads, ['/api/connectors?spaceId=presti'], `the read names the live space (stored «${stored}»)`);
+  }
+});
