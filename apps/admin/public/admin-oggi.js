@@ -970,6 +970,47 @@ export function missingLeadChannels(connections = [], profile = null) {
     .map((entry) => Object.freeze({ channel: entry.channel, label: entry.label }));
 }
 
+/**
+ * The Oggi channel strip (9c7d1477a8d4): the shared «x di 9» count, the
+ * connectable lead channels missing (the names after «Collega»), and an
+ * aside for the missing channels that are not leads to connect here —
+ * Google Calendar «dal Profilo» when the profile offers it, else «non
+ * ancora disponibile» like Stripe — so connected + named = 9.
+ * @param {{ connections?: Array<any>, profile?: unknown }} input
+ * @returns {{ connected: number, total: number, leads: Array<string>, aside: string | null }}
+ */
+export function buildChannelInvite({ connections = [], profile = null } = {}) {
+  const count = channelConnectionCount(mergeProfileConnections(connections, profile));
+  const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
+  const leads = [];
+  const fromProfile = [];
+  const unavailable = [];
+  for (const entry of count.missing) {
+    if (guided.includes(entry.channel)) {
+      leads.push(entry.label);
+      continue;
+    }
+    // Outside the guided flow only Google Calendar has a destination
+    // (CHANNEL_CONNECT_ROUTES: Profilo, when the profile offers Google).
+    if (channelConnectRoute(entry.channel, { guided, profile }) !== null) {
+      fromProfile.push(`${entry.label} dal Profilo`);
+    } else {
+      unavailable.push(entry.label);
+    }
+  }
+  const notes = [...fromProfile];
+  if (unavailable.length === 1) notes.push(`${unavailable[0]} non ancora disponibile`);
+  if (unavailable.length > 1) {
+    notes.push(`${unavailable.slice(0, -1).join(', ')} e ${unavailable[unavailable.length - 1]} non ancora disponibili`);
+  }
+  return {
+    connected: count.connected,
+    total: count.total,
+    leads,
+    aside: notes.length > 0 ? notes.join('; ') : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Data load. One bounded page per module, narrowed on the server where the
 // generic surface allows it (ADR-008 addendum 2); the day filter stays
@@ -1597,44 +1638,34 @@ export function renderOggi({
     note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono attivi in questo spazio.'));
     page.appendChild(note);
   } else {
-    // One list for the number and the names (backlog:5083e7a77c26): the
-    // strip read «2 di 9» over eight names because the count walked the
-    // Stato sync nine and the names walked the lead catalog, two different
-    // nines. The shared count (admin-channels-count.js) is the one Stato
-    // sync prints too, so both screens say the same «x di y», and the names
-    // are exactly the channels missing from it. Hand-built homes without
-    // connections (tests) keep their own list, counted from that same list.
-    const summary = Array.isArray(home.connections)
-      ? channelConnectionCount(mergeProfileConnections(home.connections, home.profile ?? null), {
-        // Only what can really be connected here is invited (production
-        // 08/11: the strip invited Stripe, «Non disponibile» on Stato sync
-        // and Personalizza): the same channelConnectRoute those screens use.
-        connectable: (channel) => channelConnectRoute(channel, {
-          guided: CONNECTOR_CATALOG.map((entry) => entry.channel),
-          profile: home.profile ?? null,
-        }) !== null,
-      })
-      : { connected: OGGI_TOTAL_CHANNELS - Math.min(missing.length, OGGI_TOTAL_CHANNELS), total: OGGI_TOTAL_CHANNELS, missing };
-    const names = summary.missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
-    if (names.length > 0) {
-      const invite = el(doc, 'section', 'bo-oggi-section');
+    // The prototype strip (9c7d1477a8d4, production 08/11 after #687):
+    // «x di 9 collegati», always the line «per non perdere nessun lead», and
+    // the names are the connectable lead channels missing. The missing
+    // channels that are not leads to connect here (Google Calendar, Stripe)
+    // are named apart, so what the text promises adds up with the count.
+    const invite = Array.isArray(home.connections)
+      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null })
+      : {
+        connected: OGGI_TOTAL_CHANNELS - Math.min(missing.length, OGGI_TOTAL_CHANNELS),
+        total: OGGI_TOTAL_CHANNELS,
+        leads: missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== ''),
+        aside: null,
+      };
+    if (invite.leads.length > 0) {
+      const section = el(doc, 'section', 'bo-oggi-section');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
       const anchor = el(doc, 'a', 'bo-oggi-invite', '');
-      anchor.appendChild(el(doc, 'strong', undefined, `${summary.connected} di ${summary.total} collegati`));
-      // «per non perdere nessun lead» only when every name is a lead channel
-      // of the catalog; once the list names Google Calendar or Stripe the
-      // promise would be false, so the line turns neutral (owner 08/11, #680).
-      const onlyLeads = summary.missing.every((entry) => CONNECTOR_CATALOG.some((row) => row?.channel === entry?.channel));
-      const purpose = onlyLeads ? 'per non perdere nessun lead' : 'per avere tutto in un posto';
-      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} ${purpose} →`));
+      anchor.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
+      const aside = invite.aside !== null ? ` (${invite.aside})` : '';
+      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${invite.leads.join(', ')} per non perdere nessun lead${aside} →`));
       anchor.setAttribute('href', '#/connettori');
       anchor.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         navigate('#/connettori');
       });
-      invite.appendChild(anchor);
-      page.appendChild(invite);
+      section.appendChild(anchor);
+      page.appendChild(section);
     }
   }
 
