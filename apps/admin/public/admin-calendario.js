@@ -526,7 +526,10 @@ export function draftMinutes(draft) {
  */
 export function draftDayOnly(draft) {
   const startsAt = typeof draft?.startsAt === 'string' ? draft.startsAt : '';
-  return startsAt !== '' && romeTime(startsAt) === '00:00';
+  if (startsAt !== '') return romeTime(startsAt) === '00:00';
+  // backlog:65ed7430 — the server names a stated day without a time as
+  // `day` with no startsAt: still a day, not a time.
+  return typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day);
 }
 
 /**
@@ -535,6 +538,9 @@ export function draftDayOnly(draft) {
  * @param {any} draft
  */
 export function draftDayKey(draft) {
+  // backlog:65ed7430 — a stated `day` with no startsAt names the day the
+  // same way, so the slot search stays bound to it.
+  if (typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)) return draft.day;
   const startsAt = typeof draft?.startsAt === 'string' ? draft.startsAt : '';
   return startsAt === '' ? null : romeDayKey(startsAt);
 }
@@ -551,6 +557,14 @@ export function draftWhen(draft) {
     // The weekday leads, so «giovedì» reads back as the operator said it.
     const weekday = romeWeekdayShort(draft.startsAt);
     return `${weekday ? `${weekday} ` : ''}${day} · orario da scegliere · ${draftMinutes(draft)} minuti`;
+  }
+  // backlog:65ed7430 — a stated `day` with no startsAt reads the same way:
+  // noon UTC always falls on the same Rome day (+1/+2). Never «?».
+  if (!day && typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)) {
+    const noon = `${draft.day}T12:00:00Z`;
+    const label = romeShortDay(noon) ?? draft.day;
+    const weekday = romeWeekdayShort(noon);
+    return `${weekday ? `${weekday} ` : ''}${label} · orario da scegliere · ${draftMinutes(draft)} minuti`;
   }
   const from = romeTime(draft?.startsAt);
   const to = romeTime(draft?.endsAt);
@@ -2342,10 +2356,9 @@ export function createCalendarioView(deps) {
   /** @param {any} draft */
   function renderDraft(draft) {
     const box = el(doc, 'div', { className: 'cal-draft' });
-    // backlog:5fbebe8559e9: a phrase without a time («45 minuti con
-    // Daniele») drafts no startsAt — the line names the duration it will
-    // search, never «? –»; a day without a time reads «orario da
-    // scegliere», never «00:00» (production 07/11).
+    // backlog:5fbebe8559e9 + backlog:65ed7430: one «when» line for every
+    // draft shape — a day without a time reads «orario da scegliere»,
+    // never «00:00» and never «?».
     const when = draftWhen(draft);
     box.appendChild(el(doc, 'p', {
       text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
@@ -2787,13 +2800,17 @@ export function createCalendarioView(deps) {
       }
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
       if (draft.notes) inputs.notes.value = String(draft.notes);
-      const dayKey = romeDayKey(draft.startsAt);
+      // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
+      // prefill the day and ask the hour, never paint an invented midnight.
+      const dayKey = draftDayKey(draft);
       if (dayKey) inputs.date.value = dayKey;
-      // A day-only draft leaves the hours to choose: never «00:00».
-      if (!draftDayOnly(draft)) {
-        if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
-        if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
-      }
+      // A day-only draft (a Rome-midnight start, or `day` with no startsAt)
+      // leaves the hours to choose: clear them, so neither 00:00 nor a stale
+      // hour from an earlier edit is ever booked as stated (backlog:65ed7430).
+      if (draftDayOnly(draft) || draft.startsAt === undefined) inputs.start.value = '';
+      else if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
+      if (draftDayOnly(draft) || draft.endsAt === undefined) inputs.end.value = '';
+      else if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
       // The draft has been absorbed into the visible form: snapshot it, so
       // a later re-render keeps the draft values instead of replaying them
       // over the operator's own edits. A pipe outsider never painted, so an

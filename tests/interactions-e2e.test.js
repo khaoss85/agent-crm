@@ -611,7 +611,8 @@ test('interactions conforms to the domain-package contract it ships', () => {
     expected: {
       name: 'interactions',
       // 2 since backlog:998f7f2221b4: mark-customer-read joined the surface.
-      version: 2,
+      // 3 since backlog:97cba17cbb8c: #662 added the delivery advance to the surface.
+      version: 3,
       resources: ['conversation', 'interaction-message', 'interaction-call', 'conversation-assignment', 'conversation-read', 'conversation-thread-key'],
       actions: ['conversation.assign', 'conversation.close', 'conversation.mark-read', 'conversation.open-opportunity', 'interaction-message.advance'],
       requires: [],
@@ -1515,7 +1516,7 @@ test('998f7f2221b4: a database booted with interactions@1 boots again with @2, n
   const rootV2 = project(t, { withWork: false });
   const v2 = await boot(rootV2, dbPath);
   t.after(() => v2.close());
-  assert.equal(v2.app.domains.metadata().interactions.version, 2, 'the second boot composes interactions@2');
+  assert.equal(v2.app.domains.metadata().interactions.version, 3, 'the second boot composes the current interactions (@3 since #662), from @1 with no drift');
   assert.equal(typeof v2.app.markCustomerRead, 'function', '@2 serves mark-customer-read');
   const rows = v2.app.database.raw
     .prepare("SELECT type, name, version FROM definition_versions WHERE name = 'interactions' OR type LIKE '%interactions%'")

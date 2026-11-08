@@ -294,7 +294,11 @@ export function createInteractionsPackage(options = {}) {
     // `mark-customer-read` operation to the declared surface. Version 1 is
     // the surface before it, as registered in the pilot's fingerprint
     // baseline; a changed surface takes a new version, never the old one.
-    version: 2,
+    // Version 3 (backlog:97cba17cbb8c): agent-crm#662 let a written outbound
+    // message advance along its delivery lifecycle (failed with a reason
+    // code), which changed the declared surface. The pilot registers each
+    // surface's fingerprint; a changed surface takes a new version.
+    version: 3,
     label: 'Customer messages and calls',
     description:
       'Native message and call evidence: one conversation thread per customer across channels, inbound and outbound '
