@@ -102,13 +102,18 @@ test('the nightly measurement (ACCORDO_HEAVY_QUEUE=ci) uses the CI server queue,
     const core = fakeLock(home, 'core.sh');
     const out = execFileSync('bash', ['scripts/ci-heavy.sh', 'measure-1-of-6', '--', 'echo', 'step-ran'], {
       cwd: root, encoding: 'utf8',
-      env: { PATH: process.env.PATH, HOME: home, ACCORDO_HEAVY_QUEUE: 'ci', ACCORDO_CORE_HEAVY_JOB: core },
+      env: { PATH: process.env.PATH, HOME: home, ACCORDO_HEAVY_QUEUE: 'ci' },
     });
     assert.match(out, new RegExp(`^lock=${ciQueue} args=accordo ci-measure-1-of-6 -- echo step-ran$`, 'm'));
     const shared = execFileSync('bash', ['scripts/ci-heavy.sh', 'fast', '--', 'echo', 'step-ran'], {
       cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ACCORDO_CORE_HEAVY_JOB: core },
     });
     assert.match(shared, new RegExp(`^lock=${core} args=accordo ci-fast`, 'm'), 'without the variable the PR gate stays in the shared queue');
+    const forced = execFileSync('bash', ['scripts/ci-heavy.sh', 'measure-1-of-6', '--', 'echo', 'step-ran'], {
+      cwd: root, encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: home, ACCORDO_HEAVY_QUEUE: 'ci', ACCORDO_CORE_HEAVY_JOB: core },
+    });
+    assert.match(forced, new RegExp(`^lock=${core} `, 'm'), 'an explicit ACCORDO_CORE_HEAVY_JOB still wins over the CI queue');
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

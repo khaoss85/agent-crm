@@ -30,8 +30,9 @@ core="${ACCORDO_CORE_HEAVY_JOB:-${HOME:-}/dev/_work/minimal-core-versions/curren
 # The nightly measurement (job verify, ACCORDO_HEAVY_QUEUE=ci) runs in the CI server's own queue,
 # ~/ci-server/heavy.sh, not in the shared one: six pieces each waiting behind another factory's
 # stage held a runner for hours and left the PR gates queued (server, 08/11, decision of the Leader).
-# A measurement is not urgent; the PR gate stays in the shared queue.
-if [ "${ACCORDO_HEAVY_QUEUE:-}" = ci ] && [ -f "${HOME:-}/ci-server/heavy.sh" ]; then
+# A measurement is not urgent; the PR gate stays in the shared queue. The whole verify job (its
+# smoke and recipe steps too) waits there on purpose. An explicit ACCORDO_CORE_HEAVY_JOB still wins.
+if [ -z "${ACCORDO_CORE_HEAVY_JOB:-}" ] && [ "${ACCORDO_HEAVY_QUEUE:-}" = ci ] && [ -f "${HOME:-}/ci-server/heavy.sh" ]; then
   core="${HOME:-}/ci-server/heavy.sh"
 fi
 if [ -f "$core" ]; then
