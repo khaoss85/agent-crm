@@ -71,6 +71,10 @@ jobs:
     # Same billing-lock routing as `verify` below.
     runs-on: [self-hosted, accordo-ci]
     env:
+      # The PR gate waits in the CI server's own queue too (scripts/ci-heavy.sh): in the shared
+      # queue it waited 20-25 min behind other factories while holding a runner, and main's
+      # light checks queued for hours (server, 08/11, decision of the Leader).
+      ACCORDO_HEAVY_QUEUE: ci
       ACCORDO_TEST_POSTGRES: '1'
       # ACCORDO_PG_TEST_URL is set by the PostgreSQL start step below: one
       # cluster per runner, on the port the runner's .env names (ACCORDO_PG_PORT).
