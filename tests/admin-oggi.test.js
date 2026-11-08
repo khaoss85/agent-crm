@@ -1657,3 +1657,115 @@ test('5083e7a77c26: the next-call card names the customer from the profile', asy
   const agenda = buildTodayAgenda([{ ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' }], OGGI_NOW, names);
   assert.equal(agenda[0].title, 'Fio Neri', 'the agenda row reads the same name');
 });
+
+/**
+ * Backlog 2a075e2d9250 (production fc3fa62: the day at 8–20 s cold, every
+ * read once but one after the other). A virtual clock: every read but the
+ * schema (cached by the shell) answers after `ms`; the clock jumps to the
+ * next answer only when nothing else can move.
+ */
+function virtualClock() {
+  let now = 0;
+  /** @type {Array<{ at: number, resolve: () => void }>} */
+  const timers = [];
+  const flush = async () => { for (let i = 0; i < 30; i += 1) await new Promise((resolve) => { setImmediate(resolve); }); };
+  return {
+    get now() { return now; },
+    delay(ms) { return new Promise((resolve) => { timers.push({ at: now + ms, resolve }); }); },
+    /** Move time until `until()` holds; answers the virtual instant it held at. */
+    async runUntil(until) {
+      for (let guard = 0; guard < 200; guard += 1) {
+        await flush();
+        if (until()) return now;
+        timers.sort((a, b) => a.at - b.at);
+        if (timers.length === 0) throw new Error('nothing left to wait for');
+        now = timers[0].at;
+        for (const timer of timers.filter((entry) => entry.at <= now)) {
+          timers.splice(timers.indexOf(timer), 1);
+          timer.resolve();
+        }
+      }
+      throw new Error('the clock ran out');
+    },
+  };
+}
+
+function slowOggiClient(clock, ms) {
+  /** @type {Array<string>} */
+  const asked = [];
+  const answer = (path) => {
+    if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+    if (path === '/api/profile') return {};
+    if (path.startsWith('/api/customer-data/profile/')) return { identity: { contact: { firstName: 'Giulia', lastName: 'Romano' } } };
+    if (path.startsWith('/api/modules/work-task/records')) return { items: [TASK_OPEN] };
+    if (path.startsWith('/api/modules/appointment/records')) return { items: [APPT_TODAY] };
+    if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+    if (path.startsWith('/api/modules/conversation/records')) return { items: [{ id: 'conv-1', status: 'open' }] };
+    if (path.startsWith('/api/modules/interaction-message/records')) {
+      return { items: [{ ...MESSAGE_IN, direction: 'inbound', conversationId: 'conv-1' }] };
+    }
+    if (path.startsWith('/api/modules/interaction-call/records')) return { items: [CALL_MADE] };
+    throw new Error(`unexpected read: ${path}`);
+  };
+  return {
+    asked,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      asked.push(path);
+      if (path !== '/api/schema') await clock.delay(ms);
+      return answer(path);
+    },
+  };
+}
+
+test('2a075e2d9250 (production fc3fa62): the independent reads start together — reads of 2 s each finish in about 2 s, not N×2', async () => {
+  const clock = virtualClock();
+  const client = slowOggiClient(clock, 2000);
+  let essentialsAt = null;
+  let done = false;
+  let data = null;
+  void loadOggiData(client, OGGI_NOW, { onEssentials: () => { essentialsAt = clock.now; } }).then((value) => { data = value; done = true; });
+  const finishedAt = await clock.runUntil(() => done);
+  // Six independent reads (open tasks, appointments, channels, profile,
+  // inbox messages, conversations): one wave of 2 s, then one wave for what
+  // depends on them (customer names, the call recap). Before: one after the
+  // other, 16 s on this client.
+  assert.equal(essentialsAt, 2000, 'agenda and Da rispondere are in after one read time');
+  assert.equal(finishedAt, 4000, 'everything is in after two read times');
+  assert.equal(data.appointmentsAvailable, true);
+  assert.equal(data.inboxAvailable, true);
+  assert.equal(data.interactionsAvailable, true, 'the call recap is read');
+  assert.deepEqual(data.briefCalls, [CALL_MADE]);
+  assert.equal(data.inboxNames['lead:lead-1'], 'Giulia Romano');
+  const counts = new Map();
+  for (const path of client.asked) counts.set(path, (counts.get(path) ?? 0) + 1);
+  assert.equal(counts.get('/api/modules/appointment/records?limit=50') ?? [...counts.keys()].filter((key) => key.includes('/appointment/')).length, 1,
+    'each read still runs once');
+});
+
+test('2a075e2d9250: the day paints on the essentials; names and the call recap fill their sections without repainting the rest', async () => {
+  const clock = virtualClock();
+  const client = slowOggiClient(clock, 2000);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW }).then(() => { rendered = true; });
+  const paintedAt = await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
+  assert.equal(paintedAt, 2000, 'the day is on screen after one read time');
+  assert.ok(!mount.textContent.includes('Carico la tua giornata'), 'no loading line over the day');
+  const brief = () => mount.querySelector('section[data-oggi-section="brief"]');
+  assert.ok(brief().textContent.includes('Carico messaggi e chiamate da ripassare'), 'the call recap says it is still reading');
+  const advisor = mount.findAll('section')[0];
+  const execute = mount.querySelector('button[data-triage="execute"]');
+  execute.focus();
+
+  const filledAt = await clock.runUntil(() => rendered);
+  assert.equal(filledAt, 4000);
+  assert.ok(brief().textContent.includes('Interessata, richiama dopo il preventivo'), 'the recap filled in');
+  assert.ok(!brief().textContent.includes('Carico'), 'no loading line left');
+  assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('Giulia Romano'), 'the inbox names the customer');
+  assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
+  assert.equal(mount.querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
+  assert.equal(execute.__focused, true);
+});
