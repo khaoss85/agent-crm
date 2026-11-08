@@ -1,12 +1,13 @@
 // @ts-check
 
 import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS } from './admin-labels.js';
+import { openOfferPanel } from './admin-offer-panel.js';
 import {
   addFieldForm,
   defineField,
@@ -543,7 +544,7 @@ export function createCustomerCardView(deps) {
   // submission-owned Idempotency-Key before any request leaves, so in
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
-  const { client } = bindAdminMutations(deps.client, deps);
+  const { client, submissions } = bindAdminMutations(deps.client, deps);
   /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
   const detailsInFlight = new Set();
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
@@ -1199,6 +1200,8 @@ export function createCustomerCardView(deps) {
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
+    const offerWindow = mount.querySelector('div[data-offer-panel="open"]');
+    if (offerWindow && offerWindow.parentNode) offerWindow.parentNode.removeChild(offerWindow);
     // The window hangs off the view, not off the Azioni column: a sticky
     // column is its own stacking layer painted in page order, so a fixed
     // window inside the left column sat under the right one (#605).
@@ -1310,6 +1313,16 @@ export function createCustomerCardView(deps) {
     row.appendChild(field);
     row.appendChild(line);
     let busy = false;
+    // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
+    // lives in composerAiPending, outside this row (review #664): the next
+    // Genera with the same words and channel — even after ✕ and Scrivi —
+    // reads that request back instead of asking the AI again.
+    // The latest Genera (a newer one supersedes a read-back) and the key of
+    // the queued draft being read back, if any.
+    let drafting = 0;
+    /** @type {string|null} */
+    let reading = null;
+    const pendingKey = (words, picked) => `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}:${picked}:${words}`;
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
@@ -1345,9 +1358,13 @@ export function createCustomerCardView(deps) {
       }
     };
     async function generate() {
-      if (busy) return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
+      // Review #664: during the minute of read-back a Genera with other
+      // words supersedes the queued read (its request stays for the next
+      // Genera with those words); the same words keep the read going. While
+      // the POST itself is in flight Genera stays off, as before.
+      if (busy && (reading === null || reading === pendingKey(words, picked))) return;
       if (words === '') {
         say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
@@ -1356,19 +1373,68 @@ export function createCustomerCardView(deps) {
         say('Nessun canale collegato: l’AI scrive per il canale scelto.');
         return;
       }
+      const mine = ++drafting;
+      const gone = () => stale() || mine !== drafting;
+      reading = null;
       busy = true;
       go.setAttribute('disabled', 'disabled');
       go.textContent = 'Scrivo…';
       say('');
       try {
-        const answer = await client.request('/api/customer-hub/messages/draft', {
-          method: 'POST',
-          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
-        });
+        // Production 07/11 (same shape as the calendar phrase): a queued
+        // draft answers 504 *_PENDING with a requestId; it is read back on
+        // the same path every 3 s for about a minute, never asked again.
+        const key = pendingKey(words, picked);
+        let requestId = composerAiPending.get(key) ?? null;
+        composerAiPending.delete(key);
+        let answer = null;
+        if (requestId === null) {
+          try {
+            answer = await client.request('/api/customer-hub/messages/draft', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+            });
+          } catch (error) {
+            requestId = pendingRequestId(error, 'BO_DRAFT_PENDING');
+            if (requestId === null) throw error;
+          }
+        }
+        if (requestId !== null) {
+          if (gone()) {
+            composerAiPending.set(key, requestId);
+            return;
+          }
+          say('Scrivo ancora… la bozza arriva tra poco.');
+          // Genera comes back on during the read-back, so other words can
+          // supersede it (review #664).
+          reading = key;
+          go.removeAttribute?.('disabled');
+          go.textContent = 'Genera';
+          const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
+            expectedCode: 'BO_DRAFT_PENDING',
+            spaceId: spaceId ?? null,
+            wait, everyMs: 3000, rounds: 20, stale: gone,
+          });
+          if (mine === drafting) reading = null;
+          if (read.stale) {
+            // Closed while reading back: the request stays for the next Genera.
+            composerAiPending.set(key, requestId);
+            return;
+          }
+          if (read.error) throw read.error;
+          if (read.pending) {
+            composerAiPending.set(key, read.requestId);
+            console.warn('[bo] bozza AI ancora in coda', { requestId: read.requestId, spaceId: spaceId ?? null });
+            say('L’AI sta impiegando più del previsto: premi di nuovo Genera per riprendere la stessa bozza.');
+            return;
+          }
+          answer = read.answer;
+        }
         // Review #599 P2: the composer may have been closed or reopened while
         // the AI wrote. A stale answer never touches a detached form nor the
-        // shared per-customer draft.
-        if (stale()) return;
+        // shared per-customer draft; a superseded one never overwrites the
+        // newer draft (review #664).
+        if (gone()) return;
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
@@ -1386,7 +1452,7 @@ export function createCustomerCardView(deps) {
         say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
         if (typeof text.focus === 'function') text.focus();
       } catch (error) {
-        if (stale()) return;
+        if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
         const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
@@ -1400,7 +1466,9 @@ export function createCustomerCardView(deps) {
         else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
+        if (mine !== drafting) return;
         busy = false;
+        reading = null;
         if (row.getAttribute('data-off') !== 'true') {
           go.removeAttribute?.('disabled');
           if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
@@ -1432,6 +1500,11 @@ export function createCustomerCardView(deps) {
   // the server accepted. In memory: a reload still drops them, like any
   // unsent form.
   const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
   // The idempotency key of a send whose outcome is not yet known, keyed by
   // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
   // the server finds its own request instead of mailing twice (production
@@ -1755,9 +1828,28 @@ export function createCustomerCardView(deps) {
     const offer = tile('Nuova offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
+    // Dan 06/11: the offer is written where the customer is — a window
+    // over the scheda like «Scrivi», never a jump to another page. Only one
+    // window at a time: the composer steps aside (its draft is kept).
     offer.addEventListener('click', () => {
-      if (pick !== null) writePendingCustomerPick(storage, 'offer', pick);
-      navigate('#/modules/opportunity/new');
+      if (pick === null) {
+        navigate('#/modules/opportunity/new');
+        return;
+      }
+      const composer = mount.querySelector('div[data-composer="open"]');
+      if (composer && composer.parentNode) composer.parentNode.removeChild(composer);
+      openOfferPanel({
+        doc,
+        host: mount,
+        client,
+        issueKey: () => submissions.issueKey(),
+        card,
+        navCtx,
+        company: pick.company,
+        spaceId: activeSpaceId(),
+        toast,
+        onCreated: () => { renderCard(navCtx.resource, navCtx.id); },
+      });
     });
     row.appendChild(offer);
     const appointment = tile('Nuovo appuntamento', 'appuntamento');
