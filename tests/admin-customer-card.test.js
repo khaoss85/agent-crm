@@ -3710,7 +3710,9 @@ test('another customer clears at once and starts from Tutti', async () => {
   const release = hold(client);
   const other = view.renderCard('contact', 'c2');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(mount.childNodes.length, 0, 'the previous customer never stays up under another id');
+  // Backlog 608aa14d554c: only the loading state is left, never the old scheda.
+  assert.equal(mount.childNodes.length, 1, 'the previous customer never stays up under another id');
+  assert.equal(mount.childNodes[0].getAttribute('role'), 'status', 'the new scheda shows its loading state');
   release();
   await other;
   const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
@@ -4125,4 +4127,33 @@ test('composer AI: other words during the read-back supersede it, the same words
   releaseRead();
   await flushComposer(10);
   assert.equal(area.value, 'Ciao Guido, il listino è in allegato.', 'the superseded read never overwrites the newer draft');
+});
+
+test('608aa14d554c: a scheda opened from a direct link shows the loading state before its data arrives', async () => {
+  /** @type {Array<() => void>} */
+  const held = [];
+  const base = stubClient();
+  const client = {
+    ...base,
+    request(path, options) {
+      return new Promise((resolve, reject) => {
+        held.push(() => base.request(path, options).then(resolve, reject));
+      });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  const loading = () => mount.findAll('div').find((node) => node.getAttribute('role') === 'status'
+    && (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-loading'));
+  assert.ok(loading(), 'the loading state is painted at once, not a blank mount');
+  assert.equal(loading().textContent, 'Carico la scheda…');
+  assert.equal(loading().getAttribute('aria-busy'), 'true');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(held.length > 0, 'the reads are still in flight');
+  assert.ok(loading(), 'the loading state stays while the reads are pending');
+  for (const release of held.splice(0)) release();
+  await rendering;
+  assert.ok(!loading(), 'the scheda replaces the loading state');
+  assert.ok(mount.textContent.includes(CARD.name), 'the scheda painted');
 });

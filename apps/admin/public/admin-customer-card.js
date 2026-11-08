@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -3121,7 +3121,11 @@ export function createCustomerCardView(deps) {
     const renderToken = ++cardRenderToken;
     if (key !== shownKey) {
       // Another customer: clear at once, never leave the previous one up.
+      // Backlog 608aa14d554c: the clear also removed the router's loading
+      // line, so a direct link stayed blank for the whole read (5.8 s on
+      // production). The loading state shows at once; show() replaces it.
       while (mount.firstChild) mount.removeChild(mount.firstChild);
+      mount.appendChild(uiLoading(doc, { label: 'la scheda' }));
       shownKey = null;
       shownSides = [];
       retainedDrafts = null;
