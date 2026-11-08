@@ -333,6 +333,10 @@ export function offerStageMenu(first, fromQuote, opportunities, pipelines) {
     const pipeline = (Array.isArray(pipelines) ? pipelines : [])
       .find((candidate) => candidate?.name === pipelineKey && Array.isArray(candidate?.stages));
     if (!pipeline || typeof pipeline.module !== 'string' || pipeline.module === '') return null;
+    // Review #683: a stage the pipeline no longer defines (drift, «Fuori
+    // definizione» on the board) offers no move — the server would refuse
+    // every one with 409 PIPELINE_STATE_CORRUPT, like the board knows.
+    if (!pipeline.stages.some((stage) => stage?.key === pipelineStage)) return null;
     const voices = pipeline.stages
       .filter((stage) => typeof stage?.key === 'string' && stage.key !== pipelineStage)
       .map((stage) => ({
@@ -2931,6 +2935,8 @@ export function createCustomerCardView(deps) {
       button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
       menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
       const stageError = el('small', 'field-error', '');
+      const stageStatus = el('small', 'bo-muted', '');
+      stageStatus.setAttribute('role', 'status');
       let stageBusy = false;
       const failed = 'Stato non aggiornato. Riprova più tardi.';
       /** One move: the pipeline's move-stage action or the governed core workflow. */
@@ -2938,6 +2944,7 @@ export function createCustomerCardView(deps) {
         if (stageBusy) return;
         stageBusy = true;
         stageError.textContent = '';
+        stageStatus.textContent = '';
         try {
           if (stageMenu.kind === 'pipeline') {
             const input = { toStage: voice.key, fromStage: stageMenu.current };
@@ -2963,10 +2970,17 @@ export function createCustomerCardView(deps) {
           }
           await renderCard(offerCtx.resource, offerCtx.id);
         } catch (error) {
-          // A move the server still holds (the pilot queue) is not a failure.
-          const text = error?.code === 'BO_CRM_PENDING'
-            ? 'Spostamento non ancora confermato: ricarica la scheda tra poco.'
-            : humanReadError(error, { failed });
+          // Review #683: a move the server still holds (the pilot queue) is
+          // not a failure — it reads neutral, like «Non ancora confermato»
+          // on the board, never as an error.
+          if (error?.code === 'BO_CRM_PENDING') {
+            close();
+            const pending = 'Non ancora confermato: ricarica la scheda tra poco.';
+            stageStatus.textContent = pending;
+            toast(pending);
+            return;
+          }
+          const text = humanReadError(error, { failed });
           stageError.textContent = text;
           toast(text, true);
         } finally {
@@ -3008,6 +3022,7 @@ export function createCustomerCardView(deps) {
       wrap.appendChild(button);
       wrap.appendChild(menu);
       wrap.appendChild(confirmPanel.box);
+      wrap.appendChild(stageStatus);
       wrap.appendChild(stageError);
       box.appendChild(wrap);
     }
