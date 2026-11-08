@@ -1072,7 +1072,7 @@ export async function readAppointmentNames(client, appointments, next, now) {
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {Date} [now]
  */
-export async function loadOggiData(client, now = new Date()) {
+export async function loadOggiData(client, now = new Date(), { onEssentials = null } = {}) {
   const outcome = {
     workAvailable: false,
     appointmentsAvailable: false,
@@ -1094,94 +1094,93 @@ export async function loadOggiData(client, now = new Date()) {
     appointmentNames: {},
     next: null,
   };
+  // Backlog 2a075e2d9250 (production fc3fa62: the day at 8–20 s cold,
+  // every read once but one after the other): the independent reads start
+  // together, each fail-soft as before. The profile needs no schema, so it
+  // starts beside it.
+  const profileRead = client.request('/api/profile').then(
+    (answer) => (answer && typeof answer === 'object' ? answer : null),
+    (error) => { noteReadFailure('profile', error); return null; },
+  );
   let domains = {};
   try {
     const schema = await client.request('/api/schema');
     domains = schema?.domains ?? {};
   } catch (error) {
     noteReadFailure('schema', error);
+    // The profile read started already: nothing waits on it.
     return outcome;
   }
-  if (domains.work != null) {
-    try {
-      outcome.tasks = await readModulePage(client, 'work-task', { status: 'open' });
-      outcome.workAvailable = true;
-    } catch (error) {
-      noteReadFailure('work-task', error);
-      outcome.tasks = [];
-    }
+  /** One fail-soft module read: the rows, or null after naming the failure. */
+  const page = (scope, module, filters) => readModulePage(client, module, filters).then(
+    (rows) => rows,
+    (error) => { noteReadFailure(scope, error); return null; },
+  );
+  const skip = Promise.resolve(undefined);
+  const interactions = domains.interactions != null;
+  const [tasks, appointments, connections, profile, messages, conversations] = await Promise.all([
+    domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
+    domains.appointments != null ? page('appointment', 'appointment') : skip,
+    domains.channels != null ? page('channel-connection', 'channel-connection') : skip,
+    profileRead,
+    // The «Da rispondere» inbox: the latest messages and their conversations.
+    // Messages are the inbox; conversations only lend the name and the closed
+    // state, so a space without the conversation module still lists who is
+    // waiting. A failed read keeps the section honest (unavailable).
+    interactions ? page('inbox', 'interaction-message') : skip,
+    interactions ? readModulePage(client, 'conversation').catch(() => null) : skip,
+  ]);
+  if (Array.isArray(tasks)) {
+    outcome.tasks = tasks;
+    outcome.workAvailable = true;
   }
-  if (domains.appointments != null) {
-    try {
-      outcome.appointments = await readModulePage(client, 'appointment');
-      outcome.appointmentsAvailable = true;
-    } catch (error) {
-      noteReadFailure('appointment', error);
-      outcome.appointments = [];
-    }
+  if (Array.isArray(appointments)) {
+    outcome.appointments = appointments;
+    outcome.appointmentsAvailable = true;
   }
-  if (domains.channels != null) {
-    try {
-      outcome.connections = await readModulePage(client, 'channel-connection');
-      outcome.channelsAvailable = true;
-    } catch (error) {
-      noteReadFailure('channel-connection', error);
-      outcome.connections = [];
-    }
+  if (Array.isArray(connections)) {
+    outcome.connections = connections;
+    outcome.channelsAvailable = true;
   }
   // Google Calendar and Gmail connect per person through the pilot's Google
   // consent, not through channel-connection rows: the same GET /api/profile
   // answer the Profilo screen reads. Unreadable stays null and contributes
   // no vote — an unknown state never poses as connected or missing.
-  try {
-    const answer = await client.request('/api/profile');
-    outcome.profile = answer && typeof answer === 'object' ? answer : null;
-  } catch (error) {
-    noteReadFailure('profile', error);
-    outcome.profile = null;
-  }
-  // The «Da rispondere» inbox: the latest messages and their conversations.
-  // A failed read keeps the section honest (unavailable), never empty-as-calm.
-  if (domains.interactions != null) {
+  outcome.profile = profile ?? null;
+  if (interactions) {
     outcome.inboxComposed = true;
-    // Messages are the inbox; conversations only lend the name and the
-    // closed state, so a space without the conversation module still lists
-    // who is waiting.
-    const [messages, conversations] = await Promise.allSettled([
-      readModulePage(client, 'interaction-message'),
-      readModulePage(client, 'conversation'),
-    ]);
-    if (messages.status === 'fulfilled') {
-      outcome.inboxMessages = messages.value;
+    if (Array.isArray(messages)) {
+      outcome.inboxMessages = messages;
       outcome.inboxAvailable = true;
-    } else {
-      noteReadFailure('inbox', messages.reason);
     }
-    if (conversations.status === 'fulfilled') outcome.inboxConversations = conversations.value;
-    if (outcome.inboxAvailable) {
-      outcome.inboxNames = await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now);
-    }
+    if (Array.isArray(conversations)) outcome.inboxConversations = conversations;
   }
   outcome.next = upcomingAppointment(outcome.appointments, now);
-  outcome.appointmentNames = await readAppointmentNames(client, outcome.appointments, outcome.next, now);
-  if (outcome.next != null && domains.interactions != null) {
-    const subject = {
-      subjectResource: outcome.next.subjectResource,
-      subjectId: outcome.next.subjectId,
-    };
-    if (nonEmptyText(subject.subjectResource) && nonEmptyText(subject.subjectId)) {
+  // The essentials are in (agenda, Da rispondere, advisor, channels): the
+  // day can paint now; the names and the call recap fill in after.
+  if (typeof onEssentials === 'function') {
+    try {
+      onEssentials({ ...outcome, pending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+  }
+  const subject = outcome.next != null && interactions
+    ? { subjectResource: outcome.next.subjectResource, subjectId: outcome.next.subjectId }
+    : null;
+  const [inboxNames, appointmentNames] = await Promise.all([
+    outcome.inboxAvailable
+      ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now)
+      : Promise.resolve({}),
+    readAppointmentNames(client, outcome.appointments, outcome.next, now),
+    (async () => {
+      if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
       try {
-        const [messages, calls] = await Promise.all([
-          readModulePage(client, 'interaction-message', {
-            subjectResource: subject.subjectResource,
-            subjectId: subject.subjectId,
-          }),
-          readModulePage(client, 'interaction-call', {
-            subjectResource: subject.subjectResource,
-            subjectId: subject.subjectId,
-          }),
+        const [briefMessages, calls] = await Promise.all([
+          readModulePage(client, 'interaction-message', subject),
+          readModulePage(client, 'interaction-call', subject),
         ]);
-        outcome.briefMessages = messages;
+        outcome.briefMessages = briefMessages;
         outcome.briefCalls = calls;
         outcome.interactionsAvailable = true;
       } catch (error) {
@@ -1189,8 +1188,10 @@ export async function loadOggiData(client, now = new Date()) {
         outcome.briefMessages = [];
         outcome.briefCalls = [];
       }
-    }
-  }
+    })(),
+  ]);
+  outcome.inboxNames = inboxNames;
+  outcome.appointmentNames = appointmentNames;
   return outcome;
 }
 
@@ -1426,6 +1427,7 @@ export function renderOggi({
   // ---- Da rispondere: the conversations waiting for the team ----
   if (home.inbox != null) {
     const inbox = el(doc, 'section', 'bo-oggi-section bo-oggi-inbox');
+    inbox.setAttribute('data-oggi-section', 'inbox');
     const inboxHead = el(doc, 'div', 'bo-oggi-head');
     inboxHead.appendChild(el(doc, 'h3', undefined, 'Da rispondere'));
     const waitingCount = Number(home.inbox.total ?? 0);
@@ -1478,6 +1480,7 @@ export function renderOggi({
   const pair = el(doc, 'div', 'bo-oggi-pair');
   page.appendChild(pair);
   const agenda = el(doc, 'section', 'bo-oggi-card');
+  agenda.setAttribute('data-oggi-section', 'agenda');
   agenda.appendChild(el(doc, 'h3', undefined, 'Agenda di oggi'));
   const rows = Array.isArray(home.agenda) ? home.agenda : [];
   if (home.availability?.appointments === false) {
@@ -1533,8 +1536,14 @@ export function renderOggi({
   // (backlog:5083e7a77c26): with no call ahead it stays, with an honest
   // line instead of disappearing from the screen.
   const brief = el(doc, 'section', 'bo-oggi-card bo-oggi-ai');
+  brief.setAttribute('data-oggi-section', 'brief');
   brief.appendChild(el(doc, 'h3', undefined, '✦ Prima della prossima call'));
-  if (home.availability?.appointments === false) {
+  if (home.briefPending === true && home.brief != null) {
+    // Backlog 2a075e2d9250: the day paints before the call's messages are
+    // read; the card says it is still reading instead of an empty recap.
+    brief.appendChild(el(doc, 'p', 'bo-oggi-brief-who', `${String(home.brief.title ?? '')} · ${String(home.brief.when ?? '')}`));
+    brief.appendChild(uiLoading(doc, { label: 'messaggi e chiamate da ripassare' }));
+  } else if (home.availability?.appointments === false) {
     brief.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è attivo in questo spazio: qui comparirà il ripasso prima di ogni call.'));
   } else if (home.brief == null) {
     brief.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna call in programma. Quando ne fissi una, qui trovi messaggi e chiamate da ripassare prima.'));
@@ -1703,7 +1712,10 @@ export function createOggiView(deps) {
    * owns its reads: a redraw inside it awaits the same in-flight load
    * instead of reading everything again (a cold start used to pay Oggi
    * twice, and the first answer was thrown away).
-   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null } | null}
+   * The day paints as soon as the essentials are read (backlog
+   * 2a075e2d9250, fc3fa62): `essentials` keeps that first answer, so a
+   * redraw inside the round shows it again instead of «Carico…».
+   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null, essentials: any } | null}
    */
   let round = null;
   function endRound() {
@@ -1747,7 +1759,8 @@ export function createOggiView(deps) {
   let error = '';
   let busy = false;
 
-  function paint() {
+  /** @param {any} [target] where to paint: the live mount, or a detached box for fill() */
+  function paint(target = mount) {
     if (!last) return;
     const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now });
     lastBuilt = built;
@@ -1773,7 +1786,7 @@ export function createOggiView(deps) {
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
     renderOggi({
       doc,
-      mount,
+      mount: target,
       spaceName: lastMeta.spaceName,
       userName: lastMeta.userName,
       links: lastMeta.links,
@@ -1786,6 +1799,7 @@ export function createOggiView(deps) {
         capped,
         agenda,
         brief,
+        briefPending: last.pending === true,
         inbox: !last.inboxComposed
           ? null
           : last.inboxAvailable
@@ -1892,6 +1906,32 @@ export function createOggiView(deps) {
     }
   }
 
+  /**
+   * Backlog 2a075e2d9250: the late answers (customer names, the call recap)
+   * fill their own sections — Da rispondere, the agenda, the brief — in
+   * place. The rest of the day (the advisor with its buttons, a focused
+   * control) is never repainted. A structure that moved paints in full.
+   */
+  function fill() {
+    const scratch = doc.createElement('div');
+    paint(scratch);
+    const section = (root, key) => root.querySelector(`section[data-oggi-section="${key}"]`);
+    const pairs = [];
+    for (const key of ['inbox', 'agenda', 'brief']) {
+      const live = section(mount, key);
+      const fresh = section(scratch, key);
+      if ((live === null) !== (fresh === null)) {
+        paint();
+        return;
+      }
+      if (live !== null) pairs.push([live, fresh]);
+    }
+    for (const [live, fresh] of pairs) {
+      while (live.firstChild) live.removeChild(live.firstChild);
+      for (const child of Array.from(fresh.childNodes)) live.appendChild(child);
+    }
+  }
+
   async function refresh() {
     const token = ++renderToken;
     let data;
@@ -1920,22 +1960,47 @@ export function createOggiView(deps) {
       // inside the same round keeps the first deadline (and a note already
       // shown), never a fresh 10 s.
       if (round === null) {
-        const mine = { timer: null, stalled: false, load: null };
+        const mine = { timer: null, stalled: false, load: null, essentials: null };
         mine.timer = setTimer(() => {
-          if (round !== mine) return;
+          // The day already painted from its essentials: no note over it.
+          if (round !== mine || mine.essentials !== null) return;
           mine.stalled = true;
           stalledNote();
         }, ceilingMs);
         round = mine;
       }
-      if (round.stalled) stalledNote();
-      else renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
+      if (round.essentials !== null) {
+        last = round.essentials;
+        paint();
+      } else if (round.stalled) {
+        stalledNote();
+      } else {
+        renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
+      }
       const current = round;
-      if (current.load === null) current.load = Promise.resolve().then(() => loadOggiData(bound, now)).catch(() => null);
+      if (current.load === null) {
+        current.load = Promise.resolve().then(() => loadOggiData(bound, now, {
+          // Backlog 2a075e2d9250: agenda and Da rispondere are in — paint
+          // the day now, the names and the call recap fill in after.
+          onEssentials: (partial) => {
+            if (round !== current) return;
+            current.essentials = partial;
+            last = partial;
+            paint();
+          },
+        })).catch(() => null);
+      }
       const data = await current.load;
       if (token !== renderToken) return;
       endRound();
+      const partialShown = last?.pending === true;
+      if (data && partialShown) {
+        last = data;
+        fill();
+        return;
+      }
       if (data) last = data;
+      else if (partialShown) last = { ...last, pending: false };
       else if (!last) {
         last = {
           workAvailable: false, appointmentsAvailable: false, channelsAvailable: false,
