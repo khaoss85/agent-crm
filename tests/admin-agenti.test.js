@@ -7,8 +7,9 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
   AGENT_AUTONOMY_LABEL,
   AGENTS_IDLE_NOTE,
-  DA_FARE_EDIT_NOTE,
   DA_FARE_PENDING_NOTE,
+  DA_FARE_UNAVAILABLE_NOTE,
+  assignmentStatusLabel,
   PHRASE_UNCLEAR_NOTE,
   buildAgentCards,
   buildCatalogItems,
@@ -150,7 +151,7 @@ test('the #/agenti route resolves to the Agenti screen; anything under it is inv
 });
 
 /** A drive over the three reads and the two writes, like the server. */
-function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = false, rows = null, onApprove = null } = {}) {
+function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = false, rows = null, onApprove = null, onReject = null, onRevise = null } = {}) {
   const calls = [];
   const agents = [{ ...RIAGGANCIO }];
   const assignments = [];
@@ -211,6 +212,20 @@ function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = 
         if (run) run.outcome = 'applied';
         return { duplicate: false, run: { id: body.runId, outcome: 'applied' } };
       }
+      if (path === '/api/agents/reject' && method === 'POST') {
+        if (typeof onReject === 'function') return onReject(body, runs);
+        const run = runs.find((row) => row.id === body.runId);
+        if (run) run.outcome = 'rejected';
+        return { duplicate: false, run: { id: body.runId, outcome: 'rejected' } };
+      }
+      if (path === '/api/agents/revise' && method === 'POST') {
+        if (typeof onRevise === 'function') return onRevise(body, runs);
+        const run = runs.find((row) => row.id === body.runId);
+        const proposals = JSON.parse(run.proposals);
+        proposals[body.index] = { ...proposals[body.index], payload: { ...proposals[body.index].payload, ...body.payload } };
+        run.proposals = JSON.stringify(proposals);
+        return { run: { id: body.runId, outcome: 'proposed' }, proposal: proposals[body.index] };
+      }
       throw new Error(`unexpected request ${method} ${path}`);
     },
   };
@@ -220,7 +235,7 @@ function findButton(mount, action) {
   return mount.querySelector(`button[data-action="${action}"]`);
 }
 
-test('the screen paints I tuoi agenti, Da fare with Approva live and honest Modifica/Rifiuta, and the catalogue', async () => {
+test('the screen paints I tuoi agenti, Da fare with Approva Modifica Rifiuta live, and the catalogue', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = driveClient();
@@ -233,12 +248,10 @@ test('the screen paints I tuoi agenti, Da fare with Approva live and honest Modi
   assert.ok(text.includes(AGENT_AUTONOMY_LABEL));
   assert.ok(text.includes('0,42 €'), 'the spend comes from the run rows');
   assert.ok(text.includes('WhatsApp a Giulia Romano'));
-  assert.ok(text.includes(DA_FARE_EDIT_NOTE));
-  assert.equal(findButton(mount, 'approve').disabled, false, 'Approva is live (backlog:31a76b6f19a3)');
-  for (const action of ['edit', 'reject']) {
+  for (const action of ['approve', 'edit', 'reject']) {
     const button = findButton(mount, action);
     assert.ok(button, action);
-    assert.equal(button.disabled, true, `${action} stays disabled: the deployment has no route for it yet`);
+    assert.equal(button.disabled, false, `${action} is live (backlog:31a76b6f19a3)`);
   }
   assert.ok(text.includes('Nel tuo team'), 'the catalogue marks the agent already added');
   assert.ok(mount.querySelector('a[href="#/sequenze"]'), 'the old Sequenze stay reachable');
@@ -632,4 +645,112 @@ test('31a76b6f19a3: Da fare no longer says the agents do not start, and a «nien
     nowIso: NOW,
   });
   assert.equal(cards[0].assignments[0].lastRun, 'Ultimo giro: niente da proporre, 7 nov, 14:30');
+});
+
+test('31a76b6f19a3: Rifiuta asks an optional reason, sends one request with the run id, then says it in Italian', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  /** @type {null | ((value: any) => void)} */
+  let answer = null;
+  const client = driveClient({
+    onReject: (body, runs) => new Promise((resolve) => { answer = (value) => { runs[0].outcome = 'rejected'; resolve(value); }; }),
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'reject').dispatch('click');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'Rifiuta first asks, never posts blind');
+  const reason = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo del rifiuto (facoltativo)');
+  reason.value = 'Cliente già contattato';
+  reason.dispatch('input');
+  findButton(mount, 'confirm-reject').dispatch('click');
+  findButton(mount, 'confirm-reject').dispatch('click');
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'a double click sends one request');
+  assert.equal(posts[0].path, '/api/agents/reject');
+  assert.deepEqual(posts[0].body, { spaceId: 'presti', runId: RUN_ID, reason: 'Cliente già contattato' });
+  assert.equal(findButton(mount, 'confirm-reject').textContent, 'Rifiuto…', 'in corso');
+  answer({ duplicate: false, run: { id: RUN_ID, outcome: 'rejected' } });
+  await flush();
+  assert.ok(mount.textContent.includes('Rifiutata: la proposta di Riaggancio non sarà applicata.'));
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null, 'the refused run leaves Da fare');
+});
+
+test('31a76b6f19a3: Modifica edits the proposal text and sends index and payload; the run keeps waiting', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient();
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'edit').dispatch('click');
+  const area = mount.findAll('textarea').find((node) => node.getAttribute('data-proposal') === '0');
+  assert.equal(area.value, 'WhatsApp a Giulia Romano', 'the editor starts from the proposal text');
+  area.value = 'WhatsApp a Giulia: ti va di riprovare giovedì?';
+  area.dispatch('input');
+  findButton(mount, 'save-edit').dispatch('click');
+  findButton(mount, 'save-edit').dispatch('click');
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'one request');
+  assert.equal(posts[0].path, '/api/agents/revise');
+  assert.deepEqual(posts[0].body, { spaceId: 'presti', runId: RUN_ID, index: 0, payload: { summary: 'WhatsApp a Giulia: ti va di riprovare giovedì?' } });
+  assert.ok(mount.textContent.includes('Modifica salvata: la proposta di Riaggancio aspetta ancora il tuo ok.'));
+  assert.ok(mount.querySelector(`article[data-run="${RUN_ID}"]`), 'the run stays in Da fare');
+  assert.ok(mount.textContent.includes('WhatsApp a Giulia: ti va di riprovare giovedì?'), 'with the edited text');
+});
+
+test('31a76b6f19a3: a deployment without the route (405 or 404) reads «Non ancora disponibile», never a technical error', async () => {
+  for (const [kind, status] of [['reject', 405], ['revise', 404], ['approve', 405]]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const refuse = () => { throw Object.assign(new Error('Method Not Allowed'), { status, code: status === 404 ? 'NOT_FOUND' : 'METHOD_NOT_ALLOWED' }); };
+    const client = driveClient({ onApprove: refuse, onReject: refuse, onRevise: refuse });
+    const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+    await view.render();
+    await flush();
+    if (kind === 'approve') {
+      findButton(mount, 'approve').dispatch('click');
+    } else if (kind === 'reject') {
+      findButton(mount, 'reject').dispatch('click');
+      findButton(mount, 'confirm-reject').dispatch('click');
+    } else {
+      findButton(mount, 'edit').dispatch('click');
+      findButton(mount, 'save-edit').dispatch('click');
+    }
+    await flush();
+    assert.ok(mount.textContent.includes(DA_FARE_UNAVAILABLE_NOTE), `${kind}: the neutral line`);
+    assert.equal(mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').includes('bo-seq-error')).length, 0,
+      `${kind}: no error line`);
+    assert.ok(!/405|404|METHOD|NOT_FOUND/.test(mount.textContent), `${kind}: no technical text`);
+  }
+});
+
+test('31a76b6f19a3: a queued refusal reads neutral and stays locked', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onReject: () => { throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 }); },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'reject').dispatch('click');
+  findButton(mount, 'confirm-reject').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE));
+  for (const action of ['approve', 'edit', 'reject']) assert.equal(findButton(mount, action).disabled, true, `${action} locked`);
+});
+
+test('31a76b6f19a3: an assignment reads «Attivo» once it ran or recurs with a next run, «In attesa di partire» only if it never started', () => {
+  const runs = [{ assignmentSourceKey: 'a-ran', outcome: 'artifact' }];
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran', status: 'active', cadence: 'once' }, runs), 'Attivo', 'it ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
+    'Attivo', 'recurring with its next run scheduled');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-once', status: 'active', cadence: 'once', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
+    'In attesa di partire', 'a one-off that never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-new', status: 'active', cadence: 'weekly' }, runs), 'In attesa di partire', 'nothing scheduled, never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-done', status: 'completed' }, runs), 'Fatto');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-p', status: 'paused' }, runs), 'In pausa');
 });

@@ -1051,7 +1051,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   dafare: document.querySelectorAll('#view-module .bo-dafare-item').length,
   catalog: document.querySelectorAll('#view-module .bo-catalog-item').length,
   disabled: Array.from(document.querySelectorAll('#view-module .bo-dafare-actions button')).filter((b) => b.disabled).length,
-  approve: Array.from(document.querySelectorAll('#view-module .bo-dafare-actions button[data-action="approve"]')).filter((b) => !b.disabled).length,
+  live: Array.from(document.querySelectorAll('#view-module .bo-dafare-actions button')).filter((b) => !b.disabled).length,
   talk: document.querySelectorAll('#view-module .bo-agent-talk').length,
 });
 document.title = 'agenti-ready';`;
@@ -1632,13 +1632,13 @@ export function assertProbe(name, probe) {
     }
     case 'agenti': {
       // Two agent cards each with its talk box, one proposed run in Da
-      // fare with Approva live and Modifica/Rifiuta disabled (backlog:
-      // 31a76b6f19a3: no deployment route for them yet), three catalogue tiles.
+      // fare with Approva, Modifica and Rifiuta live (backlog:
+      // 31a76b6f19a3), three catalogue tiles.
       if (probe.agents !== 2) throw new Error(`agenti: the probe holds ${String(probe.agents)} agents, expected 2`);
       if (probe.talk !== 2) throw new Error(`agenti: the probe holds ${String(probe.talk)} talk boxes, expected 2`);
       if (probe.dafare !== 1) throw new Error(`agenti: the probe holds ${String(probe.dafare)} Da fare items, expected 1`);
-      if (probe.approve !== 1) throw new Error(`agenti: the probe holds ${String(probe.approve)} live Approva buttons, expected 1`);
-      if (probe.disabled !== 2) throw new Error(`agenti: the probe holds ${String(probe.disabled)} disabled Da fare controls, expected 2`);
+      if (probe.live !== 3) throw new Error(`agenti: the probe holds ${String(probe.live)} live Da fare controls, expected 3`);
+      if (probe.disabled !== 0) throw new Error(`agenti: the probe holds ${String(probe.disabled)} disabled Da fare controls, expected 0`);
       if (probe.catalog !== 3) throw new Error(`agenti: the probe holds ${String(probe.catalog)} catalogue tiles, expected 3`);
       return;
     }
