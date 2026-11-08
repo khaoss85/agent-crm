@@ -8,6 +8,7 @@ import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, offerStageLabel, offerStateLabel } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
+import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
   defineField,
@@ -2972,26 +2973,21 @@ export function createCustomerCardView(deps) {
           stageBusy = false;
         }
       };
-      // A pipeline «lost» stage needs the reason, like the board's Conferma.
-      const reasonBox = el('div', 'bo-scheda-stage-reason hidden');
-      const reasonInput = el('input');
-      reasonInput.setAttribute('type', 'text');
-      reasonInput.setAttribute('aria-label', 'Motivo della perdita');
-      reasonInput.setAttribute('placeholder', 'Motivo della perdita');
-      const reasonConfirm = el('button', undefined, 'Conferma');
-      reasonConfirm.setAttribute('type', 'button');
-      reasonConfirm.setAttribute('data-action', 'confirm-offer-lost');
-      reasonBox.appendChild(reasonInput);
-      reasonBox.appendChild(reasonConfirm);
-      let lostVoice = null;
-      reasonConfirm.addEventListener('click', () => {
-        const reason = String(reasonInput.value ?? '').trim();
-        if (!lostVoice) return;
-        if (reason === '') {
-          stageError.textContent = "Per segnare un'offerta come persa serve il motivo.";
-          return;
-        }
-        void move(lostVoice, reason);
+      // A pipeline won/lost stage asks the board's own Conferma (shared
+      // component, never a native confirm()): the question names the offer,
+      // a lost stage needs the reason, and only Conferma posts.
+      const confirmPanel = createStageConfirm(doc);
+      let confirmVoice = null;
+      const offerName = name;
+      confirmPanel.yes.addEventListener('click', () => {
+        if (!confirmVoice) return;
+        const answer = readStageConfirm(confirmPanel, confirmVoice);
+        if (!answer.ok) return;
+        void move(confirmVoice, answer.reason ?? null);
+      });
+      confirmPanel.no.addEventListener('click', () => {
+        confirmVoice = null;
+        confirmPanel.box.setAttribute('class', 'card-confirm hidden');
       });
       for (const voiceDef of stageMenu.voices) {
         const voice = el('button', undefined, voiceDef.label);
@@ -2999,18 +2995,19 @@ export function createCustomerCardView(deps) {
         voice.setAttribute('role', 'menuitem');
         voice.setAttribute('data-stage', voiceDef.key);
         voice.addEventListener('click', () => {
-          if (stageMenu.kind === 'pipeline' && voiceDef.type === 'lost') {
-            lostVoice = voiceDef;
-            reasonBox.setAttribute('class', 'bo-scheda-stage-reason');
+          if (stageMenu.kind === 'pipeline' && stageNeedsConfirm(voiceDef)) {
+            confirmVoice = voiceDef;
+            close();
+            showStageConfirm(confirmPanel, offerName, voiceDef);
             return;
           }
           void move(voiceDef);
         });
         menu.appendChild(voice);
       }
-      menu.appendChild(reasonBox);
       wrap.appendChild(button);
       wrap.appendChild(menu);
+      wrap.appendChild(confirmPanel.box);
       wrap.appendChild(stageError);
       box.appendChild(wrap);
     }

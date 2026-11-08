@@ -127,6 +127,70 @@ const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
 /**
+ * Voce 96e7b579 + backlog 1e939a362c7c: the Conferma panel for a won/lost
+ * move, shared by the board card and the scheda «Cambia stato» menu —
+ * never a native confirm(). The question names the offer and the target
+ * label; a lost stage shows the mandatory reason input.
+ * @param {any} doc
+ */
+export function createStageConfirm(doc) {
+  const box = el(doc, 'div', { class: 'card-confirm hidden' });
+  const question = el(doc, 'p', { class: 'confirm-question' });
+  const reason = el(doc, 'input', {
+    class: 'hidden',
+    attrs: { type: 'text', placeholder: 'Motivo (obbligatorio per la perdita)', 'aria-label': 'Motivo di chiusura' },
+  });
+  const yes = el(doc, 'button', { class: 'small primary', text: 'Conferma', attrs: { type: 'button' } });
+  const no = el(doc, 'button', { class: 'small secondary', text: 'Annulla', attrs: { type: 'button' } });
+  const error = el(doc, 'small', { class: 'field-error hidden' });
+  box.appendChild(question);
+  box.appendChild(reason);
+  box.appendChild(yes);
+  box.appendChild(no);
+  box.appendChild(error);
+  return { box, question, reason, yes, no, error };
+}
+
+/** Whether a move onto this stage asks Conferma first (won and lost, like the board). */
+export function stageNeedsConfirm(stage) {
+  return stage?.type === 'won' || stage?.type === 'lost';
+}
+
+/**
+ * Show the Conferma panel for `target` on the offer named `name`.
+ * @param {ReturnType<typeof createStageConfirm>} panel
+ * @param {string} name @param {{ key: string, label?: string, type?: string }} target
+ */
+export function showStageConfirm(panel, name, target) {
+  const label = target.label ?? target.key;
+  panel.question.textContent = target.type === 'lost'
+    ? `Segnare «${name}» come ${label}? Scrivi il motivo della perdita, poi premi Conferma.`
+    : `Segnare «${name}» come ${label}?`;
+  panel.reason.value = '';
+  panel.reason.setAttribute('class', target.type === 'lost' ? '' : 'hidden');
+  panel.error.textContent = '';
+  panel.error.setAttribute('class', 'field-error hidden');
+  panel.box.setAttribute('class', 'card-confirm');
+  if (typeof panel.reason.focus === 'function' && target.type === 'lost') panel.reason.focus();
+}
+
+/**
+ * The reason a Conferma posts, or null after naming what is missing: a lost
+ * move without a reason never posts.
+ * @param {ReturnType<typeof createStageConfirm>} panel
+ * @param {{ type?: string } | undefined} target
+ * @returns {{ ok: true, reason: string | undefined } | { ok: false }}
+ */
+export function readStageConfirm(panel, target) {
+  if (target?.type !== 'lost') return { ok: true, reason: undefined };
+  const reason = String(panel.reason.value ?? '').trim();
+  if (reason) return { ok: true, reason };
+  panel.error.textContent = 'Scrivi il motivo della perdita, poi premi Conferma.';
+  panel.error.setAttribute('class', 'field-error');
+  return { ok: false };
+}
+
+/**
  * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
@@ -221,7 +285,7 @@ export function createPipelineBoard(deps) {
     }
     const target = pipeline.stages.find((stage) => stage.key === toStage);
     if (!target) return;
-    if (target.type === 'won' || target.type === 'lost') {
+    if (stageNeedsConfirm(target)) {
       const revealed = revealConfirm(pipeline, record, fromStage, toStage);
       if (!revealed) {
         toast(target.type === 'lost'
@@ -1114,20 +1178,11 @@ export function createPipelineBoard(deps) {
     // and the target label, Persa adds the mandatory reason input — and
     // only Conferma posts the same move-stage action. Moves between open
     // stages keep the direct post.
-    const confirmBox = el(doc, 'div', { class: 'card-confirm hidden' });
-    const confirmQuestion = el(doc, 'p', { class: 'confirm-question' });
-    const confirmReason = el(doc, 'input', {
-      class: 'hidden',
-      attrs: { type: 'text', placeholder: 'Motivo (obbligatorio per la perdita)', 'aria-label': 'Motivo di chiusura' },
-    });
-    const confirmYes = el(doc, 'button', { class: 'small primary', text: 'Conferma', attrs: { type: 'button' } });
-    const confirmNo = el(doc, 'button', { class: 'small secondary', text: 'Annulla', attrs: { type: 'button' } });
-    const confirmError = el(doc, 'small', { class: 'field-error hidden' });
-    confirmBox.appendChild(confirmQuestion);
-    confirmBox.appendChild(confirmReason);
-    confirmBox.appendChild(confirmYes);
-    confirmBox.appendChild(confirmNo);
-    confirmBox.appendChild(confirmError);
+    const confirmPanel = createStageConfirm(doc);
+    const {
+      box: confirmBox, question: confirmQuestion, reason: confirmReason,
+      yes: confirmYes, no: confirmNo, error: confirmError,
+    } = confirmPanel;
 
     let busy = false;
     const doPost = async (toStage, reason) => {
@@ -1174,17 +1229,9 @@ export function createPipelineBoard(deps) {
       const pending = pendingConfirm.get(String(record.id));
       if (!pending) return;
       const target = pipeline.stages.find((candidate) => candidate.key === pending.toStage);
-      if (target && target.type === 'lost') {
-        const reason = String(confirmReason.value ?? '').trim();
-        if (!reason) {
-          confirmError.textContent = 'Scrivi il motivo della perdita, poi premi Conferma.';
-          confirmError.setAttribute('class', 'field-error');
-          return;
-        }
-        await doPost(pending.toStage, reason);
-        return;
-      }
-      await doPost(pending.toStage, undefined);
+      const answer = readStageConfirm(confirmPanel, target);
+      if (!answer.ok) return;
+      await doPost(pending.toStage, answer.reason);
     };
     const cancelConfirm = () => {
       pendingConfirm.delete(String(record.id));
@@ -1198,7 +1245,7 @@ export function createPipelineBoard(deps) {
       errorNode.setAttribute('class', 'field-error hidden');
       const toStage = select.value;
       const target = pipeline.stages.find((candidate) => candidate.key === toStage);
-      if (target && (target.type === 'won' || target.type === 'lost')) {
+      if (target && stageNeedsConfirm(target)) {
         revealConfirm(pipeline, record, stage.key, toStage);
         return;
       }
@@ -1216,7 +1263,7 @@ export function createPipelineBoard(deps) {
     card.appendChild(controls);
     card.appendChild(confirmBox);
     cardNodes.set(String(record.id), {
-      select, errorNode, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
       move: (toStage) => doPost(toStage, undefined),
     });
     card.__move = submit; // test hook
@@ -1243,17 +1290,7 @@ export function createPipelineBoard(deps) {
     if (!target) return false;
     pendingConfirm.set(String(record.id), { fromStage, toStage });
     controls.select.value = toStage;
-    controls.confirmQuestion.textContent = target.type === 'lost'
-      ? `Segnare «${String(record.name ?? record.id)}» come ${target.label ?? toStage}? Scrivi il motivo della perdita, poi premi Conferma.`
-      : `Segnare «${String(record.name ?? record.id)}» come ${target.label ?? toStage}?`;
-    controls.confirmReason.value = '';
-    controls.confirmReason.setAttribute('class', target.type === 'lost' ? '' : 'hidden');
-    controls.confirmError.textContent = '';
-    controls.confirmError.setAttribute('class', 'field-error hidden');
-    controls.confirmBox.setAttribute('class', 'card-confirm');
-    if (typeof controls.confirmReason.focus === 'function' && target.type === 'lost') {
-      controls.confirmReason.focus();
-    }
+    showStageConfirm(controls.confirmPanel, String(record.name ?? record.id), target);
     return true;
   }
 

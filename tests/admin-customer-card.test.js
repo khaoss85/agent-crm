@@ -4195,13 +4195,42 @@ test('1e939a362c7c: an offer on a Pipeline has Cambia stato, moving through the 
   assert.deepEqual(voices.map((node) => node.textContent), ['Richiesta info', 'Prova', 'Pagato', 'Perso'],
     'the voices are the pipeline stages with the board words, never the current one');
 
+  // Pagato is a won stage: like the board it asks Conferma first, with the
+  // board's own panel (never a native confirm()).
   voices.find((node) => node.getAttribute('data-stage') === 'pagato').dispatch('click');
   await flushClicks();
-  assert.equal(client.writes.length, 1, 'one write');
+  assert.equal(client.writes.length, 0, 'Pagato never posts straight from the menu');
+  const question = mount.findAll('p').find((node) => node.getAttribute('class') === 'confirm-question');
+  assert.equal(question?.textContent, 'Segnare «Proposta esempio — Pacchetto 10 PT» come Pagato?', 'the board question names the offer');
+  const box = question.parentNode;
+  assert.equal(box.getAttribute('class'), 'card-confirm', 'the board Conferma panel is shown');
+  box.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1, 'only Conferma posts');
   assert.equal(client.writes[0].path, '/api/modules/opportunity/records/o1/actions/move-stage',
     'the move rides the Pipeline board action, on the opportunity behind the quote');
   assert.deepEqual(client.writes[0].body, { toStage: 'pagato', fromStage: 'proposta' });
   assert.deepEqual(seen, [{ message: 'Spostata in Pagato.', error: false }]);
+});
+
+test('1e939a362c7c: an open pipeline stage moves at once, Annulla drops a pending Conferma', async () => {
+  const base = stubClient({ profile: PLACED_QUOTE_PROFILE, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] } });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast: () => {} }).renderCard('contact', 'c1');
+  const open = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
+  open();
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'pagato').dispatch('click');
+  const box = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').startsWith('card-confirm'));
+  box.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
+  await flushClicks();
+  assert.equal(box.getAttribute('class'), 'card-confirm hidden', 'Annulla hides the panel');
+  assert.equal(client.writes.length, 0, 'Annulla never posts');
+  open();
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'prova').dispatch('click');
+  await flushClicks();
+  assert.deepEqual(client.writes[0].body, { toStage: 'prova', fromStage: 'proposta' }, 'an open stage needs no Conferma, like the board');
 });
 
 test('1e939a362c7c: Perso on a Pipeline asks the reason before moving', async () => {
@@ -4214,12 +4243,14 @@ test('1e939a362c7c: Perso on a Pipeline asks the reason before moving', async ()
   mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'perso').dispatch('click');
   await flushClicks();
   assert.equal(client.writes.length, 0, 'Perso never posts without a reason');
-  const confirm = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'confirm-offer-lost');
+  const question = mount.findAll('p').find((node) => node.getAttribute('class') === 'confirm-question');
+  assert.ok(question.textContent.includes('Scrivi il motivo della perdita'), 'the board question asks the reason');
+  const confirm = question.parentNode.findAll('button').find((node) => node.textContent === 'Conferma');
   confirm.dispatch('click');
   await flushClicks();
   assert.equal(client.writes.length, 0);
-  assert.ok(mount.textContent.includes("Per segnare un'offerta come persa serve il motivo."));
-  const input = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo della perdita');
+  assert.ok(mount.textContent.includes('Scrivi il motivo della perdita, poi premi Conferma.'));
+  const input = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo di chiusura');
   input.value = 'Budget finito';
   confirm.dispatch('click');
   await flushClicks();
