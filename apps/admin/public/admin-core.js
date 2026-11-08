@@ -649,6 +649,10 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
   const { code, status, message, report } = normalizeFailure(error, log);
   report('[bo] lettura fallita', { code, status, message });
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
+  // B4 wake-up (backlog:5a40c73e54aa): a read that met a waking service is
+  // still loading, never failed — name the wait, not the refusal.
+  const wait = wakeWaitText(error);
+  if (wait !== null) return wait;
   return failed;
 }
 
@@ -666,6 +670,10 @@ export function humanWriteError(error, { failed, notComposed = null, log = null 
   const { code, status, message, report } = normalizeFailure(error, log);
   report('[bo] scrittura rifiutata', { code, status, message });
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
+  // B4 wake-up (backlog:5a40c73e54aa): a write that met a waking service was
+  // never refused — name the wait, not «rifiutata».
+  const wait = wakeWaitText(error);
+  if (wait !== null) return wait;
   if (status === 405 || code === 'METHOD_NOT_ALLOWED') {
     return 'Il server non permette questa operazione qui. Chiedi a un operatore di abilitare la funzione e riprova.';
   }
@@ -833,6 +841,21 @@ export function pendingRequestId(error, expectedCode) {
 }
 
 /**
+ * Whether a failure is a refused connection rather than a refused request:
+ * fetch rejected (a TypeError, or status 0), a timeout, or a network code.
+ * One source of truth, called by every transient verdict below.
+ * @param {unknown} error
+ */
+export function isNetworkFault(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 0) return true;
+  if (status !== null) return false;
+  return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
+}
+
+/**
  * Whether a failed read-back is worth reading again (review #664): a
  * network fault (fetch rejects with a TypeError, or status 0), a gateway or
  * server hiccup, a timeout or a rate limit. A 4xx refusal, an AI-off code
@@ -846,11 +869,68 @@ function transientReadFailure(error) {
   const code = typeof record.code === 'string' ? record.code : '';
   if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
   const status = typeof record.status === 'number' ? record.status : null;
-  if (status === 0) return true;
-  if (status === null) {
-    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
-  }
+  if (isNetworkFault(error)) return true;
+  if (status === null) return false;
   return status >= 500 || status === 408 || status === 425 || status === 429;
+}
+
+/**
+ * After the web slept (backlog:5a40c73e54aa, B4 AC-2), the first answers are
+ * a waking service, never a refusal of what the operator asked: 503 (the
+ * worker is still waking, the bridge not yet up), a workspace still starting,
+ * or a refused connection while the host wakes. One source of truth for that
+ * verdict: every shell path that meets one waits/retries instead of painting
+ * «rifiutata». Anything else — 4xx, other 5xx, AI-off codes — stays final.
+ */
+export const WAKE_TRANSIENT_CODES = Object.freeze([
+  'WORKSPACE_STARTING',
+  'OPERATION_APP_UNAVAILABLE',
+  'BRIDGE_UNREACHABLE',
+  'CHANNEL_UNREACHABLE',
+  'BO_BRIDGE_NOT_CONFIGURED',
+  'BO_CRM_DEPOSIT_UNAVAILABLE',
+]);
+
+/**
+ * Whether a rejection means «the service is waking» (retry it) rather than
+ * «the request was refused» (show it). @param {unknown} error
+ */
+export function isWakeTransient(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 503 || WAKE_TRANSIENT_CODES.includes(code)) return true;
+  return isNetworkFault(error);
+}
+
+/** What the operator reads while the service wakes: Italian, a wait, never «rifiutata». */
+export const WAKE_WAIT_TEXT = 'Il servizio si sta avviando: attendi qualche secondo e riprova.';
+
+/**
+ * The wait text when `error` is a waking service, else null — so a refused
+ * write names the wait instead of the server's generic refusal, while any
+ * other failure keeps exactly the text it had. @param {unknown} error
+ */
+export function wakeWaitText(error) {
+  return isWakeTransient(error) ? WAKE_WAIT_TEXT : null;
+}
+
+/**
+ * Run `run` once; when it rejects with a waking service, wait `waitMs` and
+ * run it once more with the same arguments (writes keep their own
+ * Idempotency-Key, so the second run replays the same tap instead of writing
+ * twice). Anything else throws at once. Bounded: at most two runs, ever.
+ * @param {() => Promise<any>} run
+ * @param {{ waitMs?: number, wait?: (ms: number) => Promise<unknown> }} [options]
+ */
+export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait } = {}) {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isWakeTransient(error)) throw error;
+    await wait(waitMs);
+    return run();
+  }
 }
 
 /**

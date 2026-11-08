@@ -63,14 +63,18 @@ async function api(path, options = {}) {
   if (isMutation(method)) {
     requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
   }
-  const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
-  const body = await response.json();
-  if (!response.ok) {
-    const error = new Error(body?.error?.message || `Request failed (${response.status})`);
-    Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
-    throw error;
-  }
-  return body;
+  // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first answer
+  // may be a waking service — one retry, same key, instead of an error.
+  return withWakeRetry(async () => {
+    const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
+    const body = await response.json();
+    if (!response.ok) {
+      const error = new Error(body?.error?.message || `Request failed (${response.status})`);
+      Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
+      throw error;
+    }
+    return body;
+  });
 }
 
 const submissions = createSubmissionController({
@@ -143,54 +147,62 @@ const moduleClient = {
     if (isMutation(method)) {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
-    const response = await fetch(`${ADMIN_BASE}${path}`, {
-      ...options,
-      headers: requestHeaders,
-    });
-    // fetch followed the host's login redirect (the mount emits no other
-    // redirect for API paths): the session is gone. Navigated once here;
-    // the branches below skip a second navigation for the same answer.
-    const followedLogin = MOUNTED && response.redirected === true;
-    if (followedLogin) {
-      leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
-    }
-    const text = await response.text();
-    let payload;
-    try {
-      payload = text === '' ? null : JSON.parse(text);
-    } catch {
-      payload = undefined;
-    }
-    if (!response.ok) {
-      // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
-      // and claimId on the error, so the composer reads it back.
-      const error = apiFailure(response.status, payload);
-      // A followed login redirect still throws: carry the signal so the
-      // calling view can tell a lost session from a refused write.
-      if (followedLogin) Object.assign(error, { redirected: true });
-      if (MOUNTED && !followedLogin) {
-        leaveForSpaceLogin(sessionLostTarget({
-          status: response.status,
-          code: /** @type {any} */ (error).code,
-          adminBase: ADMIN_BASE,
-        }));
+    // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first
+    // answer may be a waking service — one retry, same key, while the
+    // screen still shows its loading state, instead of an error. A lost
+    // session still leaves for the login at once: 401/403 and redirects
+    // are never wake-transient, so the retry never delays them.
+    const once = async () => {
+      const response = await fetch(`${ADMIN_BASE}${path}`, {
+        ...options,
+        headers: requestHeaders,
+      });
+      // fetch followed the host's login redirect (the mount emits no other
+      // redirect for API paths): the session is gone. Navigated once here;
+      // the branches below skip a second navigation for the same answer.
+      const followedLogin = MOUNTED && response.redirected === true;
+      if (followedLogin) {
+        leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
       }
-      throw error;
-    }
-    if (payload === undefined) {
-      if (MOUNTED && !followedLogin) {
-        // A 200 that is not JSON under a mount is the followed login page
-        // fetch no longer flags (or a host that answered HTML directly).
-        leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text === '' ? null : JSON.parse(text);
+      } catch {
+        payload = undefined;
       }
-      // A 200 that is not JSON still throws: carry which login-page shape
-      // it was, so the calling view reads it like the shell just did.
-      const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
-      if (followedLogin) Object.assign(invalid, { redirected: true });
-      else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
-      throw invalid;
-    }
-    return payload;
+      if (!response.ok) {
+        // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
+        // and claimId on the error, so the composer reads it back.
+        const error = apiFailure(response.status, payload);
+        // A followed login redirect still throws: carry the signal so the
+        // calling view can tell a lost session from a refused write.
+        if (followedLogin) Object.assign(error, { redirected: true });
+        if (MOUNTED && !followedLogin) {
+          leaveForSpaceLogin(sessionLostTarget({
+            status: response.status,
+            code: /** @type {any} */ (error).code,
+            adminBase: ADMIN_BASE,
+          }));
+        }
+        throw error;
+      }
+      if (payload === undefined) {
+        if (MOUNTED && !followedLogin) {
+          // A 200 that is not JSON under a mount is the followed login page
+          // fetch no longer flags (or a host that answered HTML directly).
+          leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+        }
+        // A 200 that is not JSON still throws: carry which login-page shape
+        // it was, so the calling view reads it like the shell just did.
+        const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+        if (followedLogin) Object.assign(invalid, { redirected: true });
+        else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
+        throw invalid;
+      }
+      return payload;
+    };
+    return withWakeRetry(once);
   },
 };
 const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
@@ -472,7 +484,7 @@ import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
+import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 

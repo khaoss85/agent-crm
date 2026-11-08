@@ -3083,8 +3083,11 @@ export function createCustomerCardView(deps) {
     const key = `${resource}/${id}`;
     const renderToken = ++cardRenderToken;
     if (key !== shownKey) {
-      // Another customer: clear at once, never leave the previous one up.
-      while (mount.firstChild) mount.removeChild(mount.firstChild);
+      // Another customer: reset the view state, but leave the mount alone —
+      // the router already painted this screen's loading line there
+      // (backlog:5a40c73e54aa, B4 AC-2), and clearing it here left a blank
+      // area with no loading mark for the whole read after the web slept.
+      // show() below swaps the loading line for the card or the error.
       shownKey = null;
       shownSides = [];
       retainedDrafts = null;
