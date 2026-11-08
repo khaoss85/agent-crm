@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { signedAbsenceIsProven } from './customer-status.js';
 import { safeString } from './normalize.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
 import { isNoCompany } from './sender.js';
@@ -93,7 +94,10 @@ export function createErasureOperations({ database, modules, events, core, names
    */
   async function eraseCustomer(request) {
     const actor = normalizeActor(request?.actor);
-    if (!actor || typeof actor !== 'object' || actor.type !== 'user') {
+    // The fail-closed anonymous actor ({type:'user',id:'anonymous'}) holds
+    // no membership and authorizes nothing: a destructive GDPR operation
+    // needs a named titolare, never the absence of one.
+    if (!actor || typeof actor !== 'object' || actor.type !== 'user' || actor.id === 'anonymous') {
       throw new AppError('Cancellare un cliente è una decisione del titolare', {
         code: 'HUMAN_APPROVAL_REQUIRED', status: 403,
       });
@@ -138,8 +142,33 @@ export function createErasureOperations({ database, modules, events, core, names
       owner: member.owner ?? 'host', ownerPackage: member.ownerPackage ?? null,
     }));
 
+    // A company erasure cascades to its contacts: contact PII linked only
+    // by companyId is personal data of the same customer, and leaving it
+    // behind would keep names and emails listing in Clienti.
+    if (subject.resource === 'company' && contactsSvc && typeof contactsSvc.list === 'function') {
+      let linked = [];
+      try {
+        linked = (await contactsSvc.list({ companyId: subject.id })) ?? [];
+      } catch {
+        linked = [];
+      }
+      for (const row of linked) {
+        if (!row || typeof row.id !== 'string' || row.id === '') continue;
+        const candidate = { resource: 'contact', id: row.id, owner: 'host', ownerPackage: null };
+        if (!members.some((member) => subjectKey(member) === subjectKey(candidate))) {
+          members.push(candidate);
+        }
+      }
+    }
+    const erasedCompanyIds = new Set(
+      members.filter((member) => member.resource === 'company').map((member) => member.id),
+    );
+
     // The legal gate, through the one status rule every reader shares: a
-    // customer with signed business on record is kept, never erased.
+    // customer with signed business on record is kept, never erased. And
+    // an uncertain 'contatto' never erases either: when the evidence is
+    // not readable or only partial, absence is unproven and the operation
+    // fails closed instead of anonymizing a customer the law requires kept.
     const profile = await profileFor({ modules, core, names, subject });
     if (profile?.status?.value === 'cliente') {
       const counts = {
@@ -152,6 +181,22 @@ export function createErasureOperations({ database, modules, events, core, names
         {
           code: 'ERASURE_BLOCKED_SIGNED_BUSINESS', status: 409,
           details: Object.freeze({ subject: { ...subject }, counts }),
+        },
+      );
+    }
+    if (!signedAbsenceIsProven({
+      orders: profile?.orders ?? null,
+      contracts: profile?.contracts ?? null,
+      subscriptions: profile?.subscriptions ?? null,
+    })) {
+      throw new AppError(
+        'non si può verificare che non ci siano documenti firmati (ordini, contratti o abbonamenti): la cancellazione è bloccata finché le letture non sono complete',
+        {
+          code: 'ERASURE_EVIDENCE_UNREADABLE', status: 409,
+          details: Object.freeze({
+            subject: { ...subject },
+            statusReason: profile?.status?.reason ?? null,
+          }),
         },
       );
     }
