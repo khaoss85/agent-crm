@@ -3569,3 +3569,336 @@ test('97cba17cbb8c: un invio fallito resta in cronologia con il motivo italiano 
   assert.equal(post.body.text, 'Ciao, ti mando il listino');
   assert.ok(typeof post.body.messageKey === 'string' && post.body.messageKey !== '', 'a fresh key per retry');
 });
+
+// Supervisor 06/11 sera: after Invia the scheda went blank for about a
+// second while it re-read itself. A re-read of the scheda already on screen
+// keeps it up and swaps in place: no blank, same scroll, same filter.
+function gatedClient(options = {}) {
+  const base = stubClient(options);
+  const gated = {
+    gate: null,
+    calls: base.calls,
+    writes: base.writes,
+    async request(path, opts) {
+      if (gated.gate) await gated.gate;
+      return base.request(path, opts);
+    },
+  };
+  return gated;
+}
+
+const hold = (client) => {
+  let open;
+  client.gate = new Promise((resolve) => { open = resolve; });
+  return () => { client.gate = null; open(); };
+};
+
+test('re-reading the same scheda keeps it on screen while it loads, never blank', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  const before = mount.firstChild;
+  assert.ok(mount.textContent.includes('Guido Presti'));
+
+  const release = hold(client);
+  const again = view.renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mount.firstChild, before, 'the old scheda stays up during the re-read');
+  assert.ok(mount.textContent.includes('Guido Presti'), 'never blank while loading');
+
+  release();
+  await again;
+  assert.notEqual(mount.firstChild, before, 'the fresh scheda replaced it');
+  assert.equal(mount.childNodes.length, 1, 'one scheda, swapped in one step');
+});
+
+test('re-reading the same scheda keeps the channel filter, the open pages and the side columns scroll', async () => {
+  const items = Array.from({ length: 45 }, (_, i) => ({
+    entry: 'message', id: `e${i}`, conversationId: 't1', channel: i % 2 ? 'whatsapp' : 'instagram',
+    direction: 'inbound', sync: 'received', body: `messaggio ${i}`, teamAuthorId: null,
+    remoteHandle: 'x', errorCode: null, occurredAt: new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString(),
+  }));
+  const timeline = { ...TIMELINE, entries: { available: true, count: items.length, truncated: false, items } };
+  const client = gatedClient({ timeline });
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'whatsapp').dispatch('click');
+  mount.querySelector('button[data-action="timeline-older"]').dispatch('click');
+  const shownBefore = mount.textContent.match(/messaggio \d+/g).length;
+  assert.ok(shownBefore > 20, 'a second page is open');
+  mount.querySelector('.bo-scheda-col-side').scrollTop = 140;
+
+  await view.renderCard('contact', 'c1');
+
+  const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
+  assert.equal(active.getAttribute('data-channel'), 'whatsapp', 'the filter stays');
+  assert.equal(mount.textContent.match(/messaggio \d+/g).length, shownBefore, 'the open pages stay');
+  assert.ok(!mount.textContent.includes('messaggio 44 ') && !/messaggio (0|2|4)\b/.test(mount.textContent), 'still WhatsApp only');
+  assert.equal(mount.querySelector('.bo-scheda-col-side').scrollTop, 140, 'the side column keeps its scroll');
+});
+
+test('another customer clears at once and starts from Tutti', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'instagram').dispatch('click');
+
+  const release = hold(client);
+  const other = view.renderCard('contact', 'c2');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mount.childNodes.length, 0, 'the previous customer never stays up under another id');
+  release();
+  await other;
+  const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
+  assert.equal(active.getAttribute('data-channel'), 'all', 'a new scheda starts from Tutti');
+});
+
+test('a slower older re-read never overwrites a newer one', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+
+  // The older read is held until the newer one is on screen, then lands.
+  let releaseOlder;
+  client.gate = new Promise((resolve) => { releaseOlder = resolve; });
+  const older = view.renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  client.gate = null;
+  const newer = view.renderCard('contact', 'c1');
+  await newer;
+  const shown = mount.firstChild;
+  assert.ok(shown, 'the newer scheda is on screen');
+  releaseOlder();
+  await older;
+  assert.equal(mount.firstChild, shown, 'the older read landing late never replaces the newer scheda');
+  assert.equal(mount.childNodes.length, 1);
+});
+
+test('review #612 round 2: the Scrivi window stays open with its text through a re-read', async () => {
+  const { mount, panel } = await openComposerMount();
+  const area = panel.findAll('textarea')[0];
+  area.value = 'Ciao, ti scrivo per';
+  // Same customer re-read (as after a note or an Invia elsewhere).
+  const card = mount.findAll('div').find((node) => String(node.getAttribute('class')).split(' ').includes('bo-scheda'));
+  assert.ok(card);
+  await reRead();
+  const still = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.equal(still, panel, 'the same window stays');
+  assert.equal(still.findAll('textarea')[0].value, 'Ciao, ti scrivo per', 'with the text being written');
+  assert.notEqual(mount.findAll('div').find((node) => String(node.getAttribute('class')).split(' ').includes('bo-scheda')), card, 'the scheda itself was swapped');
+
+  async function reRead() {
+    mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'nota';
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+    await flushComposer();
+  }
+});
+
+// Review #612: the in-place swap must never throw away what the person is
+// typing in the scheda when a re-read comes from elsewhere (an Invia).
+test('review #612: a note being typed survives a re-read of the same scheda', async () => {
+  const client = recordingClient(stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  const noteField = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  noteField().value = 'Richiamare giovedì';
+
+  await view.renderCard('contact', 'c1');
+  assert.equal(noteField().value, 'Richiamare giovedì', 'the half-written note is still there');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1);
+  assert.equal(noteField().value, '', 'a saved note leaves the field empty, never copied back');
+});
+
+test('review #612: an open Dettagli form keeps its edits through a re-read, and closes on Salva', async () => {
+  const client = recordingClient(stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('firstName').value = 'Guidino';
+  byName('email').value = 'nuova@esempio.invalid';
+
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-details'), 'the form is still open');
+  assert.equal(byName('firstName').value, 'Guidino', 'the typed name stays');
+  assert.equal(byName('email').value, 'nuova@esempio.invalid', 'the typed email stays');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1);
+  assert.equal(client.writes[0].body.firstName, 'Guidino');
+  assert.ok(!mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-details'), 'Salva closes the form');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'edit-details'), 'Modifica is back');
+});
+
+test('review #612: a phone number being typed survives a re-read, Annulla closes the panel', async () => {
+  const client = recordingClient(stubClient({ card: { ...CARD, phone: CARD_BARE.phone } }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-phone').dispatch('click');
+  const phoneField = () => mount.findAll('input').find((node) => node.getAttribute('type') === 'tel');
+  phoneField().value = '+39333000111';
+
+  await view.renderCard('contact', 'c1');
+  assert.equal(phoneField()?.value, '+39333000111', 'the half-typed number is still there');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-phone').dispatch('click');
+  await flushClicks();
+  assert.equal(phoneField(), undefined, 'Annulla closes the panel for good');
+});
+
+test('review #612: another customer never inherits the previous one\'s typing', async () => {
+  const client = recordingClient(stubClient({ profile: OPPORTUNITY_ONLY_PROFILE }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'solo per c1';
+  await view.renderCard('contact', 'c2');
+  assert.equal(mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value ?? '', '');
+});
+
+// Review #612 round 3 (P1): an open Dettagli form carries through a re-read
+// only the fields the person changed. An untouched field takes the fresh
+// server value, so Salva never writes back a stale name over a newer one.
+test('review #612 round 3: an untouched Dettagli field takes the fresh value after a re-read', async () => {
+  const profile = structuredClone({
+    ...OPPORTUNITY_ONLY_PROFILE,
+    identity: {
+      ...OPPORTUNITY_ONLY_PROFILE.identity,
+      contact: { ...OPPORTUNITY_ONLY_PROFILE.identity.contact, firstName: 'Guido', lastName: 'Presti' },
+    },
+  });
+  const client = recordingClient(stubClient({ profile }));
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('email').value = 'nuova@esempio.invalid';
+
+  // Another operator renames the contact; an Invia elsewhere re-reads.
+  profile.identity.contact.firstName = 'Guidone';
+  await view.renderCard('contact', 'c1');
+  assert.equal(byName('email').value, 'nuova@esempio.invalid', 'the typed email stays');
+  assert.equal(byName('firstName').value, 'Guidone', 'the untouched name is the fresh one');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1);
+  assert.equal(client.writes[0].body.firstName, 'Guidone', 'Salva never writes the stale name back');
+  assert.equal(client.writes[0].body.email, 'nuova@esempio.invalid');
+});
+
+// Review #612 round 3 (P2): a failed re-read of the scheda already shown
+// keeps the Scrivi window and its half-written text.
+test('review #612 round 3: a failed re-read of the same scheda keeps the Scrivi window', async () => {
+  const inner = composerClient();
+  let failCard = false;
+  const client = {
+    posts: inner.posts,
+    async request(path, options = {}) {
+      if (failCard && path.includes('/card/')) throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' });
+      return inner.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, spaceId: 'presti', toast: () => {}, wait: () => Promise.resolve() });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  panel.findAll('textarea')[0].value = 'Ciao, ti scrivo per';
+
+  failCard = true;
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the failure is said');
+  const still = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.equal(still, panel, 'the Scrivi window stays');
+  assert.equal(still.findAll('textarea')[0].value, 'Ciao, ti scrivo per', 'with its text');
+});
+
+// Review #612 round 3 (P2): a kept filter whose channel the fresh cronologia
+// no longer has falls back to «Tutti», never a chip-less false empty state.
+test('review #612 round 3: a kept filter on a channel gone from the re-read falls back to Tutti', async () => {
+  const message = (i, channel) => ({
+    entry: 'message', id: `e${i}`, conversationId: 't1', channel,
+    direction: 'inbound', sync: 'received', body: `messaggio ${i}`, teamAuthorId: null,
+    remoteHandle: 'x', errorCode: null, occurredAt: new Date(Date.UTC(2026, 10, 1, 8, i)).toISOString(),
+  });
+  const timeline = structuredClone({ ...TIMELINE, entries: { available: true, count: 2, truncated: false, items: [message(1, 'whatsapp'), message(2, 'instagram')] } });
+  const client = stubClient({ timeline });
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'whatsapp').dispatch('click');
+
+  timeline.entries.items = [message(2, 'instagram')];
+  timeline.entries.count = 1;
+  await view.renderCard('contact', 'c1');
+  const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
+  assert.equal(active?.getAttribute('data-channel'), 'all', 'the filter falls back to Tutti');
+  assert.ok(mount.textContent.includes('messaggio 2'), 'the remaining messages show');
+});
+
+// The in-place swap keeps open windows; the window that just sent closes as
+// on main, so the sent text never stays under a live Invia.
+test('review #612 round 3: Invia closes its own Scrivi window before the re-read', async () => {
+  const { mount, panel, client } = await openComposerMount();
+  panel.findAll('textarea')[0].value = 'Certo, domani alle 18.';
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send').dispatch('click');
+  await flushComposer();
+  assert.equal(client.posts.length, 1);
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined, 'the sent window is closed');
+  assert.ok(mount.textContent.includes('Guido Presti'), 'the scheda is on screen');
+});
+
+// Review #612 round 5 (P1): a failed re-read of the scheda already shown
+// replaces it with the error panel; what was being typed in it (a note, a
+// Dettagli edit) comes back with the next scheda that loads.
+test('review #612 round 5: typing in the scheda survives a failed re-read and returns on the next one', async () => {
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  let failCard = false;
+  const client = {
+    async request(path, options = {}) {
+      if (failCard && path.includes('/card/')) throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, toast: () => {} });
+  await view.renderCard('contact', 'c1');
+  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  byName('noteBody').value = 'Richiamare giovedì';
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  byName('email').value = 'nuova@esempio.invalid';
+
+  failCard = true;
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the failure is said');
+  // A second failure in a row keeps what the first one saved.
+  await view.renderCard('contact', 'c1');
+
+  failCard = false;
+  await view.renderCard('contact', 'c1');
+  assert.equal(byName('noteBody').value, 'Richiamare giovedì', 'the half-written note is back');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-details'), 'Dettagli is open again');
+  assert.equal(byName('email').value, 'nuova@esempio.invalid', 'with the edit');
+
+  // Another customer never inherits it.
+  failCard = true;
+  await view.renderCard('contact', 'c1');
+  failCard = false;
+  await view.renderCard('contact', 'c2');
+  assert.equal(byName('noteBody').value ?? '', '', 'another customer starts empty');
+});
