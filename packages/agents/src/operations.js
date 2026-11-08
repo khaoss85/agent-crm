@@ -16,6 +16,7 @@ import {
   checkCostCents,
   checkExecuteResult,
   checkProposal,
+  checkRejectReason,
   checkSchedulePlan,
   checkSpaceId,
   computeNextRun,
@@ -76,6 +77,8 @@ function replayBucket(outcome) {
   if (outcome === 'artifact') return 'artifacts';
   if (outcome === 'applied') return 'applied';
   if (outcome === 'proposed' || outcome === 'capped' || outcome === 'failed') return outcome;
+  // A run a human rejected later still executed as `proposed`.
+  if (outcome === 'rejected') return 'proposed';
   return null;
 }
 
@@ -90,6 +93,15 @@ function replayBucket(outcome) {
  * cross-package import). Only `eq` predicates are used: every
  * compare-and-swap matches the exact note read fresh, never a pattern.
  * Missing seam refuses fail-closed.
+ *
+ * The portable facade of the async app (backlog:dc423e525af2, the same
+ * contract as the llm spend claim in agent-crm#651) keeps the owned
+ * `database` handle private: on sync storage it publishes `mutationSync`,
+ * which hands its callback the sync transaction handle; on async storage
+ * it publishes only `mutationAsync`. An async body inside a SQLite
+ * savepoint is never atomic — the savepoint covers the whole shared
+ * connection, so a concurrent request lands inside it and shares its
+ * rollback — so the async path is taken only on async storage.
  * @param {any} runService
  */
 function runStorageSeam(runService) {
@@ -107,14 +119,18 @@ function runStorageSeam(runService) {
     decidedAt: columnOf('decidedAt'),
   };
   const syncApi = storage?.sync;
-  const syncMutation = syncApi
+  const ownedSync = syncApi
     && typeof syncApi.execute === 'function'
     && typeof syncApi.savepoint === 'function'
     && typeof runService.mutationSync === 'function';
-  const asyncMutation = typeof runService.mutationAsync === 'function';
+  // The portable facade (no `database` on it) publishes `mutationSync` only
+  // on sync storage, handing the transaction handle to its callback.
+  const facadeSync = !storage && typeof runService?.mutationSync === 'function';
+  const syncMutation = ownedSync || facadeSync;
+  const asyncMutation = typeof runService?.mutationAsync === 'function';
   if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
     || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
-    || !storage || typeof storage.execute !== 'function'
+    || (storage && typeof storage.execute !== 'function')
     || typeof runService.get !== 'function'
     || typeof runService.audit?.record !== 'function'
     || typeof runService.events?.emit !== 'function'
@@ -123,7 +139,7 @@ function runStorageSeam(runService) {
       code: 'AGENTS_STORAGE_INVALID', status: 500,
     });
   }
-  return { manifest, columns, syncApi: syncMutation ? syncApi : null };
+  return { manifest, columns, syncMutation: Boolean(syncMutation), syncApi: ownedSync ? syncApi : null };
 }
 
 /**
@@ -135,7 +151,7 @@ function runStorageSeam(runService) {
  * @param {any} runService
  */
 async function conditionalRunWrite(runService, id, patch, expect, actor) {
-  const { manifest, columns, syncApi } = runStorageSeam(runService);
+  const { manifest, columns, syncMutation, syncApi } = runStorageSeam(runService);
   const at = nowIso();
   const values = [];
   for (const field of ['outcome', 'note', 'costCents', 'proposals', 'artifact', 'artifactVersion', 'decidedAt']) {
@@ -160,11 +176,21 @@ async function conditionalRunWrite(runService, id, patch, expect, actor) {
     data: { ...patch }, action: `${manifest.name}.updated`,
   };
   let won = false;
-  if (syncApi) {
-    won = runService.mutationSync(() => {
-      const claimed = syncApi.execute(statement);
+  if (syncMutation) {
+    // One synchronous unit on sync storage: nothing awaits inside the
+    // savepoint, so no other request can land inside it.
+    won = runService.mutationSync((handed) => {
+      // The owned service hands nothing (its handle is `syncApi`); the
+      // portable facade hands the sync transaction handle.
+      const tx = syncApi ?? handed;
+      if (!tx || typeof tx.execute !== 'function') {
+        throw new AppError('agent run storage cannot prove an atomic conditional write', {
+          code: 'AGENTS_STORAGE_INVALID', status: 500,
+        });
+      }
+      const claimed = tx.execute(statement);
       if (Number(claimed?.affectedRows ?? 0) !== 1) return false;
-      runService.audit.record(auditEvent);
+      runService.audit.record(auditEvent, tx);
       return true;
     });
   } else {
@@ -838,8 +864,12 @@ export function createAgentOperations(options = {}) {
         start = marker.done;
       }
       const claimText = approvalClaimNote(actor.id, nowMs);
+      // The claim also pins the proposals read above: an edit («Modifica»)
+      // that landed meanwhile from another process makes this claim lose
+      // instead of applying the text the human just replaced.
       const claimed = await conditionalRunWrite(
-        runs(), current.id, { note: claimText }, { outcome: 'proposed', note: current.note }, actor,
+        runs(), current.id, { note: claimText },
+        { outcome: 'proposed', note: current.note, proposals: current.proposals }, actor,
       );
       if (!claimed) {
         const loser = (await runs().listWhere({ spaceId, sourceKey: runSourceKey }))[0] ?? null;
@@ -906,5 +936,147 @@ export function createAgentOperations(options = {}) {
     });
   }
 
-  return { createAgent, createAssignment, runDue, approveRun };
+  /** The run a «Da fare» decision acts on, read fresh in its space. */
+  async function readRun(spaceId, runSourceKey) {
+    const run = (await runs().listWhere({ spaceId, sourceKey: runSourceKey }))[0] ?? null;
+    if (!run) {
+      throw new AppError('Unknown run in this space', { code: 'AGENT_RUN_UNKNOWN', status: 404 });
+    }
+    return run;
+  }
+
+  /** @param {unknown} value */
+  function requireRunKey(value) {
+    if (typeof value === 'string' && value !== '') return value;
+    throw new AppError('runSourceKey is required', { code: 'AGENT_RUN_KEY_REQUIRED', status: 400 });
+  }
+
+  /**
+   * An approval holding a live claim or heartbeat on this run is applying
+   * right now: a rejection or an edit waits for it instead of racing it.
+   * @param {any} run
+   */
+  function refuseWhileApplying(run) {
+    const marker = parseApprovalNote(run.note);
+    if (marker === null || marker.kind === 'stopped') return marker;
+    const ageMs = Date.parse(now()) - marker.atMs;
+    if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= AGENT_APPROVAL_LEASE_MS) {
+      throw new AppError('An approval of this run is in progress: retry', {
+        code: 'AGENT_APPROVAL_IN_PROGRESS', status: 409,
+      });
+    }
+    return marker;
+  }
+
+  /** @param {any} run */
+  function storedProposals(run) {
+    let raw;
+    try {
+      raw = JSON.parse(run.proposals ?? '[]');
+    } catch {
+      throw new AppError('Stored proposals are unreadable', { code: 'AGENT_PROPOSALS_CORRUPT', status: 500 });
+    }
+    if (!Array.isArray(raw) || raw.length === 0) {
+      throw new AppError('A proposed run with no proposals cannot be decided', {
+        code: 'AGENT_PROPOSALS_EMPTY', status: 409,
+      });
+    }
+    return raw.map((proposal) => checkProposal(proposal));
+  }
+
+  /**
+   * «Rifiuta» (backlog:fd36da512b0e): a human refuses a proposed run.
+   * Nothing is applied; the row leaves «Da fare» as `rejected`, with the
+   * human's reason in its note and the actor on its audit row. A second
+   * rejection replays (`duplicate: true`); an applied run refuses.
+   *
+   * It shares the approval chain of the run, and the write is the same
+   * conditional claim on the exact note read fresh: a rejection never
+   * lands over an approval in progress (409, retry) nor over another
+   * decision across processes (the loser re-reads the winner).
+   */
+  async function rejectRun(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const actor = requireHumanActor(requireAgentActor(record.actor, 'Rejecting a run'), 'Rejecting a run');
+    const spaceId = checkSpaceId(record.spaceId);
+    const runSourceKey = requireRunKey(record.runSourceKey);
+    const reason = checkRejectReason(record.reason);
+    return withApprovalLock(`${spaceId}:${runSourceKey}`, async () => {
+      const current = await readRun(spaceId, runSourceKey);
+      if (current.outcome === 'rejected') return { run: current, duplicate: true };
+      assertRunTransition(current.outcome, 'reject');
+      const marker = refuseWhileApplying(current);
+      const partly = marker !== null && Number.isInteger(marker.done) && marker.done > 0
+        ? ` after ${marker.done}/${marker.total} applied`
+        : '';
+      const note = `Rejected by a human${partly}.${reason === null ? '' : ` Reason: ${reason}`}`;
+      const won = await conditionalRunWrite(
+        runs(), current.id, { outcome: 'rejected', note }, { outcome: 'proposed', note: current.note }, actor,
+      );
+      if (won) return { run: won, duplicate: false };
+      const loser = await readRun(spaceId, runSourceKey);
+      if (loser.outcome === 'rejected') return { run: loser, duplicate: true };
+      throw new AppError('Another decision on this run moved first: read it again', {
+        code: 'AGENT_DECISION_CONFLICT', status: 409,
+      });
+    });
+  }
+
+  /**
+   * «Modifica» (backlog:fd36da512b0e): a human edits one proposal of a
+   * run still waiting in «Da fare» — e.g. the text of a re-engagement
+   * message — before approving it. The action stays the agent's (the
+   * governed `applyAction` seam still decides what it may do); `payload`
+   * is merged over the stored payload and re-validated like any proposal.
+   * The run stays `proposed`; the change and its human actor land on the
+   * run's audit row. A proposal an earlier approval attempt already
+   * applied refuses, and so does an edit racing an approval in progress.
+   */
+  async function reviseRun(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const actor = requireHumanActor(requireAgentActor(record.actor, 'Editing a run'), 'Editing a run');
+    const spaceId = checkSpaceId(record.spaceId);
+    const runSourceKey = requireRunKey(record.runSourceKey);
+    const index = record.index === undefined ? 0 : record.index;
+    if (!Number.isInteger(index) || index < 0) {
+      throw new AppError('index must be the position of one proposal', { code: 'AGENT_PROPOSAL_INDEX_INVALID', status: 400 });
+    }
+    const patch = record.payload;
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new AppError('payload must be a JSON object with the fields to change', {
+        code: 'AGENT_PROPOSAL_PAYLOAD_INVALID', status: 400,
+      });
+    }
+    return withApprovalLock(`${spaceId}:${runSourceKey}`, async () => {
+      const current = await readRun(spaceId, runSourceKey);
+      assertRunTransition(current.outcome, 'revise');
+      const marker = refuseWhileApplying(current);
+      const proposals = storedProposals(current);
+      if (index >= proposals.length) {
+        throw new AppError('index must be the position of one proposal', { code: 'AGENT_PROPOSAL_INDEX_INVALID', status: 400 });
+      }
+      if (marker !== null && Number.isInteger(marker.done) && index < marker.done) {
+        throw new AppError('This proposal was already applied: it cannot change anymore', {
+          code: 'AGENT_PROPOSAL_ALREADY_APPLIED', status: 409,
+        });
+      }
+      const revised = checkProposal({
+        action: proposals[index].action,
+        payload: { ...proposals[index].payload, ...patch },
+      });
+      const next = proposals.map((proposal, at) => (at === index ? revised : proposal));
+      const won = await conditionalRunWrite(
+        runs(), current.id, { proposals: JSON.stringify(next) },
+        { outcome: 'proposed', note: current.note, proposals: current.proposals }, actor,
+      );
+      if (!won) {
+        throw new AppError('Another decision on this run moved first: read it again', {
+          code: 'AGENT_DECISION_CONFLICT', status: 409,
+        });
+      }
+      return { run: won, proposal: revised };
+    });
+  }
+
+  return { createAgent, createAssignment, runDue, approveRun, rejectRun, reviseRun };
 }

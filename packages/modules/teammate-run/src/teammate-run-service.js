@@ -107,7 +107,7 @@ export class TeammateRunService {
       teammateRun.costCents = patch.costCents === null ? null : requiredInteger(patch.costCents, 'costCents');
     }
     if (Object.hasOwn(patch, 'outcome')) {
-      teammateRun.outcome = patch.outcome === null ? null : enumValue(patch.outcome, ["started", "proposed", "applied", "artifact", "capped", "failed"], 'outcome');
+      teammateRun.outcome = patch.outcome === null ? null : enumValue(patch.outcome, ["started", "proposed", "applied", "artifact", "capped", "failed", "rejected"], 'outcome');
     }
     if (Object.hasOwn(patch, 'proposals')) {
       teammateRun.proposals = patch.proposals === null ? null : requiredString(patch.proposals, 'proposals');
@@ -284,7 +284,7 @@ export class TeammateRunService {
         changes.costCents = value;
       }
       if (Object.hasOwn(patch, 'outcome')) {
-        const value = patch.outcome === null ? null : enumValue(patch.outcome, ["started", "proposed", "applied", "artifact", "capped", "failed"], 'outcome');
+        const value = patch.outcome === null ? null : enumValue(patch.outcome, ["started", "proposed", "applied", "artifact", "capped", "failed", "rejected"], 'outcome');
         assignments.push({ column: 'outcome', value: value });
         changes.outcome = value;
       }

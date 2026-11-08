@@ -21,10 +21,10 @@ import { ValidationError } from '../../core/index.js';
  * - the message wording stays in `packages/llm` (`draftCustomerMessage`):
  *   the caller injects `draftText` and this module only builds the intent
  *   from the customer's own facts;
- * - approval stays in `packages/space-permissions` (`space-ai-proposal`
- *   via `propose-action`): the proposal values this module returns already
- *   fit that record (`actionKind`, `actionKey`, `permission`,
- *   `summary`), so nothing is stored twice;
+ * - approval stays in `packages/agents` (backlog:fd36da512b0e): «Da fare»
+ *   lists `teammate-run` rows with outcome `proposed`, so
+ *   `createReengagementExecutor` below is the `execute` seam of `run-due`
+ *   and each proposal is one action of that run — nothing is stored twice;
  * - customer identity stays in `packages/customer-data`: there is no
  *   customer table here, only the caller's `customerId` reference.
  *
@@ -380,11 +380,11 @@ export function buildReengagementIntent(candidate) {
 }
 
 /**
- * Build the approval values for one drafted knock. They already fit
- * `space-ai-proposal.propose-action` (`actionKind`, `actionKey`,
- * `permission`, `summary`): the caller records them when the space switch
- * is off and sends them when it is on. The full draft travels beside the
- * proposal for the execution, which stays the caller's job.
+ * Build the approval values for one drafted knock (`actionKind`,
+ * `actionKey`, `permission`, `summary`, plus the route and the draft): the
+ * payload of one `reengagement-message` action of a teammate run when the
+ * space switch is off, the send itself when it is on. Executing it stays
+ * the deployment's `applyAction` seam.
  *
  * @param {{candidate: {customerId: string, displayName: string, channel: string},
  *   route: {kind: string, channel: string, template?: any},
@@ -477,4 +477,86 @@ export async function scanReengagement({ customers, quietDays, nowMs, draftText 
     proposals.push(buildReengagementProposal({ candidate, route, draft, day }));
   }
   return Object.freeze({ proposals: Object.freeze(proposals), skipped: Object.freeze(skipped) });
+}
+
+/** One teammate run carries at most this many proposals (the agents package rule). */
+export const REENGAGEMENT_MAX_PROPOSALS_PER_RUN = 25;
+/** One stored proposal payload fits the agents package bound (8 KiB of JSON). */
+export const REENGAGEMENT_MAX_PAYLOAD_CHARS = 8192;
+
+/**
+ * The `execute` seam of the agents package's `run-due` for the
+ * re-engagement agent (backlog:fd36da512b0e).
+ *
+ * «Da fare» in the backoffice lists teammate runs with outcome `proposed`,
+ * so the re-engagement proposals travel that way and no other: `run-due`
+ * calls this executor, records the run, and the human approves, edits or
+ * rejects that row (`approve-run`, `revise-run`, `reject-run`). Approving
+ * applies each proposal through the deployment's `applyAction` seam, which
+ * sends `reengagement-message` actions through the channels outbox (the
+ * outbox re-checks the 24-hour window). No `space-ai-proposal` row is
+ * written: nothing duplicates the approval queue.
+ *
+ * - `loadCustomers({ agent, assignment })` is the caller's read of the
+ *   silent customers (channels inbox for the window, customer-data for the
+ *   consent). It should leave out customers already waiting in «Da fare»:
+ *   they stay silent until the message is approved and sent.
+ * - `draftText` is the wording edge, as in `scanReengagement`.
+ *
+ * Returns the agents execute result: `{ kind: 'proposals' }` with one
+ * proposal per knock (action `reengagement-message`, payload = the
+ * proposal values), at most 25 per run in scan order — the rest are still
+ * silent at the next run. A proposal whose payload would not fit 8 KiB is
+ * skipped as `payload-too-large`, never truncated blind. When nobody needs
+ * a knock the run is an `artifact` that counts the skips by reason, so the
+ * agent's run says what it saw instead of failing.
+ *
+ * @param {{
+ *   loadCustomers: (context: {agent: any, assignment: any}) => Promise<unknown> | unknown,
+ *   draftText: (input: any) => Promise<any>,
+ *   quietDays?: number,
+ *   nowMs?: () => number,
+ * }} options
+ */
+export function createReengagementExecutor(options) {
+  const { loadCustomers, draftText, quietDays } = options ?? /** @type {any} */ ({});
+  if (typeof loadCustomers !== 'function') {
+    throw new ValidationError('reengagement executor needs loadCustomers', { field: 'loadCustomers' });
+  }
+  if (typeof draftText !== 'function') {
+    throw new ValidationError('reengagement needs the draftText wording edge', { field: 'draftText' });
+  }
+  const clock = typeof options.nowMs === 'function' ? options.nowMs : () => Date.now();
+  if (quietDays !== undefined) assertQuietDays(quietDays);
+  return async function executeReengagement({ agent, assignment } = /** @type {any} */ ({})) {
+    const nowMs = clock();
+    const customers = await loadCustomers({ agent, assignment });
+    const scan = await scanReengagement({ customers, quietDays, nowMs, draftText });
+    const proposals = [];
+    const skipped = [...scan.skipped];
+    for (const proposal of scan.proposals) {
+      const payload = JSON.parse(JSON.stringify(proposal));
+      if (JSON.stringify(payload).length > REENGAGEMENT_MAX_PAYLOAD_CHARS) {
+        skipped.push(Object.freeze({ customerId: proposal.customerRef.customerId, reason: 'payload-too-large' }));
+        continue;
+      }
+      if (proposals.length >= REENGAGEMENT_MAX_PROPOSALS_PER_RUN) break;
+      proposals.push({ action: REENGAGEMENT_ACTION_KIND, payload });
+    }
+    if (proposals.length > 0) return { kind: 'proposals', proposals, costCents: 0 };
+    /** @type {Record<string, number>} */
+    const byReason = {};
+    for (const entry of skipped) byReason[entry.reason] = (byReason[entry.reason] ?? 0) + 1;
+    return {
+      kind: 'artifact',
+      costCents: 0,
+      artifact: {
+        reengagement: 1,
+        day: new Date(nowMs).toISOString().slice(0, 10),
+        customers: Array.isArray(customers) ? customers.length : 0,
+        proposed: 0,
+        skippedByReason: byReason,
+      },
+    };
+  };
 }
