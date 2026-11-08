@@ -280,6 +280,263 @@ test('A5-3: an expired link shows «offerta scaduta» and never accepts', async 
   assert.equal(row.acceptCount, 0);
 });
 
+test('A5-0: the link bearer never rests in workflow_runs or trace_spans', async (t) => {
+  const app = await bootApp(t);
+  const { quote } = await approvedQuote(app, { sku: 'LINK-0', cents: 10000 });
+  const shared = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  const token = shared.result.token;
+  assert.match(token, /^[0-9a-f]{64}$/, 'the token is unguessable');
+  await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  await app.runAction({
+    module: 'quote', action: 'link-info', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  // A refused accept persists its trace too: the attempted bearer is hashed there as well.
+  const wrong = '0'.repeat(64);
+  const denied = await refusal(app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: wrong }, actor: PUBLIC,
+  }));
+  assert.equal(denied.ok, false);
+
+  const runs = app.database.raw.prepare(
+    "SELECT workflow_name, input_json, output_json FROM workflow_runs WHERE workflow_name LIKE 'quote.%'",
+  ).all();
+  assert.ok(runs.length >= 4, 'every link action left its trace');
+  for (const run of runs) {
+    for (const column of [run.input_json, run.output_json]) {
+      if (column === null || column === undefined) continue;
+      assert.ok(!String(column).includes(token), `${run.workflow_name} trace holds no raw bearer`);
+      assert.ok(!String(column).includes(wrong), `${run.workflow_name} trace holds no attempted bearer`);
+    }
+  }
+  const spans = app.database.raw.prepare('SELECT output_json FROM trace_spans').all();
+  assert.ok(spans.length > 0, 'spans were recorded');
+  for (const span of spans) {
+    if (span.output_json === null || span.output_json === undefined) continue;
+    assert.ok(!String(span.output_json).includes(token), 'no span holds the raw bearer');
+  }
+  // The lookup form is what the traces hold: the hash still correlates trace to row.
+  const traced = runs.map((run) => `${run.input_json ?? ''}${run.output_json ?? ''}`).join('\n');
+  assert.ok(traced.includes(hashOf(token)), 'the traces hold the token hash, never the bearer');
+});
+
+test('A5-1c: re-sharing an accepted version mints no second link', async (t) => {
+  const app = await bootApp(t);
+  const { quote } = await approvedQuote(app, { sku: 'LINK-1C', cents: 10000 });
+  const { token } = (await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  })).result;
+  const first = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(first.result.accepted, true);
+
+  const again = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(again.result.alreadyExisted, true, 'the accepted version is reused, never re-minted');
+  assert.equal(again.result.token, null, 'no second bearer leaves the server');
+  assert.equal(again.result.share.status, 'accepted', 'the receipt names the terminal state');
+
+  const shares = app.modules.get('quote-share').service;
+  const rows = shares.listWhere({ quoteVersionId: first.result.offer.versionId });
+  assert.equal(rows.length, 1, 'one row per version, even after the re-share');
+  assert.equal(rows[0].acceptCount, 1, 'no second acceptance was recorded');
+
+  const retry = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(retry.result.alreadyAccepted, true, 'the original link still answers already accepted');
+  assert.equal(retry.result.acceptedAt, first.result.acceptedAt, 'the acceptance instant never moves');
+});
+
+test('A5-matrix: every stored link state answers every link operation the same way', async (t) => {
+  // One table holds every case the review rounds named — idempotent accept,
+  // accepted-before-expiry, re-share after accept, expired refusal, unknown
+  // token — so a later cure cannot fix one case by breaking another.
+  const app = await bootApp(t);
+  const first = await approvedQuote(app, { sku: 'LINK-M1', cents: 10000 });
+  const second = await approvedQuote(app, { sku: 'LINK-M2', cents: 5000 });
+
+  const token = (await app.runAction({
+    module: 'quote', action: 'share-link', recordId: first.quote.id, input: {}, actor: ACTOR,
+  })).result.token;
+  const acceptedAt = (await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: first.quote.id, input: { token }, actor: PUBLIC,
+  })).result.acceptedAt;
+
+  const token2 = (await app.runAction({
+    module: 'quote', action: 'share-link', recordId: second.quote.id, input: {}, actor: ACTOR,
+  })).result.token;
+
+  const shares = app.modules.get('quote-share').service;
+  const expire = (bearer) => {
+    const row = shares.listWhere({ tokenHash: hashOf(bearer) })[0];
+    assert.ok(row, 'the bearer resolves to a row before expiring it');
+    return shares.applyManaged(row.id, { expiresAt: '2000-01-01T00:00:00.000Z' }, { actor: ACTOR });
+  };
+
+  const link = (recordId, action, input, actor) =>
+    refusal(app.runAction({ module: 'quote', action, recordId, input, actor }));
+  const unknown = 'f'.repeat(64);
+  /** @type {Array<{ name: string, run: () => Promise<any>, check: (out: any) => void }>} */
+  const cases = [
+    {
+      name: 'accepted + share-link reuses the receipt, mints nothing',
+      run: () => link(first.quote.id, 'share-link', {}, ACTOR),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.alreadyExisted, true);
+        assert.equal(out.value.result.token, null);
+        assert.equal(out.value.result.share.status, 'accepted');
+      },
+    },
+    {
+      name: 'accepted + accept-link answers already accepted',
+      run: () => link(first.quote.id, 'accept-link', { token }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.alreadyAccepted, true);
+        assert.equal(out.value.result.acceptedAt, acceptedAt);
+        assert.equal(out.value.result.offer.oneTimeNetCents, 10000);
+      },
+    },
+    {
+      name: 'accepted + link-info proves the frozen price',
+      run: () => link(first.quote.id, 'link-info', { token }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.status, 'accepted');
+        assert.equal(out.value.result.offer.oneTimeNetCents, 10000);
+      },
+    },
+    {
+      name: 'live + share-link reuses the live link',
+      run: () => link(second.quote.id, 'share-link', {}, ACTOR),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.alreadyExisted, true);
+        assert.equal(out.value.result.token, null);
+        assert.equal(out.value.result.share.status, 'active');
+      },
+    },
+    {
+      name: 'live + link-info shows the frozen offer',
+      run: () => link(second.quote.id, 'link-info', { token: token2 }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.status, 'active');
+        assert.equal(out.value.result.offer.oneTimeNetCents, 5000);
+      },
+    },
+  ];
+  for (const c of cases) {
+    try {
+      c.check(await c.run());
+    } catch (error) {
+      error.message = `[${c.name}] ${error.message}`;
+      throw error;
+    }
+  }
+
+  // Time passes: both links expire — the accepted proof must survive, the
+  // live link must refuse, and the accepted version still mints nothing.
+  await expire(token);
+  await expire(token2);
+  /** @type {Array<{ name: string, run: () => Promise<any>, check: (out: any) => void }>} */
+  const afterExpiry = [
+    {
+      name: 'accepted+expired + accept-link still answers already accepted',
+      run: () => link(first.quote.id, 'accept-link', { token }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.alreadyAccepted, true);
+        assert.equal(out.value.result.acceptedAt, acceptedAt);
+        assert.equal(out.value.result.offer.oneTimeNetCents, 10000);
+      },
+    },
+    {
+      name: 'accepted+expired + link-info still proves the acceptance',
+      run: () => link(first.quote.id, 'link-info', { token }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.status, 'accepted');
+        assert.equal(out.value.result.offer.oneTimeNetCents, 10000);
+      },
+    },
+    {
+      name: 'accepted+expired + share-link still mints nothing',
+      run: () => link(first.quote.id, 'share-link', {}, ACTOR),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.alreadyExisted, true);
+        assert.equal(out.value.result.token, null);
+        assert.equal(out.value.result.share.status, 'accepted');
+      },
+    },
+    {
+      name: 'expired + share-link mints a fresh bearer (no live, no accepted)',
+      run: () => link(second.quote.id, 'share-link', {}, ACTOR),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.alreadyExisted, false);
+        assert.match(out.value.result.token, /^[0-9a-f]{64}$/);
+        assert.notEqual(out.value.result.token, token2);
+      },
+    },
+    {
+      name: 'expired + accept-link refuses «offerta scaduta»',
+      run: () => link(second.quote.id, 'accept-link', { token: token2 }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, false);
+        assert.equal(out.code, 'QUOTE_LINK_EXPIRED');
+        assert.equal(out.message, 'offerta scaduta');
+      },
+    },
+    {
+      name: 'expired + link-info shows «offerta scaduta», no offer',
+      run: () => link(second.quote.id, 'link-info', { token: token2 }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, true);
+        assert.equal(out.value.result.status, 'expired');
+        assert.equal(out.value.result.message, 'offerta scaduta');
+        assert.ok(!('offer' in out.value.result));
+      },
+    },
+    {
+      name: 'unknown + accept-link refuses «link non valido o scaduto»',
+      run: () => link(first.quote.id, 'accept-link', { token: unknown }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, false);
+        assert.equal(out.code, 'QUOTE_LINK_INVALID');
+        assert.equal(out.message, 'link non valido o scaduto');
+      },
+    },
+    {
+      name: 'unknown + link-info refuses «link non valido o scaduto»',
+      run: () => link(first.quote.id, 'link-info', { token: unknown }, PUBLIC),
+      check: (out) => {
+        assert.equal(out.ok, false);
+        assert.equal(out.code, 'QUOTE_LINK_INVALID');
+      },
+    },
+  ];
+  for (const c of afterExpiry) {
+    try {
+      c.check(await c.run());
+    } catch (error) {
+      error.message = `[${c.name}] ${error.message}`;
+      throw error;
+    }
+  }
+
+  assert.equal(shares.listWhere({ quoteId: first.quote.id }).length, 1, 'the accepted version was never re-minted');
+  assert.equal(shares.listWhere({ quoteId: first.quote.id })[0].acceptCount, 1);
+});
+
 test('re-sharing a live link returns no bearer', async (t) => {
   const app = await bootApp(t);
   const { quote } = await approvedQuote(app, { sku: 'LINK-R', cents: 10000 });

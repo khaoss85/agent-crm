@@ -10,11 +10,15 @@ import { AppError, ValidationError, nowIso } from '../../core/index.js';
  * token. Whoever holds the token reads the frozen version and accepts it —
  * no login, because the token itself is the credential (like every signed
  * link). The row stores only the token's SHA-256, so the bearer never rests
- * in the database. The accepted price is read from the immutable
- * `quote-version` rows only, so a later catalog change can never move it.
- * Acceptance is idempotent: the first accept wins one conditional claim,
- * every later accept answers «già accettata» without writing — even after
- * the link itself expired. An expired or unknown token refuses with a short
+ * in the database — and the action traces (`workflow_runs`/`trace_spans`)
+ * hold only the hash too, never the bearer: the raw token leaves the server
+ * exactly once, as the top-level `token` of a fresh share-link result. The
+ * accepted price is read from the immutable `quote-version` rows only, so a
+ * later catalog change can never move it. Acceptance is idempotent and
+ * terminal per version: the first accept wins one conditional claim, every
+ * later accept answers «già accettata» without writing — even after the link
+ * itself expired — and a version that already has an accepted share is never
+ * minted a new link. An expired or unknown token refuses with a short
  * Italian message and never leaks names, prices or rows.
  *
  * The quote record itself stays `approved`: customer acceptance is tracked
@@ -247,6 +251,46 @@ function expiredLink() {
   return new AppError('offerta scaduta', { code: 'QUOTE_LINK_EXPIRED', status: 410 });
 }
 
+/**
+ * One source of truth for what a quote version already has: an accepted share
+ * is terminal and wins over a live one, a live (unexpired, active) share is
+ * reused, otherwise there is nothing to reuse. Every share-link decision —
+ * reuse the live link, reuse the accepted receipt, mint a new token — reads
+ * this, never a status filter of its own, so an accepted version can never be
+ * minted a second accept-able token.
+ *
+ * @param {any} shares the quote-share managed service
+ */
+async function resolveVersionShare(shares, quote, at) {
+  const rows = await shares.listWhere({ quoteId: quote.id, quoteVersionId: quote.currentVersionId });
+  const accepted = rows.find((row) => row.status === 'accepted') ?? null;
+  if (accepted) return { kind: 'accepted', share: accepted };
+  const live = rows
+    .filter((row) => row.status === 'active' && typeof row.expiresAt === 'string' && row.expiresAt > at)[0] ?? null;
+  if (live) return { kind: 'live', share: live };
+  return null;
+}
+
+/**
+ * Trace redaction for the token the caller presents: the persisted trace
+ * input holds only the SHA-256 hash, never the bearer.
+ */
+function redactedTokenInput(input) {
+  if (!input || typeof input.token !== 'string' || input.token === '') return input;
+  const { token, ...rest } = input;
+  return { ...rest, tokenHash: hashShareToken(token) };
+}
+
+/**
+ * Trace redaction for a result carrying a fresh bearer: the persisted trace
+ * output holds only the SHA-256 hash, never the bearer. The live return
+ * value keeps the raw token — it leaves the server exactly once, here.
+ */
+function redactedShareResult(result) {
+  if (!result || typeof result.token !== 'string' || result.token === '') return result;
+  return { ...result, token: null, tokenHash: hashShareToken(result.token) };
+}
+
 /** @param {QuoteShareConfig} [config] */
 export function buildShareLinkAction(config) {
   const cfg = resolved(config);
@@ -262,6 +306,7 @@ export function buildShareLinkAction(config) {
       { name: 'expiresInDays', type: 'integer', required: false, hint: 'Link lifetime in days, 1-90 (default 14).' },
       { name: 'expectedRevision', type: 'integer', required: false },
     ],
+    traceRedact: { output: redactedShareResult },
     /** @param {any} ctx */
     async execute({ record: quote, input, actor, modules, now, step }) {
       const createdBy = requireUserActor(actor);
@@ -275,13 +320,15 @@ export function buildShareLinkAction(config) {
         throw new ValidationError('expiresInDays must be an integer between 1 and 90', { field: 'expiresInDays' });
       }
       const at = now();
-      const live = (await shares.listWhere({ quoteId: quote.id, quoteVersionId: quote.currentVersionId, status: 'active' }))
-        .filter((row) => typeof row.expiresAt === 'string' && row.expiresAt > at)[0] ?? null;
-      if (live) {
+      const existing = await resolveVersionShare(shares, quote, at);
+      if (existing) {
         // The bearer is not recoverable from the hash, so a reused link
         // returns no token: resend the original link the first share made.
-        step('quote.link-reused', { quoteId: quote.id, versionNumber: live.versionNumber });
-        return { alreadyExisted: true, share: shareSummary(live), token: null };
+        // An accepted share is terminal for its version — reusing it here,
+        // instead of minting a fresh token, is what makes double acceptance
+        // of one version impossible.
+        step('quote.link-reused', { quoteId: quote.id, versionNumber: existing.share.versionNumber });
+        return { alreadyExisted: true, share: shareSummary(existing.share), token: null };
       }
       const token = generateShareToken();
       const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
@@ -321,6 +368,7 @@ export function buildAcceptLinkAction(config) {
     input: [
       { name: 'token', type: 'string', required: true, hint: 'The public token from the shared link.' },
     ],
+    traceRedact: { input: redactedTokenInput },
     /** @param {any} ctx */
     async execute({ record: quote, input, actor, modules, now, step }) {
       const shares = requireShareService(modules, cfg);
@@ -383,6 +431,7 @@ export function buildLinkInfoAction(config) {
     input: [
       { name: 'token', type: 'string', required: true, hint: 'The public token from the shared link.' },
     ],
+    traceRedact: { input: redactedTokenInput },
     /** @param {any} ctx */
     async execute({ record: quote, input, modules, now }) {
       const shares = requireShareService(modules, cfg);

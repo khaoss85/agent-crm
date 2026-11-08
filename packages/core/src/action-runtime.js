@@ -285,7 +285,7 @@ export async function runRecordAction(params) {
       status: failure ? 'failed' : 'completed',
       input: {
         recordId,
-        input: validatedInput,
+        input: applyTraceRedact(definition, 'input', validatedInput),
         actor: safeActor(actor),
         // The decision that let this run, so the trace answers "by what
         // authority" rather than only "who claimed to be whom".
@@ -301,7 +301,7 @@ export async function runRecordAction(params) {
           }
           : {}),
       },
-      output: failure ? null : result,
+      output: failure ? null : applyTraceRedact(definition, 'output', result),
       error: failure ? failure.message : null,
       startedAt,
       steps,
@@ -436,7 +436,7 @@ async function runPostgresqlRecordAction(params, definition, validatedInput, aut
           status: 'failed',
           input: {
             recordId,
-            input: validatedInput,
+            input: applyTraceRedact(definition, 'input', validatedInput),
             actor: safeActor(actor),
             ...(authorization
               ? {
@@ -639,6 +639,25 @@ function authorizeRecordAction(params, definition) {
     ? definition.requiredPermission
     : spine.defaultActionPermission;
   return spine.authorize({ identity, organizationId, permission });
+}
+
+/**
+ * Trace redaction for bearer-shaped action data (quote-share public links).
+ * An action whose input or result carries a credential it must never persist
+ * declares `traceRedact: { input?: (input) => unknown, output?: (result) =>
+ * unknown }`. The runtime applies it to the COPIES written into
+ * workflow_runs/trace_spans; the live return value keeps the raw value, and
+ * `execute` always sees the raw validated input. A throwing redactor fails the
+ * trace write — best-effort and swallowed at the call site — instead of
+ * persisting the raw value.
+ *
+ * @param {any} definition @param {'input' | 'output'} kind @param {unknown} value
+ */
+function applyTraceRedact(definition, kind, value) {
+  const redact = definition?.traceRedact;
+  const fn = redact && typeof redact === 'object' ? redact[kind] : undefined;
+  if (typeof fn !== 'function') return value;
+  return fn(value);
 }
 
 /** @param {unknown} actor */
