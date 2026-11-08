@@ -2839,12 +2839,12 @@ export function createCalendarioView(deps) {
    * backlog:810ed0bf — the manual form's service field: a menu of the
    * bookable catalog singles (the same singles rule the booking worker
    * applies, read once with the week labels), never free text. The first
-   * entry is preselected — the worker's default-service is the first
-   * declared single the catalog confirms, so menu and worker agree on the
-   * same default — and the price field prefills from the chosen entry.
-   * The price follows every service change until the operator types their
-   * own price. Without a readable catalog the old typed field stays, and
-   * the server refuses unknown keys in Italian under the field.
+   * entry is preselected — the first bookable single, the same singles
+   * rule the worker's default-service is confirmed against — and the price
+   * field prefills from the chosen entry. The price follows every service
+   * change; a typed price sticks until the service changes again. Without
+   * a readable catalog the old typed field stays, and the server refuses
+   * unknown keys in Italian under the field.
    * @param {any} form @param {any} priceInput
    */
   function renderServiceChoice(form, priceInput) {
