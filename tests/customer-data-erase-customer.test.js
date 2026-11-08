@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
+import { createCustomerProfileCapability } from '../packages/customer-data/src/capability-profile.js';
 
 /**
  * Voce d271d723 (validazione B6): cancellare un cliente davvero (GDPR).
@@ -310,4 +311,98 @@ test('erasing a company cascades to its contacts: no name or email survives in C
   assert.ok(!list.items.some((row) => row.id === contact.id || row.id === other.id), 'cascaded contacts leave Clienti');
   const search = await app.listCustomers({ q: 'Presti', pageSize: 50 });
   assert.ok(!search.items.some((row) => row.id === contact.id), 'the erased name leaves the search');
+});
+
+test('an erased company reads as gone through the shared capability, not only the direct profile', async (t) => {
+  const { app, company } = await scene(t);
+  await app.eraseCustomer({
+    resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+  });
+  await assert.rejects(
+    () => app.readCustomerProfile({ resource: 'company', id: company.id }),
+    (error) => error?.code === 'CUSTOMER_ERASED' && error?.status === 404,
+    'the direct link reads 404 for the kept-but-erased company row',
+  );
+  // The hub card and timeline read through customer-profile@1 (the hub
+  // forwards to capability.readProfile with the provider's own names),
+  // so the gate lives on the capability every reader shares.
+  const capability = createCustomerProfileCapability({}).create({ modules: app.modules });
+  await assert.rejects(
+    () => capability.readProfile({ subject: { resource: 'company', id: company.id } }),
+    (error) => error?.code === 'CUSTOMER_ERASED' && error?.status === 404,
+    'the shared capability reads 404 for the erased company: card and timeline go through here',
+  );
+});
+
+test('a company with more than one display page still cascades fully: no PII survives past the old bound', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  t.after(() => app.close());
+  const company = await app.services.companies.create({ name: 'Grande Palestra' });
+  const ids = [];
+  for (let i = 0; i < 101; i += 1) {
+    const contact = await app.services.contacts.create({
+      companyId: company.id, firstName: 'Socio', lastName: `Numero${i}`,
+      email: `socio${i}@grande-palestra.it`,
+    });
+    ids.push(contact.id);
+  }
+  const receipt = await app.eraseCustomer({
+    resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+  });
+  assert.equal(receipt.counts.subjects, 102, 'the company and all 101 linked contacts go together');
+  for (const id of ids) {
+    const reread = await app.services.contacts.get(id);
+    assert.equal(reread.firstName, 'Cliente');
+    assert.match(reread.email, /^cancellato-.*@cancellato\.invalid$/, 'no identifying email survives the cascade');
+    assert.equal((await erasureRows(app, 'contact', id)).length, 1, 'one registry row per cascaded contact');
+  }
+});
+
+test('a full company page refuses the erasure instead of erasing half: a truncated read never decides', async (t) => {
+  const { app, company, contact } = await scene(t);
+  const original = app.services.contacts.list.bind(app.services.contacts);
+  app.services.contacts.list = async () => Array.from(
+    { length: 500 }, (_, index) => ({ id: `ghost-${index}` }),
+  );
+  let refusal = null;
+  try {
+    await app.eraseCustomer({
+      resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    });
+  } catch (error) {
+    refusal = error;
+  } finally {
+    app.services.contacts.list = original;
+  }
+  assert.equal(refusal?.code, 'ERASURE_CASCADE_INCOMPLETE', 'a possibly-truncated page refuses with 409');
+  assert.equal(refusal?.status, 409);
+  const reread = await app.services.contacts.get(contact.id);
+  assert.equal(reread.email, 'guido@palestra-esempio.it', 'a refused erasure rewrites nothing');
+  assert.equal((await erasureRows(app, 'company', company.id)).length, 0, 'a refused erasure records nothing');
+});
+
+test('purging enriched fields clears the email snapshot too: no PII copy survives beside the erased subject', async (t) => {
+  const { app, contact } = await scene(t);
+  await app.applyContactEnrichment({
+    actor: OPERATOR, email: 'guido@palestra-esempio.it',
+    fields: { role: 'Socio' }, source: 'email-signature', sourceDetail: 'msg-1',
+  });
+  const before = await app.modules.get('enriched-field').service
+    .listWhere({ subjectResource: 'contact', subjectId: contact.id });
+  assert.ok(before.length > 0, 'the enrichment row exists before the erasure');
+  assert.ok(
+    before.some((row) => row.subjectLabel === 'guido@palestra-esempio.it'),
+    'the display snapshot carries the email before the erasure',
+  );
+  await app.eraseCustomer({
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+  });
+  const after = await app.modules.get('enriched-field').service
+    .listWhere({ subjectResource: 'contact', subjectId: contact.id });
+  assert.ok(after.length > 0, 'the rows stay (append-only) but purged');
+  for (const row of after) {
+    assert.equal(row.status, 'purged', 'no active enrichment names the erased customer');
+    assert.equal(row.value, null, 'the enriched value is blanked');
+    assert.equal(row.subjectLabel, null, 'no email snapshot survives the purge');
+  }
 });

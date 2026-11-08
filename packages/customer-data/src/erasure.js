@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { CUSTOMER_SCAN_LIMIT } from './customers.js';
 import { safeString } from './normalize.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
 import { isNoCompany } from './sender.js';
@@ -205,13 +206,26 @@ export function createErasureOperations({ database, modules, events, core, names
 
     // A company erasure cascades to its contacts: contact PII linked only
     // by companyId is personal data of the same customer, and leaving it
-    // behind would keep names and emails listing in Clienti.
+    // behind would keep names and emails listing in Clienti. The contact
+    // list is a bounded display page, so the cascade asks for the widest
+    // page the service allows and refuses when it comes back full: a page
+    // that may be truncated never drives a half-erasure (a read that
+    // decides something is never a page).
     if (subject.resource === 'company' && contactsSvc && typeof contactsSvc.list === 'function') {
       let linked = [];
       try {
-        linked = (await contactsSvc.list({ companyId: subject.id })) ?? [];
+        linked = (await contactsSvc.list({ companyId: subject.id, limit: CUSTOMER_SCAN_LIMIT })) ?? [];
       } catch {
         linked = [];
+      }
+      if (linked.length >= CUSTOMER_SCAN_LIMIT) {
+        throw new AppError(
+          'questa azienda ha troppi contatti collegati per verificarli tutti in una lettura: la cancellazione è bloccata finché la lettura non è completa',
+          {
+            code: 'ERASURE_CASCADE_INCOMPLETE', status: 409,
+            details: Object.freeze({ subject: { ...subject } }),
+          },
+        );
       }
       for (const row of linked) {
         if (!row || typeof row.id !== 'string' || row.id === '') continue;
@@ -354,10 +368,13 @@ export function createErasureOperations({ database, modules, events, core, names
       // offers no update, so the row stays but the registry excludes it
       // from every product read like the contact itself.
       if (contact?.companyId && !orphan) {
+        // The widest page the service allows: a full page still proves
+        // siblings exist (the erased contact is one of them), so the
+        // company is kept — the safe direction needs no exact count.
         let siblings = [];
         try {
           siblings = (contactsSvc && typeof contactsSvc.list === 'function')
-            ? (await contactsSvc.list({ companyId: contact.companyId })) ?? []
+            ? (await contactsSvc.list({ companyId: contact.companyId, limit: CUSTOMER_SCAN_LIMIT })) ?? []
             : [];
         } catch {
           siblings = [];
@@ -416,6 +433,10 @@ export function createErasureOperations({ database, modules, events, core, names
       if (row?.status === 'purged') continue;
       await service.applyManaged(row.id, {
         status: 'purged', value: null, sourceDetail: null, decisionReason: null,
+        // The display snapshot carries the contact email (subjectLabel),
+        // so it goes with the value: no PII copy survives beside the
+        // erased subject — like the identity path already does.
+        subjectLabel: null,
         purgedAt: now, purgeReason: 'cancellazione-gdpr',
       }, { actor });
       purged += 1;
