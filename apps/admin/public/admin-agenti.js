@@ -930,6 +930,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
           const area = el(documentNode, 'textarea', 'ui-field bo-dafare-edit-text');
           area.setAttribute('aria-label', `Testo della proposta ${edit.index + 1}`);
           area.setAttribute('data-proposal', String(edit.index));
+          // The deployment's bound for an edited text (pilot#463).
+          area.setAttribute('maxlength', '2000');
           area.value = decision.drafts.has(draftKey) ? decision.drafts.get(draftKey) : edit.value;
           area.addEventListener('input', () => { decision.drafts.set(draftKey, String(area.value ?? '')); });
           editor.appendChild(area);
