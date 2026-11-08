@@ -327,6 +327,19 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const modules = new ModuleRegistry();
   const providers = new ProviderRegistry();
 
+  // Code-first pipeline registry (ADR-014, voce ba47a73b: composed before
+  // the opportunity module so creations enter the default pipeline in the
+  // same write — the same order the synchronous factory uses).
+  const pipelines = new PipelineRegistry({
+    moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name),
+  });
+  // Code-first pipelines (ADR-014, backlog:282de375): the checked-in
+  // generated pipelines first — the same source the sync factory registers —
+  // then the selected graph's explicit opt-ins. Either side fails closed in
+  // the registry (bad contract, unknown module, duplicate name or module).
+  for (const definition of generatedPipelines) pipelines.register(definition);
+  for (const definition of accepted.pipelines ?? []) pipelines.register(definition);
+
   const companyModule = createCompanyModule({ database: handle, audit, events });
   modules.register(companyModule);
 
@@ -344,6 +357,7 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
     events,
     companies: companyModule.service,
     contacts: contactModule.service,
+    pipelines,
   });
   modules.register(opportunityModule);
 
@@ -370,16 +384,6 @@ async function assemblePortableGraph({ accepted, storage, options = {} }) {
   const actionModuleExists = (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) || selectedModules.has(name);
   const actions = new ActionRegistry({ moduleExists: actionModuleExists });
   for (const definition of accepted.actions) actions.register(definition);
-
-  const pipelines = new PipelineRegistry({
-    moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name),
-  });
-  // Code-first pipelines (ADR-014, backlog:282de375): the checked-in
-  // generated pipelines first — the same source the sync factory registers —
-  // then the selected graph's explicit opt-ins. Either side fails closed in
-  // the registry (bad contract, unknown module, duplicate name or module).
-  for (const definition of generatedPipelines) pipelines.register(definition);
-  for (const definition of accepted.pipelines ?? []) pipelines.register(definition);
 
   // A drifted definition in one workspace reads as that workspace being
   // unavailable — never as the process being broken. On 2026-10-22 a single

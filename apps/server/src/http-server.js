@@ -1575,29 +1575,18 @@ export function buildRouter(app) {
       }),
     };
   });
-  // Voce ba47a73b: an offer created from the scheda enters the space's
-  // default pipeline at its first stage, so it shows on the Pipeline board
-  // at once and can be moved. The placement mirrors the rule the AI path
-  // uses (enterOpportunityPipeline in core-adapters): same registry read,
-  // same managed write path. It stays inline because the application
-  // facades deliberately do not expose the core adapters (their keys are
-  // pinned by the portable posture tests); with no pipeline installed it
-  // is a no-op and the offer keeps the legacy null pipeline state.
+  // Voce ba47a73b: an offer created from the scheda (POST /api/opportunities)
+  // takes the space's default pipeline at its first stage, shows on the board
+  // at once, and its card can move. Creation and pipeline entry are one
+  // INSERT inside opportunities.create (the registry is read and validated
+  // before the first write): never a create plus a second managed write, so
+  // a failing placement refuses the creation instead of orphaning a
+  // null-pipeline row while the POST reports an error. With no pipeline
+  // installed the offer keeps the legacy null pipeline state.
   router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
     const context = writeContext(app, { actor, identity, organizationId, headers });
     const created = await app.services.opportunities.create(body ?? {}, context);
-    const pipeline = app.pipelines && typeof app.pipelines.forModule === 'function'
-      ? app.pipelines.forModule('opportunity')
-      : null;
-    if (pipeline) {
-      const enteredAt = typeof app.now === 'function' ? app.now() : new Date().toISOString();
-      await app.services.opportunities.applyManaged(
-        created.id,
-        { pipelineKey: pipeline.name, pipelineStage: pipeline.defaultStage, stageEnteredAt: enteredAt },
-        { actor: context.actor },
-      );
-    }
     return respond(201, await app.services.opportunities.get(created.id));
   });
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {

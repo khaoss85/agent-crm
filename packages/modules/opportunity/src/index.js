@@ -17,7 +17,7 @@ export const opportunityModuleDefinition = Object.freeze({
   ],
 });
 
-/** @param {{database: any, audit: any, events: any, companies: any, contacts: any}} dependencies */
+/** @param {{database: any, audit: any, events: any, companies: any, contacts: any, pipelines?: {forModule: (name: string) => any} | null}} dependencies */
 export function createOpportunityModule(dependencies) {
   const service = new OpportunityService(dependencies);
   return { ...opportunityModuleDefinition, service };
