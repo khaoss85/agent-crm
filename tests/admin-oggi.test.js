@@ -1573,3 +1573,42 @@ test('2a075e2d9250 (production 2d2fe23): a redraw mid-load keeps the first ceili
   assert.equal(timers.length, 2, 'the next round has its own ceiling');
   assert.ok(timers[1].cleared, 'a round that painted clears its ceiling');
 });
+
+test('2a075e2d9250: a cold start with the shell redraw mid-load reads Oggi once and paints on the first answers', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  /** @type {Array<string>} */
+  const asked = [];
+  let hold = true;
+  /** @type {Array<() => void>} */
+  const held = [];
+  const client = {
+    ...base,
+    request(path, options) {
+      asked.push(path);
+      if (!hold) return base.request(path, options);
+      return new Promise((resolve, reject) => { held.push(() => base.request(path, options).then(resolve, reject)); });
+    },
+  };
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  // route() on the cold load…
+  const first = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  await settle(() => held.length > 0);
+  const firstWave = asked.length;
+  // …then populateNav re-routes Oggi once the schema and the counts arrive,
+  // with the delivered-screen links.
+  const links = [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }];
+  const second = view.render({ spaceName: 'Spazio', links, now: OGGI_NOW });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(asked.length, firstWave, 'the redraw reads nothing again');
+
+  // The first round's answers land: the home paints from them.
+  hold = false;
+  for (const release of held.splice(0)) release();
+  await Promise.all([first, second]);
+  await settle(() => mount.textContent.includes('Richiama per il preventivo'));
+  const counts = new Map();
+  for (const path of asked) counts.set(path, (counts.get(path) ?? 0) + 1);
+  for (const [path, count] of counts) assert.equal(count, 1, `${path} read once, not ${count}`);
+});

@@ -1637,8 +1637,11 @@ export function createOggiView(deps) {
    * redraw while the reads are still pending (the shell re-routes Oggi once
    * the schema and the Clienti count arrive) keeps the same deadline instead
    * of starting a new 10 s. The round ends when a render paints the home,
-   * when the operator leaves (invalidate) or on Riprova.
-   * @type {{ timer: any, stalled: boolean } | null}
+   * when the operator leaves (invalidate) or on Riprova. The round also
+   * owns its reads: a redraw inside it awaits the same in-flight load
+   * instead of reading everything again (a cold start used to pay Oggi
+   * twice, and the first answer was thrown away).
+   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null } | null}
    */
   let round = null;
   function endRound() {
@@ -1855,7 +1858,7 @@ export function createOggiView(deps) {
       // inside the same round keeps the first deadline (and a note already
       // shown), never a fresh 10 s.
       if (round === null) {
-        const mine = { timer: null, stalled: false };
+        const mine = { timer: null, stalled: false, load: null };
         mine.timer = setTimer(() => {
           if (round !== mine) return;
           mine.stalled = true;
@@ -1865,12 +1868,9 @@ export function createOggiView(deps) {
       }
       if (round.stalled) stalledNote();
       else renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
-      let data;
-      try {
-        data = await loadOggiData(bound, now);
-      } catch {
-        data = null;
-      }
+      const current = round;
+      if (current.load === null) current.load = Promise.resolve().then(() => loadOggiData(bound, now)).catch(() => null);
+      const data = await current.load;
       if (token !== renderToken) return;
       endRound();
       if (data) last = data;
