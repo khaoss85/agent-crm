@@ -100,7 +100,7 @@ export function buildCustomerDataActions(config) {
 
         // One transaction's worth of writes: both members, or neither.
         for (const [member, role] of [[canonical, 'canonical'], [alias, 'alias']]) {
-          await links.createManaged({
+          const patch = {
             sourceKey: `canonical-link:${clusterKey}:${subjectKey(member)}`,
             clusterKey,
             ...subjectFields(member),
@@ -113,7 +113,19 @@ export function buildCustomerDataActions(config) {
             status: 'active',
             withdrawnReason: null,
             withdrawnAt: null,
-          }, { actor });
+          };
+          // Undoing a merge withdraws the rows but keeps their sourceKey
+          // occupied (unlink never deletes). Relinking the same pair with the
+          // same canonical derives the same sourceKey, so a blind create
+          // would collide on the UNIQUE left behind by the withdrawn
+          // generation. Reactivate that history instead, with the new
+          // decision stamped on it.
+          const prior = (await deciding(links, { sourceKey: patch.sourceKey }))[0];
+          if (prior) {
+            await links.applyManaged(prior.id, patch, { actor });
+          } else {
+            await links.createManaged(patch, { actor });
+          }
         }
 
         const updated = await managed(candidate.id, {

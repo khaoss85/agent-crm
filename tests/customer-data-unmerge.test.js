@@ -99,3 +99,45 @@ test('dalla scheda si annulla un\u2019unione sbagliata: le due schede tornano se
 
   void ROWS;
 });
+
+test('unire di nuovo la stessa coppia dopo averla separata: nessun conflitto sulla chiave', async (t) => {
+  const { app } = await scene(t, 'unmerge-relink-a3');
+  const first = await app.services.companies.create({ name: 'Initech Srl', domain: 'initech.example' }, { actor: ACTOR });
+  const second = await app.services.companies.create({ name: 'Initech Srl', domain: 'initech.example' }, { actor: ACTOR });
+  await app.applyCustomerImport({ system: 'crm-export', rows: [{ companyName: 'Initech Srl', domain: 'initech.example' }], actor: ACTOR });
+
+  const candidate = app.modules.get('duplicate-candidate').service.list({ limit: 10 })[0];
+  assert.ok(candidate, 'ambiguity becomes a candidate, never an auto-merge');
+
+  const linkInput = { canonicalResource: 'company', canonicalId: first.id, reason: 'stessa azienda' };
+  const linked = await app.runAction({
+    module: 'duplicate-candidate', action: 'link-canonical-identity', recordId: candidate.id,
+    input: linkInput, actor: ACTOR,
+  });
+  assert.equal(linked.result.candidate.status, 'linked');
+
+  const undone = await app.runAction({
+    module: 'duplicate-candidate', action: 'unlink-canonical-identity', recordId: candidate.id,
+    input: { reason: 'controllo sbagliato, riprovo' }, actor: ACTOR,
+  });
+  assert.equal(undone.result.candidate.status, 'unresolved');
+
+  const relinked = await app.runAction({
+    module: 'duplicate-candidate', action: 'link-canonical-identity', recordId: candidate.id,
+    input: { canonicalResource: 'company', canonicalId: first.id, reason: 'stessa azienda, confermato' },
+    actor: ACTOR,
+  });
+  assert.equal(relinked.result.candidate.status, 'linked', 'the same pair relinks with the same canonical');
+
+  const rows = app.modules.get('canonical-link').service.list({ limit: 10 });
+  assert.equal(rows.length, 2, 'relink reactivates the withdrawn history, it creates no duplicate rows');
+  assert.equal(rows.filter((row) => row.status === 'active').length, 2, 'exactly 2 active rows after relink');
+
+  const rereadFirst = await app.readCustomerProfile({ resource: 'company', id: first.id });
+  const rereadSecond = await app.readCustomerProfile({ resource: 'company', id: second.id });
+  assert.equal(rereadFirst.canonicalIdentity.linked, true, 'both cards read one cluster again');
+  assert.equal(rereadSecond.canonicalIdentity.linked, true);
+  assert.equal(rereadFirst.canonicalIdentity.clusterKey, rereadSecond.canonicalIdentity.clusterKey);
+
+  void ROWS;
+});
