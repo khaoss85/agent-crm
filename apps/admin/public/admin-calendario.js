@@ -2813,13 +2813,15 @@ export function createCalendarioView(deps) {
     // primary booking identity — the named subject when the filter names
     // it, else the first subject — so a draft naming a secondary identity
     // lands on the person's row instead of an empty choice.
-    // DECISION (to be confirmed): booking a person books their primary
-    // identity; the claim carries a single subject, and the primary is
-    // the operator's own named one when the filter names it.
+    // DECISION (backlog:810ed0bf, confirmed): booking a person books
+    // their primary identity; the claim carries a single subject, and
+    // the primary is the operator's own named one when the filter names
+    // it. This narrows the df55cf25 review P2 (exact secondary subject):
+    // the menu offers the person, never a choice it would remap.
     const currentRow = current === '' ? null : groupOf(current);
     const shown = currentRow !== null ? currentRow.id : current;
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.map((row) => ({ value: row.id, label: row.label })))];
+      ...rows.map((row) => ({ value: row.id, label: row.label }))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {

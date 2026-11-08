@@ -2404,10 +2404,15 @@ test('a hidden partially-listed person stays hidden after a reload', async () =>
   assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
 });
 
-// backlog:df55cf25 (review P2 on #549): an explicitly chosen non-primary
-// subject is booked as exactly that subject — never silently remapped to
-// the group primary.
-test('a chosen non-primary subject books exactly that subject', async () => {
+// backlog:810ed0bf (narrowing backlog:df55cf25 review P2 on #549): the
+// manual person menu shows one row per PERSON — Dan's github|1 and google|2
+// merge into a single «Dan» row, so the two subjects cannot stay separate
+// options (owner P1 acceptance, verifier-failed AC-2). Booking a person
+// books the row's primary identity — the named subject when the filter
+// names it, else the first subject — and the claim carries that single
+// subject. Nothing offered is remapped: the menu offers the person, the
+// claim books the person's primary.
+test('one row per person books the row primary identity', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -2422,10 +2427,16 @@ test('a chosen non-primary subject books exactly that subject', async () => {
   }
   const person = mount.querySelector('select[name="teamMemberId"]');
   assert.ok(person, 'the known team paints a choice');
-  const values = person.findAll('option').map((node) => node.getAttribute('value'));
-  assert.ok(values.includes('github|1') && values.includes('google|2'), 'both subjects stay exact options');
-  choosePerson(mount, 'google|2');
-  assert.equal(mount.querySelector('select[name="teamMemberId"]').value, 'google|2', 'the kept choice is not remapped');
+  const options = person.findAll('option');
+  const values = options.map((node) => node.getAttribute('value'));
+  assert.equal(values.length, 2, 'placeholder plus exactly one row per person');
+  assert.ok(values.includes('github|1'), 'the row rides the primary identity');
+  assert.ok(!values.includes('google|2'), 'the secondary identity is not a separate option');
+  const labels = options.map((node) => node.textContent);
+  assert.ok(!labels.some((label) => label.includes('|')), 'no technical id paints in the menu');
+  assert.ok(labels.some((label) => label.includes('Dan')), 'the row reads the profile name');
+  choosePerson(mount, 'github|1');
+  assert.equal(mount.querySelector('select[name="teamMemberId"]').value, 'github|1', 'the kept choice is the person row');
   await pickCustomerByName(mount, 'Ada');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   const form = byName();
@@ -2439,7 +2450,7 @@ test('a chosen non-primary subject books exactly that subject', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
-  assert.equal(payload(proposes[0]).teamMemberId, 'google|2', 'the claim books the chosen identity');
+  assert.equal(payload(proposes[0]).teamMemberId, 'github|1', 'the claim books the person primary');
 });
 
 // backlog:df55cf25 (review P2 on #549): the manual fallback field never
