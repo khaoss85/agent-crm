@@ -1631,8 +1631,38 @@ export function createOggiView(deps) {
    * home; the token below covers overlapping home reads.
    */
   let renderToken = 0;
+  /**
+   * Backlog 2a075e2d9250 (production 2d2fe23): one loading round per
+   * opening of Oggi. The ceiling starts at the round's FIRST render; a
+   * redraw while the reads are still pending (the shell re-routes Oggi once
+   * the schema and the Clienti count arrive) keeps the same deadline instead
+   * of starting a new 10 s. The round ends when a render paints the home,
+   * when the operator leaves (invalidate) or on Riprova. The round also
+   * owns its reads: a redraw inside it awaits the same in-flight load
+   * instead of reading everything again (a cold start used to pay Oggi
+   * twice, and the first answer was thrown away).
+   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null } | null}
+   */
+  let round = null;
+  function endRound() {
+    if (round !== null) clearTimer(round.timer);
+    round = null;
+  }
+  function stalledNote() {
+    const { spaceName, userName, links, now } = lastMeta;
+    renderOggi({
+      doc, mount, spaceName, userName, links, navigate, now,
+      stalled: {
+        onRetry: () => {
+          endRound();
+          void view.render({ spaceName, userName, links, now: new Date() });
+        },
+      },
+    });
+  }
   function invalidate() {
     renderToken += 1;
+    endRound();
   }
   /** Session-local triage: decided suggestions only, records stay the truth. */
   let triage = {};
@@ -1822,26 +1852,27 @@ export function createOggiView(deps) {
     async render({ spaceName = '', userName = '', links = [], now = new Date() } = {}) {
       const token = ++renderToken;
       lastMeta = { spaceName, userName, links, now };
-      renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
       // Backlog 2a075e2d9250: past the ceiling the loading line gives way to
       // a note with Riprova. The reads keep going: if they land while this
-      // render still owns the screen, the home replaces the note.
-      const ceiling = setTimer(() => {
-        if (token !== renderToken) return;
-        renderOggi({
-          doc, mount, spaceName, userName, links, navigate, now,
-          stalled: { onRetry: () => { void view.render({ spaceName, userName, links, now: new Date() }); } },
-        });
-      }, ceilingMs);
-      let data;
-      try {
-        data = await loadOggiData(bound, now);
-      } catch {
-        data = null;
-      } finally {
-        clearTimer(ceiling);
+      // render still owns the screen, the home replaces the note. A redraw
+      // inside the same round keeps the first deadline (and a note already
+      // shown), never a fresh 10 s.
+      if (round === null) {
+        const mine = { timer: null, stalled: false, load: null };
+        mine.timer = setTimer(() => {
+          if (round !== mine) return;
+          mine.stalled = true;
+          stalledNote();
+        }, ceilingMs);
+        round = mine;
       }
+      if (round.stalled) stalledNote();
+      else renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
+      const current = round;
+      if (current.load === null) current.load = Promise.resolve().then(() => loadOggiData(bound, now)).catch(() => null);
+      const data = await current.load;
       if (token !== renderToken) return;
+      endRound();
       if (data) last = data;
       else if (!last) {
         last = {
