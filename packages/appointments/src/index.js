@@ -208,7 +208,10 @@ export function createAppointmentsPackage(options = {}) {
     // propose/confirmBooking and the phrase-to-draft parse, attached
     // generically as `app.readAppointmentTeamWeek` and siblings. Additive:
     // capabilities, records and the booking contract are untouched.
-    version: 2,
+    // 3: owner holds with no guest (backlog:af190faf): the optional
+    // busyBlocks input on team-week, suggest, propose and confirm, shown as
+    // Occupato and never offered as free. Additive: old callers unchanged.
+    version: 3,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '

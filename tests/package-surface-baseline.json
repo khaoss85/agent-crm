@@ -19,15 +19,15 @@
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "5fcabe52dd10f2b2eef51958955ec7d0ca981975c2450dcb7fce9c39765e0072"
+      "version": 3,
+      "fingerprint": "62bd51cf7e704ae7c2369bb71c532ff58294d54940bd8e1149183f500063b665"
     },
     {
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "8336fba211cdcbeb2ca653c723ebede2dc8c9d78491803d627749bb885021512"
+      "version": 3,
+      "fingerprint": "4492ccccc2bbb1a76381da680f556accc6cdda6d2f30aef00c4c860beb58d7e6"
     },
     {
       "name": "calendar-sync",
