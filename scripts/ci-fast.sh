@@ -97,6 +97,10 @@ run_lane() {
 # The touched tests can rebuild site/dist (tests/site-pages.test.js runs
 # scripts/site-build.js) and gtm:check rebuilds and reads it: one after the
 # other, never together, in one lane beside the others (Muse P2 on #444).
+# This lane is the longest by design: the touched tests take up to 450 s
+# (STEP_BUDGET_SEC in scripts/ci-touched-tests.js, raised from 300 s on
+# 2026-11-08) and gtm:check took 7-15 s on that day's green runs, so the
+# lane ends ~75 s before the 540 s total; the other lanes ended by 196 s.
 touched_then_gtm() {
   run_phase_now 'tests of the touched files' node scripts/ci-touched-tests.js --base FETCH_HEAD || return
   run_phase_now 'public claims and packaging agree' npm run gtm:check
