@@ -1,7 +1,7 @@
 // @ts-check
 
-import { randomBytes } from 'node:crypto';
-import { AppError, ValidationError } from '../../core/index.js';
+import { createHash, randomBytes } from 'node:crypto';
+import { AppError, ValidationError, nowIso } from '../../core/index.js';
 
 /**
  * Public quote links (A5 offerta via link, accettazione e prezzo congelato).
@@ -9,12 +9,13 @@ import { AppError, ValidationError } from '../../core/index.js';
  * A `quote-share` row binds ONE approved quote version to an unguessable
  * token. Whoever holds the token reads the frozen version and accepts it —
  * no login, because the token itself is the credential (like every signed
- * link). The accepted price is read from the immutable `quote-version`
- * rows only, so a later catalog change can never move it. Acceptance is
- * idempotent: the first accept stamps the row once, every later accept
- * answers «già accettata» without writing. An expired or unknown token
- * refuses with a short Italian message and never leaks names, prices or
- * rows.
+ * link). The row stores only the token's SHA-256, so the bearer never rests
+ * in the database. The accepted price is read from the immutable
+ * `quote-version` rows only, so a later catalog change can never move it.
+ * Acceptance is idempotent: the first accept wins one conditional claim,
+ * every later accept answers «già accettata» without writing — even after
+ * the link itself expired. An expired or unknown token refuses with a short
+ * Italian message and never leaks names, prices or rows.
  *
  * The quote record itself stays `approved`: customer acceptance is tracked
  * on the share row, while discount approval keeps its own lifecycle.
@@ -60,6 +61,16 @@ function requireShareService(modules, cfg) {
 /** An unguessable 64-hex-char public token. */
 export function generateShareToken() {
   return randomBytes(32).toString('hex');
+}
+
+/**
+ * What the database holds of a bearer: the SHA-256 hex of the token, never
+ * the token. The row, the audit trail and every summary stay useless to a
+ * reader without the link itself (the calendar-sync channel-token precedent:
+ * rows hold hashes, the raw secret travels once at issue).
+ */
+export function hashShareToken(token) {
+  return createHash('sha256').update(String(token), 'utf8').digest('hex');
 }
 
 /** Draft-revision optimistic concurrency guard (mirrors the quote actions). */
@@ -131,8 +142,11 @@ async function frozenOffer(modules, cfg, share) {
 }
 
 function shareSummary(share) {
+  // No token here on purpose: the summary travels in traces, audit and
+  // action results, and the hash the row holds is not the bearer. The raw
+  // token leaves the server exactly once, as the top-level `token` of a
+  // fresh share-link result.
   return {
-    token: share.token,
     quoteId: share.quoteId,
     quoteVersionId: share.quoteVersionId,
     versionNumber: share.versionNumber,
@@ -145,7 +159,84 @@ function shareSummary(share) {
 
 async function findShare(shares, token) {
   if (typeof token !== 'string' || token === '') return null;
-  return (await shares.listWhere({ token }))[0] ?? null;
+  return (await shares.listWhere({ tokenHash: hashShareToken(token) }))[0] ?? null;
+}
+
+/**
+ * One source of truth for the first accept: the committing write is a
+ * single conditional UPDATE gated on `status = 'active'` where it executes
+ * — the product-import row-decision idiom (`affectedRows` verdict, audit
+ * mirror, managed re-read, one event). Zero rows means a concurrent accept
+ * won or the row moved meanwhile: the caller re-reads and answers from the
+ * row it finds. Never accept with an unconditional write.
+ *
+ * @param {any} shares the quote-share managed service
+ */
+async function claimAcceptedShare(shares, share, at, actor) {
+  const manifest = shares?.manifest;
+  const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
+  const columnOf = (name) => fields?.find((field) => field?.name === name)?.column ?? null;
+  const table = manifest?.table;
+  const columns = {
+    status: columnOf('status'),
+    acceptedAt: columnOf('acceptedAt'),
+    acceptCount: columnOf('acceptCount'),
+  };
+  const syncApi = shares?.database?.storage?.sync;
+  const syncMutation = syncApi
+    && typeof syncApi.execute === 'function'
+    && typeof syncApi.savepoint === 'function'
+    && typeof shares.mutationSync === 'function';
+  const asyncMutation = typeof shares.mutationAsync === 'function';
+  if (!manifest || typeof table !== 'string' || typeof manifest.name !== 'string'
+    || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
+    || typeof shares.get !== 'function'
+    || typeof shares.audit?.record !== 'function'
+    || typeof shares.events?.emit !== 'function'
+    || (!syncMutation && !asyncMutation)) {
+    throw new AppError('quote-share storage cannot prove an atomic accept claim', {
+      code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
+    });
+  }
+  const statement = {
+    kind: 'update',
+    table,
+    values: [
+      { column: columns.status, value: 'accepted' },
+      { column: columns.acceptedAt, value: at },
+      { column: columns.acceptCount, value: 1 },
+      { column: 'updated_at', value: nowIso() },
+    ],
+    where: [
+      { column: 'id', op: 'eq', value: share.id },
+      { column: columns.status, op: 'eq', value: 'active' },
+    ],
+  };
+  const auditEvent = {
+    actor, entityType: manifest.name, entityId: share.id,
+    data: { status: 'accepted', acceptedAt: at, acceptCount: 1 },
+    action: `${manifest.name}.updated`,
+  };
+  let won = false;
+  if (syncMutation) {
+    won = shares.mutationSync(() => {
+      const claimed = syncApi.execute(statement);
+      if (Number(claimed?.affectedRows ?? 0) !== 1) return false;
+      shares.audit.record(auditEvent, syncApi);
+      return true;
+    });
+  } else {
+    won = await shares.mutationAsync(async (tx) => {
+      const claimed = await tx.execute(statement);
+      if (Number(claimed?.affectedRows ?? 0) !== 1) return false;
+      await shares.audit.record(auditEvent, tx);
+      return true;
+    });
+  }
+  if (!won) return null;
+  const updated = await shares.get(share.id);
+  await shares.events.emit(`${manifest.name}.updated`, updated);
+  return updated;
 }
 
 function invalidLink() {
@@ -187,8 +278,10 @@ export function buildShareLinkAction(config) {
       const live = (await shares.listWhere({ quoteId: quote.id, quoteVersionId: quote.currentVersionId, status: 'active' }))
         .filter((row) => typeof row.expiresAt === 'string' && row.expiresAt > at)[0] ?? null;
       if (live) {
+        // The bearer is not recoverable from the hash, so a reused link
+        // returns no token: resend the original link the first share made.
         step('quote.link-reused', { quoteId: quote.id, versionNumber: live.versionNumber });
-        return { alreadyExisted: true, share: shareSummary(live) };
+        return { alreadyExisted: true, share: shareSummary(live), token: null };
       }
       const token = generateShareToken();
       const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
@@ -197,8 +290,7 @@ export function buildShareLinkAction(config) {
           quoteId: quote.id,
           quoteVersionId: quote.currentVersionId,
           versionNumber: quote.currentVersionNumber,
-          token,
-          sourceKey: `qs:${token}`,
+          tokenHash: hashShareToken(token),
           status: 'active',
           expiresAt,
           acceptCount: 0,
@@ -207,7 +299,9 @@ export function buildShareLinkAction(config) {
         { actor },
       );
       step('quote.link-shared', { quoteId: quote.id, versionNumber: share.versionNumber });
-      return { alreadyExisted: false, share: shareSummary(share) };
+      // The only result that ever carries the raw bearer: the operator
+      // copies it into the message once, then it lives only in the link.
+      return { alreadyExisted: false, share: shareSummary(share), token };
     },
   };
 }
@@ -230,19 +324,45 @@ export function buildAcceptLinkAction(config) {
     /** @param {any} ctx */
     async execute({ record: quote, input, actor, modules, now, step }) {
       const shares = requireShareService(modules, cfg);
+      // One connection runs one outer record-action transaction at a time
+      // (NESTED_TRANSACTION), so overlapping accepts on the same connection
+      // serialize in the framework before they reach this claim; overlapping
+      // accepts on different connections meet in the conditional claim
+      // below, which elects exactly one winner.
       const share = await findShare(shares, input.token);
       if (!share || share.quoteId !== quote.id) throw invalidLink();
+      // An accepted link stays accepted: the acceptance proof survives the
+      // link's own expiry, so a reopened link never reports «scaduta».
+      if (share.status === 'accepted') {
+        return {
+          alreadyAccepted: true,
+          acceptedAt: share.acceptedAt ?? null,
+          share: shareSummary(share),
+          offer: await frozenOffer(modules, cfg, share),
+        };
+      }
       const at = now();
       if (typeof share.expiresAt !== 'string' || share.expiresAt <= at) throw expiredLink();
       const offer = await frozenOffer(modules, cfg, share);
-      if (share.status === 'accepted') {
-        return { alreadyAccepted: true, acceptedAt: share.acceptedAt ?? null, share: shareSummary(share), offer };
+      const updated = await claimAcceptedShare(shares, share, at, actor);
+      if (!updated) {
+        // Another accept won the conditional claim between our read and our
+        // write (another connection): answer from the row it left, never
+        // from our stale read.
+        const current = await shares.get(share.id);
+        if (current.status === 'accepted') {
+          return {
+            alreadyAccepted: true,
+            acceptedAt: current.acceptedAt ?? null,
+            share: shareSummary(current),
+            offer: await frozenOffer(modules, cfg, current),
+          };
+        }
+        if (typeof current.expiresAt !== 'string' || current.expiresAt <= now()) throw expiredLink();
+        throw new AppError('quote link was decided concurrently: reopen it', {
+          code: 'QUOTE_LINK_CONTEST', status: 409,
+        });
       }
-      const updated = await shares.applyManaged(
-        share.id,
-        { status: 'accepted', acceptedAt: at, acceptCount: 1 },
-        { actor },
-      );
       step('quote.link-accepted', { quoteId: quote.id, versionNumber: share.versionNumber });
       return { accepted: true, acceptedAt: at, share: shareSummary(updated), offer };
     },
@@ -269,11 +389,13 @@ export function buildLinkInfoAction(config) {
       const share = await findShare(shares, input.token);
       if (!share || share.quoteId !== quote.id) throw invalidLink();
       const at = now();
-      if (typeof share.expiresAt !== 'string' || share.expiresAt <= at) {
-        return { status: 'expired', message: 'offerta scaduta', expiresAt: share.expiresAt ?? null };
-      }
+      // Accepted first here too: an accepted-then-expired link proves the
+      // acceptance, it never reports «offerta scaduta».
       if (share.status === 'accepted') {
         return { status: 'accepted', message: 'già accettata', acceptedAt: share.acceptedAt ?? null, offer: await frozenOffer(modules, cfg, share) };
+      }
+      if (typeof share.expiresAt !== 'string' || share.expiresAt <= at) {
+        return { status: 'expired', message: 'offerta scaduta', expiresAt: share.expiresAt ?? null };
       }
       return { status: 'active', expiresAt: share.expiresAt, offer: await frozenOffer(modules, cfg, share) };
     },

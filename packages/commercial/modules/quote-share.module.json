@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "name": "quote-share",
-  "description": "One public-link share per approved quote version (A5 offerta via link). The token is the only credential: whoever holds it reads the frozen version and accepts it. The accepted price is the immutable quote version, never the live catalog.",
+  "description": "One public-link share per approved quote version (A5 offerta via link). The token is the only credential: whoever holds it reads the frozen version and accepts it. The row stores only the token's SHA-256 hex (tokenHash): the raw bearer is returned once at creation and never rests in the database, the audit trail or a summary. The accepted price is the immutable quote version, never the live catalog.",
   "fields": [
     {
       "name": "quoteId",
@@ -20,13 +20,7 @@
       "writable": "managed"
     },
     {
-      "name": "token",
-      "type": "string",
-      "unique": true,
-      "writable": "managed"
-    },
-    {
-      "name": "sourceKey",
+      "name": "tokenHash",
       "type": "string",
       "unique": true,
       "writable": "managed"

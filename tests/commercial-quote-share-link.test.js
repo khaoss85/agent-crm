@@ -14,6 +14,7 @@
 
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -133,20 +134,25 @@ async function refusal(promise) {
   }
 }
 
+const hashOf = (token) => createHash('sha256').update(String(token), 'utf8').digest('hex');
+
 test('A5-1: accepting twice from the link stays one acceptance', async (t) => {
   const app = await bootApp(t);
   const { quote } = await approvedQuote(app, { sku: 'LINK-1', cents: 10000 });
   const shared = await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
   });
-  const token = shared.result.share.token;
+  // The raw bearer travels exactly once, top-level: never inside the share.
+  const token = shared.result.token;
   assert.match(token, /^[0-9a-f]{64}$/, 'the token is unguessable');
+  assert.ok(!('token' in shared.result.share), 'the share summary carries no bearer');
 
   const first = await app.runAction({
     module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
   });
   assert.equal(first.result.accepted, true, 'the first accept lands without a login');
   assert.equal(first.result.offer.oneTimeNetCents, 10000, 'the accepted price is the sent one');
+  assert.ok(!('token' in first.result.share), 'the accept result carries no bearer');
   const acceptedAt = first.result.acceptedAt;
 
   const second = await app.runAction({
@@ -156,9 +162,16 @@ test('A5-1: accepting twice from the link stays one acceptance', async (t) => {
   assert.equal(second.result.acceptedAt, acceptedAt, 'the acceptance instant never moves');
   assert.equal(second.result.offer.oneTimeNetCents, 10000, 'the price still answers, unchanged');
 
-  const share = app.modules.get('quote-share').service.listWhere({ token })[0];
-  assert.equal(share.status, 'accepted');
-  assert.equal(share.acceptCount, 1, 'exactly one acceptance is recorded');
+  const shares = app.modules.get('quote-share').service;
+  const rows = shares.listWhere({ tokenHash: hashOf(token) });
+  assert.equal(rows.length, 1, 'the row is found by its hash');
+  assert.equal(rows[0].status, 'accepted');
+  assert.equal(rows[0].acceptCount, 1, 'exactly one acceptance is recorded');
+  assert.ok(!('token' in rows[0]), 'the stored row holds no raw bearer');
+  assert.equal(rows[0].tokenHash, hashOf(token), 'the stored hash matches the bearer');
+
+  // The bearer is gone from the row: the plaintext lookup finds nothing.
+  assert.equal(shares.listWhere({ tokenHash: token }).length, 0);
 
   const info = await app.runAction({
     module: 'quote', action: 'link-info', recordId: quote.id, input: { token }, actor: PUBLIC,
@@ -167,12 +180,46 @@ test('A5-1: accepting twice from the link stays one acceptance', async (t) => {
   assert.equal(info.result.message, 'già accettata');
 });
 
+test('A5-1b: the acceptance proof survives the link expiry', async (t) => {
+  const app = await bootApp(t);
+  const { quote } = await approvedQuote(app, { sku: 'LINK-1B', cents: 10000 });
+  const { token } = (await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  })).result;
+  const first = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(first.result.accepted, true);
+
+  // Time passes: the link expires AFTER the acceptance.
+  const shares = app.modules.get('quote-share').service;
+  const shareId = shares.listWhere({ tokenHash: hashOf(token) })[0].id;
+  await shares.applyManaged(shareId, { expiresAt: '2000-01-01T00:00:00.000Z' }, { actor: ACTOR });
+
+  const again = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(again.result.alreadyAccepted, true, 'an accepted-then-expired link still accepts idempotently');
+  assert.equal(again.result.acceptedAt, first.result.acceptedAt, 'the acceptance instant never moves');
+  assert.equal(again.result.offer.oneTimeNetCents, 10000, 'the frozen price still answers');
+
+  const info = await app.runAction({
+    module: 'quote', action: 'link-info', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(info.result.status, 'accepted');
+  assert.equal(info.result.message, 'già accettata');
+  assert.equal(info.result.offer.oneTimeNetCents, 10000, 'link-info still proves the frozen price');
+
+  const row = shares.listWhere({ tokenHash: hashOf(token) })[0];
+  assert.equal(row.acceptCount, 1, 'the expired reopen wrote nothing');
+});
+
 test('A5-2: the accepted price is the frozen send price after a catalog reprice', async (t) => {
   const app = await bootApp(t);
   const { quote, product, offerId } = await approvedQuote(app, { sku: 'LINK-2', cents: 10000 });
   const { token } = (await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
-  })).result.share;
+  })).result;
 
   // The catalog moves AFTER the send: revision 2 doubles the price.
   await app.setManualPrices({
@@ -199,10 +246,10 @@ test('A5-3: an expired link shows «offerta scaduta» and never accepts', async 
   const shared = await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: { expiresInDays: 1 }, actor: ACTOR,
   });
-  const { token } = shared.result.share;
+  const { token } = shared.result;
   // Time passes: the link expires without any other change.
   const shares = app.modules.get('quote-share').service;
-  const shareId = shares.listWhere({ token })[0].id;
+  const shareId = shares.listWhere({ tokenHash: hashOf(token) })[0].id;
   await shares.applyManaged(shareId, { expiresAt: '2000-01-01T00:00:00.000Z' }, { actor: ACTOR });
 
   const denied = await refusal(app.runAction({
@@ -228,9 +275,24 @@ test('A5-3: an expired link shows «offerta scaduta» and never accepts', async 
   assert.equal(unknown.code, 'QUOTE_LINK_INVALID');
   assert.equal(unknown.message, 'link non valido o scaduto');
 
-  const row = shares.listWhere({ token })[0];
+  const row = shares.listWhere({ tokenHash: hashOf(token) })[0];
   assert.equal(row.status, 'active', 'the refused accept wrote nothing');
   assert.equal(row.acceptCount, 0);
+});
+
+test('re-sharing a live link returns no bearer', async (t) => {
+  const app = await bootApp(t);
+  const { quote } = await approvedQuote(app, { sku: 'LINK-R', cents: 10000 });
+  const first = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.match(first.result.token, /^[0-9a-f]{64}$/);
+  const second = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(second.result.alreadyExisted, true, 'the live link is reused, not minted twice');
+  assert.equal(second.result.token, null, 'the hash cannot give the bearer back: resend the original link');
+  assert.deepEqual(second.result.share, first.result.share);
 });
 
 test('sharing stays a human act on an approved quote only', async (t) => {
