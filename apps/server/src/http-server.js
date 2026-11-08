@@ -1575,9 +1575,30 @@ export function buildRouter(app) {
       }),
     };
   });
+  // Voce ba47a73b: an offer created from the scheda enters the space's
+  // default pipeline at its first stage, so it shows on the Pipeline board
+  // at once and can be moved. The placement mirrors the rule the AI path
+  // uses (enterOpportunityPipeline in core-adapters): same registry read,
+  // same managed write path. It stays inline because the application
+  // facades deliberately do not expose the core adapters (their keys are
+  // pinned by the portable posture tests); with no pipeline installed it
+  // is a no-op and the offer keeps the legacy null pipeline state.
   router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.opportunities.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+    const context = writeContext(app, { actor, identity, organizationId, headers });
+    const created = await app.services.opportunities.create(body ?? {}, context);
+    const pipeline = app.pipelines && typeof app.pipelines.forModule === 'function'
+      ? app.pipelines.forModule('opportunity')
+      : null;
+    if (pipeline) {
+      const enteredAt = typeof app.now === 'function' ? app.now() : new Date().toISOString();
+      await app.services.opportunities.applyManaged(
+        created.id,
+        { pipelineKey: pipeline.name, pipelineStage: pipeline.defaultStage, stageEnteredAt: enteredAt },
+        { actor: context.actor },
+      );
+    }
+    return respond(201, await app.services.opportunities.get(created.id));
   });
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
