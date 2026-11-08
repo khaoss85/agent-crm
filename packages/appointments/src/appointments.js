@@ -418,16 +418,24 @@ export function validateAppointmentRequest(request) {
  * Owner busy blocks (backlog:af190faf): a commitment with no guest holds its
  * member like a booking, without becoming a booking — no customer, no
  * appointment row. Shape `{ teamMemberId, startsAt, endsAt, title? }`, the
- * same shape the Google sync writes. A block without a readable teamMemberId
- * holds every named member: an unattributed commitment closes rather than
- * frees. Absent or null means no blocks, and every caller keeps its old
- * behaviour; a non-array value is a caller bug and is refused.
+ * same shape the Google sync writes. Absent or null means no blocks, and
+ * every caller keeps its old behaviour; a non-array value is a caller bug
+ * and is refused.
+ *
+ * Every block is proven up front, on every path (week read, suggestion,
+ * proposal, booking): a block must name its member with a non-empty string,
+ * and its slot must parse with `endsAt` after `startsAt`. An unattributed
+ * block is refused rather than widened to every member — a malformed entry
+ * must never wedge the whole team, and a read that silently drops a corrupt
+ * block while the booking path 500s over it would let the grid and the
+ * booking disagree. One rule, one code (`ValidationError`, 400, field
+ * `busyBlocks`), everywhere: a caller bug surfaces as a 400 the caller
+ * fixes, never as storage corruption and never as a free slot.
  *
  * @param {any} source the filter or request carrying the optional `busyBlocks`
- * @param {string} teamMemberId the member the caller checks
- * @returns {Array<object>} the blocks holding that member
+ * @returns {Array<object>} the proven blocks, in caller order
  */
-function busyBlocksFor(source, teamMemberId) {
+function validateBusyBlocks(source) {
   const value = source && typeof source === 'object' ? source.busyBlocks : undefined;
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -435,8 +443,40 @@ function busyBlocksFor(source, teamMemberId) {
       field: 'busyBlocks',
     });
   }
-  return value.filter((block) => block && typeof block === 'object'
-    && (typeof block.teamMemberId !== 'string' || block.teamMemberId === '' || block.teamMemberId === teamMemberId));
+  value.forEach((block, index) => {
+    const where = `busyBlocks[${index}]`;
+    if (!block || typeof block !== 'object' || Array.isArray(block)) {
+      throw new ValidationError(`${where} must be an object { teamMemberId, startsAt, endsAt }: a hold nobody described holds nobody`, {
+        field: 'busyBlocks',
+      });
+    }
+    if (typeof block.teamMemberId !== 'string' || block.teamMemberId.trim() === '') {
+      throw new ValidationError(`${where}.teamMemberId must be a non-empty member identity: an unattributed hold is refused, never widened to the whole team`, {
+        field: 'busyBlocks',
+      });
+    }
+    const startMs = Date.parse(block.startsAt);
+    const endMs = Date.parse(block.endsAt);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw new ValidationError(`${where} must name a provable slot (startsAt before endsAt): an unprovable hold fails closed, never reads as free`, {
+        field: 'busyBlocks',
+      });
+    }
+  });
+  return value;
+}
+
+/**
+ * The proven owner blocks holding one member: the strict validation above,
+ * then an exact member match. No wildcard — a block holds exactly the member
+ * it names, so one malformed or unattributed entry can never wedge the team.
+ *
+ * @param {any} source the filter or request carrying the optional `busyBlocks`
+ * @param {string} teamMemberId the member the caller checks
+ * @returns {Array<object>} the blocks holding that member
+ */
+function busyBlocksFor(source, teamMemberId) {
+  return validateBusyBlocks(source).filter((block) => block.teamMemberId === teamMemberId);
 }
 
 /**
@@ -480,9 +520,12 @@ export function findOverlap(candidate, held) {
 
 /**
  * The 409 a held slot answers (backlog:af190faf): a booking conflict names
- * the held appointment, an owner-block conflict names the commitment — the
- * caller proposes another slot either way. Same code, same status, same
- * details shape: only the words tell what holds the member.
+ * the held appointment; an owner-block conflict stays generic — the block
+ * title is the owner's private commitment (medical, personal) and must never
+ * leak to a booker probing slots, so the refusal names only the held range.
+ * The title stays in the authorized backoffice week read (`busy[].title`),
+ * where the operator already sees the member's commitments. Same code, same
+ * status, same details shape either way.
  *
  * @param {string} teamMemberId
  * @param {any} conflict the row or block `findOverlap` returned
@@ -490,13 +533,11 @@ export function findOverlap(candidate, held) {
  */
 function overlapRefusal(teamMemberId, conflict) {
   if (conflict && conflict.status === undefined) {
-    const title = typeof conflict.title === 'string' && conflict.title.trim() !== ''
-      ? conflict.title.trim().slice(0, 120) : 'Occupato';
     return new AppError(
       `The team member "${teamMemberId}" holds an owner commitment overlapping this slot `
-        + `(${conflict.startsAt} to ${conflict.endsAt}, "${title}"): one member holds one slot at a time. `
+        + `(${conflict.startsAt} to ${conflict.endsAt}): one member holds one slot at a time. `
         + 'Book another slot, or book another member.',
-      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: null, status: null } },
     );
   }
   return new AppError(
@@ -1260,13 +1301,11 @@ export async function rescheduleAppointment(context, request) {
     );
     if (conflict) {
       if (conflict.status === undefined) {
-        const title = typeof conflict.title === 'string' && conflict.title.trim() !== ''
-          ? conflict.title.trim().slice(0, 120) : 'Occupato';
         throw new AppError(
-          `Il membro "${current.teamMemberId}" ha un impegno ("${title}") in questa fascia oraria `
+          `Il membro "${current.teamMemberId}" ha un impegno del titolare in questa fascia oraria `
           + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
           + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
-          { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+          { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: null, status: null } },
         );
       }
       throw new AppError(
@@ -1394,9 +1433,11 @@ const MAX_TEAM_WEEK_MS = 31 * 24 * 60 * 60 * 1000;
  */
 /**
  * One frozen owner-block row for the BO-F3-01 team view (backlog:af190faf):
- * `{ startsAt, endsAt, title }`, null when the slot cannot be proven — the
- * week read leaves it out, while the booking paths refuse over it. The title
- * defaults to «Occupato»: a commitment with no guest has no customer to name.
+ * `{ startsAt, endsAt, title }`, null for a misshapen entry the strict
+ * validation above already refused — a second net, never the first. The
+ * title defaults to «Occupato»: a commitment with no guest has no customer
+ * to name. Titles live only here, in the authorized backoffice read: booking
+ * refusals stay generic so a booker can never probe private commitments.
  *
  * @param {any} block
  * @returns {object|null}
@@ -1498,9 +1539,9 @@ export async function readTeamWeek({ appointments }, filter) {
     ));
     // Owner commitments with no guest (backlog:af190faf): the week shows
     // them as «Occupato» beside the bookings, so the grid paints what the
-    // booking path refuses. A block whose slot cannot be proven is left out
-    // of the read — the booking and suggestion paths still fail closed on
-    // it, so it can hide from the grid but never become a booking.
+    // booking path refuses. The blocks are proven up front like on every
+    // other path — a malformed block fails the read closed (400), exactly
+    // like the booking and suggestion paths, so grid and booking agree.
     const busy = busyBlocksFor(value, teamMemberId)
       .map((block) => projectBusyWeekRow(block))
       .filter((projected) => projected !== null)

@@ -105,7 +105,6 @@ test('an owner block with no guest reads as Occupato beside the bookings (backlo
     busyBlocks: [
       { teamMemberId: 'coach-guido', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'test accordo' },
       { teamMemberId: 'coach-maria', startsAt: '2026-10-21T09:00:00.000Z', endsAt: '2026-10-21T10:00:00.000Z' },
-      { teamMemberId: 'coach-guido', startsAt: 'not-a-date', endsAt: '2026-10-20T16:00:00.000Z' },
       { teamMemberId: 'coach-unknown', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' },
     ],
   });
@@ -116,6 +115,24 @@ test('an owner block with no guest reads as Occupato beside the bookings (backlo
     startsAt: '2026-10-21T09:00:00.000Z', endsAt: '2026-10-21T10:00:00.000Z', title: 'Occupato',
   }]);
   assert.deepEqual(week.members[0].appointments.map((booking) => booking.id), ['a-1']);
+});
+
+test('a malformed owner block fails the week read closed like every other path (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  const bad = [
+    [null],
+    [{ startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: 'not-a-date', endsAt: '2026-10-20T16:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T16:00:00.000Z', endsAt: '2026-10-20T15:00:00.000Z' }],
+    [{ teamMemberId: '', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' }],
+  ];
+  for (const busyBlocks of bad) {
+    await assert.rejects(
+      weekOf(storage, { busyBlocks }),
+      (error) => error instanceof ValidationError && error.details?.field === 'busyBlocks',
+      `week rejects ${JSON.stringify(busyBlocks)}`,
+    );
+  }
 });
 
 test('duplicate member ids collapse to one group', async () => {

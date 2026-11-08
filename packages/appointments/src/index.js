@@ -258,6 +258,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
+          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest [{ teamMemberId, startsAt, endsAt, title? }] (backlog:af190faf): deployment-injected from its calendar-sync store; strictly validated (400), shown as Occupato.' },
         ],
         create(runtime) {
           return (input) => flowFor(runtime).schedule.teamWeekFor(input);
@@ -276,6 +277,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
           { name: 'slotMinutes', type: 'integer', required: false, hint: 'Step granularity, one of 15 30 45 60 90 120 (default 30).' },
           { name: 'nowIso', type: 'string', required: false, hint: 'Reference instant, ISO: steps already begun are cut (backlog:d1e4d90e).' },
+          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest [{ teamMemberId, startsAt, endsAt, title? }] (backlog:af190faf): deployment-injected from its calendar-sync store; strictly validated (400), held steps never offered.' },
         ],
         create(runtime) {
           // Read-only: the suggest path never touches the actor, so the book
@@ -292,6 +294,7 @@ export function createAppointmentsPackage(options = {}) {
           'Plan one booking without writing (BO-F3-02): a confirm-required draft when the space switch is on, a space-ai-proposal when it is off.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The space the booking is gated on.' },
+          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest (backlog:af190faf), deployment-injected from its calendar-sync store; strictly validated (400), held slots refuse 409 generic.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).proposeBooking(input);
@@ -307,6 +310,7 @@ export function createAppointmentsPackage(options = {}) {
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The space the booking is gated on.' },
           { name: 'confirmed', type: 'json', required: true, hint: 'Must be true: nothing is created without it.' },
+          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest (backlog:af190faf), deployment-injected from its calendar-sync store; strictly validated (400), held slots refuse 409 generic.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).confirmBooking(input);

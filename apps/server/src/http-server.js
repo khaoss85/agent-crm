@@ -465,6 +465,7 @@ export function buildRouter(app) {
       teamMemberIds: parseMemberList(query.teamMemberIds),
       from: query.from,
       to: query.to,
+      ...parseBusyBlocksInput(query),
     });
   });
   router.add('GET', '/api/appointments/suggest-slots', async ({ query, identity, organizationId }) => {
@@ -483,6 +484,7 @@ export function buildRouter(app) {
       // A proposal must be bookable (backlog:d1e4d90e): the server names its
       // own now, so steps already begun are cut, never offered as free.
       nowIso: new Date().toISOString(),
+      ...parseBusyBlocksInput(query),
     });
   });
   router.add('POST', '/api/appointments/propose', async ({ body, actor, identity, organizationId }) => {
@@ -2151,6 +2153,36 @@ function parseMemberList(value) {
   return [...new Set(
     value.split(',').map((entry) => entry.trim()).filter((entry) => entry !== ''),
   )];
+}
+
+/**
+ * Parse the owner busy blocks for the calendar reads (backlog:af190faf). The
+ * deployment injects them server-side from its calendar-sync store (agent-crm
+ * keeps no sync store: the sync is the consuming project's adapter work, see
+ * the appointments package docs) as a URL-encoded JSON array on `busyBlocks`.
+ * Absent means no blocks and every caller keeps its old behaviour; a present
+ * but unparsable or non-array value fails closed 400 here, while the shape
+ * of each block is proven by the package (400, field `busyBlocks`).
+ * @param {{ busyBlocks?: unknown }} query
+ * @returns {{ busyBlocks?: Array<unknown> }} the spreadable input (`{}` when absent)
+ */
+function parseBusyBlocksInput(query) {
+  const value = query?.busyBlocks;
+  if (value === undefined || value === null || value === '') return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(String(value));
+  } catch {
+    throw new ValidationError('busyBlocks must be a JSON array of owner blocks [{ teamMemberId, startsAt, endsAt, title? }]', {
+      field: 'busyBlocks',
+    });
+  }
+  if (!Array.isArray(parsed)) {
+    throw new ValidationError('busyBlocks must be a JSON array of owner blocks [{ teamMemberId, startsAt, endsAt, title? }]', {
+      field: 'busyBlocks',
+    });
+  }
+  return { busyBlocks: parsed };
 }
 
 /**

@@ -326,11 +326,48 @@ test('an owner block with no guest closes its slot: no suggestion, no proposal (
       assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
       assert.equal(error.status, 409);
       assert.match(error.message, /owner commitment/);
-      assert.match(error.message, /test accordo/);
+      assert.doesNotMatch(error.message, /test accordo/, 'a booker probing slots never reads the owner title');
+      assert.deepEqual(error.details, { conflictingId: null, status: null });
       return true;
     },
   );
   assert.equal(service.rows.length, 0, 'no appointment row for the held slot');
+});
+
+test('a malformed owner block fails every path closed with the same 400 (backlog:af190faf)', async () => {
+  const bad = [
+    [null],
+    [{ startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: 'not-a-date', endsAt: '2026-10-20T18:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T18:00:00.000Z', endsAt: '2026-10-20T17:00:00.000Z' }],
+    [{ teamMemberId: 123, startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' }],
+  ];
+  for (const busyBlocks of bad) {
+    const service = fakeAppointments();
+    const cap = capabilityFor({ service, gate: allowGate() });
+    await assert.rejects(
+      cap.proposeBooking({ ...booking(), spaceId: SPACE, busyBlocks }),
+      (error) => {
+        assert.equal(error.code, 'VALIDATION_ERROR');
+        assert.equal(error.status, 400);
+        assert.equal(error.details?.field, 'busyBlocks');
+        return true;
+      },
+      `propose rejects ${JSON.stringify(busyBlocks)}`,
+    );
+    await assert.rejects(
+      suggestSlots({ modules: modulesFor(service) }, {
+        teamMemberIds: ['coach-guido'],
+        from: '2026-10-20T16:00:00.000Z',
+        to: '2026-10-20T19:00:00.000Z',
+        slotMinutes: 60,
+        busyBlocks,
+      }),
+      (error) => error.code === 'VALIDATION_ERROR' && error.details?.field === 'busyBlocks',
+      `suggest rejects ${JSON.stringify(busyBlocks)}`,
+    );
+    assert.equal(service.rows.length, 0, 'no appointment row for a refused block');
+  }
 });
 
 test('a block of another member never closes this member’s slot', async () => {
