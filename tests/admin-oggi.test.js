@@ -27,6 +27,7 @@ import {
   nextAppointment,
   upcomingAppointment,
   readAppointmentNames,
+  buildChannelInvite,
   oggiDateLine,
   renderOggi,
   romeDayKey,
@@ -1771,4 +1772,25 @@ test('9c7d1477a8d4: the invite counts of 9, keeps the prototype line and names o
     assert.ok(!text.includes('avere tutto in un posto'), 'no other line than the prototype one');
     assert.ok(!/Collega [^(]*Stripe/.test(text) && !/Collega [^(]*Google Calendar/.test(text), 'Calendar and Stripe are never invited');
   }
+});
+
+// Review #692 P2: Oggi stays on the spec's nine — a linked channel outside
+// the nine (SMS) never turns the strip into «1 di 10».
+test('#692 P2: Oggi counts of the nine only, an active SMS included', () => {
+  const invite = buildChannelInvite({ connections: [{ channel: 'sms', status: 'active' }] });
+  assert.equal(invite.connected, 0);
+  assert.equal(invite.total, 9);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      connections: [{ channel: 'sms', status: 'active' }],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  assert.ok(strip.includes('0 di 9 collegati'), strip);
+  assert.ok(!strip.includes('di 10'), 'never «di 10» on Oggi');
 });

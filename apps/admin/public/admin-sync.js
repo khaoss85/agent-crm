@@ -246,7 +246,7 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   // not the empty «Collega il primo canale» either.
   const linked = rows.some((row) => row.connected);
   // The hero reads the table's own pills (production 08/11, 3a3e6eaf C9/
-  // C20): a linked row that is not `Attivo` (In attesa, Importazione, Da
+  // C20): a linked row that is not `Attivo` (Importazione, Da
   // sistemare…) means not everything is synced, even with nothing to fix.
   const waiting = rows.some((row) => row.connected && row.pill !== null && row.pill.tone !== 'attivo');
   const bound = linked || rows.some((row) => row.present === true);
@@ -492,7 +492,7 @@ export function withProfileConnections(activity, profile = null) {
  * connect it (backlog:cf365ada15b9). A catalogued channel opens its guided
  * flow; Google Calendar opens Profilo when the profile offers the Google
  * connector (that is where its Collega lives); Stripe has no connect
- * screen, so it stays `Non disponibile` rather than a Collega to nowhere.
+ * screen, so it reads `non collegato` with no Collega to nowhere.
  * @param {string} channel
  * @param {unknown} [profile]
  */
@@ -535,11 +535,15 @@ export function grantExpiring(iso, nowMs = Date.now()) {
  * showed «In attesa», a word the spec does not have. A binding that really
  * broke (`attention`, `down`) is a state the spec does not list: the
  * closest honest word is `Da sistemare`, the name of the section that
- * says what to do about it.
+ * says what to do about it. `Attivo` (and `Importazione`) need an active
+ * binding (review #692): a suspended, pending or revoked binding reads
+ * `Da sistemare` whatever its health says.
  * @param {{ expiringAt: string | null, importing: boolean, worst: string }} agg
  * @param {number} nowMs
+ * @param {boolean} hasActive whether one binding of the row is active
  */
-function channelPill(agg, nowMs) {
+function channelPill(agg, nowMs, hasActive) {
+  if (!hasActive) return { text: 'Da sistemare', tone: 'altro' };
   if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
   const calm = agg.worst === 'ok' || agg.worst === 'idle';
   if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
@@ -604,7 +608,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
     const connected = agg.list.some((entry) => entry.status === 'active');
     // A blocked binding never poses as importing: the expiry and the
     // running import read only on bindings that are otherwise calm.
-    const pill = present ? channelPill(agg, nowMs) : null;
+    const pill = present ? channelPill(agg, nowMs, connected) : null;
     // Google Calendar and Stripe have no catalog entry and no detail flow:
     // their rows never route to the "Connettore sconosciuto" dead end
     // (P2 Codex su #415).
@@ -628,7 +632,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
   for (const [channel, list] of byChannel) {
     if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
     const agg = aggregate(channel, list);
-    const pill = channelPill(agg, nowMs);
+    const pill = channelPill(agg, nowMs, list.some((entry) => entry.status === 'active'));
     const extraCatalogued = cataloguedChannel(channel);
     rows.push({
       channel,
@@ -1188,9 +1192,9 @@ export function createSyncView(deps) {
   // The prototype's `Canali` card (BO-F6-16, fetta 2): nine fixed rows with
   // the mark, the name plus the fixed direction line, `agg. …`, `<n> eventi
   // ricevuti` (cumulative — the payload has no daily counter, P2 Codex su
-  // #415) and the pill — `Collega` for a catalogued channel with no binding,
-  // an honest `Non disponibile` for the fixed rows no catalog can connect
-  // (Google Calendar, Stripe). No
+  // #415) and the pill — `Collega` where the row can be connected, an honest
+  // `non collegato` with no button for a row nothing here connects (Stripe,
+  // Google Calendar without the profile's Google connector, C19). No
   // per-row pull: the prototype pulls globally from the hero, and the
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
@@ -1249,7 +1253,7 @@ export function createSyncView(deps) {
         // A row connects where the product connects it (backlog:cf365ada15b9):
         // the guided flow for a catalogued channel, Profilo for Google
         // Calendar when the profile offers it. Only a row nothing here can
-        // connect (Stripe) reads `Non disponibile` — never a `Collega` to
+        // connect (Stripe) reads `non collegato` — never a `Collega` to
         // "Connettore sconosciuto" (P2 Codex su #415).
         const route = typeof row.connectRoute === 'string' ? row.connectRoute : null;
         if (!readOnly() && route !== null) {

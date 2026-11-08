@@ -1350,3 +1350,22 @@ test('3a3e6eaf: Stato sync starts its reads together and paints with schema and 
   await done;
   assert.ok(mount.textContent.includes('1 di 9 collegati'));
 });
+
+// Review #692 P2: «Attivo» only on an active binding. A suspended, pending
+// or revoked binding never reads Attivo, whatever its health says.
+test('#692 P2: a binding that is not active never reads Attivo', () => {
+  for (const status of ['suspended', 'pending', 'revoked']) {
+    for (const health of ['ok', 'idle']) {
+      const rows = syncChannelTable(activityOf({ connections: [entryOf({ status, health })] }));
+      const row = rows.find((entry) => entry.channel === 'whatsapp');
+      assert.equal(row.connected, false, `${status}/${health} is not connected`);
+      assert.notEqual(row.pill.text, 'Attivo', `${status}/${health} never reads Attivo`);
+      assert.equal(row.pill.text, 'Da sistemare', `${status}/${health} reads Da sistemare`);
+    }
+  }
+  const extra = syncChannelTable(activityOf({ connections: [entryOf({ channel: 'sms', status: 'pending', health: 'ok' })] }))
+    .find((entry) => entry.channel === 'sms');
+  assert.equal(extra.pill.text, 'Da sistemare', 'an extra row follows the same rule');
+  const active = syncChannelTable(activityOf({ connections: [entryOf({ health: 'idle' })] }))[0];
+  assert.equal(active.pill.text, 'Attivo', 'an active binding with no traffic yet stays Attivo');
+});

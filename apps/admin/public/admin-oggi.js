@@ -971,7 +971,7 @@ export function missingLeadChannels(connections = [], profile = null) {
 }
 
 /**
- * The Oggi channel strip (9c7d1477a8d4): the shared «x di 9» count, the
+ * The Oggi channel strip (9c7d1477a8d4): «x di 9» over the spec's nine, the
  * connectable lead channels missing (the names after «Collega»), and an
  * aside for the missing channels that are not leads to connect here —
  * Google Calendar «dal Profilo» when the profile offers it, else «non
@@ -1003,9 +1003,12 @@ export function buildChannelInvite({ connections = [], profile = null } = {}) {
   if (unavailable.length > 1) {
     notes.push(`${unavailable.slice(0, -1).join(', ')} e ${unavailable[unavailable.length - 1]} non ancora disponibili`);
   }
+  // Oggi stays on the spec's nine (review #692): a linked channel outside
+  // the nine (SMS, Telegram) never turns the strip into «1 di 10» — that
+  // extra row lives on Stato sync only.
   return {
-    connected: count.connected,
-    total: count.total,
+    connected: count.connectedChannels.filter((channel) => OGGI_NINE_CHANNELS.includes(channel)).length,
+    total: OGGI_TOTAL_CHANNELS,
     leads,
     aside: notes.length > 0 ? notes.join('; ') : null,
   };
