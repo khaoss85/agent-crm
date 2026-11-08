@@ -8,7 +8,7 @@ import { createCustomerProfileCapability } from './capability-profile.js';
 import { createChannelOriginsCapability } from './capability-channel-origins.js';
 import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
-import { ERASURE_INVENTORY } from './erasure.js';
+import { ERASURE_INVENTORY, ERASURE_REASONS } from './erasure.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import {
   applyCustomerPhrase, customerPhraseAiAvailable, defineCustomField, listCustomFieldDefs,
@@ -154,8 +154,8 @@ export function createCustomerDataPackage(options = {}) {
     // declared surface. Version 4: the erasure declares its inventory and its
     // all-or-nothing contract in the metadata. The pilot registers each
     // surface's fingerprint; a changed surface takes a new version, never the
-    // old one.
-    version: 4,
+    // old one. Version 5: the erasure reason is a code from a closed list.
+    version: 5,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -336,7 +336,7 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
           { name: 'id', type: 'string', hint: 'The record id.' },
           { name: 'confirm', type: 'json', hint: 'The titolare confirmation: must be true, nothing is erased without it.' },
-          { name: 'reason', type: 'string', hint: 'Why the customer is erased, recorded with the decider identity. Write why, never who: no emails or phone numbers, the registry keeps it forever.' },
+          { name: 'reason', type: 'string', hint: `Why the customer is erased, as a code: one of ${ERASURE_REASONS.join(', ')}. Free text is refused and never stored: the registry keeps the reason forever.` },
         ],
         create(runtime) {
           const operations = createCustomerDataOperations({
@@ -821,7 +821,8 @@ export function createCustomerDataPackage(options = {}) {
         erasure: {
           operation: 'erase-customer',
           registry: 'customer-erasure-log',
-          confirmation: 'an explicit titolare confirmation (confirm: true) plus a recorded reason, by a user actor',
+          confirmation: 'an explicit titolare confirmation (confirm: true) plus a reason code, by a user actor',
+          reasons: [...ERASURE_REASONS],
           legalBasis: 'signed business (orders, contracts, subscriptions) is kept: a cliente refuses with ERASURE_BLOCKED_SIGNED_BUSINESS, everything else goes',
           replay: 'a second erasure of the same subject answers the stored row, never a second write',
           exclusion: 'erased subjects leave the customer list, the search, the profile and the export through the same registry',

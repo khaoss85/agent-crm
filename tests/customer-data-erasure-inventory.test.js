@@ -39,7 +39,7 @@ const envelope = (contact, prefix = 'subject', label = `${NAME} ${SURNAME} <${EM
 });
 
 function erase(app, contact) {
-  return app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR });
+  return app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR });
 }
 
 /** No trace of the erased person's name, email or phone anywhere in a value. */
@@ -89,7 +89,7 @@ test('inventory: company — a last contact takes its company name and domain wi
 
 test('inventory: company erasure — the company and every contact are anonymized', async (t) => {
   const { app, company, erased, kept } = await scene(t);
-  await app.eraseCustomer({ resource: 'company', id: company.id, confirm: true, reason: 'richiesta', actor: OPERATOR });
+  await app.eraseCustomer({ resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR });
   assert.equal((await app.services.companies.get(company.id)).name, 'Azienda cancellata');
   assertNoPii(await app.services.contacts.get(erased.id), 'the cascaded contact');
   assert.equal((await app.services.contacts.get(kept.id)).firstName, 'Cliente');

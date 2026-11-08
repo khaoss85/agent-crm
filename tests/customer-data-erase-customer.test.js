@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createCustomerProfileCapability } from '../packages/customer-data/src/capability-profile.js';
+import { ERASURE_REASONS } from '../packages/customer-data/src/erasure.js';
 
 /**
  * Voce d271d723 (validazione B6): cancellare un cliente davvero (GDPR).
@@ -60,12 +61,12 @@ function stubSignedBusiness(app, companyId) {
 test('erasing needs the titolare: agent actors, missing confirm and missing reason refuse', async (t) => {
   const { app, contact } = await scene(t);
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: AGENT }),
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: AGENT }),
     (error) => error?.code === 'HUMAN_APPROVAL_REQUIRED' && error?.status === 403,
     'an agent actor refuses: erasing is a titolare decision',
   );
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: contact.id, reason: 'richiesta', actor: OPERATOR }),
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, reason: 'richiesta-interessato', actor: OPERATOR }),
     (error) => error?.name === 'ValidationError',
     'no explicit confirmation refuses',
   );
@@ -75,7 +76,7 @@ test('erasing needs the titolare: agent actors, missing confirm and missing reas
     'no recorded reason refuses',
   );
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: 'ghost', confirm: true, reason: 'richiesta', actor: OPERATOR }),
+    () => app.eraseCustomer({ resource: 'contact', id: 'ghost', confirm: true, reason: 'richiesta-interessato', actor: OPERATOR }),
     (error) => error?.code === 'ERASURE_SUBJECT_NOT_FOUND' && error?.status === 404,
     'an unknown customer reads 404',
   );
@@ -88,7 +89,7 @@ test('signed business blocks the erasure: a cliente is kept, never erased', asyn
   const profile = await app.readCustomerProfile({ resource: 'contact', id: contact.id });
   assert.equal(profile.status.value, 'cliente', 'the stub order promotes the contact to cliente');
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR }),
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR }),
     (error) => error?.code === 'ERASURE_BLOCKED_SIGNED_BUSINESS' && error?.status === 409,
     'signed business refuses with 409',
   );
@@ -106,11 +107,11 @@ test('erasing anonymizes, records and excludes: list, search, profile and export
   await app.setCustomFieldValue({ resource: 'contact', id: contact.id, key: amico.key, value: true, actor: OPERATOR });
 
   const receipt = await app.eraseCustomer({
-    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   assert.equal(receipt.outcome, 'erased');
   assert.equal(receipt.replayed, false);
-  assert.equal(receipt.reason, 'richiesta del cliente');
+  assert.equal(receipt.reason, 'richiesta-interessato');
 
   const reread = await app.services.contacts.get(contact.id);
   assert.equal(reread.firstName, 'Cliente');
@@ -133,7 +134,7 @@ test('erasing anonymizes, records and excludes: list, search, profile and export
 
   const logged = await erasureRows(app, 'contact', contact.id);
   assert.equal(logged.length, 1, 'one append-only registry row');
-  assert.equal(logged[0].reason, 'richiesta del cliente');
+  assert.equal(logged[0].reason, 'richiesta-interessato');
   assert.equal(logged[0].erasedById, 'titolare-1');
 
   const list = await app.listCustomers({ pageSize: 50 });
@@ -154,7 +155,7 @@ test('erasing anonymizes, records and excludes: list, search, profile and export
   );
 
   const replay = await app.eraseCustomer({
-    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   assert.equal(replay.replayed, true, 'a second erasure replays the stored row');
   assert.equal((await erasureRows(app, 'contact', contact.id)).length, 1, 'no second registry row');
@@ -169,7 +170,7 @@ test('erasing anonymizes, records and excludes: list, search, profile and export
 test('the erasure registry itself still exports: the accountability proof is never filtered', async (t) => {
   const { app, contact } = await scene(t);
   await app.eraseCustomer({
-    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   const exported = await app.exportCustomerRecords({ resource: 'customer-erasure-log' });
   assert.equal(exported.erasedExcluded, 0, 'the registry is exempt from erased-subject exclusion');
@@ -186,41 +187,45 @@ test('erasing clears the job title: no role survives the anonymization', async (
     email: 'anna@palestra-esempio.it', role: 'Amministratore Delegato',
   });
   await app.eraseCustomer({
-    resource: 'contact', id: director.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'contact', id: director.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   const reread = await app.services.contacts.get(director.id);
   assert.equal(reread.role, null, 'the job title goes with the rest of the PII');
   assert.equal(reread.firstName, 'Cliente');
 });
 
-test('a reason carrying contact details refuses and records nothing', async (t) => {
+test('the reason is a code from a closed list: a name in free text never reaches the registry or the export', async (t) => {
   const { app, contact } = await scene(t);
-  await assert.rejects(
-    () => app.eraseCustomer({
-      resource: 'contact', id: contact.id, confirm: true,
-      reason: 'cancellare Mario Rossi mario@x.it su sua richiesta', actor: OPERATOR,
-    }),
-    (error) => error?.name === 'ValidationError',
-    'an email inside the reason refuses: the registry would keep it forever',
-  );
-  await assert.rejects(
-    () => app.eraseCustomer({
-      resource: 'contact', id: contact.id, confirm: true,
-      reason: 'richiamare il +39 333 123 4567 poi cancellare', actor: OPERATOR,
-    }),
-    (error) => error?.name === 'ValidationError',
-    'a phone number inside the reason refuses',
-  );
+  for (const reason of [
+    'cancellare Mario Rossi su sua richiesta',
+    'cancellare Mario Rossi mario@x.it su sua richiesta',
+    'richiamare il +39 333 123 4567 poi cancellare',
+    'richiesta del 08/11/2026',
+  ]) {
+    await assert.rejects(
+      () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason, actor: OPERATOR }),
+      (error) => error?.name === 'ValidationError' && error?.details?.field === 'reason',
+      `free text refuses: «${reason}»`,
+    );
+  }
   assert.equal((await erasureRows(app, 'contact', contact.id)).length, 0, 'a refused erasure records nothing');
+  assert.equal((await app.services.contacts.get(contact.id)).lastName, 'Presti', 'and rewrites nothing');
+
   const receipt = await app.eraseCustomer({
-    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del 08/11/2026', actor: OPERATOR,
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
-  assert.equal(receipt.outcome, 'erased', 'a date is not a phone number');
+  assert.equal(receipt.reason, 'richiesta-interessato', 'the receipt carries the code only');
+  const exported = await app.exportCustomerRecords({ resource: 'customer-erasure-log' });
+  for (const row of exported.rows) {
+    assert.ok(ERASURE_REASONS.includes(row.reason), 'every registry reason is a closed-list code');
+  }
+  const text = JSON.stringify({ receipt, rows: exported.rows });
+  assert.ok(!text.includes('Mario') && !text.includes('Rossi'), 'no name reaches the registry, its export or the receipt');
 });
 
 test('the company with other contacts stays: only the erased contact leaves', async (t) => {
   const { app, company, contact, other } = await scene(t);
-  await app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR });
+  await app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR });
   const list = await app.listCustomers({ pageSize: 50 });
   assert.ok(list.items.some((row) => row.id === other.id), 'the other contact still lists');
   assert.ok(list.items.some((row) => row.company?.id === company.id), 'the shared company still shows beside its contact');
@@ -230,13 +235,13 @@ test('the company with other contacts stays: only the erased contact leaves', as
 test('nobody authorizes an erasure: a missing or malformed actor refuses and records nothing', async (t) => {
   const { app, contact } = await scene(t);
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta' }),
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato' }),
     (error) => error?.code === 'HUMAN_APPROVAL_REQUIRED' && error?.status === 403,
     'no actor refuses: the fail-closed anonymous authorizes nothing',
   );
   await assert.rejects(
     () => app.eraseCustomer({
-      resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: { type: 'user' },
+      resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: { type: 'user' },
     }),
     (error) => error?.code === 'HUMAN_APPROVAL_REQUIRED' && error?.status === 403,
     'an actor without an id refuses too',
@@ -261,7 +266,7 @@ test('uncertain evidence blocks the erasure: an empty bounded page proves nothin
     },
   });
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR }),
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR }),
     (error) => error?.code === 'ERASURE_EVIDENCE_UNREADABLE' && error?.status === 409,
     'a list-only page refuses even when empty: a page is not a count',
   );
@@ -285,7 +290,7 @@ test('uncertain evidence blocks the erasure: a failed evidence read refuses', as
     },
   });
   await assert.rejects(
-    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR }),
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR }),
     (error) => error?.code === 'ERASURE_EVIDENCE_UNREADABLE' && error?.status === 409,
     'an unreadable evidence package refuses instead of risking signed business',
   );
@@ -295,7 +300,7 @@ test('uncertain evidence blocks the erasure: a failed evidence read refuses', as
 test('erasing a company cascades to its contacts: no name or email survives in Clienti', async (t) => {
   const { app, company, contact, other } = await scene(t);
   const receipt = await app.eraseCustomer({
-    resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   assert.equal(receipt.outcome, 'erased');
   assert.equal(receipt.counts.subjects, 3, 'the company and both linked contacts go together');
@@ -316,7 +321,7 @@ test('erasing a company cascades to its contacts: no name or email survives in C
 test('an erased company reads as gone through the shared capability, not only the direct profile', async (t) => {
   const { app, company } = await scene(t);
   await app.eraseCustomer({
-    resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   await assert.rejects(
     () => app.readCustomerProfile({ resource: 'company', id: company.id }),
@@ -347,7 +352,7 @@ test('a company with more than one display page still cascades fully: no PII sur
     ids.push(contact.id);
   }
   const receipt = await app.eraseCustomer({
-    resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   assert.equal(receipt.counts.subjects, 102, 'the company and all 101 linked contacts go together');
   for (const id of ids) {
@@ -367,7 +372,7 @@ test('a full company page refuses the erasure instead of erasing half: a truncat
   let refusal = null;
   try {
     await app.eraseCustomer({
-      resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+      resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
     });
   } catch (error) {
     refusal = error;
@@ -391,7 +396,7 @@ test('a company erasure with an unreadable contacts list refuses: no half-erasur
   let refusal = null;
   try {
     await app.eraseCustomer({
-      resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+      resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
     });
   } catch (error) {
     refusal = error;
@@ -418,7 +423,7 @@ test('an unreadable siblings list keeps the company: absence unproven never excl
   let receipt = null;
   try {
     receipt = await app.eraseCustomer({
-      resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+      resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
     });
   } finally {
     app.services.contacts.list = original;
@@ -456,13 +461,13 @@ test('the contacts-list gate decides every case the same way on both paths: one 
       try {
         if (kase.company.proceeds) {
           const receipt = await app.eraseCustomer({
-            resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+            resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
           });
           assert.equal(receipt.counts.subjects, kase.company.subjects, `${kase.name}: the cascade carries its proven members`);
         } else {
           await assert.rejects(
             () => app.eraseCustomer({
-              resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+              resource: 'company', id: company.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
             }),
             (error) => error?.code === kase.company.code && error?.status === 409,
             `${kase.name}: the cascade refuses instead of deciding on the page`,
@@ -480,7 +485,7 @@ test('the contacts-list gate decides every case the same way on both paths: one 
       const original = stubList(app, contact, other);
       try {
         const receipt = await app.eraseCustomer({
-          resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+          resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
         });
         assert.equal(receipt.outcome, 'erased', `${kase.name}: the contact erasure itself proceeds`);
         const companyRows = await erasureRows(app, 'company', company.id);
@@ -509,7 +514,7 @@ test('purging enriched fields clears the email snapshot too: no PII copy survive
     'the display snapshot carries the email before the erasure',
   );
   await app.eraseCustomer({
-    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
   });
   const after = await app.modules.get('enriched-field').service
     .listWhere({ subjectResource: 'contact', subjectId: contact.id });

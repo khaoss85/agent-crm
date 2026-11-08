@@ -2,7 +2,6 @@
 
 import { AppError, NotFoundError, ValidationError, normalizeActor } from '../../core/index.js';
 import { CUSTOMER_SCAN_LIMIT } from './customers.js';
-import { safeString } from './normalize.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
 import { isNoCompany } from './sender.js';
 import {
@@ -47,8 +46,6 @@ import {
  * (ERASURE_EVIDENCE_UNREADABLE).
  */
 
-const MAX_REASON = 300;
-
 /** The purge reason written on every row this erasure rewrites. */
 const PURGE_REASON = 'cancellazione-gdpr';
 
@@ -79,40 +76,36 @@ export const ERASURE_INVENTORY = Object.freeze([
   { place: 'customer-import-row', keeps: 'subjectLabel, reason (match evidence)', action: 'anonymize' },
   { place: 'enrichment-opt-out', keeps: 'subjectLabel (email), reason', action: 'anonymize' },
   { place: 'customer-bulk-item', keeps: 'reason of a failed decision on a candidate or issue of the subject', action: 'anonymize' },
-  { place: 'customer-erasure-log', keeps: 'subject id, reason (no email/phone), decider', action: 'exclude' },
+  { place: 'customer-erasure-log', keeps: 'subject id, reason code from a closed list (never free text), decider', action: 'exclude' },
   { place: 'opportunity', keeps: 'deal name, contactId', action: 'retain' },
   { place: 'other-package-rows', keeps: 'messages, calls, appointments, tasks, forms, sequences', action: 'retain' },
   { place: 'core-audit-trace', keeps: 'audit_events, workflow_runs, trace_spans, write_outcomes', action: 'retain' },
 ]);
 
 /**
- * What the erasure reason may never carry: the registry is append-only and
- * would keep the copy forever, contradicting its no-PII promise. An email
- * address or a phone number inside the reason refuses with ValidationError;
- * names cannot be detected reliably, so the operation contract (and the
- * reason hint) tells the operator to write why, never who.
+ * **The erasure reason is a code from a closed list, never free text.**
+ * The registry is append-only: whatever the reason says is kept forever.
+ * A free-text reason lets a name through (an email or a phone can be
+ * caught, a name cannot), so the registry and the receipt only ever hold
+ * one of these codes. Any other value — free text included — refuses with
+ * ValidationError and nothing is written: free text is never stored.
  */
-const REASON_EMAIL_RE = /[^\s@]+@[^\s@.]+\.[^\s@.]+/;
-// A phone-shaped run: at least 9 characters of digits and phone
-// separators holding 9 or more digits. A date (08/11/2026, 8 digits)
-// passes; a real number (+39 333 123 4567, 12 digits) refuses.
-const REASON_PHONE_RUN_RE = /[+\d][\d\s\-./()]{8,}/g;
+export const ERASURE_REASONS = Object.freeze([
+  'richiesta-interessato',
+  'fine-rapporto',
+  'dati-errati',
+  'altro',
+]);
 
-function reasonHasPhone(reason) {
-  for (const run of reason.match(REASON_PHONE_RUN_RE) ?? []) {
-    if (run.replace(/\D/g, '').length >= 9) return true;
-  }
-  return false;
-}
-
-function assertReasonCarriesNoPii(reason) {
-  if (REASON_EMAIL_RE.test(reason) || reasonHasPhone(reason)) {
+function erasureReasonCode(value) {
+  const code = typeof value === 'string' ? value.trim() : '';
+  if (!ERASURE_REASONS.includes(code)) {
     throw new ValidationError(
-      'il motivo non deve contenere email o telefoni: il registro è permanente e non conserva dati personali',
+      `il motivo della cancellazione è un codice: uno di ${ERASURE_REASONS.join(', ')} (il testo libero non si salva: il registro è permanente)`,
       { field: 'reason' },
     );
   }
-  return reason;
+  return code;
 }
 
 /**
@@ -338,9 +331,7 @@ export function createErasureOperations({ database, modules, events, core, names
     if (request?.confirm !== true) {
       throw new ValidationError('la cancellazione va confermata dal titolare (confirm: true)', { field: 'confirm' });
     }
-    const reason = assertReasonCarriesNoPii(
-      safeString(request?.reason, 'reason', { max: MAX_REASON, required: true }),
-    );
+    const reason = erasureReasonCode(request?.reason);
     const subject = { resource, id: id.trim() };
 
     const erasureSvc = trusted(modules, names.erasure);
