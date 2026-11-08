@@ -815,3 +815,102 @@ export function apiFailure(status, payload) {
   if (typeof payload?.claimId === 'string' && payload.claimId !== '') Object.assign(error, { claimId: payload.claimId });
   return error;
 }
+
+/**
+ * The request id of a queued answer the shell can read back (production
+ * 07/11: the phrase POST answered 504 BO_PHRASE_PENDING after 51.9 s while
+ * a GET with its requestId answered the ready draft in 0.3 s). Only the
+ * one queued code the route offers counts (review #664), never any
+ * `*_PENDING`: an unrelated refusal stays a refusal.
+ * @param {unknown} error the rejection from `client.request`
+ * @param {string} expectedCode the route's queued code, e.g. `BO_PHRASE_PENDING`
+ * @returns {string | null}
+ */
+export function pendingRequestId(error, expectedCode) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const id = typeof record.requestId === 'string' ? record.requestId : '';
+  return typeof expectedCode === 'string' && record.code === expectedCode && id !== '' ? id : null;
+}
+
+/**
+ * Whether a failed read-back is worth reading again (review #664): a
+ * network fault (fetch rejects with a TypeError, or status 0), a gateway or
+ * server hiccup, a timeout or a rate limit. A 4xx refusal, an AI-off code
+ * (the pilot forwards LLM_* at 502), a cancelled or unshapable outcome and
+ * any other status-less exception (a bug, a shape error) are final — never
+ * retried for a minute and passed off as «still queued».
+ * @param {unknown} error
+ */
+function transientReadFailure(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 0) return true;
+  if (status === null) {
+    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
+  }
+  return status >= 500 || status === 408 || status === 425 || status === 429;
+}
+
+/**
+ * Read a queued request back on its own path (`GET <path>?requestId=`), the
+ * resume the pilot offers for its queued writes: never a second POST. Waits
+ * `everyMs` before each read, up to `rounds` reads; a transient read
+ * failure keeps the same request and reads again (review #664). Answers
+ * `{answer}` when the request settled, `{error}` on a final refusal,
+ * `{pending, requestId}` when it is still queued (or unreadable) after the
+ * last read, and `{stale: true}` when the caller's view moved on meanwhile.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {string} path the queued route, e.g. `/api/appointments/phrase`
+ * @param {string} requestId the id the 504 carried
+ * @param {{expectedCode: string, wait: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, stale?: () => boolean, spaceId?: string|null}} options
+ */
+export async function readBackPending(client, path, requestId, { expectedCode, wait, everyMs = 3000, rounds = 20, stale = () => false, spaceId = null }) {
+  let id = requestId;
+  for (let round = 0; round < rounds; round += 1) {
+    await wait(everyMs);
+    if (stale()) return { stale: true };
+    try {
+      const answer = await client.request(`${path}?requestId=${encodeURIComponent(id)}`);
+      if (stale()) return { stale: true };
+      return { answer };
+    } catch (error) {
+      if (stale()) return { stale: true };
+      const next = pendingRequestId(error, expectedCode);
+      if (next !== null) {
+        id = next;
+        continue;
+      }
+      if (transientReadFailure(error)) {
+        const record = /** @type {any} */ (error);
+        console.warn('[bo] rilettura in coda non riuscita, riprovo', {
+          code: typeof record?.code === 'string' ? record.code : 'UNKNOWN',
+          status: typeof record?.status === 'number' ? record.status : null,
+          requestId: id,
+          spaceId,
+        });
+        continue;
+      }
+      // A final refusal is diagnosable (review #664): its cause, the request
+      // and the space go to the log; the caller shows its Italian sentence.
+      const record = /** @type {any} */ (error);
+      console.warn('[bo] rilettura in coda rifiutata', {
+        code: typeof record?.code === 'string' ? record.code : (error instanceof Error ? error.name : 'UNKNOWN'),
+        status: typeof record?.status === 'number' ? record.status : null,
+        requestId: id,
+        spaceId,
+      });
+      return { error };
+    }
+  }
+  return { pending: true, requestId: id };
+}
+
+/** A pause that never holds a Node process open (unref is absent in the browser). @param {number} ms */
+export function unrefWait(ms) {
+  return new Promise((resolve) => {
+    const timer = /** @type {any} */ (setTimeout(resolve, ms));
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  });
+}
