@@ -1335,7 +1335,8 @@ select.bo-spazi-input { flex: none; }
 /* Supervisor design pass: the prototype's header and two-column layout. */
 .cal-wrap .panel-heading { align-items: flex-end; margin-bottom: 0; flex-wrap: wrap; }
 .cal-wrap .panel-heading .eyebrow { text-transform: uppercase; margin-bottom: 10px; }
-.cal-wrap .panel-heading h2 { margin: 0; font-size: clamp(32px, 4vw, 50px); line-height: 1; letter-spacing: -.03em; }
+/* backlog:29bb3f2c0d64: the prototype title size, the same as Sequenze and Clienti (46px top). */
+.cal-wrap .panel-heading h2 { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
 .cal-wrap .panel-heading .lede { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
 .cal-wrap .actions { display: flex; align-items: center; gap: 8px; }
 .cal-wrap .actions [data-role="week-interval"] { padding: 0 8px; font-size: 16px; font-weight: 700; white-space: nowrap; }
@@ -1391,6 +1392,15 @@ select.bo-spazi-input { flex: none; }
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
+/* backlog:29bb3f2c0d64: the channel pill on blocks and in the detail card,
+ * and the «↔ Google Calendar» line, in the prototype's mono and tints. */
+.cal-pill { display: inline-block; border-radius: 4px; padding: 0 4px; font-family: var(--mono); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.cal-pill-google { background: var(--data-soft); color: var(--data-ink); }
+.cal-pill-link { background: var(--agent-soft); color: var(--agent-ink); }
+.cal-via { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--surface-soft); color: var(--ink); }
+.cal-via-google { background: var(--data-soft); color: var(--data-ink); }
+.cal-via-link { background: var(--agent-soft); color: var(--agent-ink); }
+.cal-sync { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--data-ink); }
 /* Press-and-drag on the grid (supervisor design pass 03/11): the chosen
  * half hours read as one accent block, the form opens beside it. */
 .cal-day { cursor: cell; touch-action: none; user-select: none; }
