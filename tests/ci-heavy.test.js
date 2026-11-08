@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +92,26 @@ test('an unset HOME does not abort the step', () => {
     cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH },
   });
   assert.equal(out.trim(), 'step-ran');
+});
+
+test('the nightly measurement (ACCORDO_HEAVY_QUEUE=ci) uses the CI server queue, not the shared one', () => {
+  const home = mkdtempSync(join(tmpdir(), 'accordo-ci-heavy-home-'));
+  try {
+    mkdirSync(join(home, 'ci-server'), { recursive: true });
+    const ciQueue = fakeLock(join(home, 'ci-server'), 'heavy.sh');
+    const core = fakeLock(home, 'core.sh');
+    const out = execFileSync('bash', ['scripts/ci-heavy.sh', 'measure-1-of-6', '--', 'echo', 'step-ran'], {
+      cwd: root, encoding: 'utf8',
+      env: { PATH: process.env.PATH, HOME: home, ACCORDO_HEAVY_QUEUE: 'ci', ACCORDO_CORE_HEAVY_JOB: core },
+    });
+    assert.match(out, new RegExp(`^lock=${ciQueue} args=accordo ci-measure-1-of-6 -- echo step-ran$`, 'm'));
+    const shared = execFileSync('bash', ['scripts/ci-heavy.sh', 'fast', '--', 'echo', 'step-ran'], {
+      cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, ACCORDO_CORE_HEAVY_JOB: core },
+    });
+    assert.match(shared, new RegExp(`^lock=${core} args=accordo ci-fast`, 'm'), 'without the variable the PR gate stays in the shared queue');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('without the core lock nor a lock script the step runs as before', () => {

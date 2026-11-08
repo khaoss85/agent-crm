@@ -27,6 +27,13 @@ set -euo pipefail
 name="$1"; shift
 [ "${1:-}" = "--" ] && shift
 core="${ACCORDO_CORE_HEAVY_JOB:-${HOME:-}/dev/_work/minimal-core-versions/current/tools/minimal/heavy-job.sh}"
+# The nightly measurement (job verify, ACCORDO_HEAVY_QUEUE=ci) runs in the CI server's own queue,
+# ~/ci-server/heavy.sh, not in the shared one: six pieces each waiting behind another factory's
+# stage held a runner for hours and left the PR gates queued (server, 08/11, decision of the Leader).
+# A measurement is not urgent; the PR gate stays in the shared queue.
+if [ "${ACCORDO_HEAVY_QUEUE:-}" = ci ] && [ -f "${HOME:-}/ci-server/heavy.sh" ]; then
+  core="${HOME:-}/ci-server/heavy.sh"
+fi
 if [ -f "$core" ]; then
   conf="${ACCORDO_HEAVY_JOB_CONF:-${HOME:-}/.config/environment.d/60-heavy-job.conf}"
   if [ -f "$conf" ]; then
