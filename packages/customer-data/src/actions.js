@@ -170,6 +170,71 @@ export function buildCustomerDataActions(config) {
     },
 
     /**
+     * Undo a wrong merge: separate the cluster this candidate created.
+     *
+     * A merge is logical, so undoing it withdraws the `canonical-link` rows
+     * instead of deleting anything: every record survives, every message
+     * stays where it was written, and the two schede read separate again
+     * because the profile only aggregates `active` links. The candidate
+     * returns to `unresolved` with its decision cleared, so a human can
+     * decide again. Human-only, with confirmation like every merge.
+     */
+    {
+      module: names.candidate,
+      name: 'unlink-canonical-identity',
+      label: 'Separate wrongly merged customers',
+      description:
+        'Undo a wrong merge from the scheda: withdraw the canonical-link rows this candidate created so every message reads under the right person again and the two cards read separate. Nothing is deleted; the candidate returns to unresolved for a new decision.',
+      actionContract: 1,
+      stateField: 'status',
+      fromStates: ['linked'],
+      confirm: true,
+      input: [{ name: 'reason', type: 'string', required: true, hint: 'Why this merge was wrong.' }],
+      /** @param {any} ctx */
+      async execute({ record: candidate, input, actor, modules, managed, now, step }) {
+        requireUser(actor, 'Undoing a canonical merge');
+        const reason = safeString(input.reason, 'reason', { max: MAX_REASON, required: true });
+        const decisionId = typeof candidate.decisionId === 'string' && candidate.decisionId !== ''
+          ? candidate.decisionId
+          : `decision:${candidate.id}`;
+        const links = trusted(modules, names.link);
+        const active = await deciding(links, { decisionId, status: 'active' });
+        if (active.length === 0) {
+          throw new AppError(
+            'this merge has no active canonical links to withdraw, so there is nothing to separate',
+            { code: 'CANONICAL_CLUSTER_NOT_FOUND', status: 409, details: Object.freeze({ candidateId: candidate.id }) },
+          );
+        }
+        const withdrawnAt = now();
+        const actorId = String(/** @type {any} */ (actor).id ?? 'unknown');
+        for (const row of active) {
+          await links.applyManaged(row.id, {
+            status: 'withdrawn',
+            withdrawnReason: reason,
+            withdrawnAt,
+          }, { actor });
+        }
+        const updated = await managed(candidate.id, {
+          status: 'unresolved',
+          decisionId: null,
+          decidedReason: null,
+          decidedByType: null,
+          decidedById: null,
+          decidedAt: null,
+        });
+        step('customer-data.canonical-identity-unlinked', {
+          candidateId: candidate.id, decisionId, withdrawn: active.length,
+        });
+        return {
+          candidate: { id: updated.id, status: updated.status },
+          withdrawn: active.length,
+          decidedById: actorId,
+          semantics: 'unmerged — the links are withdrawn, both records still exist, each card reads its own again',
+        };
+      },
+    },
+
+    /**
      * Govern a data-quality issue. Resolution never erases the finding.
      */
     {
