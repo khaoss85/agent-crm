@@ -26,6 +26,7 @@ import {
   missingLeadChannels,
   nextAppointment,
   upcomingAppointment,
+  readAppointmentNames,
   oggiDateLine,
   renderOggi,
   romeDayKey,
@@ -807,7 +808,8 @@ test('Oggi strip with Gmail and Calendar connected counts them and links Connett
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  assert.ok(mount.textContent.includes('2 di 9 collegati'), 'Gmail plus Calendar read as two connected');
+  // Stripe cannot be connected here, so it is not in the denominator (08/11).
+  assert.ok(mount.textContent.includes('2 di 8 collegati'), 'Gmail plus Calendar read as two connected');
   assert.ok(!mount.textContent.includes('Collega Email'), 'Email is not invited once Gmail is connected');
   const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
   assert.ok(strip, 'the strip renders');
@@ -1414,7 +1416,7 @@ test('5083e7a77c26: the strip count equals the list it names', () => {
   assert.ok(named, 'the strip names the channels to connect');
   const names = named[1].split(', ');
   assert.equal(Number(count[1]) + names.length, Number(count[2]), `«${count[0]}» and ${names.length} names tell one story`);
-  assert.equal(count[0], '2 di 9 collegati');
+  assert.equal(count[0], '2 di 8 collegati', 'Stripe, which nothing here connects, is not counted');
   assert.ok(!names.includes('Email') && !names.includes('Google Calendar'), 'connected channels are not invited');
 });
 
@@ -1494,11 +1496,25 @@ test('#680: the invite promises leads only when it names lead channels only', ()
   const leadsOnly = render(['whatsapp', 'instagram', 'email', 'voice', 'site-form', 'calendar', 'stripe']
     .map((channel) => ({ channel, status: 'active' })));
   assert.ok(leadsOnly.includes('Collega Facebook, TikTok per non perdere nessun lead'), leadsOnly);
+  // Stripe is never invited (production 08/11): nothing here connects it.
   const withStripe = render(NINE_STRIPE_MISSING.map((channel) => ({ channel, status: 'active' })));
-  assert.ok(withStripe.includes('Collega Stripe per avere tutto in un posto'), withStripe);
-  assert.ok(!withStripe.includes('lead'), 'no lead promise for Stripe');
-  const mixed = render([]);
-  assert.ok(mixed.includes('Google Calendar, Stripe per avere tutto in un posto'), mixed);
+  assert.equal(withStripe, '', 'only Stripe left: no invite at all');
+  // Google Calendar is invited when the profile offers it: no lead promise then.
+  const offered = { connections: { available: true, items: [{ connector: 'calendar', status: 'not_connected' }] } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], profile: offered,
+      connections: ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form'].map((channel) => ({ channel, status: 'active' })),
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const calendar = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  assert.ok(calendar.includes('7 di 8 collegati'), calendar);
+  assert.ok(calendar.includes('Collega Google Calendar per avere tutto in un posto'), calendar);
+  assert.ok(!calendar.includes('Stripe'), 'never Stripe');
 });
 
 test('#680 P2-3: an inactive extra channel never widens the count', async () => {
@@ -1611,4 +1627,33 @@ test('2a075e2d9250: a cold start with the shell redraw mid-load reads Oggi once 
   const counts = new Map();
   for (const path of asked) counts.set(path, (counts.get(path) ?? 0) + 1);
   for (const [path, count] of counts) assert.equal(count, 1, `${path} read once, not ${count}`);
+});
+
+// Production 08/11 (5083e7a77c26): the brief read «il cliente · 10 nov
+// alle 11:00» for an appointment with Fio Neri — the synced appointment
+// carries no subject label. The name comes from the customer's profile.
+test('5083e7a77c26: the next-call card names the customer from the profile', async () => {
+  const appt = { ...APPT_TOMORROW, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' };
+  const lateToday = new Date('2026-10-19T16:00:00.000Z');
+  const brief = buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Fio Neri' } });
+  assert.equal(brief.title, 'Fio Neri');
+  assert.ok(brief.bullets[0].includes('con Fio Neri'));
+  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday }).title, 'il cliente', 'only when no name exists');
+  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Unknown' } }).title, 'il cliente',
+    'a placeholder is not a name');
+  const seen = [];
+  const names = await readAppointmentNames({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/customer-data/profile/contact/fio') {
+        return { identity: { contact: { firstName: 'Fio', lastName: 'Neri' } } };
+      }
+      throw new Error('not here');
+    },
+  }, [appt, APPT_TODAY], appt, lateToday);
+  assert.deepEqual(names, { 'contact:fio': 'Fio Neri' }, 'the profile name; a refused read leaves no name');
+  assert.ok(seen.includes('/api/customer-data/profile/contact/fio'));
+  const agenda = buildTodayAgenda([{ ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' }], OGGI_NOW, names);
+  assert.equal(agenda[0].title, 'Fio Neri', 'the agenda row reads the same name');
 });
