@@ -1,11 +1,11 @@
 {
   "stateVersion": 2,
   "module": "teammate-run",
-  "revision": 1,
-  "fingerprint": "1f253da1f093bd88612ed3b1344cd86d73c478d5ad322a7b0b41bf0dd1fcfa56",
+  "revision": 2,
+  "fingerprint": "3816f5e6ed6b8be49f5c2522b039cbd6482d31d26ae96003c0152940564b7819",
   "manifest": {
     "manifestVersion": 1,
-    "revision": 1,
+    "revision": 2,
     "name": "teammate-run",
     "description": "One recorded execution of one teammate assignment (backlog:8986f4459f0f): agent, assignment, cost and outcome of every run, including runs the spending cap stopped. A run that proposes actions waits for a human approval; a run that produces a versioned artifact carries it inline with its version. (backlog:8986f4459f0f)",
     "table": "teammate_runs",
@@ -74,7 +74,8 @@
           "applied",
           "artifact",
           "capped",
-          "failed"
+          "failed",
+          "rejected"
         ]
       },
       {
@@ -162,6 +163,11 @@
       "name": "create_teammate_runs",
       "checksum": "3527377dd152b3d5e99149ba78598dce449ed3c517ffe607d269a5fa13067518",
       "sql": "CREATE TABLE IF NOT EXISTS teammate_runs (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  agent_source_key TEXT,\n  assignment_source_key TEXT,\n  started_at TEXT,\n  cost_cents INTEGER,\n  outcome TEXT CHECK(outcome IN ('started', 'proposed', 'applied', 'artifact', 'capped', 'failed')),\n  proposals TEXT,\n  artifact TEXT,\n  artifact_version INTEGER,\n  note TEXT,\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS teammate_runs_space_id ON teammate_runs(space_id);\nCREATE INDEX IF NOT EXISTS teammate_runs_agent_source_key ON teammate_runs(agent_source_key);\nCREATE INDEX IF NOT EXISTS teammate_runs_assignment_source_key ON teammate_runs(assignment_source_key);\nCREATE INDEX IF NOT EXISTS teammate_runs_source_package ON teammate_runs(source_package);\n"
+    },
+    {
+      "name": "evolve_teammate_runs_r2",
+      "checksum": "6024e3a993fc2d8bfc3a4341c7573d8a491d50ea1e78851f856cf4069e3e9af7",
+      "sql": "CREATE TABLE teammate_runs__evolve__r2 (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  agent_source_key TEXT,\n  assignment_source_key TEXT,\n  started_at TEXT,\n  cost_cents INTEGER,\n  outcome TEXT CHECK(outcome IN ('started', 'proposed', 'applied', 'artifact', 'capped', 'failed', 'rejected')),\n  proposals TEXT,\n  artifact TEXT,\n  artifact_version INTEGER,\n  note TEXT,\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nINSERT INTO teammate_runs__evolve__r2 (id, source_key, space_id, agent_source_key, assignment_source_key, started_at, cost_cents, outcome, proposals, artifact, artifact_version, note, decided_at, actor_type, actor_id, source_package, source_action, created_at, updated_at) SELECT id, source_key, space_id, agent_source_key, assignment_source_key, started_at, cost_cents, outcome, proposals, artifact, artifact_version, note, decided_at, actor_type, actor_id, source_package, source_action, created_at, updated_at FROM teammate_runs;\nDROP TABLE teammate_runs;\nALTER TABLE teammate_runs__evolve__r2 RENAME TO teammate_runs;\nCREATE INDEX IF NOT EXISTS teammate_runs_space_id ON teammate_runs(space_id);\nCREATE INDEX IF NOT EXISTS teammate_runs_agent_source_key ON teammate_runs(agent_source_key);\nCREATE INDEX IF NOT EXISTS teammate_runs_assignment_source_key ON teammate_runs(assignment_source_key);\nCREATE INDEX IF NOT EXISTS teammate_runs_source_package ON teammate_runs(source_package);\n"
     }
   ],
   "postgres": {
@@ -174,6 +180,12 @@
         "fingerprint": "1f253da1f093bd88612ed3b1344cd86d73c478d5ad322a7b0b41bf0dd1fcfa56"
       }
     },
-    "evolutions": []
+    "evolutions": [
+      {
+        "name": "pg_evolve_teammate_runs_r2",
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nALTER TABLE \"accordo\".\"teammate_runs\" DROP CONSTRAINT IF EXISTS \"teammate_runs_outcome_check\";\nALTER TABLE \"accordo\".\"teammate_runs\" ADD CONSTRAINT \"teammate_runs_outcome_check\" CHECK (\"outcome\" IN ('started', 'proposed', 'applied', 'artifact', 'capped', 'failed', 'rejected'));\n",
+        "checksum": "0d2a3d93741224c5855362ee25d285237ea634e050d7af61effd708d54d9b116"
+      }
+    ]
   }
 }

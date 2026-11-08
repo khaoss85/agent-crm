@@ -326,7 +326,7 @@ test('the package declares its identity, resources and operations', () => {
   assert.equal(graph.name, 'agents');
   assert.deepEqual(graph.resources, ['teammate-agent', 'teammate-assignment', 'teammate-run']);
   const names = (graph.operations ?? []).map((entry) => entry.name).sort();
-  assert.deepEqual(names, ['approve-run', 'create-agent', 'create-assignment', 'run-due']);
+  assert.deepEqual(names, ['approve-run', 'create-agent', 'create-assignment', 'reject-run', 'revise-run', 'run-due']);
 });
 
 test('a capped agent refuses an assignment without a cost estimate', async () => {
