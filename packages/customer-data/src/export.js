@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError } from '../../core/index.js';
+import { readErasedSubjects } from './erasure.js';
 import { deciding, resolvedNames, trusted } from './store.js';
 
 /**
@@ -33,6 +34,28 @@ import { deciding, resolvedNames, trusted } from './store.js';
 export const EXPORT_MAX_ROWS = 10_000;
 
 /**
+ * Drop rows naming an erased subject. Only rows carrying the subject
+ * envelope are candidates; every other row passes through untouched.
+ * @param {Array<any>} rows
+ * @param {ReadonlySet<string>} erased subject keys (`resource:id`)
+ */
+export function excludeErasedSubjects(rows, erased) {
+  if (!erased || erased.size === 0) return { visible: rows, erasedExcluded: 0 };
+  const visible = [];
+  let erasedExcluded = 0;
+  for (const row of rows) {
+    const resource = row?.subjectResource;
+    const id = row?.subjectId;
+    if (typeof resource === 'string' && typeof id === 'string' && erased.has(`${resource}:${id}`)) {
+      erasedExcluded += 1;
+      continue;
+    }
+    visible.push(row);
+  }
+  return { visible, erasedExcluded };
+}
+
+/**
  * @param {Record<string, string>} [config]
  */
 export function exportableResources(config) {
@@ -49,6 +72,8 @@ export function exportableResources(config) {
     // The enrichment record sets the package metadata and README promise.
     'enriched-field': names.enriched,
     'enrichment-opt-out': names.optOut,
+    // The erasure registry: append-only accountability, no personal data.
+    'customer-erasure-log': names.erasure,
   });
 }
 
@@ -120,12 +145,17 @@ export function createCustomerDataExport({ database, modules, events, config }) 
           },
         );
       }
+      // Erased subjects leave the export (backlog:d271d723): the registry
+      // names them, and the exclusion is stated on the answer — never a
+      // silent short file. Rows without a subject envelope are unaffected.
+      const { visible, erasedExcluded } = excludeErasedSubjects(rows, await readErasedSubjects({ modules, names }));
       return Object.freeze({
         resource,
-        rowCount,
+        rowCount: visible.length,
         bound,
         complete: true,
-        rows: Object.freeze(rows.map((row) => Object.freeze({ ...row }))),
+        erasedExcluded,
+        rows: Object.freeze(visible.map((row) => Object.freeze({ ...row }))),
       });
     },
   };

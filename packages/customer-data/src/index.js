@@ -71,6 +71,7 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'enrichment-opt-out',
   'custom-field-def',
   'custom-field-value',
+  'customer-erasure-log',
 ]);
 
 /**
@@ -314,6 +315,31 @@ export function createCustomerDataPackage(options = {}) {
             config: runtime.config, core: runtime.core, policy, names,
           });
           return (request) => operations.applyBulkCustomerAction(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'erase-customer',
+        appMethod: 'eraseCustomer',
+        label: 'Erase one customer for good (GDPR)',
+        description:
+          'Erase one contact or company: a human decision with an explicit titolare confirmation. Refuses with '
+          + '409 when signed business (orders, contracts, subscriptions) must be kept. Otherwise anonymizes what is '
+          + 'writable (contact PII, channel identities, enriched fields, custom-field values), records one '
+          + 'append-only customer-erasure-log row per erased subject, and excludes the subject from the customer '
+          + 'list, the profile and the export. Replaying an erasure answers the stored row.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'confirm', type: 'boolean', hint: 'The titolare confirmation: must be true, nothing is erased without it.' },
+          { name: 'reason', type: 'string', hint: 'Why the customer is erased, recorded with the decider identity.' },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.eraseCustomer(request);
         },
       },
       {
@@ -772,6 +798,7 @@ export function createCustomerDataPackage(options = {}) {
           bound: 'stated on every answer; a smaller bound may be asked, never a larger one',
           truncation: 'a set larger than the bound refuses with EXPORT_WOULD_TRUNCATE instead of returning a short file',
           reconciliation: 'the rows returned always equal the count stated, or nothing is returned',
+          erased: 'rows naming an erased subject are excluded and counted as erasedExcluded, never silently dropped',
           writes: 'an export writes nothing at all — not a run, not a receipt',
         },
         dataQuality: {
@@ -787,15 +814,24 @@ export function createCustomerDataPackage(options = {}) {
             + 'reads "not available" with the reason, never as an empty result',
           counts: 'every readable section states countIsComplete: a count taken from a bounded display page is reported as a floor, not as a total',
         },
+        erasure: {
+          operation: 'erase-customer',
+          registry: 'customer-erasure-log',
+          confirmation: 'an explicit titolare confirmation (confirm: true) plus a recorded reason, by a user actor',
+          legalBasis: 'signed business (orders, contracts, subscriptions) is kept: a cliente refuses with ERASURE_BLOCKED_SIGNED_BUSINESS, everything else goes',
+          replay: 'a second erasure of the same subject answers the stored row, never a second write',
+          exclusion: 'erased subjects leave the customer list, the search, the profile and the export through the same registry',
+          physicalPurge: 'interaction messages and calls, appointments and the company record are excluded from reads but not rewritten here: their owning packages do that',
+        },
         deferred: {
           track: 'Customer Data Operations v2',
           items: ['global search', 'saved views', 'physical merge or consolidation',
-            'retention and erasure workflow'],
+            'physical purge of messages, calls and appointments for erased subjects'],
         },
         limitations: [...LIMITATIONS],
         notModeled: ['CDP activation', 'warehouse or lakehouse', 'real-time streaming', 'probabilistic identity resolution',
           'machine-learning entity resolution', 'arbitrary ETL', 'global full-text search', 'consent orchestration',
-          'GDPR or legal assurance', 'retention and erasure', 'cross-channel timeline'],
+          'GDPR or legal assurance', 'cross-channel timeline'],
       };
     },
   }), options.packageContract === 2 ? 2 : 1);
