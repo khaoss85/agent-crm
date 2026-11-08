@@ -1,12 +1,14 @@
 // @ts-check
 
-import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { elFor, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS } from './admin-labels.js';
+import { SYNC_LABELS, offerStageLabel, offerStateLabel } from './admin-labels.js';
+import { openOfferPanel } from './admin-offer-panel.js';
+import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
   defineField,
@@ -227,13 +229,9 @@ const statusMicrocopy = (card, profile) => {
     : 'Ordini e contratti non leggibili adesso';
 };
 
-const OFFER_STATUS_LABELS = Object.freeze({
-  sent: 'inviata', draft: 'bozza', approved: 'approvata', rejected: 'rifiutata',
-  open: 'aperta', won: 'vinta', lost: 'persa', expired: 'scaduta', accepted: 'accettata',
-  pending_approval: 'in attesa di approvazione', approval_pending: 'in attesa di approvazione',
-  discovery: 'scoperta', qualification: 'qualificazione', proposal: 'proposta', negotiation: 'trattativa',
-});
-const offerStatusLabel = (status) => ownLabel(OFFER_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
+// Backlog a551982c06eb: the commercial states share one map with the
+// Pipeline board and the offer detail (admin-labels.js).
+const offerStatusLabel = offerStateLabel;
 
 // Voce 714433c2: the opportunity stages the «Cambia stato» menu offers.
 // Mirrors ALLOWED_TRANSITIONS in
@@ -241,7 +239,7 @@ const offerStatusLabel = (status) => ownLabel(OFFER_STATUS_LABELS, String(status
 // as a static file, so it names the table instead of importing it, like
 // TERMINAL_APPOINTMENT below). A test pins this mirror to the governed
 // table, so a workflow change that the menu ignores fails loudly. Every key
-// has an Italian voice in OFFER_STATUS_LABELS above, so the menu never
+// has an Italian voice in OFFER_STATE_LABELS (admin-labels.js), so the menu never
 // prints a raw stage key.
 export const OPPORTUNITY_ALLOWED_TRANSITIONS = Object.freeze({
   discovery: ['qualification', 'lost'],
@@ -272,6 +270,90 @@ export function offerStageTargets(current) {
   return allowed.filter((stage) => stage !== key && !GOVERNED_SYSTEM_STAGES.includes(stage));
 }
 
+/**
+ * Backlog a551982c06eb: the state the scheda offer line shows. An
+ * opportunity reads its own stage; a quote reads the stage of the
+ * opportunity it was made for — from the profile's join on the quote item,
+ * else the opportunity row of the same profile — and only a quote with no
+ * readable opportunity falls back to its own status.
+ * @param {any} first the shown row (quote or opportunity)
+ * @param {boolean} fromQuote
+ * @param {Array<any> | null} opportunities the profile's opportunity rows
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @returns {string | null}
+ */
+export function shownOfferState(first, fromQuote, opportunities, pipelines) {
+  if (!first || typeof first !== 'object') return null;
+  if (!fromQuote) {
+    return offerStageLabel(pipelines, {
+      pipelineKey: first.pipelineKey, pipelineStage: first.pipelineStage, stage: first.stage ?? first.status,
+    });
+  }
+  const joined = first.opportunityStage != null || first.opportunityPipelineStage != null
+    ? { pipelineKey: first.opportunityPipelineKey, pipelineStage: first.opportunityPipelineStage, stage: first.opportunityStage }
+    : null;
+  const row = joined === null && typeof first.opportunityId === 'string' && Array.isArray(opportunities)
+    ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+    : null;
+  const parent = joined ?? (row === null ? null : {
+    pipelineKey: row.pipelineKey, pipelineStage: row.pipelineStage, stage: row.stage ?? row.status,
+  });
+  return (parent === null ? null : offerStageLabel(pipelines, parent)) ?? offerStateLabel(first.status);
+}
+
+/**
+ * Backlog 1e939a362c7c: the «Cambia stato» menu of the scheda offer line,
+ * for every offer — a quote line acts on the opportunity it was made for.
+ * An offer placed on a composed pipeline moves through that pipeline's
+ * stages, on the same `move-stage` action the Pipeline board posts (the
+ * line shows the pipeline stage, so the menu moves exactly that). An offer
+ * outside any pipeline keeps the governed core workflow
+ * (`POST /api/opportunities/:id/stage`). Null when no opportunity is known,
+ * or when it is placed on a pipeline this reader does not compose (never a
+ * core move the line would not show).
+ * @param {any} first the shown row (quote or opportunity)
+ * @param {boolean} fromQuote
+ * @param {Array<any> | null} opportunities the profile's opportunity rows
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @returns {{ id: string, kind: 'pipeline', pipeline: any, current: string, voices: Array<{ key: string, label: string, type: string }> }
+ *   | { id: string, kind: 'core', current: string, voices: Array<{ key: string, label: string, type: string }> } | null}
+ */
+export function offerStageMenu(first, fromQuote, opportunities, pipelines) {
+  if (!first || typeof first !== 'object') return null;
+  const row = fromQuote && typeof first.opportunityId === 'string' && Array.isArray(opportunities)
+    ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+    : null;
+  const id = fromQuote ? first.opportunityId : first.id;
+  if (typeof id !== 'string' || id === '') return null;
+  const pick = (joined, own) => (typeof joined === 'string' && joined !== '' ? joined : (typeof own === 'string' && own !== '' ? own : null));
+  const pipelineKey = fromQuote ? pick(first.opportunityPipelineKey, row?.pipelineKey) : pick(first.pipelineKey, null);
+  const pipelineStage = fromQuote ? pick(first.opportunityPipelineStage, row?.pipelineStage) : pick(first.pipelineStage, null);
+  const coreStage = fromQuote ? pick(first.opportunityStage, row?.stage ?? row?.status) : pick(first.stage, first.status);
+  if (pipelineKey !== null && pipelineStage !== null) {
+    const pipeline = (Array.isArray(pipelines) ? pipelines : [])
+      .find((candidate) => candidate?.name === pipelineKey && Array.isArray(candidate?.stages));
+    if (!pipeline || typeof pipeline.module !== 'string' || pipeline.module === '') return null;
+    // Review #683: a stage the pipeline no longer defines (drift, «Fuori
+    // definizione» on the board) offers no move — the server would refuse
+    // every one with 409 PIPELINE_STATE_CORRUPT, like the board knows.
+    if (!pipeline.stages.some((stage) => stage?.key === pipelineStage)) return null;
+    const voices = pipeline.stages
+      .filter((stage) => typeof stage?.key === 'string' && stage.key !== pipelineStage)
+      .map((stage) => ({
+        key: stage.key,
+        label: typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : stage.key,
+        type: typeof stage.type === 'string' ? stage.type : 'open',
+      }));
+    return voices.length > 0 ? { id, kind: 'pipeline', pipeline, current: pipelineStage, voices } : null;
+  }
+  if (coreStage === null) return null;
+  const current = coreStage.toLowerCase();
+  const voices = offerStageTargets(current).map((stage) => ({
+    key: stage, label: offerStateLabel(stage) ?? stage, type: 'core',
+  }));
+  return voices.length > 0 ? { id, kind: 'core', current, voices } : null;
+}
+
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
 const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
@@ -282,6 +364,21 @@ const ROLE_LABELS = Object.freeze({ canonical: 'scheda principale', alias: 'sche
 const roleLabel = (role) => ownLabel(ROLE_LABELS, String(role ?? '').toLowerCase()) ?? null;
 const channelLabel = (channel) => ownLabel(CHANNEL_LABELS, String(channel ?? '').toLowerCase()) ?? String(channel ?? 'canale');
 const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase()) ?? String(sync ?? 'stato ignoto');
+
+/**
+ * Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta visibile in
+ * cronologia con il motivo e Riprova. La riga del server porta `sync:
+ * 'failed'` e il codice inglese in `errorCode`: qui si legge solo italiano,
+ * mai il codice grezzo da solo.
+ */
+export function failedSendReason(errorCode) {
+  const code = String(errorCode ?? '').trim();
+  if (code === 'CHANNEL_TEMPLATE_REQUIRED') return 'Fuori dalla finestra di 24 ore: serve un modello approvato.';
+  if (code === 'CHANNEL_CONNECTION_NOT_ACTIVE' || code === 'CHANNEL_CONNECTION_UNKNOWN') return 'Il canale non è collegato: aprilo in Connettori e riprova.';
+  if (code === 'CHANNEL_SECRET_UNAVAILABLE') return 'Il canale non può firmare l’invio: ricontrolla il collegamento e riprova.';
+  if (code !== '') return `Motivo: ${code}.`;
+  return 'Non sappiamo perché: controlla il collegamento e riprova.';
+}
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
@@ -528,7 +625,7 @@ export function createCustomerCardView(deps) {
   // submission-owned Idempotency-Key before any request leaves, so in
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
-  const { client } = bindAdminMutations(deps.client, deps);
+  const { client, submissions } = bindAdminMutations(deps.client, deps);
   /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
   const detailsInFlight = new Set();
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
@@ -568,6 +665,47 @@ export function createCustomerCardView(deps) {
   };
 
   let channelFilter = 'all';
+  // The note writer picked under «Note» (Dan 06/11). Kept with the channel
+  // filter through a re-read of the same scheda, reset on a new one.
+  let noteAuthorFilter = null;
+  // How far the conversation is opened (Mostra precedenti). Kept with the
+  // channel filter when the same scheda re-reads itself, reset on a new one.
+  let timelineShown = TIMELINE_PAGE;
+  // The scheda on screen, so a re-read of the same customer (after Invia,
+  // a note, an edit) redraws in place instead of blanking the page.
+  let shownKey = null;
+  let shownSides = [];
+  // Review #612: what the person was typing in the scheda on screen (a note,
+  // the open Dettagli form, a phone number) when a re-read swaps it. The new
+  // scheda is built with it, so an Invia elsewhere never wipes their text.
+  let pendingDrafts = null;
+  // Review #612 round 5: what was being typed when a re-read of the same
+  // scheda failed. The error panel replaces the scheda, so the typing is
+  // kept here and handed to the next scheda that loads for this customer.
+  let retainedDrafts = null;
+
+  function readDrafts(root) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+    const drafts = {};
+    const note = root.querySelector('input[name="noteBody"]');
+    if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    if (root.querySelector('button[data-action="save-details"]')) {
+      // Review #612 round 3: only the fields the person changed travel to
+      // the new scheda. An untouched field takes the freshly read value, so a
+      // later Salva never writes back what another operator just changed.
+      drafts.details = {};
+      for (const name of ['firstName', 'lastName', 'email']) {
+        const input = root.querySelector(`input[name="${name}"]`);
+        if (input && typeof input.value === 'string' && input.value !== input.getAttribute('data-initial')) {
+          drafts.details[name] = input.value;
+        }
+      }
+    }
+    const phonePanel = root.querySelector('div[data-phone="open"]');
+    const phone = phonePanel ? phonePanel.querySelector('input') : null;
+    if (phone) drafts.phone = typeof phone.value === 'string' ? phone.value : '';
+    return Object.keys(drafts).length > 0 ? drafts : null;
+  }
 
   // Voce 908f2eb9bbfb: one slow or failing read must never fail the whole
   // scheda. Every read settles on its own: the card stays the identity
@@ -592,7 +730,7 @@ export function createCustomerCardView(deps) {
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
-    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw] = await Promise.all([
+    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw, schemaRaw] = await Promise.all([
       settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
       settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
       settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
@@ -611,6 +749,10 @@ export function createCustomerCardView(deps) {
       // 404, and the section hides instead of failing the card.
       settle(() => fetchFieldDefs(client)),
       settle(() => fetchFieldValues(client, resource, id)),
+      // Backlog a551982c06eb: the composed pipelines name the offer's stage
+      // exactly like the Pipeline board (the shell shares one schema read).
+      // Without them the offer line falls back to the core stage.
+      settle(() => client.request('/api/schema')),
     ]);
     // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
     // retry — the package is not composed for this reader, so the read stays
@@ -637,6 +779,7 @@ export function createCustomerCardView(deps) {
       fieldDefsError: fieldDefs.error,
       fieldValues: fieldValues.value,
       fieldValuesError: fieldValues.error,
+      pipelines: Array.isArray(schemaRaw.value?.pipelines) ? schemaRaw.value.pipelines : [],
     };
   }
 
@@ -880,6 +1023,11 @@ export function createCustomerCardView(deps) {
         openPhonePanel(box, navCtx);
       });
       row.appendChild(add);
+      if (pendingDrafts && typeof pendingDrafts.phone === 'string') {
+        openPhonePanel(box, navCtx);
+        const typed = box.querySelector('div[data-phone="open"]')?.querySelector('input');
+        if (typed) typed.value = pendingDrafts.phone;
+      }
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -947,6 +1095,7 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone }),
         });
         toast('Telefono salvato');
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
         // The typed number stays in the field: the operator corrects it.
@@ -956,6 +1105,7 @@ export function createCustomerCardView(deps) {
       }
     });
     cancel.addEventListener('click', async () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
       await renderCard(navCtx.resource, navCtx.id);
     });
   }
@@ -1136,6 +1286,8 @@ export function createCustomerCardView(deps) {
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
+    const offerWindow = mount.querySelector('div[data-offer-panel="open"]');
+    if (offerWindow && offerWindow.parentNode) offerWindow.parentNode.removeChild(offerWindow);
     // The window hangs off the view, not off the Azioni column: a sticky
     // column is its own stacking layer painted in page order, so a fixed
     // window inside the left column sat under the right one (#605).
@@ -1247,6 +1399,16 @@ export function createCustomerCardView(deps) {
     row.appendChild(field);
     row.appendChild(line);
     let busy = false;
+    // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
+    // lives in composerAiPending, outside this row (review #664): the next
+    // Genera with the same words and channel — even after ✕ and Scrivi —
+    // reads that request back instead of asking the AI again.
+    // The latest Genera (a newer one supersedes a read-back) and the key of
+    // the queued draft being read back, if any.
+    let drafting = 0;
+    /** @type {string|null} */
+    let reading = null;
+    const pendingKey = (words, picked) => `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}:${picked}:${words}`;
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
@@ -1282,9 +1444,13 @@ export function createCustomerCardView(deps) {
       }
     };
     async function generate() {
-      if (busy) return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
+      // Review #664: during the minute of read-back a Genera with other
+      // words supersedes the queued read (its request stays for the next
+      // Genera with those words); the same words keep the read going. While
+      // the POST itself is in flight Genera stays off, as before.
+      if (busy && (reading === null || reading === pendingKey(words, picked))) return;
       if (words === '') {
         say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
@@ -1293,19 +1459,68 @@ export function createCustomerCardView(deps) {
         say('Nessun canale collegato: l’AI scrive per il canale scelto.');
         return;
       }
+      const mine = ++drafting;
+      const gone = () => stale() || mine !== drafting;
+      reading = null;
       busy = true;
       go.setAttribute('disabled', 'disabled');
       go.textContent = 'Scrivo…';
       say('');
       try {
-        const answer = await client.request('/api/customer-hub/messages/draft', {
-          method: 'POST',
-          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
-        });
+        // Production 07/11 (same shape as the calendar phrase): a queued
+        // draft answers 504 *_PENDING with a requestId; it is read back on
+        // the same path every 3 s for about a minute, never asked again.
+        const key = pendingKey(words, picked);
+        let requestId = composerAiPending.get(key) ?? null;
+        composerAiPending.delete(key);
+        let answer = null;
+        if (requestId === null) {
+          try {
+            answer = await client.request('/api/customer-hub/messages/draft', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+            });
+          } catch (error) {
+            requestId = pendingRequestId(error, 'BO_DRAFT_PENDING');
+            if (requestId === null) throw error;
+          }
+        }
+        if (requestId !== null) {
+          if (gone()) {
+            composerAiPending.set(key, requestId);
+            return;
+          }
+          say('Scrivo ancora… la bozza arriva tra poco.');
+          // Genera comes back on during the read-back, so other words can
+          // supersede it (review #664).
+          reading = key;
+          go.removeAttribute?.('disabled');
+          go.textContent = 'Genera';
+          const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
+            expectedCode: 'BO_DRAFT_PENDING',
+            spaceId: spaceId ?? null,
+            wait, everyMs: 3000, rounds: 20, stale: gone,
+          });
+          if (mine === drafting) reading = null;
+          if (read.stale) {
+            // Closed while reading back: the request stays for the next Genera.
+            composerAiPending.set(key, requestId);
+            return;
+          }
+          if (read.error) throw read.error;
+          if (read.pending) {
+            composerAiPending.set(key, read.requestId);
+            console.warn('[bo] bozza AI ancora in coda', { requestId: read.requestId, spaceId: spaceId ?? null });
+            say('L’AI sta impiegando più del previsto: premi di nuovo Genera per riprendere la stessa bozza.');
+            return;
+          }
+          answer = read.answer;
+        }
         // Review #599 P2: the composer may have been closed or reopened while
         // the AI wrote. A stale answer never touches a detached form nor the
-        // shared per-customer draft.
-        if (stale()) return;
+        // shared per-customer draft; a superseded one never overwrites the
+        // newer draft (review #664).
+        if (gone()) return;
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
@@ -1323,7 +1538,7 @@ export function createCustomerCardView(deps) {
         say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
         if (typeof text.focus === 'function') text.focus();
       } catch (error) {
-        if (stale()) return;
+        if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
         const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
@@ -1337,7 +1552,9 @@ export function createCustomerCardView(deps) {
         else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
+        if (mine !== drafting) return;
         busy = false;
+        reading = null;
         if (row.getAttribute('data-off') !== 'true') {
           go.removeAttribute?.('disabled');
           if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
@@ -1369,6 +1586,11 @@ export function createCustomerCardView(deps) {
   // the server accepted. In memory: a reload still drops them, like any
   // unsent form.
   const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
   // The idempotency key of a send whose outcome is not yet known, keyed by
   // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
   // the server finds its own request instead of mailing twice (production
@@ -1599,6 +1821,11 @@ export function createCustomerCardView(deps) {
         composerSendKeys.delete(sendKey);
         composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
+        // The re-read below keeps open windows through the in-place swap
+        // (#612); the sent message's own window closes first, as it always
+        // did, so the sent text never stays under a live Invia.
+        composerGeneration += 1;
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       };
       try {
@@ -1687,9 +1914,28 @@ export function createCustomerCardView(deps) {
     const offer = tile('Nuova offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
+    // Dan 06/11: the offer is written where the customer is — a window
+    // over the scheda like «Scrivi», never a jump to another page. Only one
+    // window at a time: the composer steps aside (its draft is kept).
     offer.addEventListener('click', () => {
-      if (pick !== null) writePendingCustomerPick(storage, 'offer', pick);
-      navigate('#/modules/opportunity/new');
+      if (pick === null) {
+        navigate('#/modules/opportunity/new');
+        return;
+      }
+      const composer = mount.querySelector('div[data-composer="open"]');
+      if (composer && composer.parentNode) composer.parentNode.removeChild(composer);
+      openOfferPanel({
+        doc,
+        host: mount,
+        client,
+        issueKey: () => submissions.issueKey(),
+        card,
+        navCtx,
+        company: pick.company,
+        spaceId: activeSpaceId(),
+        toast,
+        onCreated: () => { renderCard(navCtx.resource, navCtx.id); },
+      });
     });
     row.appendChild(offer);
     const appointment = tile('Nuovo appuntamento', 'appuntamento');
@@ -1891,6 +2137,15 @@ export function createCustomerCardView(deps) {
       };
       edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
       box.appendChild(edit);
+      if (pendingDrafts && pendingDrafts.details) {
+        const typed = pendingDrafts.details;
+        renderDetailsForm(box, card, contact, editCtx, restore);
+        for (const name of Object.keys(typed)) {
+          const input = box.querySelector(`input[name="${name}"]`);
+          if (input) input.value = typed[name];
+        }
+        return;
+      }
     }
     // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
     // It opens the BO-F0-04 bar with this customer already in the context —
@@ -1930,6 +2185,8 @@ export function createCustomerCardView(deps) {
       const input = el('input');
       input.setAttribute('name', name);
       input.value = value;
+      // What the form opened with: a re-read keeps only what differs from it.
+      input.setAttribute('data-initial', value);
       input.setAttribute('aria-label', label);
       box.appendChild(labelNode);
       box.appendChild(input);
@@ -1976,6 +2233,7 @@ export function createCustomerCardView(deps) {
         });
         detailsInFlight.delete(flightKey);
         toast('Dati salvati');
+        if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
@@ -2163,6 +2421,20 @@ export function createCustomerCardView(deps) {
     const notes = entries.filter((item) => item?.entry === 'note');
     const noteAuthor = (item) => (isHumanHandle(item?.teamAuthorId) ? String(item.teamAuthorId).trim() : '');
     const authors = [...new Set(notes.map(noteAuthor))];
+    // Review #612 round 3: a filter kept through a re-read may name a channel
+    // (or a note writer) the fresh cronologia no longer has. It falls back to
+    // «Tutti», like a new scheda, instead of a chip-less false empty state.
+    const filterGone = channelFilter === 'note'
+      ? notes.length === 0
+      : channelFilter !== 'all' && !channels.includes(channelFilter);
+    if (filterGone) {
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    } else if (noteAuthorFilter !== null && !authors.includes(noteAuthorFilter)) {
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    }
     const chips = el('p', 'bo-scheda-chips');
     const chip = (label, key, active, onPick) => {
       const node = el('button', undefined, label);
@@ -2177,7 +2449,7 @@ export function createCustomerCardView(deps) {
       const pick = (key) => () => {
         channelFilter = key;
         noteAuthorFilter = null;
-        shownCount = TIMELINE_PAGE;
+        timelineShown = TIMELINE_PAGE;
         drawChips();
         drawList();
       };
@@ -2198,7 +2470,7 @@ export function createCustomerCardView(deps) {
           const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
-            shownCount = TIMELINE_PAGE;
+            timelineShown = TIMELINE_PAGE;
             drawChips();
             drawList();
           });
@@ -2208,7 +2480,6 @@ export function createCustomerCardView(deps) {
         chips.appendChild(byAuthor);
       }
     };
-    let noteAuthorFilter = null;
     const list = el('div', 'bo-scheda-timeline');
     // Voce 32820692: the timeline entry carries the attachment reference
     // the host logged, and the card shows it — a thumbnail for photos, a
@@ -2252,7 +2523,7 @@ export function createCustomerCardView(deps) {
         return String(item?.channel ?? '') === channelFilter;
       });
       const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
-      const visible = ordered.slice(0, shownCount);
+      const visible = ordered.slice(0, timelineShown);
       if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
@@ -2383,6 +2654,45 @@ export function createCustomerCardView(deps) {
           state.setAttribute('data-sync', syncKey);
           bubble.appendChild(state);
         }
+        // Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta
+        // visibile con il motivo italiano e Riprova. Riprova riusa la
+        // stessa rotta del composer (un tasto nuovo, mai un doppio invio:
+        // la chiave del messaggio è fresca a ogni tocco).
+        if (item?.entry === 'message' && isOutbound && syncKey === 'failed') {
+          const reason = el('p', 'bo-scheda-failed-reason', `Non consegnato: ${failedSendReason(item?.errorCode)}`);
+          reason.setAttribute('data-failed-reason', String(item?.errorCode ?? ''));
+          bubble.appendChild(reason);
+          const body = typeof item?.body === 'string' ? item.body : '';
+          const channel = typeof item?.channel === 'string' ? item.channel : '';
+          if (body !== '' && channel !== '') {
+            const retry = el('button', 'bo-scheda-retry', 'Riprova');
+            retry.setAttribute('type', 'button');
+            retry.setAttribute('data-action', 'message-retry');
+            retry.addEventListener('click', async () => {
+              retry.setAttribute('disabled', '');
+              try {
+                const spaceId = activeSpaceId();
+                await client.request('/api/customer-hub/messages', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    spaceId,
+                    resource: noteCtx?.resource,
+                    id: noteCtx?.id,
+                    channel,
+                    text: body,
+                    messageKey: freshMessageKey(),
+                  }),
+                });
+                toast('Messaggio in consegna');
+                await renderCard(noteCtx?.resource, noteCtx?.id);
+              } catch (error) {
+                toast(humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' }), true);
+                retry.removeAttribute('disabled');
+              }
+            });
+            bubble.appendChild(retry);
+          }
+        }
         row.appendChild(bubble);
         list.appendChild(row);
       }
@@ -2392,13 +2702,12 @@ export function createCustomerCardView(deps) {
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
-          shownCount += TIMELINE_PAGE;
+          timelineShown += TIMELINE_PAGE;
           drawList();
         });
         list.appendChild(older);
       }
     };
-    let shownCount = TIMELINE_PAGE;
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -2414,6 +2723,7 @@ export function createCustomerCardView(deps) {
       noteInput.setAttribute('name', 'noteBody');
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
+      if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
       const noteButton = el('button', undefined, 'Aggiungi nota');
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
@@ -2429,6 +2739,7 @@ export function createCustomerCardView(deps) {
             body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
           });
           toast('Nota aggiunta');
+          noteInput.value = '';
           await renderCard(noteCtx.resource, noteCtx.id);
         } catch (error) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
@@ -2507,7 +2818,7 @@ export function createCustomerCardView(deps) {
     return true;
   }
 
-  function offer(box, profile, offerCtx, profileError = null) {
+  function offer(box, profile, offerCtx, profileError = null, pipelines = []) {
     // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
     // section too, instead of vanishing as "no offer".
     if (profileError) {
@@ -2548,7 +2859,12 @@ export function createCustomerCardView(deps) {
     }
     const rawName = fromQuote ? (first?.opportunityName ?? first?.name) : first?.name;
     const name = typeof rawName === 'string' && rawName !== '' ? rawName : 'offerta';
-    const offerStatus = offerStatusLabel(first?.status);
+    // Backlog a551982c06eb: the state is the offer's stage, as the Pipeline
+    // board and the offer detail say it (offerStageLabel). A quote's own
+    // status is its approval («approvata» meant the price was cleared, not
+    // the sale): it reads only for a quote with no readable opportunity,
+    // and in full on #/quotes/<id>, where the line links.
+    const offerStatus = shownOfferState(first, fromQuote, opportunities, pipelines);
     // Name and state read as one line for assistive tech and tests («nome · stato»); on screen the state is the prototype's pill.
     const line = el('p', 'bo-scheda-offer');
     line.appendChild(el('span', 'bo-scheda-offer-name', name));
@@ -2582,79 +2898,133 @@ export function createCustomerCardView(deps) {
     // /api/opportunities/:id/stage), never a direct write: a renewal moving
     // to proposal past the approval threshold lands in «in attesa di
     // approvazione» with a toast saying so, like the pipeline board. The
-    // menu acts on exactly the stato the line shows: when the line reads a
-    // quote (no governed stage transition exists for quotes), there is no
-    // menu — the quote's state changes from the quotes screen. A refused
+    // menu acts on exactly the stato the line shows: since backlog
+    // a551982c06eb that is the offer's stage even on a quote line, so the
+    // menu acts on the quote's opportunity (the quote's own approval
+    // changes from the quotes screen). A refused
     // move keeps the menu with the server's Italian error, and a completed
     // move re-reads the card so the line is the server's state, never an
     // optimistic copy. The header Cliente/Contatto pill stays derived (see
     // customer-status.js): this menu does not touch it.
-    const shownOpportunity = fromQuote ? null : first;
-    if (shownOpportunity && typeof shownOpportunity.id === 'string' && shownOpportunity.id !== ''
-      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
-      const current = String(shownOpportunity.status ?? '').toLowerCase();
-      const targets = offerStageTargets(current);
-      if (targets.length > 0) {
-        const wrap = el('div', 'bo-scheda-stage-menu');
-        const button = el('button', undefined, 'Cambia stato');
-        button.setAttribute('type', 'button');
-        button.setAttribute('aria-haspopup', 'menu');
-        button.setAttribute('aria-expanded', 'false');
-        button.setAttribute('data-action', 'change-offer-stage');
-        const menu = el('div', 'bo-scheda-stage-voices hidden');
-        menu.setAttribute('role', 'menu');
-        const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
-        const syncMenu = () => {
-          button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
-        };
-        const close = () => {
-          if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
-          syncMenu();
-        };
-        button.addEventListener('click', () => {
-          menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
-          syncMenu();
-        });
-        button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-        menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-        const stageError = el('small', 'field-error', '');
-        let stageBusy = false;
-        for (const stage of targets) {
-          const voice = el('button', undefined, offerStatusLabel(stage) ?? stage);
-          voice.setAttribute('type', 'button');
-          voice.setAttribute('role', 'menuitem');
-          voice.setAttribute('data-stage', stage);
-          voice.addEventListener('click', async () => {
-            if (stageBusy) return;
-            stageBusy = true;
-            stageError.textContent = '';
-            try {
-              const result = await client.request(
-                `/api/opportunities/${encodeURIComponent(shownOpportunity.id)}/stage`,
-                { method: 'POST', body: JSON.stringify({ targetStage: stage }) },
-              );
-              close();
-              // The stage route returns the workflow envelope
-              // { runId, status, output }: the approval gate reads in
-              // output.outcome, never in a top-level outcome.
-              toast(result?.output?.outcome === 'approval_required'
-                ? 'Stato aggiornato: serve un\u2019approvazione'
-                : 'Stato aggiornato');
-              await renderCard(offerCtx.resource, offerCtx.id);
-            } catch (error) {
-              stageError.textContent = humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' });
-              toast(humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' }), true);
-            } finally {
-              stageBusy = false;
-            }
-          });
-          menu.appendChild(voice);
+    // Backlog 1e939a362c7c: every offer has the menu — a quote line acts on
+    // its opportunity, a placed offer moves through its pipeline (see
+    // offerStageMenu).
+    const stageMenu = offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string'
+      ? offerStageMenu(first, fromQuote, opportunities, pipelines) : null;
+    if (stageMenu) {
+      const wrap = el('div', 'bo-scheda-stage-menu');
+      const button = el('button', undefined, 'Cambia stato');
+      button.setAttribute('type', 'button');
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('data-action', 'change-offer-stage');
+      const menu = el('div', 'bo-scheda-stage-voices hidden');
+      menu.setAttribute('role', 'menu');
+      const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+      const syncMenu = () => {
+        button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
+      };
+      const close = () => {
+        if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
+        syncMenu();
+      };
+      button.addEventListener('click', () => {
+        menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
+        syncMenu();
+      });
+      button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      const stageError = el('small', 'field-error', '');
+      const stageStatus = el('small', 'bo-muted', '');
+      stageStatus.setAttribute('role', 'status');
+      let stageBusy = false;
+      const failed = 'Stato non aggiornato. Riprova più tardi.';
+      /** One move: the pipeline's move-stage action or the governed core workflow. */
+      const move = async (voice, reason = null) => {
+        if (stageBusy) return;
+        stageBusy = true;
+        stageError.textContent = '';
+        stageStatus.textContent = '';
+        try {
+          if (stageMenu.kind === 'pipeline') {
+            const input = { toStage: voice.key, fromStage: stageMenu.current };
+            if (reason) input.reason = reason;
+            await client.request(
+              `/api/modules/${encodeURIComponent(stageMenu.pipeline.module)}/records/${encodeURIComponent(stageMenu.id)}/actions/move-stage`,
+              { method: 'POST', body: JSON.stringify(input) },
+            );
+            close();
+            toast(`Spostata in ${voice.label}.`);
+          } else {
+            const result = await client.request(
+              `/api/opportunities/${encodeURIComponent(stageMenu.id)}/stage`,
+              { method: 'POST', body: JSON.stringify({ targetStage: voice.key }) },
+            );
+            close();
+            // The stage route returns the workflow envelope
+            // { runId, status, output }: the approval gate reads in
+            // output.outcome, never in a top-level outcome.
+            toast(result?.output?.outcome === 'approval_required'
+              ? 'Stato aggiornato: serve un\u2019approvazione'
+              : 'Stato aggiornato');
+          }
+          await renderCard(offerCtx.resource, offerCtx.id);
+        } catch (error) {
+          // Review #683: a move the server still holds (the pilot queue) is
+          // not a failure — it reads neutral, like «Non ancora confermato»
+          // on the board, never as an error.
+          if (error?.code === 'BO_CRM_PENDING') {
+            close();
+            const pending = 'Non ancora confermato: ricarica la scheda tra poco.';
+            stageStatus.textContent = pending;
+            toast(pending);
+            return;
+          }
+          const text = humanReadError(error, { failed });
+          stageError.textContent = text;
+          toast(text, true);
+        } finally {
+          stageBusy = false;
         }
-        wrap.appendChild(button);
-        wrap.appendChild(menu);
-        wrap.appendChild(stageError);
-        box.appendChild(wrap);
+      };
+      // A pipeline won/lost stage asks the board's own Conferma (shared
+      // component, never a native confirm()): the question names the offer,
+      // a lost stage needs the reason, and only Conferma posts.
+      const confirmPanel = createStageConfirm(doc);
+      let confirmVoice = null;
+      const offerName = name;
+      confirmPanel.yes.addEventListener('click', () => {
+        if (!confirmVoice) return;
+        const answer = readStageConfirm(confirmPanel, confirmVoice);
+        if (!answer.ok) return;
+        void move(confirmVoice, answer.reason ?? null);
+      });
+      confirmPanel.no.addEventListener('click', () => {
+        confirmVoice = null;
+        confirmPanel.box.setAttribute('class', 'card-confirm hidden');
+      });
+      for (const voiceDef of stageMenu.voices) {
+        const voice = el('button', undefined, voiceDef.label);
+        voice.setAttribute('type', 'button');
+        voice.setAttribute('role', 'menuitem');
+        voice.setAttribute('data-stage', voiceDef.key);
+        voice.addEventListener('click', () => {
+          if (stageMenu.kind === 'pipeline' && stageNeedsConfirm(voiceDef)) {
+            confirmVoice = voiceDef;
+            close();
+            showStageConfirm(confirmPanel, offerName, voiceDef);
+            return;
+          }
+          void move(voiceDef);
+        });
+        menu.appendChild(voice);
       }
+      wrap.appendChild(button);
+      wrap.appendChild(menu);
+      wrap.appendChild(confirmPanel.box);
+      wrap.appendChild(stageStatus);
+      wrap.appendChild(stageError);
+      box.appendChild(wrap);
     }
     return true;
   }
@@ -2820,15 +3190,57 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
+  /**
+   * Puts the new scheda on screen in one step. A re-read of the scheda already
+   * shown (after Invia, a note, an edit) keeps the old one up while it loads
+   * and swaps in the same tick: no blank flash, the page and the side columns
+   * keep their scroll, the conversation keeps its filter and its open pages.
+   */
+  function show(node, key, sides = []) {
+    const page = doc.scrollingElement ?? null;
+    const pageTop = key === shownKey && page ? page.scrollTop : null;
+    const sideTops = key === shownKey ? shownSides.map((side) => side.scrollTop ?? 0) : [];
+    // Review #612 round 2: the windows that hang off the view (Scrivi, the
+    // offer panel) stay open through a re-read of the same customer, with
+    // their text and focus; only the scheda itself is swapped.
+    const isWindow = (child) => typeof child?.getAttribute === 'function'
+      && (child.getAttribute('data-composer') === 'open' || child.getAttribute('data-offer-panel') === 'open');
+    const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
+    for (const child of Array.from(mount.childNodes ?? [])) {
+      if (!kept.includes(child)) mount.removeChild(child);
+    }
+    if (kept.length > 0 && typeof mount.insertBefore === 'function') mount.insertBefore(node, kept[0]);
+    else mount.appendChild(node);
+    sides.forEach((side, index) => {
+      if (sideTops[index]) side.scrollTop = sideTops[index];
+    });
+    if (pageTop !== null && page.scrollTop !== pageTop) page.scrollTop = pageTop;
+    shownKey = key;
+    shownSides = sides;
+  }
+
   // Two renders racing (a route plus a re-read after a save) must not both
   // land: only the newest paints, so the scheda never holds two Dettagli
   // forms whose Salva would both write.
   let cardRenderToken = 0;
 
   async function renderCard(resource, id) {
+    const key = `${resource}/${id}`;
     const renderToken = ++cardRenderToken;
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
-    channelFilter = 'all';
+    if (key !== shownKey) {
+      // Another customer: clear at once, never leave the previous one up.
+      // Backlog 608aa14d554c: the clear also removed the router's loading
+      // line, so a direct link stayed blank for the whole read (5.8 s on
+      // production). The loading state shows at once; show() replaces it.
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+      mount.appendChild(uiLoading(doc, { label: 'la scheda' }));
+      shownKey = null;
+      shownSides = [];
+      retainedDrafts = null;
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    }
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
     // id) used to blank the scheda with neither the card nor the error panel.
@@ -2838,21 +3250,25 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    // A newer render started while this one loaded: it owns the screen.
     if (renderToken !== cardRenderToken) return;
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
-      mount.appendChild(panel);
+      // Review #612 round 3: a failed re-read of the scheda already shown
+      // keeps its windows (a half-written Scrivi), filter, pages and scroll;
+      // only a first read that fails starts from nothing.
+      if (key === shownKey) retainedDrafts = readDrafts(mount) ?? retainedDrafts;
+      show(panel, key === shownKey ? key : null);
       return;
     }
     const {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
-      fieldDefs, fieldDefsError, fieldValues, fieldValuesError,
+      fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
     } = loaded;
     // C13: the re-read behind `Aggiorna` — the same enriched route the load
     // uses, with the same honest 404. Anything else still rejects, so the
@@ -2862,6 +3278,28 @@ export function createCustomerCardView(deps) {
       if (error && error.status === 404) return null;
       throw error;
     });
+    pendingDrafts = key === shownKey ? readDrafts(mount) : null;
+    if (key === shownKey && retainedDrafts !== null) {
+      pendingDrafts = { ...retainedDrafts, ...(pendingDrafts ?? {}) };
+    }
+    retainedDrafts = null;
+    try {
+      buildAndShow(key, resource, id, {
+        card, timeline, timelineError, profile, profileError,
+        enrichment, enrichmentError, calls, callsError,
+        fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+      });
+    } finally {
+      pendingDrafts = null;
+    }
+    markRead(resource, id, timeline);
+  }
+
+  function buildAndShow(key, resource, id, {
+    card, timeline, timelineError, profile, profileError,
+    enrichment, enrichmentError, calls, callsError,
+    fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+  }) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -2909,14 +3347,13 @@ export function createCustomerCardView(deps) {
       section(right, '', callsBox, calls);
     }
     section(right, '', nextSteps, profile, profileError, { resource, id });
-    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError);
+    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);
     panel.appendChild(grid);
-    mount.appendChild(panel);
-    markRead(resource, id, timeline);
+    show(panel, key, [left, right]);
   }
 
   /**

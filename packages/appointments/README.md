@@ -105,8 +105,10 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   the handle it refuses with a named code; the model is strictly validated,
   the price never comes from it. A named weekday resolves to its next
   occurrence, a stated duration rides `durationMinutes` even without a time,
-  and a draft at or before the reference instant is refused
-  `APPOINTMENTS_AI_DRAFT_IN_PAST` (backlog `d1e4d90e`).
+  a day named without a time rides `day` (`YYYY-MM-DD`, never a midnight
+  `startsAt`: the operator is asked for the hour), and a draft at or before
+  the reference instant is refused `APPOINTMENTS_AI_DRAFT_IN_PAST` (backlog
+  `d1e4d90e`).
 - `rescheduleAppointment({ id | sourceKey, startsAt, endsAt, spaceId?, calendar? })`
   (backlog `bdca2010d471`) moves a `booked`/`confirmed` booking to a new
   slot — the governed write behind dragging an event or stretching its

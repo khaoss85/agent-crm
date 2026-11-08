@@ -336,7 +336,17 @@ export function createConnectorsView(deps) {
   const toast = deps.toast ?? (() => {});
   const storage = deps.storage ?? null;
 
+  // The live session space wins, like Stato sync (backlog:24a57904a428):
+  // every connectors read names the space the page belongs to, and a stale
+  // stored pick of another space can no longer send this page's reads
+  // somewhere the server refuses. Storage stays the fallback.
   const readSpace = () => {
+    try {
+      const live = typeof deps.spaceId === 'function' ? deps.spaceId() : null;
+      if (typeof live === 'string' && live.trim() !== '') return live;
+    } catch {
+      // A broken live reader never breaks the resolution: storage applies.
+    }
     try {
       const stored = storage !== null ? storage.getItem(ACTIVE_SPACE_KEY) : null;
       return typeof stored === 'string' ? stored : '';

@@ -1,0 +1,74 @@
+{
+  "manifestVersion": 1,
+  "name": "customer-erasure-log",
+  "description": "One erased customer subject (backlog:d271d723, GDPR validazione B6): which contact or company was erased, why the titolare confirmed it, who decided and when, and what the erasure covered. Append-only accountability: rows are never updated or deleted, and a second erasure of the same subject replays the stored row. The row carries no personal data beyond the opaque subject id — no name, no email, no phone — so the registry itself never becomes a copy of what was erased.",
+  "fields": [
+    {
+      "name": "sourceKey",
+      "type": "string",
+      "unique": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectResource",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectId",
+      "type": "string",
+      "index": true,
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwner",
+      "type": "enum",
+      "values": [
+        "host",
+        "package"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "subjectOwnerPackage",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "reason",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "erasedByType",
+      "type": "enum",
+      "values": [
+        "user",
+        "agent",
+        "system"
+      ],
+      "writable": "managed"
+    },
+    {
+      "name": "erasedById",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "erasedAt",
+      "type": "timestamp",
+      "writable": "managed"
+    },
+    {
+      "name": "via",
+      "type": "string",
+      "writable": "managed"
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "writable": "managed"
+    }
+  ]
+}

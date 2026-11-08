@@ -295,3 +295,11 @@ test('italianDay: a bare day keeps its date, an instant reads as the Rome calend
   assert.equal(italianDay('non una data'), null);
   assert.equal(italianDay(undefined), null);
 });
+
+test('1e939a362c7c: #/customer-card/opportunity/<id> opens the offer page, never «Scheda non disponibile»', () => {
+  assert.deepEqual(parseModuleRoute('#/customer-card/opportunity/o-123'), { view: 'offer-detail', offerId: 'o-123' });
+  assert.deepEqual(parseModuleRoute('#/customer-card/opportunity/a%20b'), { view: 'offer-detail', offerId: 'a b' });
+  assert.equal(parseModuleRoute('#/customer-card/opportunity/a%2Fb').view, 'invalid', 'an encoded slash never reaches the offer route');
+  // The old profile path follows the same road through the scheda redirect.
+  assert.deepEqual(parseModuleRoute('#/customer-card/contact/c1'), { view: 'customer-card', resource: 'contact', subjectId: 'c1' });
+});

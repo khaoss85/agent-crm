@@ -1,6 +1,6 @@
 // @ts-check
 
-import { NotFoundError } from '../../../core/src/errors.js';
+import { NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import { requiredString, optionalString } from '../../../core/src/validation.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
@@ -105,6 +105,64 @@ export class CompanyService {
     return company;
   }
 
+  /**
+   * Rewrite a company's name or domain (backlog:d271d723, GDPR erasure).
+   * In-process only — no HTTP route reaches it: the customer-data erasure
+   * anonymizes an erased company through here instead of leaving its name
+   * readable. The write names only the columns the patch supplies, and the
+   * update and its audit row commit together, like the contact update.
+   * @param {string} id
+   * @param {{name?: unknown, domain?: unknown}} patch
+   * @param {{actor?: unknown}} [context]
+   */
+  async update(id, patch, context = {}) {
+    const current = await this.get(id);
+    if (!patch || typeof patch !== 'object') {
+      throw new ValidationError('a company update needs at least one field', { field: 'patch' });
+    }
+    const values = [];
+    const next = { ...current };
+    if (patch.name !== undefined) {
+      next.name = requiredString(patch.name, 'name');
+      values.push({ column: 'name', value: next.name });
+    }
+    if (patch.domain !== undefined) {
+      next.domain = optionalString(patch.domain, 'domain')?.toLowerCase() ?? null;
+      values.push({ column: 'domain', value: next.domain });
+    }
+    if (values.length === 0) {
+      throw new ValidationError('a company update needs at least one of name, domain', { field: 'patch' });
+    }
+    next.updatedAt = nowIso();
+    values.push({ column: 'updated_at', value: next.updatedAt });
+    const write = {
+      kind: 'update', table: 'companies', values,
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const entry = {
+      actor: context.actor,
+      action: 'company.updated',
+      entityType: 'company',
+      entityId: id,
+      data: next,
+    };
+    if (isSyncStorage(this.database)) {
+      const sync = this.database.storage.sync;
+      sync.savepoint('company_update', () => {
+        sync.execute(write);
+        this.audit.record(entry, sync);
+      });
+    } else {
+      await storageMutate(this.database, 'company_update', async (tx) => {
+        await tx.execute(write);
+        await this.audit.record(entry, tx);
+      });
+    }
+    const reread = await this.get(id);
+    await this.events.emit('company.updated', reread);
+    return reread;
+  }
+
   /** @param {string} id */
   get(id) {
     return storageMaybeOne(this.database, {
@@ -123,7 +181,27 @@ export class CompanyService {
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
     }, mapCompanyRow);
   }
+
+  /**
+   * A bounded search scan (backlog:d128847d21fc): newest first like
+   * `list`, but with a larger fixed ceiling (SCAN_MAX_ROWS) for a caller
+   * that filters in memory and must reach past the display page — the
+   * customer search. Not reachable over HTTP: the route keeps `list` and
+   * its 500 cap.
+   * @param {{limit?: number}} [options]
+   */
+  scan(options = {}) {
+    const requested = Number.isInteger(options.limit) ? options.limit : SCAN_MAX_ROWS;
+    const limit = Math.min(Math.max(requested, 1), SCAN_MAX_ROWS);
+    return storageMany(this.database, {
+      kind: 'select', table: 'companies', columns: '*',
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+    }, mapCompanyRow);
+  }
 }
+
+/** The ceiling of one search scan: a fixed bound, never the whole table. */
+export const SCAN_MAX_ROWS = 5000;
 
 /** @param {any} row */
 function mapCompanyRow(row) {

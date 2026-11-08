@@ -31,8 +31,9 @@
 //   700px like every other backoffice screen.
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { nameFromProfile } from './admin-labels.js';
+import { nameFromProfile, readableName } from './admin-labels.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -245,8 +246,16 @@ export function recordDetailHref(module, id) {
  * (the screen must never print labels like "lead · lead-1").
  * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
  */
-function subjectDisplayLabel(row) {
-  return nonEmptyText(row?.subjectLabel) ?? 'il cliente';
+function subjectDisplayLabel(row, names = {}) {
+  // The customer's readable name first (backlog:5083e7a77c26, production
+  // 08/11: the brief read «il cliente · 10 nov alle 11:00» for Fio Neri —
+  // the channel syncs store no subject label on the appointment): the
+  // profile name read for that subject, else the stored label, and «il
+  // cliente» only when no name exists at all.
+  const key = inboxSubjectKey(row);
+  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null;
+  return fromProfile ?? readableName(nonEmptyText(row?.subjectLabel)) ?? 'il cliente';
 }
 
 /**
@@ -570,19 +579,31 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
 }
 
 /**
- * Today's agenda: booked/confirmed appointments on the Rome day, oldest
- * first. Each row links the customer scheda when the subject resolves, else
- * the appointment record itself — never a dead link.
+ * Today's booked or confirmed appointments, in start order: the rows the
+ * agenda renders.
  * @param {Array<Record<string, any>>} [appointments]
  * @param {Date} [now]
  */
-export function buildTodayAgenda(appointments = [], now = new Date()) {
+function buildTodayAgendaRows(appointments = [], now = new Date()) {
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && romeTime(row.startsAt) !== null
       && isTodayInRome(row.startsAt, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
+  return today;
+}
+
+/**
+ * Today's agenda: booked/confirmed appointments on the Rome day, oldest
+ * first. Each row links the customer scheda when the subject resolves, else
+ * the appointment record itself — never a dead link.
+ * @param {Array<Record<string, any>>} [appointments]
+ * @param {Date} [now]
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+export function buildTodayAgenda(appointments = [], now = new Date(), names = {}) {
+  const today = buildTodayAgendaRows(appointments, now);
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
     // The prototype's second line under each appointment ("chi"): who the
@@ -595,7 +616,7 @@ export function buildTodayAgenda(appointments = [], now = new Date()) {
     return Object.freeze({
       id,
       time: romeTime(row.startsAt),
-      title: subjectDisplayLabel(row),
+      title: subjectDisplayLabel(row, names),
       who: cue,
       status: row.status,
       past: now instanceof Date && start !== null && start.getTime() < now.getTime(),
@@ -620,6 +641,46 @@ export function nextAppointment(appointments = [], now = new Date()) {
       && (Number.isNaN(mark) || toInstant(row.startsAt).getTime() >= mark));
   upcoming.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   return upcoming.length > 0 ? upcoming[0] : null;
+}
+
+/**
+ * The appointment the «Prima della prossima call» card prepares
+ * (backlog:5083e7a77c26): the next one today, else the soonest booked or
+ * confirmed one still ahead — the prototype always shows the card, and a
+ * day with no more calls must not hide tomorrow's. Null when nothing is
+ * ahead at all.
+ * @param {Array<Record<string, any>>} [appointments]
+ * @param {Date} [now]
+ */
+export function upcomingAppointment(appointments = [], now = new Date()) {
+  const today = nextAppointment(appointments, now);
+  if (today !== null) return today;
+  const mark = now instanceof Date ? now.getTime() : NaN;
+  if (Number.isNaN(mark)) return null;
+  const ahead = (Array.isArray(appointments) ? appointments : [])
+    .filter((row) => row != null
+      && (row.status === 'booked' || row.status === 'confirmed')
+      && toInstant(row.startsAt) !== null
+      && toInstant(row.startsAt).getTime() >= mark);
+  ahead.sort((a, b) => toInstant(a.startsAt).getTime() - toInstant(b.startsAt).getTime());
+  return ahead.length > 0 ? ahead[0] : null;
+}
+
+/**
+ * When one appointment happens, in the words of the brief: «oggi alle
+ * 10:00», «domani alle 10:00», «12 nov alle 10:00».
+ * @param {unknown} startsAt
+ * @param {Date} now
+ */
+function briefWhen(startsAt, now) {
+  const time = romeTime(startsAt) ?? '—';
+  if (isTodayInRome(startsAt, now)) return `oggi alle ${time}`;
+  const tomorrow = now instanceof Date ? new Date(now.getTime() + 86400000) : null;
+  if (tomorrow !== null && romeDayKey(startsAt) !== null && romeDayKey(startsAt) === romeDayKey(tomorrow)) {
+    return `domani alle ${time}`;
+  }
+  const day = romeShortDay(startsAt);
+  return day !== null ? `${day} alle ${time}` : `alle ${time}`;
 }
 
 /**
@@ -651,18 +712,21 @@ function briefSource(label, href) {
  * Pre-call brief for one appointment: what the appointment itself says plus
  * the latest messages and calls with the same subject. Sources are the
  * records behind every line, each clickable.
- * @param {{ appointment?: Record<string, any>, messages?: Array<Record<string, any>>, calls?: Array<Record<string, any>> }} input
+ * @param {{ appointment?: Record<string, any>, messages?: Array<Record<string, any>>, calls?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null> }} input
  */
-export function buildPreCallBrief({ appointment = null, messages = [], calls = [] } = {}) {
+export function buildPreCallBrief({ appointment = null, messages = [], calls = [], now = new Date(), names = {} } = {}) {
   if (appointment == null) return null;
   const id = nonEmptyText(appointment?.id) ?? '';
   const time = romeTime(appointment?.startsAt) ?? '—';
-  const who = subjectDisplayLabel(appointment);
+  const who = subjectDisplayLabel(appointment, names);
+  const when = briefWhen(appointment?.startsAt, now);
+  // Today's call keeps the short line; a later day names its day.
+  const opening = when.startsWith('oggi ') ? `Appuntamento delle ${time}` : `Appuntamento di ${when}`;
   const bullets = [];
   const notes = briefSnippet(appointment?.notes);
   bullets.push(notes !== ''
-    ? `Appuntamento delle ${time} con ${who}: ${notes}`
-    : `Appuntamento delle ${time} con ${who}.`);
+    ? `${opening} con ${who}: ${notes}`
+    : `${opening} con ${who}.`);
   const sources = [];
   if (id !== '') {
     const source = briefSource(`Appuntamento delle ${time}`, recordDetailHref('appointment', id));
@@ -711,7 +775,7 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
   }
   return Object.freeze({
     title: who,
-    when: `oggi alle ${time}`,
+    when,
     bullets: Object.freeze(bullets),
     sources: Object.freeze(sources.slice(0, 6)),
     cardHref: card,
@@ -751,9 +815,13 @@ export function inboxSubjectKey(subject) {
   return resource && id ? `${resource}:${id}` : null;
 }
 
-/** A stored subject label that names someone: the generic «Cliente» placeholder does not. */
+/**
+ * A stored subject label that names someone: the generic «Cliente»
+ * placeholder does not, and a stored `Unknown` word is dropped
+ * («PayPal Unknown» reads «PayPal», backlog:5083e7a77c26).
+ */
 function realLabel(value) {
-  const text = nonEmptyText(value);
+  const text = readableName(nonEmptyText(value));
   return text && text.toLowerCase() !== 'cliente' ? text : null;
 }
 
@@ -821,17 +889,11 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
 export const OGGI_TOTAL_CHANNELS = 9;
 
 /**
- * The nine counted channel ids, in Stato sync order. Mirrors SYNC_CHANNELS
- * in admin-sync.js (the table owner): the lead catalog and the nine differ
- * (SMS is a lead channel but not one of the nine; Calendar and Stripe are
- * nine but not lead), so the count must read the nine, never the catalog.
- * Kept as ids here so Oggi never imports another screen's view module; the
- * test pins the two lists together.
+ * The nine counted channel ids, in Stato sync order: re-exported from the
+ * shared count (admin-channels-count.js), so Oggi and Stato sync count
+ * from one list, never two kept in step by a test.
  */
-export const OGGI_NINE_CHANNELS = Object.freeze([
-  'whatsapp', 'instagram', 'facebook', 'tiktok', 'email',
-  'voice', 'site-form', 'calendar', 'stripe',
-]);
+export const OGGI_NINE_CHANNELS = NINE_CHANNEL_IDS;
 
 /**
  * Google connectors of GET /api/profile mapped onto the nine counted
@@ -875,22 +937,17 @@ export function googleNineChannels(profile) {
 /**
  * Distinct connected channels among the nine: active rows only, one vote
  * per channel, capped at the nine. A channel outside the nine never moves
- * this count. Google connections from GET /api/profile vote too (Gmail for
- * Email, Calendar for Calendar): without them Oggi reads «0 di 9 collegati»
- * while Gmail and Calendar are connected.
+ * this count. The profile links from GET /api/profile vote too (Gmail for
+ * Email, Calendar for Calendar, the Meta links for their channels): without
+ * them Oggi reads «0 di 9 collegati» while Gmail and Calendar are connected.
+ * The screen strip prints the shared `channelConnectionCount` instead, which
+ * also counts a linked channel outside the nine.
  * @param {Array<Record<string, any>>} [connections]
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function countConnectedNine(connections = [], profile = null) {
-  const active = new Set();
-  for (const row of Array.isArray(connections) ? connections : []) {
-    if (row == null || row.status !== 'active') continue;
-    if (typeof row.channel !== 'string' || row.channel === '') continue;
-    if (!OGGI_NINE_CHANNELS.includes(row.channel)) continue;
-    active.add(row.channel);
-  }
-  for (const channel of googleNineChannels(profile)) active.add(channel);
-  return Math.min(active.size, OGGI_TOTAL_CHANNELS);
+  const { connectedChannels } = channelConnectionCount(mergeProfileConnections(connections, profile));
+  return connectedChannels.filter((channel) => OGGI_NINE_CHANNELS.includes(channel)).length;
 }
 
 /**
@@ -978,6 +1035,37 @@ export async function readInboxNames(client, messages, conversations, now) {
   return names;
 }
 
+/** Profile reads for appointment names, at most: the agenda never has more on one screen. */
+export const APPOINTMENT_NAME_LIMIT = 10;
+
+/**
+ * Customer names for the agenda of today and the next call
+ * (backlog:5083e7a77c26): appointments synced from a calendar carry no
+ * subject label, so the brief and the agenda read «il cliente». One
+ * read-only profile per subject (the same read the inbox uses), the next
+ * call first, bounded, settled together; a refused or unknown profile
+ * leaves the row on its stored label, never an error on Oggi.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} appointments @param {any} next @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readAppointmentNames(client, appointments, next, now) {
+  const rows = [next, ...buildTodayAgendaRows(appointments, now)].filter((row) => row != null);
+  const keys = [...new Set(rows.map((row) => inboxSubjectKey(row)).filter((key) => typeof key === 'string'))]
+    .slice(0, APPOINTMENT_NAME_LIMIT);
+  /** @type {Record<string, string>} */
+  const names = {};
+  const settled = await Promise.allSettled(keys.map(async (key) => {
+    const cut = key.indexOf(':');
+    const profile = await client.request(`/api/customer-data/profile/${encodeURIComponent(key.slice(0, cut))}/${encodeURIComponent(key.slice(cut + 1))}`);
+    return { key, name: nameFromProfile(profile) };
+  }));
+  for (const result of settled) {
+    if (result.status === 'fulfilled' && result.value.name) names[result.value.key] = result.value.name;
+  }
+  return names;
+}
+
 /**
  * Load everything Oggi renders. Never throws for a missing package: each
  * section carries its own availability.
@@ -1002,6 +1090,8 @@ export async function loadOggiData(client, now = new Date()) {
     inboxConversations: [],
     /** Customer names of the shown inbox rows, by `resource:id` (profile reads). */
     inboxNames: {},
+    /** Customer names of the agenda and next-call subjects, by `resource:id`. */
+    appointmentNames: {},
     next: null,
   };
   let domains = {};
@@ -1072,7 +1162,8 @@ export async function loadOggiData(client, now = new Date()) {
       outcome.inboxNames = await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now);
     }
   }
-  outcome.next = nextAppointment(outcome.appointments, now);
+  outcome.next = upcomingAppointment(outcome.appointments, now);
+  outcome.appointmentNames = await readAppointmentNames(client, outcome.appointments, outcome.next, now);
   if (outcome.next != null && domains.interactions != null) {
     const subject = {
       subjectResource: outcome.next.subjectResource,
@@ -1115,7 +1206,7 @@ export async function loadOggiData(client, now = new Date()) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiEmpty, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons
@@ -1208,6 +1299,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *   navigate?: (hash: string) => void,
  *   now?: Date,
  *   loading?: boolean,
+ *   stalled?: { onRetry?: () => void } | null,
  *   home?: {
  *     recap?: string,
  *     actions?: Array<any>,
@@ -1234,6 +1326,7 @@ export function renderOggi({
   navigate = () => {},
   now = new Date(),
   loading = false,
+  stalled = null,
   home = null,
 } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1247,6 +1340,21 @@ export function renderOggi({
   // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
   // scale is untouched — only the semantics change (C6).
   page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
+
+  if (home == null && stalled) {
+    // Backlog 2a075e2d9250: the reads passed their ceiling — an honest note
+    // with Riprova, never «Carico…» forever.
+    const note = uiEmpty(doc, {
+      title: 'La tua giornata ci mette più del solito.',
+      text: 'Il server risponde piano: riprova tra poco.',
+    });
+    note.setAttribute('role', 'alert');
+    const retry = uiButton(doc, { label: 'Riprova', attrs: { type: 'button', 'data-action': 'oggi-retry' } });
+    retry.addEventListener('click', () => { if (typeof stalled.onRetry === 'function') stalled.onRetry(); });
+    note.appendChild(retry);
+    page.appendChild(note);
+    return;
+  }
 
   if (home == null && loading === true) {
     // Reads pending (production 07/11): a neutral loading line under the
@@ -1421,9 +1529,16 @@ export function renderOggi({
   pair.appendChild(agenda);
 
   // ---- Pre-call brief ----
-  if (home.brief != null) {
-    const brief = el(doc, 'section', 'bo-oggi-card bo-oggi-ai');
-    brief.appendChild(el(doc, 'h3', undefined, '✦ Prima della prossima call'));
+  // The prototype's grid always pairs the agenda with this card
+  // (backlog:5083e7a77c26): with no call ahead it stays, with an honest
+  // line instead of disappearing from the screen.
+  const brief = el(doc, 'section', 'bo-oggi-card bo-oggi-ai');
+  brief.appendChild(el(doc, 'h3', undefined, '✦ Prima della prossima call'));
+  if (home.availability?.appointments === false) {
+    brief.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è attivo in questo spazio: qui comparirà il ripasso prima di ogni call.'));
+  } else if (home.brief == null) {
+    brief.appendChild(el(doc, 'p', 'bo-muted', 'Nessuna call in programma. Quando ne fissi una, qui trovi messaggi e chiamate da ripassare prima.'));
+  } else {
     brief.appendChild(el(
       doc, 'p', 'bo-oggi-brief-who',
       `${String(home.brief.title ?? '')} · ${String(home.brief.when ?? '')}`,
@@ -1463,8 +1578,8 @@ export function renderOggi({
         brief.appendChild(open);
       }
     }
-    pair.appendChild(brief);
   }
+  pair.appendChild(brief);
 
   // ---- Missing channels ----
   const missing = Array.isArray(home.missing) ? home.missing : [];
@@ -1472,29 +1587,46 @@ export function renderOggi({
     const note = el(doc, 'section', 'bo-oggi-section');
     note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono attivi in questo spazio.'));
     page.appendChild(note);
-  } else if (missing.length > 0) {
-    const invite = el(doc, 'section', 'bo-oggi-section');
-    const names = missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
-    // The prototype's headline count: connected of the 9 backoffice
-    // channels, read from the actual connections plus the GET /api/profile
-    // Google links (Gmail votes Email, Calendar votes Calendar). Hand-built
-    // homes without connections (tests) fall back to nine minus the missing
-    // lead list; the live view always carries connections, so production
-    // never guesses. The strip lands on #/connettori, whose head is the
-    // Collegamenti Google card with the Collega links.
-    const connected = Array.isArray(home.connections)
-      ? countConnectedNine(home.connections, home.profile ?? null)
-      : OGGI_TOTAL_CHANNELS - missing.length;
-    const anchor = el(doc, 'a', 'bo-oggi-invite', '');
-    anchor.appendChild(el(doc, 'strong', undefined, `${connected} di ${OGGI_TOTAL_CHANNELS} collegati`));
-    anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} per non perdere nessun lead →`));
-    anchor.setAttribute('href', '#/connettori');
-    anchor.addEventListener('click', (event) => {
-      if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      navigate('#/connettori');
-    });
-    invite.appendChild(anchor);
-    page.appendChild(invite);
+  } else {
+    // One list for the number and the names (backlog:5083e7a77c26): the
+    // strip read «2 di 9» over eight names because the count walked the
+    // Stato sync nine and the names walked the lead catalog, two different
+    // nines. The shared count (admin-channels-count.js) is the one Stato
+    // sync prints too, so both screens say the same «x di y», and the names
+    // are exactly the channels missing from it. Hand-built homes without
+    // connections (tests) keep their own list, counted from that same list.
+    const summary = Array.isArray(home.connections)
+      ? channelConnectionCount(mergeProfileConnections(home.connections, home.profile ?? null), {
+        // Only what can really be connected here is invited (production
+        // 08/11: the strip invited Stripe, «Non disponibile» on Stato sync
+        // and Personalizza): the same channelConnectRoute those screens use.
+        connectable: (channel) => channelConnectRoute(channel, {
+          guided: CONNECTOR_CATALOG.map((entry) => entry.channel),
+          profile: home.profile ?? null,
+        }) !== null,
+      })
+      : { connected: OGGI_TOTAL_CHANNELS - Math.min(missing.length, OGGI_TOTAL_CHANNELS), total: OGGI_TOTAL_CHANNELS, missing };
+    const names = summary.missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== '');
+    if (names.length > 0) {
+      const invite = el(doc, 'section', 'bo-oggi-section');
+      // The strip lands on #/connettori, whose head is the Collegamenti
+      // Google card with the Collega links.
+      const anchor = el(doc, 'a', 'bo-oggi-invite', '');
+      anchor.appendChild(el(doc, 'strong', undefined, `${summary.connected} di ${summary.total} collegati`));
+      // «per non perdere nessun lead» only when every name is a lead channel
+      // of the catalog; once the list names Google Calendar or Stripe the
+      // promise would be false, so the line turns neutral (owner 08/11, #680).
+      const onlyLeads = summary.missing.every((entry) => CONNECTOR_CATALOG.some((row) => row?.channel === entry?.channel));
+      const purpose = onlyLeads ? 'per non perdere nessun lead' : 'per avere tutto in un posto';
+      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} ${purpose} →`));
+      anchor.setAttribute('href', '#/connettori');
+      anchor.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        navigate('#/connettori');
+      });
+      invite.appendChild(anchor);
+      page.appendChild(invite);
+    }
   }
 
   if (typeof home.error === 'string' && home.error !== '') {
@@ -1544,8 +1676,14 @@ function appendLinkList(doc, mount, links, navigate) {
 /**
  * @param {{ doc: any, mount: any, client: { request: Function }, navigate?: (hash: string) => void, submissions?: any, storage?: any }} deps
  */
+/** Backlog 2a075e2d9250: how long Oggi shows «Carico…» before the Riprova note. */
+export const OGGI_LOAD_CEILING_MS = 10_000;
+
 export function createOggiView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
+  const ceilingMs = Number.isFinite(deps.loadCeilingMs) ? deps.loadCeilingMs : OGGI_LOAD_CEILING_MS;
+  const setTimer = typeof deps.setTimer === 'function' ? deps.setTimer : (fn, ms) => setTimeout(fn, ms);
+  const clearTimer = typeof deps.clearTimer === 'function' ? deps.clearTimer : (id) => clearTimeout(id);
   const { client: bound } = bindAdminMutations(deps.client, deps);
   /**
    * Guard against a stale async response overwriting a newer view
@@ -1555,8 +1693,38 @@ export function createOggiView(deps) {
    * home; the token below covers overlapping home reads.
    */
   let renderToken = 0;
+  /**
+   * Backlog 2a075e2d9250 (production 2d2fe23): one loading round per
+   * opening of Oggi. The ceiling starts at the round's FIRST render; a
+   * redraw while the reads are still pending (the shell re-routes Oggi once
+   * the schema and the Clienti count arrive) keeps the same deadline instead
+   * of starting a new 10 s. The round ends when a render paints the home,
+   * when the operator leaves (invalidate) or on Riprova. The round also
+   * owns its reads: a redraw inside it awaits the same in-flight load
+   * instead of reading everything again (a cold start used to pay Oggi
+   * twice, and the first answer was thrown away).
+   * @type {{ timer: any, stalled: boolean, load: Promise<any> | null } | null}
+   */
+  let round = null;
+  function endRound() {
+    if (round !== null) clearTimer(round.timer);
+    round = null;
+  }
+  function stalledNote() {
+    const { spaceName, userName, links, now } = lastMeta;
+    renderOggi({
+      doc, mount, spaceName, userName, links, navigate, now,
+      stalled: {
+        onRetry: () => {
+          endRound();
+          void view.render({ spaceName, userName, links, now: new Date() });
+        },
+      },
+    });
+  }
   function invalidate() {
     renderToken += 1;
+    endRound();
   }
   /** Session-local triage: decided suggestions only, records stay the truth. */
   let triage = {};
@@ -1598,9 +1766,9 @@ export function createOggiView(deps) {
     const actions = merged.slice(0, ADVISOR_ACTION_LIMIT);
     const capped = built.capped || merged.length > ADVISOR_ACTION_LIMIT;
     lastActions = actions;
-    const agenda = buildTodayAgenda(last.appointments, lastMeta.now);
+    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {});
     const brief = last.next
-      ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls })
+      ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {} })
       : null;
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
     renderOggi({
@@ -1737,7 +1905,7 @@ export function createOggiView(deps) {
     paint();
   }
 
-  return {
+  const view = {
     /**
      * Render the home: the greeting frame with the loading state first,
      * the full screen once the records arrive. `userName` greets the person; without it the space
@@ -1746,21 +1914,34 @@ export function createOggiView(deps) {
     async render({ spaceName = '', userName = '', links = [], now = new Date() } = {}) {
       const token = ++renderToken;
       lastMeta = { spaceName, userName, links, now };
-      renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
-      let data;
-      try {
-        data = await loadOggiData(bound, now);
-      } catch {
-        data = null;
+      // Backlog 2a075e2d9250: past the ceiling the loading line gives way to
+      // a note with Riprova. The reads keep going: if they land while this
+      // render still owns the screen, the home replaces the note. A redraw
+      // inside the same round keeps the first deadline (and a note already
+      // shown), never a fresh 10 s.
+      if (round === null) {
+        const mine = { timer: null, stalled: false, load: null };
+        mine.timer = setTimer(() => {
+          if (round !== mine) return;
+          mine.stalled = true;
+          stalledNote();
+        }, ceilingMs);
+        round = mine;
       }
+      if (round.stalled) stalledNote();
+      else renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
+      const current = round;
+      if (current.load === null) current.load = Promise.resolve().then(() => loadOggiData(bound, now)).catch(() => null);
+      const data = await current.load;
       if (token !== renderToken) return;
+      endRound();
       if (data) last = data;
       else if (!last) {
         last = {
           workAvailable: false, appointmentsAvailable: false, channelsAvailable: false,
           interactionsAvailable: false, tasks: [], appointments: [], connections: [],
           profile: null,
-          briefMessages: [], briefCalls: [], next: null,
+          briefMessages: [], briefCalls: [], next: null, appointmentNames: {},
           inboxAvailable: false, inboxMessages: [], inboxConversations: [], inboxNames: {},
         };
       }
@@ -1768,4 +1949,5 @@ export function createOggiView(deps) {
     },
     invalidate,
   };
+  return view;
 }

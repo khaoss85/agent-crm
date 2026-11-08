@@ -126,3 +126,39 @@ test('an opportunity-only card carries the opportunity stage as its item status'
     'proposal',
     'the opportunity item carries its stage as status, so the scheda reads «Pacchetto Ada · proposta»');
 });
+
+/**
+ * Backlog a551982c06eb: an approved quote on an offer in «Proposta» read
+ * «approvata» on the scheda, while the Pipeline board and the offer detail
+ * said «Proposta». The quote item carries its opportunity's stage and
+ * pipeline placement, and the opportunity item its own, so the scheda can
+ * say the sale's stage with the board's words.
+ */
+test('a quote item carries its opportunity stage and pipeline placement', async (t) => {
+  const root = project(t, { withCommercial: true });
+  const context = await boot(root, join(root, 'data', 'offer-pipeline-stage.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const db = app.database.raw;
+
+  const company = await app.services.companies.create({ name: 'Palestra', domain: 'palestra.example' }, { actor: ACTOR });
+  const ada = await app.services.contacts.create(
+    { companyId: company.id, firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra.example' }, { actor: ACTOR });
+  const opportunity = await app.services.opportunities.create(
+    { companyId: company.id, contactId: ada.id, name: 'Pacchetto Ada', valueCents: 10000, currency: 'EUR', owner: 'rep' },
+    { actor: ACTOR });
+  await app.services.opportunities.applyManaged(
+    opportunity.id, { pipelineKey: 'accordo-sales', pipelineStage: 'proposta' }, { actor: ACTOR });
+  insertQuote(db, 'quote-ada-1', opportunity.id, 'approved');
+
+  const profile = await app.readCustomerProfile({ actor: ACTOR, resource: 'contact', id: ada.id });
+  const quote = profile.quotes.items.find((item) => item.id === 'quote-ada-1');
+  assert.equal(quote.status, 'approved', 'the quote keeps its own approval state');
+  assert.equal(quote.opportunityStage, 'qualification', 'the quote item carries its opportunity core stage');
+  assert.equal(quote.opportunityPipelineKey, 'accordo-sales');
+  assert.equal(quote.opportunityPipelineStage, 'proposta', 'the quote item carries its opportunity pipeline stage');
+  const item = profile.opportunities.items.find((row) => row.id === opportunity.id);
+  assert.equal(item.stage, 'qualification');
+  assert.equal(item.pipelineKey, 'accordo-sales');
+  assert.equal(item.pipelineStage, 'proposta', 'the opportunity item carries its pipeline stage');
+});

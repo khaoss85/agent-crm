@@ -8,6 +8,7 @@ import { createCustomerProfileCapability } from './capability-profile.js';
 import { createChannelOriginsCapability } from './capability-channel-origins.js';
 import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
+import { ERASURE_INVENTORY, ERASURE_REASONS } from './erasure.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import {
   applyCustomerPhrase, customerPhraseAiAvailable, defineCustomField, listCustomFieldDefs,
@@ -71,6 +72,7 @@ export const CUSTOMER_DATA_RESOURCES = Object.freeze([
   'enrichment-opt-out',
   'custom-field-def',
   'custom-field-value',
+  'customer-erasure-log',
 ]);
 
 /**
@@ -148,7 +150,12 @@ export function createCustomerDataPackage(options = {}) {
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: CUSTOMER_DATA_DOMAIN,
-    version: 1,
+    // Version 3 (backlog:d271d723): the GDPR erasure (erase-customer) joined the
+    // declared surface. Version 4: the erasure declares its inventory and its
+    // all-or-nothing contract in the metadata. The pilot registers each
+    // surface's fingerprint; a changed surface takes a new version, never the
+    // old one. Version 5: the erasure reason is a code from a closed list.
+    version: 5,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -314,6 +321,29 @@ export function createCustomerDataPackage(options = {}) {
             config: runtime.config, core: runtime.core, policy, names,
           });
           return (request) => operations.applyBulkCustomerAction(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'erase-customer',
+        appMethod: 'eraseCustomer',
+        label: 'Erase one customer for good (GDPR)',
+        description:
+          'Erase one contact or company with an explicit titolare confirmation. Refuses with 409 when signed '
+          + 'business must be kept; otherwise anonymizes what is writable, records the erasure log and excludes '
+          + 'the subject from list, profile and export. A replay answers the stored row.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'confirm', type: 'json', hint: 'The titolare confirmation: must be true, nothing is erased without it.' },
+          { name: 'reason', type: 'string', hint: `Why the customer is erased, as a code: one of ${ERASURE_REASONS.join(', ')}. Free text is refused and never stored: the registry keeps the reason forever.` },
+        ],
+        create(runtime) {
+          const operations = createCustomerDataOperations({
+            database: runtime.database, modules: runtime.modules, events: runtime.events,
+            config: runtime.config, core: runtime.core, policy, names,
+          });
+          return (request) => operations.eraseCustomer(request);
         },
       },
       {
@@ -772,6 +802,7 @@ export function createCustomerDataPackage(options = {}) {
           bound: 'stated on every answer; a smaller bound may be asked, never a larger one',
           truncation: 'a set larger than the bound refuses with EXPORT_WOULD_TRUNCATE instead of returning a short file',
           reconciliation: 'the rows returned always equal the count stated, or nothing is returned',
+          erased: 'rows naming an erased subject are excluded and counted as erasedExcluded, never silently dropped',
           writes: 'an export writes nothing at all — not a run, not a receipt',
         },
         dataQuality: {
@@ -787,15 +818,27 @@ export function createCustomerDataPackage(options = {}) {
             + 'reads "not available" with the reason, never as an empty result',
           counts: 'every readable section states countIsComplete: a count taken from a bounded display page is reported as a floor, not as a total',
         },
+        erasure: {
+          operation: 'erase-customer',
+          registry: 'customer-erasure-log',
+          confirmation: 'an explicit titolare confirmation (confirm: true) plus a reason code, by a user actor',
+          reasons: [...ERASURE_REASONS],
+          legalBasis: 'signed business (orders, contracts, subscriptions) is kept: a cliente refuses with ERASURE_BLOCKED_SIGNED_BUSINESS, everything else goes',
+          replay: 'a second erasure of the same subject answers the stored row, never a second write',
+          exclusion: 'erased subjects leave the customer list, the search, the profile and the export through the same registry',
+          inventory: ERASURE_INVENTORY.map((entry) => ({ ...entry })),
+          failClosed: 'every read and write of the inventory runs in one transaction: a failed read (ERASURE_READ_FAILED) or write (ERASURE_WRITE_FAILED) rolls back, records nothing and returns no receipt',
+          physicalPurge: 'rows of other packages (messages, calls, appointments, tasks, forms) and the core audit are counted on the receipt as retained with their reason, not rewritten here: their owning packages do that',
+        },
         deferred: {
           track: 'Customer Data Operations v2',
           items: ['global search', 'saved views', 'physical merge or consolidation',
-            'retention and erasure workflow'],
+            'physical purge of messages, calls and appointments for erased subjects'],
         },
         limitations: [...LIMITATIONS],
         notModeled: ['CDP activation', 'warehouse or lakehouse', 'real-time streaming', 'probabilistic identity resolution',
           'machine-learning entity resolution', 'arbitrary ETL', 'global full-text search', 'consent orchestration',
-          'GDPR or legal assurance', 'retention and erasure', 'cross-channel timeline'],
+          'GDPR or legal assurance', 'cross-channel timeline'],
       };
     },
   }), options.packageContract === 2 ? 2 : 1);

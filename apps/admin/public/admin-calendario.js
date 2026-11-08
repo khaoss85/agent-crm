@@ -19,7 +19,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
+import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -230,6 +230,27 @@ export function memberInitials(memberId) {
  */
 export function channelOf(row) {
   return row && row.channel === 'whatsapp' ? 'whatsapp' : null;
+}
+
+/**
+ * backlog:29bb3f2c0d64 — where a week row was booked, read only from what
+ * the row proves: the explicit WhatsApp marker first, then the booking
+ * source key every writer stamps with its own prefix — `gcal:` for an
+ * event imported by calendar-sync (packages/calendar-sync sourceKeyFor),
+ * `booking-link:` for the public booking link (appointments bookFromLink),
+ * `calendario:` for a booking made on this screen (manual form or phrase
+ * Conferma, indistinguishable on the row). Anything else is null: no pill,
+ * never a guess.
+ * @param {any} row
+ * @returns {'whatsapp'|'google'|'link'|'calendario'|null}
+ */
+export function originOf(row) {
+  if (channelOf(row) === 'whatsapp') return 'whatsapp';
+  const key = typeof row?.sourceKey === 'string' ? row.sourceKey : '';
+  if (key.startsWith('gcal:')) return 'google';
+  if (key.startsWith('booking-link:')) return 'link';
+  if (key.startsWith('calendario:')) return 'calendario';
+  return null;
 }
 
 /**
@@ -495,6 +516,10 @@ export function slotInGrid(startsAt, endsAt) {
   return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
+/** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
+export const PHRASE_RESUME_EVERY_MS = 3000;
+export const PHRASE_RESUME_ROUNDS = 20;
+
 /**
  * backlog:d1e4d90e — draft duration in whole minutes for the suggest path:
  * the model's endsAt minus startsAt when the draft searched that size, else
@@ -526,7 +551,10 @@ export function draftMinutes(draft) {
  */
 export function draftDayOnly(draft) {
   const startsAt = typeof draft?.startsAt === 'string' ? draft.startsAt : '';
-  return startsAt !== '' && romeTime(startsAt) === '00:00';
+  if (startsAt !== '') return romeTime(startsAt) === '00:00';
+  // backlog:65ed7430 — the server names a stated day without a time as
+  // `day` with no startsAt: still a day, not a time.
+  return typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day);
 }
 
 /**
@@ -535,6 +563,9 @@ export function draftDayOnly(draft) {
  * @param {any} draft
  */
 export function draftDayKey(draft) {
+  // backlog:65ed7430 — a stated `day` with no startsAt names the day the
+  // same way, so the slot search stays bound to it.
+  if (typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)) return draft.day;
   const startsAt = typeof draft?.startsAt === 'string' ? draft.startsAt : '';
   return startsAt === '' ? null : romeDayKey(startsAt);
 }
@@ -551,6 +582,14 @@ export function draftWhen(draft) {
     // The weekday leads, so «giovedì» reads back as the operator said it.
     const weekday = romeWeekdayShort(draft.startsAt);
     return `${weekday ? `${weekday} ` : ''}${day} · orario da scegliere · ${draftMinutes(draft)} minuti`;
+  }
+  // backlog:65ed7430 — a stated `day` with no startsAt reads the same way:
+  // noon UTC always falls on the same Rome day (+1/+2). Never «?».
+  if (!day && typeof draft?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(draft.day)) {
+    const noon = `${draft.day}T12:00:00Z`;
+    const label = romeShortDay(noon) ?? draft.day;
+    const weekday = romeWeekdayShort(noon);
+    return `${weekday ? `${weekday} ` : ''}${label} · orario da scegliere · ${draftMinutes(draft)} minuti`;
   }
   const from = romeTime(draft?.startsAt);
   const to = romeTime(draft?.endsAt);
@@ -572,11 +611,23 @@ function romeWeekdayShort(value) {
 }
 
 /**
+ * Proposal row label (backlog:29bb3f2c0d64): weekday, day and month, then
+ * the hours, the prototype's «Mar 20 · 11:30–12:15» in the screen's own
+ * words — «gio 13 nov · 10:00–10:45». Without the weekday the operator had
+ * to count days to know which «13 nov» it was.
+ * @param {any} slot
+ */
+export function slotLabel(slot) {
+  const day = [romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ');
+  return `${day} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
+}
+
+/**
  * The listino key a typed service names: the key itself when typed, or
  * the key of the one catalog product whose name the operator typed
- * («Lezione prova» → `lezione-prova`). Anything else is sent as typed and
- * the server answers BO_APPOINTMENT_SERVICE_REFUSED — painted in Italian
- * under the field (production 07/11).
+ * («Lezione prova» → `lezione-prova`). Anything else travels as typed when
+ * its shape is sendable and the server decides; an unsendable shape never
+ * leaves the form (servicePresendError, production 07/11).
  * @param {unknown} typed @param {Map<string, string> | null | undefined} names sku → name
  */
 export function serviceKeyFor(typed, names) {
@@ -586,6 +637,31 @@ export function serviceKeyFor(typed, names) {
   const wanted = text.toLowerCase();
   const hits = [...names.entries()].filter(([, name]) => String(name).trim().toLowerCase() === wanted);
   return hits.length === 1 ? hits[0][0] : text;
+}
+
+/**
+ * The sendable shape of the service the claim carries: the framework books
+ * the listino product key (lowercase slug, letters, digits, hyphens, at most
+ * 48 characters — `packages/appointments` SERVICE_KEY_RE), and the pilot
+ * /bo route refuses anything else with BO_APPOINTMENT_SERVICE_REFUSED before
+ * the queue. Mirrored here so the form blocks a hand-typed service that
+ * could never book instead of sending it to a 400.
+ */
+const BOOKING_SERVICE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
+
+/**
+ * The Italian sentence blocking a hand-typed service before any request, or
+ * null when the mapped key is sendable (backlog:9a853f44: a hand-written
+ * service either books or is stopped here with a clear message — never a
+ * 400 with «Riprova più tardi»). Empty stays null: a missing service is the
+ * required-fields check's job, and the slot Conferma keeps its server
+ * refusal for it. Pure and DOM-free, unit-tested without a browser.
+ * @param {unknown} serviceKey the mapped claim value (serviceKeyFor first)
+ */
+export function servicePresendError(serviceKey) {
+  if (typeof serviceKey !== 'string' || serviceKey === '') return null;
+  if (BOOKING_SERVICE_KEY_RE.test(serviceKey)) return null;
+  return 'Scegli un servizio dal listino: questo servizio non c’è.';
 }
 
 /**
@@ -839,6 +915,11 @@ export function createCalendarioView(deps) {
   const { client } = bindAdminMutations(deps.client, deps);
   const storage = deps.storage ?? null;
   const clock = typeof deps.now === 'function' ? deps.now : () => new Date();
+  // The phrase read-back pause (BO_PHRASE_PENDING): injectable so tests run
+  // the wait loop without real time, like the composer's send wait.
+  const wait = typeof deps.wait === 'function' ? deps.wait : unrefWait;
+  /** Guards the phrase search and its read-back: a newer search or a route away stops the old one. */
+  let phraseSeq = 0;
   let renderToken = 0;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
@@ -850,6 +931,12 @@ export function createCalendarioView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    phraseSeq += 1;
+    // The search in flight is dropped with the route (review #664): the
+    // card comes back idle, never wedged on «Sto cercando…».
+    state.aiLoading = false;
+    state.phraseWaiting = false;
+    state.phrasePending = null;
     memberToken += 1;
     trackRetainedDraft();
   }
@@ -926,6 +1013,12 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
+    /** The space the view last rendered for, so a switch drops that space's search. @type {string|null} */
+    renderedSpace: null,
+    /** The phrase POST was queued and is being read back: the card says «Sto cercando…». */
+    phraseWaiting: false,
+    /** The queued phrase request still pending after the read-back, the phrase and the space that asked it, for Riprova (never a new POST). @type {{requestId: string, phrase: string, spaceId: string}|null} */
+    phrasePending: null,
     /** Live manual form nodes, so a slot Conferma books the claim the operator sees. @type {any} */
     manualNodes: null,
     /** @type {any} */
@@ -958,6 +1051,8 @@ export function createCalendarioView(deps) {
     customerItems: [],
     /** Customer search failure in the operator's own words, or null. @type {string|null} */
     customerError: null,
+    /** The last customer search answer was read in part (complete:false). */
+    customerPartial: false,
   };
   /** Guards the customer search, like renderToken guards the week. */
   let customerSeq = 0;
@@ -1226,7 +1321,72 @@ export function createCalendarioView(deps) {
     return null;
   }
 
+  /**
+   * backlog:739c0c81f55c — the field the operator is typing in, before a
+   * repaint replaces it. Late reads (roster, week, labels, profile) repaint
+   * the whole view, and a replaced node loses focus and caret: the next
+   * keystrokes landed on the page and the phrase looked wiped (production
+   * 08/11). Every typed control carries a `name`, so the new node is found
+   * by it. Null when focus is outside the view or on a non-text control.
+   */
+  function focusedField() {
+    const active = doc?.activeElement ?? null;
+    if (!active || typeof mount.contains !== 'function' || !mount.contains(active)) return null;
+    const tag = String(active.tagName ?? '').toLowerCase();
+    if (tag !== 'textarea' && tag !== 'input' && tag !== 'select') return null;
+    const name = typeof active.getAttribute === 'function' ? active.getAttribute('name') : null;
+    if (typeof name !== 'string' || name === '' || !/^[A-Za-z0-9_-]+$/.test(name)) return null;
+    let start = null;
+    let end = null;
+    let direction = null;
+    try {
+      // Some input types (date, number) have no text selection: null, or a
+      // throw on older engines — focus is restored either way.
+      start = typeof active.selectionStart === 'number' ? active.selectionStart : null;
+      end = typeof active.selectionEnd === 'number' ? active.selectionEnd : null;
+      direction = typeof active.selectionDirection === 'string' ? active.selectionDirection : null;
+    } catch {
+      start = null;
+      end = null;
+    }
+    return { tag, name, start, end, direction };
+  }
+
+  /**
+   * Puts focus and caret back on the repainted field the operator was
+   * typing in. The value itself already survives through state (every
+   * typed field writes it on input). A field the repaint dropped, or one
+   * now disabled, stays unfocused.
+   * @param {{tag: string, name: string, start: number|null, end: number|null, direction: string|null} | null} kept
+   */
+  function restoreField(kept) {
+    if (kept === null) return;
+    const node = mount.querySelector(`${kept.tag}[name="${kept.name}"]`);
+    if (!node || typeof node.focus !== 'function') return;
+    if (node.disabled === true || (typeof node.getAttribute === 'function' && node.getAttribute('disabled') !== null)) return;
+    node.focus();
+    if (kept.start === null || kept.end === null) return;
+    const length = String(node.value ?? '').length;
+    const start = Math.min(kept.start, length);
+    const end = Math.min(kept.end, length);
+    try {
+      if (typeof node.setSelectionRange === 'function') node.setSelectionRange(start, end, kept.direction ?? undefined);
+      else {
+        node.selectionStart = start;
+        node.selectionEnd = end;
+      }
+    } catch {
+      // A control without a text selection keeps the focus only.
+    }
+  }
+
   function renderAll() {
+    const kept = focusedField();
+    renderView();
+    restoreField(kept);
+  }
+
+  function renderView() {
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
@@ -1708,11 +1868,20 @@ export function createCalendarioView(deps) {
       return panel;
     }
     if (!state.week) {
-      panel.appendChild(el(doc, 'p', {
-        className: 'empty',
-        text: 'Scegli le persone del team e premi «Mostra settimana»: niente settimana senza nomi, mai quella di tutti.',
-      }));
-      return panel;
+      // backlog:29bb3f2c0d64: with nobody to show (a space with no people
+      // yet, or no names while the roster is unread) the week still paints
+      // its empty grid, like the prototype, with one honest line above it —
+      // never a bare message where the calendar should be. Nothing is read
+      // for nobody: the grid is empty because no week was asked.
+      // A known roster with people means their week is on its way (the
+      // roster auto-fills the team): no line, the grid fills when it lands.
+      const roster = Array.isArray(state.members) ? personRows([], [], state.members) : null;
+      const line = roster === null
+        ? 'Scegli le persone del team e premi «Mostra settimana»: niente settimana senza nomi, mai quella di tutti.'
+        : (roster.length === 0
+          ? 'Nello spazio non c’è ancora nessuna persona: la settimana resta vuota finché il titolare non invita il team.'
+          : '');
+      if (line !== '') panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
     }
     const grid = el(doc, 'div', { className: 'cal-grid' });
     grid.appendChild(el(doc, 'div', { className: 'cal-corner', attrs: { 'aria-hidden': 'true' } }));
@@ -1838,7 +2007,7 @@ export function createCalendarioView(deps) {
     // stays in the «Fissa con una frase» card rows, like every other slot.
     for (const slot of state.proposals) {
       if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
-      const when = `${romeShortDay(slot?.startsAt) ?? ''} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
         text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
@@ -1904,8 +2073,17 @@ export function createCalendarioView(deps) {
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
     foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
-    if (channelOf(row) === 'whatsapp') {
+    // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
+    // keeps its badge, a Google-imported event and an online-link booking
+    // carry their own short pill; a booking made here carries none, like
+    // the prototype's non-WA blocks.
+    const origin = originOf(row);
+    if (origin === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+    } else if (origin === 'google') {
+      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+    } else if (origin === 'link') {
+      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
     }
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
@@ -2005,13 +2183,12 @@ export function createCalendarioView(deps) {
    * read-only customer profile (the map's own read), falling back to the row
    * label or id when the profile is unavailable. The WA pill paints only
    * from the explicit row marker (fetta 4's fail-closed rule) with the
-   * shared channel chip; anything else carries no pill because rows record
-   * no origin — an "✦ Fissato con l'AI" line would be invented. The Google
-   * sync row stays out for the same reason: appointments declares calendar
-   * synchronization notModeled and no row carries sync state, so any
-   * "invito inviato" line would be a guess (missing capability, nominated in
-   * the PR: adapter calendario). "Apri scheda cliente" is the dark primary
-   * button over the shared customer-card route, only for linked events.
+   * shared channel chip. backlog:29bb3f2c0d64: the other origins come from
+   * the row's source key (originOf) — never "✦ Fissato con l'AI", which the
+   * row cannot prove — and the «↔ Google Calendar» line paints only for
+   * events calendar-sync imported (`gcal:`); a booking made here carries no
+   * sync state, so it gets no «invito inviato» guess. "Apri scheda cliente"
+   * is the dark primary button over the shared customer-card route, only for linked events.
    * @param {any} row
    */
   function renderDetailCard(row) {
@@ -2053,7 +2230,8 @@ export function createCalendarioView(deps) {
     }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
     if (notes !== '') card.appendChild(el(doc, 'p', { text: `Nota: ${notes}` }));
-    if (channelOf(row) === 'whatsapp') {
+    const origin = originOf(row);
+    if (origin === 'whatsapp') {
       const pill = el(doc, 'p');
       pill.appendChild(uiChannelChip(doc, 'WA'));
       // Leading space: the chip and the sentence are sibling inline boxes. A
@@ -2063,6 +2241,37 @@ export function createCalendarioView(deps) {
         text: display ? ` Prenotato da ${display} su WhatsApp` : ' Prenotato su WhatsApp',
       }));
       card.appendChild(pill);
+    } else if (origin !== null) {
+      // backlog:29bb3f2c0d64 (C8): the other origins the row proves, in the
+      // prototype pill. A booking made here never claims «Fissato con
+      // l'AI»: manual and phrase bookings look the same on the row.
+      const words = {
+        google: 'Arrivato da Google Calendar',
+        link: 'Prenotato dal cliente con il link online',
+        calendario: 'Fissato dal calendario',
+      }[origin];
+      const pill = el(doc, 'p');
+      pill.appendChild(el(doc, 'span', { className: `cal-via cal-via-${origin}`, attrs: { 'data-role': 'event-origin' }, text: words }));
+      card.appendChild(pill);
+    }
+    if (origin === 'google') {
+      // backlog:29bb3f2c0d64 (C8): the «↔ Google Calendar» line, only where
+      // the row proves the link — an event calendar-sync imported. A
+      // booking made here carries no sync evidence on the row, so it stays
+      // without the line (no «invito inviato» guess).
+      // Review #678: «collegato» only on positive proof from the profile; an
+      // unknown state (profile unavailable or unread) says only where the
+      // event came from.
+      const connected = state.calendar?.connected;
+      card.appendChild(el(doc, 'p', {
+        className: 'cal-sync',
+        attrs: { 'data-role': 'event-sync' },
+        text: connected === true
+          ? '↔ Google Calendar · evento importato dal calendario collegato'
+          : connected === false
+            ? '↔ Google Calendar · non più collegato: ricollegalo dal Profilo'
+            : '↔ Google Calendar · evento importato da Google Calendar',
+      }));
     }
     if (linked) {
       const open = uiButton(doc, {
@@ -2116,10 +2325,24 @@ export function createCalendarioView(deps) {
     row.appendChild(find);
     panel.appendChild(row);
     if (state.aiLoading) {
-      panel.appendChild(el(doc, 'p', { className: 'empty', text: 'Cerco gli slot liberi…' }));
+      panel.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: state.phraseWaiting ? 'Sto cercando… la risposta arriva tra poco.' : 'Cerco gli slot liberi…',
+      }));
     }
     const aiNote = state.aiNote || (aiOff ? calendarRefusalText({ code: 'LLM_SPACE_DISABLED' }) : '');
     if (aiNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: aiNote }));
+    if (!state.aiLoading && state.phrasePending && state.phrasePending.spaceId === readSpace()) {
+      // Still queued after the read-back: Riprova reads the SAME request
+      // back, never a new POST (the pilot parses each POST again).
+      // The phrase that produced the request rides with it (review #664):
+      // an edit after the timeout never paints that request's draft under
+      // other words — Riprova restores the asked phrase with its answer.
+      const queued = state.phrasePending;
+      const retry = el(doc, 'button', { className: 'small secondary', text: 'Riprova', attrs: { type: 'button', 'data-action': 'phrase-resume' } });
+      retry.addEventListener('click', () => void submitAi(queued.phrase, { resumeId: queued.requestId }));
+      panel.appendChild(retry);
+    }
     if (state.draft) panel.appendChild(renderDraft(state.draft));
     if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
     if (state.proposals.length > 0) {
@@ -2137,10 +2360,6 @@ export function createCalendarioView(deps) {
     return panel;
   }
 
-  /** Proposal row label: `<ddd> <n> · <hh:mm>–<hh:mm>`, the grid's own words. */
-  function slotLabel(slot) {
-    return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
-  }
 
   /**
    * The team week holding every searched identity: the painted week when it
@@ -2175,10 +2394,49 @@ export function createCalendarioView(deps) {
     };
   }
 
-  /** @param {string} phrase */
-  async function submitAi(phrase) {
+  /**
+   * The phrase answer: the POST, or — when the pilot queues it (504
+   * BO_PHRASE_PENDING with a requestId, production 07/11) — the same
+   * request read back every 3 s for about a minute. Throws PHRASE_STILL_PENDING
+   * (with the requestId) when it is still queued after that.
+   * @param {{resumeId?: string|null, seq: number}} options
+   */
+  async function phraseAnswer({ resumeId = null, seq }) {
+    let requestId = resumeId;
+    if (requestId === null) {
+      try {
+        return await client.request('/api/appointments/phrase', {
+          method: 'POST',
+          body: { spaceId: readSpace(), phrase: state.phrase },
+        });
+      } catch (error) {
+        requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
+        if (requestId === null) throw error;
+      }
+    }
+    // A route away (or a newer search) during the POST owns the mount now:
+    // never paint the waiting card over it (review #664, backlog:607f33ee).
+    if (seq !== phraseSeq) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
+    state.phraseWaiting = true;
+    renderAll();
+    const read = await readBackPending(client, '/api/appointments/phrase', requestId, {
+      expectedCode: 'BO_PHRASE_PENDING',
+      spaceId: readSpace(),
+      wait, everyMs: PHRASE_RESUME_EVERY_MS, rounds: PHRASE_RESUME_ROUNDS, stale: () => seq !== phraseSeq,
+    });
+    if (read.stale) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
+    if (read.error) throw read.error;
+    if (read.pending) throw Object.assign(new Error('pending'), { code: 'PHRASE_STILL_PENDING', requestId: read.requestId });
+    return read.answer;
+  }
+
+  /** @param {string} phrase @param {{resumeId?: string|null}} [options] */
+  async function submitAi(phrase, { resumeId = null } = {}) {
+    const seq = ++phraseSeq;
+    state.phrasePending = null;
+    state.phraseWaiting = false;
     state.phrase = String(phrase ?? '');
-    if (state.phrase.trim() === '') {
+    if (state.phrase.trim() === '' && resumeId === null) {
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -2192,11 +2450,18 @@ export function createCalendarioView(deps) {
     state.proposals = [];
     state.aiNote = '';
     renderAll();
+    // The phrase that asks this request (review #664): the queued id and the
+    // answer both ride with it, never with a later edit of the textarea.
+    const asked = state.phrase;
+    // The space that asks it (review #664): a queued id is never read back
+    // under another space.
+    const askedSpace = readSpace();
     try {
-      const answer = await client.request('/api/appointments/phrase', {
-        method: 'POST',
-        body: { spaceId: readSpace(), phrase: state.phrase },
-      });
+      const answer = await phraseAnswer({ resumeId, seq });
+      state.phraseWaiting = false;
+      // An edit while the answer was on its way never relabels it: the
+      // draft paints under the phrase that asked it (review #664 P3).
+      state.phrase = asked;
       const draft = answer?.draft ?? null;
       state.draft = draft;
       if (!draft) {
@@ -2285,10 +2550,21 @@ export function createCalendarioView(deps) {
         ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
         : '';
     } catch (error) {
+      const record = error !== null && typeof error === 'object' ? error : {};
+      // A newer search or a route away owns the card now: touch nothing.
+      if (record.code === 'PHRASE_STALE') return;
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
-      const record = error !== null && typeof error === 'object' ? error : {};
+      state.phraseWaiting = false;
+      if (record.code === 'PHRASE_STILL_PENDING') {
+        // Never «Ricerca non riuscita» on an answer that may be ready: say
+        // it is slow, and offer Riprova on the same request.
+        console.warn('bo-calendario phrase still pending:', `requestId=${String(record.requestId ?? '')}`, `spaceId=${readSpace()}`);
+        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: asked, spaceId: askedSpace } : null;
+        state.aiNote = 'La ricerca sta impiegando più del previsto.';
+        return;
+      }
       const refusal = calendarRefusalText(error);
       if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
@@ -2299,9 +2575,12 @@ export function createCalendarioView(deps) {
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
     } finally {
-      state.aiLoading = false;
-      renderAll();
+      if (seq === phraseSeq) {
+        state.aiLoading = false;
+        renderAll();
+      }
     }
+    if (seq !== phraseSeq) return;
     // A resolved person prefills its single booking identity; with several
     // (or none) the choice stays with the operator on the manual form.
     if (state.draft) {
@@ -2317,10 +2596,9 @@ export function createCalendarioView(deps) {
   /** @param {any} draft */
   function renderDraft(draft) {
     const box = el(doc, 'div', { className: 'cal-draft' });
-    // backlog:5fbebe8559e9: a phrase without a time («45 minuti con
-    // Daniele») drafts no startsAt — the line names the duration it will
-    // search, never «? –»; a day without a time reads «orario da
-    // scegliere», never «00:00» (production 07/11).
+    // backlog:5fbebe8559e9 + backlog:65ed7430: one «when» line for every
+    // draft shape — a day without a time reads «orario da scegliere»,
+    // never «00:00» and never «?».
     const when = draftWhen(draft);
     box.appendChild(el(doc, 'p', {
       text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
@@ -2389,9 +2667,13 @@ export function createCalendarioView(deps) {
       const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
       if (token !== customerSeq) return;
       state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
+      // backlog:d128847d21fc: a list the server read only in part says so,
+      // never a flat «nessun cliente».
+      state.customerPartial = answer?.complete === false;
       state.customerError = null;
     } catch (error) {
       if (token !== customerSeq) return;
+      state.customerPartial = false;
       state.customerItems = [];
       state.customerError = humanReadError(error, {
         failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
@@ -2427,7 +2709,9 @@ export function createCalendarioView(deps) {
     if (state.customerItems.length === 0) {
       box.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: 'Nessun cliente corrisponde. Prova con un altro nome.',
+        text: state.customerPartial
+          ? 'Nessun cliente corrisponde tra quelli letti: l’elenco è parziale. Prova con nome o cognome.'
+          : 'Nessun cliente corrisponde. Prova con un altro nome.',
       }));
       return;
     }
@@ -2488,6 +2772,16 @@ export function createCalendarioView(deps) {
     };
     state.confirmed = null;
     state.serviceError = '';
+    const presend = servicePresendError(claim.serviceKey);
+    if (presend !== null) {
+      // A typed service the server could never book (backlog:9a853f44,
+      // production 07/11): said under the field before anything is sent —
+      // never a 400 with «Riprova più tardi».
+      state.serviceError = presend;
+      state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+      renderAll();
+      return;
+    }
     // Same in-flight rule as the manual Conferma (review #657): the queued
     // write can take a while, the stale draft note never stays on screen.
     state.draftNote = '';
@@ -2752,13 +3046,17 @@ export function createCalendarioView(deps) {
       }
       if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
       if (draft.notes) inputs.notes.value = String(draft.notes);
-      const dayKey = romeDayKey(draft.startsAt);
+      // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
+      // prefill the day and ask the hour, never paint an invented midnight.
+      const dayKey = draftDayKey(draft);
       if (dayKey) inputs.date.value = dayKey;
-      // A day-only draft leaves the hours to choose: never «00:00».
-      if (!draftDayOnly(draft)) {
-        if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
-        if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
-      }
+      // A day-only draft (a Rome-midnight start, or `day` with no startsAt)
+      // leaves the hours to choose: clear them, so neither 00:00 nor a stale
+      // hour from an earlier edit is ever booked as stated (backlog:65ed7430).
+      if (draftDayOnly(draft) || draft.startsAt === undefined) inputs.start.value = '';
+      else if (romeTime(draft.startsAt)) inputs.start.value = romeTime(draft.startsAt);
+      if (draftDayOnly(draft) || draft.endsAt === undefined) inputs.end.value = '';
+      else if (romeTime(draft.endsAt)) inputs.end.value = romeTime(draft.endsAt);
       // The draft has been absorbed into the visible form: snapshot it, so
       // a later re-render keeps the draft values instead of replaying them
       // over the operator's own edits. A pipe outsider never painted, so an
@@ -2922,6 +3220,16 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    const presend = servicePresendError(claim.serviceKey);
+    if (presend !== null) {
+      // Same rule as the slot Conferma above (backlog:9a853f44): one
+      // function, both callers — a typed service the server could never
+      // book never leaves the form, on Proponi or Conferma alike.
+      state.serviceError = presend;
+      state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      renderAll();
+      return;
+    }
     // The queued write can take a while on the pilot: the stale «Bozza
     // pronta» never stays on screen while Conferma is in flight.
     state.bookingNote = confirm ? 'Prenotazione in corso…' : 'Controllo lo slot…';
@@ -2970,6 +3278,18 @@ export function createCalendarioView(deps) {
   }
 
   async function render() {
+    // A space switch while on Calendario (review #664): the search in flight
+    // and the queued request belong to the space just left — drop them, so
+    // nothing of space A is read back or painted under space B.
+    const space = readSpace();
+    if (state.renderedSpace !== null && state.renderedSpace !== space) {
+      phraseSeq += 1;
+      state.aiLoading = false;
+      state.phraseWaiting = false;
+      state.phrasePending = null;
+      state.aiNote = '';
+    }
+    state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
     // one-time pick the calendar takes here, once, on entry — read and
     // cleared, so a later visit starts unpicked. A fresh pick opens the

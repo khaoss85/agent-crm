@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError } from '../../core/index.js';
+import { readErasedSubjects } from './erasure.js';
 import { deciding, resolvedNames, trusted } from './store.js';
 
 /**
@@ -33,6 +34,38 @@ import { deciding, resolvedNames, trusted } from './store.js';
 export const EXPORT_MAX_ROWS = 10_000;
 
 /**
+ * The subject envelopes a stored row can carry (ADR-030): a single subject,
+ * or the two sides of a pair (a duplicate candidate names `left` and
+ * `right`). A row naming an erased subject on ANY of them leaves the export.
+ */
+const SUBJECT_ENVELOPES = Object.freeze(['subject', 'left', 'right']);
+
+/**
+ * Drop rows naming an erased subject. Only rows carrying a subject
+ * envelope are candidates; every other row passes through untouched.
+ * @param {Array<any>} rows
+ * @param {ReadonlySet<string>} erased subject keys (`resource:id`)
+ */
+export function excludeErasedSubjects(rows, erased) {
+  if (!erased || erased.size === 0) return { visible: rows, erasedExcluded: 0 };
+  const visible = [];
+  let erasedExcluded = 0;
+  for (const row of rows) {
+    const named = SUBJECT_ENVELOPES.some((prefix) => {
+      const resource = row?.[`${prefix}Resource`];
+      const id = row?.[`${prefix}Id`];
+      return typeof resource === 'string' && typeof id === 'string' && erased.has(`${resource}:${id}`);
+    });
+    if (named) {
+      erasedExcluded += 1;
+      continue;
+    }
+    visible.push(row);
+  }
+  return { visible, erasedExcluded };
+}
+
+/**
  * @param {Record<string, string>} [config]
  */
 export function exportableResources(config) {
@@ -49,6 +82,8 @@ export function exportableResources(config) {
     // The enrichment record sets the package metadata and README promise.
     'enriched-field': names.enriched,
     'enrichment-opt-out': names.optOut,
+    // The erasure registry: append-only accountability, no personal data.
+    'customer-erasure-log': names.erasure,
   });
 }
 
@@ -64,6 +99,7 @@ export function createCustomerDataExport({ database, modules, events, config }) 
     });
   }
   const resources = exportableResources(config);
+  const names = resolvedNames(config);
 
   return {
     /**
@@ -120,12 +156,23 @@ export function createCustomerDataExport({ database, modules, events, config }) 
           },
         );
       }
+      // Erased subjects leave the export (backlog:d271d723): the registry
+      // names them, and the exclusion is stated on the answer — never a
+      // silent short file. Rows without a subject envelope are unaffected.
+      // The registry itself is exempt: its rows ARE the accountability
+      // proof, not customer data, so excluding them would always export
+      // an empty set with a misleading erasedExcluded count.
+      const erased = resource === 'customer-erasure-log'
+        ? Object.freeze(new Set())
+        : await readErasedSubjects({ modules, names });
+      const { visible, erasedExcluded } = excludeErasedSubjects(rows, erased);
       return Object.freeze({
         resource,
-        rowCount,
+        rowCount: visible.length,
         bound,
         complete: true,
-        rows: Object.freeze(rows.map((row) => Object.freeze({ ...row }))),
+        erasedExcluded,
+        rows: Object.freeze(visible.map((row) => Object.freeze({ ...row }))),
       });
     },
   };

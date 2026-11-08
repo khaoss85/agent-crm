@@ -59,12 +59,14 @@ export function createAgentsPackage(options = {}) {
     name: AGENTS_DOMAIN,
     // 1: backlog:8986f4459f0f — teammate agents with phrase assignments,
     // approval-gated proposals, versioned artifacts, spending caps.
-    version: 1,
+    // 2: backlog:fd36da512b0e — «Da fare» decisions on a proposed run:
+    // reject-run (outcome `rejected`) and revise-run (edit one proposal).
+    version: 2,
     label: 'Agenti teammate',
     description:
       'Teammate agents: named agents with roles and instructions, assignments created from a human phrase '
       + 'with a cadence and a next run, executions recorded with cost and outcome, a monthly spending cap '
-      + 'per agent, and action proposals applied only after a human approval (or a versioned artifact).',
+      + 'per agent, and action proposals a human approves, edits or rejects (or a versioned artifact).',
     resources: [...AGENTS_RESOURCES],
     requires: [],
     capabilities: [],
@@ -142,6 +144,43 @@ export function createAgentsPackage(options = {}) {
         create(runtime) {
           const ops = opsFor(runtime);
           return (request) => ops.approveRun(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'reject-run',
+        appMethod: 'rejectTeammateRun',
+        label: 'Reject a proposed run',
+        description:
+          'A human rejection: the proposed run leaves the approval queue as rejected and nothing is applied. '
+          + 'A second rejection replays; an applied run refuses.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'runSourceKey', type: 'string', hint: 'The proposed run to reject.' },
+          { name: 'reason', type: 'string', hint: 'Optional: why, in one line.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.rejectRun(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'revise-run',
+        appMethod: 'reviseTeammateRun',
+        label: 'Edit a proposal before approving',
+        description:
+          'A human edit of one proposal of a proposed run: the fields given are merged over its payload and '
+          + 'validated again; the action stays the agent one and the run keeps waiting for approval.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'runSourceKey', type: 'string', hint: 'The proposed run to edit.' },
+          { name: 'index', type: 'integer', hint: 'Which proposal (0 for the first).' },
+          { name: 'payload', type: 'json', hint: 'The payload fields to change, e.g. { "text": "..." }.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.reviseRun(request);
         },
       },
     ],

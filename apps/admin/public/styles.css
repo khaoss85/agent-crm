@@ -1335,7 +1335,8 @@ select.bo-spazi-input { flex: none; }
 /* Supervisor design pass: the prototype's header and two-column layout. */
 .cal-wrap .panel-heading { align-items: flex-end; margin-bottom: 0; flex-wrap: wrap; }
 .cal-wrap .panel-heading .eyebrow { text-transform: uppercase; margin-bottom: 10px; }
-.cal-wrap .panel-heading h2 { margin: 0; font-size: clamp(32px, 4vw, 50px); line-height: 1; letter-spacing: -.03em; }
+/* backlog:29bb3f2c0d64: the prototype title size, the same as Sequenze and Clienti (46px top). */
+.cal-wrap .panel-heading h2 { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
 .cal-wrap .panel-heading .lede { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
 .cal-wrap .actions { display: flex; align-items: center; gap: 8px; }
 .cal-wrap .actions [data-role="week-interval"] { padding: 0 8px; font-size: 16px; font-weight: 700; white-space: nowrap; }
@@ -1391,6 +1392,15 @@ select.bo-spazi-input { flex: none; }
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
+/* backlog:29bb3f2c0d64: the channel pill on blocks and in the detail card,
+ * and the «↔ Google Calendar» line, in the prototype's mono and tints. */
+.cal-pill { display: inline-block; border-radius: 4px; padding: 0 4px; font-family: var(--mono); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.cal-pill-google { background: var(--data-soft); color: var(--data-ink); }
+.cal-pill-link { background: var(--agent-soft); color: var(--agent-ink); }
+.cal-via { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--surface-soft); color: var(--ink); }
+.cal-via-google { background: var(--data-soft); color: var(--data-ink); }
+.cal-via-link { background: var(--agent-soft); color: var(--agent-ink); }
+.cal-sync { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--data-ink); }
 /* Press-and-drag on the grid (supervisor design pass 03/11): the chosen
  * half hours read as one accent block, the form opens beside it. */
 .cal-day { cursor: cell; touch-action: none; user-select: none; }
@@ -2384,3 +2394,43 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
    * to the stacked layout only: a wide touch screen keeps the drag. */
   .cal-day { touch-action: manipulation; }
 }
+/* ---- Nuova offerta in a window over the scheda (Dan 06/11) ------------- */
+/* Same frame as the composer; the body is a short form: four facts in a
+   two-column grid, the catalog as chips, one primary action. */
+.bo-offer-panel .bo-offer-body { padding-bottom: 6px; }
+.bo-offer-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; padding: 6px 0 4px; }
+.bo-offer-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 0 6px; border-bottom: 1px solid var(--line-faint); }
+.bo-offer-field-wide { grid-column: 1 / -1; }
+.bo-offer-field:focus-within { border-bottom-color: var(--ink); }
+.bo-offer-label { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
+.bo-scheda-composer .bo-offer-input { width: 100%; min-height: 0; padding: 4px 0 2px; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
+.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); }
+.bo-scheda-composer .bo-offer-input[name="offer-title"] { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+.bo-scheda-composer .bo-offer-input[name="offer-title"]::placeholder { font-weight: 450; }
+.bo-scheda-composer .bo-offer-input[name="offer-value"] { font-variant-numeric: tabular-nums; }
+.bo-offer-field .field-error { margin: 2px 0 0; font-size: 12px; }
+.bo-offer-field .field-error:empty { display: none; }
+.bo-offer-catalog { padding: 12px 0 4px; }
+.bo-offer-catalog[data-empty="true"] { display: none; }
+.bo-offer-catalog-title { margin: 0 0 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.bo-offer-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bo-offer-pick { display: inline-flex; align-items: center; gap: 4px; }
+.bo-scheda-composer .bo-offer-chip { display: inline-flex; align-items: baseline; gap: 8px; min-height: 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+.bo-scheda-composer .bo-offer-chip:hover { border-color: var(--ink); }
+.bo-scheda-composer .bo-offer-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bo-scheda-composer .bo-offer-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.bo-scheda-composer .bo-offer-chip[aria-pressed="true"]::before { content: "✓"; font-size: 11px; margin-right: -2px; }
+.bo-offer-chip-price { font-family: var(--mono); font-size: 11.5px; font-weight: 450; opacity: .7; font-variant-numeric: tabular-nums; }
+.bo-scheda-composer .bo-offer-qty { width: 54px; min-height: 0; padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: inherit; font-size: 13px; text-align: center; }
+.bo-offer-pick[data-on="false"] .bo-offer-qty { display: none; }
+.bo-offer-total { margin: 10px 0 0; font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-offer-total:empty { display: none; }
+.bo-offer-blocked { margin: 0; padding: 18px 0; font-size: 14px; color: var(--muted); }
+.bo-offer-panel .bo-composer-foot [data-action="offer-create"] { min-width: 132px; border-radius: 999px; }
+@media (max-width: 560px) {
+  .bo-offer-fields { grid-template-columns: 1fr; }
+}
+/* Backlog 1e939a362c7c: «N offerte di altre pipeline» reads as a link and unfolds the offers. */
+.pipeline-switch .link-button { padding: 0; border: none; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.pipeline-off-list { margin: 6px 0 0; padding-left: 18px; }
+.pipeline-off-list li { margin: 2px 0; }

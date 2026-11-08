@@ -104,9 +104,10 @@
  * default; CI fetches the PR base and passes it explicitly). `--list` prints
  * the files that would run (the selection, or the default fast suite when
  * the gate would fall back) without running them. The run itself is bounded:
- * the run timeout refuses to hold the machine lock longer than that — a
- * hanging run fails red instead of queueing every other factory behind
- * it — inside the gate's shared total (540 s, see `scripts/ci-fast.sh`).
+ * the run timeout (420 s by default, see `DEFAULT_TIMEOUT_SEC`) refuses to
+ * hold the queue longer than that — a hanging run fails red instead of
+ * queueing every other PR behind it — inside the gate's shared total
+ * (540 s, see `scripts/ci-fast.sh`).
  * The run bound additionally yields to the selection phase so
  * select-plus-run always fits its share of the total.
  *
@@ -132,8 +133,27 @@ const root = process.cwd();
 const TEST_FILE = /\.test\.[cm]?js$/;
 const SOURCE_EXT = /\.[cm]?js$/;
 
-/** This step's share of the PR machine-lock budget (<5 minutes per step). */
-const DEFAULT_TIMEOUT_SEC = 270;
+/**
+ * The run bound: the most the test run may last once the selection is over
+ * (it further yields to the selection's elapsed time, see `runBudgetSec`).
+ *
+ * 420 s since 2026-11-08 (was 270 s, sized for the shared Mac's single
+ * machine lock, where every phase ran one after the other). Since
+ * agent-crm#681 the fast job waits in the CI server's own queue and the
+ * phases run in parallel lanes (`CI_FAST_PARALLEL=4`), killed together at
+ * HEAVY_JOB_MAX_SEC=540 — so the only thing this phase shares its 540 s
+ * with is `gtm:check`, which runs after it in the same lane. The old bound
+ * failed red with every test that ran green: agent-crm#651 (run
+ * 42491220408, 10 files left) and #684 (run 42495287784, 1 file left), both
+ * on the warned 50-file fallback in 4 parts. The file left in both is
+ * `tests/contracts-activation-e2e.test.js`: alone it needs 252 s (7 tests
+ * of 21-55 s each, run 42475723018) and more than 257 s on a loaded runner
+ * — one file the parts cannot split, still running at 270 s. In run
+ * 42491220408 the 50 files carried about 1,200 s of work (603 s done plus
+ * the 10 left, as timed in run 42475723018) for 4 parts: ~305 s each at
+ * best. See `STEP_BUDGET_SEC` for how the new number fits the 540 s.
+ */
+const DEFAULT_TIMEOUT_SEC = 420;
 
 /** The selection phase's own budget: graph build plus mapping, in seconds. */
 const DEFAULT_SELECT_TIMEOUT_SEC = 60;
@@ -148,8 +168,20 @@ const DEFAULT_MAX_SELECTED = 50;
  * This phase's internal share of the gate's shared 540 s total (see
  * `scripts/ci-fast.sh`): select-plus-run must fit inside it, with a few
  * seconds of margin for process startup.
+ *
+ * 450 s since 2026-11-08 (was 300 s). Measured on the 14 green fast runs
+ * of 2026-11-08 (42461859027 to 42497107593, Linux runner, 4 lanes): the
+ * phase after this one in the same lane, `gtm:check`, took 7-15 s; this
+ * phase took at most 13 s more than its test run (selection plus startup,
+ * both inside this budget); when this lane was not the longest, the whole
+ * gate ended by 196 s (`npm run check` 104-193 s, the recipe replay
+ * 82-155 s, the plan pins 61-103 s). So this lane needs at most 450 s plus
+ * 15 s of `gtm:check`, ~75 s under the 540 s kill — five times the slowest
+ * `gtm:check` seen — and the other lanes keep more than 300 s of room.
+ * `tests/ci-touched-tests.test.js` keeps at least a minute free against the
+ * HEAVY_JOB_MAX_SEC of the fast step in `.github/workflows/ci.yml`.
  */
-const STEP_BUDGET_SEC = 300;
+export const STEP_BUDGET_SEC = 450;
 
 /**
  * The repo-wide guards: test files whose verdict depends on repository

@@ -2029,7 +2029,8 @@ export function createInteractionLogCapability(moduleNames) {
     description:
       'Append interaction evidence — open a conversation, log a message or a call, assign its owner, mark it read — '
       + 'inside the caller\'s handles. Every write is one row, idempotent by source key. '
-      + 'Grants no read beyond the written row, no update and no delete.',
+      + 'Grants no read beyond the written row and no delete: a written message may advance '
+      + 'along its delivery lifecycle (to failed with a reason code), never rewritten.',
     /** @param {{modules: any, actor?: unknown, now?: () => string, consumer?: string}} context */
     create(context = {}) {
       const modules = context?.modules;
@@ -2045,6 +2046,19 @@ export function createInteractionLogCapability(moduleNames) {
         openConversation: (request) => openConversation(scope, request),
         /** @param {unknown} request */
         logMessage: (request) => logMessage(scope, request),
+        /**
+         * Advance a written outbound message along the delivery lifecycle
+         * (backlog:97cba17c, VALIDAZIONE A4): the channel worker marks its
+         * own queued send failed with the reason code when the provider
+         * refuses it, so the scheda cronologia keeps the failure as
+         * evidence with Riprova. Only the transition table moves a row —
+         * a refused move names the moves the state allows, never a rewrite.
+         * @param {unknown} record @param {unknown} to @param {unknown} [errorCode]
+         */
+        advanceMessage: (record, to, errorCode) => advanceMessage(
+          { messages: scope.modules.get(MESSAGE_MODULE)?.service ?? null, actor: scope.actor },
+          record, to, errorCode,
+        ),
         /** @param {unknown} request */
         logCall: (request) => logCall(scope, request),
         /** @param {unknown} request */

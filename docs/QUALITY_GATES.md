@@ -298,8 +298,10 @@ applied by the wrapper killing the run past it. A PR holds the shared lock
 less than ten minutes in total, enforced,
 not an objective (measured ~290 s on CI run 39124350674, about half the
 budget). The touched-tests selection additionally enforces its own
-60-second budget and its 270-second run bound, the run bound yielding to
-the selection's elapsed time so the two always fit inside the shared total —
+60-second budget and its 420-second run bound (450 s for select-plus-run:
+the phase shares its lane only with `gtm:check`, measured 7-15 s), the run
+bound yielding to the selection's elapsed time so the two always fit inside
+the shared total —
 past a dozen files the run splits into up to four parallel parts that pull
 one file at a time from a shared queue (fixed round-robin slices left two
 parts idle while two others timed out on agent-crm#621), so a core-wide
