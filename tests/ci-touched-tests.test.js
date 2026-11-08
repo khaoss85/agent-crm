@@ -25,6 +25,7 @@ import {
   PACKAGE_DECLARATION_FREEZE_TESTS,
   REPO_WIDE_GUARDS,
   REPO_WIDE_GUARD_EXCLUSIONS,
+  STEP_BUDGET_SEC,
   buildFileImports,
   changedTestFiles,
   digestDirectorySuites,
@@ -248,11 +249,11 @@ test('the real graph builder follows a packages/ barrel to the importing test', 
   }
 });
 
-test('parseArgs defaults to origin/main with the 270 s step bound', () => {
+test('parseArgs defaults to origin/main with the 420 s run bound', () => {
   assert.deepEqual(parseArgs([]), {
     base: 'origin/main',
     list: false,
-    timeoutSec: 270,
+    timeoutSec: 420,
     selectTimeoutSec: 60,
     maxSelected: 50,
   });
@@ -267,14 +268,14 @@ test('parseArgs consumes --base and --timeout-sec values instead of re-reading t
   );
   assert.deepEqual(
     parseArgs(['--base', 'FETCH_HEAD']),
-    { base: 'FETCH_HEAD', list: false, timeoutSec: 270, selectTimeoutSec: 60, maxSelected: 50 },
+    { base: 'FETCH_HEAD', list: false, timeoutSec: 420, selectTimeoutSec: 60, maxSelected: 50 },
   );
 });
 
 test('parseArgs consumes --select-timeout-sec and --max-selected', () => {
   assert.deepEqual(
     parseArgs(['--select-timeout-sec', '30', '--max-selected', '10']),
-    { base: 'origin/main', list: false, timeoutSec: 270, selectTimeoutSec: 30, maxSelected: 10 },
+    { base: 'origin/main', list: false, timeoutSec: 420, selectTimeoutSec: 30, maxSelected: 10 },
   );
 });
 
@@ -400,12 +401,36 @@ test('fallbackPlan resolves skip, warned fallback and refuse without a selection
 });
 
 test('runBudgetSec yields to the selection phase inside the step budget', () => {
-  assert.equal(runBudgetSec(270, 0.1), 270);
-  assert.equal(runBudgetSec(270, 60), 235);
+  const { timeoutSec } = parseArgs([]);
+  // The default run bound sits under the step budget, so a quick selection
+  // keeps all of it.
+  assert.ok(timeoutSec < STEP_BUDGET_SEC - 5, 'the run bound fits inside the step budget');
+  assert.equal(runBudgetSec(timeoutSec, 0.1), timeoutSec);
+  // A slow selection eats into the run, never past the step budget.
+  assert.equal(runBudgetSec(timeoutSec, 60), Math.min(timeoutSec, STEP_BUDGET_SEC - 5 - 60));
+  assert.ok(runBudgetSec(timeoutSec, 60) + 60 <= STEP_BUDGET_SEC);
   // Never below a minute, even when the selection ate the step.
-  assert.equal(runBudgetSec(270, 290), 60);
+  assert.equal(runBudgetSec(timeoutSec, STEP_BUDGET_SEC + 20), 60);
   // A custom run timeout is kept when it is the tighter bound.
   assert.equal(runBudgetSec(120, 0.1), 120);
+  // An explicit step budget is honoured (the old 270 s / 300 s pair).
+  assert.equal(runBudgetSec(270, 60, 300), 235);
+});
+
+test('the step budget leaves gtm:check at least a minute inside the fast job cap', () => {
+  // The touched tests and gtm:check run one after the other in one lane of
+  // scripts/ci-fast.sh, killed together at the fast step's HEAVY_JOB_MAX_SEC.
+  // gtm:check took 7-15 s on the green fast runs of 2026-11-08: a minute
+  // keeps four times that free. Raising the step budget past it fails here.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const step = workflow.split('\n').find((line) => line.includes('scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh'));
+  assert.ok(step, 'the fast step runs scripts/ci-fast.sh under scripts/ci-heavy.sh');
+  const cap = Number(/HEAVY_JOB_MAX_SEC=(\d+)/.exec(step)?.[1]);
+  assert.ok(Number.isInteger(cap) && cap > 0, `the fast step sets HEAVY_JOB_MAX_SEC: ${step}`);
+  assert.ok(STEP_BUDGET_SEC + 60 <= cap, `step budget ${STEP_BUDGET_SEC}s + 60s for gtm:check exceeds the ${cap}s cap`);
+  const fast = readFileSync(join(repoRoot, 'scripts/ci-fast.sh'), 'utf8');
+  assert.match(fast, /touched_then_gtm\(\) \{\n(?:.*\n)*?.*ci-touched-tests\.js.*\n.*gtm:check/, 'gtm:check still follows the touched tests in their lane');
 });
 
 test('selection is end to end on a throwaway repository with real git', () => {
