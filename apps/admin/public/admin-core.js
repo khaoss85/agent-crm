@@ -296,6 +296,9 @@ function bindingOf(raw) {
   return trimmed;
 }
 
+/** The paths that name the home (Oggi) besides the empty one. */
+const HOME_ALIASES = new Set(['oggi', 'home', 'dashboard']);
+
 /**
  * Parse an Admin hash into a route descriptor. Pure and total: malformed
  * encoding, encoded separators and dangerous names never throw and never
@@ -314,6 +317,13 @@ export function parseModuleRoute(hash) {
   const rawParts = segments;
   // Pipeline board routes: #/pipelines/<name> (ADR-014). Same canonical-name
   // discipline as module routes; anything else is invalid, not a lookup.
+  // Backlog 2a075e2d9250: #/pipeline is the natural direct link to the
+  // board; it opens the first composed pipeline (pipelineName null, resolved
+  // by the board like the sidebar voice) — never Oggi. A bare #/pipelines
+  // stays an empty name, invalid like below.
+  if (rawParts.length === 1 && rawParts[0] === 'pipeline') {
+    return { view: 'pipeline', pipelineName: null };
+  }
   if (rawParts.length && rawParts[0] === 'pipelines') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length !== 2) return { view: 'invalid' };
@@ -519,7 +529,11 @@ export function parseModuleRoute(hash) {
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'sync' };
   }
-  if (rawParts.length === 0 || rawParts[0] !== 'modules') return { view: 'dashboard' };
+  // Backlog 2a075e2d9250: only the home names open Oggi. Any other unknown
+  // path is an honest «Questa pagina non esiste», never a silent landing on
+  // Oggi that looks like the link opened the wrong screen.
+  if (rawParts.length === 0 || HOME_ALIASES.has(rawParts.join('/'))) return { view: 'dashboard' };
+  if (rawParts[0] !== 'modules') return { view: 'invalid' };
   // An internal empty segment (e.g. "modules//new") is malformed, not a lookup.
   if (rawParts.some((part) => part === '')) return { view: 'invalid' };
   if (rawParts.length < 2) return { view: 'dashboard' };

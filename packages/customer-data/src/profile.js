@@ -211,6 +211,10 @@ export async function profileFor({ modules, core, names, subject }) {
   // A quote carries no human name of its own; the scheda names it after the
   // opportunity it was made for, resolved here from the same read above.
   const opportunityNames = new Map((opportunityRead?.rows ?? []).map((row) => [row.id, row.name ?? null]));
+  // Backlog a551982c06eb: the quote also carries its opportunity's stage, so
+  // the scheda says the sale's state (like the Pipeline board), never the
+  // quote's approval as if it were the offer's.
+  const opportunityStages = new Map((opportunityRead?.rows ?? []).map((row) => [row.id, row]));
   const references = { companyIds, contactIds, opportunityIds };
 
   // Voce 908f2eb9bbfb: sections are independent of each other (quotes
@@ -220,7 +224,7 @@ export async function profileFor({ modules, core, names, subject }) {
   const sections = {};
   await Promise.all(SECTIONS.map(async (section) => {
     sections[section.key] = await readOneSection(section, {
-      modules, references, subject, opportunityRead, opportunityNames,
+      modules, references, subject, opportunityRead, opportunityNames, opportunityStages,
     });
   }));
 
@@ -272,9 +276,9 @@ export async function profileFor({ modules, core, names, subject }) {
  * with a reason) instead of failing the profile.
  *
  * @param {{key: string, module: string, owner: string, label: string}} section
- * @param {{modules: any, references: any, subject: any, opportunityRead: any, opportunityNames: Map<string, string|null>}} input
+ * @param {{modules: any, references: any, subject: any, opportunityRead: any, opportunityNames: Map<string, string|null>, opportunityStages: Map<string, any>}} input
  */
-async function readOneSection(section, { modules, references, subject, opportunityRead, opportunityNames }) {
+async function readOneSection(section, { modules, references, subject, opportunityRead, opportunityNames, opportunityStages }) {
   const service = optional(modules, section.module);
   if (!service || typeof service.list !== 'function') {
     return NOT_AVAILABLE(section.label, section.owner);
@@ -327,6 +331,7 @@ async function readOneSection(section, { modules, references, subject, opportuni
         opportunityName: row.opportunityId != null
           ? (opportunityNames.get(row.opportunityId) ?? null)
           : null,
+        ...opportunityStageOf(row.opportunityId != null ? opportunityStages.get(row.opportunityId) : null),
         // Voce 59def6cb805d (C25): the amount the owning record already
         // holds, server-computed — the scheda never sums anything. A quote
         // with recurring groups has no single one-time total, so it carries
@@ -336,12 +341,28 @@ async function readOneSection(section, { modules, references, subject, opportuni
         currency: typeof row.currency === 'string' ? row.currency : null,
       } : {}),
       ...(section.key === 'opportunities' ? {
+        stage: typeof row.stage === 'string' ? row.stage : null,
+        pipelineKey: typeof row.pipelineKey === 'string' ? row.pipelineKey : null,
+        pipelineStage: typeof row.pipelineStage === 'string' ? row.pipelineStage : null,
         amountCents: Number.isSafeInteger(row.valueCents) ? row.valueCents : null,
         currency: typeof row.currency === 'string' ? row.currency : null,
       } : {}),
     }))),
     truncated: rows.length > 50,
   });
+}
+
+/**
+ * The stage of a quote's opportunity, as quote item fields: core stage plus
+ * pipeline placement, null each when the opportunity was not read.
+ * @param {any} row
+ */
+function opportunityStageOf(row) {
+  return {
+    opportunityStage: typeof row?.stage === 'string' ? row.stage : null,
+    opportunityPipelineKey: typeof row?.pipelineKey === 'string' ? row.pipelineKey : null,
+    opportunityPipelineStage: typeof row?.pipelineStage === 'string' ? row.pipelineStage : null,
+  };
 }
 
 /** Read the host identity records this subject and its cluster name. */

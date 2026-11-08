@@ -10,8 +10,11 @@ import {
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
   NO_COMPANY_NAME,
   shownCompanyName,
+  shownOfferState,
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
+import { offerStageLabel } from '../apps/admin/public/admin-labels.js';
+import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -181,7 +184,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -196,6 +199,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       requested.push(path);
       if ((options?.method ?? 'GET') !== 'GET') writes.push({ path, method: options.method, body });
       if (onRequest) return onRequest(path, body, options);
+      if (path === '/api/schema' && schema) return schema;
       if (path === '/api/customer-data/fields') return { definitions: fieldDefs };
       if (path.startsWith('/api/customer-data/fields/values')) return { values: fieldValues };
       if (path.startsWith('/api/customer-hub/')) {
@@ -1158,7 +1162,7 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
   assert.equal(seen[0].error, true, 'the failure toasts as an error');
   assert.ok(seen[0].message.includes('Riprova'), 'the failure toasts the Italian retry');
 });
-test('the offer panel names the quote after its opportunity, with the state in Italian', async () => {
+test('the offer panel names the quote after its opportunity, with the opportunity stage in Italian', async () => {
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
@@ -1176,8 +1180,11 @@ test('the offer panel names the quote after its opportunity, with the state in I
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Pacchetto 10 ingressi · approvata'),
-    'the offer reads with its opportunity name and the Italian state');
+  // Backlog a551982c06eb: the line reads the sale's stage, never the quote's
+  // approval («approvata») as if it were the offer's state.
+  assert.ok(text.includes('Pacchetto 10 ingressi · proposta'),
+    'the offer reads with its opportunity name and the Italian stage');
+  assert.ok(!text.includes('approvata'), 'the quote approval is not the offer state');
   assert.ok(!text.includes('8d8f1d4d-25c1-4641-8836-267581100b32'),
     'a bare record id is never the offer name');
   assert.ok(!text.includes('approved'), 'the raw English state is never shown');
@@ -1203,8 +1210,45 @@ test('cf340b571e98: the quote offer line links to the quote detail', async () =>
   const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.ok(link, 'the quote offer line is a link');
   assert.equal(link.getAttribute('href'), '#/quotes/q9', 'the link opens the quote detail');
-  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · approvata'),
-    'the link keeps the opportunity name and the Italian state');
+  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · proposta'),
+    'the link keeps the opportunity name and the Italian stage');
+});
+
+test('a551982c06eb: an approved quote on an offer in Proposta reads «Proposta», the Pipeline board label', async () => {
+  const schema = { pipelineContract: 1, pipelines: [accordoSalesPipeline] };
+  const mount = await renderCard(stubClient({
+    schema,
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'o1', status: 'qualification', stage: 'qualification', name: 'Pacchetto 10 ingressi',
+          pipelineKey: 'accordo-sales', pipelineStage: 'proposta',
+        }],
+      },
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q9', status: 'approved', name: null, opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+          opportunityStage: 'qualification', opportunityPipelineKey: 'accordo-sales', opportunityPipelineStage: 'proposta',
+        }],
+      },
+    },
+  }));
+  const state = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-state');
+  assert.ok(state, 'the offer line shows a state');
+  assert.equal(state.textContent, 'Proposta', 'the scheda says the stage the Pipeline board shows');
+  // The same shared function names the stage on the board and the offer detail.
+  assert.equal(offerStageLabel(schema.pipelines, { pipelineKey: 'accordo-sales', pipelineStage: 'proposta', stage: 'qualification' }), 'Proposta');
+  assert.ok(!mount.textContent.includes('approvata'), 'the quote approval is not the offer state');
+});
+
+test('a551982c06eb: a quote without a readable opportunity still reads its own state', () => {
+  assert.equal(shownOfferState({ id: 'q1', status: 'approved' }, true, [], []), 'approvata');
+  assert.equal(shownOfferState({ id: 'q1', status: 'approved', opportunityId: 'gone' }, true, [{ id: 'o1', stage: 'proposal' }], []), 'approvata');
+  assert.equal(shownOfferState({ id: 'o1', status: 'proposal', stage: 'proposal' }, false, null, []), 'proposta');
+  assert.equal(shownOfferState({ id: 'o1', stage: 'proposal', pipelineKey: 'accordo-sales', pipelineStage: 'prova' }, false, null, [accordoSalesPipeline]), 'Prova');
 });
 
 test('cf340b571e98: a hostile quote id stays inside the detail href', async () => {
@@ -3666,7 +3710,9 @@ test('another customer clears at once and starts from Tutti', async () => {
   const release = hold(client);
   const other = view.renderCard('contact', 'c2');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(mount.childNodes.length, 0, 'the previous customer never stays up under another id');
+  // Backlog 608aa14d554c: only the loading state is left, never the old scheda.
+  assert.equal(mount.childNodes.length, 1, 'the previous customer never stays up under another id');
+  assert.equal(mount.childNodes[0].getAttribute('role'), 'status', 'the new scheda shows its loading state');
   release();
   await other;
   const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
@@ -4081,4 +4127,33 @@ test('composer AI: other words during the read-back supersede it, the same words
   releaseRead();
   await flushComposer(10);
   assert.equal(area.value, 'Ciao Guido, il listino è in allegato.', 'the superseded read never overwrites the newer draft');
+});
+
+test('608aa14d554c: a scheda opened from a direct link shows the loading state before its data arrives', async () => {
+  /** @type {Array<() => void>} */
+  const held = [];
+  const base = stubClient();
+  const client = {
+    ...base,
+    request(path, options) {
+      return new Promise((resolve, reject) => {
+        held.push(() => base.request(path, options).then(resolve, reject));
+      });
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  const loading = () => mount.findAll('div').find((node) => node.getAttribute('role') === 'status'
+    && (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-loading'));
+  assert.ok(loading(), 'the loading state is painted at once, not a blank mount');
+  assert.equal(loading().textContent, 'Carico la scheda…');
+  assert.equal(loading().getAttribute('aria-busy'), 'true');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(held.length > 0, 'the reads are still in flight');
+  assert.ok(loading(), 'the loading state stays while the reads are pending');
+  for (const release of held.splice(0)) release();
+  await rendering;
+  assert.ok(!loading(), 'the scheda replaces the loading state');
+  assert.ok(mount.textContent.includes(CARD.name), 'the scheda painted');
 });
