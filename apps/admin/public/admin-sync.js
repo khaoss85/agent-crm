@@ -156,6 +156,15 @@ export function timeAgo(iso, nowMs = Date.now()) {
 }
 
 /**
+ * «1 evento ricevuto», «<n> eventi ricevuti»: the count in Italian, never
+ * «1 eventi» (production 08/11, the Email row and the hero subtitle).
+ * @param {number} count
+ */
+export function eventsReceived(count) {
+  return count === 1 ? '1 evento ricevuto' : `${count} eventi ricevuti`;
+}
+
+/**
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
  */
 function entriesOf(activity) {
@@ -247,8 +256,8 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
       ? 'Nessun collegamento è attivo: sistemali qui sotto, finché restano fermi non arriva niente.'
       // C10: always the prototype's «<aggiornamento> · <n> eventi» line.
       : tempo === null
-        ? `Nessun aggiornamento ancora · ${received} eventi ricevuti in tutto.`
-        : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
+        ? `Nessun aggiornamento ancora · ${eventsReceived(received)} in tutto.`
+        : `Ultimo aggiornamento ${tempo} · ${eventsReceived(received)} in tutto.`;
   if (syncing) {
     return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: total };
   }
@@ -520,6 +529,25 @@ export function grantExpiring(iso, nowMs = Date.now()) {
 }
 
 /**
+ * The pill of one table row, in the spec's words (C20: `Attivo`,
+ * `Permesso in scadenza`, `Importazione`). A binding with no traffic yet
+ * (`idle`) is linked and healthy, so it reads `Attivo` — production 08/11
+ * showed «In attesa», a word the spec does not have. A binding that really
+ * broke (`attention`, `down`) is a state the spec does not list: the
+ * closest honest word is `Da sistemare`, the name of the section that
+ * says what to do about it.
+ * @param {{ expiringAt: string | null, importing: boolean, worst: string }} agg
+ * @param {number} nowMs
+ */
+function channelPill(agg, nowMs) {
+  if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
+  const calm = agg.worst === 'ok' || agg.worst === 'idle';
+  if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
+  if (calm) return { text: 'Attivo', tone: 'attivo' };
+  return { text: 'Da sistemare', tone: 'altro' };
+}
+
+/**
  * One aggregated channel row for the fixed nine-row card. Several bindings
  * of one channel aggregate honestly: events sum, the update is the latest
  * instant seen, the health is the worst verdict, expiry is the soonest
@@ -576,15 +604,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
     const connected = agg.list.some((entry) => entry.status === 'active');
     // A blocked binding never poses as importing: the expiry and the
     // running import read only on bindings that are otherwise calm.
-    const pill = present
-      ? (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
-        ? { text: 'Permesso in scadenza', tone: 'permesso' }
-        : agg.importing && agg.worst === 'ok'
-          ? { text: 'Importazione', tone: 'importazione' }
-          : agg.worst === 'ok'
-            ? { text: 'Attivo', tone: 'attivo' }
-            : { text: healthLabel(agg.worst), tone: 'altro' })
-      : null;
+    const pill = present ? channelPill(agg, nowMs) : null;
     // Google Calendar and Stripe have no catalog entry and no detail flow:
     // their rows never route to the "Connettore sconosciuto" dead end
     // (P2 Codex su #415).
@@ -608,13 +628,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
   for (const [channel, list] of byChannel) {
     if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
     const agg = aggregate(channel, list);
-    const pill = agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
-      ? { text: 'Permesso in scadenza', tone: 'permesso' }
-      : agg.importing && agg.worst === 'ok'
-        ? { text: 'Importazione', tone: 'importazione' }
-        : agg.worst === 'ok'
-          ? { text: 'Attivo', tone: 'attivo' }
-          : { text: healthLabel(agg.worst), tone: 'altro' };
+    const pill = channelPill(agg, nowMs);
     const extraCatalogued = cataloguedChannel(channel);
     rows.push({
       channel,
@@ -872,7 +886,21 @@ export function createSyncView(deps) {
     }
   }
 
-  async function load() {
+  // Only the latest load writes the state: a slower, older one never
+  // repaints over a newer answer.
+  let loadGeneration = 0;
+
+  /**
+   * Every read starts at once (production 08/11: the space sat on «Carico
+   * Stato sync…» about 12 s while schema, activity, profile and candidates
+   * went one after the other). Each read is fail-soft on its own; the
+   * screen paints (`onMinimum`) as soon as schema and activity are in, and
+   * the profile and the identity candidates complete it when they land.
+   * @param {() => void} [onMinimum]
+   */
+  async function load(onMinimum) {
+    const generation = ++loadGeneration;
+    const current = () => generation === loadGeneration;
     try {
       state.spaceId = readSpace();
     } catch {
@@ -884,50 +912,55 @@ export function createSyncView(deps) {
     state.profile = null;
     state.candidates = [];
     state.candidatesError = null;
-    let schema;
-    try {
-      schema = await client.request('/api/schema');
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
-    }
-    const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
-    // Any composed channels domain reads the activity: the shared hosting
-    // composes the read-only «Reader Channels» domain, which carries no
-    // channelsContract, and the screen used to answer «non composti» there
-    // with Gmail and Calendar connected (production, 04/11).
-    state.channelsReady = Boolean(meta);
-    if (!state.channelsReady || state.spaceId.trim() === '') return;
-    try {
-      state.activity = await client.request(
-        `/api/connectors/activity?spaceId=${encodeURIComponent(state.spaceId.trim())}`,
-      );
-      state.loaded = true;
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
-    }
+    const space = state.spaceId.trim();
+    /** @param {Promise<any>} promise */
+    const settle = (promise) => promise.then((value) => ({ ok: true, value, error: null }), (error) => ({ ok: false, value: null, error }));
+    const ask = (path) => settle(Promise.resolve().then(() => client.request(path)));
+    const schemaRead = ask('/api/schema');
+    const activityRead = space === '' ? null : ask(`/api/connectors/activity?spaceId=${encodeURIComponent(space)}`);
     // The profile links (Gmail, Calendar, Meta) through the same
     // GET /api/profile read Oggi and Profilo use (backlog:cf365ada15b9):
     // the shared count needs them on both screens, and Google Calendar's
     // Collega exists only where the profile offers it. Fail-soft: an
     // unreadable profile adds nothing and offers nothing.
-    try {
-      const answer = await client.request('/api/profile');
-      state.profile = answer !== null && typeof answer === 'object' ? answer : null;
-    } catch {
-      state.profile = null;
-    }
+    const profileRead = space === '' ? null : ask('/api/profile');
     // Unresolved identity candidates for the purple cards: the same
     // records endpoint the shell badge counts (MEM_ACC_REUSE), narrowed to
     // the unresolved rows on the server — a resolved history beyond the
     // page bound must never hide an outstanding decision. The cards still
     // ignore anything but unresolved, so an unfiltered answer stays safe.
-    try {
-      const read = await client.request('/api/modules/duplicate-candidate/records?filter.status=unresolved&limit=100');
-      state.candidates = Array.isArray(read?.items) ? read.items : [];
+    const candidatesRead = space === '' ? null : ask('/api/modules/duplicate-candidate/records?filter.status=unresolved&limit=100');
+    const schema = await schemaRead;
+    if (!current()) return;
+    if (!schema.ok) {
+      state.loadError = errorOf(schema.error);
+      return;
+    }
+    const meta = schema.value?.domains?.channels?.metadata ?? schema.value?.domains?.channels;
+    // Any composed channels domain reads the activity: the shared hosting
+    // composes the read-only «Reader Channels» domain, which carries no
+    // channelsContract, and the screen used to answer «non composti» there
+    // with Gmail and Calendar connected (production, 04/11).
+    state.channelsReady = Boolean(meta);
+    if (!state.channelsReady || activityRead === null) return;
+    const activity = await activityRead;
+    if (!current()) return;
+    if (!activity.ok) {
+      state.loadError = errorOf(activity.error);
+      return;
+    }
+    state.activity = activity.value;
+    state.loaded = true;
+    if (typeof onMinimum === 'function') onMinimum();
+    const [profile, candidates] = await Promise.all([profileRead, candidatesRead]);
+    if (!current()) return;
+    state.profile = profile !== null && profile.ok && profile.value !== null && typeof profile.value === 'object'
+      ? profile.value : null;
+    if (candidates !== null && candidates.ok) {
+      state.candidates = Array.isArray(candidates.value?.items) ? candidates.value.items : [];
       state.candidatesError = null;
-    } catch (error) {
+    } else if (candidates !== null) {
+      const error = candidates.error;
       state.candidates = [];
       // An uncomposed module (or an older Admin) is an expected absence,
       // not a fault: zero cards, silent. A failed read is a distinct state:
@@ -970,7 +1003,8 @@ export function createSyncView(deps) {
   }
 
   async function renderView() {
-    await load();
+    // Paint as soon as the minimum is in, then once more with the rest.
+    await load(() => render());
     if (state.loadError !== null) toast(state.loadError, true);
     render();
   }
@@ -1168,12 +1202,9 @@ export function createSyncView(deps) {
     // the table, so it counts and so does its place — «1 di 10» (review
     // #647 P2); a row that is not active (suspended, pending) keeps its
     // pill but is not «collegato».
-    // Only channels this backoffice can connect (or already linked) are in
-    // the denominator: a «Non disponibile» Stripe row is shown but never
-    // counted as something to connect — the Oggi invite reads the same.
-    const count = channelConnectionCount(entriesOf(activity), {
-      connectable: (channel) => syncConnectRoute(channel, state.profile) !== null,
-    });
+    // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
+    // included, plus a linked channel outside the nine (review #647).
+    const count = channelConnectionCount(entriesOf(activity));
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
     cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));
@@ -1212,7 +1243,7 @@ export function createSyncView(deps) {
         undefined,
         !present ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
-      line.appendChild(el(doc, 'td', undefined, !present ? '—' : `${row.received} eventi ricevuti`));
+      line.appendChild(el(doc, 'td', undefined, !present ? '—' : eventsReceived(row.received)));
       const stateCell = doc.createElement('td');
       if (!present) {
         // A row connects where the product connects it (backlog:cf365ada15b9):
@@ -1231,10 +1262,11 @@ export function createSyncView(deps) {
             go(route);
           });
           stateCell.appendChild(link);
-        } else if (route !== null) {
-          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
         } else {
-          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'Non disponibile'));
+          // C19 has only `non collegato` for an unlinked row: a row nothing
+          // here can connect (Stripe) says that, with no Collega it could
+          // not keep — never the off-spec «Non disponibile».
+          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
         }
       } else {
         const pill = el(doc, 'span', 'bo-sync-pill', row.pill.text);

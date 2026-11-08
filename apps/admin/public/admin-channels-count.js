@@ -196,16 +196,14 @@ export function channelConnectRoute(channel, { guided = [], profile = null } = {
  * names. Rows should already carry the profile links
  * (`mergeProfileConnections`).
  *
- * `connectable` decides which unlinked channels belong to the universe
- * (production 08/11: Oggi invited to connect Stripe, which Stato sync and
- * Personalizza call «Non disponibile»): a channel nothing here can connect
- * is neither counted nor invited until it is linked; a linked channel
- * always counts. Without the predicate every fixed channel is connectable.
+ * The universe is always the spec's nine (C16/C27: «<n> di 9 collegati»),
+ * Stripe included even though nothing connects it yet: what may be
+ * *invited* is the screen's decision (Oggi names only the connectable lead
+ * channels), never a smaller denominator.
  * @param {unknown} rows connection-like rows ({ channel, status })
- * @param {{ connectable?: (channel: string) => boolean }} [options]
  * @returns {{ connected: number, total: number, connectedChannels: ReadonlyArray<string>, missing: ReadonlyArray<{ channel: string, label: string }> }}
  */
-export function channelConnectionCount(rows, { connectable = () => true } = {}) {
+export function channelConnectionCount(rows) {
   const list = Array.isArray(rows) ? rows : [];
   const active = new Set();
   const extras = [];
@@ -218,17 +216,7 @@ export function channelConnectionCount(rows, { connectable = () => true } = {}) 
     if (!NINE_CHANNEL_IDS.includes(channel) && !extras.includes(channel)) extras.push(channel);
     active.add(channel);
   }
-  const canConnect = (channel) => {
-    try {
-      return connectable(channel) === true;
-    } catch {
-      return false;
-    }
-  };
-  const universe = [
-    ...NINE_CHANNEL_IDS.filter((channel) => active.has(channel) || canConnect(channel)),
-    ...extras,
-  ];
+  const universe = [...NINE_CHANNEL_IDS, ...extras];
   const connectedChannels = universe.filter((channel) => active.has(channel));
   const missing = universe
     .filter((channel) => !active.has(channel))
