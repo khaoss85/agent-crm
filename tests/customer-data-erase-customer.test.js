@@ -167,3 +167,89 @@ test('the company with other contacts stays: only the erased contact leaves', as
   assert.ok(list.items.some((row) => row.company?.id === company.id), 'the shared company still shows beside its contact');
   assert.equal((await erasureRows(app, 'company', company.id)).length, 0, 'no registry row for a kept company');
 });
+
+test('nobody authorizes an erasure: a missing or malformed actor refuses and records nothing', async (t) => {
+  const { app, contact } = await scene(t);
+  await assert.rejects(
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta' }),
+    (error) => error?.code === 'HUMAN_APPROVAL_REQUIRED' && error?.status === 403,
+    'no actor refuses: the fail-closed anonymous authorizes nothing',
+  );
+  await assert.rejects(
+    () => app.eraseCustomer({
+      resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: { type: 'user' },
+    }),
+    (error) => error?.code === 'HUMAN_APPROVAL_REQUIRED' && error?.status === 403,
+    'an actor without an id refuses too',
+  );
+  const reread = await app.services.contacts.get(contact.id);
+  assert.equal(reread.email, 'guido@palestra-esempio.it', 'a refused erasure rewrites nothing');
+  assert.equal((await erasureRows(app, 'contact', contact.id)).length, 0, 'a refused erasure records nothing');
+});
+
+test('uncertain evidence blocks the erasure: an empty bounded page proves nothing', async (t) => {
+  const { app, contact } = await scene(t);
+  app.modules.register({
+    name: 'order',
+    kind: 'generated',
+    manifestVersion: 1,
+    capabilities: ['list'],
+    fields: [
+      { name: 'id', type: 'string', required: true, unique: true },
+    ],
+    service: {
+      list: async () => [],
+    },
+  });
+  await assert.rejects(
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR }),
+    (error) => error?.code === 'ERASURE_EVIDENCE_UNREADABLE' && error?.status === 409,
+    'a list-only page refuses even when empty: a page is not a count',
+  );
+  const reread = await app.services.contacts.get(contact.id);
+  assert.equal(reread.email, 'guido@palestra-esempio.it', 'a blocked erasure rewrites nothing');
+  assert.equal((await erasureRows(app, 'contact', contact.id)).length, 0, 'a blocked erasure records nothing');
+});
+
+test('uncertain evidence blocks the erasure: a failed evidence read refuses', async (t) => {
+  const { app, contact } = await scene(t);
+  app.modules.register({
+    name: 'order',
+    kind: 'generated',
+    manifestVersion: 1,
+    capabilities: ['list'],
+    fields: [
+      { name: 'id', type: 'string', required: true, unique: true },
+    ],
+    service: {
+      list: async () => { throw new Error('order store down'); },
+    },
+  });
+  await assert.rejects(
+    () => app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR }),
+    (error) => error?.code === 'ERASURE_EVIDENCE_UNREADABLE' && error?.status === 409,
+    'an unreadable evidence package refuses instead of risking signed business',
+  );
+  assert.equal((await erasureRows(app, 'contact', contact.id)).length, 0, 'a blocked erasure records nothing');
+});
+
+test('erasing a company cascades to its contacts: no name or email survives in Clienti', async (t) => {
+  const { app, company, contact, other } = await scene(t);
+  const receipt = await app.eraseCustomer({
+    resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+  });
+  assert.equal(receipt.outcome, 'erased');
+  assert.equal(receipt.counts.subjects, 3, 'the company and both linked contacts go together');
+  for (const erased of [contact, other]) {
+    const reread = await app.services.contacts.get(erased.id);
+    assert.equal(reread.firstName, 'Cliente');
+    assert.equal(reread.lastName, 'cancellato');
+    assert.match(reread.email, /^cancellato-.*@cancellato\.invalid$/, 'no identifying email survives the cascade');
+    assert.equal((await erasureRows(app, 'contact', erased.id)).length, 1, 'one registry row per cascaded contact');
+  }
+  assert.equal((await erasureRows(app, 'company', company.id)).length, 1, 'one registry row for the company');
+  const list = await app.listCustomers({ pageSize: 50 });
+  assert.ok(!list.items.some((row) => row.id === contact.id || row.id === other.id), 'cascaded contacts leave Clienti');
+  const search = await app.listCustomers({ q: 'Presti', pageSize: 50 });
+  assert.ok(!search.items.some((row) => row.id === contact.id), 'the erased name leaves the search');
+});

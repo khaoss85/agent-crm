@@ -1,7 +1,6 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
-import { signedAbsenceIsProven } from './customer-status.js';
 import { safeString } from './normalize.js';
 import { canonicalClusterFor, profileFor } from './profile.js';
 import { isNoCompany } from './sender.js';
@@ -32,7 +31,10 @@ import {
  * The written legal basis is the one the status rule already enforces
  * (`customer-status.js`): signed business (orders, contracts,
  * subscriptions) must be kept, so a `cliente` refuses with
- * ERASURE_BLOCKED_SIGNED_BUSINESS. Everything else goes.
+ * ERASURE_BLOCKED_SIGNED_BUSINESS. Uncertain evidence refuses too
+ * (ERASURE_EVIDENCE_UNREADABLE): a composed package that cannot prove a
+ * complete zero count blocks the erasure instead of risking a customer
+ * the law requires kept.
  *
  * Out of this slice on purpose (named follow-ups, not silent gaps):
  * interaction messages and calls, appointments and the company record
@@ -41,6 +43,31 @@ import {
  */
 
 const MAX_REASON = 300;
+
+/**
+ * The evidence sections that can hold signed business, and the module each
+ * needs to exist. A section whose module is not composed holds no rows in
+ * this application, so there is nothing of that kind to keep — this is a
+ * deployment fact, not uncertainty. A section whose module IS composed must
+ * prove absence (readable, zero, complete); a failed read or a bounded page
+ * fails closed instead of erasing a customer the law requires kept.
+ */
+const EVIDENCE_MODULES = Object.freeze([
+  { key: 'orders', module: 'order' },
+  { key: 'contracts', module: 'commercial-contract' },
+  { key: 'subscriptions', module: 'subscription' },
+]);
+
+function erasureEvidenceIsProven({ modules, profile }) {
+  return EVIDENCE_MODULES.every(({ key, module }) => {
+    const service = optional(modules, module);
+    if (!service || typeof service.list !== 'function') return true;
+    const section = profile?.[key] ?? null;
+    return section?.available === true
+      && (section?.count ?? 0) === 0
+      && section?.countIsComplete !== false;
+  });
+}
 
 /** The erasure registry row key for one subject. */
 export function erasureSourceKey(resource, id) {
@@ -160,15 +187,14 @@ export function createErasureOperations({ database, modules, events, core, names
         }
       }
     }
-    const erasedCompanyIds = new Set(
-      members.filter((member) => member.resource === 'company').map((member) => member.id),
-    );
-
     // The legal gate, through the one status rule every reader shares: a
     // customer with signed business on record is kept, never erased. And
-    // an uncertain 'contatto' never erases either: when the evidence is
-    // not readable or only partial, absence is unproven and the operation
-    // fails closed instead of anonymizing a customer the law requires kept.
+    // uncertain evidence never erases either: a composed package that
+    // cannot be read fully (a failed read, a bounded page) leaves absence
+    // unproven, so the operation fails closed instead of anonymizing a
+    // customer the law requires kept. A package that is not composed at
+    // all holds no rows here, so it proves nothing and blocks nothing
+    // (see erasureEvidenceIsProven).
     const profile = await profileFor({ modules, core, names, subject });
     if (profile?.status?.value === 'cliente') {
       const counts = {
@@ -184,11 +210,7 @@ export function createErasureOperations({ database, modules, events, core, names
         },
       );
     }
-    if (!signedAbsenceIsProven({
-      orders: profile?.orders ?? null,
-      contracts: profile?.contracts ?? null,
-      subscriptions: profile?.subscriptions ?? null,
-    })) {
+    if (!erasureEvidenceIsProven({ modules, profile })) {
       throw new AppError(
         'non si può verificare che non ci siano documenti firmati (ordini, contratti o abbonamenti): la cancellazione è bloccata finché le letture non sono complete',
         {
