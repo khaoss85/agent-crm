@@ -51,6 +51,7 @@ const MODULE_HISTORY_FILES = Object.freeze({
   'sequence-step': join(HERE, '../../sequences/modules/sequence-step.history.json'),
   'sequence-send': join(HERE, '../../sequences/modules/sequence-send.history.json'),
   'interaction-message': join(HERE, '../../interactions/modules/interaction-message.history.json'),
+  'teammate-run': join(HERE, '../../agents/modules/teammate-run.history.json'),
 });
 
 /**

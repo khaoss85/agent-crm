@@ -1,0 +1,114 @@
+{
+  "module": "teammate-run",
+  "previousManifests": [
+    {
+      "manifestVersion": 1,
+      "name": "teammate-run",
+      "description": "One recorded execution of one teammate assignment (backlog:8986f4459f0f): agent, assignment, cost and outcome of every run, including runs the spending cap stopped. A run that proposes actions waits for a human approval; a run that produces a versioned artifact carries it inline with its version. (backlog:8986f4459f0f)",
+      "fields": [
+        {
+          "name": "sourceKey",
+          "type": "string",
+          "unique": true,
+          "writable": "managed"
+        },
+        {
+          "name": "spaceId",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "agentSourceKey",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "assignmentSourceKey",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "startedAt",
+          "type": "timestamp",
+          "writable": "managed"
+        },
+        {
+          "name": "costCents",
+          "type": "integer",
+          "writable": "managed"
+        },
+        {
+          "name": "outcome",
+          "type": "enum",
+          "values": [
+            "started",
+            "proposed",
+            "applied",
+            "artifact",
+            "capped",
+            "failed"
+          ],
+          "writable": "managed"
+        },
+        {
+          "name": "proposals",
+          "type": "string",
+          "writable": "managed",
+          "required": false
+        },
+        {
+          "name": "artifact",
+          "type": "string",
+          "writable": "managed",
+          "required": false
+        },
+        {
+          "name": "artifactVersion",
+          "type": "integer",
+          "writable": "managed",
+          "required": false
+        },
+        {
+          "name": "note",
+          "type": "string",
+          "writable": "managed",
+          "required": false
+        },
+        {
+          "name": "decidedAt",
+          "type": "timestamp",
+          "writable": "managed"
+        },
+        {
+          "name": "actorType",
+          "type": "enum",
+          "values": [
+            "user",
+            "agent",
+            "system"
+          ],
+          "writable": "managed"
+        },
+        {
+          "name": "actorId",
+          "type": "string",
+          "writable": "managed"
+        },
+        {
+          "name": "sourcePackage",
+          "type": "string",
+          "index": true,
+          "writable": "managed"
+        },
+        {
+          "name": "sourceAction",
+          "type": "string",
+          "writable": "managed"
+        }
+      ]
+    }
+  ]
+}
