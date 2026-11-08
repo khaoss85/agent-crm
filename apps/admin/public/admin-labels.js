@@ -45,6 +45,20 @@ export function italianLabel(table, value, fallback) {
   return Object.hasOwn(table, key) ? table[key] : fallback;
 }
 
+/**
+ * State of one history import (`channel-import-state.status`, the
+ * `sync.status` of the connectors reads) in the operator's words
+ * (backlog:cf365ada15b9: the connector detail printed the raw `done`).
+ */
+export const IMPORT_STATE_LABELS = Object.freeze({
+  running: 'in corso',
+  done: 'completata',
+  failed: 'non riuscita',
+});
+
+/** @param {unknown} status */
+export const importStateLabel = (status) => italianLabel(IMPORT_STATE_LABELS, status, 'stato sconosciuto');
+
 /** @param {unknown} outcome */
 export const callOutcomeLabel = (outcome) => italianLabel(CALL_OUTCOME_LABELS, outcome, 'senza esito');
 

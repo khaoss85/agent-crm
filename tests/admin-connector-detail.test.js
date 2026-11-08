@@ -633,3 +633,20 @@ test('the observer watches the renewal without touching it', async () => {
   assert.ok(mount.textContent.includes('Rinnovo del permesso'), 'the section stays visible');
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'renew-grant').length, 0);
 });
+
+// backlog:cf365ada15b9 (d): the detail printed the raw import state
+// («Sincronizzazione: done») and the raw connection status («Stato: active»).
+test('cf365ada15b9: the detail says import and connection states in Italian', () => {
+  for (const [status, word] of [['done', 'completata'], ['running', 'in corso'], ['failed', 'non riuscita'], ['weird', 'stato sconosciuto']]) {
+    const sections = detailSections({
+      entry: ENTRY,
+      connection: { ...CONNECTION, importable: true, sync: { status, importedEvents: 3, createdContacts: 1, unresolvedContacts: 0 } },
+    });
+    const lines = [...sections.interruttori.lines, ...sections.dettagliTecnici.lines];
+    assert.ok(lines.some((line) => line.includes(`Sincronizzazione: ${word}`)), `${status} reads «${word}»`);
+    assert.ok(lines.some((line) => line.startsWith(`Cronologia: ${word}`)), `history ${status} reads «${word}»`);
+    assert.ok(!lines.some((line) => new RegExp(`\\b${status}\\b`).test(line) && status !== word), `no raw «${status}»`);
+    assert.ok(lines.some((line) => line === 'Stato: Collegato.'), 'the connection status reads Collegato, not active');
+    assert.ok(!lines.some((line) => /\bactive\b/.test(line)), 'no raw «active»');
+  }
+});

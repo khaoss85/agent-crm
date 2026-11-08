@@ -32,6 +32,7 @@
 // inert text, never markup.
 
 import { humanReadError } from './admin-core.js';
+import { importStateLabel } from './admin-labels.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
@@ -338,7 +339,7 @@ export function detailSections({ entry, connection, spaceId = null }) {
     : [
         `Stato del collegamento: ${stato}. Si cambia solo dal flusso guidato (#/connettori), mai da qui.`,
         importable
-          ? `Cronologia: ${sync !== null && typeof sync.status === 'string' ? sync.status : 'da avviare'} (Fatto del collegamento, a pagine).`
+          ? `Cronologia: ${sync !== null && typeof sync.status === 'string' ? importStateLabel(sync.status) : 'da avviare'} (Fatto del collegamento, a pagine).`
           : 'Cronologia: non disponibile su questo connettore.',
         direction === 'in-only'
           ? 'Invii: rifiutati per contratto, solo entrata (CHANNEL_SEND_UNSUPPORTED).'
@@ -365,12 +366,12 @@ export function detailSections({ entry, connection, spaceId = null }) {
         `Canale: ${typeof connection.channel === 'string' ? connection.channel : channel}.`,
         `Adattatore: ${typeof connection.adapter === 'string' ? connection.adapter : '—'} v${Number.isSafeInteger(connection.adapterVersion) ? connection.adapterVersion : '—'}.`,
         `Chiave di collegamento: ${connectionKey ?? '—'}.`,
-        `Stato: ${typeof connection.status === 'string' ? connection.status : '—'}.`,
+        `Stato: ${statusLabel(connection.status)}.`,
         direction === null
           ? 'Direzione: non dichiarata nel matrix dei canali (nessun adattatore dedicato nel pacchetto).'
           : `Direzione: ${direction === 'in-out' ? 'entrata e uscita' : 'solo entrata'}.`,
         sync !== null && typeof sync.status === 'string'
-          ? `Sincronizzazione: ${sync.status} · eventi ${Number(sync.importedEvents ?? 0)} · contatti creati ${Number(sync.createdContacts ?? 0)} · da decidere ${Number(sync.unresolvedContacts ?? 0)}.`
+          ? `Sincronizzazione: ${importStateLabel(sync.status)} · eventi ${Number(sync.importedEvents ?? 0)} · contatti creati ${Number(sync.createdContacts ?? 0)} · da decidere ${Number(sync.unresolvedContacts ?? 0)}.`
           : 'Sincronizzazione: nessuna importazione registrata.',
       ];
 

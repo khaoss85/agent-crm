@@ -18,6 +18,7 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SYNC_CHANNELS,
+  syncConnectRoute,
   SYNC_GRANT_EXPIRING_DAYS,
   SYNC_ROUTE,
   cataloguedChannel,
@@ -88,7 +89,7 @@ const activityOf = (over = {}) => ({
 
 const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
-function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null } = {}) {
+function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null, profile = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -108,6 +109,10 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
       if (path.startsWith('/api/connectors/activity')) {
         if (failActivity !== null) throw failActivity;
         return activity;
+      }
+      if (path === '/api/profile') {
+        if (profile === null) throw new Error('profile not served');
+        return profile;
       }
       if (path.startsWith('/api/modules/data-quality-issue/records')) return { items: qualityIssues };
       if (path.startsWith('/api/modules/duplicate-candidate/records')) {
@@ -1124,4 +1129,75 @@ test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows o
     'on a phone each row stacks: name and state, then agg. and events');
   assert.match(phone, /\.bo-sync-channels \.bo-sync-table td \{ display: block;[^}]*white-space: normal;/,
     'nothing is forced onto one line wider than the screen');
+});
+
+// backlog:cf365ada15b9 — Stato sync and Oggi print one count, Calendar
+// connects where the product connects it, and a stopped import offers
+// Sincronizza ora only where the pull exists.
+const GOOGLE_PROFILE = {
+  connections: {
+    available: true,
+    items: [
+      { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+      { connector: 'calendar', status: 'connected', account: 'op@palestra.it' },
+    ],
+  },
+};
+
+test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async () => {
+  const { countConnectedNine } = await import('../apps/admin/public/admin-oggi.js');
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
+  });
+  await view.render();
+  await flush();
+  const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
+  assert.ok(count, 'the card shows a count');
+  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
+  assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
+});
+
+test('cf365ada15b9: Google Calendar offers Collega on Profilo when the product can connect it; Stripe stays honest', async () => {
+  const offered = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'not_connected' },
+        { connector: 'calendar', status: 'not_connected' },
+      ],
+    },
+  };
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: offered },
+  });
+  await view.render();
+  await flush();
+  const collega = mount.findAll('a').filter((node) => node.textContent === 'Collega');
+  const calendar = collega.find((node) => node.getAttribute('data-channel') === 'calendar');
+  assert.ok(calendar, 'Google Calendar offers Collega');
+  assert.equal(calendar.getAttribute('href'), '#/profilo', 'it lands where its Collega lives');
+  assert.equal(collega.find((node) => node.getAttribute('data-channel') === 'stripe'), undefined, 'Stripe has no connect screen');
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non disponibile').length, 1, 'only Stripe reads Non disponibile');
+  assert.equal(syncConnectRoute('calendar', null), null, 'without the profile there is nothing to offer');
+  assert.equal(syncConnectRoute('whatsapp', null), '#/connettori/whatsapp');
+});
+
+test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull exists', async () => {
+  const stopped = entryOf({
+    connectionKey: 'profile:gmail', channel: 'email', importable: false, health: 'attention',
+    sync: { status: 'done', lastErrorCode: 'GOOGLE_GRANT_REFUSED', lastErrorReason: 'Google ha rifiutato il permesso: ricollega l\u2019account dal Profilo.' },
+  });
+  const [item] = syncFixItems(activityOf({ connections: [stopped] }));
+  assert.equal(item.action.kind, 'route', 'no pull where none exists');
+  assert.equal(item.action.route, '#/connettori/email');
+  assert.equal(item.detail, 'Google ha rifiutato il permesso: ricollega l\u2019account dal Profilo.', 'the round says what to do');
+  const { mount, view } = renderView({ client: { activity: activityOf({ connections: [stopped] }) } });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('si è fermata'), 'the card is there');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now').length, 0,
+    'no Sincronizza ora button on the card');
+  const [pullable] = syncFixItems(activityOf({ connections: [entryOf({ sync: { status: 'done', lastErrorCode: 'X' } })] }));
+  assert.equal(pullable.action.kind, 'sync-now', 'an importable binding keeps its pull');
 });

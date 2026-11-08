@@ -27,6 +27,7 @@
 // usa solo DOM API — createElement + textContent/setAttribute — mai innerHTML
 // con dati, così un nome o un blurb ostile resta testo, mai markup.
 
+import { CHANNEL_CONNECT_ROUTES } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
@@ -306,8 +307,9 @@ export function previewTitleFor(previewFor, units = []) {
  * Entries with a `channel` reuse the guided `#/connettori` flow for that
  * channel; the channel must be a CONNECTOR_CATALOG member (pinned by test),
  * otherwise the card falls back to the hub link instead of a deep link.
- * Google Calendar connects per person on Profilo, where its Collega lives;
- * Stripe lives on its own screen, so their cards link
+ * Google Calendar connects per person on Profilo, where its Collega lives
+ * (the shared CHANNEL_CONNECT_ROUTES, the same route Stato sync's Collega
+ * opens); Stripe lives on its own screen, so their cards link
  * there (`#/profilo` and `#/quotes`, DECISION to be confirmed for Stripe).
  */
 export const CONNETTORI_SECTIONS = Object.freeze([
@@ -357,7 +359,7 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['Ogni invio del form crea o aggiorna un contatto.', 'di Accordo · ← in entrata']),
       },
       {
-        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: '#/profilo',
+        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: CHANNEL_CONNECT_ROUTES.calendar,
         lines: Object.freeze(['Appuntamenti del team e disponibilità condivisa.', 'di Google · ↔ bidirezionale']),
       },
       {
