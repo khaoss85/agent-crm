@@ -381,6 +381,120 @@ test('a full company page refuses the erasure instead of erasing half: a truncat
   assert.equal((await erasureRows(app, 'company', company.id)).length, 0, 'a refused erasure records nothing');
 });
 
+test('a company erasure with an unreadable contacts list refuses: no half-erasure behind a success receipt', async (t) => {
+  const { app, company, contact, other } = await scene(t);
+  const original = app.services.contacts.list.bind(app.services.contacts);
+  app.services.contacts.list = async (filters) => {
+    if (filters?.companyId) throw new Error('contacts store down');
+    return original(filters);
+  };
+  let refusal = null;
+  try {
+    await app.eraseCustomer({
+      resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    });
+  } catch (error) {
+    refusal = error;
+  } finally {
+    app.services.contacts.list = original;
+  }
+  assert.equal(refusal?.code, 'ERASURE_CASCADE_UNREADABLE', 'a failed cascade read refuses with 409');
+  assert.equal(refusal?.status, 409);
+  for (const erased of [contact, other]) {
+    const reread = await app.services.contacts.get(erased.id);
+    assert.equal(reread.firstName === 'Cliente' ? 'erased' : 'kept', 'kept', 'a refused cascade rewrites no contact');
+    assert.equal((await erasureRows(app, 'contact', erased.id)).length, 0, 'a refused cascade records no contact row');
+  }
+  assert.equal((await erasureRows(app, 'company', company.id)).length, 0, 'a refused cascade records no receipt');
+});
+
+test('an unreadable siblings list keeps the company: absence unproven never excludes', async (t) => {
+  const { app, company, contact, other } = await scene(t);
+  const original = app.services.contacts.list.bind(app.services.contacts);
+  app.services.contacts.list = async (filters) => {
+    if (filters?.companyId) throw new Error('contacts store down');
+    return original(filters);
+  };
+  let receipt = null;
+  try {
+    receipt = await app.eraseCustomer({
+      resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+    });
+  } finally {
+    app.services.contacts.list = original;
+  }
+  assert.equal(receipt?.outcome, 'erased', 'the contact erasure itself still proceeds');
+  assert.equal((await erasureRows(app, 'company', company.id)).length, 0, 'no registry row for a company that stays');
+  const list = await app.listCustomers({ pageSize: 50 });
+  assert.ok(list.items.some((row) => row.id === other.id), 'the other contact still lists');
+  assert.ok(list.items.some((row) => row.company?.id === company.id), 'the possibly-shared company still shows');
+});
+
+test('the contacts-list gate decides every case the same way on both paths: one table', async (t) => {
+  const ghosts = (n) => Array.from({ length: n }, (_, index) => ({ id: `ghost-${index}` }));
+  const cases = [
+    { name: 'empty list', rows: 'empty', company: { proceeds: true, subjects: 1 }, orphan: { keeps: false } },
+    { name: 'partial list', rows: 'partial', company: { proceeds: true, subjects: 3 }, orphan: { keeps: true } },
+    { name: 'full page', rows: 'full', company: { proceeds: false, code: 'ERASURE_CASCADE_INCOMPLETE' }, orphan: { keeps: true } },
+    { name: 'failed read', rows: 'failed', company: { proceeds: false, code: 'ERASURE_CASCADE_UNREADABLE' }, orphan: { keeps: true } },
+  ];
+  for (const kase of cases) {
+    const stubList = (app, contact, other) => {
+      const original = app.services.contacts.list.bind(app.services.contacts);
+      app.services.contacts.list = async (filters) => {
+        if (!filters?.companyId) return original(filters);
+        if (kase.rows === 'failed') throw new Error('contacts store down');
+        if (kase.rows === 'full') return ghosts(500);
+        if (kase.rows === 'partial') return [{ id: contact.id }, { id: other.id }];
+        return [];
+      };
+      return original;
+    };
+    {
+      const { app, company, contact, other } = await scene(t);
+      const original = stubList(app, contact, other);
+      try {
+        if (kase.company.proceeds) {
+          const receipt = await app.eraseCustomer({
+            resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+          });
+          assert.equal(receipt.counts.subjects, kase.company.subjects, `${kase.name}: the cascade carries its proven members`);
+        } else {
+          await assert.rejects(
+            () => app.eraseCustomer({
+              resource: 'company', id: company.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+            }),
+            (error) => error?.code === kase.company.code && error?.status === 409,
+            `${kase.name}: the cascade refuses instead of deciding on the page`,
+          );
+          const reread = await app.services.contacts.get(contact.id);
+          assert.equal(reread.email, 'guido@palestra-esempio.it', `${kase.name}: a refused cascade rewrites nothing`);
+          assert.equal((await erasureRows(app, 'company', company.id)).length, 0, `${kase.name}: a refused cascade records nothing`);
+        }
+      } finally {
+        app.services.contacts.list = original;
+      }
+    }
+    {
+      const { app, company, contact, other } = await scene(t);
+      const original = stubList(app, contact, other);
+      try {
+        const receipt = await app.eraseCustomer({
+          resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+        });
+        assert.equal(receipt.outcome, 'erased', `${kase.name}: the contact erasure itself proceeds`);
+        const companyRows = await erasureRows(app, 'company', company.id);
+        assert.equal(
+          companyRows.length, kase.orphan.keeps ? 0 : 1,
+          `${kase.name}: only a proven-empty siblings list excludes the company`,
+        );
+      } finally {
+        app.services.contacts.list = original;
+      }
+    }
+  }
+});
+
 test('purging enriched fields clears the email snapshot too: no PII copy survives beside the erased subject', async (t) => {
   const { app, contact } = await scene(t);
   await app.applyContactEnrichment({

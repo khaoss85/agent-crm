@@ -210,14 +210,10 @@ export function createErasureOperations({ database, modules, events, core, names
     // list is a bounded display page, so the cascade asks for the widest
     // page the service allows and refuses when it comes back full: a page
     // that may be truncated never drives a half-erasure (a read that
-    // decides something is never a page).
+    // decides something is never a page). A failed list refuses too: an
+    // unreadable cascade never erases half behind a success receipt.
     if (subject.resource === 'company' && contactsSvc && typeof contactsSvc.list === 'function') {
-      let linked = [];
-      try {
-        linked = (await contactsSvc.list({ companyId: subject.id, limit: CUSTOMER_SCAN_LIMIT })) ?? [];
-      } catch {
-        linked = [];
-      }
+      const linked = await listContactsOfCompany(contactsSvc, subject.id);
       if (linked.length >= CUSTOMER_SCAN_LIMIT) {
         throw new AppError(
           'questa azienda ha troppi contatti collegati per verificarli tutti in una lettura: la cancellazione è bloccata finché la lettura non è completa',
@@ -333,6 +329,29 @@ export function createErasureOperations({ database, modules, events, core, names
     return receipt;
   }
 
+  /**
+   * The one source of truth for "which contacts belong to this company"
+   * wherever an erasure decides on it: the company cascade and the
+   * orphan-company check both read through here. The list is a bounded
+   * display page, so a failed read throws ERASURE_CASCADE_UNREADABLE
+   * instead of answering an empty list — an empty answer would decide a
+   * half-erasure (cascade) or a wrongful exclusion (orphan check). Callers
+   * fail closed on the throw: the cascade refuses, the orphan check keeps.
+   */
+  async function listContactsOfCompany(contactsSvc, companyId) {
+    try {
+      return (await contactsSvc.list({ companyId, limit: CUSTOMER_SCAN_LIMIT })) ?? [];
+    } catch (error) {
+      throw new AppError(
+        'non si può verificare quali contatti sono collegati a questa azienda: la cancellazione è bloccata finché la lettura non riesce',
+        {
+          code: 'ERASURE_CASCADE_UNREADABLE', status: 409,
+          details: Object.freeze({ companyId, cause: error?.message ?? String(error) }),
+        },
+      );
+    }
+  }
+
   async function readStoredSubject({ contactsSvc, companiesSvc }, subject) {
     const get = async (service) => {
       if (!service || typeof service.get !== 'function') return null;
@@ -370,28 +389,34 @@ export function createErasureOperations({ database, modules, events, core, names
       if (contact?.companyId && !orphan) {
         // The widest page the service allows: a full page still proves
         // siblings exist (the erased contact is one of them), so the
-        // company is kept — the safe direction needs no exact count.
-        let siblings = [];
+        // company is kept — the safe direction needs no exact count. An
+        // unreadable siblings list keeps the company too: absence unproven
+        // never excludes a possibly shared company from every product read.
+        let siblings = null;
         try {
           siblings = (contactsSvc && typeof contactsSvc.list === 'function')
-            ? (await contactsSvc.list({ companyId: contact.companyId, limit: CUSTOMER_SCAN_LIMIT })) ?? []
+            ? await listContactsOfCompany(contactsSvc, contact.companyId)
             : [];
         } catch {
-          siblings = [];
+          siblings = null;
         }
-        const others = (siblings ?? []).filter((row) => row?.id !== member.id);
-        if (others.length === 0) {
-          const companiesSvc = optional(modules, 'company');
-          const company = await readStoredSubject(
-            { contactsSvc: null, companiesSvc },
-            { resource: 'company', id: contact.companyId },
-          );
-          if (company && !isNoCompany(company)) {
-            outcome.orphanCompany = { resource: 'company', id: company.id, owner: 'host', ownerPackage: null };
-            outcome.note = 'l\u2019azienda collegata non ha altri contatti ed è esclusa dalle letture con questo cliente';
-          }
+        if (siblings === null) {
+          outcome.note = 'l\u2019azienda collegata resta: non si è potuto verificare se ha altri contatti';
         } else {
-          outcome.note = `l\u2019azienda collegata resta: ha altri ${others.length} contatti`;
+          const others = (siblings ?? []).filter((row) => row?.id !== member.id);
+          if (others.length === 0) {
+            const companiesSvc = optional(modules, 'company');
+            const company = await readStoredSubject(
+              { contactsSvc: null, companiesSvc },
+              { resource: 'company', id: contact.companyId },
+            );
+            if (company && !isNoCompany(company)) {
+              outcome.orphanCompany = { resource: 'company', id: company.id, owner: 'host', ownerPackage: null };
+              outcome.note = 'l\u2019azienda collegata non ha altri contatti ed è esclusa dalle letture con questo cliente';
+            }
+          } else {
+            outcome.note = `l\u2019azienda collegata resta: ha altri ${others.length} contatti`;
+          }
         }
       }
     } else if (!orphan) {
