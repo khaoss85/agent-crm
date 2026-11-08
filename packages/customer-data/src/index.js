@@ -148,7 +148,10 @@ export function createCustomerDataPackage(options = {}) {
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: CUSTOMER_DATA_DOMAIN,
-    version: 1,
+    // Version 2 (backlog:be9dd6c0c89f): agent-crm#668 added unmerge (undo a wrong
+    // merge) to the declared surface. The pilot registers each surface's
+    // fingerprint; a changed surface takes a new version, never the old one.
+    version: 2,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
