@@ -1575,9 +1575,19 @@ export function buildRouter(app) {
       }),
     };
   });
+  // Voce ba47a73b: an offer created from the scheda (POST /api/opportunities)
+  // takes the space's default pipeline at its first stage, shows on the board
+  // at once, and its card can move. Creation and pipeline entry are one
+  // INSERT inside opportunities.create (the registry is read and validated
+  // before the first write): never a create plus a second managed write, so
+  // a failing placement refuses the creation instead of orphaning a
+  // null-pipeline row while the POST reports an error. With no pipeline
+  // installed the offer keeps the legacy null pipeline state.
   router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.opportunities.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+    const context = writeContext(app, { actor, identity, organizationId, headers });
+    const created = await app.services.opportunities.create(body ?? {}, context);
+    return respond(201, await app.services.opportunities.get(created.id));
   });
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
