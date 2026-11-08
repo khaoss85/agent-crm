@@ -37,6 +37,7 @@
 
 import { formatAmount, humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { offerStageLabel } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
 
@@ -244,7 +245,11 @@ export function createPipelineBoard(deps) {
     }
   }
 
-  /** @param {string} pipelineName */
+  /**
+   * @param {string | null} pipelineName null for the bare #/pipeline link
+   *   (backlog 2a075e2d9250): the first composed pipeline, the same rule
+   *   as the sidebar voice (buildShellNav).
+   */
   async function renderBoard(pipelineName) {
     const token = ++renderToken;
     showMessage('Caricamento…');
@@ -258,7 +263,9 @@ export function createPipelineBoard(deps) {
         return;
       }
       composed = Array.isArray(schema.pipelines) ? schema.pipelines : [];
-      pipeline = composed.find((candidate) => candidate.name === pipelineName);
+      pipeline = pipelineName === null || pipelineName === undefined
+        ? composed.find((candidate) => typeof candidate?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(candidate.name))
+        : composed.find((candidate) => candidate.name === pipelineName);
       if (!pipeline) {
         if (typeof console !== 'undefined' && typeof console.error === 'function') {
           console.error('[bo] pipeline non composta', { pipelineName });
@@ -881,7 +888,8 @@ export function createPipelineBoard(deps) {
    * goes to the console only; the DOM gets a friendly Italian line.
    */
   function stageLabel(pipeline, key) {
-    return pipeline.stages.find((stage) => stage.key === key)?.label ?? key;
+    // Backlog a551982c06eb: the same words as the scheda and the offer detail.
+    return offerStageLabel([pipeline], { pipelineKey: pipeline.name, pipelineStage: key }) ?? key;
   }
 
   /** A move the server still holds: the queue answered BO_CRM_PENDING. A bare 504 is a failure, not a queue. */
