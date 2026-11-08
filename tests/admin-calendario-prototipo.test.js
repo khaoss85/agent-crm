@@ -214,7 +214,7 @@ test('29bb3f2c0d64 (d): a space with no people still shows the empty grid with i
 test('29bb3f2c0d64 (d): with the roster unread the grid paints under the naming prompt', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc,
     mount,
     client: {

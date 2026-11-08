@@ -341,7 +341,7 @@ test('calendario: a failed week read never renders the message', async () => {
   for (const client of [failingClient(), missingClient()]) {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+    const view = createCalendarioView({ searchDelayMs: 0,
       doc,
       mount,
       client,

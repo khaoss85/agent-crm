@@ -1329,7 +1329,7 @@ test('the WA badge is fail-closed on the row channel marker', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const calls = [];
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc,
     mount,
     client: {
@@ -1379,7 +1379,7 @@ test('the detail card opens the customer card for linked events only', async () 
   const doc = createFakeDocument();
   const mount = createMount();
   const seen = [];
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc,
     mount,
     client: stubClient({
@@ -1431,7 +1431,7 @@ test('the detail card hides the customer button without a linked customer', asyn
   };
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc, mount, client: stubClient({ week }), navigate: () => { throw new Error('must not navigate'); },
     now: () => new Date('2026-10-21T08:40:00Z'),
   });
@@ -1477,7 +1477,7 @@ test('the channel pill is fail-closed with the resolved customer name', async ()
   const profilePath = '/api/customer-data/profile/contact/c1';
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc,
     mount,
     client: stubClient({
@@ -1601,7 +1601,7 @@ test('the detail card falls back honestly when the profile is unavailable', asyn
   const doc = createFakeDocument();
   const mount = createMount();
   const seen = [];
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc,
     mount,
     client: stubClient({ week }),
@@ -1715,7 +1715,7 @@ test('an unexpected profile failure is logged with the space, never the message'
   try {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+    const view = createCalendarioView({ searchDelayMs: 0,
       doc,
       mount,
       client,
@@ -2536,7 +2536,7 @@ test('a disconnected calendar shows the Profilo way in the week panel', async ()
       },
     },
   });
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z'),
     navigate: (hash) => { seen.push(hash); },
   });
@@ -2922,7 +2922,7 @@ test('a stashed appointment pick opens the manual form with the customer', async
     'the pick is read once, never kept');
   // Without a pick the form stays closed with the name search, never a ghost.
   const plain = createMount();
-  const plainView = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const plainView = createCalendarioView({ searchDelayMs: 0,
     doc: createFakeDocument(), mount: plain, client: stubClient(), storage,
     now: () => new Date('2026-10-23T06:00:00Z'),
   });
@@ -3543,7 +3543,7 @@ test('review #646 P1: after a phrase draft filled the form, «+ Prenota» keeps 
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' };
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc, mount, client: stubClient({ phrase: draft, slots: [] }), now: () => new Date('2026-10-21T06:00:00Z'),
   });
   await view.render();

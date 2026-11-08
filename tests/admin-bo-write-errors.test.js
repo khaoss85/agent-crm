@@ -121,7 +121,7 @@ test('an empty booking names the missing fields before sending', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = calendarioClient();
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc, mount, client, storage: memoryStorage(), now: () => new Date('2026-10-25T10:00:00Z'),
   });
   await view.render();
@@ -148,7 +148,7 @@ test('a 422 booking shows the Italian invalid-data text', async () => {
   storage.setItem('accordo.bo.customer-pick.appointment', JSON.stringify({
     resource: 'contact', id: 'c1', name: 'Guido Presti',
   }));
-  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc, mount, client, storage, now: () => new Date('2026-10-25T10:00:00Z'),
   });
   await view.render();

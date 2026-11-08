@@ -2709,9 +2709,11 @@ export function createCalendarioView(deps) {
       paintCustomerResults(liveCustomerBox());
       return;
     }
+    // The space the search asked in: an answer never paints in another one.
+    const askedSpace = readSpace();
     try {
       const params = new URLSearchParams({ q, page: '1', pageSize: '10' });
-      const spaceId = readSpace();
+      const spaceId = askedSpace;
       if (spaceId) params.set('spaceId', spaceId);
       const controller = typeof AbortController === 'function' ? new AbortController() : null;
       customerAbort = controller;
@@ -2720,7 +2722,7 @@ export function createCalendarioView(deps) {
         controller ? { signal: controller.signal } : {},
       );
       if (customerAbort === controller) customerAbort = null;
-      if (token !== customerSeq) return;
+      if (token !== customerSeq || readSpace() !== askedSpace) return;
       state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
       // backlog:d128847d21fc: a list the server read only in part says so,
       // never a flat «nessun cliente».
@@ -2728,7 +2730,7 @@ export function createCalendarioView(deps) {
       state.customerError = null;
     } catch (error) {
       // An aborted request belongs to a search a newer keystroke replaced.
-      if (token !== customerSeq || error?.name === 'AbortError') return;
+      if (token !== customerSeq || error?.name === 'AbortError' || readSpace() !== askedSpace) return;
       state.customerPartial = false;
       state.customerItems = [];
       state.customerError = humanReadError(error, {
@@ -2775,6 +2777,9 @@ export function createCalendarioView(deps) {
       const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
       const pick = uiSecondaryButton(doc, name);
       pick.addEventListener('click', () => {
+        // Review #690 (P2): the choice ends the search — no pending timer or
+        // request in flight reads again after it.
+        cancelCustomerSearch();
         state.customerPick = {
           resource: typeof item?.resource === 'string' && item.resource !== '' ? item.resource : 'contact',
           id: typeof item?.id === 'string' ? item.id : '',
@@ -2925,6 +2930,8 @@ export function createCalendarioView(deps) {
       form.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: `Cliente: ${pick.name}` }));
       const change = uiSecondaryButton(doc, 'Cambia cliente');
       change.addEventListener('click', () => {
+        // Review #690 (P2): a search still pending never lands after the reset.
+        cancelCustomerSearch();
         state.customerPick = null;
         state.customerQuery = '';
         state.customerItems = [];
@@ -3344,6 +3351,16 @@ export function createCalendarioView(deps) {
       state.phraseWaiting = false;
       state.phrasePending = null;
       state.aiNote = '';
+      // Review #690 (P1): the customer search of space A dies with the
+      // switch too — no pending timer fires under B, no answer read for A
+      // paints A's customer names in B, and A's query, results and picked
+      // customer never carry over into B's booking form.
+      cancelCustomerSearch();
+      state.customerQuery = '';
+      state.customerItems = [];
+      state.customerError = null;
+      state.customerPartial = false;
+      state.customerPick = null;
     }
     state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
