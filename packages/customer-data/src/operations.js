@@ -8,7 +8,7 @@ import { deriveCustomerStatus } from './customer-status.js';
 import {
   CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, channelWordsIn, filterCustomerRows,
-  parseCustomerListQuery, shapeCustomerRow,
+  matchesSearch, parseCustomerListQuery, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -608,9 +608,37 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   if (!companiesSvc || typeof companiesSvc.list !== 'function') {
     throw new AppError('the customer list needs the host company records', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
-  const contacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
-  const companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  let contacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  let companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
   const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
+  // backlog:d128847d21fc: the scan holds the newest records only, so a
+  // search over a truncated scan could never find an older customer — a
+  // space with hundreds of fresh contacts (a mailbox sync) hid «Prova …»
+  // created the day before. With text to search, the customers beyond the
+  // bound whose name, email or company match join the scan (at most
+  // another bound of them); the answer stays complete:false.
+  const needle = searchNeedle(query.q ?? '');
+  if (!complete && needle.length > 0
+    && typeof contactsSvc.listWhere === 'function' && typeof companiesSvc.listWhere === 'function') {
+    const everyContact = await contactsSvc.listWhere({});
+    const everyCompany = await companiesSvc.listWhere({});
+    const companyNameById = new Map(everyCompany.map((company) => [company.id, company?.name ?? null]));
+    const scannedContacts = new Set(contacts.map((contact) => contact.id));
+    const extraContacts = everyContact
+      .filter((contact) => !scannedContacts.has(contact.id) && matchesSearch(
+        [contact?.firstName, contact?.lastName, contact?.email, companyNameById.get(contact?.companyId)],
+        needle,
+      ))
+      .slice(0, CUSTOMER_SCAN_LIMIT);
+    const scannedCompanies = new Set(companies.map((company) => company.id));
+    const behindExtra = new Set(extraContacts.map((contact) => contact?.companyId).filter(Boolean));
+    const extraCompanies = everyCompany
+      .filter((company) => !scannedCompanies.has(company.id)
+        && (behindExtra.has(company.id) || matchesSearch([company?.name], needle)))
+      .slice(0, CUSTOMER_SCAN_LIMIT);
+    contacts = [...contacts, ...extraContacts];
+    companies = [...companies, ...extraCompanies];
+  }
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const subjects = [];
   const seenCompanies = new Set();

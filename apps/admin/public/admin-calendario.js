@@ -1051,6 +1051,8 @@ export function createCalendarioView(deps) {
     customerItems: [],
     /** Customer search failure in the operator's own words, or null. @type {string|null} */
     customerError: null,
+    /** The last customer search answer was read in part (complete:false). */
+    customerPartial: false,
   };
   /** Guards the customer search, like renderToken guards the week. */
   let customerSeq = 0;
@@ -2661,9 +2663,13 @@ export function createCalendarioView(deps) {
       const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
       if (token !== customerSeq) return;
       state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
+      // backlog:d128847d21fc: a list the server read only in part says so,
+      // never a flat «nessun cliente».
+      state.customerPartial = answer?.complete === false;
       state.customerError = null;
     } catch (error) {
       if (token !== customerSeq) return;
+      state.customerPartial = false;
       state.customerItems = [];
       state.customerError = humanReadError(error, {
         failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
@@ -2699,7 +2705,9 @@ export function createCalendarioView(deps) {
     if (state.customerItems.length === 0) {
       box.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: 'Nessun cliente corrisponde. Prova con un altro nome.',
+        text: state.customerPartial
+          ? 'Nessun cliente corrisponde tra quelli letti: l’elenco è parziale. Prova con nome o cognome.'
+          : 'Nessun cliente corrisponde. Prova con un altro nome.',
       }));
       return;
     }

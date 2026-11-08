@@ -201,6 +201,48 @@ export function channelWordsIn(q) {
  */
 const NL_GLUE_WORDS = Object.freeze(new Set(['di', 'su']));
 
+/**
+ * Search text folded for matching (backlog:d128847d21fc): lowercase and
+ * without accents, so «Josè», «JOSE» and «jose» are one word.
+ * @param {unknown} value
+ */
+export function foldSearchText(value) {
+  return String(value ?? '').toLowerCase().normalize('NFD').replace(/\p{M}+/gu, '');
+}
+
+/** The folded words of a text: letters and digits, every other mark splits. @param {unknown} value */
+function searchWords(value) {
+  return foldSearchText(value).split(/[^\p{L}\p{N}]+/u).filter((word) => word !== '');
+}
+
+/**
+ * The text needle of a search (backlog:d128847d21fc): the folded words of
+ * `q` minus the channel words (they filter by channel) and the glue words
+ * of the phrase grammar. Empty when only channel or glue words were typed.
+ * @param {unknown} q
+ */
+export function searchNeedle(q) {
+  const text = String(q ?? '');
+  if (text.trim() === '') return [];
+  const channelWordSet = new Set(channelWordsIn(text).flatMap((channel) => [channel, ...channelAliases(channel)]));
+  return searchWords(text.replace(/^(chi è di|chi e di|clienti di|clienti)\s+/i, ''))
+    .filter((word) => !channelWordSet.has(word) && !NL_GLUE_WORDS.has(word));
+}
+
+/**
+ * Whether a customer's searchable parts match the needle
+ * (backlog:d128847d21fc): every needle word starts some word of the parts —
+ * «Prova» finds «Prova verifica 07/11», «verifica 07/11» finds it too, and
+ * «ada» finds «Ada Rossi» but not «Canada». Case and accents never matter.
+ * @param {Array<unknown>} parts name, email, company, phone
+ * @param {Array<string>} needle from searchNeedle
+ */
+export function matchesSearch(parts, needle) {
+  if (!Array.isArray(needle) || needle.length === 0) return true;
+  const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
+  return needle.every((wanted) => words.some((word) => word.startsWith(wanted)));
+}
+
 /** All the words (canonical + aliases) that name one channel. */
 function channelAliases(channel) {
   return {
@@ -234,19 +276,11 @@ export function filterCustomerRows(rows, query, view, todayIso) {
   const viewExtra = viewFilters(view);
   const wantedStatus = query.stato !== 'all' ? query.stato : viewExtra.stato ?? 'all';
   const channelHits = query.q ? channelWordsIn(query.q) : [];
-  const haystackOf = (row) => [
-    row?.name, row?.email, row?.company?.name, row?.phone?.value,
-  ].filter((part) => typeof part === 'string' && part !== '').join(' ').toLowerCase();
   // Channel words filter by channel AND are removed from the text: unlike the
   // prototype (which ignored the remaining words once a channel hit), "marco
-  // whatsapp" must not match every WhatsApp customer.
-  const channelWordSet = new Set(channelHits.flatMap((channel) => [channel, ...channelAliases(channel)]));
-  const strippedQ = (query.q ?? '')
-    .replace(/^(chi è di|chi e di|clienti di|clienti)\s+/i, '')
-    .toLowerCase()
-    .split(/[^a-zà-öø-ÿ0-9+]+/i)
-    .filter((word) => word !== '' && !channelWordSet.has(word) && !NL_GLUE_WORDS.has(word))
-    .join(' ');
+  // whatsapp" must not match every WhatsApp customer. The remaining words
+  // match by word start (backlog:d128847d21fc), never as one glued phrase.
+  const textNeedle = searchNeedle(query.q ?? '');
 
   const today = typeof todayIso === 'string' && todayIso !== '' ? todayIso : new Date().toISOString().slice(0, 10);
   const needle = typeof query.valore === 'string' && query.valore !== ''
@@ -260,7 +294,7 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     }
     if (query.canale !== 'all' && !(row?.channels ?? []).includes(query.canale)) return false;
     if (channelHits.length > 0 && !channelHits.some((channel) => (row?.channels ?? []).includes(channel))) return false;
-    if (strippedQ !== '' && !haystackOf(row).includes(strippedQ)) return false;
+    if (textNeedle.length > 0 && !matchesSearch([row?.name, row?.email, row?.company?.name, row?.phone?.value], textNeedle)) return false;
     if (viewExtra.ricontattareOggi === true && row?.nextStep?.dueAt?.slice(0, 10) !== today && !(row?.nextStep?.overdue === true)) return false;
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
     // «Da leggere»: only rows with unread inbound messages. A null
