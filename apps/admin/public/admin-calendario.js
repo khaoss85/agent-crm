@@ -19,7 +19,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
+import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -495,6 +495,10 @@ export function slotInGrid(startsAt, endsAt) {
   return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
+/** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
+export const PHRASE_RESUME_EVERY_MS = 3000;
+export const PHRASE_RESUME_ROUNDS = 20;
+
 /**
  * backlog:d1e4d90e — draft duration in whole minutes for the suggest path:
  * the model's endsAt minus startsAt when the draft searched that size, else
@@ -878,6 +882,11 @@ export function createCalendarioView(deps) {
   const { client } = bindAdminMutations(deps.client, deps);
   const storage = deps.storage ?? null;
   const clock = typeof deps.now === 'function' ? deps.now : () => new Date();
+  // The phrase read-back pause (BO_PHRASE_PENDING): injectable so tests run
+  // the wait loop without real time, like the composer's send wait.
+  const wait = typeof deps.wait === 'function' ? deps.wait : unrefWait;
+  /** Guards the phrase search and its read-back: a newer search or a route away stops the old one. */
+  let phraseSeq = 0;
   let renderToken = 0;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
@@ -889,6 +898,12 @@ export function createCalendarioView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    phraseSeq += 1;
+    // The search in flight is dropped with the route (review #664): the
+    // card comes back idle, never wedged on «Sto cercando…».
+    state.aiLoading = false;
+    state.phraseWaiting = false;
+    state.phrasePending = null;
     memberToken += 1;
     trackRetainedDraft();
   }
@@ -965,6 +980,12 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
+    /** The space the view last rendered for, so a switch drops that space's search. @type {string|null} */
+    renderedSpace: null,
+    /** The phrase POST was queued and is being read back: the card says «Sto cercando…». */
+    phraseWaiting: false,
+    /** The queued phrase request still pending after the read-back, the phrase and the space that asked it, for Riprova (never a new POST). @type {{requestId: string, phrase: string, spaceId: string}|null} */
+    phrasePending: null,
     /** Live manual form nodes, so a slot Conferma books the claim the operator sees. @type {any} */
     manualNodes: null,
     /** @type {any} */
@@ -2155,10 +2176,24 @@ export function createCalendarioView(deps) {
     row.appendChild(find);
     panel.appendChild(row);
     if (state.aiLoading) {
-      panel.appendChild(el(doc, 'p', { className: 'empty', text: 'Cerco gli slot liberi…' }));
+      panel.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: state.phraseWaiting ? 'Sto cercando… la risposta arriva tra poco.' : 'Cerco gli slot liberi…',
+      }));
     }
     const aiNote = state.aiNote || (aiOff ? calendarRefusalText({ code: 'LLM_SPACE_DISABLED' }) : '');
     if (aiNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: aiNote }));
+    if (!state.aiLoading && state.phrasePending && state.phrasePending.spaceId === readSpace()) {
+      // Still queued after the read-back: Riprova reads the SAME request
+      // back, never a new POST (the pilot parses each POST again).
+      // The phrase that produced the request rides with it (review #664):
+      // an edit after the timeout never paints that request's draft under
+      // other words — Riprova restores the asked phrase with its answer.
+      const queued = state.phrasePending;
+      const retry = el(doc, 'button', { className: 'small secondary', text: 'Riprova', attrs: { type: 'button', 'data-action': 'phrase-resume' } });
+      retry.addEventListener('click', () => void submitAi(queued.phrase, { resumeId: queued.requestId }));
+      panel.appendChild(retry);
+    }
     if (state.draft) panel.appendChild(renderDraft(state.draft));
     if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
     if (state.proposals.length > 0) {
@@ -2214,10 +2249,49 @@ export function createCalendarioView(deps) {
     };
   }
 
-  /** @param {string} phrase */
-  async function submitAi(phrase) {
+  /**
+   * The phrase answer: the POST, or — when the pilot queues it (504
+   * BO_PHRASE_PENDING with a requestId, production 07/11) — the same
+   * request read back every 3 s for about a minute. Throws PHRASE_STILL_PENDING
+   * (with the requestId) when it is still queued after that.
+   * @param {{resumeId?: string|null, seq: number}} options
+   */
+  async function phraseAnswer({ resumeId = null, seq }) {
+    let requestId = resumeId;
+    if (requestId === null) {
+      try {
+        return await client.request('/api/appointments/phrase', {
+          method: 'POST',
+          body: { spaceId: readSpace(), phrase: state.phrase },
+        });
+      } catch (error) {
+        requestId = pendingRequestId(error, 'BO_PHRASE_PENDING');
+        if (requestId === null) throw error;
+      }
+    }
+    // A route away (or a newer search) during the POST owns the mount now:
+    // never paint the waiting card over it (review #664, backlog:607f33ee).
+    if (seq !== phraseSeq) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
+    state.phraseWaiting = true;
+    renderAll();
+    const read = await readBackPending(client, '/api/appointments/phrase', requestId, {
+      expectedCode: 'BO_PHRASE_PENDING',
+      spaceId: readSpace(),
+      wait, everyMs: PHRASE_RESUME_EVERY_MS, rounds: PHRASE_RESUME_ROUNDS, stale: () => seq !== phraseSeq,
+    });
+    if (read.stale) throw Object.assign(new Error('stale'), { code: 'PHRASE_STALE' });
+    if (read.error) throw read.error;
+    if (read.pending) throw Object.assign(new Error('pending'), { code: 'PHRASE_STILL_PENDING', requestId: read.requestId });
+    return read.answer;
+  }
+
+  /** @param {string} phrase @param {{resumeId?: string|null}} [options] */
+  async function submitAi(phrase, { resumeId = null } = {}) {
+    const seq = ++phraseSeq;
+    state.phrasePending = null;
+    state.phraseWaiting = false;
     state.phrase = String(phrase ?? '');
-    if (state.phrase.trim() === '') {
+    if (state.phrase.trim() === '' && resumeId === null) {
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -2231,11 +2305,18 @@ export function createCalendarioView(deps) {
     state.proposals = [];
     state.aiNote = '';
     renderAll();
+    // The phrase that asks this request (review #664): the queued id and the
+    // answer both ride with it, never with a later edit of the textarea.
+    const asked = state.phrase;
+    // The space that asks it (review #664): a queued id is never read back
+    // under another space.
+    const askedSpace = readSpace();
     try {
-      const answer = await client.request('/api/appointments/phrase', {
-        method: 'POST',
-        body: { spaceId: readSpace(), phrase: state.phrase },
-      });
+      const answer = await phraseAnswer({ resumeId, seq });
+      state.phraseWaiting = false;
+      // An edit while the answer was on its way never relabels it: the
+      // draft paints under the phrase that asked it (review #664 P3).
+      state.phrase = asked;
       const draft = answer?.draft ?? null;
       state.draft = draft;
       if (!draft) {
@@ -2324,10 +2405,21 @@ export function createCalendarioView(deps) {
         ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
         : '';
     } catch (error) {
+      const record = error !== null && typeof error === 'object' ? error : {};
+      // A newer search or a route away owns the card now: touch nothing.
+      if (record.code === 'PHRASE_STALE') return;
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
-      const record = error !== null && typeof error === 'object' ? error : {};
+      state.phraseWaiting = false;
+      if (record.code === 'PHRASE_STILL_PENDING') {
+        // Never «Ricerca non riuscita» on an answer that may be ready: say
+        // it is slow, and offer Riprova on the same request.
+        console.warn('bo-calendario phrase still pending:', `requestId=${String(record.requestId ?? '')}`, `spaceId=${readSpace()}`);
+        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: asked, spaceId: askedSpace } : null;
+        state.aiNote = 'La ricerca sta impiegando più del previsto.';
+        return;
+      }
       const refusal = calendarRefusalText(error);
       if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
@@ -2338,9 +2430,12 @@ export function createCalendarioView(deps) {
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
     } finally {
-      state.aiLoading = false;
-      renderAll();
+      if (seq === phraseSeq) {
+        state.aiLoading = false;
+        renderAll();
+      }
     }
+    if (seq !== phraseSeq) return;
     // A resolved person prefills its single booking identity; with several
     // (or none) the choice stays with the operator on the manual form.
     if (state.draft) {
@@ -3032,6 +3127,18 @@ export function createCalendarioView(deps) {
   }
 
   async function render() {
+    // A space switch while on Calendario (review #664): the search in flight
+    // and the queued request belong to the space just left — drop them, so
+    // nothing of space A is read back or painted under space B.
+    const space = readSpace();
+    if (state.renderedSpace !== null && state.renderedSpace !== space) {
+      phraseSeq += 1;
+      state.aiLoading = false;
+      state.phraseWaiting = false;
+      state.phrasePending = null;
+      state.aiNote = '';
+    }
+    state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
     // one-time pick the calendar takes here, once, on entry — read and
     // cleared, so a later visit starts unpicked. A fresh pick opens the
