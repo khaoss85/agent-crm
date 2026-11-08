@@ -363,6 +363,66 @@ test('offer draft: the draft carries rows with product, quantity, price and disc
   assert.deepEqual(result.draft.catalogOfferIds, ['offer:pt-10', 'offer:mensile'], 'the ids stay beside the rows');
 });
 
+test('offer draft: a flat-fee line stays at its price whatever the quantity (backlog:fc1cba47)', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta forfait installazione e due mensili',
+    offers: [
+      { offerId: 'offer:forfait', name: 'Forfait installazione', priceCents: 12000, currency: 'EUR', pricingModel: 'flat_fee' },
+      { offerId: 'offer:mensile', name: 'Mensile sala', priceCents: 3900, currency: 'EUR', pricingModel: 'per_unit' },
+    ],
+    complete: async () => validAnswer({
+      lines: [
+        { offerId: 'offer:forfait', quantity: 2 },
+        { offerId: 'offer:mensile', quantity: 2 },
+      ],
+    }),
+  });
+  assert.equal(result.status, 'ok', 'the draft lands');
+  assert.deepEqual(result.refused, [], 'nothing refuses on the happy path');
+  assert.equal(result.draft.lines.length, 2, 'both lines draft');
+  assert.equal(result.draft.lines[0].netCents, 12000, '2 x forfait 120 euro stays 120 euro');
+  assert.equal(result.draft.lines[1].netCents, 7800, 'unit prices still multiply by quantity');
+  assert.equal(result.draft.valueCents, 19800, 'the total sums the flat line once plus the units');
+});
+
+test('offer draft: only the two plain pricing models draft (backlog:fc1cba47)', async () => {
+  await assert.rejects(
+    suggestOfferDraft({
+      prompt: 'offerta',
+      offers: [{ offerId: 'offer:volume', priceCents: 1000, currency: 'EUR', pricingModel: 'volume' }],
+      complete: async () => validAnswer({ lines: [] }),
+    }),
+    (error) => error?.code === 'VALIDATION_ERROR' && /pricingModel/.test(error?.message ?? ''),
+    'a tiered model refuses the whole call instead of guessing a total',
+  );
+  const defaulted = await suggestOfferDraft({
+    prompt: 'offerta',
+    offers: [{ offerId: 'offer:mensile', priceCents: 3900, currency: 'EUR' }],
+    complete: async () => validAnswer({ lines: [{ offerId: 'offer:mensile', quantity: 2 }] }),
+  });
+  assert.equal(defaulted.draft.valueCents, 7800, 'without a model the line keeps multiplying, as before');
+});
+
+test('offer draft: a flat-fee discount applies to the flat price, never to a multiplied one (backlog:fc1cba47)', async () => {
+  const result = await suggestOfferDraft({
+    prompt: 'offerta forfait con sconto 10%',
+    offers: [
+      { offerId: 'offer:forfait', name: 'Forfait installazione', priceCents: 12000, currency: 'EUR', pricingModel: 'flat_fee', maxDiscountBps: 2000 },
+    ],
+    policy: { maxDiscountBps: 2000, currency: 'EUR' },
+    complete: async () => validAnswer({
+      lines: [{ offerId: 'offer:forfait', quantity: 3, discountBps: 1000 }],
+    }),
+  });
+  assert.equal(result.status, 'ok', 'the draft lands');
+  assert.equal(
+    result.draft.lines[0].netCents,
+    applyDiscount(12000, 1000).netAmountCents,
+    'the 10% discount applies to the single flat price, not to 3 x 120 euro',
+  );
+  assert.equal(result.draft.valueCents, result.draft.lines[0].netCents, 'the total is the flat line net');
+});
+
 test('offer draft: an empty draft carries empty rows, never an invented product', async () => {
   const result = await suggestOfferDraft({
     prompt: 'offerta',
