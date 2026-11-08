@@ -21,6 +21,7 @@ import {
   spentThisMonthCents,
   isDaFareRun,
   lastRunLine,
+  isDecisionUnavailable,
 } from '../apps/admin/public/admin-agenti.js';
 import { rerendersOnSpaceSwitch } from '../apps/admin/public/admin-shell.js';
 import { createAssistantPanel, ASSISTANT_STATUS_PATH } from '../apps/admin/public/admin-assistant.js';
@@ -706,7 +707,12 @@ test('31a76b6f19a3: a deployment without the route (405 or 404) reads «Non anco
   for (const [kind, status] of [['reject', 405], ['revise', 404], ['approve', 405]]) {
     const doc = createFakeDocument();
     const mount = createMount();
-    const refuse = () => { throw Object.assign(new Error('Method Not Allowed'), { status, code: status === 404 ? 'NOT_FOUND' : 'METHOD_NOT_ALLOWED' }); };
+    // What the routers answer for a route they do not have (review #688).
+    const refuse = () => {
+      throw status === 404
+        ? Object.assign(new Error('Route not found'), { status, code: 'NOT_FOUND' })
+        : Object.assign(new Error('Method POST is not mounted here'), { status, code: 'ADMIN_METHOD_NOT_ALLOWED' });
+    };
     const client = driveClient({ onApprove: refuse, onReject: refuse, onRevise: refuse });
     const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
     await view.render();
@@ -754,4 +760,108 @@ test('31a76b6f19a3: an assignment reads «Attivo» once it ran or recurs with a 
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-new', status: 'active', cadence: 'weekly' }, runs), 'In attesa di partire', 'nothing scheduled, never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-done', status: 'completed' }, runs), 'Fatto');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-p', status: 'paused' }, runs), 'In pausa');
+});
+
+test('review #688 P1: an answer that lands after a space switch is dropped, never painted on the space now shown', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'presti';
+  /** @type {null | ((value: any) => void)} */
+  let answer = null;
+  const client = driveClient({ onApprove: () => new Promise((resolve) => { answer = resolve; }) });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => space, now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.ok(answer, 'the approval is in flight');
+  space = 'altro';
+  answer({ duplicate: false, run: { id: RUN_ID, outcome: 'applied' } });
+  await flush();
+  assert.equal(view.state.space, 'altro', 'the active space is painted');
+  assert.ok(!mount.textContent.includes('Approvato'), 'the outcome of presti never lands on altro');
+  assert.equal(view.state.notice, '');
+  assert.ok([...view.state.decisions.values()].every((decision) => decision.busy === null && !decision.pending && decision.error === ''),
+    'no decision state of presti is carried over');
+});
+
+test('review #688 P1: a queued decision stays locked across Ricarica until its run leaves «proposed», with no second request', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onApprove: () => { throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 }); },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  const firstKey = client.calls.find((call) => call.method === 'POST').key;
+  findButton(mount, 'reload-dafare').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE), 'still «Non ancora confermato» after the reload');
+  assert.equal(findButton(mount, 'approve').disabled, true, 'still locked');
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 1, 'no second approval while the first is queued');
+  assert.equal(view.state.queued.get(RUN_ID)?.keys.get('approve'), firstKey, 'its key is kept');
+  // The worker applied it: the next read finds the run applied and forgets the queue.
+  const { items: runs } = await client.request('/api/modules/teammate-run/records?filter.spaceId=presti', {});
+  runs[0].outcome = 'applied';
+  await view.render();
+  await flush();
+  assert.equal(view.state.queued.size, 0, 'a settled run leaves the queue');
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null);
+});
+
+test('review #688 P2: Modifica edits the very field the row shows', async () => {
+  const items = buildDaFare({
+    agents: [RIAGGANCIO],
+    runs: [{ id: 'run-x', sourceKey: 'r-x', agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'proposed', startedAt: NOW,
+      proposals: JSON.stringify([{ action: 'invia', payload: { summary: 'WhatsApp a Giulia', text: 'Ciao Giulia, ti va giovedì?' } }]) }],
+  });
+  assert.equal(items[0].lines[0], 'WhatsApp a Giulia');
+  assert.deepEqual(items[0].edits[0], { index: 0, field: 'summary', value: 'WhatsApp a Giulia' }, 'the editor opens the shown field');
+});
+
+test('review #688 P2: only a missing route reads «Non ancora disponibile»; a gone run is said and the list is read again', async () => {
+  assert.equal(isDecisionUnavailable({ status: 405, code: 'ADMIN_METHOD_NOT_ALLOWED' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'NOT_FOUND', message: 'Route not found' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404 }), true, 'no domain code');
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'BO_AGENT_ROUTE_UNKNOWN' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'BO_AGENT_DECISION_UNAVAILABLE' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'AGENT_RUN_UNKNOWN' }), false, 'an AGENT_ refusal is never hidden');
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'NOT_FOUND', message: 'teammate-run not found' }), false, 'a gone record is not a missing route');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onApprove: (body, runs) => {
+      runs.splice(0, runs.length);
+      throw Object.assign(new Error('Agent write refused'), { status: 404, code: 'AGENT_RUN_UNKNOWN' });
+    },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.ok(!mount.textContent.includes(DA_FARE_UNAVAILABLE_NOTE), 'not hidden as «non disponibile»');
+  const error = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '').includes('bo-seq-error'));
+  assert.ok(error && error.textContent !== '' && !/AGENT_|404/.test(error.textContent), 'an Italian line, no code');
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null, 'the list was read again: the stale row is gone');
+});
+
+test('review #688 P3: Modifica shows «Salvo…» while its edit flies', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({ onRevise: () => new Promise(() => {}) });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'edit').dispatch('click');
+  findButton(mount, 'save-edit').dispatch('click');
+  await flush();
+  assert.equal(findButton(mount, 'edit').textContent, 'Salvo…');
+  assert.equal(findButton(mount, 'edit').getAttribute('aria-busy'), 'true');
 });

@@ -252,19 +252,26 @@ export function buildCatalogItems({ catalog = [], agents = [] }) {
  * @param {any} proposal
  */
 function proposalLine(proposal) {
-  const payload = proposal?.payload && typeof proposal.payload === 'object' ? proposal.payload : {};
-  return text(payload.summary) ?? text(payload.text) ?? text(payload.title) ?? text(proposal?.action) ?? 'Azione senza nome';
+  const shown = editableField(proposal);
+  return shown !== null ? shown.value.trim() : (text(proposal?.action) ?? 'Azione senza nome');
 }
 
 /**
- * Backlog 31a76b6f19a3: the one text field «Modifica» edits in a proposal —
- * its text, else summary, else title — or null when it carries none.
+ * The text fields a proposal line reads, in the one order the row and
+ * «Modifica» share (review #688: the editor opened another field than the
+ * one shown).
+ */
+const PROPOSAL_TEXT_FIELDS = Object.freeze(['summary', 'text', 'title']);
+
+/**
+ * Backlog 31a76b6f19a3: the text field a proposal line shows — and the one
+ * «Modifica» edits — or null when it carries none.
  * @param {any} proposal
  * @returns {{ field: string, value: string } | null}
  */
 function editableField(proposal) {
   const payload = proposal?.payload && typeof proposal.payload === 'object' ? proposal.payload : {};
-  for (const field of ['text', 'summary', 'title']) {
+  for (const field of PROPOSAL_TEXT_FIELDS) {
     if (typeof payload[field] === 'string' && payload[field].trim() !== '') return { field, value: payload[field] };
   }
   return null;
@@ -272,15 +279,20 @@ function editableField(proposal) {
 
 /**
  * Whether a decision route is simply not served here (backlog
- * 31a76b6f19a3): a 405 from the mount, or a 404 that is not the agents
- * package refusing a known route (AGENT_RUN_UNKNOWN stays a real refusal).
+ * 31a76b6f19a3, review #688): a 405 from the mount, or a 404 that names the
+ * route as missing — no domain code, the routers' «Route not found», the
+ * deployment's unknown agents route, or a deployment whose framework has
+ * no such operation yet. Any other 404 (a run that is gone) and every
+ * AGENT_ refusal is a real answer, never hidden.
  * @param {unknown} error
  */
 export function isDecisionUnavailable(error) {
   const record = error && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
   if (record.status === 405) return true;
-  return record.status === 404 && !code.startsWith('AGENT_');
+  if (record.status !== 404) return false;
+  if (code === '' || code === 'BO_AGENT_ROUTE_UNKNOWN' || code === 'BO_AGENT_DECISION_UNAVAILABLE') return true;
+  return code === 'NOT_FOUND' && record.message === 'Route not found';
 }
 
 /**
@@ -595,6 +607,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
      * @type {Map<string, { busy: boolean, pending: boolean, error: string, key: string | null }>}
      */
     decisions: new Map(),
+    /**
+     * Review #688: decisions still queued on the server, by run id, with
+     * the Idempotency-Key each kind was sent under. A reload never forgets
+     * them — the row stays locked and a retry reuses its key — until the
+     * run leaves `proposed`.
+     * @type {Map<string, { kind: string, keys: Map<string, string> }>}
+     */
+    queued: new Map(),
+    /** Review #688: a decision on a run that is gone, said above the list after the reload. */
+    daFareError: '',
   };
 
   function invalidate() {
@@ -618,6 +640,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.capped = data.capped;
     state.unavailable = data.unavailable;
     state.loaded = true;
+    forgetSettledQueue();
     return true;
   }
 
@@ -657,11 +680,21 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function decisionOf(runId) {
     if (!state.decisions.has(runId)) {
+      const queued = state.queued.get(runId) ?? null;
       state.decisions.set(runId, {
-        busy: null, pending: false, unavailable: false, error: '', mode: null, reason: '', drafts: new Map(), keys: new Map(),
+        busy: null, pending: queued !== null, unavailable: false, error: '', mode: null, reason: '', drafts: new Map(),
+        keys: queued !== null ? queued.keys : new Map(),
       });
     }
     return /** @type {any} */ (state.decisions.get(runId));
+  }
+
+  /** Review #688: a queued decision is forgotten only once its run left `proposed`. */
+  function forgetSettledQueue() {
+    for (const runId of [...state.queued.keys()]) {
+      const run = state.runs.find((row) => row && row.id != null && String(row.id) === runId);
+      if (!run || run.outcome !== 'proposed') state.queued.delete(runId);
+    }
   }
 
   /**
@@ -681,19 +714,30 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (!item.runId || !state.space) return;
     const decision = decisionOf(item.runId);
     if (decision.busy !== null || decision.pending) return;
+    // Review #688: the space is fixed at the click; an answer that lands
+    // after the operator moved to another space is dropped, never painted
+    // on the space now shown.
+    const space = state.space;
+    const left = () => readSpace() !== space || state.space !== space;
     decision.busy = kind;
     decision.error = '';
     decision.unavailable = false;
     state.notice = '';
+    state.daFareError = '';
     const keyId = kind === 'revise' ? `revise:${String(extra.index)}:${JSON.stringify(extra.payload)}` : kind;
     if (!decision.keys.has(keyId)) decision.keys.set(keyId, issueAdminKey());
     paint();
     try {
       const answer = await bound.request(`/api/agents/${kind}`, {
         method: 'POST',
-        body: { spaceId: state.space, runId: item.runId, ...extra },
+        body: { spaceId: space, runId: item.runId, ...extra },
         idempotencyKey: decision.keys.get(keyId),
       });
+      if (left()) {
+        await render();
+        return;
+      }
+      state.queued.delete(item.runId);
       if (kind === 'revise') {
         // The run keeps waiting in Da fare with the edited proposal.
         decision.busy = null;
@@ -712,16 +756,32 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       }
       if (await reload()) paint();
     } catch (error) {
+      if (left()) {
+        await render();
+        return;
+      }
       decision.busy = null;
       const code = typeof error?.code === 'string' ? error.code : '';
       if (/^BO_[A-Z_]*PENDING$/.test(code)) {
         // Still queued on the server: the outcome is unknown, never a
-        // failure. Locked until the list is read again, so a second click
-        // never queues a second decision.
+        // failure. Locked — across reloads too (review #688) — until the
+        // run leaves `proposed`, and a retry reuses the same key.
         decision.pending = true;
+        state.queued.set(item.runId, { kind, keys: decision.keys });
       } else if (isDecisionUnavailable(error)) {
         decision.unavailable = true;
         decision.keys.delete(keyId);
+      } else if (error?.status === 404) {
+        // The run is gone (deleted, or never in this space): say it above
+        // the list and read the list again, so the stale row leaves.
+        decision.keys.delete(keyId);
+        state.decisions.delete(item.runId);
+        state.daFareError = humanWriteError(error, {
+          failed: 'Questa proposta non c’è più: ho ricaricato l’elenco.',
+          notComposed: 'Questa proposta non c’è più: ho ricaricato l’elenco.',
+        });
+        if (await reload()) paint();
+        return;
       } else {
         decision.keys.delete(keyId);
         decision.error = humanWriteError(error, {
@@ -877,6 +937,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     head.appendChild(el(documentNode, 'h3', null, 'Da fare'));
     if (items.length > 0) head.appendChild(el(documentNode, 'span', 'bo-agenti-count', String(items.length)));
     section.appendChild(head);
+    if (state.daFareError !== '') section.appendChild(el(documentNode, 'p', 'bo-seq-error', state.daFareError));
     if (items.length === 0) {
       section.appendChild(uiEmpty(documentNode, { title: 'Niente da approvare', text: AGENTS_IDLE_NOTE }));
       page.appendChild(section);
@@ -904,12 +965,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // never approved or edited blind (it can still be refused).
       const locked = decision === null || decision.busy !== null || decision.pending;
       const button = (label, variant, action, busyLabel, onClick, off = false) => {
+        // Review #688: Modifica's request is a «revise».
+        const flying = decision !== null && (decision.busy === action || (action === 'edit' && decision.busy === 'revise'));
         const node = uiButton(documentNode, {
-          variant, small: true, label: decision?.busy === action ? busyLabel : label,
+          variant, small: true, label: flying ? busyLabel : label,
           attrs: { type: 'button', 'data-action': action },
         });
         node.disabled = locked || off;
-        if (decision?.busy === action) node.setAttribute('aria-busy', 'true');
+        if (flying) node.setAttribute('aria-busy', 'true');
         node.addEventListener('click', onClick);
         actions.appendChild(node);
       };
@@ -1096,7 +1159,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.notice = '';
       state.addError = '';
     }
-    // A fresh read is the truth: a pending approval is decided or still waits.
+    // A fresh read is the truth for the row state; a decision still queued
+    // stays locked through state.queued (review #688) until its run leaves
+    // `proposed`.
     state.decisions = new Map();
     state.loaded = false;
     paint();
