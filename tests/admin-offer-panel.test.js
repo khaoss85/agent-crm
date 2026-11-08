@@ -389,3 +389,33 @@ test('review #616: a customer whose company is undefined gets the honest block, 
   assert.match(panel.textContent, /deve avere un’azienda/);
   assert.equal(panel.findAll('input').length, 0);
 });
+
+// Review #616 round 4 (P1): a create that fails after the window was
+// closed is logged and told as a toast, never swallowed.
+test('review #616 round 4: a create failing after the window closed is logged and toasted', async () => {
+  let fail;
+  const pending = new Promise((_resolve, reject) => { fail = () => reject(Object.assign(new Error('bad gateway'), { status: 502, code: 'UPSTREAM' })); });
+  const client = fakeClient({ create: () => pending });
+  const { panel, toasts, created } = await open({ client });
+  input(panel, 'title').value = 'Pacchetto 10 PT';
+  input(panel, 'value').value = '350';
+  const submitting = panel.__submit();
+  byAction(panel, 'offer-close').dispatch('click');
+  assert.equal(panel.parentNode, null, 'the window is closed while the create is in flight');
+
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => logged.push(args);
+  try {
+    fail();
+    await submitting;
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(toasts, ['Offerta non creata: riapri «Nuova offerta» e riprova.'], 'the person learns it was not filed');
+  assert.equal(created.length, 0);
+  assert.equal(logged.length, 1, 'the failure is logged');
+  assert.equal(logged[0][0], '[bo] offerta non creata');
+  assert.deepEqual(logged[0][1], { code: 'UPSTREAM', status: 502, spaceId: 'presti' });
+  assert.ok(!JSON.stringify(logged).includes('Pacchetto'), 'never the offer itself');
+});

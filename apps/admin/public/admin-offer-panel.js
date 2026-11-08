@@ -51,7 +51,7 @@ function dayOf(raw) {
  *   doc: any, host: any, client: any, issueKey: () => string,
  *   card: any, navCtx: {resource: string, id: string},
  *   company: {id: string, name: string} | null,
- *   spaceId: string | null, toast?: (text: string) => void,
+ *   spaceId: string | null, toast?: (text: string, error?: boolean) => void,
  *   onCreated?: (created: any) => void,
  * }} deps
  */
@@ -501,7 +501,20 @@ export function openOfferPanel(deps) {
       toast('Offerta creata');
       if (typeof deps.onCreated === 'function') deps.onCreated(created);
     } catch (error) {
-      if (gone()) return;
+      // Review #616 round 4: a failed create is always logged (code, status
+      // and space, never the offer) and, with the window already closed
+      // (Escape, ✕, Scrivi), still told to the person as a toast.
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] offerta non creata', {
+          code: error?.code ?? null,
+          status: typeof error?.status === 'number' ? error.status : null,
+          spaceId: deps.spaceId ?? null,
+        });
+      }
+      if (gone()) {
+        toast('Offerta non creata: riapri «Nuova offerta» e riprova.', true);
+        return;
+      }
       // A definitive refusal frees the key: the corrected offer is a new one.
       const status = typeof error?.status === 'number' ? error.status : 0;
       if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) submissionKey = null;
