@@ -3918,3 +3918,167 @@ test('review #612 round 5: typing in the scheda survives a failed re-read and re
   await view.renderCard('contact', 'c2');
   assert.equal(byName('noteBody').value ?? '', '', 'another customer starts empty');
 });
+
+// Production 07/11 (same shape as the calendar phrase): a queued AI draft
+// answers 504 BO_DRAFT_PENDING with a requestId and is read back on the same
+// path, never asked again; the server's English message never shows.
+function pendingDraftClient({ readyAfter = 1 } = {}) {
+  const inner = composerClient();
+  const drafts = [];
+  const reads = [];
+  return {
+    posts: inner.posts,
+    drafts,
+    reads,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages/draft') {
+        enforceAdminWriteGate(path, options);
+        drafts.push(JSON.parse(options.body));
+        throw Object.assign(new Error('Composer draft pending: poll ?requestId, do not resubmit'), {
+          status: 504, code: 'BO_DRAFT_PENDING', requestId: 'draft-req-1',
+        });
+      }
+      if (path.startsWith('/api/customer-hub/messages/draft?requestId=')) {
+        reads.push(path);
+        if (reads.length < readyAfter) {
+          throw Object.assign(new Error('Composer draft pending: poll ?requestId, do not resubmit'), {
+            status: 504, code: 'BO_DRAFT_PENDING', requestId: 'draft-req-1',
+          });
+        }
+        return { body: 'Ciao Guido, ti aspettiamo giovedì.' };
+      }
+      return inner.request(path, options);
+    },
+  };
+}
+
+test('composer AI: a queued draft is read back with its requestId and fills the message', async () => {
+  const client = pendingDraftClient({ readyAfter: 3 });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer(20);
+  assert.equal(client.drafts.length, 1, 'one POST only');
+  assert.equal(client.reads.length, 3, 'read back until ready');
+  assert.ok(client.reads.every((path) => path.endsWith('requestId=draft-req-1')));
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì.');
+  assert.ok(!panel.textContent.includes('poll ?requestId'), 'never the English server message');
+});
+
+test('composer AI: a draft still queued after a minute says so in Italian and Genera resumes the same request', async () => {
+  const client = pendingDraftClient({ readyAfter: 21 });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer(80);
+  assert.equal(client.reads.length, 20, 'about a minute of reads');
+  assert.match(panel.textContent, /L’AI sta impiegando più del previsto/);
+  assert.ok(!panel.textContent.includes('poll ?requestId'), 'never the English server message');
+  go.dispatch('click');
+  await flushComposer(20);
+  assert.equal(client.drafts.length, 1, 'Genera resumes, never a second POST');
+  assert.equal(client.reads.length, 21);
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì.');
+});
+
+// Review #664 P1: a transient read failure kept the draft request, never a new POST.
+test('composer AI: a transient read-back failure keeps reading the same queued draft', async () => {
+  const inner = pendingDraftClient({ readyAfter: 2 });
+  let failed = false;
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    reads: inner.reads,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/customer-hub/messages/draft?requestId=') && !failed) {
+        failed = true;
+        inner.reads.push(path);
+        throw Object.assign(new Error('Bad Gateway'), { status: 502, code: 'UNKNOWN' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer(30);
+  assert.equal(client.drafts.length, 1, 'one POST only');
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì.', 'the ready draft lands after the hiccup');
+  assert.ok(!panel.textContent.includes('Bad Gateway'));
+});
+
+// Review #664 round 2 P2: the queued draft request survives closing and
+// reopening the composer — never a second POST for the same words.
+test('composer AI: a queued draft is resumed after ✕ and Scrivi, never asked again', async () => {
+  const client = pendingDraftClient({ readyAfter: 21 });
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.input.value = 'ricordagli la prova';
+  first.go.dispatch('click');
+  await flushComposer(80);
+  assert.match(panel.textContent, /L’AI sta impiegando più del previsto/);
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const again = aiParts(reopened);
+  again.input.value = 'ricordagli la prova';
+  again.go.dispatch('click');
+  await flushComposer(20);
+  assert.equal(client.drafts.length, 1, 'the reopened composer reads the same request back');
+  assert.equal(client.reads.length, 21);
+  assert.ok(client.reads.at(-1).endsWith('requestId=draft-req-1'));
+  assert.equal(again.area.value, 'Ciao Guido, ti aspettiamo giovedì.');
+});
+
+// Review #664 round 3 P2: a Genera with other words during the minute of
+// read-back was silently dropped.
+test('composer AI: other words during the read-back supersede it, the same words keep it', async () => {
+  const drafts = [];
+  const reads = [];
+  const inner = composerClient();
+  let releaseRead = () => {};
+  const client = {
+    posts: inner.posts,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages/draft') {
+        enforceAdminWriteGate(path, options);
+        const body = JSON.parse(options.body);
+        drafts.push(body);
+        if (body.prompt === 'ricordagli la prova') {
+          throw Object.assign(new Error('Composer draft pending: poll ?requestId, do not resubmit'), {
+            status: 504, code: 'BO_DRAFT_PENDING', requestId: 'draft-req-1',
+          });
+        }
+        return { body: 'Ciao Guido, il listino è in allegato.' };
+      }
+      if (path.startsWith('/api/customer-hub/messages/draft?requestId=')) {
+        reads.push(path);
+        await new Promise((resolve) => { releaseRead = resolve; });
+        return { body: 'Testo della prima richiesta' };
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer(10);
+  assert.equal(reads.length, 1, 'the queued draft is being read back');
+  go.dispatch('click');
+  await flushComposer(10);
+  assert.equal(drafts.length, 1, 'the same words keep the read going, no second POST');
+  input.value = 'mandagli il listino';
+  go.dispatch('click');
+  await flushComposer(10);
+  assert.equal(drafts.length, 2, 'other words are a new request');
+  assert.equal(drafts[1].prompt, 'mandagli il listino');
+  assert.equal(area.value, 'Ciao Guido, il listino è in allegato.');
+  releaseRead();
+  await flushComposer(10);
+  assert.equal(area.value, 'Ciao Guido, il listino è in allegato.', 'the superseded read never overwrites the newer draft');
+});

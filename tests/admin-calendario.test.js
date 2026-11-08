@@ -7,6 +7,7 @@ import {
   channelOf,
   createCalendarioView,
   calendarRefusalText,
+  servicePresendError,
   dayHead,
   displayKeys,
   draftDayKey,
@@ -4205,4 +4206,75 @@ test('a pager move during the cross-week preload never proposes against the wron
   await flushMany(14);
   const rows = (mount.querySelector('.cal-slots')?.findAll('span') ?? []).map((node) => node.textContent);
   assert.ok(!rows.includes('29 ott · 10:00–10:45'), `the held 10:00 Rome step is never proposed (${rows.join(' | ')})`);
+});
+
+// ---- backlog:9a853f44 — hand-written service, production 07/11 ----
+// AC-1: a typed service either books (sendable listino-key shape) or the
+// form stops it before any request with a clear sentence — never a 400
+// BO_APPOINTMENT_SERVICE_REFUSED with «Riprova più tardi».
+test('servicePresendError lets a listino key travel and stops the rest before any request', () => {
+  assert.equal(servicePresendError('taglio'), null, 'a listino key travels');
+  assert.equal(servicePresendError('lezione-prova'), null, 'hyphens travel');
+  assert.equal(servicePresendError(''), null, 'a missing service is the required-fields check');
+  assert.equal(servicePresendError(undefined), null);
+  assert.equal(servicePresendError('massaggio speciale'), 'Scegli un servizio dal listino: questo servizio non c’è.');
+  assert.equal(servicePresendError('Massaggio'), 'Scegli un servizio dal listino: questo servizio non c’è.', 'uppercase never books');
+  assert.equal(servicePresendError('a'.repeat(49)), 'Scegli un servizio dal listino: questo servizio non c’è.', 'over 48 characters never books');
+});
+
+test('Conferma with a hand-written unbookable service sends nothing and names the field', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'massaggio speciale';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  const sentBefore = client.calls.filter((call) => call.path.startsWith('/api/appointments/')).length;
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 0, 'nothing leaves the form');
+  assert.equal(client.calls.filter((call) => call.path.startsWith('/api/appointments/')).length, sentBefore, 'no booking request at all');
+  const hint = mount.findAll('small').find((node) => node.getAttribute('data-role') === 'service-error');
+  assert.ok(hint, 'the stop sits under the service field');
+  assert.ok(hint.textContent.startsWith('Scegli un servizio dal listino'), hint.textContent);
+  assert.ok(!mount.textContent.includes('Riprova più tardi'), 'never the generic retry for a hand-written service');
+  assert.equal(byName().serviceKey.value, 'massaggio speciale', 'the typed value stays to correct');
+});
+
+// AC-3: the grid event reads «service · customer», never the raw listino
+// key — here through the server-attached label path (no profile read).
+test('a block with a server-attached customer label reads service · customer with no profile read', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        ...WEEK.members[0].appointments[0],
+        serviceKey: 'lezione-prova',
+        subject: { resource: 'contact', id: 'c9', label: 'Mario Rossi', owner: 'host', ownerPackage: null },
+      }],
+    }],
+  };
+  const client = stubClient({
+    week,
+    catalog: { products: [{ sku: 'lezione-prova', name: 'Lezione di prova' }] },
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await showWeek(mount);
+  const titles = texts(mount, 'strong');
+  assert.ok(titles.includes('Lezione di prova · Mario Rossi'), `the block reads service · customer: ${JSON.stringify(titles)}`);
+  assert.ok(!mount.textContent.includes('lezione-prova'), 'the raw listino key never paints');
+  // The label paints at once; a background profile read may warm the cache
+  // for the detail card — the block never waits for it.
+  assert.ok(!mount.textContent.includes('c9'), 'a customer id is never a name');
 });
