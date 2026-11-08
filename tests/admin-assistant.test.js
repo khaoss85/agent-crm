@@ -11,6 +11,7 @@ import {
   assistantDisabledNotice,
   createAssistantPanel,
   isSafeRecordId,
+  italianDates,
   probeAssistantBackend,
   runAssistantAction,
   runSuggestion,
@@ -1633,4 +1634,21 @@ test('voce 34fd687c: la coda della barra parte dopo una domanda senza risposta',
   for (let i = 0; i < 12; i += 1) await tick();
   assert.ok(!mount.textContent.includes('Finisco la risposta in corso'), 'nothing is left stranded');
   assert.ok(mount.textContent.includes('Marco Rossi'), `the queued question ran: ${mount.textContent.slice(0, 400)}`);
+});
+
+test('5a1e6d8dc42e: FONTI e «Apri:» dicono le date in italiano, mai l’ISO grezzo', async () => {
+  const client = stubClient({
+    '/api/modules/appointment/records?limit=50': {
+      items: [{ id: 'appt-1', status: 'booked', startsAt: '2026-11-07T13:30:00.000Z', subjectLabel: 'Ada Rossi' }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:calendario:slot');
+  const source = answer.sources.find((item) => item.id === 'appt-1');
+  assert.equal(source.label, '7 nov, 14:30 Ada Rossi', 'the source reads the Rome day and time');
+  const open = answer.actions.find((action) => action.id === 'bo04:apri-primo');
+  assert.equal(open.label, 'Apri: 7 nov, 14:30 Ada Rossi', 'the Apri action reads the same words');
+  for (const text of [source.label, open.label]) assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), text);
+  // Any label with an ISO instant (the server's free answer too) reads Italian.
+  assert.equal(italianDates('Appuntamento 2026-11-07T13:30:00Z con Ada'), 'Appuntamento 7 nov, 14:30 con Ada');
+  assert.equal(italianDates('Nota senza data'), 'Nota senza data');
 });

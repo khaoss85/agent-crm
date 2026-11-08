@@ -83,6 +83,23 @@ export function nameFromProfile(profile) {
   return company !== '' ? company : null;
 }
 
+const ROME_DAY_TIME = new Intl.DateTimeFormat('it-IT', {
+  day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Rome',
+});
+
+/**
+ * Backlog 5a1e6d8dc42e: an instant as a person writes it, in Europe/Rome
+ * («7 nov, 14:30»), null when the value is not a readable instant. Never a
+ * raw ISO stamp on screen.
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function italianDateTime(value) {
+  const ms = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return ROME_DAY_TIME.format(new Date(ms)).replace(/\./g, '');
+}
+
 /**
  * Commercial states in the operator's words: quote states and the core
  * opportunity stages. Backlog a551982c06eb: one map for every screen that

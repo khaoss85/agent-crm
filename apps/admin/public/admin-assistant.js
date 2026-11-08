@@ -32,7 +32,7 @@ import {
   PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
-import { callOutcomeLabel, romeClock } from './admin-labels.js';
+import { callOutcomeLabel, italianDateTime, romeClock } from './admin-labels.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -231,6 +231,22 @@ export function suggestionsFor(screenId) {
  * @typedef {{ suggestionId: string, title: string, at: string, reads: TraceRead[], executions: TraceExecution[] }} AnswerTrace
  */
 
+// An ISO-8601 instant inside a label: date, time and an explicit zone.
+const ISO_INSTANT_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})/g;
+
+/**
+ * Backlog 5a1e6d8dc42e: a source label (and the «Apri:» action built from
+ * it) never shows a raw ISO stamp — every instant inside it reads as
+ * «7 nov, 14:30» in Europe/Rome, whoever wrote the label (a suggestion
+ * builder or the server's free answer).
+ * @param {unknown} label
+ * @returns {string}
+ */
+export function italianDates(label) {
+  const text = label === null || label === undefined ? '' : String(label);
+  return text.replace(ISO_INSTANT_RE, (stamp) => italianDateTime(stamp) ?? stamp);
+}
+
 /**
  * @param {string} module
  * @param {unknown} id
@@ -238,7 +254,7 @@ export function suggestionsFor(screenId) {
  */
 function recordSource(module, id, label) {
   if (!isSafeModule(module) || !isSafeRecordId(id)) return null;
-  const text = shortText(label, 80) || id;
+  const text = shortText(italianDates(label), 80) || id;
   return {
     kind: 'record',
     module,
@@ -891,7 +907,10 @@ async function answerSlot(client) {
   // no-show are out; a missing status is never counted as booked.
   const booked = appointments.filter((row) => row?.status === 'booked' || row?.status === 'confirmed');
   answer.lines.push(`${booked.length} appuntamenti fissati letti. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
-  const labelOf = (row) => `${shortText(row?.startsAt ?? row?.date, 24) || 'appuntamento'} ${shortText(row?.subjectLabel, 40) || ''}`.trim();
+  // Backlog 5a1e6d8dc42e: the slot reads «7 nov, 14:30», never the ISO
+  // stamp; a bare day keeps its day and never invents a time.
+  const whenOf = (row) => italianDateTime(row?.startsAt) || italianDay(row?.date) || shortText(row?.date, 24) || 'appuntamento';
+  const labelOf = (row) => `${whenOf(row)} ${shortText(row?.subjectLabel, 40) || ''}`.trim();
   answer.sources.push(...takeSources(newestFirst(booked), 'appointment', labelOf));
   const firstThread = answer.sources[0];
   if (firstThread) {
