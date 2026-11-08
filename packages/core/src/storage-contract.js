@@ -211,41 +211,15 @@ export function createSqliteStorage(raw, transaction, transactionAsync, readWitn
     savepoint(name, fn) {
       const safeName = identifier(name, 'savepoint');
       raw.exec(`SAVEPOINT ${safeName}`);
-      let result;
       try {
-        result = fn();
+        const result = fn();
+        raw.exec(`RELEASE SAVEPOINT ${safeName}`);
+        return result;
       } catch (error) {
         raw.exec(`ROLLBACK TO SAVEPOINT ${safeName}`);
         raw.exec(`RELEASE SAVEPOINT ${safeName}`);
         throw error;
       }
-      // `mutationAsync` on sync storage hands this an async callback
-      // (backlog:1943c161): releasing here would commit the statements
-      // already run while the continuations after the first await still
-      // execute in autocommit — a spend UPDATE would survive its receipt
-      // INSERT failing. A promise return settles inside the savepoint:
-      // RELEASE waits for it, a rejection rolls everything back. Sync
-      // returns keep the old straight-line path with no new tick.
-      if (result !== null && (typeof result === 'object' || typeof result === 'function')
-        && typeof result.then === 'function') {
-        return Promise.resolve(result).then(
-          (value) => {
-            raw.exec(`RELEASE SAVEPOINT ${safeName}`);
-            return value;
-          },
-          (error) => {
-            try {
-              raw.exec(`ROLLBACK TO SAVEPOINT ${safeName}`);
-              raw.exec(`RELEASE SAVEPOINT ${safeName}`);
-            } catch {
-              /* the primary error wins */
-            }
-            throw error;
-          },
-        );
-      }
-      raw.exec(`RELEASE SAVEPOINT ${safeName}`);
-      return result;
     },
   });
   const storage = Object.freeze({

@@ -226,40 +226,36 @@ test('a receipt failure rolls the spend back: zero spend without receipt', async
   const { app, api, ops } = await composedLlmApp(t);
   const auditTable = app.modules.get('llm-call-audit').service.manifest.table;
   // The reviewer's scenario (backlog:1943c161 P1): the claim UPDATE lands,
-  // then the domain receipt INSERT fails. On the portable facade the claim
-  // runs through `mutationAsync` on sync storage, whose savepoint used to
-  // release before the async continuations ran — the spend stayed committed
-  // with no receipt. The poisoned tx fails only the receipt insert.
+  // then the domain receipt INSERT fails. The spend must roll back with it.
+  // The poison wraps both entry points the claim may take — `mutationSync`
+  // (sync storage, the facade hands the transaction handle) and
+  // `mutationAsync` (async storage) — and fails only the receipt insert.
+  // The tx handle is frozen, so it is spread into a fresh handle.
+  const poison = (tx) => {
+    const realExecute = tx.execute.bind(tx);
+    return {
+      ...tx,
+      execute: (statement) => {
+        if (statement?.kind === 'insert' && statement?.table === auditTable) {
+          throw new Error('injected llm receipt failure');
+        }
+        return realExecute(statement);
+      },
+    };
+  };
   const receiptFails = {
     get(name) {
       const entry = app.modules.get(name);
       if (name !== 'llm-usage-day') return entry;
       const service = entry.service;
-      const realMutationAsync = service.mutationAsync.bind(service);
-      return {
-        ...entry,
-        service: {
-          ...service,
-          async mutationAsync(fn) {
-            return realMutationAsync(async (tx) => {
-              // The tx handle is frozen, so a shadowing assignment over its
-              // prototype would throw before any statement: spread it into a
-              // fresh handle whose `execute` fails only the receipt insert.
-              const realExecute = tx.execute.bind(tx);
-              const poisoned = {
-                ...tx,
-                execute: (statement) => {
-                  if (statement?.kind === 'insert' && statement?.table === auditTable) {
-                    throw new Error('injected llm receipt failure');
-                  }
-                  return realExecute(statement);
-                },
-              };
-              return fn(poisoned);
-            });
-          },
-        },
-      };
+      const wrapped = { ...service };
+      if (typeof service.mutationAsync === 'function') {
+        wrapped.mutationAsync = (fn) => service.mutationAsync(async (tx) => fn(poison(tx)));
+      }
+      if (typeof service.mutationSync === 'function') {
+        wrapped.mutationSync = (fn) => service.mutationSync((tx) => fn(tx ? poison(tx) : tx));
+      }
+      return { ...entry, service: Object.freeze(wrapped) };
     },
     list: () => app.modules.list(),
     schema: () => app.modules.schema(),
@@ -284,4 +280,79 @@ test('a receipt failure rolls the spend back: zero spend without receipt', async
   assert.equal(usage[0].inputTokens + usage[0].outputTokens, 0, 'no tokens landed without receipt');
   const audit = await app.operations.run('read-llm-audit', { actor: ACTOR, spaceId: 'presti' });
   assert.equal(audit.length, 0, 'no half receipt landed');
+});
+
+test('a concurrent claim keeps its spend when another claim rolls back on SQLite', async (t) => {
+  const { app, api, ops } = await composedLlmApp(t);
+  const auditTable = app.modules.get('llm-call-audit').service.manifest.table;
+  // P1 of the review on 31a03ad1 (backlog:1943c161): on sync storage the
+  // facade claim ran an async body inside one connection-wide savepoint, so
+  // a second claim started while the first was parked at an await nested
+  // inside it — and the first claim's rollback undid the second claim's
+  // spend and receipt after the second had already reported success. The
+  // failing claim (space «altro») parks on its receipt insert until the
+  // healthy claim (space «presti») has finished; on sync storage the claim
+  // must be one synchronous unit, so no other claim can land inside it.
+  let reached;
+  const reachedReceipt = new Promise((resolve) => { reached = resolve; });
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  const poison = (tx, park) => {
+    const realExecute = tx.execute.bind(tx);
+    return {
+      ...tx,
+      execute: (statement) => {
+        if (statement?.kind === 'insert' && statement?.table === auditTable) {
+          reached();
+          if (park) return gate.then(() => { throw new Error('injected llm receipt failure'); });
+          throw new Error('injected llm receipt failure');
+        }
+        return realExecute(statement);
+      },
+    };
+  };
+  const failingModules = {
+    get(name) {
+      const entry = app.modules.get(name);
+      if (name !== 'llm-usage-day') return entry;
+      const service = entry.service;
+      const wrapped = { ...service };
+      if (typeof service.mutationAsync === 'function') {
+        wrapped.mutationAsync = (fn) => service.mutationAsync(async (tx) => fn(poison(tx, true)));
+      }
+      if (typeof service.mutationSync === 'function') {
+        wrapped.mutationSync = (fn) => service.mutationSync((tx) => fn(tx ? poison(tx, false) : tx));
+      }
+      return { ...entry, service: Object.freeze(wrapped) };
+    },
+    list: () => app.modules.list(),
+    schema: () => app.modules.schema(),
+  };
+  const ask = (spaceId, modules) => ops.complete({
+    actor: ACTOR,
+    spaceId,
+    purpose: 'free-question',
+    messages: [{ role: 'user', content: `ciao da ${spaceId}` }],
+    maxTokens: 64,
+  }, modules);
+  const failing = ask('altro', failingModules).then(() => null, (error) => error);
+  await reachedReceipt;
+  const healthy = await ask('presti', app.modules);
+  open();
+  const failure = await failing;
+  assert.ok(failure, 'the poisoned claim surfaces its receipt failure');
+  assert.equal(healthy.adapter, 'fixture-llm');
+  assert.equal(api.calls(), 2, 'each claim paid the provider once');
+
+  const usage = await app.operations.run('read-llm-usage', { actor: ACTOR, spaceId: 'presti' });
+  assert.equal(usage.length, 1);
+  assert.equal(usage[0].calls, 1, 'the healthy claim kept its spend');
+  const audit = await app.operations.run('read-llm-audit', { actor: ACTOR, spaceId: 'presti' });
+  assert.equal(audit.length, 1, 'the healthy claim kept its receipt');
+
+  const otherUsage = await app.operations.run('read-llm-usage', { actor: ACTOR, spaceId: 'altro' });
+  assert.equal(otherUsage.length, 1);
+  assert.equal(otherUsage[0].calls, 0, 'the failed claim rolled its spend back');
+  const otherAudit = await app.operations.run('read-llm-audit', { actor: ACTOR, spaceId: 'altro' });
+  assert.equal(otherAudit.length, 0, 'the failed claim left no receipt');
 });

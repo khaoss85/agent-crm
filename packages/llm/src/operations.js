@@ -295,9 +295,15 @@ function overCap(row, caps) {
  * `database` handle private and publishes only `mutationAsync`: that is
  * enough, because the async claim path runs its conditional write on the
  * transaction handle the mutation hands it instead of reaching into
- * `service.database.storage` itself. Only a composition that hides both the
- * storage handle and `mutationAsync` refuses. Missing seam refuses
- * fail-closed: a totals update that cannot prove atomicity never runs.
+ * `service.database.storage` itself. On sync storage the facade publishes
+ * `mutationSync`, which hands its callback the sync transaction handle:
+ * the claim then stays one synchronous unit there too. An async body
+ * inside a SQLite savepoint is never atomic — the savepoint is
+ * connection-wide, so a concurrent request lands inside it and shares its
+ * rollback — so the async path is taken only on async storage. Only a
+ * composition that hides both the storage handle and every mutation entry
+ * point refuses. Missing seam refuses fail-closed: a totals update that
+ * cannot prove atomicity never runs.
  */
 function spendSeam(usageService) {
   const manifest = usageService?.manifest;
@@ -312,11 +318,15 @@ function spendSeam(usageService) {
     calls: columnOf('calls'),
   };
   const syncApi = storage?.sync;
-  const syncMutation = syncApi
+  const ownedSync = syncApi
     && typeof syncApi.execute === 'function'
     && typeof syncApi.savepoint === 'function'
     && typeof usageService.mutationSync === 'function';
-  const asyncMutation = typeof usageService.mutationAsync === 'function';
+  // The portable facade (no `database` on it) publishes `mutationSync` only
+  // on sync storage, handing the transaction handle to its callback.
+  const facadeSync = !storage && typeof usageService?.mutationSync === 'function';
+  const syncMutation = ownedSync || facadeSync;
+  const asyncMutation = typeof usageService?.mutationAsync === 'function';
   if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
     || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
     || typeof usageService.get !== 'function'
@@ -327,7 +337,7 @@ function spendSeam(usageService) {
       code: 'LLM_STORAGE_INVALID', status: 500,
     });
   }
-  return { manifest, columns, syncApi: syncMutation ? syncApi : null };
+  return { manifest, columns, syncMutation: Boolean(syncMutation), syncApi: ownedSync ? syncApi : null };
 }
 
 /**
@@ -492,7 +502,7 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
   const abortClaim = () => new AppError('the llm operation timed out: retry the call', {
     code: 'LLM_OPERATION_TIMEOUT', status: 503,
   });
-  const { manifest, columns, syncApi } = spendSeam(usageService);
+  const { manifest, columns, syncMutation, syncApi } = spendSeam(usageService);
   if (receipt !== null && receipt !== undefined
     && (typeof receipt !== 'object' || Array.isArray(receipt)
       || receipt.service === undefined || receipt.patch === undefined)) {
@@ -549,17 +559,25 @@ export async function claimSpend(usageService, dayKey, delta, actor, caps, clock
       actor, entityType: manifest.name, entityId: fresh.id, data: totals, action,
     };
     let row = null;
-    if (syncApi) {
-      row = usageService.mutationSync(() => {
+    if (syncMutation) {
+      row = usageService.mutationSync((handed) => {
+        // The owned service hands nothing (its handle is `syncApi`); the
+        // portable facade hands the sync transaction handle.
+        const tx = syncApi ?? handed;
+        if (!tx || typeof tx.execute !== 'function') {
+          throw new AppError('llm usage storage cannot prove an atomic spend claim', {
+            code: 'LLM_STORAGE_INVALID', status: 500,
+          });
+        }
         // The committing write is gated where it executes: a slot that
         // fired after the fresh read above still lands zero rows.
         if (aborted()) throw abortClaim();
-        const claimed = syncApi.execute(statement);
+        const claimed = tx.execute(statement);
         if (Number(claimed?.affectedRows ?? 0) !== 1) return null;
-        usageService.audit.record(auditEvent, syncApi);
+        usageService.audit.record(auditEvent, tx);
         if (built) {
-          syncApi.execute(built.statement);
-          built.service.audit.record(built.auditEvent, syncApi);
+          tx.execute(built.statement);
+          built.service.audit.record(built.auditEvent, tx);
         }
         return usageService.get(fresh.id);
       });
