@@ -1314,6 +1314,11 @@ export function createCustomerCardView(deps) {
     // lives in composerAiPending, outside this row (review #664): the next
     // Genera with the same words and channel — even after ✕ and Scrivi —
     // reads that request back instead of asking the AI again.
+    // The latest Genera (a newer one supersedes a read-back) and the key of
+    // the queued draft being read back, if any.
+    let drafting = 0;
+    /** @type {string|null} */
+    let reading = null;
     const pendingKey = (words, picked) => `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}:${picked}:${words}`;
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
@@ -1350,9 +1355,13 @@ export function createCustomerCardView(deps) {
       }
     };
     async function generate() {
-      if (busy) return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
+      // Review #664: during the minute of read-back a Genera with other
+      // words supersedes the queued read (its request stays for the next
+      // Genera with those words); the same words keep the read going. While
+      // the POST itself is in flight Genera stays off, as before.
+      if (busy && (reading === null || reading === pendingKey(words, picked))) return;
       if (words === '') {
         say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
@@ -1361,6 +1370,9 @@ export function createCustomerCardView(deps) {
         say('Nessun canale collegato: l’AI scrive per il canale scelto.');
         return;
       }
+      const mine = ++drafting;
+      const gone = () => stale() || mine !== drafting;
+      reading = null;
       busy = true;
       go.setAttribute('disabled', 'disabled');
       go.textContent = 'Scrivo…';
@@ -1385,16 +1397,22 @@ export function createCustomerCardView(deps) {
           }
         }
         if (requestId !== null) {
-          if (stale()) {
+          if (gone()) {
             composerAiPending.set(key, requestId);
             return;
           }
           say('Scrivo ancora… la bozza arriva tra poco.');
+          // Genera comes back on during the read-back, so other words can
+          // supersede it (review #664).
+          reading = key;
+          go.removeAttribute?.('disabled');
+          go.textContent = 'Genera';
           const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
             expectedCode: 'BO_DRAFT_PENDING',
             spaceId: spaceId ?? null,
-            wait, everyMs: 3000, rounds: 20, stale,
+            wait, everyMs: 3000, rounds: 20, stale: gone,
           });
+          if (mine === drafting) reading = null;
           if (read.stale) {
             // Closed while reading back: the request stays for the next Genera.
             composerAiPending.set(key, requestId);
@@ -1411,8 +1429,9 @@ export function createCustomerCardView(deps) {
         }
         // Review #599 P2: the composer may have been closed or reopened while
         // the AI wrote. A stale answer never touches a detached form nor the
-        // shared per-customer draft.
-        if (stale()) return;
+        // shared per-customer draft; a superseded one never overwrites the
+        // newer draft (review #664).
+        if (gone()) return;
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
@@ -1430,7 +1449,7 @@ export function createCustomerCardView(deps) {
         say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
         if (typeof text.focus === 'function') text.focus();
       } catch (error) {
-        if (stale()) return;
+        if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
         const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
@@ -1444,7 +1463,9 @@ export function createCustomerCardView(deps) {
         else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
+        if (mine !== drafting) return;
         busy = false;
+        reading = null;
         if (row.getAttribute('data-off') !== 'true') {
           go.removeAttribute?.('disabled');
           if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';

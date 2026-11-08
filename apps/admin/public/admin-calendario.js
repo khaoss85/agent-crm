@@ -874,6 +874,10 @@ export function createCalendarioView(deps) {
   function invalidate() {
     renderToken += 1;
     phraseSeq += 1;
+    // The search in flight is dropped with the route (review #664): the
+    // card comes back idle, never wedged on «Sto cercando…».
+    state.aiLoading = false;
+    state.phraseWaiting = false;
     memberToken += 1;
     trackRetainedDraft();
   }
@@ -2273,8 +2277,10 @@ export function createCalendarioView(deps) {
     state.proposals = [];
     state.aiNote = '';
     renderAll();
+    // The phrase that asks this request (review #664): the queued id and the
+    // answer both ride with it, never with a later edit of the textarea.
+    const asked = state.phrase;
     try {
-      const asked = state.phrase;
       const answer = await phraseAnswer({ resumeId, seq });
       state.phraseWaiting = false;
       // An edit while the answer was on its way never relabels it: the
@@ -2379,7 +2385,7 @@ export function createCalendarioView(deps) {
         // Never «Ricerca non riuscita» on an answer that may be ready: say
         // it is slow, and offer Riprova on the same request.
         console.warn('bo-calendario phrase still pending:', `requestId=${String(record.requestId ?? '')}`, `spaceId=${readSpace()}`);
-        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: state.phrase } : null;
+        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: asked } : null;
         state.aiNote = 'La ricerca sta impiegando più del previsto.';
         return;
       }

@@ -4017,3 +4017,52 @@ test('composer AI: a queued draft is resumed after ✕ and Scrivi, never asked a
   assert.ok(client.reads.at(-1).endsWith('requestId=draft-req-1'));
   assert.equal(again.area.value, 'Ciao Guido, ti aspettiamo giovedì.');
 });
+
+// Review #664 round 3 P2: a Genera with other words during the minute of
+// read-back was silently dropped.
+test('composer AI: other words during the read-back supersede it, the same words keep it', async () => {
+  const drafts = [];
+  const reads = [];
+  const inner = composerClient();
+  let releaseRead = () => {};
+  const client = {
+    posts: inner.posts,
+    async request(path, options = {}) {
+      if (path === '/api/customer-hub/messages/draft') {
+        enforceAdminWriteGate(path, options);
+        const body = JSON.parse(options.body);
+        drafts.push(body);
+        if (body.prompt === 'ricordagli la prova') {
+          throw Object.assign(new Error('Composer draft pending: poll ?requestId, do not resubmit'), {
+            status: 504, code: 'BO_DRAFT_PENDING', requestId: 'draft-req-1',
+          });
+        }
+        return { body: 'Ciao Guido, il listino è in allegato.' };
+      }
+      if (path.startsWith('/api/customer-hub/messages/draft?requestId=')) {
+        reads.push(path);
+        await new Promise((resolve) => { releaseRead = resolve; });
+        return { body: 'Testo della prima richiesta' };
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer(10);
+  assert.equal(reads.length, 1, 'the queued draft is being read back');
+  go.dispatch('click');
+  await flushComposer(10);
+  assert.equal(drafts.length, 1, 'the same words keep the read going, no second POST');
+  input.value = 'mandagli il listino';
+  go.dispatch('click');
+  await flushComposer(10);
+  assert.equal(drafts.length, 2, 'other words are a new request');
+  assert.equal(drafts[1].prompt, 'mandagli il listino');
+  assert.equal(area.value, 'Ciao Guido, il listino è in allegato.');
+  releaseRead();
+  await flushComposer(10);
+  assert.equal(area.value, 'Ciao Guido, il listino è in allegato.', 'the superseded read never overwrites the newer draft');
+});

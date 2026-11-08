@@ -300,3 +300,51 @@ test('an edit during the read-back never paints the draft under other words', as
   assert.ok(mount.querySelector('.cal-draft'), 'the asked draft paints');
   assert.equal(mount.querySelector('textarea[name="phrase"]').value, 'trova 30 minuti con marco giovedì');
 });
+
+// Review #664 round 3 P1: an edit during the read-back went into the queued
+// request, so Riprova resumed it under the edited words.
+test('an edit during the read-back never becomes the phrase Riprova resumes with', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseWait = () => {};
+  let first = true;
+  const client = phraseClient({ readyAfter: PHRASE_RESUME_ROUNDS + 1 });
+  const wait = () => {
+    if (!first) return Promise.resolve();
+    first = false;
+    return new Promise((resolve) => { releaseWait = resolve; });
+  };
+  const view = createCalendarioView({ doc, mount, client, wait, now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush();
+  const field = mount.querySelector('textarea[name="phrase"]');
+  field.value = 'trova 60 minuti con sara venerdì';
+  field.dispatch('input');
+  releaseWait();
+  await flush(120);
+  assert.ok(mount.textContent.includes('La ricerca sta impiegando più del previsto.'));
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'phrase-resume').dispatch('click');
+  await flush(30);
+  assert.equal(posts(client).length, 1, 'Riprova never POSTs');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').value, 'trova 30 minuti con marco giovedì',
+    'the queued request rides with the phrase that asked it');
+});
+
+// Review #664 round 3 P1: a route away during the search left the card
+// wedged on «Sto cercando…» with the button off.
+test('a route away during the read-back brings the card back idle', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({ readyAfter: 99 });
+  const view = createCalendarioView({ doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush();
+  assert.ok(mount.textContent.includes('Sto cercando'), 'waiting before the route away');
+  view.invalidate();
+  await view.render();
+  await flush();
+  assert.ok(!mount.textContent.includes('Sto cercando'), 'no stuck waiting line');
+  assert.ok(!mount.textContent.includes('Cerco gli slot liberi'), 'no stuck loading line');
+  const find = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
+  assert.equal(find.getAttribute('disabled'), null, 'the search button works again');
+});
