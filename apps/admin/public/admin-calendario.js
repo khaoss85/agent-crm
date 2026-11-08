@@ -1286,7 +1286,72 @@ export function createCalendarioView(deps) {
     return null;
   }
 
+  /**
+   * backlog:739c0c81f55c — the field the operator is typing in, before a
+   * repaint replaces it. Late reads (roster, week, labels, profile) repaint
+   * the whole view, and a replaced node loses focus and caret: the next
+   * keystrokes landed on the page and the phrase looked wiped (production
+   * 08/11). Every typed control carries a `name`, so the new node is found
+   * by it. Null when focus is outside the view or on a non-text control.
+   */
+  function focusedField() {
+    const active = doc?.activeElement ?? null;
+    if (!active || typeof mount.contains !== 'function' || !mount.contains(active)) return null;
+    const tag = String(active.tagName ?? '').toLowerCase();
+    if (tag !== 'textarea' && tag !== 'input' && tag !== 'select') return null;
+    const name = typeof active.getAttribute === 'function' ? active.getAttribute('name') : null;
+    if (typeof name !== 'string' || name === '' || !/^[A-Za-z0-9_-]+$/.test(name)) return null;
+    let start = null;
+    let end = null;
+    let direction = null;
+    try {
+      // Some input types (date, number) have no text selection: null, or a
+      // throw on older engines — focus is restored either way.
+      start = typeof active.selectionStart === 'number' ? active.selectionStart : null;
+      end = typeof active.selectionEnd === 'number' ? active.selectionEnd : null;
+      direction = typeof active.selectionDirection === 'string' ? active.selectionDirection : null;
+    } catch {
+      start = null;
+      end = null;
+    }
+    return { tag, name, start, end, direction };
+  }
+
+  /**
+   * Puts focus and caret back on the repainted field the operator was
+   * typing in. The value itself already survives through state (every
+   * typed field writes it on input). A field the repaint dropped, or one
+   * now disabled, stays unfocused.
+   * @param {{tag: string, name: string, start: number|null, end: number|null, direction: string|null} | null} kept
+   */
+  function restoreField(kept) {
+    if (kept === null) return;
+    const node = mount.querySelector(`${kept.tag}[name="${kept.name}"]`);
+    if (!node || typeof node.focus !== 'function') return;
+    if (node.disabled === true || (typeof node.getAttribute === 'function' && node.getAttribute('disabled') !== null)) return;
+    node.focus();
+    if (kept.start === null || kept.end === null) return;
+    const length = String(node.value ?? '').length;
+    const start = Math.min(kept.start, length);
+    const end = Math.min(kept.end, length);
+    try {
+      if (typeof node.setSelectionRange === 'function') node.setSelectionRange(start, end, kept.direction ?? undefined);
+      else {
+        node.selectionStart = start;
+        node.selectionEnd = end;
+      }
+    } catch {
+      // A control without a text selection keeps the focus only.
+    }
+  }
+
   function renderAll() {
+    const kept = focusedField();
+    renderView();
+    restoreField(kept);
+  }
+
+  function renderView() {
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
