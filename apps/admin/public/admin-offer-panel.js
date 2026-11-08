@@ -468,7 +468,12 @@ export function openOfferPanel(deps) {
     if (cents === null) { errors.value.textContent = 'Scrivi il valore in euro, es. 350.00.'; bad = true; }
     if (owner === '') { errors.owner.textContent = 'Scrivi chi la segue.'; bad = true; }
     if (expiry !== '' && Number.isNaN(Date.parse(expiry))) { errors.expiry.textContent = 'La data non è valida.'; bad = true; }
-    if (currencies.size > 1) { generalError.textContent = 'I prodotti scelti hanno valute diverse.'; bad = true; }
+    // Review #616 round 5: the selection is re-checked here, not only in the
+    // total line: an invalid quantity or mixed currencies never file the
+    // value that was on screen before the selection went wrong.
+    const selection = selectedProductTotal(picks);
+    if (selection?.error === 'qty') { generalError.textContent = 'Una quantità non è valida: scrivi un intero da 1 in su.'; bad = true; }
+    if (selection?.error === 'mixed' || currencies.size > 1) { generalError.textContent = 'I prodotti scelti hanno valute diverse.'; bad = true; }
     // Review #616 round 3 (P1): a value the AI drafted in one currency is
     // never filed under the chips' other currency.
     const chipCurrency = currencies.size === 1 ? [...currencies][0] : null;

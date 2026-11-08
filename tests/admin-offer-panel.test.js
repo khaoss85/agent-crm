@@ -419,3 +419,27 @@ test('review #616 round 4: a create failing after the window closed is logged an
   assert.deepEqual(logged[0][1], { code: 'UPSTREAM', status: 502, spaceId: 'presti' });
   assert.ok(!JSON.stringify(logged).includes('Pacchetto'), 'never the offer itself');
 });
+
+// Review #616 round 5 (P1): an invalid per-unit quantity blocks Crea
+// offerta, like the total line already says, instead of filing the value
+// left from before.
+test('review #616 round 5: an invalid quantity blocks Crea offerta with the quantity sentence', async () => {
+  const client = fakeClient();
+  const { panel } = await open({ client });
+  input(panel, 'title').value = 'PT singole';
+  chip(panel, 'pt1').dispatch('click');
+  assert.equal(input(panel, 'value').value, '40.00');
+  const qty = panel.findAll('input').find((node) => node.getAttribute('aria-label') === 'Quantità per PT singola');
+  for (const bad of ['0', '', '1.5']) {
+    qty.value = bad;
+    qty.dispatch('input');
+    await panel.__submit();
+    assert.equal(client.creates().length, 0, `quantity «${bad}» files nothing`);
+    assert.match(panel.textContent, /Una quantità non è valida: scrivi un intero da 1 in su\./);
+  }
+  qty.value = '3';
+  qty.dispatch('input');
+  await panel.__submit();
+  assert.equal(client.creates().length, 1);
+  assert.equal(client.creates()[0].body.valueCents, 12000, '3 × 40');
+});
