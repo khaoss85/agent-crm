@@ -148,6 +148,18 @@ test('29bb3f2c0d64 (a): a disconnected calendar says so on an imported event', a
   assert.equal(sync.textContent, '↔ Google Calendar · non più collegato: ricollegalo dal Profilo');
 });
 
+test('review #678: with the calendar state unknown the Google line names only the origin', async () => {
+  // calendar null: the profile is not composed here, so nothing proves
+  // the calendar is connected — never «collegato» without proof.
+  const { mount } = await open({ calendar: null });
+  blockOf(mount, '10:00').dispatch('click');
+  await settle();
+  const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  const sync = card.findAll('p').find((node) => node.getAttribute('data-role') === 'event-sync');
+  assert.equal(sync.textContent, '↔ Google Calendar · evento importato da Google Calendar');
+  assert.ok(!sync.textContent.includes('collegato'), 'no connection claim without proof');
+});
+
 test('29bb3f2c0d64 (b): the title uses the prototype size of the other /bo screens', () => {
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   const rule = css.split('\n').find((line) => line.startsWith('.cal-wrap .panel-heading h2 {'));

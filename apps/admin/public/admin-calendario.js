@@ -2258,15 +2258,19 @@ export function createCalendarioView(deps) {
       // backlog:29bb3f2c0d64 (C8): the «↔ Google Calendar» line, only where
       // the row proves the link — an event calendar-sync imported. A
       // booking made here carries no sync evidence on the row, so it stays
-      // without the line (no «invito inviato» guess). A profile that
-      // positively reports the calendar disconnected says so instead.
-      const disconnected = state.calendar !== null && state.calendar.connected === false;
+      // without the line (no «invito inviato» guess).
+      // Review #678: «collegato» only on positive proof from the profile; an
+      // unknown state (profile unavailable or unread) says only where the
+      // event came from.
+      const connected = state.calendar?.connected;
       card.appendChild(el(doc, 'p', {
         className: 'cal-sync',
         attrs: { 'data-role': 'event-sync' },
-        text: disconnected
-          ? '↔ Google Calendar · non più collegato: ricollegalo dal Profilo'
-          : '↔ Google Calendar · evento importato dal calendario collegato',
+        text: connected === true
+          ? '↔ Google Calendar · evento importato dal calendario collegato'
+          : connected === false
+            ? '↔ Google Calendar · non più collegato: ricollegalo dal Profilo'
+            : '↔ Google Calendar · evento importato da Google Calendar',
       }));
     }
     if (linked) {

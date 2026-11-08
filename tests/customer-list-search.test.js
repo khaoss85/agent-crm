@@ -42,6 +42,22 @@ test('d128847d21fc: the search matches the start of any word of the name', () =>
   assert.deepEqual(hits(rows, 'ROSSI'), ['Ada Rossi'], 'case never matters');
 });
 
+test('review #678: a word of 4 or more letters also matches inside a word, word starts come first', () => {
+  const giovanni = row('Giovanni', 'Rossi', { email: 'gio@example.it' });
+  const vanni = row('Vanni', 'Bianchi');
+  const canada = row('Studio', 'Canada');
+  assert.deepEqual(hits([giovanni], 'ovanni'), ['Giovanni Rossi'], '«ovanni» finds Giovanni');
+  assert.deepEqual(hits([giovanni], 'ossi'), ['Giovanni Rossi'], '«ossi» finds Rossi');
+  assert.deepEqual(hits([giovanni], 'xample'), ['Giovanni Rossi'], 'a piece of the email');
+  assert.deepEqual(hits([giovanni], 'OVÀNNI'), ['Giovanni Rossi'], 'case and accents folded inside words too');
+  assert.deepEqual(hits([canada], 'ada'), [], '«ada» (3 letters) never matches inside «Canada»');
+  assert.deepEqual(hits([giovanni], 'ssi'), [], 'a 3-letter piece inside a word does not match');
+  // «vanni» starts Vanni and sits inside Giovanni: the word start comes
+  // first whatever the list order, the inside match stays in the answer.
+  const ordered = applyCustomerListQuery([giovanni, vanni], parseCustomerListQuery({ q: 'vanni', sort: 'name' })).items.map((item) => item.name);
+  assert.deepEqual(ordered, ['Vanni Bianchi', 'Giovanni Rossi']);
+});
+
 test('d128847d21fc: accents never matter', () => {
   const rows = [row('Josè', 'Niccolò')];
   assert.deepEqual(hits(rows, 'jose'), ['Josè Niccolò']);

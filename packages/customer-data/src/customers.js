@@ -238,18 +238,47 @@ export function searchNeedle(q) {
     .filter((word) => !channelWordSet.has(word) && !NL_GLUE_WORDS.has(word));
 }
 
+/** The shortest needle word that may match inside a word, not only at its start. */
+export const SEARCH_INFIX_MIN_CHARS = 4;
+
 /**
- * Whether a customer's searchable parts match the needle
- * (backlog:d128847d21fc): every needle word starts some word of the parts —
- * «Prova» finds «Prova verifica 07/11», «verifica 07/11» finds it too, and
- * «ada» finds «Ada Rossi» but not «Canada». Case and accents never matter.
+ * How a customer's searchable parts match the needle (backlog:d128847d21fc,
+ * review #678): 0 when every needle word starts some word of the parts, 1
+ * when every needle word matches but some only inside a word, -1 when one
+ * does not match. A word of at least SEARCH_INFIX_MIN_CHARS letters may sit
+ * inside a word («ovanni» finds «Giovanni», «xample» an «example» mailbox);
+ * a shorter one only at the start, so «ada» finds «Ada Rossi» but not
+ * «Canada». Case and accents never matter.
+ * @param {Array<unknown>} parts name, email, company, phone
+ * @param {Array<string>} needle from searchNeedle
+ */
+export function searchRank(parts, needle) {
+  if (!Array.isArray(needle) || needle.length === 0) return 0;
+  const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
+  let rank = 0;
+  for (const wanted of needle) {
+    if (words.some((word) => word.startsWith(wanted))) continue;
+    if (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))) {
+      rank = 1;
+      continue;
+    }
+    return -1;
+  }
+  return rank;
+}
+
+/**
+ * Whether a customer's searchable parts match the needle (see searchRank).
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
  */
 export function matchesSearch(parts, needle) {
-  if (!Array.isArray(needle) || needle.length === 0) return true;
-  const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
-  return needle.every((wanted) => words.some((word) => word.startsWith(wanted)));
+  return searchRank(parts, needle) >= 0;
+}
+
+/** The searchable parts of a shaped list row: name, email, company, phone. @param {any} row */
+function searchPartsOf(row) {
+  return [row?.name, row?.email, row?.company?.name, row?.phone?.value];
 }
 
 /** All the words (canonical + aliases) that name one channel. */
@@ -303,7 +332,7 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     }
     if (query.canale !== 'all' && !(row?.channels ?? []).includes(query.canale)) return false;
     if (channelHits.length > 0 && !channelHits.some((channel) => (row?.channels ?? []).includes(channel))) return false;
-    if (textNeedle.length > 0 && !matchesSearch([row?.name, row?.email, row?.company?.name, row?.phone?.value], textNeedle)) return false;
+    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle)) return false;
     if (viewExtra.ricontattareOggi === true && row?.nextStep?.dueAt?.slice(0, 10) !== today && !(row?.nextStep?.overdue === true)) return false;
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
     // «Da leggere»: only rows with unread inbound messages. A null
@@ -349,6 +378,13 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     sorted.sort((a, b) => (lastUnreadMs(b) - lastUnreadMs(a)) || byName(a, b));
   } else {
     sorted.sort((a, b) => (lastContactMs(b) - lastContactMs(a)) || byName(a, b));
+  }
+  // Review #678: with text searched, word-start matches come first; the
+  // chosen order holds inside each group (Array#sort is stable).
+  const textNeedle = searchNeedle(query.q ?? '');
+  if (textNeedle.length > 0) {
+    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle)]));
+    sorted.sort((a, b) => rankOf.get(a) - rankOf.get(b));
   }
 
   const total = sorted.length;
