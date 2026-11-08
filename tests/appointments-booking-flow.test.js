@@ -300,6 +300,58 @@ test('propose fails fast on a held slot, before reading the switch', async () =>
   );
 });
 
+test('an owner block with no guest closes its slot: no suggestion, no proposal (backlog:af190faf)', async () => {
+  const service = fakeAppointments();
+  const busyBlocks = [{
+    teamMemberId: 'coach-guido',
+    startsAt: '2026-10-20T17:00:00.000Z',
+    endsAt: '2026-10-20T18:00:00.000Z',
+    title: 'test accordo',
+  }];
+  const week = await suggestSlots({ modules: modulesFor(service) }, {
+    teamMemberIds: ['coach-guido'],
+    from: '2026-10-20T16:00:00.000Z',
+    to: '2026-10-20T19:00:00.000Z',
+    slotMinutes: 60,
+    busyBlocks,
+  });
+  assert.deepEqual(
+    week.members[0].slots.map((slot) => slot.startsAt),
+    ['2026-10-20T16:00:00.000Z', '2026-10-20T18:00:00.000Z'],
+  );
+  const cap = capabilityFor({ service, gate: allowGate() });
+  await assert.rejects(
+    cap.proposeBooking({ ...booking(), spaceId: SPACE, busyBlocks }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.equal(error.status, 409);
+      assert.match(error.message, /owner commitment/);
+      assert.match(error.message, /test accordo/);
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0, 'no appointment row for the held slot');
+});
+
+test('a block of another member never closes this member’s slot', async () => {
+  const service = fakeAppointments();
+  const week = await suggestSlots({ modules: modulesFor(service) }, {
+    teamMemberIds: ['coach-guido'],
+    from: '2026-10-20T16:00:00.000Z',
+    to: '2026-10-20T19:00:00.000Z',
+    slotMinutes: 60,
+    busyBlocks: [{
+      teamMemberId: 'coach-maria',
+      startsAt: '2026-10-20T17:00:00.000Z',
+      endsAt: '2026-10-20T18:00:00.000Z',
+    }],
+  });
+  assert.deepEqual(
+    week.members[0].slots.map((slot) => slot.startsAt),
+    ['2026-10-20T16:00:00.000Z', '2026-10-20T17:00:00.000Z', '2026-10-20T18:00:00.000Z'],
+  );
+});
+
 test('propose with the switch off records a space-ai-proposal and writes no appointment', async () => {
   const service = fakeAppointments();
   const { gate, proposalRows } = fakeGate({

@@ -415,16 +415,43 @@ export function validateAppointmentRequest(request) {
 }
 
 /**
+ * Owner busy blocks (backlog:af190faf): a commitment with no guest holds its
+ * member like a booking, without becoming a booking — no customer, no
+ * appointment row. Shape `{ teamMemberId, startsAt, endsAt, title? }`, the
+ * same shape the Google sync writes. A block without a readable teamMemberId
+ * holds every named member: an unattributed commitment closes rather than
+ * frees. Absent or null means no blocks, and every caller keeps its old
+ * behaviour; a non-array value is a caller bug and is refused.
+ *
+ * @param {any} source the filter or request carrying the optional `busyBlocks`
+ * @param {string} teamMemberId the member the caller checks
+ * @returns {Array<object>} the blocks holding that member
+ */
+function busyBlocksFor(source, teamMemberId) {
+  const value = source && typeof source === 'object' ? source.busyBlocks : undefined;
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ValidationError('busyBlocks must be an array of owner blocks: one member holds one slot at a time', {
+      field: 'busyBlocks',
+    });
+  }
+  return value.filter((block) => block && typeof block === 'object'
+    && (typeof block.teamMemberId !== 'string' || block.teamMemberId === '' || block.teamMemberId === teamMemberId));
+}
+
+/**
  * The no-double-booking invariant: one team member holds one slot at a time.
  * Two half-open slots `[startsAt, endsAt)` overlap when each starts before the
  * other ends; back-to-back slots share an endpoint and do not overlap. A
  * cancelled booking holds nothing — cancelling is how a slot is freed — but
  * every other state holds its slot even after it ends, because the slot was
- * real: the member was busy then, and the row is the evidence.
+ * real: the member was busy then, and the row is the evidence. An owner busy
+ * block (backlog:af190faf, no `status`) holds its slot the same way: the
+ * member is busy then, with no guest and no appointment row.
  *
  * @param {{teamMemberId: string, startMs: number, endMs: number}} candidate
- * @param {Array<any>} held the team member's existing rows
- * @returns {any|null} the conflicting row, or null
+ * @param {Array<any>} held the team member's existing rows, owner blocks included
+ * @returns {any|null} the conflicting row or block, or null
  */
 export function findOverlap(candidate, held) {
   for (const row of held ?? []) {
@@ -435,8 +462,9 @@ export function findOverlap(candidate, held) {
     // free slot: ignoring it would silently switch the no-double-booking
     // invariant off, so the booking is refused instead of booked over it.
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      const kind = row.status === undefined ? 'owner block' : 'appointment';
       throw new AppError(
-        `The held appointment "${typeof row.id === 'string' && row.id !== '' ? row.id : 'unknown'}" carries a slot this package cannot prove `
+        `The held ${kind} "${typeof row.id === 'string' && row.id !== '' ? row.id : 'unknown'}" carries a slot this package cannot prove `
         + `(startsAt "${String(row.startsAt)}", endsAt "${String(row.endsAt)}"): a booking overlapping an unprovable slot is refused, never booked over it.`,
         {
           code: 'APPOINTMENTS_STORAGE_INVALID',
@@ -448,6 +476,35 @@ export function findOverlap(candidate, held) {
     if (startMs < candidate.endMs && candidate.startMs < endMs) return row;
   }
   return null;
+}
+
+/**
+ * The 409 a held slot answers (backlog:af190faf): a booking conflict names
+ * the held appointment, an owner-block conflict names the commitment — the
+ * caller proposes another slot either way. Same code, same status, same
+ * details shape: only the words tell what holds the member.
+ *
+ * @param {string} teamMemberId
+ * @param {any} conflict the row or block `findOverlap` returned
+ * @returns {AppError}
+ */
+function overlapRefusal(teamMemberId, conflict) {
+  if (conflict && conflict.status === undefined) {
+    const title = typeof conflict.title === 'string' && conflict.title.trim() !== ''
+      ? conflict.title.trim().slice(0, 120) : 'Occupato';
+    return new AppError(
+      `The team member "${teamMemberId}" holds an owner commitment overlapping this slot `
+        + `(${conflict.startsAt} to ${conflict.endsAt}, "${title}"): one member holds one slot at a time. `
+        + 'Book another slot, or book another member.',
+      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+    );
+  }
+  return new AppError(
+    `The team member "${teamMemberId}" already holds an appointment overlapping this slot `
+      + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): one member holds one slot at a time. `
+      + 'Cancel the held booking to free the slot, or book another member.',
+    { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+  );
 }
 
 /**
@@ -852,14 +909,10 @@ export async function bookAppointment(context, request) {
     }
 
     const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
-    const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
+    const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
+      [...held, ...busyBlocksFor(request, input.teamMemberId)]);
     if (conflict) {
-      throw new AppError(
-        `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
-          + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): one member holds one slot at a time. `
-          + 'Cancel the held booking to free the slot, or book another member.',
-        { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
-      );
+      throw overlapRefusal(input.teamMemberId, conflict);
     }
 
     // The send target is proven before the first write: a fresh booking that
@@ -1203,9 +1256,19 @@ export async function rescheduleAppointment(context, request) {
     const others = held.filter((row) => row && row.id !== current.id);
     const conflict = findOverlap(
       { teamMemberId: current.teamMemberId, startMs: startsAt.ms, endMs: endsAt.ms },
-      others,
+      [...others, ...busyBlocksFor(record, current.teamMemberId)],
     );
     if (conflict) {
+      if (conflict.status === undefined) {
+        const title = typeof conflict.title === 'string' && conflict.title.trim() !== ''
+          ? conflict.title.trim().slice(0, 120) : 'Occupato';
+        throw new AppError(
+          `Il membro "${current.teamMemberId}" ha un impegno ("${title}") in questa fascia oraria `
+          + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
+          + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+          { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+        );
+      }
       throw new AppError(
         `Il membro "${current.teamMemberId}" ha già un altro appuntamento in questa fascia oraria `
         + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
@@ -1329,6 +1392,29 @@ const MAX_TEAM_WEEK_MS = 31 * 24 * 60 * 60 * 1000;
  * with their status, like the scheda read: a cancelled slot is still
  * evidence the member once held it.
  */
+/**
+ * One frozen owner-block row for the BO-F3-01 team view (backlog:af190faf):
+ * `{ startsAt, endsAt, title }`, null when the slot cannot be proven — the
+ * week read leaves it out, while the booking paths refuse over it. The title
+ * defaults to «Occupato»: a commitment with no guest has no customer to name.
+ *
+ * @param {any} block
+ * @returns {object|null}
+ */
+function projectBusyWeekRow(block) {
+  if (!block || typeof block !== 'object') return null;
+  const startMs = Date.parse(block.startsAt);
+  const endMs = Date.parse(block.endsAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  const title = typeof block.title === 'string' && block.title.trim() !== ''
+    ? block.title.trim().slice(0, 120) : 'Occupato';
+  return Object.freeze({
+    startsAt: new Date(startMs).toISOString(),
+    endsAt: new Date(endMs).toISOString(),
+    title,
+  });
+}
+
 function projectTeamWeekRow(row) {
   return Object.freeze({
     id: row.id,
@@ -1410,9 +1496,22 @@ export async function readTeamWeek({ appointments }, filter) {
       || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
       || String(a.id ?? '').localeCompare(String(b.id ?? ''))
     ));
+    // Owner commitments with no guest (backlog:af190faf): the week shows
+    // them as «Occupato» beside the bookings, so the grid paints what the
+    // booking path refuses. A block whose slot cannot be proven is left out
+    // of the read — the booking and suggestion paths still fail closed on
+    // it, so it can hide from the grid but never become a booking.
+    const busy = busyBlocksFor(value, teamMemberId)
+      .map((block) => projectBusyWeekRow(block))
+      .filter((projected) => projected !== null)
+      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso)
+      .sort((a, b) => (
+        a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt)
+      ));
     groups.push(Object.freeze({
       teamMemberId,
       appointments: Object.freeze(overlapping.map(projectTeamWeekRow)),
+      busy: Object.freeze(busy),
     }));
   }
   return Object.freeze({ from: from.iso, to: to.iso, members: Object.freeze(groups) });
@@ -1575,6 +1674,10 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
   const groups = [];
   for (const teamMemberId of checked.members) {
     const held = await appointments.listWhere({ teamMemberId });
+    // Owner commitments with no guest (backlog:af190faf) hold like bookings:
+    // the same rows the booking path overlap-checks, so a suggestion never
+    // offers a slot the booking would refuse.
+    const heldWithBlocks = [...held, ...busyBlocksFor(filter, teamMemberId)];
     const slots = [];
     for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
       // A proposal must be fully ahead: a step already begun cannot be
@@ -1584,7 +1687,7 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
       const candidate = { teamMemberId, startMs: start, endMs: start + slotMs };
       // findOverlap throws on a held row whose slot cannot be proven: a
       // corrupt witness fails the suggestion closed, never a silent free slot.
-      if (findOverlap(candidate, held) === null) {
+      if (findOverlap(candidate, heldWithBlocks) === null) {
         slots.push(Object.freeze({
           startsAt: new Date(start).toISOString(),
           endsAt: new Date(start + slotMs).toISOString(),
@@ -1688,13 +1791,10 @@ export async function proposeBooking(context, request) {
   const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments(context, names);
   const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
-  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
+  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
+    [...held, ...busyBlocksFor(request, input.teamMemberId)]);
   if (conflict) {
-    throw new AppError(
-      `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
-      + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): propose a free slot instead.`,
-      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
-    );
+    throw overlapRefusal(input.teamMemberId, conflict);
   }
   const gate = requireFlowPermissionGate(context);
   const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });

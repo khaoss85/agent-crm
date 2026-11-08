@@ -96,7 +96,26 @@ test('cancelled rows stay listed with their status', async () => {
 test('a member with no bookings reads as an empty group, never an error', async () => {
   const storage = fakeAppointments([row({ id: 'a-1' })]);
   const week = await weekOf(storage);
-  assert.deepEqual(week.members[1], { teamMemberId: 'coach-maria', appointments: [] });
+  assert.deepEqual(week.members[1], { teamMemberId: 'coach-maria', appointments: [], busy: [] });
+});
+
+test('an owner block with no guest reads as Occupato beside the bookings (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  const week = await weekOf(storage, {
+    busyBlocks: [
+      { teamMemberId: 'coach-guido', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'test accordo' },
+      { teamMemberId: 'coach-maria', startsAt: '2026-10-21T09:00:00.000Z', endsAt: '2026-10-21T10:00:00.000Z' },
+      { teamMemberId: 'coach-guido', startsAt: 'not-a-date', endsAt: '2026-10-20T16:00:00.000Z' },
+      { teamMemberId: 'coach-unknown', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' },
+    ],
+  });
+  assert.deepEqual(week.members[0].busy, [{
+    startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'test accordo',
+  }]);
+  assert.deepEqual(week.members[1].busy, [{
+    startsAt: '2026-10-21T09:00:00.000Z', endsAt: '2026-10-21T10:00:00.000Z', title: 'Occupato',
+  }]);
+  assert.deepEqual(week.members[0].appointments.map((booking) => booking.id), ['a-1']);
 });
 
 test('duplicate member ids collapse to one group', async () => {
