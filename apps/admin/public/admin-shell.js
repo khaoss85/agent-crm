@@ -45,7 +45,11 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1', icon: 'clienti' },
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2', icon: 'pipeline' },
   { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
-  { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze' },
+  // backlog:33782ba68747: «Agenti» takes the place of Sequenze in the
+  // sidebar. Sequenze keep their route (#/sequenze, linked from Agenti and
+  // from the native-modules catalog) but no sidebar voice of their own.
+  { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
+  { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
   // No voice of its own (prototype, design pass 6): the dashed "+ Nuovo modulo"
   // button under the voices is the entry, and its "Compila manualmente" opens
@@ -95,6 +99,7 @@ const AI_PLACEHOLDERS = Object.freeze({
   pipeline: 'Chiedi: «quanto posso chiudere questo mese?»',
   calendario: 'Scrivi: «trova 45 minuti con Marco e Sara»',
   sequenze: 'Scrivi: «crea una sequenza per i lead del sito»',
+  agenti: 'Scrivi: «@Riaggancio occupati dei lead WhatsApp non contattati»',
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
   'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
@@ -334,6 +339,22 @@ export function spaceMenuItems(spaces, activeId) {
 }
 
 /**
+ * Whether the open screen must re-render when the operator switches space
+ * (review #661): every screen that reads or writes space-scoped rows. The
+ * card shows space-scoped calls, Stato sync pulls for one space, the
+ * mounted home greets with the space name, and Agenti / Sequenze read and
+ * write the space's agents and sequences — left alone they would keep the
+ * space just left behind. Calendario too (review #664): its week and its
+ * queued phrase search belong to one space.
+ * @param {unknown} view the routed view id
+ * @param {{ mounted?: boolean }} [options]
+ */
+export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
+  if (view === 'dashboard') return mounted === true;
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze' || view === 'calendario';
+}
+
+/**
  * Build the sidebar model: fixed prototype voices plus the user's custom
  * modules (opt-in bundles are the "personalizzati" group). BO-F6-01: kernel
  * generated tables (channel inbox rows, import state, quality rows and the
@@ -345,9 +366,10 @@ export function spaceMenuItems(spaces, activeId) {
  * (customerDataAvailable), Sequenze only when the sequences package is
  * composed (sequencesAvailable): otherwise each stays disabled with its
  * story, like Pipeline/Calendario, never as a dead link to a blank screen.
- * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean }} input
+ * Agenti only when the agents package is composed (agentsAvailable).
+ * @param {{ pipelines?: Array<{ name?: unknown, label?: unknown }>, customModules?: Array<{ name?: unknown, origin?: unknown }>, customerDataAvailable?: boolean, sequencesAvailable?: boolean, agentsAvailable?: boolean }} input
  */
-export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false } = {}) {
+export function buildShellNav({ pipelines = [], customModules = [], customerDataAvailable = false, sequencesAvailable = false, agentsAvailable = false } = {}) {
   const firstPipeline = pipelines.find(
     (pipeline) => typeof pipeline?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(pipeline.name),
   );
@@ -363,6 +385,12 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
         return { ...item, route: `#/pipelines/${firstPipeline.name}`, available: true, disabledReason: '' };
       }
       return { ...item, route: null, available: false, disabledReason: 'Nessuna pipeline composta' };
+    }
+    if (item.id === 'agenti') {
+      if (agentsAvailable) {
+        return { ...item, route: '#/agenti', available: true, disabledReason: '' };
+      }
+      return { ...item, route: null, available: false, disabledReason: 'Agenti non attivi in questo spazio' };
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {

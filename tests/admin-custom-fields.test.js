@@ -107,7 +107,56 @@ test('postSubjectNote posts through the single writer', async () => {
   const client = stubClient(() => ({ note: { id: 'n1' } }));
   await postSubjectNote(client, { resource: 'contact', id: 'c7', text: 'Ci ha conosciuti in palestra.' });
   assert.equal(client.calls[0].path, '/api/customer-hub/notes');
-  assert.deepEqual(client.calls[0].body, { resource: 'contact', id: 'c7', text: 'Ci ha conosciuti in palestra.' });
+  // The scheda's own shape (production 07/11): `body`, never `text`.
+  assert.deepEqual(client.calls[0].body, { resource: 'contact', id: 'c7', body: 'Ci ha conosciuti in palestra.' });
+});
+
+// Production 07/11, space 2f07eeb9: the framework route answers a BARE
+// array, and `answer.values` on an array is Array.prototype.values — the
+// card read every saved value as none and showed «—». Exactly that payload.
+const PROD_VALUES = [{
+  key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [],
+  createdBy: 'u1', value: 'sì', updatedAt: '2026-11-07T16:23:09.466Z', updatedBy: 'u1',
+}];
+
+test('fetchFieldValues reads the bare array the framework route answers (production 07/11)', async () => {
+  const client = stubClient(() => PROD_VALUES);
+  const values = await fetchFieldValues(client, 'contact', '07ec5a4f-7205-404a-95df-cbf6d4346120');
+  assert.equal(values.length, 1, 'the bare array is the list, not Array.prototype.values');
+  assert.equal(values[0].value, 'sì');
+  assert.deepEqual(await fetchFieldValues(stubClient(() => ({ values: PROD_VALUES })), 'contact', 'c1'), PROD_VALUES,
+    'an enveloped answer still reads');
+  assert.deepEqual(await fetchFieldValues(stubClient(() => ({ values: 'x' })), 'contact', 'c1'), []);
+});
+
+test('fetchFieldDefs reads the bare array the framework route answers', async () => {
+  const defs = [{ key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [] }];
+  assert.deepEqual(await fetchFieldDefs(stubClient(() => defs)), defs);
+  assert.deepEqual(await fetchFieldDefs(stubClient(() => ({ fields: defs }))), defs);
+});
+
+test('a Sì/No value reads the same in every older representation', () => {
+  for (const value of ['sì', 'Sì', 'si', 'yes', true, 'true']) {
+    assert.equal(formatCustomValue({ type: 'si-no' }, value), 'sì', `${JSON.stringify(value)} reads sì`);
+  }
+  for (const value of ['no', 'No', false, 'false']) {
+    assert.equal(formatCustomValue({ type: 'si-no' }, value), 'no', `${JSON.stringify(value)} reads no`);
+  }
+});
+
+test('the Sì/No edit control round-trips the stored form', () => {
+  const doc = createFakeDocument();
+  const el = (tag, cls, text) => {
+    const node = doc.createElement(tag);
+    if (cls) node.setAttribute('class', cls);
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const def = { key: 'amico-verifica-l1', label: 'Amico verifica L1', type: 'si-no', options: [] };
+  assert.equal(fieldControl(el, def, 'sì').read(), 'sì', 'the stored sì opens selected and saves sì');
+  assert.equal(fieldControl(el, def, true).read(), 'sì');
+  assert.equal(fieldControl(el, def, 'no').read(), 'no');
+  assert.equal(fieldControl(el, def, null).read(), '', 'never set opens empty');
 });
 
 test('formatCustomValue reads Italian, null when never set', () => {

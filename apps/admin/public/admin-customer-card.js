@@ -1,12 +1,13 @@
 // @ts-check
 
 import { elFor, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS } from './admin-labels.js';
+import { openOfferPanel } from './admin-offer-panel.js';
 import {
   addFieldForm,
   defineField,
@@ -284,6 +285,21 @@ const channelLabel = (channel) => ownLabel(CHANNEL_LABELS, String(channel ?? '')
 const syncLabel = (sync) => ownLabel(SYNC_LABELS, String(sync ?? '').toLowerCase()) ?? String(sync ?? 'stato ignoto');
 
 /**
+ * Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta visibile in
+ * cronologia con il motivo e Riprova. La riga del server porta `sync:
+ * 'failed'` e il codice inglese in `errorCode`: qui si legge solo italiano,
+ * mai il codice grezzo da solo.
+ */
+export function failedSendReason(errorCode) {
+  const code = String(errorCode ?? '').trim();
+  if (code === 'CHANNEL_TEMPLATE_REQUIRED') return 'Fuori dalla finestra di 24 ore: serve un modello approvato.';
+  if (code === 'CHANNEL_CONNECTION_NOT_ACTIVE' || code === 'CHANNEL_CONNECTION_UNKNOWN') return 'Il canale non è collegato: aprilo in Connettori e riprova.';
+  if (code === 'CHANNEL_SECRET_UNAVAILABLE') return 'Il canale non può firmare l’invio: ricontrolla il collegamento e riprova.';
+  if (code !== '') return `Motivo: ${code}.`;
+  return 'Non sappiamo perché: controlla il collegamento e riprova.';
+}
+
+/**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
  *   spaceId?: string | (() => (string | null | undefined)),
  *   onAskAi?: (screenId: string, draft: string, customer: { resource: string, id: string }) => void}} deps
@@ -504,6 +520,22 @@ export function phoneRefusalText(error) {
   return isItalianSentence(record.message) ? String(record.message).trim() : own;
 }
 
+/**
+ * The reserved company a contact typed without Azienda sits under
+ * (customer-data `NO_COMPANY_NAME`, production 07/11): the core needs a
+ * company behind every contact, the scheda shows none.
+ */
+export const NO_COMPANY_NAME = 'Senza azienda';
+
+/** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
+export function shownCompanyName(card) {
+  const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
+  // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
+  const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
+  if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  return name;
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -512,7 +544,9 @@ export function createCustomerCardView(deps) {
   // submission-owned Idempotency-Key before any request leaves, so in
   // production «Aggiungi nota» answered «Nota non salvata» with no request
   // at all (04/11).
-  const { client } = bindAdminMutations(deps.client, deps);
+  const { client, submissions } = bindAdminMutations(deps.client, deps);
+  /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
+  const detailsInFlight = new Set();
   // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
   // The shell passes its storage; without one the buttons still navigate
   // and the creation screens open unpicked.
@@ -550,6 +584,47 @@ export function createCustomerCardView(deps) {
   };
 
   let channelFilter = 'all';
+  // The note writer picked under «Note» (Dan 06/11). Kept with the channel
+  // filter through a re-read of the same scheda, reset on a new one.
+  let noteAuthorFilter = null;
+  // How far the conversation is opened (Mostra precedenti). Kept with the
+  // channel filter when the same scheda re-reads itself, reset on a new one.
+  let timelineShown = TIMELINE_PAGE;
+  // The scheda on screen, so a re-read of the same customer (after Invia,
+  // a note, an edit) redraws in place instead of blanking the page.
+  let shownKey = null;
+  let shownSides = [];
+  // Review #612: what the person was typing in the scheda on screen (a note,
+  // the open Dettagli form, a phone number) when a re-read swaps it. The new
+  // scheda is built with it, so an Invia elsewhere never wipes their text.
+  let pendingDrafts = null;
+  // Review #612 round 5: what was being typed when a re-read of the same
+  // scheda failed. The error panel replaces the scheda, so the typing is
+  // kept here and handed to the next scheda that loads for this customer.
+  let retainedDrafts = null;
+
+  function readDrafts(root) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+    const drafts = {};
+    const note = root.querySelector('input[name="noteBody"]');
+    if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    if (root.querySelector('button[data-action="save-details"]')) {
+      // Review #612 round 3: only the fields the person changed travel to
+      // the new scheda. An untouched field takes the freshly read value, so a
+      // later Salva never writes back what another operator just changed.
+      drafts.details = {};
+      for (const name of ['firstName', 'lastName', 'email']) {
+        const input = root.querySelector(`input[name="${name}"]`);
+        if (input && typeof input.value === 'string' && input.value !== input.getAttribute('data-initial')) {
+          drafts.details[name] = input.value;
+        }
+      }
+    }
+    const phonePanel = root.querySelector('div[data-phone="open"]');
+    const phone = phonePanel ? phonePanel.querySelector('input') : null;
+    if (phone) drafts.phone = typeof phone.value === 'string' ? phone.value : '';
+    return Object.keys(drafts).length > 0 ? drafts : null;
+  }
 
   // Voce 908f2eb9bbfb: one slow or failing read must never fail the whole
   // scheda. Every read settles on its own: the card stays the identity
@@ -682,7 +757,7 @@ export function createCustomerCardView(deps) {
     const segments = [city, origin === null ? null : `via ${origin}`, follow === null ? null : `la segue ${follow}`]
       .filter((segment) => segment !== null);
     if (segments.length > 0) meta.appendChild(el('span', 'bo-scheda-sub', segments.join(' · ')));
-    else if (card?.company?.name) meta.appendChild(el('span', 'bo-scheda-sub', card.company.name));
+    else if (shownCompanyName(card)) meta.appendChild(el('span', 'bo-scheda-sub', shownCompanyName(card)));
     titles.appendChild(meta);
     head.appendChild(titles);
     panel.appendChild(head);
@@ -702,13 +777,21 @@ export function createCustomerCardView(deps) {
     // The offer form files under a company: a company pick is its own
     // company, a contact pick rides the linked one (null when the scheda
     // knows none — the offer form then says so honestly).
-    const companyId = typeof card?.company?.id === 'string' && card.company.id !== '' ? card.company.id : null;
-    const companyName = typeof card?.company?.name === 'string' && card.company.name.trim() !== ''
-      ? card.company.name.trim()
-      : null;
+    // Review #654: a contact typed without Azienda shows no company (the
+    // card API names none for its «no company» placeholder). Its offer is
+    // still filed under the contact's own placeholder — the one id the core
+    // accepts beside this contact, shared with no other customer — and the
+    // offer form reads the person's name, never «Senza azienda».
+    const shown = shownCompanyName(card);
+    const companyId = shown !== null && typeof card?.company?.id === 'string' && card.company.id !== ''
+      ? card.company.id : null;
+    const ownCompanyId = typeof navCtx?.contactCompanyId === 'string' && navCtx.contactCompanyId !== ''
+      ? navCtx.contactCompanyId : null;
     const company = resource === 'company'
       ? { id, name }
-      : (companyId !== null && companyName !== null ? { id: companyId, name: companyName } : null);
+      : (companyId !== null
+        ? { id: companyId, name: shown }
+        : (shown === null && ownCompanyId !== null ? { id: ownCompanyId, name } : null));
     return { resource, id, name, company };
   }
 
@@ -725,6 +808,10 @@ export function createCustomerCardView(deps) {
    *   connects Email (backlog:a935af6a6d19)
    */
   function composerChannelsFor(card, connections, profile) {
+    /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
+    const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+    /** The pilot's profile mailbox merged as a connection row: never a route. */
+    const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
     // Voce a935af6a6d19: the profile Google link counts for Email. The
     // Connettori screen links channel connections (one row per account),
@@ -756,18 +843,44 @@ export function createCustomerCardView(deps) {
     };
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
-      const live = matchConnections(channel, list).find((entry) => entry.status === 'active') ?? null;
+      // A real channel connection is preferred over the pilot's synthetic
+      // profile row, whatever their order (review #648, giro 2): the real
+      // row's key is a route readSyncState knows and its account is the
+      // mailbox that route sends from, so «Da» and the route agree. The
+      // synthetic row only stands in when it is the sole active one.
+      const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
+      const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
       // queues on); the profile Gmail mailbox only fills the gap, with no
       // key — the server still needs its own email connection to send.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
+      // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
+      // connections as an active email row (`profile:gmail`). Its account is
+      // the mailbox the «Da» row names; without one the profile Gmail still
+      // fills it. A connection key is never a sender: a `profile:` handle
+      // (any case) or the row's own key posing as an account counts as
+      // missing.
+      const liveAccount = channel === 'email' && live !== null && typeof live.account === 'string'
+        && live.account.trim() !== '' && !isProfileKey(live.account)
+        && live.account.trim() !== String(live.connectionKey ?? '').trim()
+        ? live.account.trim() : null;
+      const sender = liveAccount ?? (gmailLinked ? gmailSender : null);
+      // The synthetic profile row is no channel connection: its key is not
+      // a route the send queues on, so it is never sent (the server derives
+      // the route from the space's own mailbox).
+      const synthetic = live !== null && isSyntheticRow(live);
+      // «Connected» implies a sender for Email: a linked row that names no
+      // valid mailbox reads off with its Connettori link, never an enabled
+      // channel with an empty «Da».
+      const linked = live !== null || gmailLinked;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
-        connected: live !== null || gmailLinked,
-        connectionKey: live?.connectionKey ?? null,
-        sender: gmailLinked ? gmailSender : null,
+        connected: linked && (channel !== 'email' || sender !== null),
+        connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
+          && live.connectionKey !== '' ? live.connectionKey : null,
+        sender,
       });
     });
   }
@@ -824,6 +937,11 @@ export function createCustomerCardView(deps) {
         openPhonePanel(box, navCtx);
       });
       row.appendChild(add);
+      if (pendingDrafts && typeof pendingDrafts.phone === 'string') {
+        openPhonePanel(box, navCtx);
+        const typed = box.querySelector('div[data-phone="open"]')?.querySelector('input');
+        if (typed) typed.value = pendingDrafts.phone;
+      }
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -891,6 +1009,7 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone }),
         });
         toast('Telefono salvato');
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
         // The typed number stays in the field: the operator corrects it.
@@ -900,6 +1019,7 @@ export function createCustomerCardView(deps) {
       }
     });
     cancel.addEventListener('click', async () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
       await renderCard(navCtx.resource, navCtx.id);
     });
   }
@@ -1080,6 +1200,8 @@ export function createCustomerCardView(deps) {
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
+    const offerWindow = mount.querySelector('div[data-offer-panel="open"]');
+    if (offerWindow && offerWindow.parentNode) offerWindow.parentNode.removeChild(offerWindow);
     // The window hangs off the view, not off the Azioni column: a sticky
     // column is its own stacking layer painted in page order, so a fixed
     // window inside the left column sat under the right one (#605).
@@ -1191,6 +1313,16 @@ export function createCustomerCardView(deps) {
     row.appendChild(field);
     row.appendChild(line);
     let busy = false;
+    // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
+    // lives in composerAiPending, outside this row (review #664): the next
+    // Genera with the same words and channel — even after ✕ and Scrivi —
+    // reads that request back instead of asking the AI again.
+    // The latest Genera (a newer one supersedes a read-back) and the key of
+    // the queued draft being read back, if any.
+    let drafting = 0;
+    /** @type {string|null} */
+    let reading = null;
+    const pendingKey = (words, picked) => `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}:${picked}:${words}`;
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
@@ -1226,9 +1358,13 @@ export function createCustomerCardView(deps) {
       }
     };
     async function generate() {
-      if (busy) return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
+      // Review #664: during the minute of read-back a Genera with other
+      // words supersedes the queued read (its request stays for the next
+      // Genera with those words); the same words keep the read going. While
+      // the POST itself is in flight Genera stays off, as before.
+      if (busy && (reading === null || reading === pendingKey(words, picked))) return;
       if (words === '') {
         say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
@@ -1237,19 +1373,68 @@ export function createCustomerCardView(deps) {
         say('Nessun canale collegato: l’AI scrive per il canale scelto.');
         return;
       }
+      const mine = ++drafting;
+      const gone = () => stale() || mine !== drafting;
+      reading = null;
       busy = true;
       go.setAttribute('disabled', 'disabled');
       go.textContent = 'Scrivo…';
       say('');
       try {
-        const answer = await client.request('/api/customer-hub/messages/draft', {
-          method: 'POST',
-          body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
-        });
+        // Production 07/11 (same shape as the calendar phrase): a queued
+        // draft answers 504 *_PENDING with a requestId; it is read back on
+        // the same path every 3 s for about a minute, never asked again.
+        const key = pendingKey(words, picked);
+        let requestId = composerAiPending.get(key) ?? null;
+        composerAiPending.delete(key);
+        let answer = null;
+        if (requestId === null) {
+          try {
+            answer = await client.request('/api/customer-hub/messages/draft', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, contactId: navCtx.id, channel: picked, prompt: words }),
+            });
+          } catch (error) {
+            requestId = pendingRequestId(error, 'BO_DRAFT_PENDING');
+            if (requestId === null) throw error;
+          }
+        }
+        if (requestId !== null) {
+          if (gone()) {
+            composerAiPending.set(key, requestId);
+            return;
+          }
+          say('Scrivo ancora… la bozza arriva tra poco.');
+          // Genera comes back on during the read-back, so other words can
+          // supersede it (review #664).
+          reading = key;
+          go.removeAttribute?.('disabled');
+          go.textContent = 'Genera';
+          const read = await readBackPending(client, '/api/customer-hub/messages/draft', requestId, {
+            expectedCode: 'BO_DRAFT_PENDING',
+            spaceId: spaceId ?? null,
+            wait, everyMs: 3000, rounds: 20, stale: gone,
+          });
+          if (mine === drafting) reading = null;
+          if (read.stale) {
+            // Closed while reading back: the request stays for the next Genera.
+            composerAiPending.set(key, requestId);
+            return;
+          }
+          if (read.error) throw read.error;
+          if (read.pending) {
+            composerAiPending.set(key, read.requestId);
+            console.warn('[bo] bozza AI ancora in coda', { requestId: read.requestId, spaceId: spaceId ?? null });
+            say('L’AI sta impiegando più del previsto: premi di nuovo Genera per riprendere la stessa bozza.');
+            return;
+          }
+          answer = read.answer;
+        }
         // Review #599 P2: the composer may have been closed or reopened while
         // the AI wrote. A stale answer never touches a detached form nor the
-        // shared per-customer draft.
-        if (stale()) return;
+        // shared per-customer draft; a superseded one never overwrites the
+        // newer draft (review #664).
+        if (gone()) return;
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
@@ -1267,7 +1452,7 @@ export function createCustomerCardView(deps) {
         say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
         if (typeof text.focus === 'function') text.focus();
       } catch (error) {
-        if (stale()) return;
+        if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
         const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
@@ -1281,7 +1466,9 @@ export function createCustomerCardView(deps) {
         else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
+        if (mine !== drafting) return;
         busy = false;
+        reading = null;
         if (row.getAttribute('data-off') !== 'true') {
           go.removeAttribute?.('disabled');
           if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
@@ -1313,6 +1500,11 @@ export function createCustomerCardView(deps) {
   // the server accepted. In memory: a reload still drops them, like any
   // unsent form.
   const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
   // The idempotency key of a send whose outcome is not yet known, keyed by
   // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
   // the server finds its own request instead of mailing twice (production
@@ -1543,6 +1735,11 @@ export function createCustomerCardView(deps) {
         composerSendKeys.delete(sendKey);
         composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
+        // The re-read below keeps open windows through the in-place swap
+        // (#612); the sent message's own window closes first, as it always
+        // did, so the sent text never stays under a live Invia.
+        composerGeneration += 1;
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       };
       try {
@@ -1631,9 +1828,28 @@ export function createCustomerCardView(deps) {
     const offer = tile('Nuova offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
+    // Dan 06/11: the offer is written where the customer is — a window
+    // over the scheda like «Scrivi», never a jump to another page. Only one
+    // window at a time: the composer steps aside (its draft is kept).
     offer.addEventListener('click', () => {
-      if (pick !== null) writePendingCustomerPick(storage, 'offer', pick);
-      navigate('#/modules/opportunity/new');
+      if (pick === null) {
+        navigate('#/modules/opportunity/new');
+        return;
+      }
+      const composer = mount.querySelector('div[data-composer="open"]');
+      if (composer && composer.parentNode) composer.parentNode.removeChild(composer);
+      openOfferPanel({
+        doc,
+        host: mount,
+        client,
+        issueKey: () => submissions.issueKey(),
+        card,
+        navCtx,
+        company: pick.company,
+        spaceId: activeSpaceId(),
+        toast,
+        onCreated: () => { renderCard(navCtx.resource, navCtx.id); },
+      });
     });
     row.appendChild(offer);
     const appointment = tile('Nuovo appuntamento', 'appuntamento');
@@ -1793,7 +2009,7 @@ export function createCustomerCardView(deps) {
       box.appendChild(row);
     };
     fact('Nome', card?.name ?? '—');
-    if (card?.company?.name) fact('Azienda', card.company.name);
+    if (shownCompanyName(card)) fact('Azienda', shownCompanyName(card));
     fact('Email', card?.email ?? 'non disponibile');
     // Voce 1a066ddfe42a: plain Italian empty states; the English card reasons
     // stay in the API response, never on screen.
@@ -1835,6 +2051,15 @@ export function createCustomerCardView(deps) {
       };
       edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
       box.appendChild(edit);
+      if (pendingDrafts && pendingDrafts.details) {
+        const typed = pendingDrafts.details;
+        renderDetailsForm(box, card, contact, editCtx, restore);
+        for (const name of Object.keys(typed)) {
+          const input = box.querySelector(`input[name="${name}"]`);
+          if (input) input.value = typed[name];
+        }
+        return;
+      }
     }
     // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
     // It opens the BO-F0-04 bar with this customer already in the context —
@@ -1874,6 +2099,8 @@ export function createCustomerCardView(deps) {
       const input = el('input');
       input.setAttribute('name', name);
       input.value = value;
+      // What the form opened with: a re-read keeps only what differs from it.
+      input.setAttribute('data-initial', value);
       input.setAttribute('aria-label', label);
       box.appendChild(labelNode);
       box.appendChild(input);
@@ -1897,10 +2124,17 @@ export function createCustomerCardView(deps) {
     row.appendChild(cancel);
     box.appendChild(row);
     box.appendChild(error);
+    // Production 07/11: one Salva sent PATCH /contacts/<id> twice. The
+    // guard is the view's, not this form's: a second handler, a second form
+    // on the same contact (a re-render that raced) or a double tap all find
+    // the PATCH already in flight and send nothing.
+    const flightKey = `PATCH contact ${contact.id}`;
     let busy = false;
     save.addEventListener('click', async () => {
-      if (busy) return;
+      if (busy || detailsInFlight.has(flightKey)) return;
       busy = true;
+      detailsInFlight.add(flightKey);
+      save.disabled = true;
       error.textContent = '';
       try {
         await client.request(`/api/contacts/${encodeURIComponent(contact.id)}`, {
@@ -1911,13 +2145,17 @@ export function createCustomerCardView(deps) {
             email: emailInput.value,
           }),
         });
+        detailsInFlight.delete(flightKey);
         toast('Dati salvati');
+        if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
         toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
       } finally {
+        detailsInFlight.delete(flightKey);
         busy = false;
+        save.disabled = false;
       }
     });
     cancel.addEventListener('click', async () => {
@@ -2097,6 +2335,20 @@ export function createCustomerCardView(deps) {
     const notes = entries.filter((item) => item?.entry === 'note');
     const noteAuthor = (item) => (isHumanHandle(item?.teamAuthorId) ? String(item.teamAuthorId).trim() : '');
     const authors = [...new Set(notes.map(noteAuthor))];
+    // Review #612 round 3: a filter kept through a re-read may name a channel
+    // (or a note writer) the fresh cronologia no longer has. It falls back to
+    // «Tutti», like a new scheda, instead of a chip-less false empty state.
+    const filterGone = channelFilter === 'note'
+      ? notes.length === 0
+      : channelFilter !== 'all' && !channels.includes(channelFilter);
+    if (filterGone) {
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    } else if (noteAuthorFilter !== null && !authors.includes(noteAuthorFilter)) {
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    }
     const chips = el('p', 'bo-scheda-chips');
     const chip = (label, key, active, onPick) => {
       const node = el('button', undefined, label);
@@ -2111,7 +2363,7 @@ export function createCustomerCardView(deps) {
       const pick = (key) => () => {
         channelFilter = key;
         noteAuthorFilter = null;
-        shownCount = TIMELINE_PAGE;
+        timelineShown = TIMELINE_PAGE;
         drawChips();
         drawList();
       };
@@ -2132,7 +2384,7 @@ export function createCustomerCardView(deps) {
           const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
-            shownCount = TIMELINE_PAGE;
+            timelineShown = TIMELINE_PAGE;
             drawChips();
             drawList();
           });
@@ -2142,7 +2394,6 @@ export function createCustomerCardView(deps) {
         chips.appendChild(byAuthor);
       }
     };
-    let noteAuthorFilter = null;
     const list = el('div', 'bo-scheda-timeline');
     // Voce 32820692: the timeline entry carries the attachment reference
     // the host logged, and the card shows it — a thumbnail for photos, a
@@ -2186,7 +2437,7 @@ export function createCustomerCardView(deps) {
         return String(item?.channel ?? '') === channelFilter;
       });
       const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
-      const visible = ordered.slice(0, shownCount);
+      const visible = ordered.slice(0, timelineShown);
       if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
@@ -2317,6 +2568,45 @@ export function createCustomerCardView(deps) {
           state.setAttribute('data-sync', syncKey);
           bubble.appendChild(state);
         }
+        // Voce 97cba17cbb8c (VALIDAZIONE A4): un invio fallito resta
+        // visibile con il motivo italiano e Riprova. Riprova riusa la
+        // stessa rotta del composer (un tasto nuovo, mai un doppio invio:
+        // la chiave del messaggio è fresca a ogni tocco).
+        if (item?.entry === 'message' && isOutbound && syncKey === 'failed') {
+          const reason = el('p', 'bo-scheda-failed-reason', `Non consegnato: ${failedSendReason(item?.errorCode)}`);
+          reason.setAttribute('data-failed-reason', String(item?.errorCode ?? ''));
+          bubble.appendChild(reason);
+          const body = typeof item?.body === 'string' ? item.body : '';
+          const channel = typeof item?.channel === 'string' ? item.channel : '';
+          if (body !== '' && channel !== '') {
+            const retry = el('button', 'bo-scheda-retry', 'Riprova');
+            retry.setAttribute('type', 'button');
+            retry.setAttribute('data-action', 'message-retry');
+            retry.addEventListener('click', async () => {
+              retry.setAttribute('disabled', '');
+              try {
+                const spaceId = activeSpaceId();
+                await client.request('/api/customer-hub/messages', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    spaceId,
+                    resource: noteCtx?.resource,
+                    id: noteCtx?.id,
+                    channel,
+                    text: body,
+                    messageKey: freshMessageKey(),
+                  }),
+                });
+                toast('Messaggio in consegna');
+                await renderCard(noteCtx?.resource, noteCtx?.id);
+              } catch (error) {
+                toast(humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' }), true);
+                retry.removeAttribute('disabled');
+              }
+            });
+            bubble.appendChild(retry);
+          }
+        }
         row.appendChild(bubble);
         list.appendChild(row);
       }
@@ -2326,13 +2616,12 @@ export function createCustomerCardView(deps) {
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
-          shownCount += TIMELINE_PAGE;
+          timelineShown += TIMELINE_PAGE;
           drawList();
         });
         list.appendChild(older);
       }
     };
-    let shownCount = TIMELINE_PAGE;
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -2348,6 +2637,7 @@ export function createCustomerCardView(deps) {
       noteInput.setAttribute('name', 'noteBody');
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
+      if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
       const noteButton = el('button', undefined, 'Aggiungi nota');
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
@@ -2363,6 +2653,7 @@ export function createCustomerCardView(deps) {
             body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
           });
           toast('Nota aggiunta');
+          noteInput.value = '';
           await renderCard(noteCtx.resource, noteCtx.id);
         } catch (error) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
@@ -2754,9 +3045,53 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
+  /**
+   * Puts the new scheda on screen in one step. A re-read of the scheda already
+   * shown (after Invia, a note, an edit) keeps the old one up while it loads
+   * and swaps in the same tick: no blank flash, the page and the side columns
+   * keep their scroll, the conversation keeps its filter and its open pages.
+   */
+  function show(node, key, sides = []) {
+    const page = doc.scrollingElement ?? null;
+    const pageTop = key === shownKey && page ? page.scrollTop : null;
+    const sideTops = key === shownKey ? shownSides.map((side) => side.scrollTop ?? 0) : [];
+    // Review #612 round 2: the windows that hang off the view (Scrivi, the
+    // offer panel) stay open through a re-read of the same customer, with
+    // their text and focus; only the scheda itself is swapped.
+    const isWindow = (child) => typeof child?.getAttribute === 'function'
+      && (child.getAttribute('data-composer') === 'open' || child.getAttribute('data-offer-panel') === 'open');
+    const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
+    for (const child of Array.from(mount.childNodes ?? [])) {
+      if (!kept.includes(child)) mount.removeChild(child);
+    }
+    if (kept.length > 0 && typeof mount.insertBefore === 'function') mount.insertBefore(node, kept[0]);
+    else mount.appendChild(node);
+    sides.forEach((side, index) => {
+      if (sideTops[index]) side.scrollTop = sideTops[index];
+    });
+    if (pageTop !== null && page.scrollTop !== pageTop) page.scrollTop = pageTop;
+    shownKey = key;
+    shownSides = sides;
+  }
+
+  // Two renders racing (a route plus a re-read after a save) must not both
+  // land: only the newest paints, so the scheda never holds two Dettagli
+  // forms whose Salva would both write.
+  let cardRenderToken = 0;
+
   async function renderCard(resource, id) {
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
-    channelFilter = 'all';
+    const key = `${resource}/${id}`;
+    const renderToken = ++cardRenderToken;
+    if (key !== shownKey) {
+      // Another customer: clear at once, never leave the previous one up.
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+      shownKey = null;
+      shownSides = [];
+      retainedDrafts = null;
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    }
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
     // id) used to blank the scheda with neither the card nor the error panel.
@@ -2766,13 +3101,19 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    // A newer render started while this one loaded: it owns the screen.
+    if (renderToken !== cardRenderToken) return;
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
-      mount.appendChild(panel);
+      // Review #612 round 3: a failed re-read of the scheda already shown
+      // keeps its windows (a half-written Scrivi), filter, pages and scroll;
+      // only a first read that fails starts from nothing.
+      if (key === shownKey) retainedDrafts = readDrafts(mount) ?? retainedDrafts;
+      show(panel, key === shownKey ? key : null);
       return;
     }
     const {
@@ -2788,6 +3129,28 @@ export function createCustomerCardView(deps) {
       if (error && error.status === 404) return null;
       throw error;
     });
+    pendingDrafts = key === shownKey ? readDrafts(mount) : null;
+    if (key === shownKey && retainedDrafts !== null) {
+      pendingDrafts = { ...retainedDrafts, ...(pendingDrafts ?? {}) };
+    }
+    retainedDrafts = null;
+    try {
+      buildAndShow(key, resource, id, {
+        card, timeline, timelineError, profile, profileError,
+        enrichment, enrichmentError, calls, callsError,
+        fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment,
+      });
+    } finally {
+      pendingDrafts = null;
+    }
+    markRead(resource, id, timeline);
+  }
+
+  function buildAndShow(key, resource, id, {
+    card, timeline, timelineError, profile, profileError,
+    enrichment, enrichmentError, calls, callsError,
+    fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment,
+  }) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -2802,7 +3165,9 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card, { resource, id });
+    section(left, '', quickActions, card, {
+      resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
+    });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
@@ -2839,8 +3204,7 @@ export function createCustomerCardView(deps) {
     grid.appendChild(center);
     grid.appendChild(right);
     panel.appendChild(grid);
-    mount.appendChild(panel);
-    markRead(resource, id, timeline);
+    show(panel, key, [left, right]);
   }
 
   /**

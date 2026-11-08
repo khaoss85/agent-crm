@@ -62,3 +62,23 @@ export function romeClock(value) {
   if (!Number.isFinite(ms)) return '';
   return ROME_CLOCK.format(new Date(ms));
 }
+
+/**
+ * Display name from a read-only customer profile
+ * (`GET /api/customer-data/profile/:resource/:id`): the contact's full name,
+ * else the company name. The email is deliberately not a «nome», and an
+ * unknown customer resolves to null (the caller falls back to its own label
+ * or handle) — never a guessed name. Shared by Calendario and Oggi.
+ * @param {any} profile
+ * @returns {string | null}
+ */
+export function nameFromProfile(profile) {
+  const contact = profile?.identity?.contact ?? null;
+  const full = [contact?.firstName, contact?.lastName]
+    .filter((part) => typeof part === 'string' && part.trim() !== '')
+    .join(' ').trim();
+  if (full !== '') return full;
+  const company = typeof profile?.identity?.company?.name === 'string'
+    ? profile.identity.company.name.trim() : '';
+  return company !== '' ? company : null;
+}

@@ -621,6 +621,66 @@ test('the phrase carries a stated duration and refuses a past draft (backlog:d1e
   );
 });
 
+test('the phrase returns a day field when the sentence names no time (backlog:65ed7430)', async () => {
+  const service = fakeAppointments();
+  const withText = (text) => capabilityFor({ service, phraseLlm: { async complete() { return { text, dryRun: false }; } } });
+  const thursday = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22"}').parseBookingPhrase({
+    spaceId: 'spazio-prova', phrase: 'giovedì con Guido',
+  });
+  assert.equal(thursday.draft.day, '2026-10-22');
+  assert.equal(thursday.draft.startsAt, undefined, 'a day without a time never invents an hour');
+  for (const text of ['{"day": "22-10-2026"}', '{"day": "2026-02-30"}', '{"day": ""}']) {
+    await assert.rejects(
+      withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì con Guido' }),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+        return true;
+      },
+      `day must be refused: ${text}`,
+    );
+  }
+  await assert.rejects(
+    withText('{"day": "2026-10-22", "startsAt": "2026-10-23T17:00:00.000Z"}').parseBookingPhrase({
+      spaceId: 'spazio-prova', phrase: 'giovedì con Guido',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+      return true;
+    },
+    'a day and an instant on different Rome days disagree and are refused',
+  );
+  // backlog:65ed7430 — one midnight rule on the Rome wall clock only: a lone
+  // 00:00 in Rome is an invented midnight, while a lone 00:00Z is a stated
+  // early hour (02:00 in October, 01:00 in November) that stays bookable.
+  await assert.rejects(
+    withText('{"startsAt": "2026-10-21T22:00:00.000Z"}').parseBookingPhrase({
+      spaceId: 'spazio-prova', phrase: 'giovedì con Guido',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_UNUSABLE');
+      return true;
+    },
+    'a lone 00:00 on the Rome clock without day is never a stated hour',
+  );
+  for (const [text, phrase] of [
+    ['{"teamMemberId": "coach-guido", "startsAt": "2026-10-22T00:00:00.000Z"}', 'giovedì alle 2 di notte con Guido'],
+    ['{"teamMemberId": "coach-guido", "startsAt": "2026-11-05T00:00:00.000Z"}', 'giovedì alle 1 di notte con Guido'],
+  ]) {
+    const early = await withText(text).parseBookingPhrase({ spaceId: 'spazio-prova', phrase });
+    assert.equal(early.draft.day, undefined, `a stated early hour needs no day: ${text}`);
+    assert.equal(early.draft.startsAt, JSON.parse(text).startsAt, `a stated early hour stays bookable: ${text}`);
+  }
+  const midnight = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22", "startsAt": "2026-10-21T22:00:00.000Z"}')
+    .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì a mezzanotte con Guido' });
+  assert.equal(midnight.draft.day, '2026-10-22');
+  assert.equal(midnight.draft.startsAt, '2026-10-21T22:00:00.000Z', 'a stated midnight rides with its day');
+  const timed = await withText('{"teamMemberId": "coach-guido", "day": "2026-10-22", "startsAt": "2026-10-22T17:00:00.000Z"}')
+    .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì alle 19 con Guido' });
+  assert.equal(timed.draft.day, '2026-10-22');
+  assert.equal(timed.draft.startsAt, '2026-10-22T17:00:00.000Z');
+  assert.equal(service.rows.length, 0, 'a draft never writes');
+});
+
 test('the phrase names the Rome weekday and the next-occurrence rule (backlog:d1e4d90e)', async () => {
   const service = fakeAppointments();
   let seen = null;

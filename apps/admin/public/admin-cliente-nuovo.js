@@ -45,6 +45,8 @@ import {
 export const CLIENTI_NUOVO_ROUTE = '#/clienti/nuovo';
 export const MANUAL_IMPORT_SYSTEM = 'inserimento-manuale';
 export const MANUAL_PHONE_SYSTEM = 'phone';
+/** Shown beside the form when the customer exists but its note was refused. */
+export const NOTE_NOT_SAVED_WARNING = 'Cliente creato, ma la nota non è stata salvata: aggiungila dalla scheda.';
 
 /**
  * B4 — the session may die while the operator is typing (backlog:5a40c73e54aa).
@@ -479,6 +481,14 @@ export function createCustomerFormView(deps) {
     actions.appendChild(save);
     actions.appendChild(cancel);
     panel.appendChild(actions);
+    // A refused note (production 07/11: 400 BO_CRM_BODY_REFUSED, and the
+    // operator saw nothing) keeps the operator on the form with this line
+    // and the way to the scheda: the customer exists, only the note is
+    // missing, so Salva stays off — a second Salva would only re-match.
+    const noteWarning = el('p', 'field-error bo-cliente-nuovo-warning', '');
+    noteWarning.setAttribute('data-note-warning', '');
+    noteWarning.setAttribute('role', 'alert');
+    panel.appendChild(noteWarning);
 
     const setErrors = (errors) => {
       for (const [name, slot] of Object.entries(slots)) {
@@ -497,6 +507,8 @@ export function createCustomerFormView(deps) {
     }
     if (token !== renderToken) return;
     const customControls = fieldDefs.map((def) => fieldControl(el, def));
+    /** Set once the note-refused lock exists: a custom field added later lifts it too. */
+    let watchCustomControl = (entry) => { void entry; };
     for (const entry of customControls) customBox.appendChild(entry.wrap);
 
     let addOpen = false;
@@ -512,6 +524,7 @@ export function createCustomerFormView(deps) {
             const entry = fieldControl(el, def);
             customBox.appendChild(entry.wrap);
             customControls.push(entry);
+            watchCustomControl(entry);
             fieldDefs = [...fieldDefs, def];
           }
           while (addBox.firstChild) addBox.removeChild(addBox.firstChild);
@@ -538,6 +551,39 @@ export function createCustomerFormView(deps) {
     if (aiOn) renderAiBox(aiBox, previewBox, token, { setErrors, customControls, fieldDefs, notify });
 
     let busy = false;
+    let created = false;
+    /** The customer exists but its note was refused: say so here, beside the form. */
+    const showNoteRefused = (subject) => {
+      created = true;
+      save.disabled = true;
+      while (noteWarning.firstChild) noteWarning.removeChild(noteWarning.firstChild);
+      noteWarning.appendChild(el('span', undefined, `${NOTE_NOT_SAVED_WARNING} `));
+      const open = uiSecondaryButton(doc, 'Apri la scheda');
+      open.setAttribute('data-action', 'open-created-card');
+      open.addEventListener('click', () => navigate(`#/customer-card/${subject.resource}/${subject.id}`));
+      noteWarning.appendChild(open);
+      notify(NOTE_NOT_SAVED_WARNING);
+    };
+    // Review #654: the lock belongs to the customer just created, not to the
+    // form. Typing anything — another customer, or the same one with the
+    // note to retry — lifts it: Salva works again and the warning goes.
+    const releaseCreated = () => {
+      if (!created) return;
+      created = false;
+      if (!busy) save.disabled = false;
+      while (noteWarning.firstChild) noteWarning.removeChild(noteWarning.firstChild);
+    };
+    for (const control of [nome, email, telefono, azienda, nota]) {
+      control.addEventListener('input', releaseCreated);
+    }
+    // Custom fields count as typing too (review #654, giro 3): a select
+    // fires change, a text field input — and a field added later joins.
+    const watchCustom = (entry) => {
+      entry?.control?.addEventListener?.('input', releaseCreated);
+      entry?.control?.addEventListener?.('change', releaseCreated);
+    };
+    for (const entry of customControls) watchCustom(entry);
+    watchCustomControl = watchCustom;
     save.addEventListener('click', () => void saveCustomer());
     cancel.addEventListener('click', () => {
       clearNewCustomerDraft(drafts, draftScope());
@@ -596,7 +642,7 @@ export function createCustomerFormView(deps) {
     };
 
     async function saveCustomer() {
-      if (busy) return;
+      if (busy || created) return;
       const values = currentValues();
       const errors = validateCustomerForm(values);
       setErrors(errors);
@@ -730,8 +776,10 @@ export function createCustomerFormView(deps) {
           } catch (err) {
             if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
             if (token !== renderToken) return;
-            if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
+            showNoteRefused(subject);
+            return;
           }
+          if (token !== renderToken) return;
         }
         // Base-field edits written back above join the part-step warnings so
         // a later step failure can never overwrite them into silence.
@@ -760,7 +808,7 @@ export function createCustomerFormView(deps) {
         }
       } finally {
         busy = false;
-        save.disabled = false;
+        save.disabled = created;
       }
     }
 
@@ -889,7 +937,10 @@ export function createCustomerFormView(deps) {
               await postSubjectNote(client, { resource: subject.resource, id: subject.id, text: noteText });
             } catch {
               if (token !== renderToken) return;
-              if (warning === null) warning = 'Il cliente è creato, ma la nota non si è salvata: aggiungila dalla scheda.';
+              // Conferma stays (review #654, giro 3): a second press matches
+              // the same customer and retries the note.
+              showNoteRefused(subject);
+              return;
             }
           }
           navigate(`#/customer-card/${subject.resource}/${subject.id}`);

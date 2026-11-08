@@ -14,7 +14,7 @@ import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, coalescedProfileFor } from './profile.js';
-import { createPolicyReader, createSubjectForRow, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
+import { createPolicyReader, createSubjectForRow, isNoCompany, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -511,7 +511,9 @@ export function createCustomerDataOperations({ database, modules, events, config
 
   /** Create the Company/Contact this row names, through the core adapters. Shared with the sender resolution. */
   async function createSubjectFor(row, actor) {
-    return createSubjectForRow(core, row, actor);
+    // An empty Azienda stays empty (production 07/11): the import never
+    // turns the email domain into a company.
+    return createSubjectForRow(core, row, actor, { companyFromEmail: false });
   }
 
   async function recordExternalIdentity(row, subject, runId, actor) {
@@ -618,7 +620,9 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     subjects.push({ contact, company });
   }
   for (const company of companies) {
-    if (!seenCompanies.has(company.id)) subjects.push({ contact: null, company });
+    // A «no company» placeholder (production 07/11) is never a customer of
+    // its own: it only stands behind a contact, so it lists no row.
+    if (!seenCompanies.has(company.id) && !isNoCompany(company)) subjects.push({ contact: null, company });
   }
   const refs = {
     companyIds: new Set(companies.map((company) => company.id)),

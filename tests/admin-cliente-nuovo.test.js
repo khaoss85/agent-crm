@@ -7,6 +7,7 @@ import {
   MANUAL_PHONE_SYSTEM,
   NEW_CUSTOMER_DRAFT_KEY,
   NEW_CUSTOMER_DRAFT_TTL_MS,
+  NOTE_NOT_SAVED_WARNING,
   applyRefusalText,
   clearNewCustomerDraft,
   createCustomerFormView,
@@ -300,15 +301,22 @@ test('the Nuovo cliente note lands in the cronologia through the single writer',
   clickSave(rendered.mount);
   await flush();
   assert.equal(notesOf(client).length, 1, 'one note through POST /api/customer-hub/notes');
-  assert.deepEqual(notesOf(client)[0].body, { resource: 'contact', id: 'c7', text: 'Ci ha conosciuti in palestra.' });
+  // Production 07/11: exactly the scheda's «Aggiungi nota» shape — the note
+  // travels as `body`; `text` was refused 400 BO_CRM_BODY_REFUSED by the /bo
+  // edge, which reads `resource`, `id` and `body` only.
+  assert.deepEqual(notesOf(client)[0].body, { resource: 'contact', id: 'c7', body: 'Ci ha conosciuti in palestra.' });
+  assert.deepEqual(Object.keys(notesOf(client)[0].body).sort(), ['body', 'id', 'resource'],
+    'no extra or missing key: the same three keys the scheda sends');
   assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
 });
 
-test('a refused note warns but never blocks the created customer', async () => {
-  const client = stubClient((path, body) => {
+test('a refused note says so beside the form and keeps the way to the created scheda (production 07/11)', async () => {
+  const client = stubClient((path) => {
     if (path === '/api/customer-data/phrase/ai-available') return { available: false };
     if (path === '/api/customer-data/fields') return { definitions: [] };
-    if (path === '/api/customer-hub/notes') throw Object.assign(new Error('no'), { status: 503 });
+    if (path === '/api/customer-hub/notes') {
+      throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+    }
     return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
   });
   const rendered = render(client);
@@ -318,8 +326,109 @@ test('a refused note warns but never blocks the created customer', async () => {
   setValue(rendered.mount, 'nota', 'Una nota.');
   clickSave(rendered.mount);
   await flush();
-  assert.equal(rendered.navigated(), '#/customer-card/contact/c7', 'the customer still lands on its scheda');
-  assert.ok(rendered.notes.some((note) => note.includes('nota non si è salvata')), 'the warning names the note');
+  const warning = rendered.mount.findAll('p').find((node) => node.getAttribute('data-note-warning') !== null);
+  assert.ok(warning, 'the warning line sits in the form');
+  assert.ok(warning.textContent.includes(NOTE_NOT_SAVED_WARNING), 'the warning reads beside the form, never silent');
+  assert.equal(NOTE_NOT_SAVED_WARNING, 'Cliente creato, ma la nota non è stata salvata: aggiungila dalla scheda.');
+  assert.equal(rendered.navigated(), null, 'the operator stays on the form to read it');
+  const saveButton = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-customer');
+  assert.equal(saveButton.disabled, true, 'Salva stays off: the customer already exists');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'a second Salva writes nothing');
+  clickAction(rendered.mount, 'open-created-card');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7', 'Apri la scheda lands on the created customer');
+});
+
+test('review #654: the note-refused lock lifts as soon as the operator types again', async () => {
+  let applies = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+    }
+    applies += 1;
+    return accepted({ id: `c${applies}`, resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Una nota.');
+  clickSave(rendered.mount);
+  await flush();
+  const saveButton = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-customer');
+  assert.equal(saveButton.disabled, true, 'locked right after the refusal');
+  // Another customer: typing lifts the lock and Salva creates it.
+  setValue(rendered.mount, 'nome', 'Anna Bianchi');
+  field(rendered.mount, 'nome').dispatch('input');
+  setValue(rendered.mount, 'email', 'anna@esempio.it');
+  setValue(rendered.mount, 'nota', '');
+  assert.equal(saveButton.disabled, false, 'typing lifts the lock');
+  const warning = rendered.mount.findAll('p').find((node) => node.getAttribute('data-note-warning') !== null);
+  assert.equal(warning.textContent, '', 'the old warning leaves with the lock');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 2, 'the other customer is created, no reload needed');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c2');
+});
+
+test('review #654 giro 3: changing only a custom field lifts the note-refused lock', async () => {
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [{ key: 'amico', label: 'Amico', type: 'si-no', options: [] }] };
+    if (path === '/api/customer-hub/notes') {
+      throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+    }
+    if (path === '/api/customer-data/fields/value') return { value: { key: 'amico', value: 'sì' } };
+    return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Una nota.');
+  clickSave(rendered.mount);
+  await flush();
+  const saveButton = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-customer');
+  assert.equal(saveButton.disabled, true, 'locked after the refusal');
+  const amico = rendered.mount.findAll('select').find((node) => node.getAttribute('data-field-key') === 'amico');
+  amico.value = 'sì';
+  amico.dispatch('change');
+  assert.equal(saveButton.disabled, false, 'a custom field change lifts the lock');
+});
+
+test('review #654 giro 3: after a refused phrase note Conferma stays, and a second press retries the note', async () => {
+  let notes = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: true };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-data/phrase/preview') return { ...PHRASE_PREVIEW, note: 'Amico di Guido.' };
+    if (path === '/api/customer-data/phrase/apply') {
+      return { subject: { resource: 'contact', id: 'c7' }, matchedExisting: notes > 0, phoneLinked: true, phoneWarning: null, fields: [] };
+    }
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+      return { note: { id: 'n1' } };
+    }
+    return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client);
+  await rendered.view.render();
+  rendered.mount.findAll('textarea').find((node) => node.getAttribute('name') === 'frase').value = 'daniele pelleri amico di guido';
+  clickAction(rendered.mount, 'preview-phrase');
+  await flush();
+  clickAction(rendered.mount, 'apply-phrase');
+  await flush();
+  const confirm = rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'apply-phrase');
+  assert.ok(confirm && confirm.hidden !== true, 'Conferma stays on screen after the refused note');
+  assert.equal(rendered.navigated(), null, 'the operator stays to read the warning');
+  clickAction(rendered.mount, 'apply-phrase');
+  await flush();
+  assert.equal(notes, 2, 'the second press retries the note');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c7');
 });
 
 test('+ Aggiungi campo creates a space field and its control reads on the form', async () => {

@@ -28,6 +28,11 @@
  *   and expectedCloseDate, so the pair proves the C13/C15 card lines (sigla
  *   referente, `chiusura <data>`); the probe gate (`pipeline-ready`, 5 cards)
  *   passed on the same render.
+ * - agenti (new) and spazi-accessi (refreshed: the Team now lists the
+ *   space's agents beside the people): rendered by `npm run bo:shots --
+ *   --screen agenti|spazi-accessi` on the backlog:33782ba68747 branch; the
+ *   probe gates (`agenti-ready`: 2 agents, 1 Da fare item with 3 disabled
+ *   controls, 3 catalogue tiles; `spazi-accessi-ready` unchanged) passed.
  * - login: rendered by the CI `bo-shots` workflow on the self-hosted Mac
  *   runner for this branch (workflow_dispatch run 40775943607 on
  *   `minimal/5acdfd87-login`; `login.html`/`login.js` byte-identical to
@@ -63,7 +68,7 @@ test('bo:shots proof fixtures show every committed screen filled at both widths'
     [...SCREEN_NAMES].sort(),
     'the proof set covers the whole screen registry',
   );
-  assert.equal(PROVEN_SCREENS.length, 17, 'seventeen screens carry committed proof');
+  assert.equal(PROVEN_SCREENS.length, 18, 'eighteen screens carry committed proof');
   for (const name of PROVEN_SCREENS) {
     for (const [viewport, floor] of [[DESKTOP, 20000], [PHONE, 10000]]) {
       const file = `${name}-${viewport.width}x${viewport.height}.png`;

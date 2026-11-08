@@ -1,6 +1,7 @@
 // @ts-check
 
 import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
+import { isNoCompany } from './sender.js';
 import { deriveCustomerStatus } from './customer-status.js';
 
 /**
@@ -185,6 +186,9 @@ export async function profileFor({ modules, core, names, subject }) {
   const companyIds = new Set(cluster.members.filter((m) => m.resource === 'company').map((m) => m.id));
   const contactIds = new Set(cluster.members.filter((m) => m.resource === 'contact').map((m) => m.id));
   if (identity.company?.id) companyIds.add(identity.company.id);
+  // The contact's own «no company» placeholder reads as no company, but an
+  // offer filed under it is still this customer's.
+  if (identity.contact?.companyId) companyIds.add(identity.contact.companyId);
   if (identity.contact?.id) contactIds.add(identity.contact.id);
 
   // The customer's own opportunities are resolved first, because a quote names
@@ -356,9 +360,17 @@ async function readIdentity({ modules, subject, cluster }) {
     contact = await read(contacts, canonical.id);
     if (contact?.companyId) company = await read(companies, contact.companyId);
   }
+  // A contact typed without Azienda sits under its own «no company»
+  // placeholder (production 07/11): the profile — and the card and timeline
+  // that read it — names no company for it. The contact still carries its
+  // companyId, the one id an offer for this customer is filed under.
+  const shownCompany = company && !(contact && isNoCompany(company)) ? company : null;
   return Object.freeze({
-    company: company ? Object.freeze({ id: company.id, name: company.name, domain: company.domain ?? null }) : null,
-    contact: contact ? Object.freeze({ id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName }) : null,
+    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name, domain: shownCompany.domain ?? null }) : null,
+    contact: contact ? Object.freeze({
+      id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName,
+      companyId: typeof contact.companyId === 'string' && contact.companyId !== '' ? contact.companyId : null,
+    }) : null,
     note: company || contact ? null : 'the canonical record for this subject could not be read from the host application',
   });
 }

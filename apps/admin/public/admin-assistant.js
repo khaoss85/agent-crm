@@ -27,7 +27,11 @@
 // confirmation first.
 
 import { formatMinorUnits } from './admin-core.js';
-import { issueAdminKey } from './admin-submission.js';
+import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
+import {
+  PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
+  isPhraseUnclear, loadSpaceAgents,
+} from './admin-agenti.js';
 import { callOutcomeLabel, romeClock } from './admin-labels.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
@@ -1717,9 +1721,25 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  * and the free-question box (disabled with the key message in dry-run).
  * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void }} options
  */
-export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {} } = {}) {
+export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {}, spaceId = null } = {}) {
   if (!doc || !mount || !client) throw new Error('Il pannello assistente richiede doc, mount e client.');
+  // backlog:33782ba68747: «@Agente …» writes through the mutation-bound
+  // client (Idempotency-Key), scoped to the shell's active space.
+  const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
+  /** @type {any} */
+  let boundClient = null;
+  /** The «@Agente» intent in flight, kept until it succeeds (review #661 P1). @type {any} */
+  let pendingAttempt = null;
+  const bound = () => {
+    if (boundClient === null) boundClient = bindAdminMutations(client).client;
+    return boundClient;
+  };
   const state = {
+    /**
+     * backlog:33782ba68747: the «@Agente …» request in flight, or null.
+     * @type {null | { typed: string, status: string, agent?: any, instruction?: string, rest?: string, agents?: Array<any>, message?: string, busy?: boolean, once?: boolean, space?: string | null }}
+     */
+    mention: null,
     open: false,
     screenId: 'oggi',
     status: null,
@@ -2030,9 +2050,16 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       state.answer = null;
       state.error = '';
       state.pendingConfirmId = null;
+      state.mention = null;
     }
     if (typed === '') {
       render();
+      return;
+    }
+    // backlog:33782ba68747: «@Nome …» talks to an agent of this space, in
+    // every mode — it is an instruction to a colleague, not a question.
+    if (typed.startsWith('@')) {
+      await startMention(typed);
       return;
     }
     // A question typed in the top bar (Dan 05/11): live → the free
@@ -2076,6 +2103,155 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     drainQueued();
   }
 
+  /** Resolve «@Nome …» against this space's agents (backlog:33782ba68747). */
+  async function startMention(typed) {
+    const space = readSpace();
+    state.asked = null;
+    state.mention = { typed, status: 'loading', space };
+    render();
+    const agents = await loadSpaceAgents(client, space);
+    // A newer question or a space switch meanwhile wins (review #661 P3).
+    if (state.mention === null || state.mention.typed !== typed || state.mention.space !== space) return;
+    if (agents === null) {
+      state.mention = { typed, status: 'unavailable', space };
+    } else {
+      const found = findMentionedAgent(typed, agents);
+      if (!found || !found.agent) {
+        const word = found?.typedName ?? '';
+        state.mention = { typed, status: 'unknown', agents, rest: typed.slice(1 + word.length).trim(), space };
+      } else if (found.instruction === '') {
+        state.mention = { typed, status: 'empty', agent: found.agent, space };
+      } else {
+        state.mention = { typed, status: 'confirm', agent: found.agent, instruction: found.instruction, space };
+      }
+    }
+    render();
+  }
+
+  /** Hand the instruction to the agent through create-assignment. */
+  async function confirmMention(once) {
+    const mention = state.mention;
+    if (!mention || mention.busy || !mention.agent || !mention.instruction || !mention.space) return;
+    // Review #661 P2: the space may have changed since the card resolved.
+    // Never post to the space left behind: resolve again in the active one.
+    if (readSpace() !== mention.space) {
+      await startMention(mention.typed);
+      return;
+    }
+    mention.busy = true;
+    mention.once = once;
+    // Review #661 P1: one intent keeps one sourceKey and key across retries.
+    pendingAttempt = assignAttempt(pendingAttempt, {
+      spaceId: mention.space, agentSourceKey: mention.agent.sourceKey, phrase: mention.instruction,
+    });
+    render();
+    try {
+      const made = await assignToAgent(bound(), pendingAttempt, { once });
+      pendingAttempt = null;
+      mention.status = 'done';
+      mention.message = `Fatto: ${mention.agent.name} ha l’incarico «${mention.instruction}» (${made ? describeSchedule(made).toLowerCase() : 'registrato'}).`;
+      // A card cancelled meanwhile stays quiet (review #661 P3).
+      if (state.mention === mention) notify(`Incarico dato a ${mention.agent.name}`);
+    } catch (error) {
+      if (isPhraseUnclear(error)) {
+        mention.status = 'unclear';
+      } else {
+        mention.status = 'error';
+        mention.message = assignErrorText(error);
+      }
+    } finally {
+      mention.busy = false;
+      render();
+    }
+  }
+
+  function agentsLink() {
+    const link = el(doc, 'a', 'bo-assistant-source-link', 'Apri Agenti');
+    link.setAttribute('href', '#/agenti');
+    link.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate('#/agenti');
+    });
+    return link;
+  }
+
+  /** The «@Agente» card: who, what, and one explicit confirm before writing. */
+  function renderMention() {
+    const mention = state.mention;
+    if (!mention) return null;
+    const box = el(doc, 'div', 'bo-assistant-answer bo-assistant-agent');
+    box.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(mention.typed, 140)}»`));
+    const say = (line) => box.appendChild(el(doc, 'p', 'bo-assistant-line', line));
+    switch (mention.status) {
+      case 'loading':
+        say('Cerco l’agente…');
+        break;
+      case 'unavailable':
+        say('Gli agenti non sono ancora disponibili in questo spazio.');
+        break;
+      case 'unknown': {
+        const agents = Array.isArray(mention.agents) ? mention.agents : [];
+        if (agents.length === 0) {
+          say('Non hai ancora agenti nel team: aggiungine uno dal catalogo.');
+          box.appendChild(agentsLink());
+          break;
+        }
+        say('Non trovo un agente con questo nome. Agenti del team:');
+        const chips = el(doc, 'div', 'bo-assistant-chips');
+        for (const agent of agents) {
+          if (typeof agent?.name !== 'string' || agent.name.trim() === '') continue;
+          const chip = el(doc, 'button', 'bo-assistant-suggestion', `@${agent.name}`);
+          chip.setAttribute('type', 'button');
+          chip.addEventListener('click', () => {
+            void startMention(`@${agent.name} ${mention.rest ?? ''}`.trim());
+          });
+          chips.appendChild(chip);
+        }
+        box.appendChild(chips);
+        break;
+      }
+      case 'empty':
+        say(`Cosa deve fare ${mention.agent.name}? Scrivi «@${mention.agent.name}» e l’incarico nella barra in alto.`);
+        break;
+      case 'confirm':
+      case 'unclear': {
+        say(`Incarico per ${mention.agent.name}: «${shortText(mention.instruction, 200)}»`);
+        if (mention.status === 'unclear') say(PHRASE_UNCLEAR_NOTE);
+        const actions = el(doc, 'div', 'bo-assistant-actions');
+        const go = el(doc, 'button', 'bo-assistant-confirm', mention.status === 'unclear'
+          ? 'Fallo una volta, adesso'
+          : `Affida a ${mention.agent.name}`);
+        go.setAttribute('type', 'button');
+        go.setAttribute('data-action', mention.status === 'unclear' ? 'agent-once' : 'agent-assign');
+        go.disabled = mention.busy === true;
+        go.addEventListener('click', () => { void confirmMention(mention.status === 'unclear'); });
+        actions.appendChild(go);
+        const cancel = el(doc, 'button', 'bo-assistant-cancel', 'Annulla');
+        cancel.setAttribute('type', 'button');
+        cancel.disabled = mention.busy === true;
+        cancel.addEventListener('click', () => { state.mention = null; render(); });
+        actions.appendChild(cancel);
+        box.appendChild(actions);
+        break;
+      }
+      case 'done':
+        say(String(mention.message ?? ''));
+        box.appendChild(agentsLink());
+        break;
+      default: {
+        box.appendChild(el(doc, 'p', 'bo-assistant-error', String(mention.message ?? 'Qualcosa non è andato.')));
+        // Retry the same intent: same sourceKey, never a second incarico.
+        const retry = el(doc, 'button', 'bo-assistant-confirm', 'Riprova');
+        retry.setAttribute('type', 'button');
+        retry.setAttribute('data-action', 'agent-retry');
+        retry.disabled = mention.busy === true;
+        retry.addEventListener('click', () => { void confirmMention(mention.once === true); });
+        box.appendChild(retry);
+      }
+    }
+    return box;
+  }
+
   function render() {
     clearMount();
     if (!state.open) return;
@@ -2111,8 +2287,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-note', 'Finisco la risposta in corso, poi rispondo a questa.'));
       scroll.appendChild(waiting);
     }
+    const mentionBox = renderMention();
+    if (mentionBox) scroll.appendChild(mentionBox);
     const answer = renderAnswer();
-    if (!answer && !state.busy && !state.asked) {
+    if (!answer && !state.busy && !state.asked && !mentionBox) {
       const hello = el(doc, 'div', 'bo-assistant-hello');
       hello.appendChild(el(doc, 'p', 'bo-assistant-hello-title', 'Cosa vuoi sapere?'));
       hello.appendChild(el(doc, 'p', 'bo-assistant-hello-text', 'Rispondo leggendo i dati di questo spazio e ti porto alla scheda giusta.'));
@@ -2219,6 +2397,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         traceExecutions: Array.isArray(state.answer?.trace?.executions) ? state.answer.trace.executions.length : 0,
         pendingConfirmId: state.pendingConfirmId,
         error: state.error,
+        mentionStatus: state.mention?.status ?? null,
       };
     },
   };

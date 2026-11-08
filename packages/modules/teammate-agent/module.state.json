@@ -1,0 +1,142 @@
+{
+  "stateVersion": 2,
+  "module": "teammate-agent",
+  "revision": 1,
+  "fingerprint": "a92fc2a563cbeb03e85e174894e2b230c3bdb5ad9d6f7da79181419fa5c810f1",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "teammate-agent",
+    "description": "One teammate agent of one space (backlog:8986f4459f0f): a named agent with a role and working instructions plus an optional monthly spending cap in cents. Every row is managed: an agent exists only through the agents package create operation. (backlog:8986f4459f0f)",
+    "table": "teammate_agents",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "name",
+        "writable": "managed"
+      },
+      {
+        "name": "role",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "role",
+        "writable": "managed"
+      },
+      {
+        "name": "instructions",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "instructions",
+        "writable": "managed"
+      },
+      {
+        "name": "spendingCapCents",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "spending_cap_cents",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "status",
+        "writable": "managed",
+        "default": "active",
+        "values": [
+          "active",
+          "paused"
+        ]
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_teammate_agents",
+      "checksum": "31aa25373be0f9117ffcdff50599f3f4c3b26757f37dcde804893c1824c3a7d4",
+      "sql": "CREATE TABLE IF NOT EXISTS teammate_agents (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  name TEXT,\n  role TEXT,\n  instructions TEXT,\n  spending_cap_cents INTEGER,\n  status TEXT CHECK(status IN ('active', 'paused')),\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS teammate_agents_space_id ON teammate_agents(space_id);\nCREATE INDEX IF NOT EXISTS teammate_agents_source_package ON teammate_agents(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_teammate_agents",
+      "checksum": "20f02cf966f4de2d19c37b3f00a2f169ac7e6ebde3787126ce8c1be4a61964d0",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"teammate_agents\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"name\" TEXT,\n  \"role\" TEXT,\n  \"instructions\" TEXT,\n  \"spending_cap_cents\" BIGINT,\n  \"status\" TEXT CHECK(\"status\" IN ('active', 'paused')),\n  \"decided_at\" TIMESTAMPTZ,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"teammate_agents_space_id\"\n  ON \"accordo\".\"teammate_agents\"(\"space_id\");\n\nCREATE INDEX \"teammate_agents_source_package\"\n  ON \"accordo\".\"teammate_agents\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "a92fc2a563cbeb03e85e174894e2b230c3bdb5ad9d6f7da79181419fa5c810f1"
+      }
+    },
+    "evolutions": []
+  }
+}

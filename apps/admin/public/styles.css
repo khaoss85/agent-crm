@@ -953,6 +953,66 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 }
 
 /*
+ * Agenti (backlog:33782ba68747): the Sequenze page frame (.bo-seq / -top /
+ * -title) with agent cards in the violet «agent» authority, a Da fare list
+ * and the catalogue tiles. Cards flow in an auto-fill grid and stack in one
+ * column on a phone; the talk form keeps input and button on one row and
+ * wraps under 420px. No new tokens.
+ */
+.bo-agenti-section { display: flex; flex-direction: column; gap: 12px; margin: 0; }
+.bo-agenti-section > h3, .bo-agenti-sectionhead h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
+.bo-agenti-sectionhead { display: flex; align-items: center; gap: 10px; }
+.bo-agenti-count { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 99px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--pending-soft); color: var(--pending-ink); }
+.bo-agent-grid, .bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.bo-agent-card, .bo-catalog-item, .bo-dafare-item { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
+.bo-agent-card { border-color: var(--agent-line); }
+.bo-agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.bo-agent-avatar { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--agent-soft); color: var(--agent-ink); }
+.bo-agent-avatar-sm { width: 34px; height: 34px; border-radius: 10px; font-size: 12px; }
+.bo-agent-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bo-agent-name { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-role { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
+.bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
+.bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
+.bo-agent-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.bo-agent-fact { min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--paper); }
+.bo-agent-fact dt { margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+.bo-agent-fact dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.bo-agent-assignment { padding: 8px 10px; border-left: 3px solid var(--agent-line); }
+.bo-agent-phrase { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.bo-agent-when { margin: 2px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.bo-agent-noassign { margin: 0; }
+.bo-agent-talk { display: flex; gap: 8px; align-items: center; }
+.bo-agent-talk .bo-agent-input { flex: 1; min-width: 0; }
+.bo-agent-talk .ui-btn { flex: none; }
+.bo-agent-unclear { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--pending-soft); color: var(--pending-ink); font-size: 13px; line-height: 1.45; }
+.bo-agent-unclear p { margin: 0; }
+.bo-agent-done { margin: 0; font-size: 13px; font-weight: 700; color: var(--accent); }
+.bo-agent-tip, .bo-agenti-legacy { margin: 0; font-size: 13px; }
+.bo-dafare-list { display: flex; flex-direction: column; gap: 10px; }
+.bo-dafare-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.bo-dafare-when { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.bo-dafare-phrase { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-dafare-lines { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; overflow-wrap: anywhere; }
+.bo-dafare-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.bo-dafare-actions .ui-btn[disabled] { opacity: .55; cursor: not-allowed; }
+.bo-dafare-note { margin: 0; }
+.bo-catalog-text { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.bo-catalog-example { margin: 0; font-size: 12.5px; color: var(--agent-ink); overflow-wrap: anywhere; }
+.bo-catalog-item > .ui-btn, .bo-catalog-item > .ui-badge { align-self: flex-start; margin-top: auto; }
+.bo-agent-team { display: grid; }
+.bo-agent-team-title { margin: 0; padding: 14px 20px 6px; border-top: 1px solid var(--line-faint); font-size: 13px; color: var(--muted); }
+.bo-agent-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--line-faint); }
+.bo-agent-team-link { font-size: 12px; color: var(--muted); }
+@media (max-width: 420px) {
+  .bo-agent-talk { flex-wrap: wrap; }
+  .bo-agent-talk .ui-btn { flex: 1 1 100%; }
+  .bo-agent-facts { grid-template-columns: 1fr 1fr; }
+}
+
+/*
  * Spazi e accessi (BO-F0-06): space cards, team rows with invite and
  * two-step removal, and the five AI switches with their one-line meaning.
  * Same tokens, radii and row idiom as the settings rows above — no new
@@ -1316,6 +1376,8 @@ select.bo-spazi-input { flex: none; }
 .cal-day-head .cal-today { display: inline-block; background: var(--ink); color: var(--paper); border-radius: 999px; min-width: 44px; padding: 2px 8px; font-weight: 700; }
 .cal-day { position: relative; display: grid; grid-template-rows: repeat(18, minmax(30px, auto)); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
 .cal-day:last-child { border-right: 1px solid var(--line); }
+/* backlog:5fbebe8559e9: the compact empty-day row exists only on the phone stack. */
+.cal-day-compact { display: none; }
 .cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
@@ -1377,6 +1439,26 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions { flex-shrink: 1; flex-wrap: wrap; width: auto; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
+  /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
+   * detail, «Fissa con una frase», the week, Team, the manual form, online
+   * booking — so the grid is not pushed under every rail card. The rail
+   * dissolves into the column and each card takes its place by order. */
+  .cal-layout { display: flex; flex-direction: column; gap: 14px; }
+  .cal-layout > .cal-rail { display: contents; }
+  .cal-rail > [data-role="event-detail"] { order: 1; }
+  .cal-rail > .cal-ai { order: 2; }
+  .cal-layout > .cal-main { order: 3; }
+  .cal-rail > .cal-team { order: 4; }
+  .cal-rail > .cal-manual { order: 5; }
+  .cal-rail > .cal-booking { order: 6; }
+  /* backlog:5fbebe8559e9: an empty day is one compact row (day, «Nessun
+   * appuntamento», «+ Prenota») instead of a 540px empty timeline; a day
+   * with blocks keeps its hours at a shorter row height. */
+  .cal-grid .cal-day.is-empty, .cal-grid .cal-day-head.is-empty { display: none; }
+  .cal-grid .cal-day-compact { display: flex; align-items: center; gap: 10px; grid-column: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
+  .cal-day-compact-name { font-weight: 700; text-transform: capitalize; }
+  .cal-day-compact > span:not(.cal-day-compact-name) { color: var(--muted); flex: 1; min-width: 0; }
+  .cal-grid .cal-day { grid-template-rows: repeat(18, minmax(22px, auto)); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
 }
 
 /*
@@ -2301,4 +2383,40 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
    * (pointerdown + pointerup), a swipe scrolls and cancels the pick. Scoped
    * to the stacked layout only: a wide touch screen keeps the drag. */
   .cal-day { touch-action: manipulation; }
+}
+/* ---- Nuova offerta in a window over the scheda (Dan 06/11) ------------- */
+/* Same frame as the composer; the body is a short form: four facts in a
+   two-column grid, the catalog as chips, one primary action. */
+.bo-offer-panel .bo-offer-body { padding-bottom: 6px; }
+.bo-offer-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; padding: 6px 0 4px; }
+.bo-offer-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 0 6px; border-bottom: 1px solid var(--line-faint); }
+.bo-offer-field-wide { grid-column: 1 / -1; }
+.bo-offer-field:focus-within { border-bottom-color: var(--ink); }
+.bo-offer-label { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
+.bo-scheda-composer .bo-offer-input { width: 100%; min-height: 0; padding: 4px 0 2px; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
+.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); }
+.bo-scheda-composer .bo-offer-input[name="offer-title"] { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+.bo-scheda-composer .bo-offer-input[name="offer-title"]::placeholder { font-weight: 450; }
+.bo-scheda-composer .bo-offer-input[name="offer-value"] { font-variant-numeric: tabular-nums; }
+.bo-offer-field .field-error { margin: 2px 0 0; font-size: 12px; }
+.bo-offer-field .field-error:empty { display: none; }
+.bo-offer-catalog { padding: 12px 0 4px; }
+.bo-offer-catalog[data-empty="true"] { display: none; }
+.bo-offer-catalog-title { margin: 0 0 8px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.bo-offer-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bo-offer-pick { display: inline-flex; align-items: center; gap: 4px; }
+.bo-scheda-composer .bo-offer-chip { display: inline-flex; align-items: baseline; gap: 8px; min-height: 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 550; cursor: pointer; transition: border-color .12s, background .12s, color .12s; }
+.bo-scheda-composer .bo-offer-chip:hover { border-color: var(--ink); }
+.bo-scheda-composer .bo-offer-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bo-scheda-composer .bo-offer-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.bo-scheda-composer .bo-offer-chip[aria-pressed="true"]::before { content: "✓"; font-size: 11px; margin-right: -2px; }
+.bo-offer-chip-price { font-family: var(--mono); font-size: 11.5px; font-weight: 450; opacity: .7; font-variant-numeric: tabular-nums; }
+.bo-scheda-composer .bo-offer-qty { width: 54px; min-height: 0; padding: 5px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font: inherit; font-size: 13px; text-align: center; }
+.bo-offer-pick[data-on="false"] .bo-offer-qty { display: none; }
+.bo-offer-total { margin: 10px 0 0; font-size: 13px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-offer-total:empty { display: none; }
+.bo-offer-blocked { margin: 0; padding: 18px 0; font-size: 14px; color: var(--muted); }
+.bo-offer-panel .bo-composer-foot [data-action="offer-create"] { min-width: 132px; border-radius: 999px; }
+@media (max-width: 560px) {
+  .bo-offer-fields { grid-template-columns: 1fr; }
 }
