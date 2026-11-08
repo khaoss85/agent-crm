@@ -1451,3 +1451,24 @@ test('Dan 06/11: a Lista row opens the offer detail, by its name link or the row
   assert.deepEqual(hashes, ['#/offerte/b', '#/offerte/b'], 'with the selection gone the row opens again');
   assert.equal(rows[1].findAll('a')[0].textContent, 'Bagno <b>x</b>', 'a hostile name stays text');
 });
+
+test('2a075e2d9250: the direct link #/pipeline opens the board of the first composed pipeline, never Oggi', async () => {
+  for (const hash of ['#/pipeline', '#/pipeline/']) {
+    assert.deepEqual(parseModuleRoute(hash), { view: 'pipeline', pipelineName: null }, hash);
+  }
+  // Only the home names land on Oggi; an unknown path is not a silent Oggi.
+  for (const hash of ['#/', '', '#/oggi', '#/home', '#/dashboard']) {
+    assert.equal(parseModuleRoute(hash).view, 'dashboard', hash);
+  }
+  for (const hash of ['#/pipelin', '#/inbox', '#/preventivi']) {
+    assert.equal(parseModuleRoute(hash).view, 'invalid', hash);
+  }
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const other = { ...PIPELINE, name: 'Not-Canonical' };
+  const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'demo')], { pipelines: [other, PIPELINE] }) });
+  await board.renderBoard(parseModuleRoute('#/pipeline').pipelineName);
+  const columns = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').startsWith('pipeline-column'));
+  assert.ok(columns.some((column) => column.getAttribute('data-stage') === 'demo'), 'the b2b-sales board is on screen');
+  assert.ok(!mount.textContent.includes('Nessuna pipeline da mostrare'), 'the bare link finds the composed pipeline');
+});
