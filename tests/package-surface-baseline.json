@@ -5,15 +5,15 @@
       "name": "agents",
       "dir": "agents",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "724798875769a59eed58283d6e5699416d84477a559bc98c835b0b9e92e19341"
+      "version": 2,
+      "fingerprint": "5be32a42ab3d7d61e8e4bac590a32100d821ce8a5781c6fa9e3b874fe28eef31"
     },
     {
       "name": "agents",
       "dir": "agents",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "724798875769a59eed58283d6e5699416d84477a559bc98c835b0b9e92e19341"
+      "version": 2,
+      "fingerprint": "5be32a42ab3d7d61e8e4bac590a32100d821ce8a5781c6fa9e3b874fe28eef31"
     },
     {
       "name": "appointments",
@@ -222,15 +222,15 @@
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "9afdf16d5e4f1f7e1b6a8fe5de05fa0181b4d609af65de6c8f1d1d686b020d63"
+      "version": 2,
+      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
     },
     {
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "9afdf16d5e4f1f7e1b6a8fe5de05fa0181b4d609af65de6c8f1d1d686b020d63"
+      "version": 2,
+      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
     },
     {
       "name": "sequences",

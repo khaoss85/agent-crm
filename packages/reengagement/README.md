@@ -27,19 +27,41 @@ stays in `packages/channels` and is never re-declared here.
 |---|---|
 | 24-hour window rule | `packages/channels` (`checkMetaServiceWindow`) |
 | message wording | `packages/llm` (`draftCustomerMessage`, injected as `draftText`) |
-| approval rows | `packages/space-permissions` (`space-ai-proposal`, values already fit) |
+| approval rows | `packages/agents` (`teammate-run`, the «Da fare» queue) |
 | follow-up tasks | `packages/work` (`work-task`, recorded by the caller) |
 | autonomy switch | `send-without-approval` permission (existing, no new switch) |
 | customer identity | `packages/customer-data` (only `customerId` travels) |
 
 ## What it deliberately does not do
 
-The daily timer, the inbox and window reads, the approval recording and the
-send. The deployment owns the schedule; the caller records the returned
-proposal values with `space-ai-proposal.propose-action` when the space
-switch is off and sends them (through the channels outbox, which re-checks
-the window) when it is on. Executing an approved proposal stays the
-caller's job.
+The daily timer, the inbox and window reads, and the send. The deployment
+owns the schedule; the agents package records the run; the deployment's
+`applyAction` seam sends an approved proposal through the channels outbox,
+which re-checks the window.
+
+## Into «Da fare» (backlog:fd36da512b0e)
+
+The backoffice «Da fare» lists teammate runs with outcome `proposed`, so
+the proposals travel as one run of the agents package, never as
+`space-ai-proposal` rows:
+
+```js
+import { createReengagementExecutor } from './packages/reengagement/src/index.js';
+
+const execute = createReengagementExecutor({
+  loadCustomers: ({ agent, assignment }) => silentCustomersOf(spaceId), // channels + customer-data
+  draftText,
+});
+await app.operations.run('run-due', { spaceId, actor, execute });
+```
+
+Each knock becomes one `reengagement-message` action of the run (payload =
+the proposal values; at most 25 per run, the rest stay silent for the next
+run). The human then acts on that row: `approve-run` applies the actions
+through `applyAction`, `revise-run` edits one message before approving,
+`reject-run` closes the run as `rejected` with nothing sent. A run with
+nobody to knock is an `artifact` counting the skips by reason.
+`loadCustomers` should leave out customers already waiting in «Da fare».
 
 ## Wiring
 
