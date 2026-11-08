@@ -1838,17 +1838,17 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   }).renderCard('contact', 'c1');
 
   const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+  // Dan 06/11: Nuova offerta opens its window over the scheda (see
+  // tests/admin-offer-panel.test.js) — no navigation, no stash.
   byAction('new-offer').dispatch('click');
-  assert.deepEqual(navs, ['#/modules/opportunity/new'], 'Nuova offerta opens the offer creation screen');
-  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.offer')), {
-    resource: 'contact', id: 'c1', name: 'Guido Presti',
-    company: { id: 'co1', name: 'Palestra Esempio' },
-  }, 'the offer pick names the record and its company');
+  assert.deepEqual(navs, [], 'Nuova offerta stays on the scheda');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'), 'the offer window opens');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.offer'), null, 'no page handoff is needed');
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'no appointment pick leaks from the offer voice');
 
   byAction('new-appointment').dispatch('click');
-  assert.deepEqual(navs, ['#/modules/opportunity/new', '#/calendario'],
+  assert.deepEqual(navs, ['#/calendario'],
     'Nuovo appuntamento opens the calendar manual booking');
   assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
     resource: 'contact', id: 'c1', name: 'Guido Presti',
@@ -1857,19 +1857,36 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
+  // #616: «Nuova offerta» opens its window over the scheda; the pick it
+  // files under is the companyId the window's Crea offerta posts.
   const pickFor = async (card, profile) => {
-    const map = new Map();
-    const storage = {
-      getItem: (key) => (map.has(key) ? map.get(key) : null),
-      setItem: (key, value) => { map.set(key, String(value)); },
-      removeItem: (key) => { map.delete(key); },
+    const base = stubClient({ card, profile });
+    const posts = [];
+    const client = {
+      async request(path, options = {}) {
+        if (path === '/api/opportunities' && options.method === 'POST') {
+          posts.push(JSON.parse(String(options.body)));
+          return { id: 'o-new' };
+        }
+        return base.request(path, options);
+      },
     };
     const doc = createFakeDocument();
     const mount = createMount();
-    await createCustomerCardView({ doc, mount, client: stubClient({ card, profile }), storage, navigate: () => {} })
+    await createCustomerCardView({ doc, mount, client, navigate: () => {}, spaceId: 'presti', toast: () => {} })
       .renderCard('contact', 'c1');
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer').dispatch('click');
-    return JSON.parse(storage.getItem('accordo.bo.customer-pick.offer'));
+    const panel = mount.findAll('div').find((node) => node.getAttribute('data-offer-panel') === 'open');
+    assert.ok(panel, 'the offer window opens');
+    assert.ok(!panel.textContent.includes('deve avere un’azienda'), 'the placeholder company is a company: no block');
+    const input = (name) => panel.findAll('input').find((node) => node.getAttribute('name') === name);
+    input('offer-title').value = 'Pacchetto 10 PT';
+    input('offer-value').value = '350';
+    input('offer-owner').value = 'Elena';
+    await panel.__submit();
+    assert.equal(posts.length, 1, 'one offer is filed');
+    assert.ok(!mount.textContent.includes(NO_COMPANY_NAME), 'the placeholder name never reads on screen');
+    return posts[0].companyId;
   };
   const ownProfile = {
     ...OPPORTUNITY_ONLY_PROFILE,
@@ -1881,11 +1898,10 @@ test('review #654: a contact without Azienda picks its own placeholder id under 
   };
   // The card API names no company for the placeholder (customer-data profile).
   const viaApi = await pickFor({ ...CARD, company: null }, ownProfile);
-  assert.deepEqual(viaApi.company, { id: 'k-own', name: 'Guido Presti' },
-    'the offer files under the contact own placeholder, read as the person');
+  assert.equal(viaApi, 'k-own', 'the offer files under the contact own placeholder');
   // An older server still naming the placeholder: same pick, never its name.
   const viaOld = await pickFor({ ...CARD, company: { id: 'k-own', name: NO_COMPANY_NAME } }, ownProfile);
-  assert.deepEqual(viaOld.company, { id: 'k-own', name: 'Guido Presti' });
+  assert.equal(viaOld, 'k-own');
   assert.equal(shownCompanyName({ company: { name: '  SENZA   azienda ' } }), null, 'same normalization as the server');
 });
 
