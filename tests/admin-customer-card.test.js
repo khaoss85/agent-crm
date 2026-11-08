@@ -10,6 +10,7 @@ import {
   OPPORTUNITY_ALLOWED_TRANSITIONS as CARD_TRANSITIONS,
   NO_COMPANY_NAME,
   shownCompanyName,
+  offerStageMenu,
   shownOfferState,
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
@@ -1852,14 +1853,15 @@ test('714433c2: an approval-gated move toasts the approval, and a quote line car
   assert.deepEqual(seen, [{ message: 'Stato aggiornato: serve un\u2019approvazione', error: false }],
     'an approval-gated move says so honestly');
 
-  // The default fixture reads a quote line (fromQuote): quotes have no
-  // governed stage transition, so no menu is offered there.
+  // The default fixture reads a quote line with no opportunity behind it:
+  // there is no offer stage to move, so no menu (backlog 1e939a362c7c: a
+  // quote WITH an opportunity moves that opportunity).
   const quoteMount = await renderCard(stubClient());
   assert.ok(quoteMount.textContent.includes('Preventivo 10 ingressi'), 'the fixture reads a quote line');
   assert.equal(
     quoteMount.findAll('button').filter((node) => node.getAttribute('data-action') === 'change-offer-stage').length,
     0,
-    'a quote line carries no stage menu',
+    'a quote line without an opportunity carries no stage menu',
   );
 });
 
@@ -4156,4 +4158,156 @@ test('608aa14d554c: a scheda opened from a direct link shows the loading state b
   await rendering;
   assert.ok(!loading(), 'the scheda replaces the loading state');
   assert.ok(mount.textContent.includes(CARD.name), 'the scheda painted');
+});
+
+const PLACED_QUOTE_PROFILE = {
+  ...PROFILE,
+  opportunities: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{
+      id: 'o1', status: 'qualification', stage: 'qualification', name: 'Proposta esempio — Pacchetto 10 PT',
+      pipelineKey: 'accordo-sales', pipelineStage: 'proposta',
+    }],
+  },
+  quotes: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{
+      id: 'q9', status: 'approved', name: null, opportunityId: 'o1', opportunityName: 'Proposta esempio — Pacchetto 10 PT',
+      opportunityStage: 'qualification', opportunityPipelineKey: 'accordo-sales', opportunityPipelineStage: 'proposta',
+    }],
+  },
+};
+
+test('1e939a362c7c: an offer on a Pipeline has Cambia stato, moving through the same move-stage as the board', async () => {
+  const seen = [];
+  const base = stubClient({ profile: PLACED_QUOTE_PROFILE, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] } });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
+  assert.ok(change, 'the placed offer has the Cambia stato menu');
+  change.dispatch('click');
+  const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
+  assert.deepEqual(voices.map((node) => node.textContent), ['Richiesta info', 'Prova', 'Pagato', 'Perso'],
+    'the voices are the pipeline stages with the board words, never the current one');
+
+  // Pagato is a won stage: like the board it asks Conferma first, with the
+  // board's own panel (never a native confirm()).
+  voices.find((node) => node.getAttribute('data-stage') === 'pagato').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 0, 'Pagato never posts straight from the menu');
+  const question = mount.findAll('p').find((node) => node.getAttribute('class') === 'confirm-question');
+  assert.equal(question?.textContent, 'Segnare «Proposta esempio — Pacchetto 10 PT» come Pagato?', 'the board question names the offer');
+  const box = question.parentNode;
+  assert.equal(box.getAttribute('class'), 'card-confirm', 'the board Conferma panel is shown');
+  box.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1, 'only Conferma posts');
+  assert.equal(client.writes[0].path, '/api/modules/opportunity/records/o1/actions/move-stage',
+    'the move rides the Pipeline board action, on the opportunity behind the quote');
+  assert.deepEqual(client.writes[0].body, { toStage: 'pagato', fromStage: 'proposta' });
+  assert.deepEqual(seen, [{ message: 'Spostata in Pagato.', error: false }]);
+});
+
+test('1e939a362c7c: an open pipeline stage moves at once, Annulla drops a pending Conferma', async () => {
+  const base = stubClient({ profile: PLACED_QUOTE_PROFILE, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] } });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast: () => {} }).renderCard('contact', 'c1');
+  const open = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
+  open();
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'pagato').dispatch('click');
+  const box = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').startsWith('card-confirm'));
+  box.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
+  await flushClicks();
+  assert.equal(box.getAttribute('class'), 'card-confirm hidden', 'Annulla hides the panel');
+  assert.equal(client.writes.length, 0, 'Annulla never posts');
+  open();
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'prova').dispatch('click');
+  await flushClicks();
+  assert.deepEqual(client.writes[0].body, { toStage: 'prova', fromStage: 'proposta' }, 'an open stage needs no Conferma, like the board');
+});
+
+test('1e939a362c7c: Perso on a Pipeline asks the reason before moving', async () => {
+  const base = stubClient({ profile: PLACED_QUOTE_PROFILE, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] } });
+  const client = recordingClient(base);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast: () => {} }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'perso').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 0, 'Perso never posts without a reason');
+  const question = mount.findAll('p').find((node) => node.getAttribute('class') === 'confirm-question');
+  assert.ok(question.textContent.includes('Scrivi il motivo della perdita'), 'the board question asks the reason');
+  const confirm = question.parentNode.findAll('button').find((node) => node.textContent === 'Conferma');
+  confirm.dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 0);
+  assert.ok(mount.textContent.includes('Scrivi il motivo della perdita, poi premi Conferma.'));
+  const input = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo di chiusura');
+  input.value = 'Budget finito';
+  confirm.dispatch('click');
+  await flushClicks();
+  assert.deepEqual(client.writes[0].body, { toStage: 'perso', fromStage: 'proposta', reason: 'Budget finito' });
+});
+
+test('1e939a362c7c: the menu model covers every offer: quote → its opportunity, placed → pipeline, unplaced → core', () => {
+  const pipelines = [accordoSalesPipeline];
+  const placed = offerStageMenu(PLACED_QUOTE_PROFILE.quotes.items[0], true, PLACED_QUOTE_PROFILE.opportunities.items, pipelines);
+  assert.equal(placed.kind, 'pipeline');
+  assert.equal(placed.id, 'o1');
+  const unplacedQuote = offerStageMenu({ id: 'q1', status: 'approved', opportunityId: 'o2' }, true, [{ id: 'o2', stage: 'proposal' }], pipelines);
+  assert.equal(unplacedQuote.kind, 'core', 'a quote on an offer outside any pipeline moves the core stage');
+  assert.equal(unplacedQuote.id, 'o2');
+  assert.deepEqual(unplacedQuote.voices.map((voice) => voice.key), ['negotiation', 'won', 'lost']);
+  assert.equal(offerStageMenu({ id: 'q1', status: 'approved' }, true, [], pipelines), null, 'no opportunity, no menu');
+  assert.equal(offerStageMenu({ id: 'o3', stage: 'proposal', pipelineKey: 'ghost', pipelineStage: 'x' }, false, null, pipelines), null,
+    'a pipeline this reader does not compose never falls back to a core move');
+});
+
+test('review #683: an offer on a stage its pipeline no longer defines has no Cambia stato', async () => {
+  const drift = {
+    ...PLACED_QUOTE_PROFILE,
+    opportunities: {
+      ...PLACED_QUOTE_PROFILE.opportunities,
+      items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], pipelineStage: 'vecchia' }],
+    },
+    quotes: {
+      ...PLACED_QUOTE_PROFILE.quotes,
+      items: [{ ...PLACED_QUOTE_PROFILE.quotes.items[0], opportunityPipelineStage: 'vecchia' }],
+    },
+  };
+  assert.equal(offerStageMenu(drift.quotes.items[0], true, drift.opportunities.items, [accordoSalesPipeline]), null,
+    'no move from a stage outside the definition, and no core fallback');
+  const mount = await renderCard(stubClient({ profile: drift, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] } }));
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'change-offer-stage').length, 0,
+    'the scheda shows no Cambia stato button');
+});
+
+test('review #683: a move still queued on the server reads neutral, never as an error', async () => {
+  const seen = [];
+  const base = stubClient({ profile: PLACED_QUOTE_PROFILE, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] } });
+  const client = recordingClient(base, () => { throw Object.assign(new Error('queued'), { code: 'BO_CRM_PENDING', status: 202 }); });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-stage') === 'prova').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1, 'the move was sent');
+  assert.deepEqual(seen, [{ message: 'Non ancora confermato: ricarica la scheda tra poco.', error: false }],
+    'the toast is neutral');
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error'
+    && node.textContent !== '');
+  assert.equal(fieldError, undefined, 'no error line');
+  const status = mount.findAll('small').find((node) => node.getAttribute('role') === 'status');
+  assert.equal(status?.textContent, 'Non ancora confermato: ricarica la scheda tra poco.');
 });
