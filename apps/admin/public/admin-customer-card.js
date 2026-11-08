@@ -583,6 +583,47 @@ export function createCustomerCardView(deps) {
   };
 
   let channelFilter = 'all';
+  // The note writer picked under «Note» (Dan 06/11). Kept with the channel
+  // filter through a re-read of the same scheda, reset on a new one.
+  let noteAuthorFilter = null;
+  // How far the conversation is opened (Mostra precedenti). Kept with the
+  // channel filter when the same scheda re-reads itself, reset on a new one.
+  let timelineShown = TIMELINE_PAGE;
+  // The scheda on screen, so a re-read of the same customer (after Invia,
+  // a note, an edit) redraws in place instead of blanking the page.
+  let shownKey = null;
+  let shownSides = [];
+  // Review #612: what the person was typing in the scheda on screen (a note,
+  // the open Dettagli form, a phone number) when a re-read swaps it. The new
+  // scheda is built with it, so an Invia elsewhere never wipes their text.
+  let pendingDrafts = null;
+  // Review #612 round 5: what was being typed when a re-read of the same
+  // scheda failed. The error panel replaces the scheda, so the typing is
+  // kept here and handed to the next scheda that loads for this customer.
+  let retainedDrafts = null;
+
+  function readDrafts(root) {
+    if (!root || typeof root.querySelector !== 'function') return null;
+    const drafts = {};
+    const note = root.querySelector('input[name="noteBody"]');
+    if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    if (root.querySelector('button[data-action="save-details"]')) {
+      // Review #612 round 3: only the fields the person changed travel to
+      // the new scheda. An untouched field takes the freshly read value, so a
+      // later Salva never writes back what another operator just changed.
+      drafts.details = {};
+      for (const name of ['firstName', 'lastName', 'email']) {
+        const input = root.querySelector(`input[name="${name}"]`);
+        if (input && typeof input.value === 'string' && input.value !== input.getAttribute('data-initial')) {
+          drafts.details[name] = input.value;
+        }
+      }
+    }
+    const phonePanel = root.querySelector('div[data-phone="open"]');
+    const phone = phonePanel ? phonePanel.querySelector('input') : null;
+    if (phone) drafts.phone = typeof phone.value === 'string' ? phone.value : '';
+    return Object.keys(drafts).length > 0 ? drafts : null;
+  }
 
   // Voce 908f2eb9bbfb: one slow or failing read must never fail the whole
   // scheda. Every read settles on its own: the card stays the identity
@@ -895,6 +936,11 @@ export function createCustomerCardView(deps) {
         openPhonePanel(box, navCtx);
       });
       row.appendChild(add);
+      if (pendingDrafts && typeof pendingDrafts.phone === 'string') {
+        openPhonePanel(box, navCtx);
+        const typed = box.querySelector('div[data-phone="open"]')?.querySelector('input');
+        if (typed) typed.value = pendingDrafts.phone;
+      }
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -962,6 +1008,7 @@ export function createCustomerCardView(deps) {
           body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone }),
         });
         toast('Telefono salvato');
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       } catch (error) {
         // The typed number stays in the field: the operator corrects it.
@@ -971,6 +1018,7 @@ export function createCustomerCardView(deps) {
       }
     });
     cancel.addEventListener('click', async () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
       await renderCard(navCtx.resource, navCtx.id);
     });
   }
@@ -1614,6 +1662,11 @@ export function createCustomerCardView(deps) {
         composerSendKeys.delete(sendKey);
         composerDrafts.delete(draftKey);
         toast('Messaggio in consegna');
+        // The re-read below keeps open windows through the in-place swap
+        // (#612); the sent message's own window closes first, as it always
+        // did, so the sent text never stays under a live Invia.
+        composerGeneration += 1;
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
         await renderCard(navCtx.resource, navCtx.id);
       };
       try {
@@ -1906,6 +1959,15 @@ export function createCustomerCardView(deps) {
       };
       edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
       box.appendChild(edit);
+      if (pendingDrafts && pendingDrafts.details) {
+        const typed = pendingDrafts.details;
+        renderDetailsForm(box, card, contact, editCtx, restore);
+        for (const name of Object.keys(typed)) {
+          const input = box.querySelector(`input[name="${name}"]`);
+          if (input) input.value = typed[name];
+        }
+        return;
+      }
     }
     // Voce d525f4aa48b2: the main AI voice of the scheda, beside Modifica.
     // It opens the BO-F0-04 bar with this customer already in the context —
@@ -1945,6 +2007,8 @@ export function createCustomerCardView(deps) {
       const input = el('input');
       input.setAttribute('name', name);
       input.value = value;
+      // What the form opened with: a re-read keeps only what differs from it.
+      input.setAttribute('data-initial', value);
       input.setAttribute('aria-label', label);
       box.appendChild(labelNode);
       box.appendChild(input);
@@ -1991,6 +2055,7 @@ export function createCustomerCardView(deps) {
         });
         detailsInFlight.delete(flightKey);
         toast('Dati salvati');
+        if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
         error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
@@ -2178,6 +2243,20 @@ export function createCustomerCardView(deps) {
     const notes = entries.filter((item) => item?.entry === 'note');
     const noteAuthor = (item) => (isHumanHandle(item?.teamAuthorId) ? String(item.teamAuthorId).trim() : '');
     const authors = [...new Set(notes.map(noteAuthor))];
+    // Review #612 round 3: a filter kept through a re-read may name a channel
+    // (or a note writer) the fresh cronologia no longer has. It falls back to
+    // «Tutti», like a new scheda, instead of a chip-less false empty state.
+    const filterGone = channelFilter === 'note'
+      ? notes.length === 0
+      : channelFilter !== 'all' && !channels.includes(channelFilter);
+    if (filterGone) {
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    } else if (noteAuthorFilter !== null && !authors.includes(noteAuthorFilter)) {
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    }
     const chips = el('p', 'bo-scheda-chips');
     const chip = (label, key, active, onPick) => {
       const node = el('button', undefined, label);
@@ -2192,7 +2271,7 @@ export function createCustomerCardView(deps) {
       const pick = (key) => () => {
         channelFilter = key;
         noteAuthorFilter = null;
-        shownCount = TIMELINE_PAGE;
+        timelineShown = TIMELINE_PAGE;
         drawChips();
         drawList();
       };
@@ -2213,7 +2292,7 @@ export function createCustomerCardView(deps) {
           const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
-            shownCount = TIMELINE_PAGE;
+            timelineShown = TIMELINE_PAGE;
             drawChips();
             drawList();
           });
@@ -2223,7 +2302,6 @@ export function createCustomerCardView(deps) {
         chips.appendChild(byAuthor);
       }
     };
-    let noteAuthorFilter = null;
     const list = el('div', 'bo-scheda-timeline');
     // Voce 32820692: the timeline entry carries the attachment reference
     // the host logged, and the card shows it — a thumbnail for photos, a
@@ -2267,7 +2345,7 @@ export function createCustomerCardView(deps) {
         return String(item?.channel ?? '') === channelFilter;
       });
       const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
-      const visible = ordered.slice(0, shownCount);
+      const visible = ordered.slice(0, timelineShown);
       if (filtered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
@@ -2446,13 +2524,12 @@ export function createCustomerCardView(deps) {
         older.setAttribute('type', 'button');
         older.setAttribute('data-action', 'timeline-older');
         older.addEventListener('click', () => {
-          shownCount += TIMELINE_PAGE;
+          timelineShown += TIMELINE_PAGE;
           drawList();
         });
         list.appendChild(older);
       }
     };
-    let shownCount = TIMELINE_PAGE;
     drawChips();
     box.appendChild(chips);
     drawList();
@@ -2468,6 +2545,7 @@ export function createCustomerCardView(deps) {
       noteInput.setAttribute('name', 'noteBody');
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
+      if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
       const noteButton = el('button', undefined, 'Aggiungi nota');
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
@@ -2483,6 +2561,7 @@ export function createCustomerCardView(deps) {
             body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
           });
           toast('Nota aggiunta');
+          noteInput.value = '';
           await renderCard(noteCtx.resource, noteCtx.id);
         } catch (error) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
@@ -2874,15 +2953,53 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
   };
 
+  /**
+   * Puts the new scheda on screen in one step. A re-read of the scheda already
+   * shown (after Invia, a note, an edit) keeps the old one up while it loads
+   * and swaps in the same tick: no blank flash, the page and the side columns
+   * keep their scroll, the conversation keeps its filter and its open pages.
+   */
+  function show(node, key, sides = []) {
+    const page = doc.scrollingElement ?? null;
+    const pageTop = key === shownKey && page ? page.scrollTop : null;
+    const sideTops = key === shownKey ? shownSides.map((side) => side.scrollTop ?? 0) : [];
+    // Review #612 round 2: the windows that hang off the view (Scrivi, the
+    // offer panel) stay open through a re-read of the same customer, with
+    // their text and focus; only the scheda itself is swapped.
+    const isWindow = (child) => typeof child?.getAttribute === 'function'
+      && (child.getAttribute('data-composer') === 'open' || child.getAttribute('data-offer-panel') === 'open');
+    const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
+    for (const child of Array.from(mount.childNodes ?? [])) {
+      if (!kept.includes(child)) mount.removeChild(child);
+    }
+    if (kept.length > 0 && typeof mount.insertBefore === 'function') mount.insertBefore(node, kept[0]);
+    else mount.appendChild(node);
+    sides.forEach((side, index) => {
+      if (sideTops[index]) side.scrollTop = sideTops[index];
+    });
+    if (pageTop !== null && page.scrollTop !== pageTop) page.scrollTop = pageTop;
+    shownKey = key;
+    shownSides = sides;
+  }
+
   // Two renders racing (a route plus a re-read after a save) must not both
   // land: only the newest paints, so the scheda never holds two Dettagli
   // forms whose Salva would both write.
   let cardRenderToken = 0;
 
   async function renderCard(resource, id) {
+    const key = `${resource}/${id}`;
     const renderToken = ++cardRenderToken;
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
-    channelFilter = 'all';
+    if (key !== shownKey) {
+      // Another customer: clear at once, never leave the previous one up.
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+      shownKey = null;
+      shownSides = [];
+      retainedDrafts = null;
+      channelFilter = 'all';
+      noteAuthorFilter = null;
+      timelineShown = TIMELINE_PAGE;
+    }
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
     // id) used to blank the scheda with neither the card nor the error panel.
@@ -2892,15 +3009,19 @@ export function createCustomerCardView(deps) {
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
+    // A newer render started while this one loaded: it owns the screen.
     if (renderToken !== cardRenderToken) return;
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
     if (loaded.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
-      mount.appendChild(panel);
+      // Review #612 round 3: a failed re-read of the scheda already shown
+      // keeps its windows (a half-written Scrivi), filter, pages and scroll;
+      // only a first read that fails starts from nothing.
+      if (key === shownKey) retainedDrafts = readDrafts(mount) ?? retainedDrafts;
+      show(panel, key === shownKey ? key : null);
       return;
     }
     const {
@@ -2916,6 +3037,28 @@ export function createCustomerCardView(deps) {
       if (error && error.status === 404) return null;
       throw error;
     });
+    pendingDrafts = key === shownKey ? readDrafts(mount) : null;
+    if (key === shownKey && retainedDrafts !== null) {
+      pendingDrafts = { ...retainedDrafts, ...(pendingDrafts ?? {}) };
+    }
+    retainedDrafts = null;
+    try {
+      buildAndShow(key, resource, id, {
+        card, timeline, timelineError, profile, profileError,
+        enrichment, enrichmentError, calls, callsError,
+        fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment,
+      });
+    } finally {
+      pendingDrafts = null;
+    }
+    markRead(resource, id, timeline);
+  }
+
+  function buildAndShow(key, resource, id, {
+    card, timeline, timelineError, profile, profileError,
+    enrichment, enrichmentError, calls, callsError,
+    fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment,
+  }) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -2969,8 +3112,7 @@ export function createCustomerCardView(deps) {
     grid.appendChild(center);
     grid.appendChild(right);
     panel.appendChild(grid);
-    mount.appendChild(panel);
-    markRead(resource, id, timeline);
+    show(panel, key, [left, right]);
   }
 
   /**
