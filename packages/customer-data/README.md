@@ -1,6 +1,6 @@
 # `customer-data` — governed customer identity, import provenance and data quality
 
-Ten records, three human actions, nine application operations and four declared
+Ten records, four human actions, nine application operations and four declared
 capabilities. It **requires nothing**.
 
 | | |
@@ -8,7 +8,7 @@ capabilities. It **requires nothing**.
 | Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item`, `enriched-field`, `enrichment-opt-out`, `customer-erasure-log` |
 | Requires | **nothing** |
 | Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1`, `customer-channel-origins@1` |
-| Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
+| Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.unlink-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
 | Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins`, `extract-customer-enrichment`, `read-customer-enrichment-proposals`, `decide-enrichment-proposal`, `erase-customer` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
@@ -191,12 +191,16 @@ enrich  →  stored beside the contact with source and date — the record itsel
 
 ```text
 duplicate-candidate  unresolved  →  linked      link-canonical-identity
+                     linked      →  unresolved  unlink-canonical-identity
                      unresolved  →  dismissed   dismiss-duplicate-candidate
 ```
 
-Both require `actor.type === "user"` and a reason. Linking writes two
+All require `actor.type === "user"`, a reason, and confirmation. Linking writes two
 `canonical-link` rows — one `canonical`, one `alias`, under one cluster key —
-each carrying who decided and why.
+each carrying who decided and why. Unlinking withdraws those rows
+(`active` → `withdrawn` with reason and date) and returns the candidate to
+`unresolved`, so the two schede read separate again and every message reads
+under the right person.
 
 - **Nothing is deleted or rewritten.** The scenario fingerprints both business
   rows as bytes before and after and proves they are identical.
