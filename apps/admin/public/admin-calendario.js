@@ -270,6 +270,24 @@ function personKeyOf(value) {
 }
 
 /**
+ * backlog:810ed0bf — the control-plane same-person key of a roster row
+ * (`operatorAccountId`, one per human), or null when the roster carries
+ * none. The pilot forwards it beside the subject when it knows it, so the
+ * Team card unites one member's identities (broker, github, google) even
+ * when they carry different mailboxes. Never derived, never guessed: rows
+ * without it group exactly like before.
+ * @param {any} member
+ */
+function rosterPersonId(member) {
+  if (!member || typeof member !== 'object') return null;
+  for (const field of ['operatorAccountId', 'personKey', 'personId', 'userId']) {
+    const value = member[field];
+    if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  }
+  return null;
+}
+
+/**
  * Member creation instant (epoch ms), or null when the roster carries none.
  * The roster's own order is the fallback: it lists members oldest first.
  * @param {any} member
@@ -313,24 +331,33 @@ export function personRows(named, hidden, members) {
   const groups = [];
   const bySubject = new Map();
   const byEmail = new Map();
+  const byPerson = new Map();
   const groupFor = (subject) => bySubject.get(subject) ?? null;
   for (const member of roster) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
+    const personId = rosterPersonId(member);
     const email = personKeyOf(member.email);
     const display = cleanPersonText(member.displayName);
-    // One human shares one mailbox: only a shared mailbox merges two
-    // subjects into one person row. A shared display name alone never
-    // merges — two email-less homonyms are two humans, two rows.
-    let group = (email !== null && byEmail.get(email)) || null;
+    // One human shares one mailbox — or one control-plane person key when
+    // the roster carries it (backlog:810ed0bf): either merges two subjects
+    // into one person row. A shared display name alone never merges — two
+    // email-less homonyms are two humans, two rows.
+    let group = (personId !== null && byPerson.get(personId))
+      || (email !== null && byEmail.get(email))
+      || null;
     if (!group) {
-      group = { subjects: [], displayName: null, email: null, born: null, bornIndex: groups.length };
+      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
       groups.push(group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
     const born = memberBornAt(member);
     if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
+    if (personId !== null && group.personId === null) {
+      group.personId = personId;
+      byPerson.set(personId, group);
+    }
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
       byEmail.set(email, group);
@@ -600,6 +627,84 @@ export function serviceKeyFor(typed, names) {
   const wanted = text.toLowerCase();
   const hits = [...names.entries()].filter(([, name]) => String(name).trim().toLowerCase() === wanted);
   return hits.length === 1 ? hits[0][0] : text;
+}
+
+/** A listino product key: lowercase slug, like the booking server requires. */
+const CATALOG_SLUG_RE = /^[a-z][a-z0-9-]{0,47}$/;
+
+/**
+ * backlog:810ed0bf — the catalog slug of a product or offer name
+ * («Lezione prova» → `lezione-prova`): lowercase, spaces and underscores
+ * become one hyphen, anything outside the key alphabet drops out. Empty
+ * when the name holds no slug character at all — never guessed.
+ * @param {unknown} value
+ */
+export function slugifyServiceKey(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-').replace(/^-+/, '').replace(/-+$/, '').slice(0, 48);
+}
+
+/** Minor units of one `one_time` component, or null when it fixes no hour price. @param {any} only */
+function catalogSingleAmount(only) {
+  if (!only || typeof only !== 'object') return null;
+  if (only.chargeType !== 'one_time') return null;
+  const amount = only.pricingModel === 'per_unit'
+    ? only.unitAmountCents
+    : (only.pricingModel === 'flat_fee' ? only.flatAmountCents : undefined);
+  return Number.isSafeInteger(amount) && amount >= 0 ? amount : null;
+}
+
+/**
+ * backlog:810ed0bf — the bookable services of a `GET /api/catalog/products`
+ * answer: one entry per active product with an active offer fixing one
+ * `one_time` hour price — the same singles rule the booking worker uses, so
+ * the menu never offers a pack, a subscription or a price the worker would
+ * refuse. The key is the product sku the week titles already read as the
+ * listino key, slugified from the product name when the sku is no key;
+ * a product with no key and no nameable offer stays out. First
+ * bookable offer wins per product, first product wins per key.
+ * @param {unknown} payload
+ */
+export function catalogBookingServices(payload) {
+  const products = Array.isArray(payload?.products) ? payload.products : [];
+  const out = [];
+  const seen = new Set();
+  for (const product of products) {
+    if (!product || typeof product !== 'object' || product.active !== true) continue;
+    const sku = typeof product.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+    const name = typeof product.name === 'string' ? product.name.trim() : '';
+    if (name === '' || name.length > 200) continue;
+    const offers = Array.isArray(product.offers) ? product.offers : [];
+    for (const offer of offers) {
+      if (!offer || typeof offer !== 'object' || offer.active !== true) continue;
+      const currency = typeof offer.currency === 'string' && /^[A-Z]{3}$/.test(offer.currency)
+        ? offer.currency
+        : null;
+      if (currency === null) continue;
+      const components = Array.isArray(offer.components) ? offer.components : [];
+      if (components.length !== 1) continue;
+      const priceCents = catalogSingleAmount(components[0]);
+      if (priceCents === null) continue;
+      const key = CATALOG_SLUG_RE.test(sku) ? sku : slugifyServiceKey(name);
+      if (key === '' || seen.has(key)) continue;
+      seen.add(key);
+      out.push(Object.freeze({ key, name, priceCents, currency }));
+      break;
+    }
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * backlog:810ed0bf — minor units to the price text the manual form paints
+ * (`4500` → `'45.00'`), two decimals, dot separator like the form hint.
+ * Null when the amount is no integer of cents.
+ * @param {unknown} priceCents
+ */
+export function formatPriceCents(priceCents) {
+  if (!Number.isSafeInteger(priceCents) || priceCents < 0) return null;
+  return `${Math.floor(priceCents / 100)}.${String(priceCents % 100).padStart(2, '0')}`;
 }
 
 /**
@@ -1118,6 +1223,8 @@ export function createCalendarioView(deps) {
   async function loadServices() {
     /** @type {Map<string, string>} */
     const names = new Map();
+    /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
+    let bookable = [];
     try {
       const answer = await client.request('/api/catalog/products?limit=200');
       for (const product of Array.isArray(answer?.products) ? answer.products : []) {
@@ -1125,6 +1232,9 @@ export function createCalendarioView(deps) {
         const name = typeof product?.name === 'string' ? product.name.trim() : '';
         if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
       }
+      // The manual form's service menu (backlog:810ed0bf): the same
+      // singles rule the booking worker applies, read once with the names.
+      bookable = catalogBookingServices(answer);
     } catch (error) {
       // No catalog in this project (or a stale bundle): the readable key
       // stays. Anything else is unexpected and logged without the message.
@@ -1137,6 +1247,10 @@ export function createCalendarioView(deps) {
       }
     }
     state.services = names;
+    state.catalogServices = bookable;
+    // The service menu paints from this read: repaint once it settles while
+    // the calendar is still mounted (same guard as the roster read).
+    if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**
