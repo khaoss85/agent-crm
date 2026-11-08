@@ -30,6 +30,40 @@ function requireUser(actor, what) {
   return actor;
 }
 
+/**
+ * Which canonical-link row a link write may touch — the single source of
+ * truth for the link/unlink/relink key discipline, called by every link
+ * write in this file (there is exactly one).
+ *
+ * Unlink withdraws rows but never deletes them, so a withdrawn generation
+ * keeps its sourceKey occupied. Relinking the same pair with the same
+ * canonical derives the same base key, and a blind create would collide on
+ * that UNIQUE. The row is therefore reactivated — but only when it is this
+ * decision's own history (`decisionId` coincides). An overlapping pair with
+ * the same canonical derives the same base key for the shared member, and
+ * reactivating that row would silently rewrite the other pair's withdrawn
+ * history under a new decision. That write gets a new row with a distinct
+ * key instead (the base key suffixed with this decision), so every
+ * decision's history stays readable under its own key.
+ *
+ * Suffixed keys embed the decision id, so a suffixed key always belongs to
+ * the decision being written: meeting it again means this decision's own
+ * earlier overlapping link, safe to reactivate.
+ *
+ * @param {any} links the canonical-link service
+ * @param {{sourceKey: string, decisionId: string}} query
+ * @returns {Promise<{id: string|null, sourceKey: string}>} the row to update (by id) or the key to create
+ */
+async function resolveCanonicalLinkRow(links, { sourceKey, decisionId }) {
+  const prior = (await deciding(links, { sourceKey }))[0] ?? null;
+  if (!prior) return { id: null, sourceKey };
+  if (prior.decisionId === decisionId) return { id: prior.id, sourceKey };
+  const distinct = `${sourceKey}:${decisionId}`;
+  const own = (await deciding(links, { sourceKey: distinct }))[0] ?? null;
+  if (own) return { id: own.id, sourceKey: distinct };
+  return { id: null, sourceKey: distinct };
+}
+
 /** @param {Record<string, string>} [config] */
 export function buildCustomerDataActions(config) {
   const names = resolvedNames(config);
@@ -99,9 +133,16 @@ export function buildCustomerDataActions(config) {
         const actorId = String(/** @type {any} */ (actor).id ?? 'unknown');
 
         // One transaction's worth of writes: both members, or neither.
+        // resolveCanonicalLinkRow above is the single source of truth for
+        // which row each write touches: same-decision history is reactivated,
+        // another decision's history is never rewritten.
         for (const [member, role] of [[canonical, 'canonical'], [alias, 'alias']]) {
-          const patch = {
+          const target = await resolveCanonicalLinkRow(links, {
             sourceKey: `canonical-link:${clusterKey}:${subjectKey(member)}`,
+            decisionId,
+          });
+          const patch = {
+            sourceKey: target.sourceKey,
             clusterKey,
             ...subjectFields(member),
             role,
@@ -114,15 +155,8 @@ export function buildCustomerDataActions(config) {
             withdrawnReason: null,
             withdrawnAt: null,
           };
-          // Undoing a merge withdraws the rows but keeps their sourceKey
-          // occupied (unlink never deletes). Relinking the same pair with the
-          // same canonical derives the same sourceKey, so a blind create
-          // would collide on the UNIQUE left behind by the withdrawn
-          // generation. Reactivate that history instead, with the new
-          // decision stamped on it.
-          const prior = (await deciding(links, { sourceKey: patch.sourceKey }))[0];
-          if (prior) {
-            await links.applyManaged(prior.id, patch, { actor });
+          if (target.id !== null) {
+            await links.applyManaged(target.id, patch, { actor });
           } else {
             await links.createManaged(patch, { actor });
           }

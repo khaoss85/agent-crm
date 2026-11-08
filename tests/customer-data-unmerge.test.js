@@ -100,6 +100,127 @@ test('dalla scheda si annulla un\u2019unione sbagliata: le due schede tornano se
   void ROWS;
 });
 
+async function makeCandidate(app, left, right, tag) {
+  const now = new Date().toISOString();
+  return await app.modules.get('duplicate-candidate').service.createManaged({
+    sourceKey: `duplicate:${left.resource}:${left.id}|${right.resource}:${right.id}:${tag}`,
+    leftResource: left.resource,
+    leftId: left.id,
+    leftOwner: 'host',
+    leftOwnerPackage: null,
+    leftLabel: left.name,
+    rightResource: right.resource,
+    rightId: right.id,
+    rightOwner: 'host',
+    rightOwnerPackage: null,
+    rightLabel: right.name,
+    policy: 'test-overlap',
+    policyVersion: 1,
+    policyFingerprint: 'test',
+    rule: 'test-overlap',
+    evidence: '{}',
+    status: 'unresolved',
+    detectedByRunId: 'test',
+    detectedAt: now,
+  }, { actor: ACTOR });
+}
+
+test('disciplina delle sourceKey: una tabella per ogni caso deciso nei round', async (t) => {
+  const { app } = await scene(t, 'unmerge-sourcekey-table');
+  const alpha = await app.services.companies.create({ name: 'Alpha Srl', domain: 'alpha.example' }, { actor: ACTOR });
+  const beta = await app.services.companies.create({ name: 'Beta Srl', domain: 'beta.example' }, { actor: ACTOR });
+  const gamma = await app.services.companies.create({ name: 'Gamma Srl', domain: 'gamma.example' }, { actor: ACTOR });
+  const subject = (company) => ({ resource: 'company', id: company.id, name: company.name });
+
+  const links = () => app.modules.get('canonical-link').service.list({ limit: 50 });
+  const baseKey = (canonId, memberId) => `canonical-link:cluster:company:${canonId}:company:${memberId}`;
+  const rowsOf = (decisionId) => links().filter((row) => row.decisionId === decisionId);
+
+  const link = (candidate, canonicalId, reason) => app.runAction({
+    module: 'duplicate-candidate', action: 'link-canonical-identity', recordId: candidate.id,
+    input: { canonicalResource: 'company', canonicalId, reason }, actor: ACTOR,
+  });
+  const unlink = (candidate, reason) => app.runAction({
+    module: 'duplicate-candidate', action: 'unlink-canonical-identity', recordId: candidate.id,
+    input: { reason }, actor: ACTOR,
+  });
+
+  // Coppia 1 (Alpha, Beta) e coppia 2 (Alpha, Gamma): stesso canonico,
+  // chiavi base coincidenti sul membro condiviso Alpha.
+  const first = await makeCandidate(app, subject(alpha), subject(beta), 'pair1');
+  const second = await makeCandidate(app, subject(alpha), subject(gamma), 'pair2');
+  const decision1 = `decision:${first.id}`;
+  const decision2 = `decision:${second.id}`;
+  const alphaBase = baseKey(alpha.id, alpha.id);
+
+  // Riga 1 (round precedente): la prima unione crea le chiavi base.
+  await link(first, alpha.id, 'stessa azienda');
+  assert.equal(links().length, 2, 'riga 1: due righe con chiave base');
+  assert.ok(links().every((row) => row.decisionId === decision1 && row.status === 'active'));
+
+  // Riga 2 (round precedente): annullare ritira senza cancellare.
+  await unlink(first, 'controllo sbagliato');
+  assert.ok(links().every((row) => row.status === 'withdrawn'), 'riga 2: righe ritirate, mai cancellate');
+
+  // Riga 3 (round precedente): riunire la stessa coppia riusa le chiavi base.
+  await link(first, alpha.id, 'stessa azienda, confermato');
+  assert.equal(links().length, 2, 'riga 3: nessun duplicato, la storia si riattiva');
+  assert.ok(links().every((row) => row.sourceKey === baseKey(alpha.id, row.subjectId)
+    && row.decisionId === decision1 && row.status === 'active'));
+  await unlink(first, 'riprovo con altra coppia');
+
+  // Riga 4 (questo round): la coppia sovrapposta non tocca la storia dell'altra.
+  await link(second, alpha.id, 'stessa sede, ragione sociale diversa');
+  assert.equal(links().length, 4, 'riga 4: due righe nuove, non due riusi rubati');
+  const alphaSecond = links().find((row) => row.decisionId === decision2 && row.subjectId === alpha.id);
+  assert.ok(alphaSecond, 'riga 4: il membro condiviso ha una sua riga');
+  assert.equal(alphaSecond.sourceKey, `${alphaBase}:${decision2}`, 'riga 4: chiave distinta con suffisso di decisione');
+  assert.equal(alphaSecond.status, 'active');
+  const alphaFirst = links().find((row) => row.decisionId === decision1 && row.subjectId === alpha.id);
+  assert.equal(alphaFirst.sourceKey, alphaBase, 'riga 4: la chiave base resta della prima decisione');
+  assert.equal(alphaFirst.status, 'withdrawn', 'riga 4: la storia ritirata non si riattiva sotto altri');
+  assert.equal(alphaFirst.withdrawnReason, 'riprovo con altra coppia', 'riga 4: motivo del ritiro intatto');
+
+  // Riga 5 (questo round): i profili seguono solo le righe attive.
+  const readAlpha = await app.readCustomerProfile({ resource: 'company', id: alpha.id });
+  const readBeta = await app.readCustomerProfile({ resource: 'company', id: beta.id });
+  const readGamma = await app.readCustomerProfile({ resource: 'company', id: gamma.id });
+  assert.equal(readAlpha.canonicalIdentity.linked, true);
+  assert.equal(readGamma.canonicalIdentity.linked, true);
+  assert.equal(readAlpha.canonicalIdentity.clusterKey, readGamma.canonicalIdentity.clusterKey);
+  assert.deepEqual(
+    readAlpha.canonicalIdentity.members.map((member) => member.id).sort(),
+    [alpha.id, gamma.id].sort(),
+    'riga 5: Beta resta fuori dal cluster riattivato per sbaglio',
+  );
+  assert.equal(readBeta.canonicalIdentity.linked, false, 'riga 5: la scheda ritirata resta separata');
+
+  // Riga 6 (questo round): annullare la seconda coppia ritira solo le sue righe.
+  await unlink(second, 'altra sede, omonimia');
+  assert.equal(rowsOf(decision1).filter((row) => row.status === 'withdrawn').length, 2);
+  assert.equal(rowsOf(decision2).filter((row) => row.status === 'withdrawn').length, 2);
+  assert.equal(links().filter((row) => row.status === 'active').length, 0, 'riga 6: niente attivo da nessuna parte');
+
+  // Riga 7 (questo round): riunire la coppia sovrapposta riusa le SUE chiavi.
+  await link(second, alpha.id, 'stessa sede, confermato');
+  assert.equal(links().length, 4, 'riga 7: ancora quattro righe, nessun duplicato');
+  assert.equal(rowsOf(decision2).filter((row) => row.status === 'active').length, 2);
+  assert.ok(rowsOf(decision2).some((row) => row.sourceKey === `${alphaBase}:${decision2}`));
+  assert.equal(rowsOf(decision1).filter((row) => row.status === 'withdrawn').length, 2,
+    'riga 7: la prima storia resta ritirata');
+  await unlink(second, 'lascio posto alla prima coppia');
+
+  // Riga 8 (entrambi i round insieme): la prima coppia riusa ancora le basi.
+  await link(first, alpha.id, 'prima coppia confermata');
+  assert.equal(links().length, 4, 'riga 8: quattro righe in tutto, mai una di più');
+  assert.equal(rowsOf(decision1).filter((row) => row.status === 'active').length, 2);
+  assert.ok(rowsOf(decision1).every((row) => !row.sourceKey.endsWith(decision1)
+    && !row.sourceKey.endsWith(decision2), 'riga 8: le basi non prendono suffissi'));
+  assert.equal(rowsOf(decision2).filter((row) => row.status === 'withdrawn').length, 2);
+
+  void ROWS;
+});
+
 test('unire di nuovo la stessa coppia dopo averla separata: nessun conflitto sulla chiave', async (t) => {
   const { app } = await scene(t, 'unmerge-relink-a3');
   const first = await app.services.companies.create({ name: 'Initech Srl', domain: 'initech.example' }, { actor: ACTOR });
