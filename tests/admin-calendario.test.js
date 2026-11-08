@@ -4,10 +4,12 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
+  catalogBookingServices,
   channelOf,
   createCalendarioView,
   calendarRefusalText,
   dayHead,
+  formatPriceCents,
   displayKeys,
   draftDayKey,
   draftDayOnly,
@@ -32,6 +34,7 @@ import {
   romeWeekKeys,
   serviceKeyFor,
   serviceLabel,
+  slugifyServiceKey,
   slotInGrid,
   statusWord,
   teamRows,
@@ -3747,6 +3750,130 @@ test('serviceKeyFor sends the listino key for a typed catalog name, the text oth
   assert.ok(calendarRefusalText({ code: 'VALIDATION_ERROR', details: { field: 'serviceKey' } }).startsWith('Scegli un servizio dal listino'),
     'the framework validation on the field reads the same');
   assert.equal(calendarRefusalText({ code: 'BO_APPOINTMENT_CONFIRM_REFUSED' }), null, 'other refusals keep their generic sentence');
+});
+
+// backlog:810ed0bf — the service menu lists the bookable catalog singles:
+// the same singles rule the booking worker applies (one active one_time
+// component fixing one hour price). Packs, subscriptions, inactive rows
+// and bad currencies stay out; the key is the sku, slugified from the
+// name when the sku is no key.
+test('catalogBookingServices keeps only active one_time singles with key, name and price', () => {
+  const single = (overrides = {}) => ({
+    active: true, currency: 'EUR',
+    components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }],
+    ...overrides,
+  });
+  const out = catalogBookingServices({ products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [single()] },
+    { active: true, sku: '', name: 'Lezione prova', offers: [single({ components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 1500 }] })] },
+    { active: true, sku: 'pack', name: 'Pacchetto 10', offers: [single({ components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 100 }, { chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 200 }] })] },
+    { active: false, sku: 'vecchio', name: 'Vecchio', offers: [single()] },
+    { active: true, sku: 'novaluta', name: 'No valuta', offers: [single({ currency: 'euro' })] },
+    { active: true, sku: 'spento', name: 'Spento', offers: [single({ active: false })] },
+    { active: true, sku: 'taglio', name: 'Taglio due', offers: [single()] },
+    { active: true, sku: '!!!', name: '!!!', offers: [single()] },
+  ] });
+  assert.deepEqual(out.map((entry) => entry.key), ['taglio', 'lezione-prova']);
+  assert.equal(out[0].name, 'Taglio');
+  assert.equal(out[0].priceCents, 4500);
+  assert.equal(out[0].currency, 'EUR');
+  assert.equal(out[1].priceCents, 1500, 'slugified name carries the flat fee');
+  assert.ok(Object.isFrozen(out), 'the menu list is frozen');
+});
+
+test('slugifyServiceKey and formatPriceCents shape the menu and the price field', () => {
+  assert.equal(slugifyServiceKey('Lezione prova'), 'lezione-prova');
+  assert.equal(slugifyServiceKey('  TAGLIO_barba  '), 'taglio-barba');
+  assert.equal(slugifyServiceKey('!!!'), '', 'no slug character: no guessed key');
+  assert.equal(slugifyServiceKey(null), '');
+  assert.equal(formatPriceCents(4500), '45.00');
+  assert.equal(formatPriceCents(5), '0.05');
+  assert.equal(formatPriceCents(0), '0.00');
+  assert.equal(formatPriceCents(-1), null);
+  assert.equal(formatPriceCents(1.5), null);
+  assert.equal(formatPriceCents('45'), null);
+});
+
+// backlog:810ed0bf — three identities of Dan (broker, github, google) with
+// different mailboxes are one «Dan» row once the roster carries the
+// control-plane person key; without it they group exactly like before.
+test('personRows merges one human on the roster person key across mailboxes', () => {
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com', operatorAccountId: 'op-9' },
+    { subject: 'google|1049abc', displayName: 'Daniele Pelleri', email: 'dan@gmail.com', operatorAccountId: 'op-9' },
+    { subject: 'sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  const rows = personRows(['broker|dan', 'github|48571113', 'google|1049abc', 'sara'], [], members);
+  assert.equal(rows.length, 2, 'three subjects of Dan are one row, plus Sara');
+  assert.deepEqual(rows[0].ids, ['broker|dan', 'github|48571113', 'google|1049abc']);
+  assert.equal(rows[0].label, 'Dan');
+  assert.equal(rows[1].label, 'Sara');
+  const noKey = personRows(['broker|dan', 'github|48571113'], [], [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com' },
+  ]);
+  assert.equal(noKey.length, 2, 'without the person key different mailboxes stay two rows');
+});
+
+// backlog:810ed0bf — the manual form paints the service as a catalog menu
+// (never free text) with the first entry preselected and its price
+// prefilled; the team menu holds one row per person.
+test('the manual form offers the catalog menu with the default and price prefilled', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    { active: true, sku: '', name: 'Lezione prova', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 1500 }] }] },
+  ] };
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com', operatorAccountId: 'op-9' },
+    { subject: 'google|1049abc', displayName: 'Daniele Pelleri', email: 'dan@gmail.com', operatorAccountId: 'op-9' },
+    { subject: 'sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    memberships: members,
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.ok(service, 'the service is a menu, never free text');
+  const labels = service.findAll('option').map((node) => node.textContent);
+  assert.ok(labels.some((text) => text.includes('Taglio')), 'the catalog names paint');
+  assert.ok(labels.some((text) => text.includes('Lezione prova')), 'every single paints');
+  assert.equal(service.value, 'taglio', 'the first entry is preselected like the worker default');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  assert.equal(byName().price.value, '45.00', 'the price prefills from the default');
+  assert.equal(
+    mount.findAll('input').filter((node) => node.getAttribute('name') === 'serviceKey').length,
+    0,
+    'no free-text service field beside the menu',
+  );
+  const people = mount.querySelector('select[name="teamMemberId"]').findAll('option')
+    .map((node) => node.textContent);
+  assert.equal(people.filter((text) => text === 'Dan').length, 1, 'three identities of Dan are one menu row');
+  assert.ok(people.includes('Sara'), 'Sara keeps her row');
+  // Switching the service follows the price; the claim books menu keys.
+  service.value = 'lezione-prova';
+  service.dispatch('change');
+  assert.equal(byName().price.value, '15.00', 'the price follows the chosen service');
+  choosePerson(mount, 'broker|dan');
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).serviceKey, 'lezione-prova', 'the claim sends the menu key');
+  assert.equal(payload(proposes[0]).priceCents, 1500);
+  assert.equal(payload(proposes[0]).teamMemberId, 'broker|dan');
 });
 
 // i) «Fissa con una frase» with the AI off read «Ricerca non riuscita».

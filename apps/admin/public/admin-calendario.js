@@ -2772,13 +2772,19 @@ export function createCalendarioView(deps) {
       form.appendChild(input);
       return input;
     }
-    // One option per SUBJECT under the person label: the value stays the
-    // exact opaque identity the operator chose or the draft named, never
-    // remapped to the group primary — a silent remap would book (or fail)
-    // as a different identity with no notice that the choice changed.
-    const shown = current;
+    // One option per PERSON under the person label (backlog:810ed0bf:
+    // the Team card and this menu read the same personRows, so three
+    // identities of Dan are one «Dan» here too). The value is the row's
+    // primary booking identity — the named subject when the filter names
+    // it, else the first subject — so a draft naming a secondary identity
+    // lands on the person's row instead of an empty choice.
+    // DECISION (to be confirmed): booking a person books their primary
+    // identity; the claim carries a single subject, and the primary is
+    // the operator's own named one when the filter names it.
+    const currentRow = current === '' ? null : groupOf(current);
+    const shown = currentRow !== null ? currentRow.id : current;
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.flatMap((row) => row.ids.map((subject) => ({ value: subject, label: row.label })))];
+      ...rows.map((row) => ({ value: row.id, label: row.label })))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {
@@ -2792,6 +2798,78 @@ export function createCalendarioView(deps) {
       return select;
     }
     return wrap;
+  }
+
+  /**
+   * backlog:810ed0bf — the manual form's service field: a menu of the
+   * bookable catalog singles (the same singles rule the booking worker
+   * applies, read once with the week labels), never free text. The first
+   * entry is preselected — the worker's default-service is the first
+   * declared single the catalog confirms, so menu and worker agree on the
+   * same default — and the price field prefills from the chosen entry.
+   * The price follows every service change until the operator types their
+   * own price. Without a readable catalog the old typed field stays, and
+   * the server refuses unknown keys in Italian under the field.
+   * @param {any} form @param {any} priceInput
+   */
+  function renderServiceChoice(form, priceInput) {
+    const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : null;
+    const paintUnder = (node) => {
+      if (state.serviceError) {
+        // Production 07/11: a refused service names its cause under the
+        // field, never «Riprova più tardi».
+        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
+        node.setAttribute('aria-invalid', 'true');
+        node.addEventListener('input', () => {
+          state.serviceError = '';
+          hint.setAttribute('class', 'field-error hidden');
+          node.setAttribute('aria-invalid', 'false');
+        });
+        form.appendChild(hint);
+      }
+    };
+    if (bookable === null || bookable.length === 0) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
+      if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      paintUnder(input);
+      return input;
+    }
+    const kept = typeof state.manual?.serviceKey === 'string' ? state.manual.serviceKey : '';
+    const drafted = typeof state.draftFill?.serviceKey === 'string' ? state.draftFill.serviceKey : '';
+    const wanted = kept !== '' ? kept : drafted;
+    const match = bookable.find((entry) => entry.key === wanted) ?? bookable[0];
+    const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
+    const options = bookable.map((entry) => ({
+      value: entry.key,
+      label: `${entry.name} · ${priceText(entry)} €`,
+    }));
+    const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
+    const select = wrap.querySelector('select') ?? wrap;
+    select.value = match.key;
+    const track = () => {
+      const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
+      state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      if (chosen !== null && priceInput) {
+        priceInput.value = priceText(chosen);
+        state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+      }
+    };
+    select.addEventListener('input', track);
+    select.addEventListener('change', track);
+    // The default is already chosen (backlog:810ed0bf): the price paints
+    // with it unless the operator already typed their own price.
+    state.manual = { ...(state.manual ?? {}), serviceKey: match.key };
+    if (priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
+      priceInput.value = priceText(match);
+      state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+    }
+    form.appendChild(wrap);
+    paintUnder(select);
+    return select;
   }
 
   function renderManual() {
@@ -2822,13 +2900,21 @@ export function createCalendarioView(deps) {
     // The person is chosen from the known team, never typed as an opaque id
     // while the team is known (fetta 9): the select owns the claim value.
     inputs.teamMemberId = renderPersonChoice(form);
-    // The service rides the listino product key the server books: no
-    // listino-backed picker exists in the framework yet (nominated missing
-    // capability, never simulated), so the key stays typed — but the label
-    // names no technical concept (fetta 9, C22).
+    // The price rides the chosen catalog entry (backlog:810ed0bf): it
+    // prefills from the menu default and follows every service change
+    // until the operator types their own price.
+    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', placeholder: 'Prezzo EUR (es. 45.00)' } });
+    if (state.manual?.price != null) priceInput.value = String(state.manual.price);
+    priceInput.addEventListener('input', () => {
+      state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
+    });
+    // The service is a catalog menu with the default already chosen, never
+    // free text (backlog:810ed0bf): the claim sends the menu key the worker
+    // books by, with its price precompiled beside it.
+    inputs.serviceKey = renderServiceChoice(form, priceInput);
+    form.appendChild(priceInput);
+    inputs.price = priceInput;
     const fields = [
-      ['serviceKey', 'text', 'Servizio'],
-      ['price', 'text', 'Prezzo EUR (es. 45.00)'],
       ['date', 'date', 'Giorno'],
       ['start', 'time', 'Inizio'],
       ['end', 'time', 'Fine'],
@@ -2846,18 +2932,6 @@ export function createCalendarioView(deps) {
       });
       inputs[name] = input;
       form.appendChild(input);
-      if (name === 'serviceKey' && state.serviceError) {
-        // Production 07/11: a typed service the listino does not know read
-        // «Riprova più tardi». The cause is this field: say it right here.
-        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
-        input.setAttribute('aria-invalid', 'true');
-        input.addEventListener('input', () => {
-          state.serviceError = '';
-          hint.setAttribute('class', 'field-error hidden');
-          input.setAttribute('aria-invalid', 'false');
-        });
-        form.appendChild(hint);
-      }
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -2869,15 +2943,33 @@ export function createCalendarioView(deps) {
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
-        // The select offers every subject, so a known draft lands on its
-        // exact identity (never remapped); a pipe outsider never paints —
-        // its identity already rides in state for the claim only.
+        // The select offers one row per person, so a draft naming a known
+        // identity lands on the person's primary row; a pipe outsider never
+        // paints — its identity already rides in state for the claim only.
         const raw = String(draft.teamMemberId);
         const people = personRows(parseMemberFilter(state.memberFilter), state.hiddenMembers, state.members);
         const person = people.find((row) => row.ids.includes(raw));
-        if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
+        if (inputs.teamMemberId?.tagName === 'SELECT') {
+          if (person) inputs.teamMemberId.value = person.id;
+        } else if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
       }
-      if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
+      if (draft.serviceKey) {
+        // The service is a menu (backlog:810ed0bf): a drafted key the
+        // catalog knows lands on its option, an unknown one keeps the
+        // preselected default the worker would book — the server would
+        // refuse the unknown key anyway.
+        const rawService = String(draft.serviceKey);
+        if (inputs.serviceKey?.tagName === 'SELECT') {
+          const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : [];
+          const hit = bookable.find((entry) => entry.key === rawService) ?? null;
+          if (hit !== null) {
+            inputs.serviceKey.value = hit.key;
+            const priceText = formatPriceCents(hit.priceCents) ?? '';
+            if (inputs.price) inputs.price.value = priceText;
+            state.manual = { ...(state.manual ?? {}), serviceKey: hit.key, price: priceText };
+          }
+        } else inputs.serviceKey.value = rawService;
+      }
       if (draft.notes) inputs.notes.value = String(draft.notes);
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
@@ -3119,6 +3211,11 @@ export function createCalendarioView(deps) {
     // profile positively reports no connected calendar.
     void loadMembers();
     void loadCalendar();
+    // The service menu reads the catalog on entry (backlog:810ed0bf), not
+    // only with the first week: the manual form shows its options and its
+    // preselected default before any member is named. Shared in-flight
+    // with the week labels; the settled read repaints while mounted.
+    void ensureServices();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
   }
