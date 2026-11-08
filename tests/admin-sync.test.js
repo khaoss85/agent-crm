@@ -795,7 +795,9 @@ test('the table renders nine rows with the count, agg and pills', async () => {
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('2 di 9 collegati'), 'the card counts the connected nine');
+  // Without the profile neither Google Calendar nor Stripe can be connected
+  // here: they show «Non disponibile» and stay out of the count (08/11).
+  assert.ok(text.includes('2 di 7 collegati'), 'the card counts what can be connected');
   for (const name of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
     assert.ok(text.includes(name), `the table names ${name}`);
   }
@@ -826,7 +828,7 @@ test('the empty space still lists nine connectable rows', async () => {
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('0 di 9 collegati'));
+  assert.ok(text.includes('0 di 7 collegati'));
   assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 7);
   assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non disponibile').length, 2);
 });
@@ -1023,7 +1025,7 @@ test('3a3e6eaf: nothing linked says so, offers Collega and never claims all sync
   await flush();
   const text = mount.textContent;
   assert.ok(text.includes('Nessun canale collegato'), 'the headline names the state');
-  assert.ok(text.includes('0 di 9 collegati'), 'the count stays');
+  assert.ok(text.includes('0 di 7 collegati'), 'the count stays');
   assert.ok(!text.includes('Tutto sincronizzato'), 'never all synced with nothing linked');
   assert.ok(!text.includes('Sincronizza ora'), 'no pull with nothing to pull');
   const connect = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-connect'));
@@ -1086,7 +1088,7 @@ for (const channel of ['sms', 'telegram']) {
     assert.ok(count, 'the card shows a count');
     assert.equal(Number(count[1]) > 0, indicator.tone !== 'empty',
       `hero «${indicator.title}» and «${count[0]}» tell the same story`);
-    assert.equal(count[0], '1 di 10 collegati', 'the extra linked row counts, and so does its place');
+    assert.equal(count[0], '1 di 8 collegati', 'the extra linked row counts, and so does its place');
     assert.ok(!text.includes('Nessun canale collegato'), 'a linked row is never «nessun canale»');
   });
 }
@@ -1101,7 +1103,7 @@ test('3a3e6eaf C15-C16: all clear hides the section, the count sits beside Canal
   const head = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-sync-cardhead'
     && node.textContent.startsWith('Canali'));
   assert.ok(head, 'Canali has a card head');
-  assert.equal(head.childNodes[1].textContent, '1 di 9 collegati', 'the count sits in the head row');
+  assert.equal(head.childNodes[1].textContent, '1 di 7 collegati', 'the count sits in the head row');
 });
 
 test('3a3e6eaf C18-C20: a linked row shows agg., events and a coloured pill; no English, no ids', async () => {
@@ -1159,7 +1161,7 @@ test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async (
   await flush();
   const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
   assert.ok(count, 'the card shows a count');
-  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  assert.equal(count[0], '2 di 8 collegati', 'Gmail and Calendar count on Stato sync too');
   assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
   assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
 });
@@ -1216,7 +1218,7 @@ test('#680 P2-1: profile links counted as connected read Attivo, never «In atte
   });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  assert.ok(mount.textContent.includes('2 di 8 collegati'));
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
   assert.deepEqual(pills.map((node) => node.textContent), ['Attivo', 'Attivo'], 'Email and Google Calendar read Attivo');
 });
@@ -1231,7 +1233,7 @@ test('#680 P2-2: a suspended row alone is not connected — table, hero and coun
   const { mount, view } = renderView({ client: { activity: only } });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('0 di 9 collegati'));
+  assert.ok(mount.textContent.includes('0 di 7 collegati'));
   assert.ok(!mount.textContent.includes('Tutto sincronizzato'), 'the hero agrees with the count');
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
   assert.equal(pills.length, 1, 'the suspended row keeps its pill');

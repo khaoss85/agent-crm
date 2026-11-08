@@ -27,13 +27,11 @@ import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import {
-  CHANNEL_CONNECT_ROUTES,
+  channelConnectRoute,
   countedChannel,
   NINE_CHANNELS,
-  PROFILE_CONNECTOR_CHANNELS,
   channelConnectionCount,
   mergeProfileConnections,
-  profileOffersConnector,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -478,11 +476,7 @@ export function withProfileConnections(activity, profile = null) {
  * @param {unknown} [profile]
  */
 export function syncConnectRoute(channel, profile = null) {
-  if (cataloguedChannel(channel)) return `#/connettori/${channel}`;
-  if (!Object.hasOwn(CHANNEL_CONNECT_ROUTES, channel)) return null;
-  const offered = Object.entries(PROFILE_CONNECTOR_CHANNELS)
-    .some(([connector, served]) => served === channel && profileOffersConnector(profile, connector));
-  return offered ? CHANNEL_CONNECT_ROUTES[channel] : null;
+  return channelConnectRoute(channel, { guided: CONNECTOR_CATALOG.map((entry) => entry.channel), profile });
 }
 
 /** Days before expiry that light the `Permesso in scadenza` pill and card. */
@@ -1158,7 +1152,12 @@ export function createSyncView(deps) {
     // the table, so it counts and so does its place — «1 di 10» (review
     // #647 P2); a row that is not active (suspended, pending) keeps its
     // pill but is not «collegato».
-    const count = channelConnectionCount(entriesOf(activity));
+    // Only channels this backoffice can connect (or already linked) are in
+    // the denominator: a «Non disponibile» Stripe row is shown but never
+    // counted as something to connect — the Oggi invite reads the same.
+    const count = channelConnectionCount(entriesOf(activity), {
+      connectable: (channel) => syncConnectRoute(channel, state.profile) !== null,
+    });
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
     cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));
