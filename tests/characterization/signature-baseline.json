@@ -2820,7 +2820,7 @@
     "packages/commercial/src/registry.js": "2aa814e7e4f207b7b46e36e996fb26f82bf7edba19ddc7512b39a017d633fc05",
     "packages/commercial/src/terms.js": "7adceb41a3ca613fc14cafda70517aee5d5da645faed9fd02121376032e56efd",
     "packages/commercial/src/verify-terms.js": "62e382bbbe8281f641ace6d674ef2d9d0e925fd2cb2024866c3ef198f44cb808",
-    "packages/core/src/action-runtime.js": "51b290fdeec8fd907e838351da2d3cb242e7250bed51c92e976b8adacaf44f3c",
+    "packages/core/src/action-runtime.js": "d4b31d619ff764d6d4f1a141854e11c22b10ca9415012cc941ab1ca8e37c2d58",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "5b52e6a48145a91dc90f202e5541dfa168d9ae5ffaa8ff8bdfeda98ab2347467",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
