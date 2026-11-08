@@ -58,10 +58,11 @@ mislead, e.g. money: `hint: "Integer MINOR units: 500000 means 5,000.00."`.
 An action whose input or result carries a credential it must never persist
 (a public-link bearer) declares `traceRedact: { input, output }` — two pure
 functions mapping the validated input and the result to the copies the
-workflow trace (`workflow_runs`/`trace_spans`) stores. The live return value
-keeps the raw value and `execute` always sees the raw validated input; only
-the persisted trace is redacted. Store the lookup form (e.g. the SHA-256
-hash), never the bearer.
+workflow trace (`workflow_runs`/`trace_spans`) stores. On PostgreSQL the same
+copies land in the idempotent write-outcome rows, so the redaction covers
+them too. The live return value keeps the raw value and `execute` always
+sees the raw validated input; only the persisted copies are redacted. Store
+the lookup form (e.g. the SHA-256 hash), never the bearer.
 
 ### The `execute` context
 
