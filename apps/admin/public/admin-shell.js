@@ -344,13 +344,14 @@ export function spaceMenuItems(spaces, activeId) {
  * card shows space-scoped calls, Stato sync pulls for one space, the
  * mounted home greets with the space name, and Agenti / Sequenze read and
  * write the space's agents and sequences — left alone they would keep the
- * space just left behind.
+ * space just left behind. Calendario too (review #664): its week and its
+ * queued phrase search belong to one space.
  * @param {unknown} view the routed view id
  * @param {{ mounted?: boolean }} [options]
  */
 export function rerendersOnSpaceSwitch(view, { mounted = false } = {}) {
   if (view === 'dashboard') return mounted === true;
-  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze';
+  return view === 'customer-card' || view === 'sync' || view === 'agenti' || view === 'sequenze' || view === 'calendario';
 }
 
 /**

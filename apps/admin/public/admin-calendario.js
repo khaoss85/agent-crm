@@ -878,6 +878,7 @@ export function createCalendarioView(deps) {
     // card comes back idle, never wedged on «Sto cercando…».
     state.aiLoading = false;
     state.phraseWaiting = false;
+    state.phrasePending = null;
     memberToken += 1;
     trackRetainedDraft();
   }
@@ -954,9 +955,11 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
+    /** The space the view last rendered for, so a switch drops that space's search. @type {string|null} */
+    renderedSpace: null,
     /** The phrase POST was queued and is being read back: the card says «Sto cercando…». */
     phraseWaiting: false,
-    /** The queued phrase request still pending after the read-back and the phrase that asked it, for Riprova (never a new POST). @type {{requestId: string, phrase: string}|null} */
+    /** The queued phrase request still pending after the read-back, the phrase and the space that asked it, for Riprova (never a new POST). @type {{requestId: string, phrase: string, spaceId: string}|null} */
     phrasePending: null,
     /** Live manual form nodes, so a slot Conferma books the claim the operator sees. @type {any} */
     manualNodes: null,
@@ -2155,7 +2158,7 @@ export function createCalendarioView(deps) {
     }
     const aiNote = state.aiNote || (aiOff ? calendarRefusalText({ code: 'LLM_SPACE_DISABLED' }) : '');
     if (aiNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: aiNote }));
-    if (!state.aiLoading && state.phrasePending) {
+    if (!state.aiLoading && state.phrasePending && state.phrasePending.spaceId === readSpace()) {
       // Still queued after the read-back: Riprova reads the SAME request
       // back, never a new POST (the pilot parses each POST again).
       // The phrase that produced the request rides with it (review #664):
@@ -2280,6 +2283,9 @@ export function createCalendarioView(deps) {
     // The phrase that asks this request (review #664): the queued id and the
     // answer both ride with it, never with a later edit of the textarea.
     const asked = state.phrase;
+    // The space that asks it (review #664): a queued id is never read back
+    // under another space.
+    const askedSpace = readSpace();
     try {
       const answer = await phraseAnswer({ resumeId, seq });
       state.phraseWaiting = false;
@@ -2385,7 +2391,7 @@ export function createCalendarioView(deps) {
         // Never «Ricerca non riuscita» on an answer that may be ready: say
         // it is slow, and offer Riprova on the same request.
         console.warn('bo-calendario phrase still pending:', `requestId=${String(record.requestId ?? '')}`, `spaceId=${readSpace()}`);
-        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: asked } : null;
+        state.phrasePending = typeof record.requestId === 'string' ? { requestId: record.requestId, phrase: asked, spaceId: askedSpace } : null;
         state.aiNote = 'La ricerca sta impiegando più del previsto.';
         return;
       }
@@ -3076,6 +3082,18 @@ export function createCalendarioView(deps) {
   }
 
   async function render() {
+    // A space switch while on Calendario (review #664): the search in flight
+    // and the queued request belong to the space just left — drop them, so
+    // nothing of space A is read back or painted under space B.
+    const space = readSpace();
+    if (state.renderedSpace !== null && state.renderedSpace !== space) {
+      phraseSeq += 1;
+      state.aiLoading = false;
+      state.phraseWaiting = false;
+      state.phrasePending = null;
+      state.aiNote = '';
+    }
+    state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
     // one-time pick the calendar takes here, once, on entry — read and
     // cleared, so a later visit starts unpicked. A fresh pick opens the

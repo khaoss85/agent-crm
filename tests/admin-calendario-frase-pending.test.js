@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCalendarioView, PHRASE_RESUME_ROUNDS } from '../apps/admin/public/admin-calendario.js';
 import { pendingRequestId } from '../apps/admin/public/admin-core.js';
+import { rerendersOnSpaceSwitch } from '../apps/admin/public/admin-shell.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -347,4 +348,61 @@ test('a route away during the read-back brings the card back idle', async () => 
   assert.ok(!mount.textContent.includes('Cerco gli slot liberi'), 'no stuck loading line');
   const find = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
   assert.equal(find.getAttribute('disabled'), null, 'the search button works again');
+});
+
+// Review #664 round 4 P1: a space switch while staying on Calendario let
+// Riprova read space A's queued request back under space B.
+function switchableStorage(initial) {
+  const kept = new Map();
+  const box = { space: initial };
+  box.storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? box.space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  return box;
+}
+
+test('a space switch on Calendario drops the queued phrase request of the space left', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const box = switchableStorage('space-a');
+  const client = phraseClient({ readyAfter: 99 });
+  const view = createCalendarioView({ doc, mount, client, storage: box.storage, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush(120);
+  const resume = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'phrase-resume');
+  assert.ok(resume(), 'Riprova is offered in space A');
+  box.space = 'space-b';
+  await view.render();
+  await flush();
+  assert.equal(resume(), undefined, 'no Riprova for space A in space B');
+  assert.ok(!mount.textContent.includes('La ricerca sta impiegando più del previsto.'), 'the slow line of space A is gone');
+  const readsBefore = reads(client).length;
+  box.space = 'space-a';
+  await view.render();
+  await flush();
+  assert.equal(resume(), undefined, 'the dropped request never comes back');
+  assert.equal(reads(client).length, readsBefore, 'nothing was read back under the other space');
+});
+
+test('a space switch on Calendario stops the read-back of the space left', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const box = switchableStorage('space-a');
+  const client = phraseClient({ readyAfter: 99 });
+  const view = createCalendarioView({ doc, mount, client, storage: box.storage, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  await search(view, mount);
+  await flush();
+  assert.ok(mount.textContent.includes('Sto cercando'), 'waiting in space A');
+  box.space = 'space-b';
+  await view.render();
+  await flush();
+  assert.ok(!mount.textContent.includes('Sto cercando'), 'space B is not waiting on space A');
+  const find = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
+  assert.equal(find.getAttribute('disabled'), null, 'the search button works in space B');
+});
+
+test('Calendario re-renders on a space switch', () => {
+  assert.equal(rerendersOnSpaceSwitch('calendario'), true);
 });
