@@ -45,6 +45,20 @@ export function italianLabel(table, value, fallback) {
   return Object.hasOwn(table, key) ? table[key] : fallback;
 }
 
+/**
+ * State of one history import (`channel-import-state.status`, the
+ * `sync.status` of the connectors reads) in the operator's words
+ * (backlog:cf365ada15b9: the connector detail printed the raw `done`).
+ */
+export const IMPORT_STATE_LABELS = Object.freeze({
+  running: 'in corso',
+  done: 'completata',
+  failed: 'non riuscita',
+});
+
+/** @param {unknown} status */
+export const importStateLabel = (status) => italianLabel(IMPORT_STATE_LABELS, status, 'stato sconosciuto');
+
 /** @param {unknown} outcome */
 export const callOutcomeLabel = (outcome) => italianLabel(CALL_OUTCOME_LABELS, outcome, 'senza esito');
 
@@ -64,23 +78,44 @@ export function romeClock(value) {
 }
 
 /**
+ * Placeholder words older writers stored instead of a name. Before #606 the
+ * sender path created contacts as `Unknown Unknown` (or kept the real first
+ * name beside `lastName: 'Unknown'`, so Oggi read «PayPal Unknown»), and the
+ * lead path still stores `—` as the last name of a one-token address. None of
+ * them names anyone: they are dropped from what the operator reads.
+ */
+const NAME_PLACEHOLDERS = new Set(['unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', '-', '—', '–']);
+
+/**
+ * A stored name with its placeholder words dropped («PayPal Unknown» reads
+ * «PayPal»), null when nothing real is left.
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function readableName(value) {
+  if (typeof value !== 'string') return null;
+  const words = value.trim().split(/\s+/).filter((word) => word !== '' && !NAME_PLACEHOLDERS.has(word.toLowerCase()));
+  const text = words.join(' ');
+  return text !== '' ? text : null;
+}
+
+/**
  * Display name from a read-only customer profile
  * (`GET /api/customer-data/profile/:resource/:id`): the contact's full name,
  * else the company name. The email is deliberately not a «nome», and an
  * unknown customer resolves to null (the caller falls back to its own label
- * or handle) — never a guessed name. Shared by Calendario and Oggi.
+ * or handle) — never a guessed name, and never a stored placeholder such as
+ * `Unknown` (backlog:5083e7a77c26). Shared by Calendario and Oggi.
  * @param {any} profile
  * @returns {string | null}
  */
 export function nameFromProfile(profile) {
   const contact = profile?.identity?.contact ?? null;
-  const full = [contact?.firstName, contact?.lastName]
-    .filter((part) => typeof part === 'string' && part.trim() !== '')
-    .join(' ').trim();
-  if (full !== '') return full;
-  const company = typeof profile?.identity?.company?.name === 'string'
-    ? profile.identity.company.name.trim() : '';
-  return company !== '' ? company : null;
+  const full = readableName([contact?.firstName, contact?.lastName]
+    .filter((part) => typeof part === 'string')
+    .join(' '));
+  if (full !== null) return full;
+  return readableName(profile?.identity?.company?.name);
 }
 
 const ROME_DAY_TIME = new Intl.DateTimeFormat('it-IT', {
