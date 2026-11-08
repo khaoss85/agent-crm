@@ -1459,3 +1459,17 @@ test('5083e7a77c26: with no more calls today the card prepares the next one ahea
   const today = buildPreCallBrief({ appointment: APPT_TODAY, now: OGGI_NOW });
   assert.equal(today.when, 'oggi alle 10:00', 'today keeps its wording');
 });
+
+test('5083e7a77c26: a stored channel alias counts as its channel, never as a tenth one', async () => {
+  const { channelConnectionCount } = await import('../apps/admin/public/admin-channels-count.js');
+  const count = channelConnectionCount([
+    { channel: 'google-calendar', status: 'active' },
+    { channel: 'gmail', status: 'active' },
+    { channel: 'messenger', status: 'pending' },
+  ]);
+  assert.equal(count.connected, 2);
+  assert.equal(count.total, 9, 'aliases add no channel to the universe');
+  assert.ok(!count.missing.some((entry) => entry.channel === 'calendar' || entry.channel === 'email'));
+  assert.ok(count.missing.some((entry) => entry.channel === 'facebook'), 'a pending Messenger row leaves Facebook to connect');
+  assert.equal(countConnectedNine([{ channel: 'google-calendar', status: 'active' }]), 1);
+});

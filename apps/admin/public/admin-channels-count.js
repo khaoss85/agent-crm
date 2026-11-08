@@ -62,6 +62,30 @@ export const PROFILE_CONNECTOR_CHANNELS = Object.freeze({
 });
 
 /**
+ * Stored channel spellings that name a counted channel under another word:
+ * a Google- or Meta-flavoured adapter may store `google-calendar`, `gmail`
+ * or `messenger`. The pilot serves its connectors reads under the shell's
+ * key already (src/shared/bo-connectors.js `CHANNEL_ALIASES`), but Oggi
+ * reads the raw channel-connection records: without the same aliases one
+ * Calendar row would count as a tenth, unknown channel there.
+ */
+export const CHANNEL_ALIASES = Object.freeze({
+  'google-calendar': 'calendar',
+  google_calendar: 'calendar',
+  gmail: 'email',
+  messenger: 'facebook',
+});
+
+/**
+ * The counted channel id of one stored spelling, '' when blank.
+ * @param {unknown} value
+ */
+export function countedChannel(value) {
+  if (typeof value !== 'string' || value === '') return '';
+  return Object.hasOwn(CHANNEL_ALIASES, value) ? CHANNEL_ALIASES[value] : value;
+}
+
+/**
  * Where a channel connects when the guided `#/connettori/<channel>` flow
  * does not serve it. Google Calendar connects per person on Profilo, where
  * its Collega lives. Stripe has no connect screen in the backoffice (the
@@ -113,8 +137,8 @@ export function mergeProfileConnections(rows, profile = null) {
   const items = profileItems(profile);
   if (items === null) return list;
   const active = new Set(list
-    .filter((row) => row.status === 'active' && typeof row.channel === 'string')
-    .map((row) => row.channel));
+    .filter((row) => row.status === 'active' && countedChannel(row.channel) !== '')
+    .map((row) => countedChannel(row.channel)));
   const merged = [...list];
   for (const [connector, channel] of Object.entries(PROFILE_CONNECTOR_CHANNELS)) {
     if (active.has(channel)) continue;
@@ -157,7 +181,7 @@ export function channelConnectionCount(rows) {
   const active = new Set();
   for (const row of list) {
     if (row == null || typeof row !== 'object') continue;
-    const channel = typeof row.channel === 'string' ? row.channel : '';
+    const channel = countedChannel(row.channel);
     if (channel === '') continue;
     if (!universe.includes(channel)) universe.push(channel);
     if (row.status === 'active') active.add(channel);
