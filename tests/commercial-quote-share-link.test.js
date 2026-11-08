@@ -78,15 +78,30 @@ after(() => {
   appliedTemplate = null;
 });
 
-async function bootApp(t) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-quote-share-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  cpSync(appliedTemplateRoot(), root, { recursive: true });
-  const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
-  const app = createAccordoApp({ dbPath: ':memory:' });
-  t.after(() => app.close());
-  return app;
+/**
+ * One composition for the whole file: every test builds its own quote,
+ * company and link on it (unique `LINK-*` skus), so rows never meet across
+ * tests while the nine boots become one. The trace test (A5-0) still proves
+ * its own case: absence of any raw Bearer [REDACTED] every `quote.*` run and presence
+ * of its own token hash.
+ */
+let sharedBooted = null;
+async function sharedApp() {
+  if (!sharedBooted) {
+    const root = mkdtempSync(join(tmpdir(), 'accordo-quote-share-'));
+    cpSync(appliedTemplateRoot(), root, { recursive: true });
+    const { createAccordoApp } = await import(pathToFileURL(join(root, 'packages/app/src/index.js')).href);
+    sharedBooted = { root, app: createAccordoApp({ dbPath: ':memory:' }) };
+  }
+  return sharedBooted.app;
 }
+after(() => {
+  if (sharedBooted) {
+    sharedBooted.app.close();
+    rmSync(sharedBooted.root, { recursive: true, force: true });
+    sharedBooted = null;
+  }
+});
 
 const COMPONENT = (flatAmountCents) => ({
   key: 'pacchetto',
@@ -137,7 +152,7 @@ async function refusal(promise) {
 const hashOf = (token) => createHash('sha256').update(String(token), 'utf8').digest('hex');
 
 test('A5-1: accepting twice from the link stays one acceptance', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-1', cents: 10000 });
   const shared = await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
@@ -181,7 +196,7 @@ test('A5-1: accepting twice from the link stays one acceptance', async (t) => {
 });
 
 test('A5-1b: the acceptance proof survives the link expiry', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-1B', cents: 10000 });
   const { token } = (await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
@@ -215,7 +230,7 @@ test('A5-1b: the acceptance proof survives the link expiry', async (t) => {
 });
 
 test('A5-2: the accepted price is the frozen send price after a catalog reprice', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote, product, offerId } = await approvedQuote(app, { sku: 'LINK-2', cents: 10000 });
   const { token } = (await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
@@ -227,7 +242,9 @@ test('A5-2: the accepted price is the frozen send price after a catalog reprice'
     offerIds: [offerId],
     offers: [{ name: 'Prodotto LINK-2', components: [COMPONENT(20000)] }],
   }, ACTOR);
-  const live = (await app.listCatalogProducts({})).products[0].offers[0];
+  // Scoped by product id: the shared composition holds every test's product.
+  const live = (await app.listCatalogProducts({})).products.find((row) => row.productId === product.id)?.offers[0];
+  assert.ok(live, 'the repriced product is still listed');
   assert.equal(live.components[0].flatAmountCents, 20000, 'the live catalog really moved');
 
   const accepted = await app.runAction({
@@ -241,7 +258,7 @@ test('A5-2: the accepted price is the frozen send price after a catalog reprice'
 });
 
 test('A5-3: an expired link shows «offerta scaduta» and never accepts', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-3', cents: 10000 });
   const shared = await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: { expiresInDays: 1 }, actor: ACTOR,
@@ -281,7 +298,7 @@ test('A5-3: an expired link shows «offerta scaduta» and never accepts', async 
 });
 
 test('A5-0: the link bearer never rests in workflow_runs or trace_spans', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-0', cents: 10000 });
   const shared = await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
@@ -324,7 +341,7 @@ test('A5-0: the link bearer never rests in workflow_runs or trace_spans', async 
 });
 
 test('A5-1c: re-sharing an accepted version mints no second link', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-1C', cents: 10000 });
   const { token } = (await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
@@ -357,7 +374,7 @@ test('A5-matrix: every stored link state answers every link operation the same w
   // One table holds every case the review rounds named — idempotent accept,
   // accepted-before-expiry, re-share after accept, expired refusal, unknown
   // token — so a later cure cannot fix one case by breaking another.
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const first = await approvedQuote(app, { sku: 'LINK-M1', cents: 10000 });
   const second = await approvedQuote(app, { sku: 'LINK-M2', cents: 5000 });
 
@@ -538,7 +555,7 @@ test('A5-matrix: every stored link state answers every link operation the same w
 });
 
 test('re-sharing a live link returns no bearer', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-R', cents: 10000 });
   const first = await app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
@@ -553,7 +570,7 @@ test('re-sharing a live link returns no bearer', async (t) => {
 });
 
 test('sharing stays a human act on an approved quote only', async (t) => {
-  const app = await bootApp(t);
+  const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-4', cents: 5000 });
   const refused = await refusal(app.runAction({
     module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: PUBLIC,
