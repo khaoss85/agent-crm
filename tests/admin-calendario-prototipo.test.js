@@ -123,7 +123,7 @@ test('29bb3f2c0d64 (a): the detail card shows the origin pill and «↔ Google C
   assert.ok(card.textContent.includes('Arrivato da Google Calendar'), card.textContent);
   const sync = card.findAll('p').find((node) => node.getAttribute('data-role') === 'event-sync');
   assert.ok(sync, 'the sync line paints');
-  assert.equal(sync.textContent, '↔ Google Calendar · sincronizzato');
+  assert.equal(sync.textContent, '↔ Google Calendar · evento importato dal calendario collegato');
 
   blockOf(mount, '14:00').dispatch('click');
   await settle();

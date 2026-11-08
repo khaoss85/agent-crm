@@ -2264,7 +2264,7 @@ export function createCalendarioView(deps) {
         attrs: { 'data-role': 'event-sync' },
         text: disconnected
           ? '↔ Google Calendar · non più collegato: ricollegalo dal Profilo'
-          : '↔ Google Calendar · sincronizzato',
+          : '↔ Google Calendar · evento importato dal calendario collegato',
       }));
     }
     if (linked) {
