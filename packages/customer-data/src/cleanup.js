@@ -98,7 +98,11 @@ export function createCleanupProposals({ database, modules, policy, names, follo
     throw new AppError('data-cleanup proposals need the declared match policy', { code: 'CLEANUP_UNAVAILABLE', status: 500 });
   }
 
-  const openFollowUps = (actor) => {
+  // The work handle opens with await: at capability contract 2 `create`
+  // is async and answers a Promise, so a sync open would hand `openTask`
+  // a Promise instead of the handle (`followUps.createFollowUp is not a
+  // function`). Awaiting a contract-1 open settles it unchanged.
+  const openFollowUps = async (actor) => {
     if (!followUpProvider || typeof followUpProvider.create !== 'function') return null;
     return followUpProvider.create({ modules, actor, consumer: 'customer-data' });
   };
@@ -351,47 +355,53 @@ export function createCleanupProposals({ database, modules, policy, names, follo
     }
 
     // ── Writes: one transaction, proposals only ─────────────────────
-    const followUps = openFollowUps(actor);
+    // The records behind the task/activity pair are decided before the
+    // handle opens: the provider edge is optional, the records are not.
     const activitySvc = optional(modules, 'work-activity');
-    const canWriteTasks = followUps !== null
-      && taskSvc && typeof taskSvc.createManaged === 'function'
-      && activitySvc && typeof activitySvc.createManaged === 'function';
-    const tasksUnavailable = canWriteTasks
-      ? null
-      : 'the composition wires no opened work follow-up@1 edge, so proposals are returned without «Da fare» tasks';
-    if (followUps !== null && !canWriteTasks) {
-      // An edge that cannot prove the task/activity pair is a wiring the
-      // caller must see, not a silent skip: it refuses fail-closed.
-      throw new AppError(
-        'the cleanup scan found an opened work follow-up@1 edge without writable work-task and work-activity records',
-        { code: 'CLEANUP_UNAVAILABLE', status: 500 },
-      );
-    }
+    const recordsWritable = Boolean(taskSvc && typeof taskSvc.createManaged === 'function'
+      && activitySvc && typeof activitySvc.createManaged === 'function');
 
     const proposals = [];
     let tasksWritten = 0;
     let tasksReplayed = 0;
-    const openTask = async (proposal) => {
-      if (!canWriteTasks) return { taskId: null, replayed: null };
-      const subject = subjectOf(proposal.subject.resource, proposal.subject.id, proposal.subject.label);
-      const { task, replayed } = await followUps.createFollowUp({
-        sourceKey: proposal.sourceKey,
-        title: proposal.title,
-        dueAt: null,
-        subject: {
-          resource: subject.resource,
-          id: subject.id,
-          owner: 'host',
-          label: subject.label,
-        },
-        source: { package: 'customer-data', action: SOURCE_ACTION },
-      });
-      if (replayed === true) tasksReplayed += 1;
-      else tasksWritten += 1;
-      return { taskId: task?.id ?? null, replayed: replayed ?? false };
-    };
-
     const receipt = await database.transactionAsync(async () => {
+      // The work handle opens inside this transaction, with await: at
+      // capability contract 2 `create` is async, and `createFollowUp`
+      // proves this flow owns the open transaction — on SQLite and
+      // PostgreSQL alike — instead of refusing WORK_TRANSACTION_REQUIRED.
+      const followUps = await openFollowUps(actor);
+      const canWriteTasks = followUps !== null && recordsWritable;
+      const tasksUnavailable = canWriteTasks
+        ? null
+        : 'the composition wires no opened work follow-up@1 edge, so proposals are returned without «Da fare» tasks';
+      if (followUps !== null && !canWriteTasks) {
+        // An edge that cannot prove the task/activity pair is a wiring the
+        // caller must see, not a silent skip: it refuses fail-closed.
+        throw new AppError(
+          'the cleanup scan found an opened work follow-up@1 edge without writable work-task and work-activity records',
+          { code: 'CLEANUP_UNAVAILABLE', status: 500 },
+        );
+      }
+      const openTask = async (proposal) => {
+        if (!canWriteTasks) return { taskId: null, replayed: null };
+        const subject = subjectOf(proposal.subject.resource, proposal.subject.id, proposal.subject.label);
+        const { task, replayed } = await followUps.createFollowUp({
+          sourceKey: proposal.sourceKey,
+          title: proposal.title,
+          dueAt: null,
+          subject: {
+            resource: subject.resource,
+            id: subject.id,
+            owner: 'host',
+            label: subject.label,
+          },
+          source: { package: 'customer-data', action: SOURCE_ACTION },
+        });
+        if (replayed === true) tasksReplayed += 1;
+        else tasksWritten += 1;
+        return { taskId: task?.id ?? null, replayed: replayed ?? false };
+      };
+
       let candidatesWritten = 0;
       for (const pair of pairs) {
         const written = await recordCandidatePairs({
