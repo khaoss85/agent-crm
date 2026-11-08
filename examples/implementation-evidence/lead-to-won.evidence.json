@@ -1,7 +1,7 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/lead-to-won.plan.json",
-  "planFingerprint": "6210980f51ea1103d4049f7c4bc2242cffeb7a5e2d8c402bc3a20d0e07b66d00",
+  "planFingerprint": "f6507b871f3c637f54dbffe314985287c0a7873f6589189f489719e81a41c491",
   "applicationInspectionFingerprint": "b92128413bc2e96daf35dac8ec748625b4422f1eda9cdc278e659465f92904c4",
   "requirements": [
     {
