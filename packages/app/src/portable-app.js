@@ -135,9 +135,50 @@ function prototypeFunctionNames(object) {
   return names;
 }
 
-/** @param {any} service */
+/**
+ * The portable view of one record service (backlog:1943c161): the prototype
+ * methods plus the plain-data `manifest` and the `audit`/`events` facades a
+ * spend claim needs. The `database` handle stays off the facade on purpose —
+ * callers that need atomicity go through `mutationSync`/`mutationAsync`, which
+ * hand them a transaction handle instead of the owned storage. The manifest
+ * is already public through `modules.schema()` and `list()`, so exposing it
+ * here publishes nothing new; `audit` and `events` mirror the closed-over
+ * graph facades (`record`/`list`, `subscribe`/`emit`/`buffered`).
+ *
+ * `mutationSync` follows the storage it can actually run on. On sync
+ * storage it hands its callback the sync transaction handle — the same
+ * handle `mutationAsync` already hands there — so a caller that needs one
+ * synchronous atomic unit (the llm spend claim) never has to run an async
+ * body inside a connection-wide SQLite savepoint, where a concurrent
+ * request would land inside it and share its rollback. On async storage
+ * the method cannot run at all (it dereferences `database.storage.sync`),
+ * so the facade does not publish it: its presence is the sync signal.
+ * @param {any} service
+ */
 function portableService(service) {
-  return closeOver(service, prototypeFunctionNames(service));
+  const names = prototypeFunctionNames(service);
+  const syncStorage = isSyncStorage(service?.database);
+  const facade = closeOver(service, syncStorage ? names : names.filter((name) => name !== 'mutationSync'));
+  const extra = {};
+  if (syncStorage && typeof service.mutationSync === 'function') {
+    const handle = service.database.storage.sync;
+    extra.mutationSync = (fn) => service.mutationSync(() => fn(handle));
+  }
+  if (service?.manifest !== undefined && service.manifest !== null
+    && typeof service.manifest === 'object' && !Array.isArray(service.manifest)) {
+    extra.manifest = Object.freeze({
+      ...service.manifest,
+      ...(Array.isArray(service.manifest.fields) ? { fields: Object.freeze(service.manifest.fields.map((field) => Object.freeze({ ...field }))) } : {}),
+    });
+  }
+  if (service?.audit !== undefined && service.audit !== null) {
+    extra.audit = closeOver(service.audit, ['record', 'list']);
+  }
+  if (service?.events !== undefined && service.events !== null) {
+    extra.events = closeOver(service.events, ['subscribe', 'emit', 'buffered']);
+  }
+  if (Object.keys(extra).length === 0) return facade;
+  return Object.freeze({ ...facade, ...extra });
 }
 
 /**
