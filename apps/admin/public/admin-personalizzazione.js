@@ -309,8 +309,9 @@ export function previewTitleFor(previewFor, units = []) {
  * otherwise the card falls back to the hub link instead of a deep link.
  * Google Calendar connects per person on Profilo, where its Collega lives
  * (the shared CHANNEL_CONNECT_ROUTES, the same route Stato sync's Collega
- * opens); Stripe lives on its own screen, so their cards link
- * there (`#/profilo` and `#/quotes`, DECISION to be confirmed for Stripe).
+ * opens). Stripe has no real connect flow yet: its card reads «Non
+ * disponibile» with no action, like its Stato sync row, until one exists
+ * (owner decision 08/11 on #680 — never a button that connects nothing).
  */
 export const CONNETTORI_SECTIONS = Object.freeze([
   {
@@ -363,7 +364,7 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['Appuntamenti del team e disponibilità condivisa.', 'di Google · ↔ bidirezionale']),
       },
       {
-        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, href: '#/quotes',
+        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, href: null,
         lines: Object.freeze(['Pagamenti, abbonamenti e rinnovi.', 'di Stripe · ↔ pagamenti e link']),
       },
     ]),
@@ -388,14 +389,18 @@ export function connettoriHref(entry) {
 
 /**
  * The card state from the live rows: `collegato` when an active row serves
- * the entry's channel, `da-collegare` otherwise (and always for entries
- * without a channel, which no `/api/connectors` row can serve).
+ * the entry's channel, `da-collegare` otherwise (and for entries without
+ * a channel that still have a destination, such as Google Calendar on
+ * Profilo); `non-disponibile` for an entry with neither (Stripe).
  * @param {{ channel?: unknown }} entry
  * @param {unknown} connectors
  */
 export function connettoriCardState(entry, connectors) {
   const channel = entry && typeof entry.channel === 'string' ? entry.channel : '';
-  if (channel === '') return 'da-collegare';
+  if (channel === '') {
+    // No channel and no destination (Stripe): nothing here connects it.
+    return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
+  }
   const rows = matchConnections(channel, Array.isArray(connectors) ? connectors : []);
   return rows.some((row) => row && row.status === 'active') ? 'collegato' : 'da-collegare';
 }
@@ -1221,6 +1226,10 @@ export function createPersonalizzazioneView(deps) {
     for (const card of group.cards) {
       const href = connettoriHref(card.entry);
       const article = el(doc, 'article', { cls: 'ui-card ui-conn-card' });
+      // A card nothing can connect (Stripe, owner decision 08/11 on #680)
+      // carries no action at all: no `+`, no link, no keyboard activation —
+      // only the same «Non disponibile» Stato sync shows.
+      const unavailable = card.state === 'non-disponibile';
       // Clicking the card opens its detail (spec C19); the `+` action
       // stops the event so it opens the collegamento instead. The fake
       // DOM has no bubbling, so the guard also ignores in-button clicks
@@ -1235,14 +1244,15 @@ export function createPersonalizzazioneView(deps) {
         }
         go(href);
       };
-      article.setAttribute('tabindex', '0');
-      article.setAttribute('role', 'link');
-      article.setAttribute('aria-label', `${card.entry.label}: apri il dettaglio`);
-      article.addEventListener('click', (event) => {
+      if (unavailable) article.setAttribute('data-state', 'non-disponibile');
+      if (!unavailable) article.setAttribute('tabindex', '0');
+      if (!unavailable) article.setAttribute('role', 'link');
+      if (!unavailable) article.setAttribute('aria-label', `${card.entry.label}: apri il dettaglio`);
+      if (!unavailable) article.addEventListener('click', (event) => {
         if (event && typeof event.target?.closest === 'function' && event.target.closest('button')) return;
         openCardDetail();
       });
-      article.addEventListener('keydown', (event) => {
+      if (!unavailable) article.addEventListener('keydown', (event) => {
         if (event?.key !== 'Enter' && event?.key !== ' ') return;
         // Mirror the click guard: a keypress on the in-card `+` button must
         // not open the detail on top of the button's own collegamento.
@@ -1273,6 +1283,8 @@ export function createPersonalizzazioneView(deps) {
         const badge = uiBadge(doc, { authority: 'accord', text: '✓' });
         badge.setAttribute('title', 'Collegato');
         actions.appendChild(badge);
+      } else if (unavailable) {
+        actions.appendChild(el(doc, 'span', { text: 'Non disponibile', cls: 'bo-muted' }));
       } else {
         const add = uiButton(doc, {
           variant: 'secondary', small: true, label: '+',
