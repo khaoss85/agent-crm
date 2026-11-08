@@ -133,6 +133,19 @@ run_phase 'truth document agrees with its authorities' npm run repo:truth -- --c
 # PR, instead of on main the next night. The fix is repeatable:
 # `npm run repin:verifier-fixture`.
 run_phase 'verifier fixture still reaches exit 0' node --no-warnings --test --test-name-pattern="the checked-in verifier fixture reaches exit 0" tests/solution-verify.test.js
+# The package surface version gate (backlog:61355d3ed19b). The checked-in
+# baseline pins every composed package's version and surface fingerprint
+# (the kernel's computeDefinitionFingerprint, the same function the pilot
+# uses); any PR that changes a declared surface without bumping the version
+# (#662 interactions, #668 customer-data) fails here, on the PR, instead of
+# reddening the pilot's pin on main the next night. The messages name the
+# fix: bump the version, or refresh the baseline in the same commit
+# (`npm run surface:baseline`). Runs on every PR (~2 s: all in-process
+# package definitions, no database), next to the verifier fixture above,
+# for the same reason: a PR that changes a declaration is not guaranteed to
+# select the test that pins it (the #360/#380 fan-in trap documented in
+# scripts/ci-touched-tests.js), so the gate runs it unconditionally.
+run_phase 'package surfaces still match the baseline' node --no-warnings --test tests/package-surface-version.test.js
 # The checked-in example plans pin the composition they were written against
 # (`plan.application.inspectionFingerprint`, plus the paired evidence pins
 # and cited artifact hashes); any change to the composed application — a new
