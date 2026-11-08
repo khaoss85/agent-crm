@@ -28,6 +28,7 @@ import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import {
   CHANNEL_CONNECT_ROUTES,
+  countedChannel,
   NINE_CHANNELS,
   PROFILE_CONNECTOR_CHANNELS,
   channelConnectionCount,
@@ -224,17 +225,28 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   const tempo = syncing ? 'in corso…' : (lastAt === null ? null : syncAgo(lastAt, nowMs));
   // Voce 3a3e6eaf: with no channel linked nothing can be "all synced" —
   // the headline says so and the hero offers Collega instead of a pull.
-  const linked = syncChannelTable(activity, nowMs).some((row) => row.connected);
-  const detail = !linked
+  // Linked means an active binding, the shared count's predicate (review
+  // #680 P2-2): a space whose only binding is suspended reads «0 di 9», so
+  // the hero never calls it synced. It still has something to fix, so it is
+  // not the empty «Collega il primo canale» either.
+  const rows = syncChannelTable(activity, nowMs);
+  const linked = rows.some((row) => row.connected);
+  const bound = linked || rows.some((row) => row.present === true);
+  const detail = !bound
     ? 'Collega il primo canale: messaggi ed eventi arriveranno qui.'
-    : tempo === null
-      ? 'Ancora nessun movimento registrato.'
-      : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
+    : !linked && !syncing
+      ? 'Nessun collegamento è attivo: sistemali qui sotto, finché restano fermi non arriva niente.'
+      : tempo === null
+        ? 'Ancora nessun movimento registrato.'
+        : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
   if (syncing) {
     return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: total };
   }
-  if (!linked) {
+  if (!bound) {
     return { tone: 'empty', title: 'Nessun canale collegato', detail, count: total };
+  }
+  if (!linked) {
+    return { tone: 'fix', title: 'Nessun canale attivo', detail, count: total };
   }
   if (total > 0) {
     return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: total };
@@ -516,7 +528,9 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
   const byChannel = new Map();
   for (const entry of entries) {
     if (entry === null || typeof entry !== 'object') continue;
-    const channel = typeof entry.channel === 'string' ? entry.channel : '';
+    // Grouped under the counted id, like the shared count (a stored
+    // `google-calendar` row is the Google Calendar row).
+    const channel = countedChannel(entry.channel);
     if (channel === '') continue;
     if (!byChannel.has(channel)) byChannel.set(channel, []);
     byChannel.get(channel).push(entry);
@@ -549,10 +563,14 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
   };
   const rows = SYNC_CHANNELS.map((fixed) => {
     const agg = aggregate(fixed.id, byChannel.get(fixed.id) ?? []);
-    const connected = agg.list.length > 0;
+    // Connected means an active binding, the shared count's predicate
+    // (review #680 P2-2): a suspended or pending row keeps its pill so the
+    // problem stays visible, but it is not «collegato» and lights no hero.
+    const present = agg.list.length > 0;
+    const connected = agg.list.some((entry) => entry.status === 'active');
     // A blocked binding never poses as importing: the expiry and the
     // running import read only on bindings that are otherwise calm.
-    const pill = connected
+    const pill = present
       ? (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
         ? { text: 'Permesso in scadenza', tone: 'permesso' }
         : agg.importing && agg.worst === 'ok'
@@ -570,6 +588,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       label: fixed.name,
       mark: fixed.mark,
       direction: fixed.direction,
+      present,
       connected,
       received: agg.received,
       lastAt: agg.lastAt,
@@ -596,7 +615,8 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       label: channelLabel(channel),
       mark: syncMark(channel),
       direction: directionLabel(list[0]?.direction ?? null),
-      connected: true,
+      present: true,
+      connected: list.some((entry) => entry.status === 'active'),
       received: agg.received,
       lastAt: agg.lastAt,
       pill,
@@ -1158,6 +1178,9 @@ export function createSyncView(deps) {
       const line = doc.createElement('tr');
       // An unlinked row reads dimmed, its Collega stays at full strength.
       if (!row.connected) line.setAttribute('class', 'bo-sync-row-off');
+      // A row with a binding (active or not) shows its update, its events
+      // and its pill; only a row with no binding at all offers Collega.
+      const present = row.present === true || row.connected === true;
       const name = doc.createElement('td');
       name.setAttribute('class', 'bo-sync-name');
       const nameWrap = el(doc, 'div', 'bo-sync-namewrap');
@@ -1172,11 +1195,11 @@ export function createSyncView(deps) {
         doc,
         'td',
         undefined,
-        !row.connected ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
+        !present ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
-      line.appendChild(el(doc, 'td', undefined, !row.connected ? '—' : `${row.received} eventi ricevuti`));
+      line.appendChild(el(doc, 'td', undefined, !present ? '—' : `${row.received} eventi ricevuti`));
       const stateCell = doc.createElement('td');
-      if (!row.connected) {
+      if (!present) {
         // A row connects where the product connects it (backlog:cf365ada15b9):
         // the guided flow for a catalogued channel, Profilo for Google
         // Calendar when the profile offers it. Only a row nothing here can

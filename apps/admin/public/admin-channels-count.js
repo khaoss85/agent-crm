@@ -12,9 +12,9 @@
 //
 // This module is the single answer, pure and DOM-free:
 // - the universe is the prototype's nine fixed channels (the Stato sync
-//   table rows) plus any channel outside the nine that has a row (a linked
-//   SMS or Telegram is a row of the table, so it counts and so does its
-//   place: «1 di 10», review #647);
+//   table rows) plus any channel outside the nine with an active row (a
+//   linked SMS or Telegram counts and so does its place: «1 di 10», review
+//   #647; a pending one widens nothing, review #680);
 // - a channel is connected when one of its rows is `active`; the profile's
 //   Google and Meta links (GET /api/profile, the Profilo screen's read) are
 //   merged as rows first, so Gmail lights Email and Calendar lights Google
@@ -151,6 +151,10 @@ export function mergeProfileConnections(rows, profile = null) {
       channel,
       account: typeof item.account === 'string' && item.account !== '' ? item.account : null,
       status: 'active',
+      // The profile says this link is connected: Stato sync paints it
+      // `Attivo`, never `In attesa` beside a count that calls it linked
+      // (review #680 P2-1). No grant, no import, no tally is implied.
+      health: 'ok',
       source: 'profile',
     }));
   }
@@ -182,9 +186,11 @@ export function channelConnectionCount(rows) {
   for (const row of list) {
     if (row == null || typeof row !== 'object') continue;
     const channel = countedChannel(row.channel);
-    if (channel === '') continue;
+    if (channel === '' || row.status !== 'active') continue;
+    // Only a linked channel widens the universe (review #680 P2-3): a
+    // pending SMS row is not a tenth channel to invite.
     if (!universe.includes(channel)) universe.push(channel);
-    if (row.status === 'active') active.add(channel);
+    active.add(channel);
   }
   const connectedChannels = universe.filter((channel) => active.has(channel));
   const missing = universe

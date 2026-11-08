@@ -160,9 +160,11 @@ test('indicator is ok with a count and fix with N things to fix', () => {
   assert.ok(ok.detail.includes('Ultimo aggiornamento 30 min fa'));
   assert.ok(ok.detail.includes('10 eventi ricevuti in tutto.'));
 
+  // Review #680 P2-2: a suspended binding alone is not linked — something
+  // to fix, never «quasi tutto sincronizzato» beside «0 di 9».
   const one = syncIndicator(activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] }), NOW);
   assert.equal(one.tone, 'fix');
-  assert.equal(one.title, 'Quasi tutto sincronizzato');
+  assert.equal(one.title, 'Nessun canale attivo');
   assert.equal(one.count, 1);
 
   const two = syncIndicator(activityOf({
@@ -171,8 +173,12 @@ test('indicator is ok with a count and fix with N things to fix', () => {
       entryOf({ connectionKey: 'b', status: 'revoked', health: 'down' }),
     ],
   }), NOW);
-  assert.equal(two.title, 'Quasi tutto sincronizzato');
+  assert.equal(two.title, 'Nessun canale attivo');
   assert.equal(two.count, 2);
+  const mixed = syncIndicator(activityOf({
+    connections: [entryOf({ connectionKey: 'a' }), entryOf({ connectionKey: 'b', channel: 'instagram', status: 'revoked', health: 'down' })],
+  }), NOW);
+  assert.equal(mixed.title, 'Quasi tutto sincronizzato', 'one active binding plus one to fix');
 
   // Voce 3a3e6eaf: nothing linked is never "all synced".
   const empty = syncIndicator(activityOf({ connections: [], feed: [], lastActivityAt: null }), NOW);
@@ -1200,4 +1206,33 @@ test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull 
     'no Sincronizza ora button on the card');
   const [pullable] = syncFixItems(activityOf({ connections: [entryOf({ sync: { status: 'done', lastErrorCode: 'X' } })] }));
   assert.equal(pullable.action.kind, 'sync-now', 'an importable binding keeps its pull');
+});
+
+// Review #680 round 1 — the table, the hero and the shared count must tell
+// one story.
+test('#680 P2-1: profile links counted as connected read Attivo, never «In attesa»', async () => {
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
+  assert.deepEqual(pills.map((node) => node.textContent), ['Attivo', 'Attivo'], 'Email and Google Calendar read Attivo');
+});
+
+test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {
+  const only = activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] });
+  const row = syncChannelTable(only).find((entry) => entry.channel === 'whatsapp');
+  assert.equal(row.connected, false, 'a suspended binding is not «collegato»');
+  assert.ok(row.pill !== null, 'its pill still names the problem');
+  const indicator = syncIndicator(only, NOW);
+  assert.equal(indicator.title, 'Nessun canale attivo', 'never «sincronizzato» with nothing connected');
+  const { mount, view } = renderView({ client: { activity: only } });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('0 di 9 collegati'));
+  assert.ok(!mount.textContent.includes('Tutto sincronizzato'), 'the hero agrees with the count');
+  const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
+  assert.equal(pills.length, 1, 'the suspended row keeps its pill');
 });

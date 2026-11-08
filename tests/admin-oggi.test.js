@@ -1500,3 +1500,14 @@ test('#680: the invite promises leads only when it names lead channels only', ()
   const mixed = render([]);
   assert.ok(mixed.includes('Google Calendar, Stripe per avere tutto in un posto'), mixed);
 });
+
+test('#680 P2-3: an inactive extra channel never widens the count', async () => {
+  const { channelConnectionCount } = await import('../apps/admin/public/admin-channels-count.js');
+  const pending = channelConnectionCount([{ channel: 'sms', status: 'pending' }]);
+  assert.equal(pending.total, 9, 'a pending SMS row is not a tenth channel');
+  assert.equal(pending.missing.length, 9, 'the invite names the nine, not ten');
+  assert.ok(!pending.missing.some((entry) => entry.channel === 'sms'));
+  const active = channelConnectionCount([{ channel: 'sms', status: 'active' }]);
+  assert.equal(active.total, 10, 'a linked SMS still counts and so does its place');
+  assert.equal(active.connected, 1);
+});
