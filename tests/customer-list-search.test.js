@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { listCustomerRecords } from '../packages/customer-data/src/operations.js';
+import { ContactService } from '../packages/modules/contact/src/contact-service.js';
+import { CompanyService } from '../packages/modules/company/src/company-service.js';
 import {
   CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_SEARCH_SCAN_LIMIT,
   applyCustomerListQuery,
   parseCustomerListQuery,
   shapeCustomerRow,
@@ -46,15 +49,28 @@ test('d128847d21fc: accents never matter', () => {
   assert.deepEqual(hits(rows, 'josé'), ['Josè Niccolò']);
 });
 
-/** Contact and company services that honour the scan bound like the core: newest first, at most `limit`. */
-function boundedModules(contacts, companies) {
-  const service = (rows) => ({
-    list: async ({ limit = 100 } = {}) => rows.slice(0, Math.min(limit, 500)),
-    listWhere: async (filters = {}) => rows.filter((entry) => Object.entries(filters).every(([key, value]) => entry[key] === value)),
+/**
+ * Contact and company services shaped like the real ones: `list` newest
+ * first capped at 500, `scan` newest first capped at its own ceiling, and
+ * no `listWhere` (ContactService and CompanyService have none). Every
+ * read limit is recorded so the ceiling can be proven.
+ */
+function boundedModules(contacts, companies, reads = []) {
+  const service = (name, rows) => ({
+    list: async ({ limit = 100 } = {}) => {
+      const capped = Math.min(limit, 500);
+      reads.push({ name, method: 'list', limit: capped });
+      return rows.slice(0, capped);
+    },
+    scan: async ({ limit = 5000 } = {}) => {
+      const capped = Math.min(limit, 5000);
+      reads.push({ name, method: 'scan', limit: capped });
+      return rows.slice(0, capped);
+    },
   });
   const map = new Map([
-    ['contact', { service: service(contacts) }],
-    ['company', { service: service(companies) }],
+    ['contact', { service: service('contact', contacts) }],
+    ['company', { service: service('company', companies) }],
   ]);
   return {
     get: (name) => {
@@ -65,12 +81,14 @@ function boundedModules(contacts, companies) {
   };
 }
 
+const senders = (count) => Array.from({ length: count }, (_, index) => ({
+  id: `g${index}`, companyId: null, firstName: `Mittente${index}`, lastName: 'Posta', email: `m${index}@example.test`,
+}));
+
 test('d128847d21fc: a customer older than the scan bound is still found by name', async () => {
   // Newest first, like the core list: a whole bound of fresh contacts (a
   // mailbox sync), then the customer created the day before.
-  const fresh = Array.from({ length: CUSTOMER_SCAN_LIMIT }, (_, index) => ({
-    id: `g${index}`, companyId: null, firstName: `Mittente${index}`, lastName: 'Posta', email: `m${index}@example.test`,
-  }));
+  const fresh = senders(CUSTOMER_SCAN_LIMIT);
   const older = { id: 'p1', companyId: 'co-p', firstName: 'Prova verifica', lastName: '07/11 Calendario', email: null };
   const modules = boundedModules([...fresh, older], [{ id: 'co-p', name: 'Studio Prova' }]);
   const run = (request) => listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, request);
@@ -84,4 +102,36 @@ test('d128847d21fc: a customer older than the scan bound is still found by name'
   assert.equal(none.items.length, 0);
   const unfiltered = await run({ pageSize: '10' });
   assert.ok(!unfiltered.items.some((item) => item.id === 'p1'), 'without text the bounded scan is unchanged');
+});
+
+test('d128847d21fc: the search scan has a fixed ceiling across contacts and companies', async () => {
+  assert.equal(CUSTOMER_SEARCH_SCAN_LIMIT, 5000, 'the named ceiling');
+  // The customer sits past the ceiling: the scan never reads the whole
+  // table, so it is not found and the answer says the list is partial.
+  const older = { id: 'p1', companyId: null, firstName: 'Prova verifica', lastName: '07/11', email: null };
+  const reads = [];
+  const modules = boundedModules([...senders(CUSTOMER_SEARCH_SCAN_LIMIT), older], [{ id: 'co1', name: 'Prova Srl' }], reads);
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova', pageSize: '10' });
+  assert.ok(!page.items.some((item) => item.id === 'p1'), 'past the ceiling the customer is not read');
+  assert.equal(page.complete, false, 'the answer stays partial');
+  const scanned = reads.filter((entry) => entry.method === 'scan').reduce((sum, entry) => sum + entry.limit, 0);
+  assert.ok(scanned <= CUSTOMER_SEARCH_SCAN_LIMIT, `the scan asked for ${scanned} rows, at most the ceiling`);
+  assert.ok(!reads.some((entry) => entry.name === 'company' && entry.method === 'scan'),
+    'a full contact scan leaves no company budget: the ceiling is shared');
+});
+
+test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {
+  const seen = [];
+  const database = { storage: { sync: { execute() {}, many(statement) { seen.push(statement); return []; } } } };
+  const contacts = new ContactService({ database, audit: null, events: null, companies: null });
+  const companies = new CompanyService({ database, audit: null, events: null });
+  contacts.scan({ limit: 1_000_000 });
+  companies.scan({ limit: 1_000_000 });
+  contacts.scan();
+  contacts.list({ limit: 1_000_000 });
+  assert.deepEqual(seen.map((statement) => [statement.table, statement.limit]), [
+    ['contacts', 5000], ['companies', 5000], ['contacts', 5000], ['contacts', 500],
+  ]);
+  assert.ok(seen.every((statement) => statement.orderBy?.[0]?.column === 'created_at' && statement.orderBy[0].direction === 'desc'),
+    'newest first, like the list');
 });

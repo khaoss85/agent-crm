@@ -25,6 +25,15 @@ export const CUSTOMER_LIST_CONTRACT = 1;
 export const CUSTOMER_SCAN_LIMIT = 500;
 
 /**
+ * The ceiling of the search scan (backlog:d128847d21fc): rows read across
+ * contacts and companies together when a text search must reach past
+ * CUSTOMER_SCAN_LIMIT. A fixed bound, never the whole table — the web runs
+ * on a small instance and the list read is already the slow one. Past it
+ * the answer stays complete:false.
+ */
+export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
+
+/**
  * Bound of the last-contact preview in a list row (prototype "04 Clienti":
  * the Ultimo contatto cell shows the channel mark plus a short message
  * excerpt, never the full body). Single-line: newlines collapse to spaces.

@@ -6,7 +6,7 @@ import { createCleanupProposals } from './cleanup.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
-  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, channelWordsIn, filterCustomerRows,
   matchesSearch, parseCustomerListQuery, searchNeedle, shapeCustomerRow,
 } from './customers.js';
@@ -614,17 +614,21 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // backlog:d128847d21fc: the scan holds the newest records only, so a
   // search over a truncated scan could never find an older customer — a
   // space with hundreds of fresh contacts (a mailbox sync) hid «Prova …»
-  // created the day before. With text to search, the customers beyond the
-  // bound whose name, email or company match join the scan (at most
-  // another bound of them); the answer stays complete:false.
+  // created the day before. With text to search, one bounded search scan
+  // (newest first, CUSTOMER_SEARCH_SCAN_LIMIT rows across contacts and
+  // companies together, never the whole table: the web runs on a small
+  // instance) adds the customers past the display bound whose name, email
+  // or company match. Past the ceiling the answer stays complete:false and
+  // the screens say the list is partial.
   const needle = searchNeedle(query.q ?? '');
   if (!complete && needle.length > 0
-    && typeof contactsSvc.listWhere === 'function' && typeof companiesSvc.listWhere === 'function') {
-    const everyContact = await contactsSvc.listWhere({});
-    const everyCompany = await companiesSvc.listWhere({});
-    const companyNameById = new Map(everyCompany.map((company) => [company.id, company?.name ?? null]));
+    && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
+    const scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT });
+    const companyBudget = Math.max(0, CUSTOMER_SEARCH_SCAN_LIMIT - scannedContactsAll.length);
+    const scannedCompaniesAll = companyBudget > 0 ? await companiesSvc.scan({ limit: companyBudget }) : [];
+    const companyNameById = new Map([...companies, ...scannedCompaniesAll].map((company) => [company.id, company?.name ?? null]));
     const scannedContacts = new Set(contacts.map((contact) => contact.id));
-    const extraContacts = everyContact
+    const extraContacts = scannedContactsAll
       .filter((contact) => !scannedContacts.has(contact.id) && matchesSearch(
         [contact?.firstName, contact?.lastName, contact?.email, companyNameById.get(contact?.companyId)],
         needle,
@@ -632,7 +636,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       .slice(0, CUSTOMER_SCAN_LIMIT);
     const scannedCompanies = new Set(companies.map((company) => company.id));
     const behindExtra = new Set(extraContacts.map((contact) => contact?.companyId).filter(Boolean));
-    const extraCompanies = everyCompany
+    const extraCompanies = scannedCompaniesAll
       .filter((company) => !scannedCompanies.has(company.id)
         && (behindExtra.has(company.id) || matchesSearch([company?.name], needle)))
       .slice(0, CUSTOMER_SCAN_LIMIT);
