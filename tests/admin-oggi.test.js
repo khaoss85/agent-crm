@@ -2,7 +2,6 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import {
   ADVISOR_ACTION_LIMIT,
   DEMO_STRINGS,
@@ -16,6 +15,7 @@ import {
   buildTodayAgenda,
   buildTodayRecap,
   createOggiView,
+  OGGI_LOAD_CEILING_MS,
   executeAdvisorAction,
   greetingForHour,
   isSpaceMount,
@@ -25,6 +25,7 @@ import {
   googleNineChannels,
   missingLeadChannels,
   nextAppointment,
+  upcomingAppointment,
   oggiDateLine,
   renderOggi,
   romeDayKey,
@@ -848,7 +849,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   assert.equal(countConnectedNine(refused.connections, refused.profile), 0);
 });
 
-test('channel invite counts connected of nine, and hides when all nine connect', () => {
+test('channel invite counts connected of nine, names exactly the missing ones, and hides when all nine connect', () => {
   assert.equal(OGGI_TOTAL_CHANNELS, 9, 'the prototype counts nine backoffice channels');
   const connections = [
     { channel: 'whatsapp', status: 'active' },
@@ -875,10 +876,12 @@ test('channel invite counts connected of nine, and hides when all nine connect',
     },
   });
   assert.ok(mount.textContent.includes('7 di 9 collegati'), 'seven nine-channels active, whatever the lead list says');
-  assert.ok(mount.textContent.includes('Collega Telegram, Facebook, TikTok, SMS per non perdere nessun lead'), 'invite names the missing lead channels');
+  // backlog:5083e7a77c26: the names are the two channels missing from the
+  // same nine the number counts — never Telegram or SMS beside «di 9».
+  assert.ok(mount.textContent.includes('Collega Facebook, TikTok per non perdere nessun lead'), 'invite names exactly the missing nine-channels');
 
   const full = createMount();
-  const fullConnections = CONNECTOR_CATALOG.map((entry) => ({ channel: entry.channel, status: 'active' }));
+  const fullConnections = OGGI_NINE_CHANNELS.map((channel) => ({ channel, status: 'active' }));
   renderOggi({
     doc,
     mount: full,
@@ -892,7 +895,7 @@ test('channel invite counts connected of nine, and hides when all nine connect',
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  assert.ok(!full.textContent.includes('collegati'), 'no invite once every lead channel connects');
+  assert.ok(!full.textContent.includes('collegati'), 'no invite once every counted channel connects');
 });
 
 test('no technical resource-id label reaches the Oggi screen', () => {
@@ -1333,4 +1336,279 @@ test('C16: the agenda card links «Apri il calendario →» to the calendar', ()
   assert.equal(link.getAttribute('href'), '#/calendario');
   link.dispatch('click', { preventDefault: () => {} });
   assert.deepEqual(seen, ['#/calendario']);
+});
+
+test('2a075e2d9250: Oggi has a load ceiling, then an Italian note with Riprova, never «Carico…» forever', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  let hold = true;
+  /** @type {Array<() => void>} */
+  const held = [];
+  const client = {
+    ...base,
+    request(path, options) {
+      if (!hold) return base.request(path, options);
+      return new Promise((resolve, reject) => { held.push(() => base.request(path, options).then(resolve, reject)); });
+    },
+  };
+  /** @type {Array<{ fn: () => void, ms: number }>} */
+  const timers = [];
+  const view = createOggiView({
+    doc, mount, client, navigate: () => {},
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimer: () => {},
+  });
+  const first = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.ok(mount.textContent.includes('Carico la tua giornata'), 'the loading line shows first');
+  assert.equal(timers.length, 1, 'one ceiling per render');
+  assert.equal(timers[0].ms, OGGI_LOAD_CEILING_MS);
+  assert.equal(OGGI_LOAD_CEILING_MS, 10_000);
+  timers[0].fn();
+  assert.ok(!mount.textContent.includes('Carico la tua giornata'), 'past the ceiling the loading line is gone');
+  const note = mount.findAll('div').find((node) => node.getAttribute('role') === 'alert');
+  assert.ok(note, 'an honest note replaces it');
+  assert.ok(note.textContent.includes('La tua giornata ci mette più del solito.'), note.textContent);
+  const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'oggi-retry');
+  assert.equal(retry?.textContent, 'Riprova');
+
+  // Riprova reads again; this time the reads answer and the home paints.
+  hold = false;
+  retry.dispatch('click', {});
+  await settle(() => mount.textContent.includes('Richiama per il preventivo'));
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('role') === 'alert'), 'the note is gone');
+  // The first render's late answer never repaints over the newer one.
+  for (const release of held.splice(0)) release();
+  await first;
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'));
+});
+
+// backlog:5083e7a77c26 (b): production read «2 di 9 collegati» over eight
+// names. Gmail and Calendar from the profile, nothing else: the number and
+// the names must come from one list, so connected + named = total.
+test('5083e7a77c26: the strip count equals the list it names', () => {
+  const profile = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+        { connector: 'calendar', status: 'connected', account: 'op@palestra.it' },
+      ],
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: missingLeadChannels([], profile), connections: [], profile,
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
+  assert.ok(strip, 'the strip renders');
+  const count = /(\d+) di (\d+) collegati/.exec(strip.textContent);
+  assert.ok(count, 'the strip carries a count');
+  const named = /Collega (.+) per (?:non perdere|avere)/.exec(strip.textContent);
+  assert.ok(named, 'the strip names the channels to connect');
+  const names = named[1].split(', ');
+  assert.equal(Number(count[1]) + names.length, Number(count[2]), `«${count[0]}» and ${names.length} names tell one story`);
+  assert.equal(count[0], '2 di 9 collegati');
+  assert.ok(!names.includes('Email') && !names.includes('Google Calendar'), 'connected channels are not invited');
+});
+
+// backlog:5083e7a77c26 (a): the prototype always pairs the agenda with
+// «Prima della prossima call»; with no call ahead the card disappeared.
+test('5083e7a77c26: «Prima della prossima call» stays on screen with no call ahead', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(mount.findAll('h3').some((node) => node.textContent === '✦ Prima della prossima call'), 'the card heading is there');
+  assert.ok(mount.textContent.includes('Nessuna call in programma.'), 'an honest empty line instead of a missing card');
+
+  const off = createMount();
+  renderOggi({
+    doc, mount: off, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: false, channels: true },
+    },
+  });
+  assert.ok(off.findAll('h3').some((node) => node.textContent === '✦ Prima della prossima call'));
+  assert.ok(off.textContent.includes('Il calendario non è attivo in questo spazio: qui comparirà'));
+});
+
+test('5083e7a77c26: with no more calls today the card prepares the next one ahead', () => {
+  const lateToday = new Date('2026-10-19T16:00:00.000Z'); // 18:00 in Rome, after APPT_TODAY
+  assert.equal(nextAppointment([APPT_TODAY, APPT_TOMORROW], lateToday), null, 'nothing else today');
+  assert.equal(upcomingAppointment([APPT_TODAY, APPT_TOMORROW], lateToday)?.id, 'appt-2', 'tomorrow is the next call');
+  assert.equal(upcomingAppointment([APPT_TODAY, APPT_TOMORROW], OGGI_NOW)?.id, 'appt-1', 'today first');
+  assert.equal(upcomingAppointment([{ ...APPT_TOMORROW, status: 'cancelled' }], lateToday), null, 'a cancelled call prepares nothing');
+  const brief = buildPreCallBrief({ appointment: APPT_TOMORROW, messages: [], calls: [], now: lateToday });
+  assert.equal(brief.when, 'domani alle 10:00');
+  assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00 con Giulia Romano'), brief.bullets[0]);
+  const later = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-10-23T08:00:00.000Z' }, now: lateToday });
+  assert.equal(later.when, '23 ott alle 10:00');
+  const today = buildPreCallBrief({ appointment: APPT_TODAY, now: OGGI_NOW });
+  assert.equal(today.when, 'oggi alle 10:00', 'today keeps its wording');
+});
+
+test('5083e7a77c26: a stored channel alias counts as its channel, never as a tenth one', async () => {
+  const { channelConnectionCount } = await import('../apps/admin/public/admin-channels-count.js');
+  const count = channelConnectionCount([
+    { channel: 'google-calendar', status: 'active' },
+    { channel: 'gmail', status: 'active' },
+    { channel: 'messenger', status: 'pending' },
+  ]);
+  assert.equal(count.connected, 2);
+  assert.equal(count.total, 9, 'aliases add no channel to the universe');
+  assert.ok(!count.missing.some((entry) => entry.channel === 'calendar' || entry.channel === 'email'));
+  assert.ok(count.missing.some((entry) => entry.channel === 'facebook'), 'a pending Messenger row leaves Facebook to connect');
+  assert.equal(countConnectedNine([{ channel: 'google-calendar', status: 'active' }]), 1);
+});
+
+const NINE_STRIPE_MISSING = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form', 'calendar'];
+
+// Owner decision 08/11 on #680: the lead promise only when every name is a
+// lead channel; with Google Calendar or Stripe in the list, a neutral line.
+test('#680: the invite promises leads only when it names lead channels only', () => {
+  const render = (connections) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    renderOggi({
+      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections,
+        availability: { work: true, appointments: true, channels: true },
+      },
+    });
+    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  };
+  const leadsOnly = render(['whatsapp', 'instagram', 'email', 'voice', 'site-form', 'calendar', 'stripe']
+    .map((channel) => ({ channel, status: 'active' })));
+  assert.ok(leadsOnly.includes('Collega Facebook, TikTok per non perdere nessun lead'), leadsOnly);
+  const withStripe = render(NINE_STRIPE_MISSING.map((channel) => ({ channel, status: 'active' })));
+  assert.ok(withStripe.includes('Collega Stripe per avere tutto in un posto'), withStripe);
+  assert.ok(!withStripe.includes('lead'), 'no lead promise for Stripe');
+  const mixed = render([]);
+  assert.ok(mixed.includes('Google Calendar, Stripe per avere tutto in un posto'), mixed);
+});
+
+test('#680 P2-3: an inactive extra channel never widens the count', async () => {
+  const { channelConnectionCount } = await import('../apps/admin/public/admin-channels-count.js');
+  const pending = channelConnectionCount([{ channel: 'sms', status: 'pending' }]);
+  assert.equal(pending.total, 9, 'a pending SMS row is not a tenth channel');
+  assert.equal(pending.missing.length, 9, 'the invite names the nine, not ten');
+  assert.ok(!pending.missing.some((entry) => entry.channel === 'sms'));
+  const active = channelConnectionCount([{ channel: 'sms', status: 'active' }]);
+  assert.equal(active.total, 10, 'a linked SMS still counts and so does its place');
+  assert.equal(active.connected, 1);
+});
+
+test('2a075e2d9250 (production 2d2fe23): a redraw mid-load keeps the first ceiling, the note shows 10 s after the FIRST render', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  let hold = true;
+  /** @type {Array<() => void>} */
+  const held = [];
+  const client = {
+    ...base,
+    request(path, options) {
+      if (!hold) return base.request(path, options);
+      return new Promise((resolve, reject) => { held.push(() => base.request(path, options).then(resolve, reject)); });
+    },
+  };
+  // A fake clock: timers fire when the test moves time past their deadline.
+  let clock = 0;
+  /** @type {Array<{ fn: () => void, at: number, cleared: boolean }>} */
+  const timers = [];
+  const advanceTo = (ms) => {
+    clock = ms;
+    for (const timer of timers) {
+      if (!timer.cleared && timer.at <= clock) { timer.cleared = true; timer.fn(); }
+    }
+  };
+  const view = createOggiView({
+    doc, mount, client, navigate: () => {},
+    setTimer: (fn, ms) => { timers.push({ fn, at: clock + ms, cleared: false }); return timers[timers.length - 1]; },
+    clearTimer: (timer) => { if (timer) timer.cleared = true; },
+  });
+  const note = () => mount.findAll('div').find((node) => node.getAttribute('role') === 'alert');
+
+  const first = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  advanceTo(7_000);
+  // The shell re-routes Oggi once the schema and the Clienti count arrive.
+  const second = view.render({ spaceName: 'Spazio', links: [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }], now: OGGI_NOW });
+  assert.equal(timers.length, 1, 'the redraw starts no second ceiling');
+  assert.ok(mount.textContent.includes('Carico la tua giornata'), 'still loading at 7 s');
+  advanceTo(9_999);
+  assert.equal(note(), undefined, 'not before the ceiling');
+  advanceTo(10_000);
+  assert.ok(note(), 'at 10 s from the FIRST render the note is there');
+  assert.ok(note().textContent.includes('La tua giornata ci mette più del solito.'));
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'oggi-retry'), 'with Riprova');
+
+  // A further redraw while still pending keeps the note, never «Carico…» again.
+  const third = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.ok(note(), 'a redraw after the ceiling keeps the note');
+  assert.equal(timers.length, 1);
+
+  // The reads land: the home replaces the note.
+  hold = false;
+  for (const release of held.splice(0)) release();
+  await Promise.all([first, second, third]);
+  await settle(() => mount.textContent.includes('Richiama per il preventivo'));
+  assert.equal(note(), undefined, 'the home replaces the note');
+
+  // A new opening after the home painted starts a fresh round.
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.equal(timers.length, 2, 'the next round has its own ceiling');
+  assert.ok(timers[1].cleared, 'a round that painted clears its ceiling');
+});
+
+test('2a075e2d9250: a cold start with the shell redraw mid-load reads Oggi once and paints on the first answers', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  /** @type {Array<string>} */
+  const asked = [];
+  let hold = true;
+  /** @type {Array<() => void>} */
+  const held = [];
+  const client = {
+    ...base,
+    request(path, options) {
+      asked.push(path);
+      if (!hold) return base.request(path, options);
+      return new Promise((resolve, reject) => { held.push(() => base.request(path, options).then(resolve, reject)); });
+    },
+  };
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  // route() on the cold load…
+  const first = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  await settle(() => held.length > 0);
+  const firstWave = asked.length;
+  // …then populateNav re-routes Oggi once the schema and the counts arrive,
+  // with the delivered-screen links.
+  const links = [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }];
+  const second = view.render({ spaceName: 'Spazio', links, now: OGGI_NOW });
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(asked.length, firstWave, 'the redraw reads nothing again');
+
+  // The first round's answers land: the home paints from them.
+  hold = false;
+  for (const release of held.splice(0)) release();
+  await Promise.all([first, second]);
+  await settle(() => mount.textContent.includes('Richiama per il preventivo'));
+  const counts = new Map();
+  for (const path of asked) counts.set(path, (counts.get(path) ?? 0) + 1);
+  for (const [path, count] of counts) assert.equal(count, 1, `${path} read once, not ${count}`);
 });

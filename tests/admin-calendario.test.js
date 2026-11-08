@@ -448,7 +448,7 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
   const list = mount.querySelector('.cal-slots');
   assert.ok(list, 'the proposal rows render');
-  assert.ok(list.textContent.includes('22 ott · 16:00–16:30'), 'C5: the row names the Rome slot');
+  assert.ok(list.textContent.includes('gio 22 ott · 16:00–16:30'), 'C5: the row names the Rome slot');
   const confirms = list.findAll('button').filter((node) => node.textContent === 'Conferma');
   assert.equal(confirms.length, 1, 'C5: one Conferma per row');
   // C5: one dashed ghost per slot on its Rome day, clickable to confirm.
@@ -3424,7 +3424,7 @@ test('a proposal on top of a held booking is never offered (defect 07/11)', asyn
   clickButton(mount, 'Trova slot liberi');
   await flushAll();
   const list = mount.querySelector('.cal-slots');
-  assert.ok(list.textContent.includes('22 ott · 16:00–16:30'));
+  assert.ok(list.textContent.includes('gio 22 ott · 16:00–16:30'));
   assert.ok(!list.textContent.includes('18:00'), 'the held 18:00 step is not proposed');
   assert.equal(list.findAll('button').length, 1);
 });
@@ -3600,7 +3600,7 @@ test('review #646 P2: the held guard reads the searched person, not only the pai
   await flushAll();
   assert.ok(weeks.some((path) => path.includes('teamMemberIds=sara')), 'the searched person week is read');
   const list = mount.querySelector('.cal-slots');
-  assert.ok(list.textContent.includes('22 ott · 15:00–15:30'), list.textContent);
+  assert.ok(list.textContent.includes('gio 22 ott · 15:00–15:30'), list.textContent);
   assert.ok(!list.textContent.includes('16:00–16:30'), 'the step on sara\'s held piega is never offered');
 });
 
@@ -3795,7 +3795,7 @@ test('a day-only phrase searches that day for the stated minutes and never paint
   assert.ok(draftLine.includes('gio 22 ott · orario da scegliere · 45 minuti'), draftLine);
   assert.ok(!mount.querySelector('.cal-rail').textContent.includes('00:00'), 'no midnight hour anywhere in the rail');
   const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
-  assert.deepEqual(rows, ['22 ott · 10:00–10:45'], 'only the named day is proposed');
+  assert.deepEqual(rows, ['gio 22 ott · 10:00–10:45'], 'only the named day is proposed');
   const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
   assert.equal(field('date').value, '2026-10-22', 'the day prefills');
   assert.equal(field('start').value, '', 'the hour stays to choose');
@@ -3925,7 +3925,7 @@ test('a cross-week phrase never proposes a step held in the named week', async (
   clickButton(mount, 'Trova slot liberi');
   await flushMany(14);
   const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
-  assert.deepEqual(rows, ['29 ott · 14:00–14:45'], 'the step booked at 10:00 Rome is not proposed');
+  assert.deepEqual(rows, ['gio 29 ott · 14:00–14:45'], 'the step booked at 10:00 Rome is not proposed');
 });
 
 // Review #657 P2: the slot/ghost Conferma kept «Bozza pronta» on screen
@@ -4005,7 +4005,7 @@ test('a cross-week phrase with nobody named still guards the held bookings', asy
   const read = client.calls.find((call) => call.path.startsWith('/api/appointments/team-week'));
   assert.ok(read && read.path.includes('teamMemberIds=marco'), 'the searched person week is read for the guard');
   const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
-  assert.deepEqual(rows, ['29 ott · 14:00–14:45'], 'the step booked at 10:00 Rome is not proposed');
+  assert.deepEqual(rows, ['gio 29 ott · 14:00–14:45'], 'the step booked at 10:00 Rome is not proposed');
 });
 
 test('a cross-week phrase whose week cannot be read proposes nothing', async () => {
@@ -4058,7 +4058,7 @@ test('a same-week phrase with nobody named still guards the held bookings', asyn
   const read = client.calls.find((call) => call.path.startsWith('/api/appointments/team-week'));
   assert.ok(read && read.path.includes('teamMemberIds=marco'), 'the searched person week is read for the guard');
   const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
-  assert.deepEqual(rows, ['22 ott · 15:00–15:30'], 'the held 18:00 Rome step is not proposed');
+  assert.deepEqual(rows, ['gio 22 ott · 15:00–15:30'], 'the held 18:00 Rome step is not proposed');
 });
 
 test('a same-week phrase whose week cannot be read proposes nothing', async () => {
@@ -4205,7 +4205,7 @@ test('a pager move during the cross-week preload never proposes against the wron
   releaseNamed();
   await flushMany(14);
   const rows = (mount.querySelector('.cal-slots')?.findAll('span') ?? []).map((node) => node.textContent);
-  assert.ok(!rows.includes('29 ott · 10:00–10:45'), `the held 10:00 Rome step is never proposed (${rows.join(' | ')})`);
+  assert.ok(!rows.includes('gio 29 ott · 10:00–10:45'), `the held 10:00 Rome step is never proposed (${rows.join(' | ')})`);
 });
 
 // ---- backlog:9a853f44 — hand-written service, production 07/11 ----

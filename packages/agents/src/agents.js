@@ -35,8 +35,10 @@ import { AppError, ValidationError } from '../../core/index.js';
 export const AGENT_STATES = Object.freeze(['active', 'paused']);
 export const ASSIGNMENT_STATES = Object.freeze(['active', 'paused', 'completed']);
 export const ASSIGNMENT_TERMINAL = Object.freeze(['completed']);
-export const RUN_OUTCOMES = Object.freeze(['started', 'proposed', 'applied', 'artifact', 'capped', 'failed']);
-export const RUN_TERMINAL = Object.freeze(['proposed', 'applied', 'artifact', 'capped', 'failed']);
+// `rejected` (backlog:fd36da512b0e): a human refused a proposed run in «Da
+// fare»; nothing was applied. Terminal like `applied`.
+export const RUN_OUTCOMES = Object.freeze(['started', 'proposed', 'applied', 'artifact', 'capped', 'failed', 'rejected']);
+export const RUN_TERMINAL = Object.freeze(['proposed', 'applied', 'artifact', 'capped', 'failed', 'rejected']);
 
 /** A claim older than this is reclaimed: its sweep never finished. */
 export const AGENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
@@ -278,7 +280,14 @@ export function assertAssignmentTransition(from, event) {
 }
 
 export function assertRunTransition(from, event) {
-  assertTransition('Run', from, event, { approve: ['proposed'] });
+  // Approve, reject and revise all act on a run still waiting in «Da fare».
+  assertTransition('Run', from, event, { approve: ['proposed'], reject: ['proposed'], revise: ['proposed'] });
+}
+
+/** A human reason for a rejection: optional, bounded single-line text. @param {unknown} value */
+export function checkRejectReason(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return boundedLine(value, 'reason', 280);
 }
 
 /**

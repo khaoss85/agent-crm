@@ -14,7 +14,7 @@
   },
   "application": {
     "inspectionContract": 1,
-    "inspectionFingerprint": "87a3b1b4a693869251773cefc3927d0a2a5420fbaf2eaa9de202b59eac07bb1c",
+    "inspectionFingerprint": "dbfeeedc9c715fb52a0edea75dc39015a64eee557fd68d8fee9897d40fe13aed",
     "packages": [
       {
         "name": "contracts",

@@ -233,6 +233,27 @@ export function channelOf(row) {
 }
 
 /**
+ * backlog:29bb3f2c0d64 — where a week row was booked, read only from what
+ * the row proves: the explicit WhatsApp marker first, then the booking
+ * source key every writer stamps with its own prefix — `gcal:` for an
+ * event imported by calendar-sync (packages/calendar-sync sourceKeyFor),
+ * `booking-link:` for the public booking link (appointments bookFromLink),
+ * `calendario:` for a booking made on this screen (manual form or phrase
+ * Conferma, indistinguishable on the row). Anything else is null: no pill,
+ * never a guess.
+ * @param {any} row
+ * @returns {'whatsapp'|'google'|'link'|'calendario'|null}
+ */
+export function originOf(row) {
+  if (channelOf(row) === 'whatsapp') return 'whatsapp';
+  const key = typeof row?.sourceKey === 'string' ? row.sourceKey : '';
+  if (key.startsWith('gcal:')) return 'google';
+  if (key.startsWith('booking-link:')) return 'link';
+  if (key.startsWith('calendario:')) return 'calendario';
+  return null;
+}
+
+/**
  * BO-F6-11 fetta 6 (specs/calendario.md C10): one Team toggle row per NAMED
  * member — never invented people. The framework stores no roster
  * (space-permissions keeps no members; membership is control-plane data),
@@ -587,6 +608,18 @@ function romeWeekdayShort(value) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Proposal row label (backlog:29bb3f2c0d64): weekday, day and month, then
+ * the hours, the prototype's «Mar 20 · 11:30–12:15» in the screen's own
+ * words — «gio 13 nov · 10:00–10:45». Without the weekday the operator had
+ * to count days to know which «13 nov» it was.
+ * @param {any} slot
+ */
+export function slotLabel(slot) {
+  const day = [romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ');
+  return `${day} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
 }
 
 /**
@@ -1018,6 +1051,8 @@ export function createCalendarioView(deps) {
     customerItems: [],
     /** Customer search failure in the operator's own words, or null. @type {string|null} */
     customerError: null,
+    /** The last customer search answer was read in part (complete:false). */
+    customerPartial: false,
   };
   /** Guards the customer search, like renderToken guards the week. */
   let customerSeq = 0;
@@ -1286,7 +1321,72 @@ export function createCalendarioView(deps) {
     return null;
   }
 
+  /**
+   * backlog:739c0c81f55c — the field the operator is typing in, before a
+   * repaint replaces it. Late reads (roster, week, labels, profile) repaint
+   * the whole view, and a replaced node loses focus and caret: the next
+   * keystrokes landed on the page and the phrase looked wiped (production
+   * 08/11). Every typed control carries a `name`, so the new node is found
+   * by it. Null when focus is outside the view or on a non-text control.
+   */
+  function focusedField() {
+    const active = doc?.activeElement ?? null;
+    if (!active || typeof mount.contains !== 'function' || !mount.contains(active)) return null;
+    const tag = String(active.tagName ?? '').toLowerCase();
+    if (tag !== 'textarea' && tag !== 'input' && tag !== 'select') return null;
+    const name = typeof active.getAttribute === 'function' ? active.getAttribute('name') : null;
+    if (typeof name !== 'string' || name === '' || !/^[A-Za-z0-9_-]+$/.test(name)) return null;
+    let start = null;
+    let end = null;
+    let direction = null;
+    try {
+      // Some input types (date, number) have no text selection: null, or a
+      // throw on older engines — focus is restored either way.
+      start = typeof active.selectionStart === 'number' ? active.selectionStart : null;
+      end = typeof active.selectionEnd === 'number' ? active.selectionEnd : null;
+      direction = typeof active.selectionDirection === 'string' ? active.selectionDirection : null;
+    } catch {
+      start = null;
+      end = null;
+    }
+    return { tag, name, start, end, direction };
+  }
+
+  /**
+   * Puts focus and caret back on the repainted field the operator was
+   * typing in. The value itself already survives through state (every
+   * typed field writes it on input). A field the repaint dropped, or one
+   * now disabled, stays unfocused.
+   * @param {{tag: string, name: string, start: number|null, end: number|null, direction: string|null} | null} kept
+   */
+  function restoreField(kept) {
+    if (kept === null) return;
+    const node = mount.querySelector(`${kept.tag}[name="${kept.name}"]`);
+    if (!node || typeof node.focus !== 'function') return;
+    if (node.disabled === true || (typeof node.getAttribute === 'function' && node.getAttribute('disabled') !== null)) return;
+    node.focus();
+    if (kept.start === null || kept.end === null) return;
+    const length = String(node.value ?? '').length;
+    const start = Math.min(kept.start, length);
+    const end = Math.min(kept.end, length);
+    try {
+      if (typeof node.setSelectionRange === 'function') node.setSelectionRange(start, end, kept.direction ?? undefined);
+      else {
+        node.selectionStart = start;
+        node.selectionEnd = end;
+      }
+    } catch {
+      // A control without a text selection keeps the focus only.
+    }
+  }
+
   function renderAll() {
+    const kept = focusedField();
+    renderView();
+    restoreField(kept);
+  }
+
+  function renderView() {
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
@@ -1768,11 +1868,20 @@ export function createCalendarioView(deps) {
       return panel;
     }
     if (!state.week) {
-      panel.appendChild(el(doc, 'p', {
-        className: 'empty',
-        text: 'Scegli le persone del team e premi «Mostra settimana»: niente settimana senza nomi, mai quella di tutti.',
-      }));
-      return panel;
+      // backlog:29bb3f2c0d64: with nobody to show (a space with no people
+      // yet, or no names while the roster is unread) the week still paints
+      // its empty grid, like the prototype, with one honest line above it —
+      // never a bare message where the calendar should be. Nothing is read
+      // for nobody: the grid is empty because no week was asked.
+      // A known roster with people means their week is on its way (the
+      // roster auto-fills the team): no line, the grid fills when it lands.
+      const roster = Array.isArray(state.members) ? personRows([], [], state.members) : null;
+      const line = roster === null
+        ? 'Scegli le persone del team e premi «Mostra settimana»: niente settimana senza nomi, mai quella di tutti.'
+        : (roster.length === 0
+          ? 'Nello spazio non c’è ancora nessuna persona: la settimana resta vuota finché il titolare non invita il team.'
+          : '');
+      if (line !== '') panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
     }
     const grid = el(doc, 'div', { className: 'cal-grid' });
     grid.appendChild(el(doc, 'div', { className: 'cal-corner', attrs: { 'aria-hidden': 'true' } }));
@@ -1898,7 +2007,7 @@ export function createCalendarioView(deps) {
     // stays in the «Fissa con una frase» card rows, like every other slot.
     for (const slot of state.proposals) {
       if (slotInGrid(slot?.startsAt, slot?.endsAt)) continue;
-      const when = `${romeShortDay(slot?.startsAt) ?? ''} ${romeTime(slot?.startsAt) ?? ''}`.trim();
+      const when = `${[romeWeekdayShort(slot?.startsAt), romeShortDay(slot?.startsAt)].filter(Boolean).join(' ')} ${romeTime(slot?.startsAt) ?? ''}`.trim();
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
         text: `✦ Proposta ${when}: è fuori dall'orario mostrato (09:00–18:00), la confermi dalla card «Fissa con una frase».`,
@@ -1964,8 +2073,17 @@ export function createCalendarioView(deps) {
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
     foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
-    if (channelOf(row) === 'whatsapp') {
+    // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
+    // keeps its badge, a Google-imported event and an online-link booking
+    // carry their own short pill; a booking made here carries none, like
+    // the prototype's non-WA blocks.
+    const origin = originOf(row);
+    if (origin === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+    } else if (origin === 'google') {
+      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+    } else if (origin === 'link') {
+      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
     }
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
@@ -2065,13 +2183,12 @@ export function createCalendarioView(deps) {
    * read-only customer profile (the map's own read), falling back to the row
    * label or id when the profile is unavailable. The WA pill paints only
    * from the explicit row marker (fetta 4's fail-closed rule) with the
-   * shared channel chip; anything else carries no pill because rows record
-   * no origin — an "✦ Fissato con l'AI" line would be invented. The Google
-   * sync row stays out for the same reason: appointments declares calendar
-   * synchronization notModeled and no row carries sync state, so any
-   * "invito inviato" line would be a guess (missing capability, nominated in
-   * the PR: adapter calendario). "Apri scheda cliente" is the dark primary
-   * button over the shared customer-card route, only for linked events.
+   * shared channel chip. backlog:29bb3f2c0d64: the other origins come from
+   * the row's source key (originOf) — never "✦ Fissato con l'AI", which the
+   * row cannot prove — and the «↔ Google Calendar» line paints only for
+   * events calendar-sync imported (`gcal:`); a booking made here carries no
+   * sync state, so it gets no «invito inviato» guess. "Apri scheda cliente"
+   * is the dark primary button over the shared customer-card route, only for linked events.
    * @param {any} row
    */
   function renderDetailCard(row) {
@@ -2113,7 +2230,8 @@ export function createCalendarioView(deps) {
     }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
     if (notes !== '') card.appendChild(el(doc, 'p', { text: `Nota: ${notes}` }));
-    if (channelOf(row) === 'whatsapp') {
+    const origin = originOf(row);
+    if (origin === 'whatsapp') {
       const pill = el(doc, 'p');
       pill.appendChild(uiChannelChip(doc, 'WA'));
       // Leading space: the chip and the sentence are sibling inline boxes. A
@@ -2123,6 +2241,37 @@ export function createCalendarioView(deps) {
         text: display ? ` Prenotato da ${display} su WhatsApp` : ' Prenotato su WhatsApp',
       }));
       card.appendChild(pill);
+    } else if (origin !== null) {
+      // backlog:29bb3f2c0d64 (C8): the other origins the row proves, in the
+      // prototype pill. A booking made here never claims «Fissato con
+      // l'AI»: manual and phrase bookings look the same on the row.
+      const words = {
+        google: 'Arrivato da Google Calendar',
+        link: 'Prenotato dal cliente con il link online',
+        calendario: 'Fissato dal calendario',
+      }[origin];
+      const pill = el(doc, 'p');
+      pill.appendChild(el(doc, 'span', { className: `cal-via cal-via-${origin}`, attrs: { 'data-role': 'event-origin' }, text: words }));
+      card.appendChild(pill);
+    }
+    if (origin === 'google') {
+      // backlog:29bb3f2c0d64 (C8): the «↔ Google Calendar» line, only where
+      // the row proves the link — an event calendar-sync imported. A
+      // booking made here carries no sync evidence on the row, so it stays
+      // without the line (no «invito inviato» guess).
+      // Review #678: «collegato» only on positive proof from the profile; an
+      // unknown state (profile unavailable or unread) says only where the
+      // event came from.
+      const connected = state.calendar?.connected;
+      card.appendChild(el(doc, 'p', {
+        className: 'cal-sync',
+        attrs: { 'data-role': 'event-sync' },
+        text: connected === true
+          ? '↔ Google Calendar · evento importato dal calendario collegato'
+          : connected === false
+            ? '↔ Google Calendar · non più collegato: ricollegalo dal Profilo'
+            : '↔ Google Calendar · evento importato da Google Calendar',
+      }));
     }
     if (linked) {
       const open = uiButton(doc, {
@@ -2211,10 +2360,6 @@ export function createCalendarioView(deps) {
     return panel;
   }
 
-  /** Proposal row label: `<ddd> <n> · <hh:mm>–<hh:mm>`, the grid's own words. */
-  function slotLabel(slot) {
-    return `${romeShortDay(slot?.startsAt) ?? ''} · ${romeTime(slot?.startsAt) ?? ''}–${romeTime(slot?.endsAt) ?? ''}`;
-  }
 
   /**
    * The team week holding every searched identity: the painted week when it
@@ -2522,9 +2667,13 @@ export function createCalendarioView(deps) {
       const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
       if (token !== customerSeq) return;
       state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
+      // backlog:d128847d21fc: a list the server read only in part says so,
+      // never a flat «nessun cliente».
+      state.customerPartial = answer?.complete === false;
       state.customerError = null;
     } catch (error) {
       if (token !== customerSeq) return;
+      state.customerPartial = false;
       state.customerItems = [];
       state.customerError = humanReadError(error, {
         failed: 'L’elenco non si è potuto leggere. Riprova più tardi.',
@@ -2560,7 +2709,9 @@ export function createCalendarioView(deps) {
     if (state.customerItems.length === 0) {
       box.appendChild(el(doc, 'p', {
         className: 'empty',
-        text: 'Nessun cliente corrisponde. Prova con un altro nome.',
+        text: state.customerPartial
+          ? 'Nessun cliente corrisponde tra quelli letti: l’elenco è parziale. Prova con nome o cognome.'
+          : 'Nessun cliente corrisponde. Prova con un altro nome.',
       }));
       return;
     }

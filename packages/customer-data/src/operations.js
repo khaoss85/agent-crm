@@ -7,9 +7,9 @@ import { createErasureOperations, isErased, readErasedSubjects } from './erasure
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
-  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, channelWordsIn, filterCustomerRows,
-  parseCustomerListQuery, shapeCustomerRow,
+  matchesSearch, parseCustomerListQuery, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -627,18 +627,50 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   if (!companiesSvc || typeof companiesSvc.list !== 'function') {
     throw new AppError('the customer list needs the host company records', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
-  const scannedContacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
-  const scannedCompanies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
-  const complete = scannedContacts.length < CUSTOMER_SCAN_LIMIT && scannedCompanies.length < CUSTOMER_SCAN_LIMIT;
+  let contacts = await contactsSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  let companies = await companiesSvc.list({ limit: CUSTOMER_SCAN_LIMIT });
+  const complete = contacts.length < CUSTOMER_SCAN_LIMIT && companies.length < CUSTOMER_SCAN_LIMIT;
+  // backlog:d128847d21fc: the scan holds the newest records only, so a
+  // search over a truncated scan could never find an older customer — a
+  // space with hundreds of fresh contacts (a mailbox sync) hid «Prova …»
+  // created the day before. With text to search, one bounded search scan
+  // (newest first, CUSTOMER_SEARCH_SCAN_LIMIT rows across contacts and
+  // companies together, never the whole table: the web runs on a small
+  // instance) adds the customers past the display bound whose name, email
+  // or company match. Past the ceiling the answer stays complete:false and
+  // the screens say the list is partial.
+  const needle = searchNeedle(query.q ?? '');
+  if (!complete && needle.length > 0
+    && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
+    const scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT });
+    const companyBudget = Math.max(0, CUSTOMER_SEARCH_SCAN_LIMIT - scannedContactsAll.length);
+    const scannedCompaniesAll = companyBudget > 0 ? await companiesSvc.scan({ limit: companyBudget }) : [];
+    const companyNameById = new Map([...companies, ...scannedCompaniesAll].map((company) => [company.id, company?.name ?? null]));
+    const scannedContacts = new Set(contacts.map((contact) => contact.id));
+    const extraContacts = scannedContactsAll
+      .filter((contact) => !scannedContacts.has(contact.id) && matchesSearch(
+        [contact?.firstName, contact?.lastName, contact?.email, companyNameById.get(contact?.companyId)],
+        needle,
+      ))
+      .slice(0, CUSTOMER_SCAN_LIMIT);
+    const scannedCompanies = new Set(companies.map((company) => company.id));
+    const behindExtra = new Set(extraContacts.map((contact) => contact?.companyId).filter(Boolean));
+    const extraCompanies = scannedCompaniesAll
+      .filter((company) => !scannedCompanies.has(company.id)
+        && (behindExtra.has(company.id) || matchesSearch([company?.name], needle)))
+      .slice(0, CUSTOMER_SCAN_LIMIT);
+    contacts = [...contacts, ...extraContacts];
+    companies = [...companies, ...extraCompanies];
+  }
   // Erased customers leave Clienti and the search (backlog:d271d723): the
-  // registry names them, and the scan drops them before shaping any row.
+  // registry names them, and the scan drops them before shaping any row —
+  // after the search extension, so erased subjects never re-enter through
+  // the extra scan either.
   const erased = await readErasedSubjects({ modules, names });
-  const contacts = erased.size === 0
-    ? scannedContacts
-    : scannedContacts.filter((contact) => !erased.has(`contact:${contact?.id}`));
-  const companies = erased.size === 0
-    ? scannedCompanies
-    : scannedCompanies.filter((company) => !erased.has(`company:${company?.id}`));
+  if (erased.size > 0) {
+    contacts = contacts.filter((contact) => !erased.has(`contact:${contact?.id}`));
+    companies = companies.filter((company) => !erased.has(`company:${company?.id}`));
+  }
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const subjects = [];
   const seenCompanies = new Set();
