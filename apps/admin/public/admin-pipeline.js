@@ -244,7 +244,11 @@ export function createPipelineBoard(deps) {
     }
   }
 
-  /** @param {string} pipelineName */
+  /**
+   * @param {string | null} pipelineName null for the bare #/pipeline link
+   *   (backlog 2a075e2d9250): the first composed pipeline, the same rule
+   *   as the sidebar voice (buildShellNav).
+   */
   async function renderBoard(pipelineName) {
     const token = ++renderToken;
     showMessage('Caricamento…');
@@ -258,7 +262,9 @@ export function createPipelineBoard(deps) {
         return;
       }
       composed = Array.isArray(schema.pipelines) ? schema.pipelines : [];
-      pipeline = composed.find((candidate) => candidate.name === pipelineName);
+      pipeline = pipelineName === null || pipelineName === undefined
+        ? composed.find((candidate) => typeof candidate?.name === 'string' && /^[a-z][a-z0-9-]*$/.test(candidate.name))
+        : composed.find((candidate) => candidate.name === pipelineName);
       if (!pipeline) {
         if (typeof console !== 'undefined' && typeof console.error === 'function') {
           console.error('[bo] pipeline non composta', { pipelineName });

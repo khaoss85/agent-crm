@@ -1115,7 +1115,7 @@ export async function loadOggiData(client, now = new Date()) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiEmpty, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons
@@ -1208,6 +1208,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *   navigate?: (hash: string) => void,
  *   now?: Date,
  *   loading?: boolean,
+ *   stalled?: { onRetry?: () => void } | null,
  *   home?: {
  *     recap?: string,
  *     actions?: Array<any>,
@@ -1234,6 +1235,7 @@ export function renderOggi({
   navigate = () => {},
   now = new Date(),
   loading = false,
+  stalled = null,
   home = null,
 } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1247,6 +1249,21 @@ export function renderOggi({
   // The prototype's only h1: same bo-oggi-hello token, so the supervisor's
   // scale is untouched — only the semantics change (C6).
   page.appendChild(el(doc, 'h1', 'bo-oggi-hello', `${greetingForHour(hour)}, ${person}`));
+
+  if (home == null && stalled) {
+    // Backlog 2a075e2d9250: the reads passed their ceiling — an honest note
+    // with Riprova, never «Carico…» forever.
+    const note = uiEmpty(doc, {
+      title: 'La tua giornata ci mette più del solito.',
+      text: 'Il server risponde piano: riprova tra poco.',
+    });
+    note.setAttribute('role', 'alert');
+    const retry = uiButton(doc, { label: 'Riprova', attrs: { type: 'button', 'data-action': 'oggi-retry' } });
+    retry.addEventListener('click', () => { if (typeof stalled.onRetry === 'function') stalled.onRetry(); });
+    note.appendChild(retry);
+    page.appendChild(note);
+    return;
+  }
 
   if (home == null && loading === true) {
     // Reads pending (production 07/11): a neutral loading line under the
@@ -1544,8 +1561,14 @@ function appendLinkList(doc, mount, links, navigate) {
 /**
  * @param {{ doc: any, mount: any, client: { request: Function }, navigate?: (hash: string) => void, submissions?: any, storage?: any }} deps
  */
+/** Backlog 2a075e2d9250: how long Oggi shows «Carico…» before the Riprova note. */
+export const OGGI_LOAD_CEILING_MS = 10_000;
+
 export function createOggiView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
+  const ceilingMs = Number.isFinite(deps.loadCeilingMs) ? deps.loadCeilingMs : OGGI_LOAD_CEILING_MS;
+  const setTimer = typeof deps.setTimer === 'function' ? deps.setTimer : (fn, ms) => setTimeout(fn, ms);
+  const clearTimer = typeof deps.clearTimer === 'function' ? deps.clearTimer : (id) => clearTimeout(id);
   const { client: bound } = bindAdminMutations(deps.client, deps);
   /**
    * Guard against a stale async response overwriting a newer view
@@ -1737,7 +1760,7 @@ export function createOggiView(deps) {
     paint();
   }
 
-  return {
+  const view = {
     /**
      * Render the home: the greeting frame with the loading state first,
      * the full screen once the records arrive. `userName` greets the person; without it the space
@@ -1747,11 +1770,23 @@ export function createOggiView(deps) {
       const token = ++renderToken;
       lastMeta = { spaceName, userName, links, now };
       renderOggi({ doc, mount, spaceName, userName, links, navigate, now, loading: true });
+      // Backlog 2a075e2d9250: past the ceiling the loading line gives way to
+      // a note with Riprova. The reads keep going: if they land while this
+      // render still owns the screen, the home replaces the note.
+      const ceiling = setTimer(() => {
+        if (token !== renderToken) return;
+        renderOggi({
+          doc, mount, spaceName, userName, links, navigate, now,
+          stalled: { onRetry: () => { void view.render({ spaceName, userName, links, now: new Date() }); } },
+        });
+      }, ceilingMs);
       let data;
       try {
         data = await loadOggiData(bound, now);
       } catch {
         data = null;
+      } finally {
+        clearTimer(ceiling);
       }
       if (token !== renderToken) return;
       if (data) last = data;
@@ -1768,4 +1803,5 @@ export function createOggiView(deps) {
     },
     invalidate,
   };
+  return view;
 }

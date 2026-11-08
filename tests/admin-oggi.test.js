@@ -16,6 +16,7 @@ import {
   buildTodayAgenda,
   buildTodayRecap,
   createOggiView,
+  OGGI_LOAD_CEILING_MS,
   executeAdvisorAction,
   greetingForHour,
   isSpaceMount,
@@ -1333,4 +1334,49 @@ test('C16: the agenda card links «Apri il calendario →» to the calendar', ()
   assert.equal(link.getAttribute('href'), '#/calendario');
   link.dispatch('click', { preventDefault: () => {} });
   assert.deepEqual(seen, ['#/calendario']);
+});
+
+test('2a075e2d9250: Oggi has a load ceiling, then an Italian note with Riprova, never «Carico…» forever', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  let hold = true;
+  /** @type {Array<() => void>} */
+  const held = [];
+  const client = {
+    ...base,
+    request(path, options) {
+      if (!hold) return base.request(path, options);
+      return new Promise((resolve, reject) => { held.push(() => base.request(path, options).then(resolve, reject)); });
+    },
+  };
+  /** @type {Array<{ fn: () => void, ms: number }>} */
+  const timers = [];
+  const view = createOggiView({
+    doc, mount, client, navigate: () => {},
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimer: () => {},
+  });
+  const first = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.ok(mount.textContent.includes('Carico la tua giornata'), 'the loading line shows first');
+  assert.equal(timers.length, 1, 'one ceiling per render');
+  assert.equal(timers[0].ms, OGGI_LOAD_CEILING_MS);
+  assert.equal(OGGI_LOAD_CEILING_MS, 10_000);
+  timers[0].fn();
+  assert.ok(!mount.textContent.includes('Carico la tua giornata'), 'past the ceiling the loading line is gone');
+  const note = mount.findAll('div').find((node) => node.getAttribute('role') === 'alert');
+  assert.ok(note, 'an honest note replaces it');
+  assert.ok(note.textContent.includes('La tua giornata ci mette più del solito.'), note.textContent);
+  const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'oggi-retry');
+  assert.equal(retry?.textContent, 'Riprova');
+
+  // Riprova reads again; this time the reads answer and the home paints.
+  hold = false;
+  retry.dispatch('click', {});
+  await settle(() => mount.textContent.includes('Richiama per il preventivo'));
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('role') === 'alert'), 'the note is gone');
+  // The first render's late answer never repaints over the newer one.
+  for (const release of held.splice(0)) release();
+  await first;
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'));
 });
