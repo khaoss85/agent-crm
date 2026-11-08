@@ -274,17 +274,16 @@ function personKeyOf(value) {
  * (`operatorAccountId`, one per human), or null when the roster carries
  * none. The pilot forwards it beside the subject when it knows it, so the
  * Team card unites one member's identities (broker, github, google) even
- * when they carry different mailboxes. Never derived, never guessed: rows
- * without it group exactly like before.
+ * when they carry different mailboxes. Only this documented key merges:
+ * generic `personKey`/`personId`/`userId` fields have no producer contract
+ * in this repo, and two unrelated humans sharing one would merge into a
+ * single unbookable row — so they never merge here.
  * @param {any} member
  */
 function rosterPersonId(member) {
   if (!member || typeof member !== 'object') return null;
-  for (const field of ['operatorAccountId', 'personKey', 'personId', 'userId']) {
-    const value = member[field];
-    if (typeof value === 'string' && value.trim() !== '') return value.trim();
-  }
-  return null;
+  const value = member.operatorAccountId;
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
 /**
@@ -678,9 +677,10 @@ export function catalogBookingServices(payload) {
     const offers = Array.isArray(product.offers) ? product.offers : [];
     for (const offer of offers) {
       if (!offer || typeof offer !== 'object' || offer.active !== true) continue;
-      const currency = typeof offer.currency === 'string' && /^[A-Z]{3}$/.test(offer.currency)
-        ? offer.currency
-        : null;
+      // The claim and the menu label only speak EUR (the form prices in
+      // EUR and the claim hardcodes currency:'EUR'): a non-EUR single
+      // would be mislabeled and misbooked, so it stays out of the menu.
+      const currency = offer.currency === 'EUR' ? 'EUR' : null;
       if (currency === null) continue;
       const components = Array.isArray(offer.components) ? offer.components : [];
       if (components.length !== 1) continue;
@@ -2809,19 +2809,17 @@ export function createCalendarioView(deps) {
     }
     // One option per PERSON under the person label (backlog:810ed0bf:
     // the Team card and this menu read the same personRows, so three
-    // identities of Dan are one «Dan» here too). The value is the row's
-    // primary booking identity — the named subject when the filter names
-    // it, else the first subject — so a draft naming a secondary identity
-    // lands on the person's row instead of an empty choice.
-    // DECISION (backlog:810ed0bf, confirmed): booking a person books
-    // their primary identity; the claim carries a single subject, and
-    // the primary is the operator's own named one when the filter names
-    // it. This narrows the df55cf25 review P2 (exact secondary subject):
-    // the menu offers the person, never a choice it would remap.
+    // identities of Dan are one «Dan» here too). The row's option carries
+    // the exact chosen or drafted subject — never the row primary — so
+    // the claim books precisely the identity the operator or the AI
+    // named, with no silent remap to another opaque subject.
     const currentRow = current === '' ? null : groupOf(current);
-    const shown = currentRow !== null ? currentRow.id : current;
+    const shown = current;
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.map((row) => ({ value: row.id, label: row.label }))];
+      ...rows.map((row) => ({
+        value: currentRow === row && current !== '' ? current : row.id,
+        label: row.label,
+      }))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {
@@ -2854,14 +2852,18 @@ export function createCalendarioView(deps) {
     const paintUnder = (node) => {
       if (state.serviceError) {
         // Production 07/11: a refused service names its cause under the
-        // field, never «Riprova più tardi».
+        // field, never «Riprova più tardi». The hint clears on input AND
+        // on change: a menu switch fires change only, and a stale refusal
+        // must never stay painted under the newly chosen service.
         const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
         node.setAttribute('aria-invalid', 'true');
-        node.addEventListener('input', () => {
+        const clear = () => {
           state.serviceError = '';
           hint.setAttribute('class', 'field-error hidden');
           node.setAttribute('aria-invalid', 'false');
-        });
+        };
+        node.addEventListener('input', clear);
+        node.addEventListener('change', clear);
         form.appendChild(hint);
       }
     };
@@ -2878,7 +2880,27 @@ export function createCalendarioView(deps) {
     const kept = typeof state.manual?.serviceKey === 'string' ? state.manual.serviceKey : '';
     const drafted = typeof state.draftFill?.serviceKey === 'string' ? state.draftFill.serviceKey : '';
     const wanted = kept !== '' ? kept : drafted;
-    const match = bookable.find((entry) => entry.key === wanted) ?? bookable[0];
+    // A kept or drafted service is never replaced by the default: the
+    // match is case-insensitive (plus the catalog-name mapping), and an
+    // unknown key keeps the typed value in a text field instead of
+    // booking a service the operator never chose. Only with nothing kept
+    // and nothing drafted does the first entry preselect.
+    const mapped = serviceKeyFor(wanted, state.services);
+    const match = bookable.find((entry) => entry.key === wanted)
+      ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
+      ?? bookable.find((entry) => entry.key === mapped)
+      ?? (wanted === '' ? bookable[0] : null);
+    if (match === null) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
+      input.value = wanted;
+      state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      paintUnder(input);
+      return input;
+    }
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
     const options = bookable.map((entry) => ({
       value: entry.key,
@@ -2898,8 +2920,11 @@ export function createCalendarioView(deps) {
     select.addEventListener('input', track);
     select.addEventListener('change', track);
     // The default is already chosen (backlog:810ed0bf): the price paints
-    // with it unless the operator already typed their own price.
-    state.manual = { ...(state.manual ?? {}), serviceKey: match.key };
+    // with it unless the operator already typed their own price. The
+    // default never lands in state: the claim, the snapshot and the next
+    // render all read the live menu, so a preselect stored here could
+    // never shadow a later draft as a «kept» choice (a kept choice is
+    // only what the operator or an absorbed draft actually set).
     if (priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
       priceInput.value = priceText(match);
       state.manual = { ...(state.manual ?? {}), price: priceInput.value };
@@ -2980,25 +3005,29 @@ export function createCalendarioView(deps) {
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
-        // The select offers one row per person, so a draft naming a known
-        // identity lands on the person's primary row; a pipe outsider never
-        // paints — its identity already rides in state for the claim only.
+        // The select offers one row per person whose option carries the
+        // exact drafted subject, so a draft naming a known identity lands
+        // on the person's row AND books that exact identity; a pipe
+        // outsider never paints — its identity already rides in state for
+        // the claim only.
         const raw = String(draft.teamMemberId);
         const people = personRows(parseMemberFilter(state.memberFilter), state.hiddenMembers, state.members);
         const person = people.find((row) => row.ids.includes(raw));
         if (inputs.teamMemberId?.tagName === 'SELECT') {
-          if (person) inputs.teamMemberId.value = person.id;
+          if (person) inputs.teamMemberId.value = raw;
         } else if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
       }
       if (draft.serviceKey) {
         // The service is a menu (backlog:810ed0bf): a drafted key the
-        // catalog knows lands on its option, an unknown one keeps the
-        // preselected default the worker would book — the server would
-        // refuse the unknown key anyway.
+        // catalog knows lands on its option (case-insensitively, like the
+        // menu match); an unknown one already paints as typed text from
+        // the menu render, so here it only needs its value confirmed.
         const rawService = String(draft.serviceKey);
         if (inputs.serviceKey?.tagName === 'SELECT') {
           const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : [];
-          const hit = bookable.find((entry) => entry.key === rawService) ?? null;
+          const hit = bookable.find((entry) => entry.key === rawService)
+            ?? bookable.find((entry) => entry.key === rawService.toLowerCase())
+            ?? null;
           if (hit !== null) {
             inputs.serviceKey.value = hit.key;
             const priceText = formatPriceCents(hit.priceCents) ?? '';

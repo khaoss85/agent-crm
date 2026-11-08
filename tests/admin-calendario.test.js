@@ -3888,6 +3888,156 @@ test('the manual form offers the catalog menu with the default and price prefill
   assert.equal(payload(proposes[0]).teamMemberId, 'broker|dan');
 });
 
+// backlog:810ed0bf review (P1 currency): the claim only speaks EUR, so a
+// non-EUR single stays out of the menu instead of being mislabeled in euro.
+test('catalogBookingServices drops non-EUR singles the claim could never book', () => {
+  const single = (overrides = {}) => ({
+    active: true, currency: 'EUR',
+    components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }],
+    ...overrides,
+  });
+  const out = catalogBookingServices({ products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [single()] },
+    { active: true, sku: 'shave', name: 'Rasatura', offers: [single({ currency: 'USD' })] },
+  ] });
+  assert.deepEqual(out.map((entry) => entry.key), ['taglio'], 'the USD single never reaches the euro menu');
+});
+
+// backlog:810ed0bf review (P2 person key): generic userId/personId fields
+// have no producer contract, so two humans sharing one stay two rows.
+test('personRows never merges two humans on a shared generic userId', () => {
+  const rows = personRows(['a|1', 'b|2'], [], [
+    { subject: 'a|1', displayName: 'Ada', email: 'ada@example.com', userId: 'u-1' },
+    { subject: 'b|2', displayName: 'Bea', email: 'bea@example.com', userId: 'u-1' },
+  ]);
+  assert.equal(rows.length, 2, 'one shared userId is not one human');
+});
+
+// backlog:810ed0bf review (P1 identity): a draft naming a secondary
+// identity books exactly that subject, never the row primary.
+test('a draft naming a secondary identity books that exact subject', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'massaggio', name: 'Massaggio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 6000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com', operatorAccountId: 'op-9' },
+    { subject: 'google|1049abc', displayName: 'Daniele Pelleri', email: 'dan@gmail.com', operatorAccountId: 'op-9' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    memberships: members,
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    phrase: { teamMemberId: 'google|1049abc', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa un taglio con dan giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(12);
+  const person = personField(mount);
+  assert.ok(person, 'the manual form names its person');
+  assert.equal(person.value, 'google|1049abc', 'the drafted secondary identity survives, not the row primary');
+  await pickCustomerByName(mount, 'Ada');
+  manualButton(mount, 'Proponi').dispatch('click');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'google|1049abc', 'the claim books the drafted identity');
+});
+
+// backlog:810ed0bf review (P1 service): a differently-cased kept service
+// matches its entry instead of falling back to the default.
+test('a differently-cased drafted service lands on its entry, never the default', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'massaggio', name: 'Massaggio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 6000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    phrase: { teamMemberId: 'marco', serviceKey: 'Taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa un taglio con marco giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(12);
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.ok(service, 'the known service stays a menu');
+  assert.equal(service.value, 'taglio', 'the cased draft matches its entry, not the first one');
+  await pickCustomerByName(mount, 'Ada');
+  manualButton(mount, 'Proponi').dispatch('click');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).serviceKey, 'taglio', 'the claim sends the matched entry');
+});
+
+// backlog:810ed0bf review (P1 service): an unknown drafted service keeps
+// its typed value instead of silently becoming the default.
+test('an unknown drafted service keeps its typed value, never the default', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    phrase: { teamMemberId: 'marco', serviceKey: 'massaggio speciale', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa un massaggio con marco giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(12);
+  assert.equal(mount.querySelector('select[name="serviceKey"]'), null, 'no menu claims the unknown service');
+  const typed = mount.findAll('input').find((node) => node.getAttribute('name') === 'serviceKey');
+  assert.ok(typed, 'the unknown service paints as typed text');
+  assert.equal(typed.value, 'massaggio speciale', 'the drafted words survive the catalog read');
+});
+
+// backlog:810ed0bf review (P2 hint): the service refusal clears on a menu
+// switch too, which fires change without input.
+test('the service-error hint clears on a change-event service switch', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const refused = Object.assign(new Error('Calendar change refused'), { status: 400, code: 'BO_APPOINTMENT_SERVICE_REFUSED' });
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]), failConfirmWith: refused });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'massaggio speciale';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  const field = byName().serviceKey;
+  assert.equal(field.getAttribute('aria-invalid'), 'true', 'the refusal paints first');
+  field.value = 'taglio';
+  field.dispatch('change');
+  assert.equal(field.getAttribute('aria-invalid'), 'false', 'a change-only switch clears the stale refusal');
+  const hint = mount.findAll('small').find((node) => node.getAttribute('data-role') === 'service-error');
+  assert.ok(hint, 'the hint node stays for the next refusal');
+  assert.ok(String(hint.getAttribute('class')).includes('hidden'), 'the stale hint hides on a change switch');
+});
+
 // i) «Fissa con una frase» with the AI off read «Ricerca non riuscita».
 for (const code of ['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']) {
   test(`AI off (${code}) points at the manual form and disables the phrase box`, async () => {
