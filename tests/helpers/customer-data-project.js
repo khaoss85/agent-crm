@@ -21,6 +21,7 @@ export const CUSTOMER_DATA_MANIFESTS = [
   'customer-bulk-item.module.json',
   'enriched-field.module.json',
   'enrichment-opt-out.module.json',
+  'customer-erasure-log.module.json',
 ];
 
 /** Commercial + signature + contracts, for the "profile spans packages" proof. */

@@ -23,6 +23,8 @@ import { createCustomerBulkItemModule } from '../customer-bulk-item/src/index.js
 import * as customerBulkItemMigrationSource from '../customer-bulk-item/src/migration.js';
 import { createCustomerBulkRunModule } from '../customer-bulk-run/src/index.js';
 import * as customerBulkRunMigrationSource from '../customer-bulk-run/src/migration.js';
+import { createCustomerErasureLogModule } from '../customer-erasure-log/src/index.js';
+import * as customerErasureLogMigrationSource from '../customer-erasure-log/src/migration.js';
 import { createCustomerImportRowModule } from '../customer-import-row/src/index.js';
 import * as customerImportRowMigrationSource from '../customer-import-row/src/migration.js';
 import { createCustomerImportRunModule } from '../customer-import-run/src/index.js';
@@ -93,6 +95,7 @@ export const generatedModules = [
   { name: 'custom-field-value', createModule: createCustomFieldValueModule, migrations: migrationsOf(customFieldValueMigrationSource, 'customFieldValue', 'custom-field-value') },
   { name: 'customer-bulk-item', createModule: createCustomerBulkItemModule, migrations: migrationsOf(customerBulkItemMigrationSource, 'customerBulkItem', 'customer-bulk-item') },
   { name: 'customer-bulk-run', createModule: createCustomerBulkRunModule, migrations: migrationsOf(customerBulkRunMigrationSource, 'customerBulkRun', 'customer-bulk-run') },
+  { name: 'customer-erasure-log', createModule: createCustomerErasureLogModule, migrations: migrationsOf(customerErasureLogMigrationSource, 'customerErasureLog', 'customer-erasure-log') },
   { name: 'customer-import-row', createModule: createCustomerImportRowModule, migrations: migrationsOf(customerImportRowMigrationSource, 'customerImportRow', 'customer-import-row') },
   { name: 'customer-import-run', createModule: createCustomerImportRunModule, migrations: migrationsOf(customerImportRunMigrationSource, 'customerImportRun', 'customer-import-run') },
   { name: 'data-quality-issue', createModule: createDataQualityIssueModule, migrations: migrationsOf(dataQualityIssueMigrationSource, 'dataQualityIssue', 'data-quality-issue') },

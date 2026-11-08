@@ -3,6 +3,7 @@
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
+import { createErasureOperations, isErased, readErasedSubjects } from './erasure.js';
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
@@ -67,6 +68,8 @@ export function createCustomerDataOperations({ database, modules, events, config
    * the operation was composed. Shared with the channel sender resolution.
    */
   const readerFor = () => createPolicyReader({ modules, names, core });
+
+  const erasure = createErasureOperations({ database, modules, events, core, names });
 
   /**
    * Shared summary shape for both preview and apply.
@@ -293,7 +296,23 @@ export function createCustomerDataOperations({ database, modules, events, config
       if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
         throw new ValidationError('a profile read needs a subject resource and id', { field: 'id' });
       }
+      // An erased customer reads as gone on the direct link (backlog:d271d723).
+      if (await isErased({ modules, names }, resource, id)) {
+        throw new AppError('cliente non trovato', { code: 'CUSTOMER_ERASED', status: 404 });
+      }
       return coalescedProfileFor({ modules, core, names, subject: { resource, id } });
+    },
+
+    /**
+     * Erase one customer for good (backlog:d271d723, validazione B6).
+     * A human decision with an explicit confirmation: anonymizes what is
+     * writable, records it in the append-only erasure log and excludes the
+     * subject from every product read. Refuses with 409 when signed
+     * business (orders, contracts, subscriptions) must be kept.
+     * @param {any} request
+     */
+    async eraseCustomer(request) {
+      return erasure.eraseCustomer(request);
     },
 
     /**
@@ -642,6 +661,15 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       .slice(0, CUSTOMER_SCAN_LIMIT);
     contacts = [...contacts, ...extraContacts];
     companies = [...companies, ...extraCompanies];
+  }
+  // Erased customers leave Clienti and the search (backlog:d271d723): the
+  // registry names them, and the scan drops them before shaping any row —
+  // after the search extension, so erased subjects never re-enter through
+  // the extra scan either.
+  const erased = await readErasedSubjects({ modules, names });
+  if (erased.size > 0) {
+    contacts = contacts.filter((contact) => !erased.has(`contact:${contact?.id}`));
+    companies = companies.filter((company) => !erased.has(`company:${company?.id}`));
   }
   const companyById = new Map(companies.map((company) => [company.id, company]));
   const subjects = [];
