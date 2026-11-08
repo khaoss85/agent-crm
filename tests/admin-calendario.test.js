@@ -295,7 +295,7 @@ test('week renders five day columns with real Rome-time events', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   // No members named yet: the honest prompt, not a blank screen.
   assert.ok(texts(mount, 'p').some((text) => text.includes('Scegli le persone')));
@@ -334,7 +334,7 @@ test('the week pager reloads the named members instead of blanking the week', as
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -365,7 +365,7 @@ test('the week pager reloads the named members instead of blanking the week', as
 test('hostile notes and subjects are inert text, never markup', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -382,7 +382,7 @@ test('uncomposed package renders an honest placeholder, never a blank screen', a
   const doc = createFakeDocument();
   const mount = createMount();
   const failure = Object.assign(new Error('Not found'), { code: 'NOT_FOUND', status: 404 });
-  const view = createCalendarioView({ doc, mount, client: stubClient({ failWith: failure }), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ failWith: failure }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -397,7 +397,7 @@ test('uncomposed package renders an honest placeholder, never a blank screen', a
 test('the AI card shows a textarea and Trova slot liberi', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const field = mount.querySelector('textarea[name="phrase"]');
   assert.ok(field, 'C4: the phrase is a textarea');
@@ -420,7 +420,7 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   const client = stubClient({ phrase: draft, slots });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e),
   // so the view clock must still see them as future — same Oct 19–25 week.
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   // The ghosts need the loaded week: name the member first.
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -479,7 +479,7 @@ test('a day-only phrase clears a stale hour and names the day on the card (backl
   };
   const dayOnly = { teamMemberId: 'marco', day: '2026-10-22' };
   const client = stubClient({ phrase: [timed, dayOnly], slots: [] });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -525,7 +525,7 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
@@ -568,7 +568,7 @@ test('zero slots say so in plain words', async () => {
     endsAt: '2026-10-22T16:30:00.000Z',
   };
   const client = stubClient({ phrase: draft, slots: [] });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -585,7 +585,7 @@ test('zero slots say so in plain words', async () => {
 test('a failed search says so in plain words, never a code', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient({ failWith: new Error('backend down') }), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ failWith: new Error('backend down') }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -610,7 +610,7 @@ test('a failed Conferma names the manual form, never a code', async () => {
   const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
   const client = stubClient({ phrase: draft, slots, failConfirmWith: new Error('serviceKey must be the listino product key') });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e).
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -638,7 +638,7 @@ test('the search button stays disabled while searching', async () => {
     endsAt: '2026-10-22T16:30:00.000Z',
   };
   const client = stubClient({ phrase: draft, slots: [] });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -656,7 +656,7 @@ test('a phrase without a person says who is missing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ phrase: { serviceKey: 'taglio' } });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti';
   clickButton(mount, 'Trova slot liberi');
@@ -671,7 +671,7 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -707,7 +707,7 @@ test('late-evening wall times book the same Rome day, never tomorrow', async () 
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -736,7 +736,7 @@ test('unsubmitted manual edits survive a week reload', async () => {
       { resource: 'contact', id: 'c2', name: 'Bo' },
     ]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -768,7 +768,7 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -821,7 +821,7 @@ test('a 19:00 proposal is named below the grid with its real time, never on the 
   const client = stubClient({ phrase: draft, slots });
   // Pinned before the stub slots: proposals cut begun steps (backlog:d1e4d90e);
   // the 19:00 Rome step stays future, so the honest out-of-hours line proves.
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -856,7 +856,7 @@ test('the manual customer search lists names, never ids or resources', async () 
       { resource: 'company', id: 'c2', name: 'Ada Ditta' },
     ]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   assert.ok(search, 'the manual form searches by name');
@@ -877,7 +877,7 @@ test('a short customer query searches nothing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   search.value = 'A';
@@ -892,7 +892,7 @@ test('a customer search without a match says so in plain words', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   search.value = 'Zzz';
@@ -911,7 +911,7 @@ test('a failed customer search says so in plain words, never a code', async () =
       throw new Error('customer-data is not composed');
     },
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   search.value = 'Ada';
@@ -941,7 +941,7 @@ test('the customer search asks for a supported page and shows five rows at most'
       return customersOf(rows)(path);
     },
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   search.value = 'Adalberto';
@@ -967,7 +967,7 @@ test('a customer search resolving after a re-render paints the live form', async
     release = () => resolve({ items: [{ resource: 'contact', id: 'c1', name: 'Ada' }] });
   });
   const client = stubClient({ customers: () => gate });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   search.value = 'Ad';
@@ -996,7 +996,7 @@ test('picking a customer names them and «Cambia cliente» searches again', asyn
       { resource: 'contact', id: 'c2', name: 'Bo' },
     ]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await pickCustomerByName(mount, 'Ada');
   assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Ada'), 'the pick names the customer');
@@ -1012,7 +1012,7 @@ test('picking a customer names them and «Cambia cliente» searches again', asyn
 test('the header carries the prototype eyebrow and title', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const eyebrow = mount.findAll('p').find((node) => node.getAttribute('class') === 'eyebrow');
   assert.equal(eyebrow?.textContent, 'Calendario condiviso', 'C1: eyebrow');
@@ -1023,7 +1023,7 @@ test('the header carries the prototype eyebrow and title', async () => {
 test('the week bar shows pager, interval, today and booking menu in order', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const nav = mount.querySelector('.actions');
   assert.ok(nav, 'the header has an actions bar');
@@ -1044,7 +1044,7 @@ test('the week bar shows pager, interval, today and booking menu in order', asyn
 test('Nuovo appuntamento opens the two voices with their subtitles', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
   assert.ok(toggle, 'the booking menu toggle exists');
@@ -1066,7 +1066,7 @@ test('Nuovo appuntamento opens the two voices with their subtitles', async () =>
 test('Escape closes the booking menu and returns focus to the toggle', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
   toggle.dispatch('click');
@@ -1084,7 +1084,7 @@ test('Escape closes the booking menu and returns focus to the toggle', async () 
 test('the voices focus the phrase field and the manual form', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
   toggle.dispatch('click');
@@ -1117,7 +1117,7 @@ test('a click outside the booking menu closes it', async () => {
     fire: (type, event) => { for (const handler of handlers[type] ?? []) handler(event); },
   };
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const toggle = mount.findAll('button').find((node) => node.textContent.includes('Nuovo appuntamento'));
   const wrap = mount.querySelector('.bo-clienti-menuwrap');
@@ -1138,7 +1138,7 @@ test('the calendario view renders no raw control', async () => {
   // legacy classes onto `ui-*`.
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   // Blocks paint too, so the week loads before the walk.
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
@@ -1175,7 +1175,7 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
 
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -1234,7 +1234,7 @@ test('selecting a block opens the detail card and × deselects it', async () => 
   const doc = createFakeDocument();
   const mount = createMount();
   // Wednesday 21 Oct 2026 08:40Z is 10:40 in Rome: the now-line paints.
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-21T08:40:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-21T08:40:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -1273,7 +1273,7 @@ test('the now-line paints on the current day inside painted hours', async () => 
   const load = async (now) => {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({ doc, mount, client: stubClient(), now });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now });
     await view.render();
     const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
     filter.value = 'marco';
@@ -1329,7 +1329,7 @@ test('the WA badge is fail-closed on the row channel marker', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const calls = [];
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc,
     mount,
     client: {
@@ -1379,7 +1379,7 @@ test('the detail card opens the customer card for linked events only', async () 
   const doc = createFakeDocument();
   const mount = createMount();
   const seen = [];
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc,
     mount,
     client: stubClient({
@@ -1431,7 +1431,7 @@ test('the detail card hides the customer button without a linked customer', asyn
   };
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc, mount, client: stubClient({ week }), navigate: () => { throw new Error('must not navigate'); },
     now: () => new Date('2026-10-21T08:40:00Z'),
   });
@@ -1477,7 +1477,7 @@ test('the channel pill is fail-closed with the resolved customer name', async ()
   const profilePath = '/api/customer-data/profile/contact/c1';
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc,
     mount,
     client: stubClient({
@@ -1552,7 +1552,7 @@ test('overlapping profile reads cache under their own keys', async () => {
   };
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -1601,7 +1601,7 @@ test('the detail card falls back honestly when the profile is unavailable', asyn
   const doc = createFakeDocument();
   const mount = createMount();
   const seen = [];
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc,
     mount,
     client: stubClient({ week }),
@@ -1653,7 +1653,7 @@ test('a late profile answer never repaints over the customer card', async () => 
   };
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -1715,7 +1715,7 @@ test('an unexpected profile failure is logged with the space, never the message'
   try {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({
+    const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
       doc,
       mount,
       client,
@@ -1773,7 +1773,7 @@ test('a missing profile stays silent while the card falls back', async () => {
   try {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T08:40:00Z') });
     await view.render();
     const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
     filter.value = 'marco';
@@ -1865,7 +1865,7 @@ test('the Team card toggles one row per named member and filters the grid', asyn
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ week: WEEK_TWO });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   assert.ok(texts(mount, 'h2').includes('Team'), 'C10: the Team card paints');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Nomina le persone')), 'no names, honest prompt');
@@ -1901,7 +1901,7 @@ test('hiding the selected block member closes the detail card', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ week: WEEK_TWO });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco, sara';
@@ -2099,7 +2099,7 @@ test('the Team card shows the roster names and loads its week with no typing', a
       { subject: 'sara', role: 'owner', displayName: 'Sara' },
     ],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -2156,7 +2156,7 @@ test('the Team card merges one human across roster subjects', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ week, memberships: members });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2228,7 +2228,7 @@ test('a partially-listed person hides with no reload', async () => {
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   assert.ok(filter, 'the typed filter stays while the roster is unread');
@@ -2260,7 +2260,7 @@ test('blocks and toggle share the tint on a two-subject person', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ week: DAN_WEEK, memberships: DAN_MEMBERS });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2319,7 +2319,7 @@ test('email-less homonyms toggle and book the right human', async () => {
     memberships: members,
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2374,7 +2374,7 @@ test('a hidden partially-listed person stays hidden after a reload', async () =>
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   assert.ok(filter, 'the typed filter stays while the roster is unread');
@@ -2412,7 +2412,7 @@ test('a chosen non-primary subject books exactly that subject', async () => {
     memberships: DAN_MEMBERS,
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2457,7 +2457,7 @@ test('a pipe outsider draft keeps an empty visible field and books exact', async
     memberships: [{ subject: 'sara', role: 'member' }],
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2501,7 +2501,7 @@ test('the roster week filters on toggle with no reload', async () => {
       { subject: 'sara', role: 'owner' },
     ],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -2536,7 +2536,7 @@ test('a disconnected calendar shows the Profilo way in the week panel', async ()
       },
     },
   });
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z'),
     navigate: (hash) => { seen.push(hash); },
   });
@@ -2571,7 +2571,7 @@ test('a connected calendar shows no connect notice', async () => {
       },
     },
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -2589,7 +2589,7 @@ test('an unreadable profile keeps the old week with no notice', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ week: WEEK_TWO });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -2614,7 +2614,7 @@ test('a refused member list keeps the opaque toggles with no error', async () =>
   const originalWarn = console.warn;
   console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
   try {
-    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
     await view.render();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -2659,7 +2659,7 @@ test('a failed member-list reload repaints the fallback, never a stale roster', 
       throw new Error(`unexpected path ${path}`);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
@@ -2693,7 +2693,7 @@ test('an unexpected member-list failure is logged with the space, never the mess
   const originalWarn = console.warn;
   console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
   try {
-    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
     await view.render();
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
@@ -2715,7 +2715,7 @@ test('an unexpected member-list failure is logged with the space, never the mess
 test('the booking card paints the prototype texts with no invented link', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(texts(mount, 'h2').includes('Prenotazione online'), 'C12: the booking card paints');
@@ -2745,7 +2745,7 @@ test('the manual person is a choice from the known team', async () => {
     ],
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   // The roster auto-fills the week: marco and sara are the known team with
   // no typing (backlog:0533362e).
@@ -2782,7 +2782,7 @@ test('no known team keeps the plain person field', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'no choice from nobody');
@@ -2818,7 +2818,7 @@ test('a draft outsider keeps the typed person field', async () => {
     endsAt: '2026-10-22T16:30:00.000Z',
   };
   const client = stubClient({ phrase: draft, slots: [], memberships: [{ subject: 'sara', role: 'member' }] });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2855,7 +2855,7 @@ test('a draft outsider wins over a previous known choice', async () => {
     memberships: [{ subject: 'sara', role: 'member' }],
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   for (let round = 0; round < 4; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -2890,7 +2890,7 @@ test('a draft outsider wins over a previous known choice', async () => {
 test('the service field carries no listino jargon', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const service = mount.findAll('input').find((node) => node.getAttribute('name') === 'serviceKey');
   assert.ok(service, 'the service field paints');
@@ -2914,7 +2914,7 @@ test('a stashed appointment pick opens the manual form with the customer', async
   }));
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), storage, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   assert.ok(mount.textContent.includes('Cliente: Guido Presti'),
     'the manual form starts with the picked customer named');
@@ -2922,7 +2922,7 @@ test('a stashed appointment pick opens the manual form with the customer', async
     'the pick is read once, never kept');
   // Without a pick the form stays closed with the name search, never a ghost.
   const plain = createMount();
-  const plainView = createCalendarioView({
+  const plainView = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc: createFakeDocument(), mount: plain, client: stubClient(), storage,
     now: () => new Date('2026-10-23T06:00:00Z'),
   });
@@ -2937,7 +2937,7 @@ test('dragging on a day column chooses the slot and opens the filled form beside
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -2967,7 +2967,7 @@ test('a plain click on an empty slot is half an hour', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -2988,7 +2988,7 @@ test('a plain click on an empty slot is half an hour', async () => {
 // browser take the gesture (pointercancel) and nothing opens.
 async function phoneWeek() {
   const mount = createMount();
-  const view = createCalendarioView({ doc: createFakeDocument(), mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc: createFakeDocument(), mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
   clickButton(mount, 'Mostra settimana');
@@ -3032,7 +3032,7 @@ test('leaving Calendario with a typed phrase keeps a draft mark, so the bundle w
   try {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
     await view.render();
     const field = mount.querySelector('textarea[name="phrase"]');
     assert.ok(field, 'the phrase field renders');
@@ -3050,7 +3050,7 @@ test('clearing the phrase clears the draft mark, so the bundle reloads', async (
   try {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
     await view.render();
     const field = mount.querySelector('textarea[name="phrase"]');
     assert.ok(field, 'the phrase field renders');
@@ -3071,7 +3071,7 @@ test('the auto-filled roster is not operator text: leaving with it alone sets no
     const doc = createFakeDocument();
     const mount = createMount();
     const client = stubClient({ memberships: [{ subject: 'marco' }] });
-    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
     await view.render();
     for (let round = 0; round < 4; round += 1) await new Promise((resolve) => setImmediate(resolve));
     view.invalidate();
@@ -3182,7 +3182,7 @@ test('a phrase step held under one identity is never proposed under the other', 
       { teamMemberId: 'google|g1', slots: [step] },
     ],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
   clickButton(mount, 'Trova slot liberi');
@@ -3220,7 +3220,7 @@ test('a phrase step free under every identity is proposed once on the drafted on
     ],
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con coach-guido';
   clickButton(mount, 'Trova slot liberi');
@@ -3329,7 +3329,7 @@ test('a block names service and customer like the prototype, never the raw key (
     catalog: { products: [{ sku: 'lezione-prova', name: 'Lezione di prova' }] },
     profiles: { '/api/customer-data/profile/contact/c7': { identity: { contact: { firstName: 'Mario', lastName: 'Rossi' } } } },
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   const titles = texts(mount, 'strong');
@@ -3360,7 +3360,7 @@ test('without a catalog or a name the block keeps the readable service alone', a
       }],
     }],
   };
-  const view = createCalendarioView({ doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   assert.ok(texts(mount, 'strong').includes('Lezione prova'), JSON.stringify(texts(mount, 'strong')));
@@ -3372,7 +3372,7 @@ test('a draft without a time names the duration, never «? –» (defect 07/11)'
   const mount = createMount();
   const draft = { teamMemberId: 'Daniele', durationMinutes: 45 };
   const client = stubClient({ phrase: draft, slots: [], suggestGroups: [{ teamMemberId: 'Daniele', slots: [] }] });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con Daniele';
@@ -3417,7 +3417,7 @@ test('a proposal on top of a held booking is never offered (defect 07/11)', asyn
     { startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
     { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' },
   ];
-  const view = createCalendarioView({ doc, mount, client: stubClient({ phrase: draft, slots }), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ phrase: draft, slots }), now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
@@ -3450,7 +3450,7 @@ test('ghosts never paint over a booking or over each other (defect 07/11)', asyn
     { startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:45:00.000Z' },
     { startsAt: '2026-10-22T14:45:00.000Z', endsAt: '2026-10-22T15:30:00.000Z' },
   ];
-  const view = createCalendarioView({ doc, mount, client: stubClient({ week: WEEK_TWO, phrase: draft, slots }), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week: WEEK_TWO, phrase: draft, slots }), now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await showWeek(mount, 'marco, sara');
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
@@ -3473,7 +3473,7 @@ test('C16: a week with zero events keeps days and hours, no technical message', 
   const doc = createFakeDocument();
   const mount = createMount();
   const empty = { ...WEEK, members: [{ teamMemberId: 'marco', appointments: [] }] };
-  const view = createCalendarioView({ doc, mount, client: stubClient({ week: empty }), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week: empty }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   const byClass = (name) => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(name));
@@ -3487,7 +3487,7 @@ test('C16: a week with zero events keeps days and hours, no technical message', 
 test('an empty day carries a compact row with «+ Prenota» for the phone stack', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   const classesOf = (node) => (node.getAttribute('class') ?? '').split(/\s+/);
@@ -3520,7 +3520,7 @@ test('review #646 P2: GRID_START_MINUTES stays exported beside the grid geometry
 test('review #646 P1: «+ Prenota» drops the times of an earlier slot', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   // An earlier pick set Thursday 16:00–16:30 in the form.
@@ -3543,7 +3543,7 @@ test('review #646 P1: after a phrase draft filled the form, «+ Prenota» keeps 
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' };
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
     doc, mount, client: stubClient({ phrase: draft, slots: [] }), now: () => new Date('2026-10-21T06:00:00Z'),
   });
   await view.render();
@@ -3592,7 +3592,7 @@ test('review #646 P2: the held guard reads the searched person, not only the pai
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await showWeek(mount, 'marco');
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con sara';
@@ -3617,7 +3617,7 @@ test('review #646 r3: a day whose only bookings are hidden never reads «Nessun 
       { teamMemberId: 'sara', appointments: [{ ...WEEK_TWO.members[1].appointments[0], startsAt: '2026-10-21T14:00:00.000Z', endsAt: '2026-10-21T14:30:00.000Z' }] },
     ],
   };
-  const view = createCalendarioView({ doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount, 'marco, sara');
   const compactDays = () => mount.findAll('div')
@@ -3647,7 +3647,7 @@ test('review #646 r3: a pager move during the search leaves its answer unpublish
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
@@ -3681,7 +3681,7 @@ test('a booked Conferma clears every draft and shows «Prenotato» with the week
     slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -3718,7 +3718,7 @@ test('a service outside the listino is named under the field, never «Riprova pi
   const mount = createMount();
   const refused = Object.assign(new Error('Calendar change refused'), { status: 400, code: 'BO_APPOINTMENT_SERVICE_REFUSED' });
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]), failConfirmWith: refused });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -3756,7 +3756,7 @@ for (const code of ['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']) {
     const doc = createFakeDocument();
     const mount = createMount();
     const client = stubClient({ failPhraseWith: Object.assign(new Error('Calendar phrase refused'), { status: 502, code }) });
-    const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
     await view.render();
     mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
     clickButton(mount, 'Trova slot liberi');
@@ -3782,7 +3782,7 @@ test('a day-only phrase searches that day for the stated minutes and never paint
       { startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' },
     ],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-20T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-20T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì';
   clickButton(mount, 'Trova slot liberi');
@@ -3837,7 +3837,7 @@ test('Conferma in flight replaces the draft note with «Prenotazione in corso…
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -3868,7 +3868,7 @@ test('AI off is remembered for its own space only', async () => {
     removeItem: (key) => { kept.delete(key); },
   };
   const client = stubClient({ failPhraseWith: Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'LLM_SPACE_DISABLED' }) });
-  const view = createCalendarioView({ doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -3915,7 +3915,7 @@ test('a cross-week phrase never proposes a step held in the named week', async (
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -3945,7 +3945,7 @@ test('a proposal Conferma in flight says «Prenotazione in corso…», never the
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -3997,7 +3997,7 @@ test('a cross-week phrase with nobody named still guards the held bookings', asy
   const doc = createFakeDocument();
   const mount = createMount();
   const client = crossWeekClient(() => NEXT_WEEK_HELD);
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
   clickButton(mount, 'Trova slot liberi');
@@ -4012,7 +4012,7 @@ test('a cross-week phrase whose week cannot be read proposes nothing', async () 
   const doc = createFakeDocument();
   const mount = createMount();
   const client = crossWeekClient(() => { throw Object.assign(new Error('down'), { status: 502, code: 'UNKNOWN' }); });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco giovedì prossimo';
   clickButton(mount, 'Trova slot liberi');
@@ -4027,7 +4027,7 @@ test('APPOINTMENTS_AI_UNAVAILABLE keeps the phrase box and never says the AI is 
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ failPhraseWith: Object.assign(new Error('unavailable'), { status: 503, code: 'APPOINTMENTS_AI_UNAVAILABLE' }) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
@@ -4050,7 +4050,7 @@ test('a same-week phrase with nobody named still guards the held bookings', asyn
       { startsAt: '2026-10-22T13:00:00.000Z', endsAt: '2026-10-22T13:30:00.000Z' },
     ],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
   clickButton(mount, 'Trova slot liberi');
@@ -4075,7 +4075,7 @@ test('a same-week phrase whose week cannot be read proposes nothing', async () =
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
   clickButton(mount, 'Trova slot liberi');
@@ -4101,7 +4101,7 @@ test('a typed catalog name books its listino key even before the catalog was rea
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
     catalog: { products: [{ sku: 'lezione-prova', name: 'Lezione prova' }] },
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -4130,7 +4130,7 @@ test('AI off stays remembered for each space, not only the last one', async () =
     removeItem: (key) => { kept.delete(key); },
   };
   const client = stubClient({ failPhraseWith: Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'LLM_SPACE_DISABLED' }) });
-  const view = createCalendarioView({ doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
   const refuse = async () => {
     mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
     clickButton(mount, 'Trova slot liberi');
@@ -4189,7 +4189,7 @@ test('a pager move during the cross-week preload never proposes against the wron
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   byName().members.value = 'marco';
@@ -4226,7 +4226,7 @@ test('Conferma with a hand-written unbookable service sends nothing and names th
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');
@@ -4268,7 +4268,7 @@ test('a block with a server-attached customer label reads service · customer wi
     week,
     catalog: { products: [{ sku: 'lezione-prova', name: 'Lezione di prova' }] },
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await showWeek(mount);
   const titles = texts(mount, 'strong');

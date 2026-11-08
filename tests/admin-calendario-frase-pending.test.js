@@ -74,7 +74,7 @@ test('a queued phrase says «Sto cercando…» while it is read back', async () 
   const doc = createFakeDocument();
   const mount = createMount();
   const client = phraseClient();
-  const view = createCalendarioView({ doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush();
   assert.ok(mount.textContent.includes('Sto cercando… la risposta arriva tra poco.'), 'the card keeps searching');
@@ -86,7 +86,7 @@ test('a queued phrase is read back with its requestId and shows the draft and th
   const doc = createFakeDocument();
   const mount = createMount();
   const client = phraseClient({ readyAfter: 3 });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(30);
   assert.equal(posts(client).length, 1, 'one POST only');
@@ -102,7 +102,7 @@ test('a phrase still queued after a minute says so in Italian, and Riprova reads
   const doc = createFakeDocument();
   const mount = createMount();
   const client = phraseClient({ readyAfter: PHRASE_RESUME_ROUNDS + 1 });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(120);
   assert.equal(reads(client).length, PHRASE_RESUME_ROUNDS, 'every 3 s for about a minute');
@@ -132,7 +132,7 @@ test('a transient read-back failure keeps reading the same request', async () =>
       new TypeError('Failed to fetch'),
     ],
   });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(40);
   assert.equal(posts(client).length, 1, 'never a second POST');
@@ -149,7 +149,7 @@ test('a final refusal during the read-back ends it in Italian (AI off)', async (
     readyAfter: 5,
     readFailures: [Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'LLM_SPACE_DISABLED' })],
   });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(30);
   assert.equal(reads(client).length, 1, 'AI off is final, not read again');
@@ -162,7 +162,7 @@ test('Riprova resumes the request with the phrase that asked it, not a later edi
   const doc = createFakeDocument();
   const mount = createMount();
   const client = phraseClient({ readyAfter: PHRASE_RESUME_ROUNDS + 1 });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(120);
   const field = mount.querySelector('textarea[name="phrase"]');
@@ -182,7 +182,7 @@ test('an unrelated *_PENDING refusal on the POST is never read back', async () =
   const client = phraseClient({
     postError: Object.assign(new Error('Claim pending elsewhere'), { status: 409, code: 'BO_CLAIM_PENDING', requestId: 'trace-1' }),
   });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(20);
   assert.equal(reads(client).length, 0, 'no read-back loop on a refusal');
@@ -207,7 +207,7 @@ test('a route away during the POST never repaints the waiting card over the new 
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush();
   // The shell routes away: it drops the calendar and paints another screen.
@@ -229,7 +229,7 @@ test('a status-less read-back bug is final, never passed off as a slow request',
   const doc = createFakeDocument();
   const mount = createMount();
   const client = phraseClient({ readyAfter: 5, readFailures: [new Error('Unexpected token < in JSON')] });
-  const view = createCalendarioView({ doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   const warned = [];
   const original = console.warn;
   console.warn = (...args) => { warned.push(args); };
@@ -261,7 +261,7 @@ test('a final 5xx read-back refusal is logged with code, request and space', asy
     readyAfter: 5,
     readFailures: [Object.assign(new Error('Calendar phrase refused'), { status: 502, code: 'BO_PHRASE_OUTCOME_UNKNOWN' })],
   });
-  const view = createCalendarioView({ doc, mount, client, storage, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   const warned = [];
   const original = console.warn;
   console.warn = (...args) => { warned.push(args); };
@@ -290,7 +290,7 @@ test('an edit during the read-back never paints the draft under other words', as
     first = false;
     return new Promise((resolve) => { releaseWait = resolve; });
   };
-  const view = createCalendarioView({ doc, mount, client, wait, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait, now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush();
   const field = mount.querySelector('textarea[name="phrase"]');
@@ -315,7 +315,7 @@ test('an edit during the read-back never becomes the phrase Riprova resumes with
     first = false;
     return new Promise((resolve) => { releaseWait = resolve; });
   };
-  const view = createCalendarioView({ doc, mount, client, wait, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait, now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush();
   const field = mount.querySelector('textarea[name="phrase"]');
@@ -337,7 +337,7 @@ test('a route away during the read-back brings the card back idle', async () => 
   const doc = createFakeDocument();
   const mount = createMount();
   const client = phraseClient({ readyAfter: 99 });
-  const view = createCalendarioView({ doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush();
   assert.ok(mount.textContent.includes('Sto cercando'), 'waiting before the route away');
@@ -368,7 +368,7 @@ test('a space switch on Calendario drops the queued phrase request of the space 
   const mount = createMount();
   const box = switchableStorage('space-a');
   const client = phraseClient({ readyAfter: 99 });
-  const view = createCalendarioView({ doc, mount, client, storage: box.storage, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage: box.storage, wait: () => Promise.resolve(), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush(120);
   const resume = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'phrase-resume');
@@ -391,7 +391,7 @@ test('a space switch on Calendario stops the read-back of the space left', async
   const mount = createMount();
   const box = switchableStorage('space-a');
   const client = phraseClient({ readyAfter: 99 });
-  const view = createCalendarioView({ doc, mount, client, storage: box.storage, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage: box.storage, wait: () => new Promise(() => {}), now: () => new Date('2026-10-21T06:00:00Z') });
   await search(view, mount);
   await flush();
   assert.ok(mount.textContent.includes('Sto cercando'), 'waiting in space A');

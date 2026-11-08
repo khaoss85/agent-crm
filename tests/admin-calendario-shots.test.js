@@ -169,7 +169,7 @@ const client = {
 // lookup spans every named field, never only <input>.
 const byName = (name) => document.querySelector('[name="' + name + '"]');
 const click = (label) => [...document.querySelectorAll('button')].find((b) => b.textContent.includes(label)).click();
-const view = createCalendarioView({
+const view = createCalendarioView({ searchDelayMs: 0, searchDelayMs: 0,
   doc: document,
   mount: document.getElementById('mount'),
   client,

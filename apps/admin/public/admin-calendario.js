@@ -517,6 +517,8 @@ export function slotInGrid(startsAt, endsAt) {
 }
 
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
+/** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
+export const SEARCH_DEBOUNCE_MS = 300;
 export const PHRASE_RESUME_EVERY_MS = 3000;
 export const PHRASE_RESUME_ROUNDS = 20;
 
@@ -938,6 +940,8 @@ export function createCalendarioView(deps) {
     state.phraseWaiting = false;
     state.phrasePending = null;
     memberToken += 1;
+    // A search pending or in flight dies with the route, like the week.
+    cancelCustomerSearch();
     trackRetainedDraft();
   }
 
@@ -1056,6 +1060,49 @@ export function createCalendarioView(deps) {
   };
   /** Guards the customer search, like renderToken guards the week. */
   let customerSeq = 0;
+  /**
+   * backlog:29bb3f2c0d64 (production 08/11): the customer search fired one
+   * request per keystroke; on the small web instance they queued (about 30 s
+   * on the first round, then 5 s each, against 0.5 s for one read alone).
+   * Typing now waits SEARCH_DEBOUNCE_MS of quiet before one request, and a
+   * newer keystroke aborts the request in flight. Injectable for tests
+   * (0 searches at once, like before).
+   */
+  const searchDelayMs = Number.isInteger(deps.searchDelayMs) && deps.searchDelayMs >= 0
+    ? deps.searchDelayMs
+    : SEARCH_DEBOUNCE_MS;
+  /** The pending debounce timer, or null. @type {any} */
+  let customerTimer = null;
+  /** The controller of the search request in flight, or null. @type {AbortController|null} */
+  let customerAbort = null;
+
+  /** Drops the pending and in-flight customer search: no stale answer paints. */
+  function cancelCustomerSearch() {
+    if (customerTimer !== null) {
+      clearTimeout(customerTimer);
+      customerTimer = null;
+    }
+    if (customerAbort !== null) {
+      customerAbort.abort();
+      customerAbort = null;
+    }
+    customerSeq += 1;
+  }
+
+  /** One keystroke in the customer search: debounce, then one request. @param {string} query */
+  function scheduleCustomerSearch(query) {
+    cancelCustomerSearch();
+    const q = String(query ?? '').trim();
+    // A cleared or too-short query answers at once: nothing is read for it.
+    if (searchDelayMs === 0 || q.length < 2) {
+      void searchCustomers(query);
+      return;
+    }
+    customerTimer = setTimeout(() => {
+      customerTimer = null;
+      void searchCustomers(query);
+    }, searchDelayMs);
+  }
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -1528,7 +1575,7 @@ export function createCalendarioView(deps) {
   }
 
   function renderHeader() {
-    const head = el(doc, 'div', { className: 'panel-heading' });
+    const head = el(doc, 'div', { className: 'panel-heading cal-page-head' });
     const titleBox = el(doc, 'div');
     // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome — the
     // eyebrow and title never carry data. The lede stays because the
@@ -1536,7 +1583,7 @@ export function createCalendarioView(deps) {
     // Fetta 4: the label names the painted work week (Mon..Fri), not the
     // loaded seven days.
     titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Calendario condiviso' }));
-    titleBox.appendChild(el(doc, 'h2', { text: 'Agenda del team' }));
+    titleBox.appendChild(el(doc, 'h2', { className: 'cal-page-title', text: 'Agenda del team' }));
     const label = weekLabel(displayKeys(state.weekKeys));
     if (label) titleBox.appendChild(el(doc, 'p', { className: 'lede', text: `La settimana del team · ${label}` }));
     head.appendChild(titleBox);
@@ -2193,8 +2240,10 @@ export function createCalendarioView(deps) {
    */
   function renderDetailCard(row) {
     const card = el(doc, 'div', { className: 'panel', attrs: { 'data-role': 'event-detail' } });
-    const head = el(doc, 'div', { className: 'panel-heading' });
-    head.appendChild(el(doc, 'h2', { text: titleOf(row) }));
+    // backlog:29bb3f2c0d64 (production 08/11): the card title is a card
+    // title, never the 46px page title.
+    const head = el(doc, 'div', { className: 'panel-heading cal-detail-head' });
+    head.appendChild(el(doc, 'h2', { className: 'cal-detail-title', text: titleOf(row) }));
     const close = el(doc, 'button', {
       className: 'small secondary',
       attrs: { type: 'button', 'aria-label': 'Chiudi dettaglio' },
@@ -2664,7 +2713,13 @@ export function createCalendarioView(deps) {
       const params = new URLSearchParams({ q, page: '1', pageSize: '10' });
       const spaceId = readSpace();
       if (spaceId) params.set('spaceId', spaceId);
-      const answer = await client.request(`/api/customer-data/customers?${params.toString()}`);
+      const controller = typeof AbortController === 'function' ? new AbortController() : null;
+      customerAbort = controller;
+      const answer = await client.request(
+        `/api/customer-data/customers?${params.toString()}`,
+        controller ? { signal: controller.signal } : {},
+      );
+      if (customerAbort === controller) customerAbort = null;
       if (token !== customerSeq) return;
       state.customerItems = (Array.isArray(answer?.items) ? answer.items : []).slice(0, 5);
       // backlog:d128847d21fc: a list the server read only in part says so,
@@ -2672,7 +2727,8 @@ export function createCalendarioView(deps) {
       state.customerPartial = answer?.complete === false;
       state.customerError = null;
     } catch (error) {
-      if (token !== customerSeq) return;
+      // An aborted request belongs to a search a newer keystroke replaced.
+      if (token !== customerSeq || error?.name === 'AbortError') return;
       state.customerPartial = false;
       state.customerItems = [];
       state.customerError = humanReadError(error, {
@@ -2889,7 +2945,7 @@ export function createCalendarioView(deps) {
     if (field) {
       field.addEventListener('input', () => {
         state.customerQuery = String(field.value ?? '');
-        void searchCustomers(state.customerQuery);
+        scheduleCustomerSearch(state.customerQuery);
       });
     }
     form.appendChild(search);
