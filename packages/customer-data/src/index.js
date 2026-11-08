@@ -330,7 +330,7 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
           { name: 'id', type: 'string', hint: 'The record id.' },
           { name: 'confirm', type: 'json', hint: 'The titolare confirmation: must be true, nothing is erased without it.' },
-          { name: 'reason', type: 'string', hint: 'Why the customer is erased, recorded with the decider identity.' },
+          { name: 'reason', type: 'string', hint: 'Why the customer is erased, recorded with the decider identity. Write why, never who: no emails or phone numbers, the registry keeps it forever.' },
         ],
         create(runtime) {
           const operations = createCustomerDataOperations({

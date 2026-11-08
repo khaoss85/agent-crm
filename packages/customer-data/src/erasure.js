@@ -23,7 +23,9 @@ import {
  *    purged like an opt-out, custom-field values are blanked;
  * 2. **record it** — one append-only `customer-erasure-log` row per erased
  *    subject (no name, no email, no phone: the registry never becomes a
- *    copy of what was erased), so a second erasure replays the stored row;
+ *    copy of what was erased), so a second erasure replays the stored row
+ *    (replay contract: the requested subject in `erasedSubjects`, no counts
+ *    or notes — branch on `replayed`);
  * 3. **exclude it** — every product read (list, profile, export) drops
  *    erased subjects by reading this same registry, so the customer
  *    disappears from Clienti, search, the direct link and export.
@@ -43,6 +45,36 @@ import {
  */
 
 const MAX_REASON = 300;
+
+/**
+ * What the erasure reason may never carry: the registry is append-only and
+ * would keep the copy forever, contradicting its no-PII promise. An email
+ * address or a phone number inside the reason refuses with ValidationError;
+ * names cannot be detected reliably, so the operation contract (and the
+ * reason hint) tells the operator to write why, never who.
+ */
+const REASON_EMAIL_RE = /[^\s@]+@[^\s@.]+\.[^\s@.]+/;
+// A phone-shaped run: at least 9 characters of digits and phone
+// separators holding 9 or more digits. A date (08/11/2026, 8 digits)
+// passes; a real number (+39 333 123 4567, 12 digits) refuses.
+const REASON_PHONE_RUN_RE = /[+\d][\d\s\-./()]{8,}/g;
+
+function reasonHasPhone(reason) {
+  for (const run of reason.match(REASON_PHONE_RUN_RE) ?? []) {
+    if (run.replace(/\D/g, '').length >= 9) return true;
+  }
+  return false;
+}
+
+function assertReasonCarriesNoPii(reason) {
+  if (REASON_EMAIL_RE.test(reason) || reasonHasPhone(reason)) {
+    throw new ValidationError(
+      'il motivo non deve contenere email o telefoni: il registro è permanente e non conserva dati personali',
+      { field: 'reason' },
+    );
+  }
+  return reason;
+}
 
 /**
  * The evidence sections that can hold signed business, and the module each
@@ -140,7 +172,9 @@ export function createErasureOperations({ database, modules, events, core, names
     if (request?.confirm !== true) {
       throw new ValidationError('la cancellazione va confermata dal titolare (confirm: true)', { field: 'confirm' });
     }
-    const reason = safeString(request?.reason, 'reason', { max: MAX_REASON, required: true });
+    const reason = assertReasonCarriesNoPii(
+      safeString(request?.reason, 'reason', { max: MAX_REASON, required: true }),
+    );
     const subject = { resource, id: id.trim() };
 
     const erasureSvc = trusted(modules, names.erasure);
@@ -310,6 +344,9 @@ export function createErasureOperations({ database, modules, events, core, names
           firstName: 'Cliente',
           lastName: 'cancellato',
           email: anonymizedEmail(member.id),
+          // A job title identifies the person as surely as a name, so it
+          // goes with the rest of the PII instead of surviving the erasure.
+          role: null,
         }, { actor });
       }
       outcome.note = null;
@@ -413,11 +450,23 @@ function summaryOf({ erased, identitiesWithdrawn, enrichedPurged, fieldValuesBla
   return parts.join('; ');
 }
 
+/**
+ * The replay contract, distinct from a first erasure by `replayed: true`.
+ * A replay answers the stored row for the requested subject only: the
+ * original tallies (identities withdrawn, fields purged, notes) describe
+ * the whole cluster of that first call and are not stored per row, so a
+ * replay carries no counts and no notes instead of inventing them.
+ * `erasedSubjects` always holds the requested subject, so readers can
+ * treat both shapes the same for membership and must branch on
+ * `replayed` before reading counts or notes.
+ */
 function replayReceipt(row) {
+  const subject = Object.freeze({ resource: row.subjectResource, id: row.subjectId });
   return Object.freeze({
     outcome: 'erased',
     replayed: true,
-    subject: Object.freeze({ resource: row.subjectResource, id: row.subjectId }),
+    subject,
+    erasedSubjects: Object.freeze([subject]),
     erasedAt: row.erasedAt ?? null,
     erasedBy: Object.freeze({ type: row.erasedByType ?? 'user', id: row.erasedById ?? null }),
     reason: row.reason ?? null,

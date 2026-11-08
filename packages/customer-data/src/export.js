@@ -149,7 +149,13 @@ export function createCustomerDataExport({ database, modules, events, config }) 
       // Erased subjects leave the export (backlog:d271d723): the registry
       // names them, and the exclusion is stated on the answer — never a
       // silent short file. Rows without a subject envelope are unaffected.
-      const { visible, erasedExcluded } = excludeErasedSubjects(rows, await readErasedSubjects({ modules, names }));
+      // The registry itself is exempt: its rows ARE the accountability
+      // proof, not customer data, so excluding them would always export
+      // an empty set with a misleading erasedExcluded count.
+      const erased = resource === 'customer-erasure-log'
+        ? Object.freeze(new Set())
+        : await readErasedSubjects({ modules, names });
+      const { visible, erasedExcluded } = excludeErasedSubjects(rows, erased);
       return Object.freeze({
         resource,
         rowCount: visible.length,

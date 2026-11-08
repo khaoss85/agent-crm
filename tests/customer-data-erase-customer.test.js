@@ -157,6 +157,64 @@ test('erasing anonymizes, records and excludes: list, search, profile and export
   });
   assert.equal(replay.replayed, true, 'a second erasure replays the stored row');
   assert.equal((await erasureRows(app, 'contact', contact.id)).length, 1, 'no second registry row');
+  assert.deepEqual(
+    replay.erasedSubjects,
+    [{ resource: 'contact', id: contact.id }],
+    'the replay names the requested subject, so membership reads never throw',
+  );
+  assert.ok(!('counts' in replay) && !('notes' in replay), 'a replay invents no tallies: branch on replayed');
+});
+
+test('the erasure registry itself still exports: the accountability proof is never filtered', async (t) => {
+  const { app, contact } = await scene(t);
+  await app.eraseCustomer({
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+  });
+  const exported = await app.exportCustomerRecords({ resource: 'customer-erasure-log' });
+  assert.equal(exported.erasedExcluded, 0, 'the registry is exempt from erased-subject exclusion');
+  assert.ok(
+    exported.rows.some((row) => row.subjectResource === 'contact' && row.subjectId === contact.id),
+    'the registry row exports: the proof of the erasure leaves the export',
+  );
+});
+
+test('erasing clears the job title: no role survives the anonymization', async (t) => {
+  const { app, company } = await scene(t);
+  const director = await app.services.contacts.create({
+    companyId: company.id, firstName: 'Anna', lastName: 'Bianchi',
+    email: 'anna@palestra-esempio.it', role: 'Amministratore Delegato',
+  });
+  await app.eraseCustomer({
+    resource: 'contact', id: director.id, confirm: true, reason: 'richiesta del cliente', actor: OPERATOR,
+  });
+  const reread = await app.services.contacts.get(director.id);
+  assert.equal(reread.role, null, 'the job title goes with the rest of the PII');
+  assert.equal(reread.firstName, 'Cliente');
+});
+
+test('a reason carrying contact details refuses and records nothing', async (t) => {
+  const { app, contact } = await scene(t);
+  await assert.rejects(
+    () => app.eraseCustomer({
+      resource: 'contact', id: contact.id, confirm: true,
+      reason: 'cancellare Mario Rossi mario@x.it su sua richiesta', actor: OPERATOR,
+    }),
+    (error) => error?.name === 'ValidationError',
+    'an email inside the reason refuses: the registry would keep it forever',
+  );
+  await assert.rejects(
+    () => app.eraseCustomer({
+      resource: 'contact', id: contact.id, confirm: true,
+      reason: 'richiamare il +39 333 123 4567 poi cancellare', actor: OPERATOR,
+    }),
+    (error) => error?.name === 'ValidationError',
+    'a phone number inside the reason refuses',
+  );
+  assert.equal((await erasureRows(app, 'contact', contact.id)).length, 0, 'a refused erasure records nothing');
+  const receipt = await app.eraseCustomer({
+    resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta del 08/11/2026', actor: OPERATOR,
+  });
+  assert.equal(receipt.outcome, 'erased', 'a date is not a phone number');
 });
 
 test('the company with other contacts stays: only the erased contact leaves', async (t) => {
