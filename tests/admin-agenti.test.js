@@ -110,7 +110,8 @@ test('Da fare lists only proposed runs, newest first, and flags unreadable propo
   });
   // backlog:31a76b6f19a3: the item carries the run's id, never its source key.
   assert.deepEqual(items.map((item) => item.runId), ['run-new', 'run-old']);
-  assert.ok(items.every((item) => !('runSourceKey' in item)), 'the source key is not what the buttons send');
+  // The source key stays beside the id (agent-crm#684 reads it).
+  assert.deepEqual(items.map((item) => item.runSourceKey), ['r-new', 'r-old']);
   assert.equal(items[0].unreadable, true);
   assert.equal(items[0].agentName, 'Agente sconosciuto');
   assert.deepEqual(items[1].lines, ['WhatsApp a Giulia', 'tag-customer']);

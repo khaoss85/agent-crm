@@ -314,8 +314,10 @@ export function buildDaFare({ runs = [], agents = [], assignments = [] }) {
         unreadable = true;
       }
       return {
-        // Backlog 31a76b6f19a3: the run's id is what Approva sends — the
-        // deployment refuses the source key (`run:<incarico>:<istante>`).
+        // The run's source key names the run for the package operations
+        // (agent-crm#684); the id is what the buttons send (backlog
+        // 31a76b6f19a3) — the deployment refuses the key.
+        runSourceKey: String(run.sourceKey),
         runId: run.id == null || String(run.id).trim() === '' ? null : String(run.id).trim(),
         agentName: names.get(run.agentSourceKey) ?? 'Agente sconosciuto',
         phrase: phrases.get(run.assignmentSourceKey) ?? null,
