@@ -219,16 +219,16 @@ export function createErasureOperations({ database, modules, events, core, names
   }
 
   async function readStoredSubject({ contactsSvc, companiesSvc }, subject) {
-    try {
-      if (subject.resource === 'contact') {
-        if (!contactsSvc || typeof contactsSvc.get !== 'function') return null;
-        return await contactsSvc.get(subject.id);
+    const get = async (service) => {
+      if (!service || typeof service.get !== 'function') return null;
+      try {
+        return await service.get(subject.id);
+      } catch {
+        return null;
       }
-      if (!companiesSvc || typeof companiesSvc.get !== 'function') return null;
-      return await companiesSvc.get(subject.id);
-    } catch {
-      return null;
-    }
+    };
+    if (subject.resource === 'contact') return get(contactsSvc);
+    return get(companiesSvc);
   }
 
   async function eraseMember(member, { now, actor, orphan = false }) {
@@ -237,7 +237,7 @@ export function createErasureOperations({ database, modules, events, core, names
     };
     if (member.resource === 'contact') {
       const contactsSvc = optional(modules, 'contact');
-      const contact = await contactsSvc?.get(member.id).catch(() => null);
+      const contact = await readStoredSubject({ contactsSvc, companiesSvc: null }, member);
       if (contact) {
         await contactsSvc.update(member.id, {
           firstName: 'Cliente',
@@ -250,11 +250,21 @@ export function createErasureOperations({ database, modules, events, core, names
       // offers no update, so the row stays but the registry excludes it
       // from every product read like the contact itself.
       if (contact?.companyId && !orphan) {
-        const siblings = await contactsSvc.list({ companyId: contact.companyId }).catch(() => []);
+        let siblings = [];
+        try {
+          siblings = (contactsSvc && typeof contactsSvc.list === 'function')
+            ? (await contactsSvc.list({ companyId: contact.companyId })) ?? []
+            : [];
+        } catch {
+          siblings = [];
+        }
         const others = (siblings ?? []).filter((row) => row?.id !== member.id);
         if (others.length === 0) {
           const companiesSvc = optional(modules, 'company');
-          const company = await companiesSvc?.get(contact.companyId).catch(() => null);
+          const company = await readStoredSubject(
+            { contactsSvc: null, companiesSvc },
+            { resource: 'company', id: contact.companyId },
+          );
           if (company && !isNoCompany(company)) {
             outcome.orphanCompany = { resource: 'company', id: company.id, owner: 'host', ownerPackage: null };
             outcome.note = 'l\u2019azienda collegata non ha altri contatti ed è esclusa dalle letture con questo cliente';
