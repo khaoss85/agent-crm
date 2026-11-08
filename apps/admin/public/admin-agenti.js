@@ -18,13 +18,14 @@
 //   Idempotency-Key. Nothing else writes from here.
 //
 // Honest gaps, said on screen and never faked:
-// - the package exposes approve-run only, and only with the deployment's
-//   applyAction seam, which this composition does not wire; there is no
-//   reject or edit operation. Approva / Modifica / Rifiuta render disabled
-//   with one note saying so;
-// - no timer runs the agents here (run-due needs the deployment's execute
-//   seam), so an assignment waits: the screen says so instead of implying
-//   the agent is working;
+// - backlog:31a76b6f19a3: Approva posts `POST /api/agents/approve`
+//   { spaceId, runId } (the deployment routes it to approve-run through its
+//   worker, pilot#458) with the run's id, never its source key. Modifica
+//   and Rifiuta have package operations (revise-run, reject-run,
+//   agent-crm#684) but no deployment route yet: they stay disabled with
+//   one note saying so, never a request to a route that does not exist;
+// - the deployment's worker runs due assignments (pilot#458): proposals
+//   land in «Da fare», and each assignment says how its last run went;
 // - «autonomia» is the package invariant, not a setting: every proposal
 //   waits for a human approval, so the card says exactly that;
 // - spend this month is summed from the run rows with the package's own
@@ -48,13 +49,27 @@ export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In 
 /** The one autonomy the package supports: proposals always wait. */
 export const AGENT_AUTONOMY_LABEL = 'Chiede sempre il tuo ok';
 
-/** Why the Da fare controls are disabled — one honest sentence. */
-export const DA_FARE_DISABLED_NOTE = 'Approvare, modificare o rifiutare da qui non è ancora collegato: '
-  + 'arriva quando gli agenti lavoreranno davvero in questo spazio.';
+/** Why Modifica and Rifiuta are disabled — one honest sentence (backlog:31a76b6f19a3). */
+export const DA_FARE_EDIT_NOTE = 'Modificare o rifiutare una proposta da qui non è ancora collegato: '
+  + 'per ora puoi approvarla o lasciarla in attesa.';
 
-/** Why nothing is in Da fare yet, even with assignments. */
-export const AGENTS_IDLE_NOTE = 'Per ora gli agenti ricevono gli incarichi ma non partono ancora da soli. '
-  + 'Quando lavoreranno, le loro proposte arriveranno qui e aspetteranno il tuo ok.';
+/** What «Da fare» holds when it is empty (backlog:31a76b6f19a3: the agents do run now). */
+export const AGENTS_IDLE_NOTE = 'Quando un agente propone qualcosa, la proposta arriva qui e aspetta il tuo ok. '
+  + 'Sotto ogni incarico vedi com’è andato l’ultimo giro.';
+
+/** A move the server still holds: neutral, never an error (backlog:31a76b6f19a3). */
+export const DA_FARE_PENDING_NOTE = 'Non ancora confermato: ricarica tra poco per vedere l’esito.';
+
+/** The last run of an assignment in the operator's words (backlog:31a76b6f19a3). */
+export const RUN_OUTCOME_LABEL = Object.freeze({
+  started: 'in corso',
+  proposed: 'proposte in «Da fare»',
+  applied: 'approvato e applicato',
+  artifact: 'niente da proporre',
+  capped: 'fermo, tetto di spesa raggiunto',
+  failed: 'non riuscito',
+  rejected: 'rifiutato',
+});
 
 export const ASSIGNMENT_STATUS_LABEL = Object.freeze({
   active: 'In attesa di partire',
@@ -149,6 +164,7 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         phrase: String(row.phrase).trim(),
         schedule: describeSchedule(row),
         status: ASSIGNMENT_STATUS_LABEL[row.status] ?? 'Stato sconosciuto',
+        lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
@@ -166,6 +182,24 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
     });
   }
   return cards;
+}
+
+/**
+ * Backlog 31a76b6f19a3: how the last run of one assignment went —
+ * «Ultimo giro: niente da proporre, 7 nov, 14:30» — so a run that found
+ * nothing to propose is seen somewhere. Null when the assignment never ran.
+ * @param {Array<any>} runs @param {string} assignmentSourceKey
+ * @returns {string | null}
+ */
+export function lastRunLine(runs, assignmentSourceKey) {
+  if (assignmentSourceKey === '') return null;
+  const at = (run) => String(run?.decidedAt ?? run?.startedAt ?? '');
+  const last = (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
+    .sort((a, b) => at(b).localeCompare(at(a)))[0];
+  if (!last) return null;
+  const stamp = romeStamp(at(last) || null);
+  return `Ultimo giro: ${RUN_OUTCOME_LABEL[last.outcome]}${stamp === '' ? '' : `, ${stamp}`}`;
 }
 
 /**
@@ -235,7 +269,9 @@ export function buildDaFare({ runs = [], agents = [], assignments = [] }) {
         unreadable = true;
       }
       return {
-        runSourceKey: String(run.sourceKey),
+        // Backlog 31a76b6f19a3: the run's id is what Approva sends — the
+        // deployment refuses the source key (`run:<incarico>:<istante>`).
+        runId: run.id == null || String(run.id).trim() === '' ? null : String(run.id).trim(),
         agentName: names.get(run.agentSourceKey) ?? 'Agente sconosciuto',
         phrase: phrases.get(run.assignmentSourceKey) ?? null,
         startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
@@ -504,6 +540,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addKeys: new Map(),
     addError: '',
     notice: '',
+    /**
+     * Backlog 31a76b6f19a3: one Approva per run id — busy while the request
+     * flies (a double click sends one request), then a done/pending/error
+     * line in Italian. The key stays the same until the answer is known.
+     * @type {Map<string, { busy: boolean, pending: boolean, error: string, key: string | null }>}
+     */
+    decisions: new Map(),
   };
 
   function invalidate() {
@@ -560,6 +603,55 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         failed: 'Non riesco ad aggiungere l’agente adesso: riprova tra poco.',
         notComposed: 'Gli agenti non sono attivi in questo spazio.',
       });
+      paint();
+    }
+  }
+
+  function decisionOf(runId) {
+    if (!state.decisions.has(runId)) state.decisions.set(runId, { busy: false, pending: false, error: '', key: null });
+    return /** @type {any} */ (state.decisions.get(runId));
+  }
+
+  /** Backlog 31a76b6f19a3: Approva — one keyed POST with the run's id. */
+  async function approveRun(item) {
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
+    if (!item.runId || !state.space) return;
+    const decision = decisionOf(item.runId);
+    if (decision.busy || decision.pending) return;
+    decision.busy = true;
+    decision.error = '';
+    state.notice = '';
+    if (decision.key === null) decision.key = issueAdminKey();
+    paint();
+    try {
+      const answer = await bound.request('/api/agents/approve', {
+        method: 'POST',
+        body: { spaceId: state.space, runId: item.runId },
+        idempotencyKey: decision.key,
+      });
+      state.decisions.delete(item.runId);
+      state.notice = answer?.duplicate === true
+        ? `La proposta di ${item.agentName} era già approvata.`
+        : `Approvato: la proposta di ${item.agentName} è applicata.`;
+      if (await reload()) paint();
+    } catch (error) {
+      decision.busy = false;
+      const code = typeof error?.code === 'string' ? error.code : '';
+      if (/^BO_[A-Z_]*PENDING$/.test(code)) {
+        // Still queued on the server: the outcome is unknown, never a
+        // failure. Locked until the list is read again, so a second click
+        // never queues a second approval.
+        decision.pending = true;
+      } else {
+        decision.key = null;
+        decision.error = humanWriteError(error, {
+          failed: 'Non riesco ad approvare adesso: riprova tra poco.',
+          notComposed: 'Gli agenti non sono attivi in questo spazio.',
+        });
+      }
       paint();
     }
   }
@@ -637,6 +729,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         const item = el(documentNode, 'li', 'bo-agent-assignment');
         item.appendChild(el(documentNode, 'p', 'bo-agent-phrase', `«${assignment.phrase}»`));
         item.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
+        if (assignment.lastRun) item.appendChild(el(documentNode, 'p', 'bo-agent-lastrun', assignment.lastRun));
         list.appendChild(item);
       }
       box.appendChild(list);
@@ -711,7 +804,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const list = el(documentNode, 'div', 'bo-dafare-list');
     for (const item of items) {
       const row = el(documentNode, 'article', 'bo-dafare-item');
-      row.setAttribute('data-run', item.runSourceKey);
+      if (item.runId) row.setAttribute('data-run', item.runId);
       const top = el(documentNode, 'div', 'bo-dafare-head');
       top.appendChild(uiBadge(documentNode, { authority: 'agent', text: item.agentName }));
       const stamp = romeStamp(item.startedAt);
@@ -725,16 +818,37 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       for (const line of item.lines) ul.appendChild(el(documentNode, 'li', null, line));
       if (item.lines.length > 0) row.appendChild(ul);
       const actions = el(documentNode, 'div', 'bo-dafare-actions');
-      for (const [label, variant, action] of [['Approva', 'cta', 'approve'], ['Modifica', 'secondary', 'edit'], ['Rifiuta', 'refusal', 'reject']]) {
-        const button = uiButton(documentNode, { variant, small: true, label, attrs: { type: 'button', 'data-action': action, title: DA_FARE_DISABLED_NOTE } });
+      const decision = item.runId ? decisionOf(item.runId) : null;
+      // Approva: live with the run's id; an unreadable proposal is never
+      // approved blind, and a row without an id has nothing to send.
+      const approve = uiButton(documentNode, {
+        variant: 'cta', small: true, label: decision?.busy ? 'Approvo…' : 'Approva',
+        attrs: { type: 'button', 'data-action': 'approve' },
+      });
+      approve.disabled = decision === null || item.unreadable || decision.busy || decision.pending;
+      if (decision?.busy) approve.setAttribute('aria-busy', 'true');
+      approve.addEventListener('click', () => { void approveRun(item); });
+      actions.appendChild(approve);
+      for (const [label, variant, action] of [['Modifica', 'secondary', 'edit'], ['Rifiuta', 'refusal', 'reject']]) {
+        const button = uiButton(documentNode, { variant, small: true, label, attrs: { type: 'button', 'data-action': action, title: DA_FARE_EDIT_NOTE } });
         button.disabled = true;
         actions.appendChild(button);
       }
       row.appendChild(actions);
+      if (decision?.pending) {
+        const note = el(documentNode, 'p', 'bo-muted bo-dafare-pending', DA_FARE_PENDING_NOTE);
+        note.setAttribute('role', 'status');
+        const again = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Ricarica', attrs: { type: 'button', 'data-action': 'reload-dafare' } });
+        again.addEventListener('click', () => { void render(); });
+        note.appendChild(el(documentNode, 'span', null, ' '));
+        note.appendChild(again);
+        row.appendChild(note);
+      }
+      if (decision && decision.error !== '') row.appendChild(el(documentNode, 'p', 'bo-seq-error', decision.error));
       list.appendChild(row);
     }
     section.appendChild(list);
-    section.appendChild(el(documentNode, 'p', 'bo-seq-note bo-dafare-note', DA_FARE_DISABLED_NOTE));
+    section.appendChild(el(documentNode, 'p', 'bo-seq-note bo-dafare-note', DA_FARE_EDIT_NOTE));
     page.appendChild(section);
   }
 
@@ -832,6 +946,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.notice = '';
       state.addError = '';
     }
+    // A fresh read is the truth: a pending approval is decided or still waits.
+    state.decisions = new Map();
     state.loaded = false;
     paint();
     if (await reload()) paint();
