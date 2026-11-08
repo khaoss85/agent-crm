@@ -207,6 +207,19 @@ jobs:
       - name: Skip when HEAD is already measured
         id: guard
         run: |
+          # GitHub fires scheduled runs late under load (08/11: the 22:23 and 02:23 windows started at
+          # 01:30, 07:19 and 09:11Z). A late window measuring in the day holds a runner for hours and
+          # queues the PR gates and main's own checks; it waits for the next night instead.
+          # workflow_dispatch still measures on demand at any hour.
+          hour=$(date -u +%H)
+          # Only while a measurement younger than 18 h exists, so the 24 h window of
+          # scripts/ci-measurement-age.js never lapses because of a skip.
+          recent=$(find "$HOME/.accordo-ci/main-last-measurement.json" -mmin -1080 2>/dev/null)
+          if [ "${{ github.event_name }}" = schedule ] && [ "$((10#$hour))" -ge 6 ] && [ "$((10#$hour))" -lt 21 ] && [ -n "$recent" ]; then
+            echo "scheduled measurement fired late (${hour}Z): skipped, the next night window measures"
+            echo "measure_needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if out="$(node scripts/ci-measure-guard.js --state-file "$HOME/.accordo-ci/main-last-measurement.json")"; then
             bash scripts/ci-measure-guard-decide.sh "$out"
           else
