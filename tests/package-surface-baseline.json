@@ -1,143 +1,320 @@
 {
-  "contract": 1,
+  "contract": 2,
   "packages": [
     {
       "name": "agents",
       "dir": "agents",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "724798875769a59eed58283d6e5699416d84477a559bc98c835b0b9e92e19341"
+    },
+    {
+      "name": "agents",
+      "dir": "agents",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "724798875769a59eed58283d6e5699416d84477a559bc98c835b0b9e92e19341"
     },
     {
       "name": "appointments",
       "dir": "appointments",
+      "graph": "contract1",
       "version": 2,
       "fingerprint": "5fcabe52dd10f2b2eef51958955ec7d0ca981975c2450dcb7fce9c39765e0072"
     },
     {
+      "name": "appointments",
+      "dir": "appointments",
+      "graph": "contract2",
+      "version": 2,
+      "fingerprint": "8336fba211cdcbeb2ca653c723ebede2dc8c9d78491803d627749bb885021512"
+    },
+    {
       "name": "calendar-sync",
       "dir": "calendar-sync",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "a1038338cb2602d9c0a6442022d0bed61579d32a9623a634be8af098a7ac92e5"
+    },
+    {
+      "name": "calendar-sync",
+      "dir": "calendar-sync",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "a1038338cb2602d9c0a6442022d0bed61579d32a9623a634be8af098a7ac92e5"
     },
     {
       "name": "channels",
       "dir": "channels",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "60e66315691c0a473a3180693094b2bc05f4be35ea043710b30c07933662cc65"
+    },
+    {
+      "name": "channels",
+      "dir": "channels",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "60e66315691c0a473a3180693094b2bc05f4be35ea043710b30c07933662cc65"
     },
     {
       "name": "commercial",
       "dir": "commercial",
+      "graph": "contract1",
       "version": 7,
       "fingerprint": "f122dbbe872fca6c3c5d439c6a00ba303de3b38f12e6d1b9de48933e60a14ed4"
     },
     {
+      "name": "commercial",
+      "dir": "commercial",
+      "graph": "contract2",
+      "version": 7,
+      "fingerprint": "a864aa54b9923d0dc735ba5a73f21e8c998f653ab2aae00244874a302dba7117"
+    },
+    {
       "name": "contracts",
       "dir": "contracts",
+      "graph": "contract1",
       "version": 8,
       "fingerprint": "b03cea4c29ce230849dcb1cd184d70ccbc43a83c2cac0de1ed58c3727445a21d"
     },
     {
+      "name": "contracts",
+      "dir": "contracts",
+      "graph": "contract2",
+      "version": 8,
+      "fingerprint": "a9cf6b9a64658a7ae5c0b8abfdd5d4490bbf9702c8e49c7fd2c9d6dbeed8a7a3"
+    },
+    {
       "name": "customer-data",
       "dir": "customer-data",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "80b8f4a00cd2ce146ab30862d0f6933f782b3b42fa8dbca236b4d30f8e7f2433"
     },
     {
+      "name": "customer-data",
+      "dir": "customer-data",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "11bf06d395d3a9cc289188250c7a51148aaad39c6e59ba8a1cf345b7e1505395"
+    },
+    {
       "name": "customer-hub",
       "dir": "customer-hub",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "97065fd8e94612c577517a3e792c4ef35ac6765256f355e774cb8ec3fcba68f4"
     },
     {
+      "name": "customer-hub",
+      "dir": "customer-hub",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "ca53a129b334a0d733fe7d81bd4a902cce1c97c37333071235d22511a1b5b2a9"
+    },
+    {
       "name": "delivery",
       "dir": "delivery",
+      "graph": "contract1",
       "version": 4,
       "fingerprint": "26036989f940695028e18783e3f097e456fc3903b87524358e9da1bf7e7e811d"
     },
     {
+      "name": "delivery",
+      "dir": "delivery",
+      "graph": "contract2",
+      "version": 4,
+      "fingerprint": "e2d8b90f49d614dcd90555c6b6987c8c6819e9823ffac751692a4bceb803556f"
+    },
+    {
       "name": "intelligence",
       "dir": "intelligence",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "7eec8f83a9d7267134418a96fff648c73b1468c2c2a4a09956e60a6c14fee58e"
     },
     {
+      "name": "intelligence",
+      "dir": "intelligence",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "3ebb082100e2baa3572601b58e81575f65d5f32e9ffbc4829157d1422f0c081e"
+    },
+    {
       "name": "interactions",
       "dir": "interactions",
+      "graph": "contract1",
       "version": 3,
       "fingerprint": "fe8ec2c5fc58f736ca9e87384f07d73958b7373bb3acd29c1b80dcabf415c796"
     },
     {
+      "name": "interactions",
+      "dir": "interactions",
+      "graph": "contract2",
+      "version": 3,
+      "fingerprint": "9ab76eb4451f70a5440dec616fb90049e160b4658e9f3b0371f099adca763a4e"
+    },
+    {
       "name": "lifecycle",
       "dir": "lifecycle",
+      "graph": "contract1",
       "version": 2,
       "fingerprint": "a7cc807eaedc257e38dae352ba8e500ed07828a9efef1610ee4d8bef30142bb5"
     },
     {
+      "name": "lifecycle",
+      "dir": "lifecycle",
+      "graph": "contract2",
+      "version": 2,
+      "fingerprint": "21ec677ff3b38c08c6fbe8e4e0f99a1676fa25241c6e4b23a3be4aa48342475d"
+    },
+    {
       "name": "llm",
       "dir": "llm",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
+    },
+    {
+      "name": "llm",
+      "dir": "llm",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
     },
     {
       "name": "magic-link",
       "dir": "magic-link",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "182f45394ce1dd1b6adec08d2a5d3226896a4f0077a4664b2fd442b141cc1476"
     },
     {
       "name": "marketing",
       "dir": "marketing",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "664bb552e294aa3b4367d236d491cbc90453b1480e86a062998d80839044b490"
     },
     {
+      "name": "marketing",
+      "dir": "marketing",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "74706433549e7b63e15ada0245bb9c67b83ccf1a332b28888d6cf1dc29e47733"
+    },
+    {
       "name": "payments",
       "dir": "payments",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "935e894e574db034240607e1f095800377aa9bcdab90ca2f7c81b117a9fe7640"
+    },
+    {
+      "name": "payments",
+      "dir": "payments",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "935e894e574db034240607e1f095800377aa9bcdab90ca2f7c81b117a9fe7640"
     },
     {
       "name": "reengagement",
       "dir": "reengagement",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "9afdf16d5e4f1f7e1b6a8fe5de05fa0181b4d609af65de6c8f1d1d686b020d63"
+    },
+    {
+      "name": "reengagement",
+      "dir": "reengagement",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "9afdf16d5e4f1f7e1b6a8fe5de05fa0181b4d609af65de6c8f1d1d686b020d63"
     },
     {
       "name": "sequences",
       "dir": "sequences",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "83566240335ead906dd3b4f097402d474b06849683bd781e332820aad41a9882"
     },
     {
+      "name": "sequences",
+      "dir": "sequences",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "c09afe7629a3aba887ad3b8a3856ac6b57903981d92c57f9fb535c8313750348"
+    },
+    {
       "name": "service",
       "dir": "service",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "8ee4bc81543a2ab7ef46698effeac435372334bb10a07f28374aad9909ccf1ff"
     },
     {
+      "name": "service",
+      "dir": "service",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "fdc7ac0bf7547568325a84e9e6887835dec1fd224d51164386acc7bc5afec75e"
+    },
+    {
       "name": "signature",
       "dir": "signature",
+      "graph": "contract1",
       "version": 3,
       "fingerprint": "25498dbced305200da805eecc381b087b152f20282fb3edc9f0577fc19f5e084"
     },
     {
+      "name": "signature",
+      "dir": "signature",
+      "graph": "contract2",
+      "version": 3,
+      "fingerprint": "f4d557d361e977d2e55b9d47bb27605fe5952898baa7817682e92f239d911b09"
+    },
+    {
       "name": "site-forms",
       "dir": "site-forms",
+      "graph": "contract1",
+      "version": 1,
+      "fingerprint": "8b505487f03b501352605de9e07178f83be8bdd34686af21f605416909d1546e"
+    },
+    {
+      "name": "site-forms",
+      "dir": "site-forms",
+      "graph": "contract2",
       "version": 1,
       "fingerprint": "8b505487f03b501352605de9e07178f83be8bdd34686af21f605416909d1546e"
     },
     {
       "name": "space-permissions",
       "dir": "space-permissions",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "d2fdd631817bf0a345741271b5d67a2fb8cf0ca5f9d66c1516bd4199bbce9f96"
     },
     {
+      "name": "space-permissions",
+      "dir": "space-permissions",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "30b7cf14acc43431ba9b9a1a1156e311cd35253dc850a0910c4530fa64d45c43"
+    },
+    {
       "name": "work",
       "dir": "work",
+      "graph": "contract1",
       "version": 1,
       "fingerprint": "4a723ff7e8d5557f68005bafaff09e627eb2519e758b9488f80c54e3db3e9aa2"
+    },
+    {
+      "name": "work",
+      "dir": "work",
+      "graph": "contract2",
+      "version": 1,
+      "fingerprint": "482be3190a2afe4fec4675eab3395be814220582a5e4baca6b514e7e588503a2"
     }
   ]
 }
