@@ -32,6 +32,7 @@
 // inert text, never markup.
 
 import { humanReadError } from './admin-core.js';
+import { importStateLabel } from './admin-labels.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
@@ -338,7 +339,7 @@ export function detailSections({ entry, connection, spaceId = null }) {
     : [
         `Stato del collegamento: ${stato}. Si cambia solo dal flusso guidato (#/connettori), mai da qui.`,
         importable
-          ? `Cronologia: ${sync !== null && typeof sync.status === 'string' ? sync.status : 'da avviare'} (Fatto del collegamento, a pagine).`
+          ? `Cronologia: ${sync !== null && typeof sync.status === 'string' ? importStateLabel(sync.status) : 'da avviare'} (Fatto del collegamento, a pagine).`
           : 'Cronologia: non disponibile su questo connettore.',
         direction === 'in-only'
           ? 'Invii: rifiutati per contratto, solo entrata (CHANNEL_SEND_UNSUPPORTED).'
@@ -365,12 +366,12 @@ export function detailSections({ entry, connection, spaceId = null }) {
         `Canale: ${typeof connection.channel === 'string' ? connection.channel : channel}.`,
         `Adattatore: ${typeof connection.adapter === 'string' ? connection.adapter : '—'} v${Number.isSafeInteger(connection.adapterVersion) ? connection.adapterVersion : '—'}.`,
         `Chiave di collegamento: ${connectionKey ?? '—'}.`,
-        `Stato: ${typeof connection.status === 'string' ? connection.status : '—'}.`,
+        `Stato: ${statusLabel(connection.status)}.`,
         direction === null
           ? 'Direzione: non dichiarata nel matrix dei canali (nessun adattatore dedicato nel pacchetto).'
           : `Direzione: ${direction === 'in-out' ? 'entrata e uscita' : 'solo entrata'}.`,
         sync !== null && typeof sync.status === 'string'
-          ? `Sincronizzazione: ${sync.status} · eventi ${Number(sync.importedEvents ?? 0)} · contatti creati ${Number(sync.createdContacts ?? 0)} · da decidere ${Number(sync.unresolvedContacts ?? 0)}.`
+          ? `Sincronizzazione: ${importStateLabel(sync.status)} · eventi ${Number(sync.importedEvents ?? 0)} · contatti creati ${Number(sync.createdContacts ?? 0)} · da decidere ${Number(sync.unresolvedContacts ?? 0)}.`
           : 'Sincronizzazione: nessuna importazione registrata.',
       ];
 
@@ -453,7 +454,7 @@ function errorOf(error) {
  * grant renewal through the existing `renew-connection-grant` record action
  * (P2 Codex su #415) — every other change still goes through the guided
  * `#/connettori` flow, which the detail links to.
- * @param {{ doc: any, mount: any, client: { request: (path: string, options?: object) => Promise<any> }, navigate?: (hash: string) => void, storage?: any, role?: () => string | null, toast?: (message: string, isError?: boolean) => void }} deps
+ * @param {{ doc: any, mount: any, client: { request: (path: string, options?: object) => Promise<any> }, navigate?: (hash: string) => void, storage?: any, spaceId?: () => string | null, role?: () => string | null, toast?: (message: string, isError?: boolean) => void }} deps
  */
 export function createConnectorDetailView(deps) {
   const { doc, mount, navigate } = deps;
@@ -461,7 +462,17 @@ export function createConnectorDetailView(deps) {
   const storage = deps.storage ?? null;
   const toast = deps.toast ?? (() => {});
 
+  // The live session space wins, like Stato sync (backlog:24a57904a428):
+  // every connectors read names the space the page belongs to, and a stale
+  // stored pick of another space can no longer send this page's reads
+  // somewhere the server refuses. Storage stays the fallback.
   const readSpace = () => {
+    try {
+      const live = typeof deps.spaceId === 'function' ? deps.spaceId() : null;
+      if (typeof live === 'string' && live.trim() !== '') return live;
+    } catch {
+      // A broken live reader never breaks the resolution: storage applies.
+    }
     try {
       const stored = storage !== null ? storage.getItem(ACTIVE_SPACE_KEY) : null;
       return typeof stored === 'string' ? stored : '';

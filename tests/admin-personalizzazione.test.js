@@ -355,7 +355,7 @@ test('the Connettori sections reuse the catalog channels with honest destination
   }
   assert.equal(cards, 10, 'seven conversation channels plus three agenda cards, like the prototype');
   assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[1]), '#/profilo');
-  assert.equal(connettoriHref(CONNETTORI_SECTIONS[1].entries[2]), '#/quotes');
+  assert.equal(connettoriCardState(CONNETTORI_SECTIONS[1].entries[2], []), 'non-disponibile', 'Stripe has no destination: nothing connects it here');
   assert.equal(connettoriHref({}), '#/connettori', 'an entry with no destination falls back to the hub');
   const live = [
     { channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' },
@@ -363,7 +363,8 @@ test('the Connettori sections reuse the catalog channels with honest destination
   ];
   assert.equal(connettoriCardState({ channel: 'whatsapp' }, live), 'collegato');
   assert.equal(connettoriCardState({ channel: 'instagram' }, live), 'da-collegare');
-  assert.equal(connettoriCardState({ channel: null }, live), 'da-collegare');
+  assert.equal(connettoriCardState({ channel: null, href: '#/profilo' }, live), 'da-collegare', 'no channel but a destination: still connectable');
+  assert.equal(connettoriCardState({ channel: null }, live), 'non-disponibile', 'no channel and no destination: nothing connects it');
 });
 
 test('Connettori opens by default with the prototype copy, filtered badges and an Italian empty state', async () => {
@@ -525,7 +526,10 @@ test('the Stato and Ordina menus list the prototype voci in order (spec C22-C23)
   menuVoices('Stato').find((node) => node.textContent === 'Da attivare').dispatch('click');
   await flush();
   assert.ok(!cardLabels().includes('WhatsApp'), 'Da attivare hides connected cards');
-  assert.equal(cardLabels().length, 9, 'Da attivare keeps the other nine');
+  // Stripe cannot be activated from here (owner decision 08/11 on #680):
+  // it is neither active nor to activate.
+  assert.equal(cardLabels().length, 8, 'Da attivare keeps the other eight that can connect');
+  assert.ok(!cardLabels().includes('Stripe'), 'Stripe is not something to activate here');
   toggleFor('Stato').dispatch('click');
   menuVoices('Stato').find((node) => node.textContent === 'Tutti').dispatch('click');
   await flush();
@@ -1039,4 +1043,32 @@ test('Connettori shows no line under the toolbar; Skill and Pacchetti speak plai
   for (const message of toasts) {
     assert.doesNotMatch(message, /BO-F\d|module:create|docs\/|`/, `no story id, command or path: ${message}`);
   }
+});
+
+// Owner decision 08/11 on #680: Stripe has no real connect flow, so its
+// card shows what Stato sync shows — «Non disponibile», no «+», no link,
+// no keyboard activation — never a button that connects nothing.
+test('#680: the Stripe card reads Non disponibile and carries no action', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const client = stubClient({ connectors: [] });
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => seen.push(hash), spaceId });
+  await view.render();
+  await flush();
+  view.test.state.tab = 'connettori';
+  await view.render();
+  await flush();
+  const stripe = mount.findAll('article').find((node) => node.textContent.includes('Stripe'));
+  assert.ok(stripe, 'the Stripe card is listed');
+  assert.ok(stripe.textContent.includes('Non disponibile'), 'it says Non disponibile, like Stato sync');
+  assert.equal(stripe.findAll('button').length, 0, 'no «+» button');
+  assert.equal(stripe.getAttribute('role'), null, 'not a link');
+  assert.equal(stripe.getAttribute('tabindex'), null, 'not focusable as an action');
+  stripe.dispatch('click', { target: stripe });
+  stripe.dispatch('keydown', { key: 'Enter', target: stripe, preventDefault() {} });
+  assert.deepEqual(seen, [], 'clicking or pressing Enter goes nowhere');
+  const calendar = mount.findAll('article').find((node) => node.textContent.includes('Google Calendar'));
+  assert.ok(calendar.findAll('button').some((node) => node.getAttribute('aria-label') === 'Collega Google Calendar'),
+    'Google Calendar keeps its «+» towards Profilo');
 });

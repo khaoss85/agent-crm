@@ -380,6 +380,10 @@ export function parseModuleRoute(hash) {
     const subjectId = safeDecode(rawParts[2]);
     if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
     if (subjectId === null || subjectId === '') return { view: 'invalid' };
+    // Backlog 1e939a362c7c: an offer is not a customer — a link naming an
+    // opportunity as the subject opens the offer's own page (#/offerte/<id>),
+    // never «Scheda non disponibile».
+    if (resource === 'opportunity') return subjectId.includes('/') ? { view: 'invalid' } : { view: 'offer-detail', offerId: subjectId };
     return { view: 'customer-card', resource, subjectId };
   }
   // Product catalog routes: #/catalogo (BO-F2-05). The backoffice product
