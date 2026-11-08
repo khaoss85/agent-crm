@@ -18,6 +18,7 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SYNC_CHANNELS,
+  syncConnectRoute,
   SYNC_GRANT_EXPIRING_DAYS,
   SYNC_ROUTE,
   cataloguedChannel,
@@ -88,7 +89,7 @@ const activityOf = (over = {}) => ({
 
 const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
-function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null } = {}) {
+function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null, profile = null } = {}) {
   const calls = [];
   return {
     calls,
@@ -108,6 +109,10 @@ function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity =
       if (path.startsWith('/api/connectors/activity')) {
         if (failActivity !== null) throw failActivity;
         return activity;
+      }
+      if (path === '/api/profile') {
+        if (profile === null) throw new Error('profile not served');
+        return profile;
       }
       if (path.startsWith('/api/modules/data-quality-issue/records')) return { items: qualityIssues };
       if (path.startsWith('/api/modules/duplicate-candidate/records')) {
@@ -155,9 +160,11 @@ test('indicator is ok with a count and fix with N things to fix', () => {
   assert.ok(ok.detail.includes('Ultimo aggiornamento 30 min fa'));
   assert.ok(ok.detail.includes('10 eventi ricevuti in tutto.'));
 
+  // Review #680 P2-2: a suspended binding alone is not linked — something
+  // to fix, never «quasi tutto sincronizzato» beside «0 di 9».
   const one = syncIndicator(activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] }), NOW);
   assert.equal(one.tone, 'fix');
-  assert.equal(one.title, 'Quasi tutto sincronizzato');
+  assert.equal(one.title, 'Nessun canale attivo');
   assert.equal(one.count, 1);
 
   const two = syncIndicator(activityOf({
@@ -166,8 +173,12 @@ test('indicator is ok with a count and fix with N things to fix', () => {
       entryOf({ connectionKey: 'b', status: 'revoked', health: 'down' }),
     ],
   }), NOW);
-  assert.equal(two.title, 'Quasi tutto sincronizzato');
+  assert.equal(two.title, 'Nessun canale attivo');
   assert.equal(two.count, 2);
+  const mixed = syncIndicator(activityOf({
+    connections: [entryOf({ connectionKey: 'a' }), entryOf({ connectionKey: 'b', channel: 'instagram', status: 'revoked', health: 'down' })],
+  }), NOW);
+  assert.equal(mixed.title, 'Quasi tutto sincronizzato', 'one active binding plus one to fix');
 
   // Voce 3a3e6eaf: nothing linked is never "all synced".
   const empty = syncIndicator(activityOf({ connections: [], feed: [], lastActivityAt: null }), NOW);
@@ -1124,4 +1135,104 @@ test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows o
     'on a phone each row stacks: name and state, then agg. and events');
   assert.match(phone, /\.bo-sync-channels \.bo-sync-table td \{ display: block;[^}]*white-space: normal;/,
     'nothing is forced onto one line wider than the screen');
+});
+
+// backlog:cf365ada15b9 — Stato sync and Oggi print one count, Calendar
+// connects where the product connects it, and a stopped import offers
+// Sincronizza ora only where the pull exists.
+const GOOGLE_PROFILE = {
+  connections: {
+    available: true,
+    items: [
+      { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+      { connector: 'calendar', status: 'connected', account: 'op@palestra.it' },
+    ],
+  },
+};
+
+test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async () => {
+  const { countConnectedNine } = await import('../apps/admin/public/admin-oggi.js');
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
+  });
+  await view.render();
+  await flush();
+  const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
+  assert.ok(count, 'the card shows a count');
+  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
+  assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
+});
+
+test('cf365ada15b9: Google Calendar offers Collega on Profilo when the product can connect it; Stripe stays honest', async () => {
+  const offered = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'not_connected' },
+        { connector: 'calendar', status: 'not_connected' },
+      ],
+    },
+  };
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: offered },
+  });
+  await view.render();
+  await flush();
+  const collega = mount.findAll('a').filter((node) => node.textContent === 'Collega');
+  const calendar = collega.find((node) => node.getAttribute('data-channel') === 'calendar');
+  assert.ok(calendar, 'Google Calendar offers Collega');
+  assert.equal(calendar.getAttribute('href'), '#/profilo', 'it lands where its Collega lives');
+  assert.equal(collega.find((node) => node.getAttribute('data-channel') === 'stripe'), undefined, 'Stripe has no connect screen');
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non disponibile').length, 1, 'only Stripe reads Non disponibile');
+  assert.equal(syncConnectRoute('calendar', null), null, 'without the profile there is nothing to offer');
+  assert.equal(syncConnectRoute('whatsapp', null), '#/connettori/whatsapp');
+});
+
+test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull exists', async () => {
+  const stopped = entryOf({
+    connectionKey: 'profile:gmail', channel: 'email', importable: false, health: 'attention',
+    sync: { status: 'done', lastErrorCode: 'GOOGLE_GRANT_REFUSED', lastErrorReason: 'Google ha rifiutato il permesso: ricollega l\u2019account dal Profilo.' },
+  });
+  const [item] = syncFixItems(activityOf({ connections: [stopped] }));
+  assert.equal(item.action.kind, 'route', 'no pull where none exists');
+  assert.equal(item.action.route, '#/connettori/email');
+  assert.equal(item.detail, 'Google ha rifiutato il permesso: ricollega l\u2019account dal Profilo.', 'the round says what to do');
+  const { mount, view } = renderView({ client: { activity: activityOf({ connections: [stopped] }) } });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('si è fermata'), 'the card is there');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now').length, 0,
+    'no Sincronizza ora button on the card');
+  const [pullable] = syncFixItems(activityOf({ connections: [entryOf({ sync: { status: 'done', lastErrorCode: 'X' } })] }));
+  assert.equal(pullable.action.kind, 'sync-now', 'an importable binding keeps its pull');
+});
+
+// Review #680 round 1 — the table, the hero and the shared count must tell
+// one story.
+test('#680 P2-1: profile links counted as connected read Attivo, never «In attesa»', async () => {
+  const { mount, view } = renderView({
+    client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
+  });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
+  assert.deepEqual(pills.map((node) => node.textContent), ['Attivo', 'Attivo'], 'Email and Google Calendar read Attivo');
+});
+
+test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {
+  const only = activityOf({ connections: [entryOf({ status: 'suspended', health: 'down' })] });
+  const row = syncChannelTable(only).find((entry) => entry.channel === 'whatsapp');
+  assert.equal(row.connected, false, 'a suspended binding is not «collegato»');
+  assert.ok(row.pill !== null, 'its pill still names the problem');
+  const indicator = syncIndicator(only, NOW);
+  assert.equal(indicator.title, 'Nessun canale attivo', 'never «sincronizzato» with nothing connected');
+  const { mount, view } = renderView({ client: { activity: only } });
+  await view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('0 di 9 collegati'));
+  assert.ok(!mount.textContent.includes('Tutto sincronizzato'), 'the hero agrees with the count');
+  const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
+  assert.equal(pills.length, 1, 'the suspended row keeps its pill');
 });

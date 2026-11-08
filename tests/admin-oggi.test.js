@@ -2,7 +2,6 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import {
   ADVISOR_ACTION_LIMIT,
   DEMO_STRINGS,
@@ -26,6 +25,7 @@ import {
   googleNineChannels,
   missingLeadChannels,
   nextAppointment,
+  upcomingAppointment,
   oggiDateLine,
   renderOggi,
   romeDayKey,
@@ -849,7 +849,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   assert.equal(countConnectedNine(refused.connections, refused.profile), 0);
 });
 
-test('channel invite counts connected of nine, and hides when all nine connect', () => {
+test('channel invite counts connected of nine, names exactly the missing ones, and hides when all nine connect', () => {
   assert.equal(OGGI_TOTAL_CHANNELS, 9, 'the prototype counts nine backoffice channels');
   const connections = [
     { channel: 'whatsapp', status: 'active' },
@@ -876,10 +876,12 @@ test('channel invite counts connected of nine, and hides when all nine connect',
     },
   });
   assert.ok(mount.textContent.includes('7 di 9 collegati'), 'seven nine-channels active, whatever the lead list says');
-  assert.ok(mount.textContent.includes('Collega Telegram, Facebook, TikTok, SMS per non perdere nessun lead'), 'invite names the missing lead channels');
+  // backlog:5083e7a77c26: the names are the two channels missing from the
+  // same nine the number counts — never Telegram or SMS beside «di 9».
+  assert.ok(mount.textContent.includes('Collega Facebook, TikTok per non perdere nessun lead'), 'invite names exactly the missing nine-channels');
 
   const full = createMount();
-  const fullConnections = CONNECTOR_CATALOG.map((entry) => ({ channel: entry.channel, status: 'active' }));
+  const fullConnections = OGGI_NINE_CHANNELS.map((channel) => ({ channel, status: 'active' }));
   renderOggi({
     doc,
     mount: full,
@@ -893,7 +895,7 @@ test('channel invite counts connected of nine, and hides when all nine connect',
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  assert.ok(!full.textContent.includes('collegati'), 'no invite once every lead channel connects');
+  assert.ok(!full.textContent.includes('collegati'), 'no invite once every counted channel connects');
 });
 
 test('no technical resource-id label reaches the Oggi screen', () => {
@@ -1379,4 +1381,133 @@ test('2a075e2d9250: Oggi has a load ceiling, then an Italian note with Riprova, 
   for (const release of held.splice(0)) release();
   await first;
   assert.ok(mount.textContent.includes('Richiama per il preventivo'));
+});
+
+// backlog:5083e7a77c26 (b): production read «2 di 9 collegati» over eight
+// names. Gmail and Calendar from the profile, nothing else: the number and
+// the names must come from one list, so connected + named = total.
+test('5083e7a77c26: the strip count equals the list it names', () => {
+  const profile = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+        { connector: 'calendar', status: 'connected', account: 'op@palestra.it' },
+      ],
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: missingLeadChannels([], profile), connections: [], profile,
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
+  assert.ok(strip, 'the strip renders');
+  const count = /(\d+) di (\d+) collegati/.exec(strip.textContent);
+  assert.ok(count, 'the strip carries a count');
+  const named = /Collega (.+) per (?:non perdere|avere)/.exec(strip.textContent);
+  assert.ok(named, 'the strip names the channels to connect');
+  const names = named[1].split(', ');
+  assert.equal(Number(count[1]) + names.length, Number(count[2]), `«${count[0]}» and ${names.length} names tell one story`);
+  assert.equal(count[0], '2 di 9 collegati');
+  assert.ok(!names.includes('Email') && !names.includes('Google Calendar'), 'connected channels are not invited');
+});
+
+// backlog:5083e7a77c26 (a): the prototype always pairs the agenda with
+// «Prima della prossima call»; with no call ahead the card disappeared.
+test('5083e7a77c26: «Prima della prossima call» stays on screen with no call ahead', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(mount.findAll('h3').some((node) => node.textContent === '✦ Prima della prossima call'), 'the card heading is there');
+  assert.ok(mount.textContent.includes('Nessuna call in programma.'), 'an honest empty line instead of a missing card');
+
+  const off = createMount();
+  renderOggi({
+    doc, mount: off, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      availability: { work: true, appointments: false, channels: true },
+    },
+  });
+  assert.ok(off.findAll('h3').some((node) => node.textContent === '✦ Prima della prossima call'));
+  assert.ok(off.textContent.includes('Il calendario non è attivo in questo spazio: qui comparirà'));
+});
+
+test('5083e7a77c26: with no more calls today the card prepares the next one ahead', () => {
+  const lateToday = new Date('2026-10-19T16:00:00.000Z'); // 18:00 in Rome, after APPT_TODAY
+  assert.equal(nextAppointment([APPT_TODAY, APPT_TOMORROW], lateToday), null, 'nothing else today');
+  assert.equal(upcomingAppointment([APPT_TODAY, APPT_TOMORROW], lateToday)?.id, 'appt-2', 'tomorrow is the next call');
+  assert.equal(upcomingAppointment([APPT_TODAY, APPT_TOMORROW], OGGI_NOW)?.id, 'appt-1', 'today first');
+  assert.equal(upcomingAppointment([{ ...APPT_TOMORROW, status: 'cancelled' }], lateToday), null, 'a cancelled call prepares nothing');
+  const brief = buildPreCallBrief({ appointment: APPT_TOMORROW, messages: [], calls: [], now: lateToday });
+  assert.equal(brief.when, 'domani alle 10:00');
+  assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00 con Giulia Romano'), brief.bullets[0]);
+  const later = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-10-23T08:00:00.000Z' }, now: lateToday });
+  assert.equal(later.when, '23 ott alle 10:00');
+  const today = buildPreCallBrief({ appointment: APPT_TODAY, now: OGGI_NOW });
+  assert.equal(today.when, 'oggi alle 10:00', 'today keeps its wording');
+});
+
+test('5083e7a77c26: a stored channel alias counts as its channel, never as a tenth one', async () => {
+  const { channelConnectionCount } = await import('../apps/admin/public/admin-channels-count.js');
+  const count = channelConnectionCount([
+    { channel: 'google-calendar', status: 'active' },
+    { channel: 'gmail', status: 'active' },
+    { channel: 'messenger', status: 'pending' },
+  ]);
+  assert.equal(count.connected, 2);
+  assert.equal(count.total, 9, 'aliases add no channel to the universe');
+  assert.ok(!count.missing.some((entry) => entry.channel === 'calendar' || entry.channel === 'email'));
+  assert.ok(count.missing.some((entry) => entry.channel === 'facebook'), 'a pending Messenger row leaves Facebook to connect');
+  assert.equal(countConnectedNine([{ channel: 'google-calendar', status: 'active' }]), 1);
+});
+
+const NINE_STRIPE_MISSING = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form', 'calendar'];
+
+// Owner decision 08/11 on #680: the lead promise only when every name is a
+// lead channel; with Google Calendar or Stripe in the list, a neutral line.
+test('#680: the invite promises leads only when it names lead channels only', () => {
+  const render = (connections) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    renderOggi({
+      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections,
+        availability: { work: true, appointments: true, channels: true },
+      },
+    });
+    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  };
+  const leadsOnly = render(['whatsapp', 'instagram', 'email', 'voice', 'site-form', 'calendar', 'stripe']
+    .map((channel) => ({ channel, status: 'active' })));
+  assert.ok(leadsOnly.includes('Collega Facebook, TikTok per non perdere nessun lead'), leadsOnly);
+  const withStripe = render(NINE_STRIPE_MISSING.map((channel) => ({ channel, status: 'active' })));
+  assert.ok(withStripe.includes('Collega Stripe per avere tutto in un posto'), withStripe);
+  assert.ok(!withStripe.includes('lead'), 'no lead promise for Stripe');
+  const mixed = render([]);
+  assert.ok(mixed.includes('Google Calendar, Stripe per avere tutto in un posto'), mixed);
+});
+
+test('#680 P2-3: an inactive extra channel never widens the count', async () => {
+  const { channelConnectionCount } = await import('../apps/admin/public/admin-channels-count.js');
+  const pending = channelConnectionCount([{ channel: 'sms', status: 'pending' }]);
+  assert.equal(pending.total, 9, 'a pending SMS row is not a tenth channel');
+  assert.equal(pending.missing.length, 9, 'the invite names the nine, not ten');
+  assert.ok(!pending.missing.some((entry) => entry.channel === 'sms'));
+  const active = channelConnectionCount([{ channel: 'sms', status: 'active' }]);
+  assert.equal(active.total, 10, 'a linked SMS still counts and so does its place');
+  assert.equal(active.connected, 1);
 });

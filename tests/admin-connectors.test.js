@@ -693,3 +693,21 @@ test('Collegamenti Meta: hidden without connections.meta, Collega rows when the 
   const down = await run(null);
   assert.equal(down.card.getAttribute('hidden'), '', 'an unreadable profile keeps Meta hidden');
 });
+
+// backlog:24a57904a428: the connectors reads always name the page's space.
+// The shell's live space wins over the stored pick — a stale stored space
+// (another identity's) must not send this page's read to a space the server
+// refuses with BO_SPACE_MISMATCH — and an empty storage still reads.
+test('24a57904a428: the connectors read carries the live space, whatever storage says', async () => {
+  for (const stored of ['', 'altro-spazio']) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
+    await createConnectorsView({
+      doc, mount, client, navigate: () => {}, storage: storageWith(stored), spaceId: () => 'presti',
+    }).render();
+    const reads = client.calls.filter((call) => call.path.startsWith('/api/connectors?'));
+    assert.equal(reads.length, 1, `one connectors read (stored «${stored}»)`);
+    assert.equal(reads[0].path, '/api/connectors?spaceId=presti', 'the read names the live space');
+  }
+});
