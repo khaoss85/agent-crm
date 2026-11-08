@@ -8,7 +8,8 @@ import { applyDiscount, checkedAdd, checkedMultiply } from './money.js';
  * «Bozza dell'offerta da una frase»): the /bo panel's «scrivi …» line fills
  * the offer fields by itself. The member types a sentence («offerta 10
  * ingressi con sconto 10%») and this module answers what the panel fills
- * in: `{ title?, valueCents?, currency?, expectedCloseDate?, catalogOfferIds? }`.
+ * in: `{ title?, valueCents?, currency?, expectedCloseDate?, catalogOfferIds?, lines }`
+ * (`lines`: the rows the panel renders, backlog:8efd56406c7e).
  *
  * What it reuses, per MEM_ACC_REUSE: the `llm-complete@1` capability's
  * audited `suggest` purpose — this module never talks to a provider. The
@@ -397,12 +398,40 @@ export async function suggestOfferDraft({
   const validatedCloseDate = normalizeCloseDate(parsed.expectedCloseDate);
   const expectedCloseDate = accepted.length === 0 ? null : validatedCloseDate;
   const title = accepted.length === 0 ? null : normalizeTitle(parsed.title);
+  // The rows the panel renders (backlog:8efd56406c7e): one per accepted
+  // catalog offer, in model order, with the catalog's own product (offerId
+  // and name), quantity, unit price and the line discount. The line net is
+  // the same applyDiscount() rule as the total, per line; a line without a
+  // catalog price carries no net rather than a guessed one, exactly like
+  // the total. catalogOfferIds stays beside lines for the older panel.
+  const rows = Object.freeze(accepted.map(({ offer: id, quantity, discountBps }) => {
+    const catalogOffer = offerById.get(id);
+    let netCents = null;
+    if (catalogOffer?.priceCents !== null && catalogOffer?.priceCents !== undefined) {
+      try {
+        const list = checkedMultiply(catalogOffer.priceCents, quantity, 'offer draft list');
+        netCents = applyDiscount(list, discountBps).netAmountCents;
+      } catch {
+        netCents = null;
+      }
+    }
+    return Object.freeze({
+      offerId: id,
+      ...(typeof catalogOffer?.name === 'string' && catalogOffer.name !== '' ? { name: catalogOffer.name } : {}),
+      quantity,
+      ...(catalogOffer?.priceCents !== null && catalogOffer?.priceCents !== undefined ? { priceCents: catalogOffer.priceCents } : {}),
+      ...(typeof catalogOffer?.currency === 'string' ? { currency: catalogOffer.currency } : {}),
+      discountBps,
+      ...(netCents === null ? {} : { netCents }),
+    });
+  }));
   const draft = {
     ...(title === null ? {} : { title }),
     ...(valueCents === null ? {} : { valueCents }),
     ...(currency === null ? {} : { currency }),
     ...(expectedCloseDate === null ? {} : { expectedCloseDate }),
     catalogOfferIds: Object.freeze([...new Set(accepted.map(({ offer }) => offer))]),
+    lines: rows,
   };
   return Object.freeze({
     status: 'ok',
