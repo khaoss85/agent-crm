@@ -123,7 +123,27 @@ export class CompanyService {
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
     }, mapCompanyRow);
   }
+
+  /**
+   * A bounded search scan (backlog:d128847d21fc): newest first like
+   * `list`, but with a larger fixed ceiling (SCAN_MAX_ROWS) for a caller
+   * that filters in memory and must reach past the display page — the
+   * customer search. Not reachable over HTTP: the route keeps `list` and
+   * its 500 cap.
+   * @param {{limit?: number}} [options]
+   */
+  scan(options = {}) {
+    const requested = Number.isInteger(options.limit) ? options.limit : SCAN_MAX_ROWS;
+    const limit = Math.min(Math.max(requested, 1), SCAN_MAX_ROWS);
+    return storageMany(this.database, {
+      kind: 'select', table: 'companies', columns: '*',
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+    }, mapCompanyRow);
+  }
 }
+
+/** The ceiling of one search scan: a fixed bound, never the whole table. */
+export const SCAN_MAX_ROWS = 5000;
 
 /** @param {any} row */
 function mapCompanyRow(row) {
