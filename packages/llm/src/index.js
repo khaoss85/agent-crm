@@ -116,7 +116,7 @@ export function createLlmPackage(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: LLM_PACKAGE,
-    version: 1,
+    version: 2,
     label: 'Language-model completions',
     description:
       'One space-scoped LLM path on a single adapter contract: an explicit dry-run without a key, a daily '

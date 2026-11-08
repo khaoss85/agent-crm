@@ -173,15 +173,15 @@
       "name": "llm",
       "dir": "llm",
       "graph": "contract1",
-      "version": 1,
+      "version": 2,
       "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
     },
     {
       "name": "llm",
       "dir": "llm",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
+      "version": 2,
+      "fingerprint": "85476a40475f03522fcf5bd352fe6d70d6a0bafada95487e9797d553258273fb"
     },
     {
       "name": "magic-link",

@@ -138,7 +138,7 @@ test('the llm package conforms and imports no sibling package', () => {
     dir: packageDir,
     expected: {
       name: 'llm',
-      version: 1,
+      version: 2,
       resources: ['llm-usage-day', 'llm-call-audit'],
       provides: ['llm-complete@1'],
       requires: [],
