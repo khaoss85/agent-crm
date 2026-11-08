@@ -323,15 +323,13 @@ export function createCustomerDataPackage(options = {}) {
         appMethod: 'eraseCustomer',
         label: 'Erase one customer for good (GDPR)',
         description:
-          'Erase one contact or company: a human decision with an explicit titolare confirmation. Refuses with '
-          + '409 when signed business (orders, contracts, subscriptions) must be kept. Otherwise anonymizes what is '
-          + 'writable (contact PII, channel identities, enriched fields, custom-field values), records one '
-          + 'append-only customer-erasure-log row per erased subject, and excludes the subject from the customer '
-          + 'list, the profile and the export. Replaying an erasure answers the stored row.',
+          'Erase one contact or company with an explicit titolare confirmation. Refuses with 409 when signed '
+          + 'business must be kept; otherwise anonymizes what is writable, records the erasure log and excludes '
+          + 'the subject from list, profile and export. A replay answers the stored row.',
         input: [
           { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
           { name: 'id', type: 'string', hint: 'The record id.' },
-          { name: 'confirm', type: 'boolean', hint: 'The titolare confirmation: must be true, nothing is erased without it.' },
+          { name: 'confirm', type: 'json', hint: 'The titolare confirmation: must be true, nothing is erased without it.' },
           { name: 'reason', type: 'string', hint: 'Why the customer is erased, recorded with the decider identity.' },
         ],
         create(runtime) {

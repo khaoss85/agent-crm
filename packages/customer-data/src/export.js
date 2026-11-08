@@ -89,6 +89,7 @@ export function createCustomerDataExport({ database, modules, events, config }) 
     });
   }
   const resources = exportableResources(config);
+  const names = resolvedNames(config);
 
   return {
     /**

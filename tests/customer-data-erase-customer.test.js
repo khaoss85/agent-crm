@@ -164,6 +164,6 @@ test('the company with other contacts stays: only the erased contact leaves', as
   await app.eraseCustomer({ resource: 'contact', id: contact.id, confirm: true, reason: 'richiesta', actor: OPERATOR });
   const list = await app.listCustomers({ pageSize: 50 });
   assert.ok(list.items.some((row) => row.id === other.id), 'the other contact still lists');
-  assert.ok(list.items.some((row) => row.id === company.id), 'the shared company still lists');
+  assert.ok(list.items.some((row) => row.company?.id === company.id), 'the shared company still shows beside its contact');
   assert.equal((await erasureRows(app, 'company', company.id)).length, 0, 'no registry row for a kept company');
 });
