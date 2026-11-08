@@ -220,6 +220,14 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   const received = entries.reduce((total, entry) => total
     + (entry !== null && typeof entry === 'object' && entry.inbox !== null && typeof entry.inbox === 'object'
       && Number.isSafeInteger(entry.inbox.received) && entry.inbox.received > 0 ? entry.inbox.received : 0), 0);
+  const rows = syncChannelTable(activity, nowMs);
+  // The freshest update the table itself shows when the payload carries no
+  // top-level instant (the pilot omits it before the first round).
+  if (lastAt === null) {
+    for (const row of rows) {
+      if (row.connected && typeof row.lastAt === 'string' && row.lastAt !== '' && (lastAt === null || row.lastAt > lastAt)) lastAt = row.lastAt;
+    }
+  }
   const tempo = syncing ? 'in corso…' : (lastAt === null ? null : syncAgo(lastAt, nowMs));
   // Voce 3a3e6eaf: with no channel linked nothing can be "all synced" —
   // the headline says so and the hero offers Collega instead of a pull.
@@ -227,15 +235,19 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   // #680 P2-2): a space whose only binding is suspended reads «0 di 9», so
   // the hero never calls it synced. It still has something to fix, so it is
   // not the empty «Collega il primo canale» either.
-  const rows = syncChannelTable(activity, nowMs);
   const linked = rows.some((row) => row.connected);
+  // The hero reads the table's own pills (production 08/11, 3a3e6eaf C9/
+  // C20): a linked row that is not `Attivo` (In attesa, Importazione, Da
+  // sistemare…) means not everything is synced, even with nothing to fix.
+  const waiting = rows.some((row) => row.connected && row.pill !== null && row.pill.tone !== 'attivo');
   const bound = linked || rows.some((row) => row.present === true);
   const detail = !bound
     ? 'Collega il primo canale: messaggi ed eventi arriveranno qui.'
     : !linked && !syncing
       ? 'Nessun collegamento è attivo: sistemali qui sotto, finché restano fermi non arriva niente.'
+      // C10: always the prototype's «<aggiornamento> · <n> eventi» line.
       : tempo === null
-        ? 'Ancora nessun movimento registrato.'
+        ? `Nessun aggiornamento ancora · ${received} eventi ricevuti in tutto.`
         : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
   if (syncing) {
     return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: total };
@@ -246,7 +258,7 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   if (!linked) {
     return { tone: 'fix', title: 'Nessun canale attivo', detail, count: total };
   }
-  if (total > 0) {
+  if (total > 0 || waiting) {
     return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: total };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
@@ -997,6 +1009,10 @@ export function createSyncView(deps) {
   // toast at the end, a second click ignored while it runs.
   function renderHeroPull(activity, syncing) {
     const keys = syncChannelTable(activity).flatMap((row) => row.keys);
+    // Nothing importable, nothing to pull (production 08/11, 3a3e6eaf C11:
+    // in Presti the button stayed disabled with no reason): no action
+    // possible, so no button — never a dead control.
+    if (keys.length === 0 && !syncing) return null;
     const button = el(
       doc,
       'button',
@@ -1017,7 +1033,7 @@ export function createSyncView(deps) {
       button.setAttribute('aria-hidden', 'true');
       return button;
     }
-    if (syncing || keys.length === 0) button.setAttribute('disabled', '');
+    if (syncing) button.setAttribute('disabled', '');
     button.addEventListener('click', () => {
       void syncAll(keys);
     });

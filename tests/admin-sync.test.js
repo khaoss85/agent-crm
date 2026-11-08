@@ -1238,3 +1238,42 @@ test('#680 P2-2: a suspended row alone is not connected — table, hero and coun
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
   assert.equal(pills.length, 1, 'the suspended row keeps its pill');
 });
+
+// Production 08/11 (3a3e6eaff1c5 C9/C10/C20): the hero said «Tutto
+// sincronizzato» while the WhatsApp row read «In attesa». The hero reads
+// the table's own pills: a waiting row means not everything is synced.
+test('3a3e6eaf C9: a row In attesa keeps the hero off «Tutto sincronizzato»', async () => {
+  const waiting = activityOf({ connections: [entryOf({ health: 'idle', inbox: null })], lastActivityAt: null });
+  const pill = syncChannelTable(waiting).find((row) => row.channel === 'whatsapp').pill;
+  assert.equal(pill.text, 'In attesa', 'the row is really waiting');
+  const indicator = syncIndicator(waiting, NOW);
+  assert.equal(indicator.title, 'Quasi tutto sincronizzato');
+  assert.equal(indicator.count, 0, 'waiting is not a fix: the settings badge stays clean');
+  // C10: the subtitle keeps the prototype pattern «<aggiornamento> · <n> eventi ricevuti in tutto».
+  assert.match(indicator.detail, / · 0 eventi ricevuti in tutto\.$/);
+  const { mount, view } = renderView({ client: { activity: waiting } });
+  await view.render();
+  await flush();
+  assert.ok(!mount.textContent.includes('Tutto sincronizzato'));
+  assert.ok(mount.textContent.includes('Quasi tutto sincronizzato'));
+  // Every row Attivo: all synced, as before.
+  assert.equal(syncIndicator(activityOf(), NOW).title, 'Tutto sincronizzato');
+});
+
+// Production 08/11 (3a3e6eaff1c5 C11): in Presti «Sincronizza ora» stayed
+// on screen disabled with no reason, because nothing there can be pulled.
+// No possible action: no button.
+test('3a3e6eaf C11: with nothing to pull the hero shows no Sincronizza ora', async () => {
+  const unpullable = activityOf({ connections: [entryOf({ importable: false })] });
+  const { mount, view } = renderView({ client: { activity: unpullable } });
+  await view.render();
+  await flush();
+  const pull = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  assert.equal(pull, undefined, 'no disabled button without an action');
+  const pullable = renderView();
+  await pullable.view.render();
+  await flush();
+  const live = pullable.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  assert.ok(live, 'an importable binding keeps the pull');
+  assert.equal(live.getAttribute('disabled'), null);
+});
