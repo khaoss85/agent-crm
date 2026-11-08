@@ -3083,11 +3083,18 @@ export function createCustomerCardView(deps) {
     const key = `${resource}/${id}`;
     const renderToken = ++cardRenderToken;
     if (key !== shownKey) {
-      // Another customer: reset the view state, but leave the mount alone —
-      // the router already painted this screen's loading line there
-      // (backlog:5a40c73e54aa, B4 AC-2), and clearing it here left a blank
-      // area with no loading mark for the whole read after the web slept.
-      // show() below swaps the loading line for the card or the error.
+      // Another customer: the previous card leaves at once — never the wrong
+      // customer under this id — but the router's loading line for this
+      // screen stays for the whole read. After the web slept the read is
+      // slow, and clearing the loading too left a blank page with no mark
+      // (backlog:5a40c73e54aa, B4 AC-2). show() below swaps the loading line
+      // for the card or the error.
+      const isScreenLoading = (child) => typeof child?.getAttribute === 'function'
+        && child.getAttribute('role') === 'status'
+        && String(child.getAttribute('class') ?? '').split(/\s+/).includes('ui-loading');
+      for (const child of Array.from(mount.childNodes ?? [])) {
+        if (!isScreenLoading(child)) mount.removeChild(child);
+      }
       shownKey = null;
       shownSides = [];
       retainedDrafts = null;

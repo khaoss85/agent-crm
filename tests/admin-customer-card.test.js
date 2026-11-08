@@ -3673,6 +3673,31 @@ test('another customer clears at once and starts from Tutti', async () => {
   assert.equal(active.getAttribute('data-channel'), 'all', 'a new scheda starts from Tutti');
 });
 
+test('backlog:5a40c73e54aa: another customer keeps the router loading line, never blank', async () => {
+  const client = gatedClient();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client });
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('Guido Presti'));
+  // The router painted this screen's loading line before the view read.
+  const loading = doc.createElement('div');
+  loading.setAttribute('class', 'ui-loading');
+  loading.setAttribute('role', 'status');
+  loading.textContent = 'Carico Scheda…';
+  mount.appendChild(loading);
+
+  const release = hold(client);
+  const other = view.renderCard('contact', 'c2');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!mount.textContent.includes('Guido Presti'), 'the previous customer never stays up under another id');
+  assert.equal(mount.childNodes.length, 1, 'only the loading line stays, never a blank page');
+  assert.ok(mount.textContent.includes('Carico'), 'the page shows loading while the read runs');
+  release();
+  await other;
+  assert.ok(!mount.textContent.includes('Carico Scheda…'), 'the card replaces the loading line');
+});
+
 test('a slower older re-read never overwrites a newer one', async () => {
   const client = gatedClient();
   const mount = createMount();

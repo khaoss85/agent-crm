@@ -887,13 +887,20 @@ export const WAKE_TRANSIENT_CODES = Object.freeze([
   'OPERATION_APP_UNAVAILABLE',
   'BRIDGE_UNREACHABLE',
   'CHANNEL_UNREACHABLE',
-  'BO_BRIDGE_NOT_CONFIGURED',
   'BO_CRM_DEPOSIT_UNAVAILABLE',
 ]);
+// NB: BO_BRIDGE_NOT_CONFIGURED is NOT a starting signal — «not configured»
+// is a state, and the Aggiungi telefono test pins its generic failure text
+// for a 503 carrying it. A 503 still earns one retry through the status
+// branch of isWakeTransient; only the words stay honest.
 
 /**
- * Whether a rejection means «the service is waking» (retry it) rather than
- * «the request was refused» (show it). @param {unknown} error
+ * Whether a rejection means «the service is waking» (retry it once while the
+ * screen still shows its loading state) rather than «the request was refused»
+ * (show it). A bare 503 or a refused connection is only worth one more try:
+ * when the retry answers the same, the failure is honest and stays a
+ * failure (voce 908f2eb9bbfb pins the section texts for a 503 read). Only
+ * an explicit starting signal names the wait in words. @param {unknown} error
  */
 export function isWakeTransient(error) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
@@ -903,16 +910,29 @@ export function isWakeTransient(error) {
   return isNetworkFault(error);
 }
 
+/**
+ * Whether the rejection carries an explicit starting signal (a workspace
+ * still starting, a bridge not yet up) — the only failures an honest screen
+ * may translate into «wait»: anything else, 503 included, stays the refusal
+ * it is once the retry has run. @param {unknown} error
+ */
+export function isWakeStarting(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  return WAKE_TRANSIENT_CODES.includes(code);
+}
+
 /** What the operator reads while the service wakes: Italian, a wait, never «rifiutata». */
 export const WAKE_WAIT_TEXT = 'Il servizio si sta avviando: attendi qualche secondo e riprova.';
 
 /**
- * The wait text when `error` is a waking service, else null — so a refused
- * write names the wait instead of the server's generic refusal, while any
- * other failure keeps exactly the text it had. @param {unknown} error
+ * The wait text when `error` carries an explicit starting signal, else null
+ * — so a refused write names the wait instead of the server's generic
+ * refusal, while any other failure (a 503 read included, once retried) keeps
+ * exactly the text it had. @param {unknown} error
  */
 export function wakeWaitText(error) {
-  return isWakeTransient(error) ? WAKE_WAIT_TEXT : null;
+  return isWakeStarting(error) ? WAKE_WAIT_TEXT : null;
 }
 
 /**
