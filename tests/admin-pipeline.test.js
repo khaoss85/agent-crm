@@ -1472,3 +1472,28 @@ test('2a075e2d9250: the direct link #/pipeline opens the board of the first comp
   assert.ok(columns.some((column) => column.getAttribute('data-stage') === 'demo'), 'the b2b-sales board is on screen');
   assert.ok(!mount.textContent.includes('Nessuna pipeline da mostrare'), 'the bare link finds the composed pipeline');
 });
+
+test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those offers', async () => {
+  const records = [
+    record('a', 'demo'),
+    { ...record('x', 'demo'), name: 'Proposta esempio', pipelineKey: null, pipelineStage: null, stage: 'proposal' },
+    { ...record('y', 'step'), name: 'Rinnovo', pipelineKey: 'renewals', pipelineStage: 'step' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the count is a button, not plain text');
+  assert.equal(toggle.textContent, '2 offerte di altre pipeline');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  const list = mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list');
+  assert.ok((list.getAttribute('class') ?? '').includes('hidden'), 'folded until clicked');
+  toggle.dispatch('click');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.ok(!(list.getAttribute('class') ?? '').includes('hidden'), 'the click unfolds the offers');
+  const links = list.findAll('a');
+  assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/x', '#/offerte/y'], 'each offer opens its page');
+  assert.equal(links[0].textContent, 'Proposta esempio · proposta', 'the stage reads in Italian like the scheda');
+  assert.ok(!list.textContent.includes('Deal a'), 'offers of this board are not listed');
+});

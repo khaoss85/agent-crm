@@ -300,6 +300,55 @@ export function shownOfferState(first, fromQuote, opportunities, pipelines) {
   return (parent === null ? null : offerStageLabel(pipelines, parent)) ?? offerStateLabel(first.status);
 }
 
+/**
+ * Backlog 1e939a362c7c: the «Cambia stato» menu of the scheda offer line,
+ * for every offer — a quote line acts on the opportunity it was made for.
+ * An offer placed on a composed pipeline moves through that pipeline's
+ * stages, on the same `move-stage` action the Pipeline board posts (the
+ * line shows the pipeline stage, so the menu moves exactly that). An offer
+ * outside any pipeline keeps the governed core workflow
+ * (`POST /api/opportunities/:id/stage`). Null when no opportunity is known,
+ * or when it is placed on a pipeline this reader does not compose (never a
+ * core move the line would not show).
+ * @param {any} first the shown row (quote or opportunity)
+ * @param {boolean} fromQuote
+ * @param {Array<any> | null} opportunities the profile's opportunity rows
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @returns {{ id: string, kind: 'pipeline', pipeline: any, current: string, voices: Array<{ key: string, label: string, type: string }> }
+ *   | { id: string, kind: 'core', current: string, voices: Array<{ key: string, label: string, type: string }> } | null}
+ */
+export function offerStageMenu(first, fromQuote, opportunities, pipelines) {
+  if (!first || typeof first !== 'object') return null;
+  const row = fromQuote && typeof first.opportunityId === 'string' && Array.isArray(opportunities)
+    ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+    : null;
+  const id = fromQuote ? first.opportunityId : first.id;
+  if (typeof id !== 'string' || id === '') return null;
+  const pick = (joined, own) => (typeof joined === 'string' && joined !== '' ? joined : (typeof own === 'string' && own !== '' ? own : null));
+  const pipelineKey = fromQuote ? pick(first.opportunityPipelineKey, row?.pipelineKey) : pick(first.pipelineKey, null);
+  const pipelineStage = fromQuote ? pick(first.opportunityPipelineStage, row?.pipelineStage) : pick(first.pipelineStage, null);
+  const coreStage = fromQuote ? pick(first.opportunityStage, row?.stage ?? row?.status) : pick(first.stage, first.status);
+  if (pipelineKey !== null && pipelineStage !== null) {
+    const pipeline = (Array.isArray(pipelines) ? pipelines : [])
+      .find((candidate) => candidate?.name === pipelineKey && Array.isArray(candidate?.stages));
+    if (!pipeline || typeof pipeline.module !== 'string' || pipeline.module === '') return null;
+    const voices = pipeline.stages
+      .filter((stage) => typeof stage?.key === 'string' && stage.key !== pipelineStage)
+      .map((stage) => ({
+        key: stage.key,
+        label: typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : stage.key,
+        type: typeof stage.type === 'string' ? stage.type : 'open',
+      }));
+    return voices.length > 0 ? { id, kind: 'pipeline', pipeline, current: pipelineStage, voices } : null;
+  }
+  if (coreStage === null) return null;
+  const current = coreStage.toLowerCase();
+  const voices = offerStageTargets(current).map((stage) => ({
+    key: stage, label: offerStateLabel(stage) ?? stage, type: 'core',
+  }));
+  return voices.length > 0 ? { id, kind: 'core', current, voices } : null;
+}
+
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
 const packageStatusLabel = (status) => ownLabel(PACKAGE_STATUS_LABELS, String(status ?? '').toLowerCase()) ?? null;
 
@@ -2844,79 +2893,126 @@ export function createCustomerCardView(deps) {
     // /api/opportunities/:id/stage), never a direct write: a renewal moving
     // to proposal past the approval threshold lands in «in attesa di
     // approvazione» with a toast saying so, like the pipeline board. The
-    // menu acts on exactly the stato the line shows: when the line reads a
-    // quote (no governed stage transition exists for quotes), there is no
-    // menu — the quote's state changes from the quotes screen. A refused
+    // menu acts on exactly the stato the line shows: since backlog
+    // a551982c06eb that is the offer's stage even on a quote line, so the
+    // menu acts on the quote's opportunity (the quote's own approval
+    // changes from the quotes screen). A refused
     // move keeps the menu with the server's Italian error, and a completed
     // move re-reads the card so the line is the server's state, never an
     // optimistic copy. The header Cliente/Contatto pill stays derived (see
     // customer-status.js): this menu does not touch it.
-    const shownOpportunity = fromQuote ? null : first;
-    if (shownOpportunity && typeof shownOpportunity.id === 'string' && shownOpportunity.id !== ''
-      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
-      const current = String(shownOpportunity.status ?? '').toLowerCase();
-      const targets = offerStageTargets(current);
-      if (targets.length > 0) {
-        const wrap = el('div', 'bo-scheda-stage-menu');
-        const button = el('button', undefined, 'Cambia stato');
-        button.setAttribute('type', 'button');
-        button.setAttribute('aria-haspopup', 'menu');
-        button.setAttribute('aria-expanded', 'false');
-        button.setAttribute('data-action', 'change-offer-stage');
-        const menu = el('div', 'bo-scheda-stage-voices hidden');
-        menu.setAttribute('role', 'menu');
-        const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
-        const syncMenu = () => {
-          button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
-        };
-        const close = () => {
-          if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
-          syncMenu();
-        };
-        button.addEventListener('click', () => {
-          menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
-          syncMenu();
-        });
-        button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-        menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-        const stageError = el('small', 'field-error', '');
-        let stageBusy = false;
-        for (const stage of targets) {
-          const voice = el('button', undefined, offerStatusLabel(stage) ?? stage);
-          voice.setAttribute('type', 'button');
-          voice.setAttribute('role', 'menuitem');
-          voice.setAttribute('data-stage', stage);
-          voice.addEventListener('click', async () => {
-            if (stageBusy) return;
-            stageBusy = true;
-            stageError.textContent = '';
-            try {
-              const result = await client.request(
-                `/api/opportunities/${encodeURIComponent(shownOpportunity.id)}/stage`,
-                { method: 'POST', body: JSON.stringify({ targetStage: stage }) },
-              );
-              close();
-              // The stage route returns the workflow envelope
-              // { runId, status, output }: the approval gate reads in
-              // output.outcome, never in a top-level outcome.
-              toast(result?.output?.outcome === 'approval_required'
-                ? 'Stato aggiornato: serve un\u2019approvazione'
-                : 'Stato aggiornato');
-              await renderCard(offerCtx.resource, offerCtx.id);
-            } catch (error) {
-              stageError.textContent = humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' });
-              toast(humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' }), true);
-            } finally {
-              stageBusy = false;
-            }
-          });
-          menu.appendChild(voice);
+    // Backlog 1e939a362c7c: every offer has the menu — a quote line acts on
+    // its opportunity, a placed offer moves through its pipeline (see
+    // offerStageMenu).
+    const stageMenu = offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string'
+      ? offerStageMenu(first, fromQuote, opportunities, pipelines) : null;
+    if (stageMenu) {
+      const wrap = el('div', 'bo-scheda-stage-menu');
+      const button = el('button', undefined, 'Cambia stato');
+      button.setAttribute('type', 'button');
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('data-action', 'change-offer-stage');
+      const menu = el('div', 'bo-scheda-stage-voices hidden');
+      menu.setAttribute('role', 'menu');
+      const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+      const syncMenu = () => {
+        button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
+      };
+      const close = () => {
+        if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
+        syncMenu();
+      };
+      button.addEventListener('click', () => {
+        menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
+        syncMenu();
+      });
+      button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      const stageError = el('small', 'field-error', '');
+      let stageBusy = false;
+      const failed = 'Stato non aggiornato. Riprova più tardi.';
+      /** One move: the pipeline's move-stage action or the governed core workflow. */
+      const move = async (voice, reason = null) => {
+        if (stageBusy) return;
+        stageBusy = true;
+        stageError.textContent = '';
+        try {
+          if (stageMenu.kind === 'pipeline') {
+            const input = { toStage: voice.key, fromStage: stageMenu.current };
+            if (reason) input.reason = reason;
+            await client.request(
+              `/api/modules/${encodeURIComponent(stageMenu.pipeline.module)}/records/${encodeURIComponent(stageMenu.id)}/actions/move-stage`,
+              { method: 'POST', body: JSON.stringify(input) },
+            );
+            close();
+            toast(`Spostata in ${voice.label}.`);
+          } else {
+            const result = await client.request(
+              `/api/opportunities/${encodeURIComponent(stageMenu.id)}/stage`,
+              { method: 'POST', body: JSON.stringify({ targetStage: voice.key }) },
+            );
+            close();
+            // The stage route returns the workflow envelope
+            // { runId, status, output }: the approval gate reads in
+            // output.outcome, never in a top-level outcome.
+            toast(result?.output?.outcome === 'approval_required'
+              ? 'Stato aggiornato: serve un\u2019approvazione'
+              : 'Stato aggiornato');
+          }
+          await renderCard(offerCtx.resource, offerCtx.id);
+        } catch (error) {
+          // A move the server still holds (the pilot queue) is not a failure.
+          const text = error?.code === 'BO_CRM_PENDING'
+            ? 'Spostamento non ancora confermato: ricarica la scheda tra poco.'
+            : humanReadError(error, { failed });
+          stageError.textContent = text;
+          toast(text, true);
+        } finally {
+          stageBusy = false;
         }
-        wrap.appendChild(button);
-        wrap.appendChild(menu);
-        wrap.appendChild(stageError);
-        box.appendChild(wrap);
+      };
+      // A pipeline «lost» stage needs the reason, like the board's Conferma.
+      const reasonBox = el('div', 'bo-scheda-stage-reason hidden');
+      const reasonInput = el('input');
+      reasonInput.setAttribute('type', 'text');
+      reasonInput.setAttribute('aria-label', 'Motivo della perdita');
+      reasonInput.setAttribute('placeholder', 'Motivo della perdita');
+      const reasonConfirm = el('button', undefined, 'Conferma');
+      reasonConfirm.setAttribute('type', 'button');
+      reasonConfirm.setAttribute('data-action', 'confirm-offer-lost');
+      reasonBox.appendChild(reasonInput);
+      reasonBox.appendChild(reasonConfirm);
+      let lostVoice = null;
+      reasonConfirm.addEventListener('click', () => {
+        const reason = String(reasonInput.value ?? '').trim();
+        if (!lostVoice) return;
+        if (reason === '') {
+          stageError.textContent = "Per segnare un'offerta come persa serve il motivo.";
+          return;
+        }
+        void move(lostVoice, reason);
+      });
+      for (const voiceDef of stageMenu.voices) {
+        const voice = el('button', undefined, voiceDef.label);
+        voice.setAttribute('type', 'button');
+        voice.setAttribute('role', 'menuitem');
+        voice.setAttribute('data-stage', voiceDef.key);
+        voice.addEventListener('click', () => {
+          if (stageMenu.kind === 'pipeline' && voiceDef.type === 'lost') {
+            lostVoice = voiceDef;
+            reasonBox.setAttribute('class', 'bo-scheda-stage-reason');
+            return;
+          }
+          void move(voiceDef);
+        });
+        menu.appendChild(voice);
       }
+      menu.appendChild(reasonBox);
+      wrap.appendChild(button);
+      wrap.appendChild(menu);
+      wrap.appendChild(stageError);
+      box.appendChild(wrap);
     }
     return true;
   }

@@ -2420,3 +2420,7 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 @media (max-width: 560px) {
   .bo-offer-fields { grid-template-columns: 1fr; }
 }
+/* Backlog 1e939a362c7c: «N offerte di altre pipeline» reads as a link and unfolds the offers. */
+.pipeline-switch .link-button { padding: 0; border: none; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
+.pipeline-off-list { margin: 6px 0 0; padding-left: 18px; }
+.pipeline-off-list li { margin: 2px 0; }

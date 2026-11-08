@@ -40,6 +40,8 @@ import { bindAdminMutations } from './admin-submission.js';
 import { offerStageLabel } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
+/** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
+const OFF_PIPELINE_LISTED = 50;
 
 /**
  * @param {Document} doc
@@ -687,8 +689,7 @@ export function createPipelineBoard(deps) {
   function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline) {
     const box = el(doc, 'div', { class: 'hint pipeline-switch' });
     if (offPipeline > 0) {
-      const one = offPipeline === 1;
-      box.appendChild(el(doc, 'span', { text: `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline. ` }));
+      box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline));
     }
     if (composedPipelineNames(pipelines).length > 1) {
       const selectId = 'pipeline-switch';
@@ -719,6 +720,56 @@ export function createPipelineBoard(deps) {
       box.appendChild(link);
     });
     return box;
+  }
+
+  /**
+   * Backlog 1e939a362c7c: «N offerte di altre pipeline» opens those offers.
+   * The count is a button that unfolds them in place — each one a link to
+   * its offer page (#/offerte/<id>) with its stage in the same words as the
+   * scheda (offerStageLabel) — so an offer placed on another board, or on
+   * none, is one click away and never only a number.
+   * @param {Array<Record<string, any>>} pipelines
+   * @param {Array<Record<string, any>>} records
+   * @param {string} pipelineName
+   * @param {number} offPipeline
+   */
+  function renderOffPipeline(pipelines, records, pipelineName, offPipeline) {
+    const wrap = el(doc, 'span', { class: 'pipeline-off' });
+    const one = offPipeline === 1;
+    const toggle = el(doc, 'button', {
+      class: 'link-button',
+      text: `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline`,
+      attrs: { type: 'button', 'data-action': 'show-off-pipeline', 'aria-expanded': 'false' },
+    });
+    const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
+    const others = records.filter((record) => record.pipelineKey !== pipelineName).slice(0, OFF_PIPELINE_LISTED);
+    for (const record of others) {
+      const item = el(doc, 'li');
+      const id = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
+      const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
+      const stage = offerStageLabel(pipelines, record);
+      const text = stage ? `${name} · ${stage}` : name;
+      if (id === null) {
+        item.appendChild(el(doc, 'span', { text }));
+      } else {
+        const link = el(doc, 'a', { attrs: { href: `#/offerte/${encodeURIComponent(id)}` } });
+        link.textContent = text;
+        item.appendChild(link);
+      }
+      list.appendChild(item);
+    }
+    if (offPipeline > others.length) {
+      list.appendChild(el(doc, 'li', { class: 'muted', text: `e altre ${offPipeline - others.length}` }));
+    }
+    toggle.addEventListener('click', () => {
+      const open = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+      list.setAttribute('class', open ? 'pipeline-off-list hidden' : 'pipeline-off-list');
+    });
+    wrap.appendChild(toggle);
+    wrap.appendChild(el(doc, 'span', { text: '. ' }));
+    wrap.appendChild(list);
+    return wrap;
   }
 
   /** Count + per-currency totals over the filtered set (currencies never summed). */
