@@ -82,3 +82,54 @@ export function nameFromProfile(profile) {
     ? profile.identity.company.name.trim() : '';
   return company !== '' ? company : null;
 }
+
+/**
+ * Commercial states in the operator's words: quote states and the core
+ * opportunity stages. Backlog a551982c06eb: one map for every screen that
+ * names the state of an offer.
+ */
+export const OFFER_STATE_LABELS = Object.freeze({
+  sent: 'inviata', draft: 'bozza', approved: 'approvata', rejected: 'rifiutata',
+  open: 'aperta', won: 'vinta', lost: 'persa', expired: 'scaduta', accepted: 'accettata',
+  pending_approval: 'in attesa di approvazione', approval_pending: 'in attesa di approvazione',
+  discovery: 'scoperta', qualification: 'qualificazione', proposal: 'proposta', negotiation: 'trattativa',
+});
+
+/**
+ * The Italian word of one commercial state, null when unknown — own keys
+ * only, so `constructor` or `__proto__` never read through.
+ * @param {unknown} state
+ * @returns {string | null}
+ */
+export function offerStateLabel(state) {
+  const key = String(state ?? '').trim().toLowerCase();
+  return Object.hasOwn(OFFER_STATE_LABELS, key) ? OFFER_STATE_LABELS[key] : null;
+}
+
+/**
+ * Backlog a551982c06eb: the stage of one offer (opportunity) as every screen
+ * says it — the scheda, the Pipeline board and the offer detail. A placed
+ * offer reads its pipeline stage's own label from `/api/schema` `pipelines`
+ * (its named pipeline first, like the board); an offer outside any composed
+ * pipeline reads its core stage from OFFER_STATE_LABELS. Null when neither
+ * is known. A quote's approval state is not the offer's stage.
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @param {{ pipelineKey?: unknown, pipelineStage?: unknown, stage?: unknown } | null | undefined} offer
+ * @returns {string | null}
+ */
+export function offerStageLabel(pipelines, offer) {
+  if (!offer || typeof offer !== 'object') return null;
+  const list = (Array.isArray(pipelines) ? pipelines : []).filter((pipeline) => pipeline && Array.isArray(pipeline.stages));
+  const placed = typeof offer.pipelineStage === 'string' && offer.pipelineStage !== '' ? offer.pipelineStage : null;
+  if (placed !== null) {
+    const ordered = [
+      ...list.filter((pipeline) => pipeline.name === offer.pipelineKey),
+      ...list.filter((pipeline) => pipeline.name !== offer.pipelineKey),
+    ];
+    for (const pipeline of ordered) {
+      const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
+      if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
+    }
+  }
+  return offerStateLabel(offer.stage);
+}

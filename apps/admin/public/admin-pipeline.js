@@ -37,6 +37,7 @@
 
 import { formatAmount, humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { offerStageLabel } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
 
@@ -881,7 +882,8 @@ export function createPipelineBoard(deps) {
    * goes to the console only; the DOM gets a friendly Italian line.
    */
   function stageLabel(pipeline, key) {
-    return pipeline.stages.find((stage) => stage.key === key)?.label ?? key;
+    // Backlog a551982c06eb: the same words as the scheda and the offer detail.
+    return offerStageLabel([pipeline], { pipelineKey: pipeline.name, pipelineStage: key }) ?? key;
   }
 
   /** A move the server still holds: the queue answered BO_CRM_PENDING. A bare 504 is a failure, not a queue. */
