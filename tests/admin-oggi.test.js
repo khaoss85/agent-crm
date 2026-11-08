@@ -1511,3 +1511,65 @@ test('#680 P2-3: an inactive extra channel never widens the count', async () => 
   assert.equal(active.total, 10, 'a linked SMS still counts and so does its place');
   assert.equal(active.connected, 1);
 });
+
+test('2a075e2d9250 (production 2d2fe23): a redraw mid-load keeps the first ceiling, the note shows 10 s after the FIRST render', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = oggiFakeClient({ tasks: [TASK_OPEN], appointments: [APPT_TODAY] });
+  let hold = true;
+  /** @type {Array<() => void>} */
+  const held = [];
+  const client = {
+    ...base,
+    request(path, options) {
+      if (!hold) return base.request(path, options);
+      return new Promise((resolve, reject) => { held.push(() => base.request(path, options).then(resolve, reject)); });
+    },
+  };
+  // A fake clock: timers fire when the test moves time past their deadline.
+  let clock = 0;
+  /** @type {Array<{ fn: () => void, at: number, cleared: boolean }>} */
+  const timers = [];
+  const advanceTo = (ms) => {
+    clock = ms;
+    for (const timer of timers) {
+      if (!timer.cleared && timer.at <= clock) { timer.cleared = true; timer.fn(); }
+    }
+  };
+  const view = createOggiView({
+    doc, mount, client, navigate: () => {},
+    setTimer: (fn, ms) => { timers.push({ fn, at: clock + ms, cleared: false }); return timers[timers.length - 1]; },
+    clearTimer: (timer) => { if (timer) timer.cleared = true; },
+  });
+  const note = () => mount.findAll('div').find((node) => node.getAttribute('role') === 'alert');
+
+  const first = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  advanceTo(7_000);
+  // The shell re-routes Oggi once the schema and the Clienti count arrive.
+  const second = view.render({ spaceName: 'Spazio', links: [{ id: 'clienti', label: 'Clienti', route: '#/customer-data' }], now: OGGI_NOW });
+  assert.equal(timers.length, 1, 'the redraw starts no second ceiling');
+  assert.ok(mount.textContent.includes('Carico la tua giornata'), 'still loading at 7 s');
+  advanceTo(9_999);
+  assert.equal(note(), undefined, 'not before the ceiling');
+  advanceTo(10_000);
+  assert.ok(note(), 'at 10 s from the FIRST render the note is there');
+  assert.ok(note().textContent.includes('La tua giornata ci mette più del solito.'));
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'oggi-retry'), 'with Riprova');
+
+  // A further redraw while still pending keeps the note, never «Carico…» again.
+  const third = view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.ok(note(), 'a redraw after the ceiling keeps the note');
+  assert.equal(timers.length, 1);
+
+  // The reads land: the home replaces the note.
+  hold = false;
+  for (const release of held.splice(0)) release();
+  await Promise.all([first, second, third]);
+  await settle(() => mount.textContent.includes('Richiama per il preventivo'));
+  assert.equal(note(), undefined, 'the home replaces the note');
+
+  // A new opening after the home painted starts a fresh round.
+  await view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW });
+  assert.equal(timers.length, 2, 'the next round has its own ceiling');
+  assert.ok(timers[1].cleared, 'a round that painted clears its ceiling');
+});
