@@ -1551,7 +1551,12 @@ export function renderOggi({
       // Google card with the Collega links.
       const anchor = el(doc, 'a', 'bo-oggi-invite', '');
       anchor.appendChild(el(doc, 'strong', undefined, `${summary.connected} di ${summary.total} collegati`));
-      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} per non perdere nessun lead →`));
+      // «per non perdere nessun lead» only when every name is a lead channel
+      // of the catalog; once the list names Google Calendar or Stripe the
+      // promise would be false, so the line turns neutral (owner 08/11, #680).
+      const onlyLeads = summary.missing.every((entry) => CONNECTOR_CATALOG.some((row) => row?.channel === entry?.channel));
+      const purpose = onlyLeads ? 'per non perdere nessun lead' : 'per avere tutto in un posto';
+      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${names.join(', ')} ${purpose} →`));
       anchor.setAttribute('href', '#/connettori');
       anchor.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();

@@ -1410,7 +1410,7 @@ test('5083e7a77c26: the strip count equals the list it names', () => {
   assert.ok(strip, 'the strip renders');
   const count = /(\d+) di (\d+) collegati/.exec(strip.textContent);
   assert.ok(count, 'the strip carries a count');
-  const named = /Collega (.+) per non perdere/.exec(strip.textContent);
+  const named = /Collega (.+) per (?:non perdere|avere)/.exec(strip.textContent);
   assert.ok(named, 'the strip names the channels to connect');
   const names = named[1].split(', ');
   assert.equal(Number(count[1]) + names.length, Number(count[2]), `«${count[0]}» and ${names.length} names tell one story`);
@@ -1472,4 +1472,31 @@ test('5083e7a77c26: a stored channel alias counts as its channel, never as a ten
   assert.ok(!count.missing.some((entry) => entry.channel === 'calendar' || entry.channel === 'email'));
   assert.ok(count.missing.some((entry) => entry.channel === 'facebook'), 'a pending Messenger row leaves Facebook to connect');
   assert.equal(countConnectedNine([{ channel: 'google-calendar', status: 'active' }]), 1);
+});
+
+const NINE_STRIPE_MISSING = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form', 'calendar'];
+
+// Owner decision 08/11 on #680: the lead promise only when every name is a
+// lead channel; with Google Calendar or Stripe in the list, a neutral line.
+test('#680: the invite promises leads only when it names lead channels only', () => {
+  const render = (connections) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    renderOggi({
+      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections,
+        availability: { work: true, appointments: true, channels: true },
+      },
+    });
+    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  };
+  const leadsOnly = render(['whatsapp', 'instagram', 'email', 'voice', 'site-form', 'calendar', 'stripe']
+    .map((channel) => ({ channel, status: 'active' })));
+  assert.ok(leadsOnly.includes('Collega Facebook, TikTok per non perdere nessun lead'), leadsOnly);
+  const withStripe = render(NINE_STRIPE_MISSING.map((channel) => ({ channel, status: 'active' })));
+  assert.ok(withStripe.includes('Collega Stripe per avere tutto in un posto'), withStripe);
+  assert.ok(!withStripe.includes('lead'), 'no lead promise for Stripe');
+  const mixed = render([]);
+  assert.ok(mixed.includes('Google Calendar, Stripe per avere tutto in un posto'), mixed);
 });
