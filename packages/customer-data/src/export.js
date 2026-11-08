@@ -34,7 +34,14 @@ import { deciding, resolvedNames, trusted } from './store.js';
 export const EXPORT_MAX_ROWS = 10_000;
 
 /**
- * Drop rows naming an erased subject. Only rows carrying the subject
+ * The subject envelopes a stored row can carry (ADR-030): a single subject,
+ * or the two sides of a pair (a duplicate candidate names `left` and
+ * `right`). A row naming an erased subject on ANY of them leaves the export.
+ */
+const SUBJECT_ENVELOPES = Object.freeze(['subject', 'left', 'right']);
+
+/**
+ * Drop rows naming an erased subject. Only rows carrying a subject
  * envelope are candidates; every other row passes through untouched.
  * @param {Array<any>} rows
  * @param {ReadonlySet<string>} erased subject keys (`resource:id`)
@@ -44,9 +51,12 @@ export function excludeErasedSubjects(rows, erased) {
   const visible = [];
   let erasedExcluded = 0;
   for (const row of rows) {
-    const resource = row?.subjectResource;
-    const id = row?.subjectId;
-    if (typeof resource === 'string' && typeof id === 'string' && erased.has(`${resource}:${id}`)) {
+    const named = SUBJECT_ENVELOPES.some((prefix) => {
+      const resource = row?.[`${prefix}Resource`];
+      const id = row?.[`${prefix}Id`];
+      return typeof resource === 'string' && typeof id === 'string' && erased.has(`${resource}:${id}`);
+    });
+    if (named) {
       erasedExcluded += 1;
       continue;
     }

@@ -8,6 +8,7 @@ import { createCustomerProfileCapability } from './capability-profile.js';
 import { createChannelOriginsCapability } from './capability-channel-origins.js';
 import { createChannelSenderCapability } from './sender-capability.js';
 import { EXPORT_MAX_ROWS } from './export.js';
+import { ERASURE_INVENTORY } from './erasure.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import {
   applyCustomerPhrase, customerPhraseAiAvailable, defineCustomField, listCustomFieldDefs,
@@ -150,9 +151,11 @@ export function createCustomerDataPackage(options = {}) {
     packageContract: 1,
     name: CUSTOMER_DATA_DOMAIN,
     // Version 3 (backlog:d271d723): the GDPR erasure (erase-customer) joined the
-    // declared surface. The pilot registers each surface's fingerprint; a
-    // changed surface takes a new version, never the old one.
-    version: 3,
+    // declared surface. Version 4: the erasure declares its inventory and its
+    // all-or-nothing contract in the metadata. The pilot registers each
+    // surface's fingerprint; a changed surface takes a new version, never the
+    // old one.
+    version: 4,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -822,7 +825,9 @@ export function createCustomerDataPackage(options = {}) {
           legalBasis: 'signed business (orders, contracts, subscriptions) is kept: a cliente refuses with ERASURE_BLOCKED_SIGNED_BUSINESS, everything else goes',
           replay: 'a second erasure of the same subject answers the stored row, never a second write',
           exclusion: 'erased subjects leave the customer list, the search, the profile and the export through the same registry',
-          physicalPurge: 'interaction messages and calls, appointments and the company record are excluded from reads but not rewritten here: their owning packages do that',
+          inventory: ERASURE_INVENTORY.map((entry) => ({ ...entry })),
+          failClosed: 'every read and write of the inventory runs in one transaction: a failed read (ERASURE_READ_FAILED) or write (ERASURE_WRITE_FAILED) rolls back, records nothing and returns no receipt',
+          physicalPurge: 'rows of other packages (messages, calls, appointments, tasks, forms) and the core audit are counted on the receipt as retained with their reason, not rewritten here: their owning packages do that',
         },
         deferred: {
           track: 'Customer Data Operations v2',
