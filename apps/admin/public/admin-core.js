@@ -895,18 +895,36 @@ export const WAKE_TRANSIENT_CODES = Object.freeze([
 // branch of isWakeTransient; only the words stay honest.
 
 /**
+ * Whether a request method carries a body that may have committed server
+ * side (a replay would write twice). Reads never commit; anything else may.
+ * @param {unknown} method
+ */
+function isWriteMethod(method) {
+  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(method ?? 'GET').toUpperCase());
+}
+
+/**
  * Whether a rejection means «the service is waking» (retry it once while the
  * screen still shows its loading state) rather than «the request was refused»
- * (show it). A bare 503 or a refused connection is only worth one more try:
- * when the retry answers the same, the failure is honest and stays a
- * failure (voce 908f2eb9bbfb pins the section texts for a 503 read). Only
- * an explicit starting signal names the wait in words. @param {unknown} error
+ * (show it). A bare 503 or a refused connection is only worth one more try
+ * on a read: a write may already have committed, so it is retried only on
+ * an explicit starting signal (the server proves it was not up yet), and an
+ * uncertain outcome (`*_OUTCOME_UNKNOWN`, e.g. COMMIT_OUTCOME_UNKNOWN) is
+ * never retried here — the reconcile path owns the second attempt (review
+ * khaoss85/agent-crm#673). When the retry answers the same, the failure is
+ * honest and stays a failure (voce 908f2eb9bbfb pins the section texts for
+ * a 503 read). Only an explicit starting signal names the wait in words.
+ * @param {unknown} error
+ * @param {{ method?: unknown }} [options] the request method (`GET` default)
  */
-export function isWakeTransient(error) {
+export function isWakeTransient(error, { method = 'GET' } = {}) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
   const status = typeof record.status === 'number' ? record.status : null;
-  if (status === 503 || WAKE_TRANSIENT_CODES.includes(code)) return true;
+  if (/_OUTCOME_UNKNOWN$/.test(code)) return false;
+  if (WAKE_TRANSIENT_CODES.includes(code)) return true;
+  if (isWriteMethod(method)) return false;
+  if (status === 503) return true;
   return isNetworkFault(error);
 }
 
@@ -937,17 +955,18 @@ export function wakeWaitText(error) {
 
 /**
  * Run `run` once; when it rejects with a waking service, wait `waitMs` and
- * run it once more with the same arguments (writes keep their own
- * Idempotency-Key, so the second run replays the same tap instead of writing
- * twice). Anything else throws at once. Bounded: at most two runs, ever.
+ * run it once more with the same arguments. A write is replayed only on an
+ * explicit starting signal (pass its `method`: POST/PUT/PATCH/DELETE retry
+ * nothing else), so an uncertain commit is never written twice here.
+ * Anything else throws at once. Bounded: at most two runs, ever.
  * @param {() => Promise<any>} run
- * @param {{ waitMs?: number, wait?: (ms: number) => Promise<unknown> }} [options]
+ * @param {{ waitMs?: number, wait?: (ms: number) => Promise<unknown>, method?: unknown }} [options]
  */
-export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait } = {}) {
+export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait, method = 'GET' } = {}) {
   try {
     return await run();
   } catch (error) {
-    if (!isWakeTransient(error)) throw error;
+    if (!isWakeTransient(error, { method })) throw error;
     await wait(waitMs);
     return run();
   }

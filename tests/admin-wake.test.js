@@ -63,6 +63,40 @@ test('withWakeRetry replays the same tap once on a waking service', async () => 
   assert.deepEqual(waits, [10]);
 });
 
+test('isWakeTransient never replays an uncertain commit, on any method (review #673 P0)', () => {
+  assert.equal(isWakeTransient({ status: 503, code: 'COMMIT_OUTCOME_UNKNOWN' }), false);
+  assert.equal(isWakeTransient({ status: 503, code: 'COMMIT_OUTCOME_UNKNOWN' }, { method: 'POST' }), false);
+  assert.equal(isWakeTransient({ code: 'SOME_OUTCOME_UNKNOWN' }, { method: 'POST' }), false);
+});
+
+test('isWakeTransient does not replay a write on a bare 503 or network fault (review #673 P0)', () => {
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    assert.equal(isWakeTransient({ status: 503 }, { method }), false, method);
+    assert.equal(isWakeTransient(new TypeError('fetch failed'), { method }), false, method);
+    assert.equal(isWakeTransient({ status: 503, code: 'WORKSPACE_STARTING' }, { method }), true, method);
+  }
+  // Reads keep the old verdict: a bare 503 or a refused connection retries once.
+  assert.equal(isWakeTransient({ status: 503 }, { method: 'GET' }), true);
+  assert.equal(isWakeTransient(new TypeError('fetch failed'), { method: 'GET' }), true);
+});
+
+test('withWakeRetry never replays a POST on a bare 503 (review #673 P0)', async () => {
+  let runs = 0;
+  let waits = 0;
+  await assert.rejects(
+    withWakeRetry(
+      async () => {
+        runs += 1;
+        throw Object.assign(new Error('waking'), { status: 503 });
+      },
+      { method: 'POST', wait: async () => { waits += 1; } },
+    ),
+    /waking/,
+  );
+  assert.equal(runs, 1);
+  assert.equal(waits, 0);
+});
+
 test('withWakeRetry throws a refusal at once, without waiting', async () => {
   let runs = 0;
   let waits = 0;

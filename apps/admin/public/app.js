@@ -65,16 +65,26 @@ async function api(path, options = {}) {
   }
   // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first answer
   // may be a waking service — one retry, same key, instead of an error.
+  // The body is read as text first (review khaoss85/agent-crm#673): a waking
+  // host may answer non-JSON (e.g. 503 HTML), and response.json() would throw
+  // a bare SyntaxError the wake verdict never sees.
   return withWakeRetry(async () => {
     const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
-    const body = await response.json();
+    const text = await response.text();
+    let body;
+    try {
+      body = text === '' ? null : JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
     if (!response.ok) {
-      const error = new Error(body?.error?.message || `Request failed (${response.status})`);
-      Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
-      throw error;
+      throw apiFailure(response.status, body ?? null);
+    }
+    if (body === undefined) {
+      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
     }
     return body;
-  });
+  }, { method });
 }
 
 const submissions = createSubmissionController({
@@ -150,8 +160,8 @@ const moduleClient = {
     // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first
     // answer may be a waking service — one retry, same key, while the
     // screen still shows its loading state, instead of an error. A lost
-    // session still leaves for the login at once: 401/403 and redirects
-    // are never wake-transient, so the retry never delays them.
+    // session still leaves for the login at once (a 401/403 carrying a
+    // wake code is a known follow-up: it navigates first and still retries).
     const once = async () => {
       const response = await fetch(`${ADMIN_BASE}${path}`, {
         ...options,
@@ -202,7 +212,7 @@ const moduleClient = {
       }
       return payload;
     };
-    return withWakeRetry(once);
+    return withWakeRetry(once, { method });
   },
 };
 const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
