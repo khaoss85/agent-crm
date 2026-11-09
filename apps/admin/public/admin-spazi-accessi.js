@@ -245,13 +245,18 @@ function nameInitials(name) {
  * the pilot enriches it with — the same fields the Calendario team reads.
  * One human can hold several subjects (an adopted broker member and the
  * Google one: prod 07/11 listed «Daniele Pelleri» twice). The roster carries
- * no person id, so subjects merge into one row ONLY when both the mailbox
- * and the display name match (trimmed, case-insensitive). A mailbox alone
- * never merges: a shared mailbox (info@…) or stale enrichment could fold a
+ * no person id (the pilot forwards no `operatorAccountId`), so one row
+ * holds every subject sharing both the mailbox and the display name
+ * (trimmed, case-insensitive) — or sharing the display name alone
+ * (backlog:3ce220e6: verification Mac 09/11, Dan holds broker, github and
+ * google identities with different mailboxes, and Calendario already
+ * merges that way, so this card reads the same). A mailbox alone never
+ * merges: a shared mailbox (info@…) or stale enrichment could fold a
  * different human into the row, hide them and let «Rimuovi» suspend them.
- * A name alone never merges either: two homonyms without email are two
- * people. Nothing merges in the backend: the row keeps every subject, and
- * removal suspends each of them.
+ * The trade-off is documented like in Calendario: two truly different
+ * humans sharing one display name fold into one row, with every identity
+ * still listed and suspended together. Nothing merges in the backend: the
+ * row keeps every subject, and removal suspends each of them.
  *
  * Without enrichment the row reads exactly as before: the subject is the
  * name and the status sits under it. Sorted by name, then subject, so the
@@ -260,9 +265,10 @@ function nameInitials(name) {
  */
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
-  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, roles: unknown[], statuses: unknown[]}>} */
+  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, emails: string[], roles: unknown[], statuses: unknown[]}>} */
   const people = [];
   const byIdentity = new Map();
+  const byName = new Map();
   const seen = new Set();
   for (const member of list) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
@@ -273,17 +279,23 @@ export function buildTeamRows(members = []) {
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
+    const nameKey = displayName === null ? null : displayName.replace(/\s+/g, ' ').toLowerCase();
     let person = key === null ? null : byIdentity.get(key) ?? null;
+    if (person === null && nameKey !== null) person = byName.get(nameKey) ?? null;
     if (person === null) {
-      person = { subjects: [], live: [], displayName: null, email, roles: [], statuses: [] };
+      person = { subjects: [], live: [], displayName: null, email, emails: [], roles: [], statuses: [] };
       people.push(person);
       if (key !== null) byIdentity.set(key, person);
+      if (nameKey !== null && !byName.has(nameKey)) byName.set(nameKey, person);
     }
     person.subjects.push(member.subject);
     if (member.status !== 'suspended') person.live.push(member.subject);
     person.roles.push(member.role);
     person.statuses.push(member.status);
     if (person.displayName === null) person.displayName = displayName;
+    if (email !== null && !person.emails.some((known) => known.toLowerCase() === email.toLowerCase())) {
+      person.emails.push(email);
+    }
   }
   return people
     .map((person) => {
@@ -306,6 +318,9 @@ export function buildTeamRows(members = []) {
         removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
         name,
         email: person.email,
+        // Every mailbox of the person, in roster order: a multi-identity
+        // row paints them all, so no identity hides behind the first one.
+        emails: [...person.emails],
         initials: person.displayName !== null ? nameInitials(person.displayName) : memberInitials(name),
         role: spaceRoleLabel(role),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
@@ -741,9 +756,15 @@ export function createSpaziAccessiView(deps) {
       // ellipsis (C13) with the full address in its title; a non-active
       // status joins it. A roster without email keeps the status line.
       names.appendChild(el(doc, 'div', { text: row.name, cls: 'bo-spazi-subject' }));
-      if (row.email !== null) {
-        const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
-        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
+      // backlog:3ce220e6: a multi-identity row paints every mailbox, so
+      // each identity of the person stays visible inside the row.
+      const paintedEmails = Array.isArray(row.emails) && row.emails.length > 0
+        ? row.emails
+        : (row.email !== null ? [row.email] : []);
+      if (paintedEmails.length > 0) {
+        const joined = paintedEmails.join(', ');
+        const line = row.status === 'attivo' ? joined : `${joined} \u00b7 ${row.status}`;
+        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: joined } }));
       } else {
         names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
       }

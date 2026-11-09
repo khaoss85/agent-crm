@@ -834,22 +834,23 @@ test('the invite toggle closes the inline form and aria-expanded tracks menu or 
 const byClassIn = (mount, tag, cls) => mount.findAll(tag)
   .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(cls));
 
-test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name alone never merges', () => {
+test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name merges (backlog:3ce220e6)', () => {
   const rows = buildTeamRows([
     { subject: 'broker|dan', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
     { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: ' DAN@esempio.invalid ' },
     { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Rossi' },
     { subject: 'google|8', role: 'observer', status: 'active', displayName: 'Marco Rossi' },
   ]);
-  assert.equal(rows.length, 3, 'Daniele is one row; the two email-less homonyms stay two people');
+  assert.equal(rows.length, 2, 'Daniele is one row; the two same-named subjects are one row (backlog:3ce220e6)');
   const dan = rows.find((row) => row.name === 'Daniele Pelleri');
   assert.deepEqual(dan.subjects, ['broker|dan', 'google|42'], 'the row keeps every subject, nothing merges server-side');
   assert.deepEqual(dan.removable, ['broker|dan', 'google|42']);
   assert.equal(dan.email, 'dan@esempio.invalid');
+  assert.deepEqual(dan.emails, ['dan@esempio.invalid']);
   assert.equal(dan.initials, 'DP', 'initials follow the person name');
   assert.equal(dan.role, 'Titolare', 'a person holding two roles shows the stronger one');
   assert.equal(dan.status, 'attivo');
-  assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2);
+  assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 1);
   // Without enrichment the row reads exactly as before.
   const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
   assert.equal(bare.name, 'marco');
@@ -862,6 +863,40 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   ]);
   assert.deepEqual(half.removable, ['b']);
   assert.equal(half.status, 'attivo', 'a person with one live subject is active');
+});
+
+// backlog:3ce220e6 — AC-2 of backlog:810ed0bf as the Mac saw it on 09/11:
+// three identities of Dan (broker, github, google) with different
+// mailboxes and no person key are one «Dan» row, and every mailbox stays
+// visible inside the row.
+test('3ce220e6: three identities with different mailboxes are one person row', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
+    { subject: 'github|48571113', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
+    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@gmail.invalid' },
+    { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara', email: 'sara@esempio.invalid' },
+  ];
+  const rows = buildTeamRows(members);
+  assert.equal(rows.length, 2, 'three identities of Dan are one row, plus Sara');
+  const dan = rows.find((row) => row.name === 'Dan');
+  assert.deepEqual(dan.subjects, ['broker|dan', 'github|48571113', 'google|1049abc'], 'the row keeps every subject');
+  assert.deepEqual(
+    dan.emails,
+    ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'dan@gmail.invalid'],
+    'every mailbox stays visible inside the row',
+  );
+  assert.deepEqual(dan.removable, ['broker|dan', 'github|48571113', 'google|1049abc']);
+  const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
+  await v.render();
+  await flush();
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.deepEqual(names, ['Dan', 'Sara'], 'the card paints Dan once');
+  const emails = byClassIn(mount, 'div', 'bo-spazi-email');
+  assert.ok(
+    emails.some((node) => ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'dan@gmail.invalid']
+      .every((mailbox) => node.textContent.includes(mailbox))),
+    'the Dan row names every mailbox',
+  );
 });
 
 test('6b44b0e9fcdf review: a mailbox alone never merges — different or missing names stay separate people', () => {

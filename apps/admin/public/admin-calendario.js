@@ -339,6 +339,16 @@ function memberBornAt(member) {
  * of the card — the Team card filters the week, roles live on in Spazi e
  * accessi. Tint stays hashed on the stable primary subject and initials
  * follow the painted name, so a block and its toggle always match.
+ * backlog:3ce220e6 (verification Mac 09/11 on 810ed0bf AC-2): Dan holds
+ * three identities (broker, github, google) with different mailboxes and NO
+ * control-plane person key — the pilot forwards only displayName and email
+ * beside each subject (see the /bo/api/spine/memberships shape), so the
+ * shared display name is the only same-person signal left, and it merges.
+ * This narrows backlog:df55cf25 («a shared display name alone never
+ * merges»): two same-named email-less homonyms now paint one row. The
+ * trade-off is documented: two truly different humans sharing one display
+ * name fold into one row, with every identity still listed, bookable and
+ * removable inside it. Different names never merge.
  * @param {unknown} named @param {unknown} hidden @param {unknown} members
  */
 export function personRows(named, hidden, members) {
@@ -855,8 +865,9 @@ export function aiBlockOf(error) {
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
  * An exact identity wins; then one display-name match (case-insensitive).
- * Homonyms and strangers resolve to nothing — the caller keeps the drafted
- * words on the outsider path instead of booking as the wrong human.
+ * backlog:3ce220e6: same-named identities are one person row, so a shared
+ * name resolves to every identity of that row; strangers resolve to
+ * nothing — the caller keeps the drafted words on the outsider path.
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {

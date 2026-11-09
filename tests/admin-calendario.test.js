@@ -2010,6 +2010,7 @@ test('personRows falls back to the mailbox before typed words', () => {
     {
       ids: ['marco'], id: 'marco', name: null, label: 'marco',
       active: true, listed: true,
+      identities: ['marco'],
       color: memberColorIndex('marco'), initials: 'MA',
     },
   ], 'no member list: named rows keep the typed words, never invented');
@@ -2017,30 +2018,33 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
 });
 
-// backlog:df55cf25 (review P1 on #549, owner 04/11): a shared display name
-// alone never merges — two email-less homonyms are two humans, two rows, two
-// booking identities, with ordinal labels in member-creation order. Toggling
-// one row must never hide the other's blocks, and a booking for the second
-// human must never carry the first subject.
-test('personRows keeps email-less homonyms as separate rows', () => {
+// backlog:3ce220e6 (verification Mac 09/11 on 810ed0bf AC-2, narrowing
+// backlog:df55cf25): the pilot forwards no person key, so a shared display
+// name merges — two same-named email-less subjects are one row, with every
+// identity kept inside it. Different names still stay separate rows.
+test('personRows merges email-less homonyms on the shared display name', () => {
   const members = [
     { subject: 'a1', role: 'member', displayName: 'Rossi' },
     { subject: 'a2', role: 'member', displayName: 'Rossi' },
   ];
   const rows = personRows(['a1', 'a2'], [], members);
-  assert.equal(rows.length, 2, 'same name without a shared mailbox is two humans');
-  assert.deepEqual(rows[0].ids, ['a1']);
-  assert.deepEqual(rows[1].ids, ['a2']);
-  assert.equal(rows[0].label, 'Rossi (1)');
-  assert.equal(rows[1].label, 'Rossi (2)');
-  assert.ok(rows[0].label !== rows[1].label, 'the two toggles read differently');
-  assert.ok(rows[0].id !== rows[1].id, 'toggling and booking keep distinct identities');
+  assert.equal(rows.length, 1, 'one shared name without a person key is one row');
+  assert.deepEqual(rows[0].ids, ['a1', 'a2']);
+  assert.equal(rows[0].label, 'Rossi');
+  assert.deepEqual(rows[0].identities, ['a1', 'a2'], 'every identity stays bookable inside the row');
+  const split = personRows(['a1', 'a2'], [], [
+    { subject: 'a1', role: 'member', displayName: 'Rossi' },
+    { subject: 'a2', role: 'member', displayName: 'Bianchi' },
+  ]);
+  assert.equal(split.length, 2, 'different names still stay two rows');
 });
 
-// backlog:df55cf25 (owner 04/11, single source of truth): one grouping table
-// holding every person-row case — the merged cures of #549 and this one. The
-// ordinal follows member creation (member.createdAt when the roster carries
-// it, else the roster's own order), never a technical id.
+// backlog:df55cf25 (owner 04/11, single source of truth), narrowed by
+// backlog:3ce220e6: one grouping table holding every person-row case. The
+// shared display name merges (no person key travels with the roster), so
+// ordinals only separate rows with different names; the ordinal follows
+// member creation (member.createdAt when the roster carries it, else the
+// roster's own order), never a technical id.
 test('personRows grouping table: merge, homonyms, ordinals', () => {
   const cases = [
     {
@@ -2063,32 +2067,32 @@ test('personRows grouping table: merge, homonyms, ordinals', () => {
       want: [{ ids: ['x|1', 'x|2'], label: 'Dan' }],
     },
     {
-      name: 'different mailboxes are different humans',
+      name: 'different mailboxes merge on the shared display name (backlog:3ce220e6)',
       named: ['a1', 'a2'],
       members: [
         { subject: 'a1', role: 'member', displayName: 'Rossi', email: 'a@example.com' },
         { subject: 'a2', role: 'member', displayName: 'Rossi', email: 'b@example.com' },
       ],
-      want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+      want: [{ ids: ['a1', 'a2'], label: 'Rossi' }],
     },
     {
-      name: 'email-less homonyms stay separate with ordinals',
+      name: 'email-less homonyms merge on the shared display name (backlog:3ce220e6)',
       named: ['a1', 'a2'],
       members: [
         { subject: 'a1', role: 'member', displayName: 'Rossi' },
         { subject: 'a2', role: 'member', displayName: 'Rossi' },
       ],
-      want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+      want: [{ ids: ['a1', 'a2'], label: 'Rossi' }],
     },
     {
-      name: 'three homonyms count up in roster order even when named reversed',
+      name: 'three homonyms are one row in roster order (backlog:3ce220e6)',
       named: ['a3', 'a1', 'a2'],
       members: [
         { subject: 'a1', role: 'member', displayName: 'Rossi' },
         { subject: 'a2', role: 'member', displayName: 'Rossi' },
         { subject: 'a3', role: 'member', displayName: 'Rossi' },
       ],
-      want: [{ ids: ['a3'], label: 'Rossi (3)' }, { ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+      want: [{ ids: ['a1', 'a2', 'a3'], label: 'Rossi' }],
     },
     {
       name: 'the ordinal follows member.createdAt when the roster carries it',
@@ -2323,10 +2327,10 @@ test('blocks and toggle share the tint on a two-subject person', async () => {
   }
 });
 
-// backlog:df55cf25 (owner 04/11): two email-less homonyms paint two distinct
-// toggles; hiding one hides only its blocks, and the manual choice offers
-// two distinct labels booking the right human.
-test('email-less homonyms toggle and book the right human', async () => {
+// backlog:3ce220e6 (narrowing backlog:df55cf25): two same-named email-less
+// subjects paint one toggle; hiding it hides both blocks, and the manual
+// choice offers one label booking the chosen identity.
+test('same-named subjects toggle and book as one person row', async () => {
   const week = {
     from: '2026-10-19T00:00:00.000Z',
     to: '2026-10-26T00:00:00.000Z',
@@ -2368,19 +2372,20 @@ test('email-less homonyms toggle and book the right human', async () => {
     await new Promise((resolve) => setImmediate(resolve));
   }
   const toggles = teamToggles(mount);
-  assert.equal(toggles.length, 2, 'two humans are two toggles');
-  assert.ok(toggles.some((node) => node.textContent.includes('Rossi (1)')), 'the first human paints');
-  assert.ok(toggles.some((node) => node.textContent.includes('Rossi (2)')), 'the second human paints');
+  assert.equal(toggles.length, 1, 'one shared name is one toggle');
+  assert.ok(toggles[0].textContent.includes('Rossi'), 'the person paints');
   // One separator between the groups too: «+ Prenota» glued to the next
   // span would read «Prenota19» and fake an «a1».
   const painted = [...texts(mount, 'button'), ...texts(mount, 'span')].join('\n');
   assert.ok(!painted.includes('a1') && !painted.includes('a2'), 'no technical subject id on screen');
-  toggles.find((node) => node.textContent.includes('Rossi (1)')).dispatch('click');
-  assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'hiding the first hides only its blocks');
-  assert.ok(texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'the second human stays');
+  toggles[0].dispatch('click');
+  assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'hiding the row hides every identity block');
+  assert.ok(!texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'hiding the row hides the second block too');
+  toggles[0].dispatch('click');
+  assert.ok(texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'showing the row paints both blocks again');
   const options = mount.querySelector('select[name="teamMemberId"]').findAll('option')
     .map((node) => node.textContent);
-  assert.ok(options.includes('Rossi (1)') && options.includes('Rossi (2)'), 'the choice names both humans distinctly');
+  assert.equal(options.filter((text) => text.startsWith('Rossi')).length, 1, 'the choice names the person once');
   choosePerson(mount, 'a2');
   await pickCustomerByName(mount, 'Ada');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
@@ -3163,7 +3168,7 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
     { subject: 'a1', displayName: 'Marco' },
     { subject: 'a2', displayName: 'Marco' },
   ];
-  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), [], 'homonyms never pick a human');
+  assert.deepEqual(resolveDraftMemberIds('Marco', [], homonyms), ['a1', 'a2'], 'one shared name resolves to the single person row (backlog:3ce220e6)');
   assert.deepEqual(resolveDraftMemberIds('sconosciuto', [], members), [], 'strangers keep the outsider path');
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
 });
@@ -3848,7 +3853,9 @@ test('slugifyServiceKey and formatPriceCents shape the menu and the price field'
 
 // backlog:810ed0bf — three identities of Dan (broker, github, google) with
 // different mailboxes are one «Dan» row once the roster carries the
-// control-plane person key; without it they group exactly like before.
+// control-plane person key. backlog:3ce220e6 (verification Mac 09/11): the
+// pilot forwards no person key, so the shared display name merges even
+// without it — the old «without the key they stay two rows» no longer holds.
 test('personRows merges one human on the roster person key across mailboxes', () => {
   const members = [
     { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
@@ -3865,7 +3872,8 @@ test('personRows merges one human on the roster person key across mailboxes', ()
     { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com' },
     { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com' },
   ]);
-  assert.equal(noKey.length, 2, 'without the person key different mailboxes stay two rows');
+  assert.equal(noKey.length, 1, 'without the person key the shared display name still merges (backlog:3ce220e6)');
+  assert.deepEqual(noKey[0].ids, ['broker|dan', 'github|48571113']);
 });
 
 // backlog:3ce220e6 — AC-2 of backlog:810ed0bf as the Mac saw it on 09/11:
@@ -3964,7 +3972,8 @@ test('the manual form offers the catalog menu with the default and price prefill
   );
   const people = mount.querySelector('select[name="teamMemberId"]').findAll('option')
     .map((node) => node.textContent);
-  assert.equal(people.filter((text) => text === 'Dan').length, 1, 'three identities of Dan are one menu row');
+  assert.equal(people.filter((text) => text.startsWith('Dan')).length, 1, 'three identities of Dan are one menu row');
+  assert.ok(people.some((text) => text.startsWith('Dan') && text.includes('dan@gmail.com')), 'the menu row names every identity');
   assert.ok(people.includes('Sara'), 'Sara keeps her row');
   // Switching the service follows the price; the claim books menu keys.
   service.value = 'lezione-prova';
