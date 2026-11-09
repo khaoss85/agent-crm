@@ -18,7 +18,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { humanWriteError } from '../apps/admin/public/admin-core.js';
+import { humanWriteError, isNetworkFailure } from '../apps/admin/public/admin-core.js';
 import { missingBookingFields } from '../apps/admin/public/admin-calendario.js';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -57,6 +57,94 @@ test('humanWriteError falls back to the caller text otherwise', () => {
     failed: 'La modifica non è riuscita. Riprova più tardi.',
   });
   assert.equal(text, 'La modifica non è riuscita. Riprova più tardi.');
+});
+
+// backlog:7cc35edab50c (production 07/11): a 502 from the /bo edge read
+// «Scrittura del pannello rifiutata», as if the panel had refused it. A
+// network fault answers «Connessione non riuscita, riprova.» instead — the
+// command stays on screen, so pressing it again is the retry.
+test('humanWriteError names a network fault, never the panel refusal', () => {
+  const failed = 'Non riesco a creare la sequenza adesso: riprova più tardi.';
+  for (const error of [
+    writeError('Bad Gateway', { code: 'UNKNOWN', status: 502 }),
+    writeError('Bad Gateway', { code: 'BAD_GATEWAY', status: 502 }),
+    writeError('Service Unavailable', { code: 'UNKNOWN', status: 503 }),
+    writeError('gateway', { code: 'UNKNOWN', status: 504 }),
+    writeError('Gateway Timeout', { code: 'GATEWAY_TIMEOUT', status: 504 }),
+    new TypeError('fetch failed'),
+    Object.assign(new Error('socket hang up'), { status: 0 }),
+    Object.assign(new Error('timed out'), { name: 'TimeoutError' }),
+  ]) {
+    assert.equal(humanWriteError(error, { failed }), 'Connessione non riuscita, riprova.');
+  }
+});
+
+// The true refusal stays distinct: AI-off forwarded at 502, a 400 with the
+// same generic message, 405 and 422 keep their own texts.
+test('humanWriteError keeps a true refusal distinct from a network fault', () => {
+  const failed = 'Non riesco a dare l’incarico adesso: riprova tra poco.';
+  assert.equal(
+    humanWriteError(writeError('AI off', { code: 'LLM_SPACE_DISABLED', status: 502 }), { failed }),
+    failed,
+    'AI-off at 502 is a refusal, never a connection fault',
+  );
+  assert.equal(
+    humanWriteError(writeError('Scrittura del pannello rifiutata', { code: 'BO_CRM_BODY_REFUSED', status: 400 }), { failed }),
+    failed,
+    'a 400 keeps the caller text, the generic message never leaks',
+  );
+});
+
+// Review agent-crm#696 (P2): a verdict the server already named at
+// 502/503/504 is an answer, never «Connessione non riuscita, riprova.».
+// A failed BO write ends its wait as «non inviato» with a fresh key, a
+// queued one is read back under its requestId — the same POST again would
+// loop under the same key or risk a duplicate write.
+test('humanWriteError keeps a named BO verdict distinct from a network fault', () => {
+  const failed = 'Non riesco a dare l’incarico adesso: riprova tra poco.';
+  for (const error of [
+    writeError('failed', { code: 'BO_SEND_FAILED', status: 502 }),
+    writeError('status miss', { code: 'BO_SEND_STATUS_FAILED', status: 502 }),
+    writeError('queued', { code: 'BO_SEND_PENDING', status: 504 }),
+    writeError('queued', { code: 'BO_DRAFT_PENDING', status: 504 }),
+    writeError('refused', { code: 'BO_CRM_BODY_REFUSED', status: 503 }),
+    writeError('no bridge', { code: 'BO_BRIDGE_NOT_CONFIGURED', status: 503 }),
+  ]) {
+    const text = humanWriteError(error, { failed });
+    assert.equal(text, failed, `a named verdict never reads as a connection fault: ${error.code}@${error.status}`);
+    assert.ok(!/Connessione non riuscita/.test(text), 'no press-again invitation on a verdict');
+  }
+});
+
+test('isNetworkFailure draws the line between no-answer and refusal', () => {
+  for (const error of [
+    writeError('down', { code: 'UNKNOWN', status: 502 }),
+    writeError('down', { code: 'UNKNOWN', status: 503 }),
+    writeError('down', { code: 'UNKNOWN', status: 504 }),
+    writeError('down', { status: 0 }),
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('slow'), { code: 'TIMEOUT' }),
+  ]) {
+    assert.equal(isNetworkFailure(error), true, `network: ${String(error?.code ?? error)}`);
+  }
+  for (const error of [
+    writeError('boom', { code: 'BOOM', status: 500 }),
+    writeError('busy', { code: 'UNKNOWN', status: 429 }),
+    writeError('denied', { code: 'METHOD_NOT_ALLOWED', status: 405 }),
+    writeError('bad', { code: 'VALIDATION_FAILED', status: 422 }),
+    writeError('gone', { code: 'NOT_FOUND', status: 404 }),
+    writeError('off', { code: 'LLM_SPACE_DISABLED', status: 502 }),
+    writeError('cancelled', { code: 'BO_SEND_CANCELLED', status: 502 }),
+    writeError('failed', { code: 'BO_SEND_FAILED', status: 502 }),
+    writeError('status miss', { code: 'BO_SEND_STATUS_FAILED', status: 502 }),
+    writeError('queued', { code: 'BO_SEND_PENDING', status: 504 }),
+    writeError('queued', { code: 'BO_PHRASE_PENDING', status: 504 }),
+    writeError('refused', { code: 'BO_APPOINTMENT_SERVICE_REFUSED', status: 503 }),
+    writeError('no bridge', { code: 'BO_BRIDGE_NOT_CONFIGURED', status: 503 }),
+    new Error('plain bug, no status'),
+  ]) {
+    assert.equal(isNetworkFailure(error), false, `refusal or bug: ${String(error?.code ?? error)}`);
+  }
 });
 
 // The booking pre-check: empty required fields are named in Italian, and a

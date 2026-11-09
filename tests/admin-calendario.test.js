@@ -4,11 +4,13 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
+  catalogBookingServices,
   channelOf,
   createCalendarioView,
   calendarRefusalText,
   servicePresendError,
   dayHead,
+  formatPriceCents,
   displayKeys,
   draftDayKey,
   draftDayOnly,
@@ -33,6 +35,7 @@ import {
   romeWeekKeys,
   serviceKeyFor,
   serviceLabel,
+  slugifyServiceKey,
   slotInGrid,
   statusWord,
   teamRows,
@@ -2401,10 +2404,15 @@ test('a hidden partially-listed person stays hidden after a reload', async () =>
   assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Dan')).getAttribute('aria-pressed'), 'false');
 });
 
-// backlog:df55cf25 (review P2 on #549): an explicitly chosen non-primary
-// subject is booked as exactly that subject — never silently remapped to
-// the group primary.
-test('a chosen non-primary subject books exactly that subject', async () => {
+// backlog:810ed0bf (narrowing backlog:df55cf25 review P2 on #549): the
+// manual person menu shows one row per PERSON — Dan's github|1 and google|2
+// merge into a single «Dan» row, so the two subjects cannot stay separate
+// options (owner P1 acceptance, verifier-failed AC-2). Booking a person
+// books the row's primary identity — the named subject when the filter
+// names it, else the first subject — and the claim carries that single
+// subject. Nothing offered is remapped: the menu offers the person, the
+// claim books the person's primary.
+test('one row per person books the row primary identity', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -2419,10 +2427,16 @@ test('a chosen non-primary subject books exactly that subject', async () => {
   }
   const person = mount.querySelector('select[name="teamMemberId"]');
   assert.ok(person, 'the known team paints a choice');
-  const values = person.findAll('option').map((node) => node.getAttribute('value'));
-  assert.ok(values.includes('github|1') && values.includes('google|2'), 'both subjects stay exact options');
-  choosePerson(mount, 'google|2');
-  assert.equal(mount.querySelector('select[name="teamMemberId"]').value, 'google|2', 'the kept choice is not remapped');
+  const options = person.findAll('option');
+  const values = options.map((node) => node.getAttribute('value'));
+  assert.equal(values.length, 2, 'placeholder plus exactly one row per person');
+  assert.ok(values.includes('github|1'), 'the row rides the primary identity');
+  assert.ok(!values.includes('google|2'), 'the secondary identity is not a separate option');
+  const labels = options.map((node) => node.textContent);
+  assert.ok(!labels.some((label) => label.includes('|')), 'no technical id paints in the menu');
+  assert.ok(labels.some((label) => label.includes('Dan')), 'the row reads the profile name');
+  choosePerson(mount, 'github|1');
+  assert.equal(mount.querySelector('select[name="teamMemberId"]').value, 'github|1', 'the kept choice is the person row');
   await pickCustomerByName(mount, 'Ada');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   const form = byName();
@@ -2436,7 +2450,7 @@ test('a chosen non-primary subject books exactly that subject', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
-  assert.equal(payload(proposes[0]).teamMemberId, 'google|2', 'the claim books the chosen identity');
+  assert.equal(payload(proposes[0]).teamMemberId, 'github|1', 'the claim books the person primary');
 });
 
 // backlog:df55cf25 (review P2 on #549): the manual fallback field never
@@ -3748,6 +3762,280 @@ test('serviceKeyFor sends the listino key for a typed catalog name, the text oth
   assert.ok(calendarRefusalText({ code: 'VALIDATION_ERROR', details: { field: 'serviceKey' } }).startsWith('Scegli un servizio dal listino'),
     'the framework validation on the field reads the same');
   assert.equal(calendarRefusalText({ code: 'BO_APPOINTMENT_CONFIRM_REFUSED' }), null, 'other refusals keep their generic sentence');
+});
+
+// backlog:810ed0bf — the service menu lists the bookable catalog singles:
+// the same singles rule the booking worker applies (one active one_time
+// component fixing one hour price). Packs, subscriptions, inactive rows
+// and bad currencies stay out; the key is the sku, slugified from the
+// name when the sku is no key.
+test('catalogBookingServices keeps only active one_time singles with key, name and price', () => {
+  const single = (overrides = {}) => ({
+    active: true, currency: 'EUR',
+    components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }],
+    ...overrides,
+  });
+  const out = catalogBookingServices({ products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [single()] },
+    { active: true, sku: '', name: 'Lezione prova', offers: [single({ components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 1500 }] })] },
+    { active: true, sku: 'pack', name: 'Pacchetto 10', offers: [single({ components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 100 }, { chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 200 }] })] },
+    { active: false, sku: 'vecchio', name: 'Vecchio', offers: [single()] },
+    { active: true, sku: 'novaluta', name: 'No valuta', offers: [single({ currency: 'euro' })] },
+    { active: true, sku: 'spento', name: 'Spento', offers: [single({ active: false })] },
+    { active: true, sku: 'taglio', name: 'Taglio due', offers: [single()] },
+    { active: true, sku: '!!!', name: '!!!', offers: [single()] },
+  ] });
+  assert.deepEqual(out.map((entry) => entry.key), ['taglio', 'lezione-prova']);
+  assert.equal(out[0].name, 'Taglio');
+  assert.equal(out[0].priceCents, 4500);
+  assert.equal(out[0].currency, 'EUR');
+  assert.equal(out[1].priceCents, 1500, 'slugified name carries the flat fee');
+  assert.ok(Object.isFrozen(out), 'the menu list is frozen');
+});
+
+test('slugifyServiceKey and formatPriceCents shape the menu and the price field', () => {
+  assert.equal(slugifyServiceKey('Lezione prova'), 'lezione-prova');
+  assert.equal(slugifyServiceKey('  TAGLIO_barba  '), 'taglio-barba');
+  assert.equal(slugifyServiceKey('!!!'), '', 'no slug character: no guessed key');
+  assert.equal(slugifyServiceKey(null), '');
+  assert.equal(formatPriceCents(4500), '45.00');
+  assert.equal(formatPriceCents(5), '0.05');
+  assert.equal(formatPriceCents(0), '0.00');
+  assert.equal(formatPriceCents(-1), null);
+  assert.equal(formatPriceCents(1.5), null);
+  assert.equal(formatPriceCents('45'), null);
+});
+
+// backlog:810ed0bf — three identities of Dan (broker, github, google) with
+// different mailboxes are one «Dan» row once the roster carries the
+// control-plane person key; without it they group exactly like before.
+test('personRows merges one human on the roster person key across mailboxes', () => {
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com', operatorAccountId: 'op-9' },
+    { subject: 'google|1049abc', displayName: 'Daniele Pelleri', email: 'dan@gmail.com', operatorAccountId: 'op-9' },
+    { subject: 'sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  const rows = personRows(['broker|dan', 'github|48571113', 'google|1049abc', 'sara'], [], members);
+  assert.equal(rows.length, 2, 'three subjects of Dan are one row, plus Sara');
+  assert.deepEqual(rows[0].ids, ['broker|dan', 'github|48571113', 'google|1049abc']);
+  assert.equal(rows[0].label, 'Dan');
+  assert.equal(rows[1].label, 'Sara');
+  const noKey = personRows(['broker|dan', 'github|48571113'], [], [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com' },
+  ]);
+  assert.equal(noKey.length, 2, 'without the person key different mailboxes stay two rows');
+});
+
+// backlog:810ed0bf — the manual form paints the service as a catalog menu
+// (never free text) with the first entry preselected and its price
+// prefilled; the team menu holds one row per person.
+test('the manual form offers the catalog menu with the default and price prefilled', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    { active: true, sku: '', name: 'Lezione prova', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 1500 }] }] },
+  ] };
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com', operatorAccountId: 'op-9' },
+    { subject: 'google|1049abc', displayName: 'Daniele Pelleri', email: 'dan@gmail.com', operatorAccountId: 'op-9' },
+    { subject: 'sara', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    memberships: members,
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.ok(service, 'the service is a menu, never free text');
+  const labels = service.findAll('option').map((node) => node.textContent);
+  assert.ok(labels.some((text) => text.includes('Taglio')), 'the catalog names paint');
+  assert.ok(labels.some((text) => text.includes('Lezione prova')), 'every single paints');
+  assert.equal(service.value, 'taglio', 'the first entry is preselected like the worker default');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  assert.equal(byName().price.value, '45.00', 'the price prefills from the default');
+  assert.equal(
+    mount.findAll('input').filter((node) => node.getAttribute('name') === 'serviceKey').length,
+    0,
+    'no free-text service field beside the menu',
+  );
+  const people = mount.querySelector('select[name="teamMemberId"]').findAll('option')
+    .map((node) => node.textContent);
+  assert.equal(people.filter((text) => text === 'Dan').length, 1, 'three identities of Dan are one menu row');
+  assert.ok(people.includes('Sara'), 'Sara keeps her row');
+  // Switching the service follows the price; the claim books menu keys.
+  service.value = 'lezione-prova';
+  service.dispatch('change');
+  assert.equal(byName().price.value, '15.00', 'the price follows the chosen service');
+  choosePerson(mount, 'broker|dan');
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).serviceKey, 'lezione-prova', 'the claim sends the menu key');
+  assert.equal(payload(proposes[0]).priceCents, 1500);
+  assert.equal(payload(proposes[0]).teamMemberId, 'broker|dan');
+});
+
+// backlog:810ed0bf review (P1 currency): the claim only speaks EUR, so a
+// non-EUR single stays out of the menu instead of being mislabeled in euro.
+test('catalogBookingServices drops non-EUR singles the claim could never book', () => {
+  const single = (overrides = {}) => ({
+    active: true, currency: 'EUR',
+    components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }],
+    ...overrides,
+  });
+  const out = catalogBookingServices({ products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [single()] },
+    { active: true, sku: 'shave', name: 'Rasatura', offers: [single({ currency: 'USD' })] },
+  ] });
+  assert.deepEqual(out.map((entry) => entry.key), ['taglio'], 'the USD single never reaches the euro menu');
+});
+
+// backlog:810ed0bf review (P2 person key): generic userId/personId fields
+// have no producer contract, so two humans sharing one stay two rows.
+test('personRows never merges two humans on a shared generic userId', () => {
+  const rows = personRows(['a|1', 'b|2'], [], [
+    { subject: 'a|1', displayName: 'Ada', email: 'ada@example.com', userId: 'u-1' },
+    { subject: 'b|2', displayName: 'Bea', email: 'bea@example.com', userId: 'u-1' },
+  ]);
+  assert.equal(rows.length, 2, 'one shared userId is not one human');
+});
+
+// backlog:810ed0bf review (P1 identity): a draft naming a secondary
+// identity books exactly that subject, never the row primary.
+test('a draft naming a secondary identity books that exact subject', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'massaggio', name: 'Massaggio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 6000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com', operatorAccountId: 'op-9' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com', operatorAccountId: 'op-9' },
+    { subject: 'google|1049abc', displayName: 'Daniele Pelleri', email: 'dan@gmail.com', operatorAccountId: 'op-9' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    memberships: members,
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    phrase: { teamMemberId: 'google|1049abc', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa un taglio con dan giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(12);
+  const person = personField(mount);
+  assert.ok(person, 'the manual form names its person');
+  assert.equal(person.value, 'google|1049abc', 'the drafted secondary identity survives, not the row primary');
+  await pickCustomerByName(mount, 'Ada');
+  manualButton(mount, 'Proponi').dispatch('click');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).teamMemberId, 'google|1049abc', 'the claim books the drafted identity');
+});
+
+// backlog:810ed0bf review (P1 service): a differently-cased kept service
+// matches its entry instead of falling back to the default.
+test('a differently-cased drafted service lands on its entry, never the default', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'massaggio', name: 'Massaggio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 6000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    phrase: { teamMemberId: 'marco', serviceKey: 'Taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa un taglio con marco giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(12);
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.ok(service, 'the known service stays a menu');
+  assert.equal(service.value, 'taglio', 'the cased draft matches its entry, not the first one');
+  await pickCustomerByName(mount, 'Ada');
+  manualButton(mount, 'Proponi').dispatch('click');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).serviceKey, 'taglio', 'the claim sends the matched entry');
+});
+
+// backlog:810ed0bf review (P1 service): an unknown drafted service keeps
+// its typed value instead of silently becoming the default.
+test('an unknown drafted service keeps its typed value, never the default', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    catalog,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+    phrase: { teamMemberId: 'marco', serviceKey: 'massaggio speciale', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
+    slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'fissa un massaggio con marco giovedì alle 18';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(12);
+  assert.equal(mount.querySelector('select[name="serviceKey"]'), null, 'no menu claims the unknown service');
+  const typed = mount.findAll('input').find((node) => node.getAttribute('name') === 'serviceKey');
+  assert.ok(typed, 'the unknown service paints as typed text');
+  assert.equal(typed.value, 'massaggio speciale', 'the drafted words survive the catalog read');
+});
+
+// backlog:810ed0bf review (P2 hint): the service refusal clears on a menu
+// switch too, which fires change without input.
+test('the service-error hint clears on a change-event service switch', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const refused = Object.assign(new Error('Calendar change refused'), { status: 400, code: 'BO_APPOINTMENT_SERVICE_REFUSED' });
+  const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]), failConfirmWith: refused });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'massaggio speciale';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  manualButton(mount, 'Conferma').dispatch('click');
+  await flushMany();
+  const field = byName().serviceKey;
+  assert.equal(field.getAttribute('aria-invalid'), 'true', 'the refusal paints first');
+  field.value = 'taglio';
+  field.dispatch('change');
+  assert.equal(field.getAttribute('aria-invalid'), 'false', 'a change-only switch clears the stale refusal');
+  const hint = mount.findAll('small').find((node) => node.getAttribute('data-role') === 'service-error');
+  assert.ok(hint, 'the hint node stays for the next refusal');
+  assert.ok(String(hint.getAttribute('class')).includes('hidden'), 'the stale hint hides on a change switch');
 });
 
 // i) «Fissa con una frase» with the AI off read «Ricerca non riuscita».
