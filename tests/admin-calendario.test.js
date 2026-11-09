@@ -2010,7 +2010,7 @@ test('personRows falls back to the mailbox before typed words', () => {
     {
       ids: ['marco'], id: 'marco', name: null, label: 'marco',
       active: true, listed: true,
-      identities: ['marco'],
+      identities: [],
       color: memberColorIndex('marco'), initials: 'MA',
     },
   ], 'no member list: named rows keep the typed words, never invented');
@@ -2031,7 +2031,7 @@ test('personRows merges email-less homonyms on the shared display name', () => {
   assert.equal(rows.length, 1, 'one shared name without a person key is one row');
   assert.deepEqual(rows[0].ids, ['a1', 'a2']);
   assert.equal(rows[0].label, 'Rossi');
-  assert.deepEqual(rows[0].identities, ['a1', 'a2'], 'every identity stays bookable inside the row');
+  assert.deepEqual(rows[0].identities, [], 'nothing readable to list: pipe-less subjects with no mailbox never paint (booking still uses ids)');
   const split = personRows(['a1', 'a2'], [], [
     { subject: 'a1', role: 'member', displayName: 'Rossi' },
     { subject: 'a2', role: 'member', displayName: 'Bianchi' },
@@ -2041,10 +2041,10 @@ test('personRows merges email-less homonyms on the shared display name', () => {
 
 // backlog:df55cf25 (owner 04/11, single source of truth), narrowed by
 // backlog:3ce220e6: one grouping table holding every person-row case. The
-// shared display name merges (no person key travels with the roster), so
-// ordinals only separate rows with different names; the ordinal follows
-// member creation (member.createdAt when the roster carries it, else the
-// roster's own order), never a technical id.
+// shared display name merges (no person key travels with the roster), so a
+// shared name is one row even when the roster carries createdAt; ordinals
+// number only the rare rows that still share a base label (nameless pipe
+// ids), in member-creation order, never a technical id.
 test('personRows grouping table: merge, homonyms, ordinals', () => {
   const cases = [
     {
@@ -2095,13 +2095,19 @@ test('personRows grouping table: merge, homonyms, ordinals', () => {
       want: [{ ids: ['a1', 'a2', 'a3'], label: 'Rossi' }],
     },
     {
-      name: 'the ordinal follows member.createdAt when the roster carries it',
+      name: 'createdAt no longer splits a shared display name (backlog:3ce220e6)',
       named: ['a1', 'a2'],
       members: [
         { subject: 'a1', role: 'member', displayName: 'Rossi', createdAt: '2026-10-20T10:00:00.000Z' },
         { subject: 'a2', role: 'member', displayName: 'Rossi', createdAt: '2026-10-18T10:00:00.000Z' },
       ],
-      want: [{ ids: ['a1'], label: 'Rossi (2)' }, { ids: ['a2'], label: 'Rossi (1)' }],
+      want: [{ ids: ['a1', 'a2'], label: 'Rossi' }],
+    },
+    {
+      name: 'nameless pipe ids still split with ordinals (backlog:3ce220e6)',
+      named: ['x|1', 'y|2'],
+      members: [],
+      want: [{ ids: ['x|1'], label: 'Membro del team (1)' }, { ids: ['y|2'], label: 'Membro del team (2)' }],
     },
     {
       name: 'a unique name keeps no ordinal',
@@ -2381,7 +2387,10 @@ test('same-named subjects toggle and book as one person row', async () => {
   toggles[0].dispatch('click');
   assert.ok(!texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'hiding the row hides every identity block');
   assert.ok(!texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'hiding the row hides the second block too');
-  toggles[0].dispatch('click');
+  // The click re-renders the card: press the fresh toggle, never the detached node.
+  const retoggle = teamToggles(mount);
+  assert.equal(retoggle.length, 1, 'still one toggle after hiding');
+  retoggle[0].dispatch('click');
   assert.ok(texts(mount, 'strong').some((text) => /^barba\b/i.test(text)), 'showing the row paints both blocks again');
   const options = mount.querySelector('select[name="teamMemberId"]').findAll('option')
     .map((node) => node.textContent);
@@ -3954,7 +3963,7 @@ test('the manual form offers the catalog menu with the default and price prefill
     catalog,
     customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await flushMany(9);
   const service = mount.querySelector('select[name="serviceKey"]');
@@ -4040,7 +4049,7 @@ test('a draft naming a secondary identity books that exact subject', async () =>
     phrase: { teamMemberId: 'google|1049abc', serviceKey: 'taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
     slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await flushMany();
   mount.querySelector('textarea[name="phrase"]').value = 'fissa un taglio con dan giovedì alle 18';
@@ -4072,7 +4081,7 @@ test('a differently-cased drafted service lands on its entry, never the default'
     phrase: { teamMemberId: 'marco', serviceKey: 'Taglio', startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' },
     slots: [{ startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z' }],
   });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
   await view.render();
   await flushMany();
   mount.querySelector('textarea[name="phrase"]').value = 'fissa un taglio con marco giovedì alle 18';
@@ -4122,7 +4131,7 @@ test('the service-error hint clears on a change-event service switch', async () 
   const mount = createMount();
   const refused = Object.assign(new Error('Calendar change refused'), { status: 400, code: 'BO_APPOINTMENT_SERVICE_REFUSED' });
   const client = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]), failConfirmWith: refused });
-  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   await pickCustomerByName(mount, 'Ada');

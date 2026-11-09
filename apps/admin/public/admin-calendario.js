@@ -327,11 +327,13 @@ function memberBornAt(member) {
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
  * the human behind every subject, and one human can hold several subjects
- * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
- * mailbox (unique per person), so Dan is one row called Dan. A shared
- * display name alone never merges — two email-less homonyms are two humans,
- * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
- * «Rossi (2)» in member-creation order, never a technical id). A group
+ * (`github|…`, `google|…`, mailbox): subjects merge on the shared mailbox
+ * (unique per person), on the control-plane person key, or on the shared
+ * display name (backlog:3ce220e6 — the pilot forwards no person key, and
+ * one human's identities carry different mailboxes), so Dan is one row
+ * called Dan. Different names never merge; ordinals number only the rare
+ * rows that still share a base label (nameless pipe ids), in
+ * member-creation order, never a technical id. A group
  * with no roster name and no mailbox paints the
  * operator's own typed words, unless they look like a technical subject
  * (a pipe id never paints anywhere); such a row falls back to the generic
@@ -456,13 +458,15 @@ export function personRows(named, hidden, members) {
   }
   // One readable descriptor per booked subject, in roster order: the mailbox
   // the roster knows for it, else the identity kind (`github` in
-  // `github|…`), never a raw pipe id. Multi-identity rows paint them so the
-  // operator sees every identity the row books, hides or shows.
+  // `github|…`) — never a raw id on screen, so a pipe-less subject with no
+  // mailbox contributes nothing readable (booking still uses its subject).
+  // Multi-identity rows paint them so the operator sees every identity the
+  // row books, hides or shows.
   const descriptorOf = (subject) => {
     const mail = mailBySubject.get(subject) ?? null;
     if (mail !== null) return mail;
     const cut = subject.indexOf('|');
-    if (cut === -1) return subject;
+    if (cut === -1) return null;
     const kind = subject.slice(0, cut).trim().toLowerCase();
     return kind === '' ? null : kind;
   };
