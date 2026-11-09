@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
-import { ERASURE_INVENTORY } from '../packages/customer-data/src/erasure.js';
+import { ERASURE_INVENTORY, createErasureOperations } from '../packages/customer-data/src/erasure.js';
+import { resolvedNames } from '../packages/customer-data/src/store.js';
 
 /**
  * Voce d271d723 (validazione B6), giro 6: one test per row of the erasure
@@ -301,4 +302,110 @@ test('fail closed: a failed inventory write rolls everything back', async (t) =>
   values.applyManaged = original;
   assert.equal((await registryRows(app, erased)).length, 0, 'no registry row');
   assert.equal((await app.services.contacts.get(erased.id)).firstName, NAME, 'the contact rewrite rolled back');
+});
+
+/* --------------------------------- voce d8d165c6: reads in the transaction */
+
+test('reads in the transaction (d8d165c6): every decision read runs inside the same transaction as the writes', async (t) => {
+  const { app, erased } = await scene(t);
+  const database = app.database;
+  const originalTx = database.transactionAsync;
+  let depth = 0;
+  database.transactionAsync = async (fn) => {
+    depth += 1;
+    try { return await originalTx(fn); } finally { depth -= 1; }
+  };
+  const calls = {};
+  const wrapped = [];
+  for (const entry of app.modules.list()) {
+    const service = app.modules.get(entry.name)?.service;
+    if (!service || (typeof service !== 'object' && typeof service !== 'function')) continue;
+    for (const method of ['get', 'list', 'listWhere']) {
+      if (typeof service[method] !== 'function') continue;
+      const original = service[method].bind(service);
+      const label = `${entry.name}.${method}`;
+      service[method] = async (...args) => {
+        calls[label] = (calls[label] ?? 0) + 1;
+        if (depth === 0) throw new Error(`la lettura ${label} avviene fuori dalla transazione di cancellazione`);
+        return original(...args);
+      };
+      wrapped.push([service, method, original]);
+    }
+  }
+  try {
+    const receipt = await erase(app, erased);
+    assert.equal(receipt.outcome, 'erased');
+  } finally {
+    for (const [service, method, original] of wrapped) service[method] = original;
+    database.transactionAsync = originalTx;
+  }
+  for (const label of ['contact.get', 'contact.list', 'canonical-link.listWhere', 'customer-erasure-log.listWhere']) {
+    assert.ok((calls[label] ?? 0) >= 1, `the erasure decided through ${label} inside the transaction`);
+  }
+});
+
+/* ------------------ voce d8d165c6: an evidence module without list() */
+
+function erasureUnit({ orderService = undefined } = {}) {
+  const calls = { updates: [], registry: [] };
+  const contactRow = {
+    id: 'c-1', companyId: null, firstName: 'Guido', lastName: 'Presti',
+    email: 'guido@palestra-esempio.it', role: 'Titolare',
+  };
+  const emptyQuery = async () => [];
+  const managed = { createManaged: async (row) => row, listWhere: emptyQuery, applyManaged: async (row) => row };
+  const services = {
+    contact: {
+      get: async (id) => (id === 'c-1' ? { ...contactRow } : null),
+      update: async (id, patch) => { calls.updates.push([id, patch]); return { ...contactRow, ...patch }; },
+    },
+    company: { get: async () => null },
+    'canonical-link': { ...managed },
+    'external-identity': { ...managed },
+    'data-quality-issue': { ...managed },
+    'duplicate-candidate': { ...managed },
+    'customer-erasure-log': {
+      createManaged: async (row) => { calls.registry.push(row); return row; },
+      listWhere: emptyQuery,
+    },
+  };
+  if (orderService !== undefined) services.order = orderService;
+  const modules = {
+    get(name) {
+      const service = services[name];
+      if (!service) throw Object.assign(new Error(`Module not found: ${name}`), { code: 'NOT_FOUND' });
+      return { service };
+    },
+    list() { return Object.keys(services).map((name) => ({ name })); },
+  };
+  const ops = createErasureOperations({
+    database: { transactionAsync: async (fn) => fn() },
+    modules,
+    events: { emit: async () => {} },
+    core: {},
+    names: resolvedNames(),
+  });
+  return { ops, calls };
+}
+
+const UNIT_ERASE = {
+  resource: 'contact', id: 'c-1', confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
+};
+
+test('evidence without list (d8d165c6): a composed evidence module with no list() stops the erasure with a code', async () => {
+  const { ops, calls } = erasureUnit({ orderService: {} });
+  await assert.rejects(
+    () => ops.eraseCustomer(UNIT_ERASE),
+    (error) => error?.code === 'ERASURE_EVIDENCE_UNREADABLE' && error?.status === 409,
+    'an unreadable evidence module is uncertainty, never an empty shelf',
+  );
+  assert.equal(calls.registry.length, 0, 'no registry row on refusal');
+  assert.equal(calls.updates.length, 0, 'nothing rewritten on refusal');
+});
+
+test('evidence without list (d8d165c6): a non-composed evidence module stays a deployment fact', async () => {
+  const { ops, calls } = erasureUnit();
+  const receipt = await ops.eraseCustomer(UNIT_ERASE);
+  assert.equal(receipt.outcome, 'erased');
+  assert.equal(calls.registry.length, 1, 'the registry row is written');
 });
