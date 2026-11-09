@@ -1021,3 +1021,72 @@ test('6b44b0e9fcdf: the card foot pairs Tu: <ruolo> with the badge or Apri; a de
   const cards = byClassIn(mount, 'div', 'bo-spazi-card');
   assert.ok((cards.at(-1).getAttribute('class') ?? '').includes('bo-spazi-adder'), 'the dashed adder stays last');
 });
+
+// backlog:3ce220e6 (review P0): a multi-identity «Rimuovi» names every
+// identity it will suspend, so one shared display name can never quietly
+// suspend a stranger the operator did not see.
+test('3ce220e6 review P0: the remove confirmation names every identity', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
+    { subject: 'github|48571113', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
+    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan' },
+    { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara', email: 'sara@esempio.invalid' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
+  await v.render();
+  await flush();
+  const danRows = buildTeamRows(members);
+  const dan = danRows.find((row) => row.name === 'Dan');
+  assert.deepEqual(
+    dan.identities,
+    ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'google'],
+    'every identity reads in words, never a pipe id',
+  );
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Dan'));
+  await remove.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Rimuovere Dan dal team\?/, 'the question keeps its words');
+  assert.match(text(mount), /Saranno sospesi 3 account/, 'the scope counts every identity');
+  assert.ok(
+    ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'google'].every((words) => text(mount).includes(words)),
+    'the confirmation names every identity',
+  );
+  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('github|') && !text(mount).includes('google|'), 'no technical subject on screen');
+});
+
+// backlog:3ce220e6 (review P0): a single-identity row keeps the old short
+// question, with no scope note.
+test('3ce220e6 review P0: a single identity keeps the short question', async () => {
+  const members = [
+    { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara', email: 'sara@esempio.invalid' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
+  await v.render();
+  await flush();
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi');
+  await remove.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Rimuovere Sara dal team\? La sospensione/, 'no scope note on a single identity');
+  assert.ok(!text(mount).includes('Saranno sospesi'), 'no scope note on a single identity');
+});
+
+// backlog:3ce220e6 (review P2/P3): one roster groups the same whatever the
+// store order, and internal whitespace never splits one person.
+test('3ce220e6 review P2/P3: roster order and whitespace never split a person', () => {
+  const forward = [
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
+    { subject: 'github|48571113', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
+    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@gmail.invalid' },
+    { subject: 's1', role: 'operator', status: 'active', displayName: 'Sara  Conti' },
+    { subject: 's2', role: 'operator', status: 'active', displayName: 'Sara Conti' },
+  ];
+  const shapes = [forward, [...forward].reverse()].map((members) => buildTeamRows(members).map((row) => ({
+    // The painted name stays first-seen; the grouping is what must not move.
+    name: row.name.replace(/\s+/g, ' '),
+    subjects: [...row.subjects].sort(),
+    emails: [...row.emails].sort(),
+  })));
+  assert.deepEqual(shapes[0], shapes[1], 'the same people in either store order');
+  assert.equal(shapes[0].length, 2, 'Dan once, Sara once');
+  assert.deepEqual(shapes[0][0].subjects, ['broker|dan', 'github|48571113', 'google|1049abc']);
+});

@@ -284,10 +284,15 @@ function cleanPersonText(value) {
   return text === '' ? null : text;
 }
 
-/** Lower-cased person key for grouping, or null when there is none. @param {unknown} value */
+/**
+ * Lower-cased person key for grouping, or null when there is none. Names
+ * collapse internal whitespace («Sara  Conti» is «Sara Conti»), the same
+ * rule Spazi e accessi uses, so the two cards group one roster the same
+ * way (backlog:3ce220e6 review). @param {unknown} value
+ */
 function personKeyOf(value) {
   const text = cleanPersonText(value);
-  return text === null ? null : text.toLowerCase();
+  return text === null ? null : text.replace(/\s+/g, ' ').toLowerCase();
 }
 
 /**
@@ -393,16 +398,21 @@ export function personRows(named, hidden, members) {
     if (rawMail !== null && !mailBySubject.has(subject)) mailBySubject.set(subject, rawMail);
     const born = memberBornAt(member);
     if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
-    if (personId !== null && group.personId === null) {
-      group.personId = personId;
-      byPerson.set(personId, group);
+    // Every observed alias points at the group, even when the group already
+    // holds a primary (backlog:3ce220e6 review P2): a later roster row
+    // carrying a secondary mailbox, person key or name must find the same
+    // person whatever the roster order. Primaries stay first-seen, so the
+    // painted name and mailbox never depend on the store order.
+    if (personId !== null) {
+      if (group.personId === null) group.personId = personId;
+      if (!byPerson.has(personId)) byPerson.set(personId, group);
     }
-    if (email !== null && group.email === null) {
-      group.email = member.email.trim();
-      byEmail.set(email, group);
+    if (email !== null) {
+      if (group.email === null) group.email = member.email.trim();
+      if (!byEmail.has(email)) byEmail.set(email, group);
     }
-    if (nameKey !== null && group.nameKey === null) {
-      group.nameKey = nameKey;
+    if (nameKey !== null) {
+      if (group.nameKey === null) group.nameKey = nameKey;
       if (!byName.has(nameKey)) byName.set(nameKey, group);
     }
     if (group.displayName === null && display !== null) group.displayName = display;
@@ -872,6 +882,11 @@ export function aiBlockOf(error) {
  * backlog:3ce220e6: same-named identities are one person row, so a shared
  * name resolves to every identity of that row; strangers resolve to
  * nothing — the caller keeps the drafted words on the outsider path.
+ * An exact identity returns the whole row on purpose (review P1 answer):
+ * the week search must cover every identity the human holds and offer a
+ * step only when all of them are free, so booking one identity never
+ * double-books their other one; the manual prefill takes the drafted
+ * identity only when the row holds exactly one.
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {
@@ -1893,14 +1908,22 @@ export function createCalendarioView(deps) {
       return panel;
     }
     for (const row of rows) {
+      // A multi-identity row hides or shows every identity at once
+      // (backlog:3ce220e6 review P1): the title names them all, so the
+      // operator sees the toggle scope before clicking. One row per person
+      // is what the acceptance asks (the pilot forwards no person key, so
+      // the shared display name is the only same-person signal); a
+      // same-named stranger would fold in too, and then this title is what
+      // warns the operator.
+      const scope = row.identities.length > 1 ? ` (${row.identities.join(', ')})` : '';
       const toggle = el(doc, 'button', {
         className: 'secondary small',
         attrs: {
           type: 'button',
           'aria-pressed': row.active ? 'true' : 'false',
           title: row.listed
-            ? (row.active ? `Nascondi ${row.label} dalla settimana` : `Mostra ${row.label} nella settimana`)
-            : `Mostra ${row.label} nella settimana`,
+            ? (row.active ? `Nascondi ${row.label}${scope} dalla settimana` : `Mostra ${row.label}${scope} nella settimana`)
+            : `Mostra ${row.label}${scope} nella settimana`,
         },
       });
       const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });

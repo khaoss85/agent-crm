@@ -255,9 +255,13 @@ function nameInitials(name) {
  * different human into the row, hide them and let «Rimuovi» suspend them.
  * The trade-off is documented like in Calendario: two truly different
  * humans sharing one display name fold into one row, with every identity
- * still listed and suspended together. Nothing merges in the backend: the
- * row keeps every subject, and removal suspends each of them.
+ * still listed. Nothing merges in the backend: the row keeps every
+ * subject. Removal suspends each of them, but only behind an explicit
+ * confirmation naming every identity the row will suspend (review P0):
+ * the operator always sees the scope before confirming.
  *
+ * Name keys trim and collapse whitespace exactly like Calendario's
+ * personKeyOf, so the two cards group one roster the same way (review P3).
  * Without enrichment the row reads exactly as before: the subject is the
  * name and the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
@@ -270,6 +274,9 @@ export function buildTeamRows(members = []) {
   const byIdentity = new Map();
   const byName = new Map();
   const seen = new Set();
+  // The mailbox each subject carried, in roster order: a readable
+  // descriptor per identity (review P0), never a pipe id on screen.
+  const mailBySubject = new Map();
   for (const member of list) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
     if (seen.has(member.subject)) continue;
@@ -279,15 +286,19 @@ export function buildTeamRows(members = []) {
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    const nameKey = displayName === null ? null : displayName.replace(/\s+/g, ' ').toLowerCase();
+    const nameKey = displayName === null ? null : displayName.trim().replace(/\s+/g, ' ').toLowerCase();
     let person = key === null ? null : byIdentity.get(key) ?? null;
     if (person === null && nameKey !== null) person = byName.get(nameKey) ?? null;
     if (person === null) {
       person = { subjects: [], live: [], displayName: null, email, emails: [], roles: [], statuses: [] };
       people.push(person);
-      if (key !== null) byIdentity.set(key, person);
-      if (nameKey !== null && !byName.has(nameKey)) byName.set(nameKey, person);
     }
+    // Every observed alias points at the group, even when the group
+    // already holds a primary (review P2): roster order never splits one
+    // person. Primaries stay first-seen, so painted values are stable.
+    if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
+    if (nameKey !== null && !byName.has(nameKey)) byName.set(nameKey, person);
+    if (!mailBySubject.has(member.subject)) mailBySubject.set(member.subject, email);
     person.subjects.push(member.subject);
     if (member.status !== 'suspended') person.live.push(member.subject);
     person.roles.push(member.role);
@@ -310,6 +321,23 @@ export function buildTeamRows(members = []) {
       const other = person.statuses.findIndex((status) => status !== 'suspended');
       const rawStatus = STATUS_RANK.find((status) => person.statuses.includes(status))
         ?? (other >= 0 ? person.statuses[other] : 'suspended');
+      // One readable descriptor per identity, roster order, deduped: the
+      // mailbox the roster knows for it, else the identity kind (`github`
+      // in `github|…`), else the bare subject (already human-readable).
+      // A pipe id never paints anywhere (review P0).
+      const descriptorOf = (subjectId) => {
+        const mail = mailBySubject.get(subjectId) ?? null;
+        if (mail !== null) return mail;
+        const cut = subjectId.indexOf('|');
+        if (cut === -1) return subjectId;
+        const kind = subjectId.slice(0, cut).trim().toLowerCase();
+        return kind === '' ? null : kind;
+      };
+      const identities = [];
+      for (const subjectId of person.subjects) {
+        const descriptor = descriptorOf(subjectId);
+        if (descriptor !== null && !identities.includes(descriptor)) identities.push(descriptor);
+      }
       return {
         subject,
         subjects: [...person.subjects].sort(),
@@ -321,6 +349,9 @@ export function buildTeamRows(members = []) {
         // Every mailbox of the person, in roster order: a multi-identity
         // row paints them all, so no identity hides behind the first one.
         emails: [...person.emails],
+        // Every identity of the row in readable words: the «Rimuovi»
+        // confirmation names them all, so the operator sees the scope.
+        identities,
         initials: person.displayName !== null ? nameInitials(person.displayName) : memberInitials(name),
         role: spaceRoleLabel(role),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
@@ -776,8 +807,14 @@ export function createSpaziAccessiView(deps) {
           ? state.removeRetry
           : null;
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
+        // A multi-identity row suspends every listed identity (review P0):
+        // the question names them all, so one shared display name can
+        // never quietly suspend a stranger the operator did not see.
+        const scopeNote = row.subjects.length > 1
+          ? ` Saranno sospesi ${row.removable.length} account${row.identities.length > 0 ? ` (${row.identities.join(', ')})` : ''}.`
+          : '';
         confirmBox.appendChild(el(doc, 'p', {
-          text: `Rimuovere ${row.name} dal team? La sospensione vale per l\u2019intera organizzazione. Il motivo resta registrato.`,
+          text: `Rimuovere ${row.name} dal team?${scopeNote} La sospensione vale per l\u2019intera organizzazione. Il motivo resta registrato.`,
           cls: 'bo-muted',
         }));
         if (retry !== null) {

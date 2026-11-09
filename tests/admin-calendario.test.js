@@ -4681,3 +4681,50 @@ test('a block with a server-attached customer label reads service · customer wi
   // for the detail card — the block never waits for it.
   assert.ok(!mount.textContent.includes('c9'), 'a customer id is never a name');
 });
+
+// backlog:3ce220e6 (review P2): every observed alias points at the same
+// person, so roster order never splits one human across rows.
+test('3ce220e6 review P2: secondary aliases group whatever the roster order', () => {
+  const forward = [
+    { subject: 'a', role: 'member', displayName: 'Alice', email: 'e1@esempio.invalid' },
+    { subject: 'b', role: 'member', displayName: 'Bob', email: 'e1@esempio.invalid' },
+    { subject: 'c', role: 'member', displayName: 'Bob', email: 'e2@esempio.invalid' },
+  ];
+  for (const members of [forward, [...forward].reverse()]) {
+    const rows = personRows(['a', 'b', 'c'], [], members);
+    assert.equal(rows.length, 1, 'Bob on e2 finds Bob on e1 through the secondary name alias');
+    assert.deepEqual([...rows[0].ids].sort(), ['a', 'b', 'c']);
+  }
+});
+
+// backlog:3ce220e6 (review P3): one roster reads the same in both cards —
+// Calendario collapses internal whitespace exactly like Spazi e accessi.
+test('3ce220e6 review P3: a double space is the same display name', () => {
+  const rows = personRows(['a', 'b'], [], [
+    { subject: 'a', role: 'member', displayName: 'Sara  Conti' },
+    { subject: 'b', role: 'member', displayName: 'Sara Conti' },
+  ]);
+  assert.equal(rows.length, 1, 'whitespace never splits one person');
+  assert.deepEqual([...rows[0].ids].sort(), ['a', 'b']);
+});
+
+// backlog:3ce220e6 (review P1): a multi-identity toggle names every
+// identity it covers, so the operator sees the scope before clicking.
+test('3ce220e6 review P1: the person toggle title names every identity', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const members = [
+    { subject: 'broker|dan', role: 'owner', displayName: 'Dan', email: 'dan@esempio.invalid' },
+    { subject: 'github|1', role: 'owner', displayName: 'Dan' },
+    { subject: 'google|2', role: 'owner', displayName: 'Dan' },
+  ];
+  const client = stubClient({ week: DAN_WEEK, memberships: members });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 4; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const toggle = teamToggles(mount).find((node) => node.textContent.includes('Dan'));
+  assert.ok(toggle, 'the Dan toggle paints');
+  const title = String(toggle.getAttribute('title') ?? '');
+  assert.ok(title.includes('dan@esempio.invalid'), `the title names the mailbox: ${title}`);
+  assert.ok(title.includes('github') && title.includes('google'), `the title names every identity: ${title}`);
+});
