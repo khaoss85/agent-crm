@@ -2011,6 +2011,7 @@ test('personRows falls back to the mailbox before typed words', () => {
       ids: ['marco'], id: 'marco', name: null, label: 'marco',
       active: true, listed: true,
       identities: [],
+      scope: '',
       color: memberColorIndex('marco'), initials: 'MA',
     },
   ], 'no member list: named rows keep the typed words, never invented');
@@ -2031,7 +2032,8 @@ test('personRows merges email-less homonyms on the shared display name', () => {
   assert.equal(rows.length, 1, 'one shared name without a person key is one row');
   assert.deepEqual(rows[0].ids, ['a1', 'a2']);
   assert.equal(rows[0].label, 'Rossi');
-  assert.deepEqual(rows[0].identities, [], 'nothing readable to list: pipe-less subjects with no mailbox never paint (booking still uses ids)');
+  assert.deepEqual(rows[0].identities, [], 'pipe-less subjects with no mailbox paint no words, never a pipe id');
+  assert.equal(rows[0].scope, ' (2 account)', 'the scope still counts every booked account (review giro 2 P2)');
   const split = personRows(['a1', 'a2'], [], [
     { subject: 'a1', role: 'member', displayName: 'Rossi' },
     { subject: 'a2', role: 'member', displayName: 'Bianchi' },
@@ -3182,6 +3184,34 @@ test('resolveDraftMemberIds maps a drafted name to booking identities (backlog:d
   assert.deepEqual(resolveDraftMemberIds('', [], members), [], 'empty drafts nothing');
 });
 
+// backlog:3ce220e6 (review giro 2 P1/P2): an exact drafted identity resolves
+// to itself only — never the whole row, so a same-named stranger's calendar
+// is not searched and the booking cannot land on the wrong subject. A
+// display-name draft still resolves to the single matching person row, and
+// the lookup collapses whitespace exactly like the grouping key.
+test('resolveDraftMemberIds resolves an exact identity to itself only', () => {
+  const members = [
+    { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com' },
+    { subject: 'github|48571113', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'google|1049abc', displayName: 'Dan', email: 'dan@gmail.com' },
+  ];
+  assert.deepEqual(
+    resolveDraftMemberIds('github|48571113', [], members),
+    ['github|48571113'],
+    'an exact identity searches and books itself, not the whole row',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('Dan', [], members),
+    ['broker|dan', 'github|48571113', 'google|1049abc'],
+    'the shared name still finds every identity of the one person row',
+  );
+  assert.deepEqual(
+    resolveDraftMemberIds('Sara  Conti', [], [{ subject: 's1', displayName: 'Sara Conti' }]),
+    ['s1'],
+    'the draft lookup collapses whitespace like the grouping key',
+  );
+});
+
 // backlog:d1e4d90e — the server answers per booking identity, so one human
 // with two identities needs the intersection: a step held under coach-guido
 // must not be offered as free under google|g1.
@@ -3227,6 +3257,11 @@ test('personFreeSlots offers a step only when every identity reports it free', (
     [{ ...step, teamMemberId: 'marco' }],
     'a single identity keeps the plain union, corrupt rows dropped',
   );
+  assert.deepEqual(
+    personFreeSlots(held, ['coach-guido'], 'coach-guido'),
+    [{ ...other, teamMemberId: 'coach-guido' }],
+    'a single searched identity reads only its own group: the other identity’s step stays out (review giro 2 P1)',
+  );
   assert.deepEqual(personFreeSlots('nope', ['marco'], 'marco'), [], 'non-lists stay empty');
 });
 
@@ -3259,7 +3294,8 @@ test('a phrase step held under one identity is never proposed under the other', 
   }
   const suggest = client.calls.find((call) => call.path.startsWith('/api/appointments/suggest-slots'));
   assert.ok(suggest, 'the phrase feeds a slot search');
-  assert.ok(suggest.path.includes('google%7Cg1'), 'every identity the human holds is searched');
+  assert.ok(suggest.path.includes('teamMemberIds=coach-guido'), 'the drafted identity is searched');
+  assert.ok(!suggest.path.includes('google%7Cg1'), 'an exact draft never searches the whole merged row (review giro 2 P1)');
   assert.ok(
     texts(mount, 'p').includes('Nessuno slot libero quel giorno, prova con un altro giorno.'),
     'the step held under coach-guido is not offered as free under google|g1',

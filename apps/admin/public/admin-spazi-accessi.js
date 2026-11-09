@@ -244,24 +244,25 @@ function nameInitials(name) {
  * carry, beside each opaque subject, the control-plane displayName and email
  * the pilot enriches it with — the same fields the Calendario team reads.
  * One human can hold several subjects (an adopted broker member and the
- * Google one: prod 07/11 listed «Daniele Pelleri» twice). The roster carries
- * no person id (the pilot forwards no `operatorAccountId`), so one row
- * holds every subject sharing both the mailbox and the display name
- * (trimmed, case-insensitive) — or sharing the display name alone
- * (backlog:3ce220e6: verification Mac 09/11, Dan holds broker, github and
- * google identities with different mailboxes, and Calendario already
- * merges that way, so this card reads the same). A mailbox alone never
- * merges: a shared mailbox (info@…) or stale enrichment could fold a
- * different human into the row, hide them and let «Rimuovi» suspend them.
- * The trade-off is documented like in Calendario: two truly different
- * humans sharing one display name fold into one row, with every identity
- * still listed. Nothing merges in the backend: the row keeps every
- * subject. Removal suspends each of them, but only behind an explicit
- * confirmation naming every identity the row will suspend (review P0):
- * the operator always sees the scope before confirming.
+ * Google one: prod 07/11 listed «Daniele Pelleri» twice). One row holds
+ * the subjects sharing both the mailbox and the display name (trimmed,
+ * case-insensitive, whitespace collapsed). A shared display name alone
+ * never merges here (review giro 2 P0): «Rimuovi» suspends every subject
+ * of the row org-wide, so folding two same-named strangers would suspend
+ * an innocent human. Same-named strangers keep separate rows with
+ * separate «Rimuovi» scopes. The Calendario Team card still merges on the
+ * shared name (backlog:3ce220e6: the pilot forwards no person key, so the
+ * name is the only same-person signal left for the filter) — narrowing
+ * per review rule 9, two rounds against the same promise. A mailbox alone
+ * never merges either: a shared mailbox (info@…) or stale enrichment
+ * could fold a different human into the row. Nothing merges in the
+ * backend: the row keeps every subject. Removal suspends each of them,
+ * but only behind an explicit confirmation naming every identity the row
+ * will suspend (review P0): the operator always sees the scope before
+ * confirming.
  *
  * Name keys trim and collapse whitespace exactly like Calendario's
- * personKeyOf, so the two cards group one roster the same way (review P3).
+ * personKeyOf, so equal names compare equal on both cards (review P3).
  * Without enrichment the row reads exactly as before: the subject is the
  * name and the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
@@ -272,7 +273,6 @@ export function buildTeamRows(members = []) {
   /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, emails: string[], roles: unknown[], statuses: unknown[]}>} */
   const people = [];
   const byIdentity = new Map();
-  const byName = new Map();
   const seen = new Set();
   // The mailbox each subject carried, in roster order: a readable
   // descriptor per identity (review P0), never a pipe id on screen.
@@ -286,18 +286,15 @@ export function buildTeamRows(members = []) {
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    const nameKey = displayName === null ? null : displayName.trim().replace(/\s+/g, ' ').toLowerCase();
     let person = key === null ? null : byIdentity.get(key) ?? null;
-    if (person === null && nameKey !== null) person = byName.get(nameKey) ?? null;
     if (person === null) {
       person = { subjects: [], live: [], displayName: null, email, emails: [], roles: [], statuses: [] };
       people.push(person);
     }
-    // Every observed alias points at the group, even when the group
-    // already holds a primary (review P2): roster order never splits one
+    // Every observed mailbox+name alias points at the group, even when the
+    // group already holds one (review P2): roster order never splits one
     // person. Primaries stay first-seen, so painted values are stable.
     if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
-    if (nameKey !== null && !byName.has(nameKey)) byName.set(nameKey, person);
     if (!mailBySubject.has(member.subject)) mailBySubject.set(member.subject, email);
     person.subjects.push(member.subject);
     if (member.status !== 'suspended') person.live.push(member.subject);
@@ -323,13 +320,15 @@ export function buildTeamRows(members = []) {
         ?? (other >= 0 ? person.statuses[other] : 'suspended');
       // One readable descriptor per identity, roster order, deduped: the
       // mailbox the roster knows for it, else the identity kind (`github`
-      // in `github|…`), else the bare subject (already human-readable).
+      // in `github|…`). A pipe-less subject with no mailbox contributes
+      // nothing readable — the scope line below still counts it through
+      // the suspended subjects, so no account hides (review giro 2 P2).
       // A pipe id never paints anywhere (review P0).
       const descriptorOf = (subjectId) => {
         const mail = mailBySubject.get(subjectId) ?? null;
         if (mail !== null) return mail;
         const cut = subjectId.indexOf('|');
-        if (cut === -1) return subjectId;
+        if (cut === -1) return null;
         const kind = subjectId.slice(0, cut).trim().toLowerCase();
         return kind === '' ? null : kind;
       };

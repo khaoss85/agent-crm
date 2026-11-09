@@ -834,14 +834,14 @@ test('the invite toggle closes the inline form and aria-expanded tracks menu or 
 const byClassIn = (mount, tag, cls) => mount.findAll(tag)
   .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(cls));
 
-test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name merges (backlog:3ce220e6)', () => {
+test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name alone never merges (review giro 2 P0)', () => {
   const rows = buildTeamRows([
     { subject: 'broker|dan', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'dan@esempio.invalid' },
     { subject: 'google|42', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: ' DAN@esempio.invalid ' },
     { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Rossi' },
     { subject: 'google|8', role: 'observer', status: 'active', displayName: 'Marco Rossi' },
   ]);
-  assert.equal(rows.length, 2, 'Daniele is one row; the two same-named subjects are one row (backlog:3ce220e6)');
+  assert.equal(rows.length, 3, 'Daniele is one row; the two same-named email-less subjects are two rows with separate scopes');
   const dan = rows.find((row) => row.name === 'Daniele Pelleri');
   assert.deepEqual(dan.subjects, ['broker|dan', 'google|42'], 'the row keeps every subject, nothing merges server-side');
   assert.deepEqual(dan.removable, ['broker|dan', 'google|42']);
@@ -850,7 +850,10 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   assert.equal(dan.initials, 'DP', 'initials follow the person name');
   assert.equal(dan.role, 'Titolare', 'a person holding two roles shows the stronger one');
   assert.equal(dan.status, 'attivo');
-  assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 1);
+  assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2, 'same-named strangers keep separate rows and separate Rimuovi scopes');
+  const rossi = rows.filter((row) => row.name === 'Marco Rossi');
+  assert.deepEqual(rossi[0].removable, ['google|7'], 'removing one Rossi never suspends the other');
+  assert.deepEqual(rossi[1].removable, ['google|8']);
   // Without enrichment the row reads exactly as before.
   const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
   assert.equal(bare.name, 'marco');
@@ -865,11 +868,12 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   assert.equal(half.status, 'attivo', 'a person with one live subject is active');
 });
 
-// backlog:3ce220e6 — AC-2 of backlog:810ed0bf as the Mac saw it on 09/11:
-// three identities of Dan (broker, github, google) with different
-// mailboxes and no person key are one «Dan» row, and every mailbox stays
-// visible inside the row.
-test('3ce220e6: three identities with different mailboxes are one person row', async () => {
+// backlog:3ce220e6 (narrowed at giro 3 per review rule 9): in Spazi e
+// accessi a shared display name alone never merges — «Rimuovi» suspends
+// org-wide, so each identity of Dan keeps its own row and its own removal
+// scope. The one-row promise (Team card and person menu in Calendario)
+// still holds where nothing destructive fans out.
+test('3ce220e6: same-named identities with different mailboxes keep separate rows in Spazi', async () => {
   const members = [
     { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
     { subject: 'github|48571113', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
@@ -877,26 +881,20 @@ test('3ce220e6: three identities with different mailboxes are one person row', a
     { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara', email: 'sara@esempio.invalid' },
   ];
   const rows = buildTeamRows(members);
-  assert.equal(rows.length, 2, 'three identities of Dan are one row, plus Sara');
-  const dan = rows.find((row) => row.name === 'Dan');
-  assert.deepEqual(dan.subjects, ['broker|dan', 'github|48571113', 'google|1049abc'], 'the row keeps every subject');
-  assert.deepEqual(
-    dan.emails,
-    ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'dan@gmail.invalid'],
-    'every mailbox stays visible inside the row',
-  );
-  assert.deepEqual(dan.removable, ['broker|dan', 'github|48571113', 'google|1049abc']);
+  assert.equal(rows.length, 4, 'each identity of Dan is its own row, plus Sara');
+  const dans = rows.filter((row) => row.name === 'Dan');
+  assert.equal(dans.length, 3, 'no Dan hides behind another one');
+  assert.deepEqual(dans.map((row) => row.removable), [['broker|dan'], ['github|48571113'], ['google|1049abc']], 'each Rimuovi scope holds one identity');
+  assert.deepEqual(dans.map((row) => row.emails), [['dan-broker@esempio.invalid'], ['dan@esempio.invalid'], ['dan@gmail.invalid']], 'each row shows its own mailbox');
   const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
   await v.render();
   await flush();
   const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
-  assert.deepEqual(names, ['Dan', 'Sara'], 'the card paints Dan once');
-  const emails = byClassIn(mount, 'div', 'bo-spazi-email');
-  assert.ok(
-    emails.some((node) => ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'dan@gmail.invalid']
-      .every((mailbox) => node.textContent.includes(mailbox))),
-    'the Dan row names every mailbox',
-  );
+  assert.deepEqual(names, ['Dan', 'Dan', 'Dan', 'Sara'], 'one row per identity, sorted by name then subject');
+  const emails = byClassIn(mount, 'div', 'bo-spazi-email').map((node) => node.textContent);
+  assert.ok(emails.includes('dan-broker@esempio.invalid'), 'every mailbox stays visible next to its own row');
+  assert.ok(emails.includes('dan@esempio.invalid'));
+  assert.ok(emails.includes('dan@gmail.invalid'));
 });
 
 test('6b44b0e9fcdf review: a mailbox alone never merges — different or missing names stay separate people', () => {
@@ -1022,36 +1020,42 @@ test('6b44b0e9fcdf: the card foot pairs Tu: <ruolo> with the badge or Apri; a de
   assert.ok((cards.at(-1).getAttribute('class') ?? '').includes('bo-spazi-adder'), 'the dashed adder stays last');
 });
 
-// backlog:3ce220e6 (review P0): a multi-identity «Rimuovi» names every
-// identity it will suspend, so one shared display name can never quietly
-// suspend a stranger the operator did not see.
+// backlog:3ce220e6 (review P0, narrowed at giro 3): same-named identities
+// with different mailboxes are separate rows, so «Rimuovi» can never suspend
+// a stranger. A multi-subject row (one mailbox, several subjects) still
+// names every identity it will suspend, and every subject contributes a
+// readable descriptor (review giro 2 P2: total, never silent).
 test('3ce220e6 review P0: the remove confirmation names every identity', async () => {
   const members = [
     { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
-    { subject: 'github|48571113', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
-    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan' },
+    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
     { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara', email: 'sara@esempio.invalid' },
   ];
   const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
   await v.render();
   await flush();
   const danRows = buildTeamRows(members);
+  assert.equal(danRows.length, 2, 'one mailbox and one name are one Dan row, plus Sara');
   const dan = danRows.find((row) => row.name === 'Dan');
-  assert.deepEqual(
-    dan.identities,
-    ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'google'],
-    'every identity reads in words, never a pipe id',
-  );
+  assert.deepEqual(dan.identities, ['dan-broker@esempio.invalid'], 'the shared mailbox reads once');
   const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Dan'));
   await remove.listeners.click[0]();
   await flush();
   assert.match(text(mount), /Rimuovere Dan dal team\?/, 'the question keeps its words');
-  assert.match(text(mount), /Saranno sospesi 3 account/, 'the scope counts every identity');
-  assert.ok(
-    ['dan-broker@esempio.invalid', 'dan@esempio.invalid', 'google'].every((words) => text(mount).includes(words)),
-    'the confirmation names every identity',
-  );
-  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('github|') && !text(mount).includes('google|'), 'no technical subject on screen');
+  assert.match(text(mount), /Saranno sospesi 2 account/, 'the scope counts every identity');
+  assert.ok(text(mount).includes('dan-broker@esempio.invalid'), 'the confirmation names the identity');
+  assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|'), 'no technical subject on screen');
+});
+
+// backlog:3ce220e6 (review giro 2 P2): a pipe-less subject without a mailbox
+// paints no words — never a pipe id — while the scope line still counts it
+// through the suspended subjects, so no account hides.
+test('3ce220e6: an unreadable identity still counts in the scope', () => {
+  const [plain] = buildTeamRows([{ subject: 'a1', role: 'operator', status: 'active', displayName: 'Rossi' }]);
+  assert.deepEqual(plain.identities, [], 'no readable words, never a pipe id');
+  assert.deepEqual(plain.removable, ['a1'], 'the account stays in the removal scope');
+  const [kinded] = buildTeamRows([{ subject: 'github|99', role: 'operator', status: 'active', displayName: 'Rossi' }]);
+  assert.deepEqual(kinded.identities, ['github'], 'a pipe identity without a mailbox lists its kind');
 });
 
 // backlog:3ce220e6 (review P0): a single-identity row keeps the old short
@@ -1071,14 +1075,15 @@ test('3ce220e6 review P0: a single identity keeps the short question', async () 
 });
 
 // backlog:3ce220e6 (review P2/P3): one roster groups the same whatever the
-// store order, and internal whitespace never splits one person.
+// store order, and internal whitespace never splits one person. Same-named
+// identities with different mailboxes stay separate rows in either order.
 test('3ce220e6 review P2/P3: roster order and whitespace never split a person', () => {
   const forward = [
-    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-broker@esempio.invalid' },
-    { subject: 'github|48571113', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
-    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@gmail.invalid' },
-    { subject: 's1', role: 'operator', status: 'active', displayName: 'Sara  Conti' },
-    { subject: 's2', role: 'operator', status: 'active', displayName: 'Sara Conti' },
+    { subject: 'broker|dan', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
+    { subject: 'google|1049abc', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan@esempio.invalid' },
+    { subject: 's1', role: 'operator', status: 'active', displayName: 'Sara  Conti', email: 'sara@esempio.invalid' },
+    { subject: 's2', role: 'operator', status: 'active', displayName: 'Sara Conti', email: 'sara@esempio.invalid' },
+    { subject: 'github|9', role: 'owner', status: 'active', displayName: 'Dan', email: 'dan-altro@esempio.invalid' },
   ];
   const shapes = [forward, [...forward].reverse()].map((members) => buildTeamRows(members).map((row) => ({
     // The painted name stays first-seen; the grouping is what must not move.
@@ -1087,6 +1092,6 @@ test('3ce220e6 review P2/P3: roster order and whitespace never split a person', 
     emails: [...row.emails].sort(),
   })));
   assert.deepEqual(shapes[0], shapes[1], 'the same people in either store order');
-  assert.equal(shapes[0].length, 2, 'Dan once, Sara once');
-  assert.deepEqual(shapes[0][0].subjects, ['broker|dan', 'github|48571113', 'google|1049abc']);
+  assert.equal(shapes[0].length, 3, 'Dan once per mailbox, Sara once despite the double space');
+  assert.deepEqual(shapes[0].find((row) => row.name === 'Sara Conti').subjects, ['s1', 's2']);
 });

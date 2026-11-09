@@ -470,8 +470,10 @@ export function personRows(named, hidden, members) {
   // the roster knows for it, else the identity kind (`github` in
   // `github|…`) — never a raw id on screen, so a pipe-less subject with no
   // mailbox contributes nothing readable (booking still uses its subject).
-  // Multi-identity rows paint them so the operator sees every identity the
-  // row books, hides or shows.
+  // Scope lines never rely on the readable count alone (review giro 2 P2):
+  // they gate on the booked subjects and name their number, so the
+  // operator sees every account the row books, hides or shows, even when
+  // one of them has no readable words.
   const descriptorOf = (subject) => {
     const mail = mailBySubject.get(subject) ?? null;
     if (mail !== null) return mail;
@@ -488,13 +490,21 @@ export function personRows(named, hidden, members) {
       const descriptor = descriptorOf(subject);
       if (descriptor !== null && !identities.includes(descriptor)) identities.push(descriptor);
     }
+    // The visible scope of a multi-subject row: the readable identities
+    // when there are several, else the booked account count — never a
+    // silent single, never a raw id (review giro 2 P2).
+    const ids = [...group.subjects];
+    const scope = ids.length <= 1
+      ? ''
+      : (identities.length > 1 ? ` (${identities.join(', ')})` : ` (${ids.length} account)`);
     return {
-      ids: [...group.subjects],
+      ids,
       id: primary,
       name,
       label,
       listed,
       identities,
+      scope,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
       active: listed && group.subjects.some((subject) => !off.has(subject)),
@@ -878,24 +888,24 @@ export function aiBlockOf(error) {
 /**
  * backlog:d1e4d90e — resolve a phrase-drafted person against the known team:
  * the model answers a name («Marco»), the search needs booking identities.
- * An exact identity wins; then one display-name match (case-insensitive).
- * backlog:3ce220e6: same-named identities are one person row, so a shared
- * name resolves to every identity of that row; strangers resolve to
- * nothing — the caller keeps the drafted words on the outsider path.
- * An exact identity returns the whole row on purpose (review P1 answer):
- * the week search must cover every identity the human holds and offer a
- * step only when all of them are free, so booking one identity never
- * double-books their other one; the manual prefill takes the drafted
- * identity only when the row holds exactly one.
+ * An exact identity resolves to itself only (review giro 2 P1): fanning
+ * out to the whole row would intersect a stranger's calendar whenever two
+ * same-named humans share one row, and could book the wrong subject. A
+ * display-name draft resolves to the single matching row — Dan's merged
+ * row included, so one name still finds every identity of the person —
+ * through the same collapsed key the grouping uses (review giro 2 P2).
+ * Strangers resolve to nothing — the caller keeps the drafted words on
+ * the outsider path.
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {
   if (typeof draftMember !== 'string' || draftMember.trim() === '') return [];
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
-  if (exact) return [...exact.ids];
-  const wanted = draftMember.trim().toLowerCase();
-  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
+  if (exact) return [draftMember];
+  const wanted = personKeyOf(draftMember);
+  if (wanted === null) return [];
+  const byName = rows.filter((row) => personKeyOf(row.name) === wanted);
   if (byName.length === 1) return [...byName[0].ids];
   return [];
 }
@@ -941,7 +951,10 @@ export function rankPhraseProposals(slots) {
  * only when every searched identity reports it free — otherwise Conferma
  * would book the same human twice. A searched identity with no answer
  * group proves nothing, so its steps stay unoffered (fail closed). A
- * single searched identity keeps the plain union, exactly as before.
+ * single searched identity reads only its own answer group (review giro
+ * 2 P1): an exact draft searches itself, never the whole merged row, so a
+ * same-named stranger's slots stay out of the offer. The server answers
+ * only the requested identities; the client never borrows another one's.
  * The offered step books the drafted identity when the draft named one of
  * the searched identities, else the first searched identity — deterministic,
  * never invented.
@@ -959,6 +972,7 @@ export function personFreeSlots(groups, searchIds, member) {
   if (ids.length <= 1) {
     const kept = [];
     for (const group of list) {
+      if (ids.length === 1 && (group?.teamMemberId ?? member) !== ids[0]) continue;
       for (const slot of group?.slots ?? []) {
         if (!slot?.startsAt || !slot?.endsAt) continue;
         kept.push({ startsAt: slot.startsAt, endsAt: slot.endsAt, teamMemberId: group?.teamMemberId ?? member });
@@ -1915,7 +1929,7 @@ export function createCalendarioView(deps) {
       // the shared display name is the only same-person signal); a
       // same-named stranger would fold in too, and then this title is what
       // warns the operator.
-      const scope = row.identities.length > 1 ? ` (${row.identities.join(', ')})` : '';
+      const scope = typeof row.scope === 'string' ? row.scope : '';
       const toggle = el(doc, 'button', {
         className: 'secondary small',
         attrs: {
@@ -1931,7 +1945,9 @@ export function createCalendarioView(deps) {
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
       toggle.appendChild(el(doc, 'span', { text: row.label }));
       // One row per person, every identity visible inside it (backlog:3ce220e6):
-      // the badges name each booked identity behind the row, never a pipe id.
+      // the badges name each readable identity behind the row, never a pipe
+      // id; the title scope above always carries the booked account count,
+      // so an account without readable words is never hidden (review P2).
       if (row.identities.length > 1) {
         for (const identity of row.identities) {
           toggle.appendChild(el(doc, 'span', { className: 'badge', attrs: { 'aria-hidden': 'true' }, text: identity }));
@@ -3271,7 +3287,7 @@ export function createCalendarioView(deps) {
     const options = [{ value: '', label: 'Scegli una persona…' },
       ...rows.map((row) => ({
         value: currentRow === row && current !== '' ? current : row.id,
-        label: row.identities.length > 1 ? `${row.label} (${row.identities.join(', ')})` : row.label,
+        label: `${row.label}${typeof row.scope === 'string' ? row.scope : ''}`,
       }))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
