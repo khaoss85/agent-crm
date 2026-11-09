@@ -126,7 +126,7 @@ composition is deliberately empty — a project writes the composition it wants 
 same one CI runs on every push) into a directory it keeps, then inspects the result:
 
 ```text
-  modules       103       resources     77        policies       7
+  modules       104       resources     77        policies       7
   packages       9        actions       65        providers      1
 
   production posture — not a readiness claim: the framework authenticates
