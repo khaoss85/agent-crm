@@ -26,6 +26,7 @@ import {
   REPO_WIDE_GUARDS,
   REPO_WIDE_GUARD_EXCLUSIONS,
   STEP_BUDGET_SEC,
+  bonusQueue,
   buildFileImports,
   changedTestFiles,
   digestDirectorySuites,
@@ -44,6 +45,7 @@ import {
   runTestShards,
   shardCountFor,
   testJobs,
+  timeoutVerdict,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -1820,6 +1822,75 @@ test('runTestShards times out naming the running and the still-queued files', as
     assert.deepEqual(result.remaining, ['slow1.test.js', 'slow2.test.js', 'quick.test.js']);
     assert.notEqual(result.status, 0);
     assert.equal(result.completedShards, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an oversized selection queues every dropped test behind the core, nearest first', () => {
+  // VERIFIER_BACK backlog:3335fd28 (08/11): planGate/fallbackPlan fell back
+  // to the PR-owned changed tests and the ~198 dropped selected tests never
+  // ran — skipped, against "mai saltata". The run queue must hold the whole
+  // mapped selection: the core suite first, the dropped remainder behind it
+  // in nearest-first order, so the run bound — not the plan — decides how
+  // far the step drains, and every file the bound does not reach is named.
+  const distances = new Map([
+    ['tests/far.test.js', 5],
+    ['tests/mine.test.js', 3],
+    ['tests/near.test.js', 1],
+  ]);
+  assert.deepEqual(bonusQueue(distances, ['tests/mine.test.js']), ['tests/near.test.js', 'tests/far.test.js']);
+  assert.deepEqual(bonusQueue(distances, ['tests/mine.test.js', 'tests/near.test.js', 'tests/far.test.js']), []);
+  assert.deepEqual(bonusQueue(new Map(), ['tests/mine.test.js']), []);
+});
+
+test('a timeout with the core finished warns naming the bonus remainder, never green silently', () => {
+  // The core suite ran green; only bonus files the bound did not reach
+  // remain, with no failure anywhere: warn naming them, since the full
+  // suite on `main` stays the safety net behind the remainder.
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/far.test.js'], []), 'warn');
+});
+
+test('a timeout with core files remaining fails red', () => {
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/mine.test.js', 'tests/far.test.js'], []), 'fail');
+});
+
+test('a timeout after a file failed fails red even when the core finished', () => {
+  // A failure anywhere must fail the step: a warn-green here would hide it.
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/far.test.js'], ['tests/far.test.js']), 'fail');
+});
+
+test('runTestShards names the files that failed', async () => {
+  const dir = scratchTests({
+    'ok.test.js': "import test from 'node:test';\ntest('ok passes', () => {});\n",
+    'bad.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bad fails', () => { assert.equal(1, 2); });\n",
+  });
+  try {
+    const result = await runTestShards(['ok.test.js', 'bad.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
+    assert.equal(result.timedOut, false);
+    assert.deepEqual(result.remaining, []);
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(result.failedFiles, ['bad.test.js']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a timeout over core plus bonus drains the core and warns on the bonus remainder', async () => {
+  // The queue the cure builds for an oversized selection: the core first,
+  // the dropped remainder behind it. The bound hits mid-bonus with the core
+  // finished and green: warn, naming the bonus files that remained.
+  const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
+  const dir = scratchTests({
+    'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
+    'bonus.test.js': sleeper,
+  });
+  try {
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['bonus.test.js']);
+    assert.deepEqual(result.failedFiles, []);
+    assert.equal(timeoutVerdict(['core.test.js'], result.remaining, result.failedFiles), 'warn');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
