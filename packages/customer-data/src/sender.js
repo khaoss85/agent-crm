@@ -241,16 +241,29 @@ export function createPolicyReader({ modules, names, core }) {
  */
 export const NO_COMPANY_NAME = 'Senza azienda';
 
-const NO_COMPANY_NORMALIZED = normalizeCompanyName(NO_COMPANY_NAME);
-
 /**
- * Whether a company record is a «no company» placeholder. One predicate for
- * every reader, on the same normalization the company lookup uses.
+ * Whether a company record is a «no company» placeholder
+ * (backlog:ac65e448fcb4). One predicate for every reader, on the core
+ * `placeholder` flag only — never on the name, so a real company named
+ * «Senza azienda» reads as a company.
  * @param {unknown} company
  */
 export function isNoCompany(company) {
-  const name = /** @type {any} */ (company)?.name;
-  return typeof name === 'string' && normalizeCompanyName(name) === NO_COMPANY_NORMALIZED;
+  const flag = /** @type {any} */ (company)?.placeholder;
+  return flag === true || flag === 1;
+}
+
+const NO_COMPANY_INPUT_NORMALIZED = normalizeCompanyName(NO_COMPANY_NAME);
+
+/**
+ * Write boundary only (review #654, giro 4): a row that literally names
+ * «Senza azienda» means «no company», so it takes its own placeholder.
+ * Reads never use this — they key on the core `placeholder` flag, so a
+ * real company with that name still reads as a company.
+ * @param {unknown} name
+ */
+function namesNoCompany(name) {
+  return typeof name === 'string' && normalizeCompanyName(name) === NO_COMPANY_INPUT_NORMALIZED;
 }
 
 /**
@@ -285,7 +298,7 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     let company;
     // An explicit «Senza azienda» names no company (review #654, giro 4):
     // it takes the contact's own placeholder, never another customer's.
-    const reservedName = Boolean(row.companyName) && isNoCompany({ name: row.companyName });
+    const reservedName = Boolean(row.companyName) && namesNoCompany(row.companyName);
     if ((!row.companyName && options.companyFromEmail !== true) || reservedName) {
       // Production 07/11: a customer typed or imported with no Azienda got
       // the email domain as its company («esempio.invalid»). The core still
@@ -293,7 +306,7 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
       // NO_COMPANY_NAME placeholder — never a name derived from the email,
       // never a row another customer or space shares. An explicit domain
       // column stays on it as evidence (review #654).
-      company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null }, { actor });
+      company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null, placeholder: true }, { actor });
     } else {
       const companies = row.companyName
         ? (await core.findCompaniesByNormalizedName(row.companyName)).filter((found) => !isNoCompany(found))

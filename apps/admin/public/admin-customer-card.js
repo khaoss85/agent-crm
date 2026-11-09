@@ -644,10 +644,21 @@ export function detailsRefusalText(error) {
  */
 export const NO_COMPANY_NAME = 'Senza azienda';
 
-/** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
+/** The company name the scheda shows, or null for none / a placeholder. @param {any} card */
 export function shownCompanyName(card) {
+  // The core `placeholder` flag (backlog:ac65e448fcb4) marks the «no
+  // company» row — never the name, so a real company named «Senza
+  // azienda» still shows.
+  if (card?.company?.placeholder === true || card?.company?.placeholder === 1) return null;
   const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
-  // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
+  // A carried `placeholder: false` always shows, whatever the name: a real
+  // company may be called «Senza azienda».
+  if (card?.company?.placeholder === false || card?.company?.placeholder === 0) {
+    return name === '' ? null : name;
+  }
+  // Flag-missing shapes (cached or legacy cards) keep the name rule, so the
+  // reserved row never shows: same normalization as customer-data
+  // `namesNoCompany` (core normalizeCompanyName).
   const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
   if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
   // A stored placeholder (`Unknown (assistenza@…)`) is no company either

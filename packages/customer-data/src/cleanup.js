@@ -239,13 +239,16 @@ export function createCleanupProposals({ database, modules, policy, names, follo
       }
     }
 
+    const placeholderByCompanyId = new Map(companies.map((company) => [company?.id, isNoCompany(company)]));
     const byCompanyName = new Map();
     for (const subject of subjects) {
       if (subject.resource !== 'company' || !subject.label) continue;
-      // Every contact without Azienda has its own «Senza azienda»
-      // placeholder (production 07/11): same name by design, never a
-      // duplicate suspect.
-      if (isNoCompany({ name: subject.label })) continue;
+      // Every contact without Azienda has its own placeholder
+      // (production 07/11, flag backlog:ac65e448fcb4): same name by
+      // design, never a duplicate suspect. The flag comes from the real
+      // company row — never from the label, so a real company with that
+      // name still pairs.
+      if (placeholderByCompanyId.get(subject.id)) continue;
       const normalized = normalizeCompanyName(subject.label);
       if (!byCompanyName.has(normalized)) byCompanyName.set(normalized, []);
       byCompanyName.get(normalized).push(subject);

@@ -70,7 +70,7 @@ test('the placeholder lists no customer row of its own and is never a duplicate 
   await applyOne(app, { firstName: 'Anna', email: 'anna@uno.invalid' });
   await applyOne(app, { firstName: 'Bruno', email: 'bruno@due.invalid' });
   // A placeholder left without its contact still never reads as a customer.
-  const orphan = await app.services.companies.create({ name: NO_COMPANY_NAME, domain: null }, { actor: OPERATOR });
+  const orphan = await app.services.companies.create({ name: NO_COMPANY_NAME, domain: null, placeholder: true }, { actor: OPERATOR });
   const list = await app.listCustomers({});
   assert.ok(!list.items.some((item) => item.resource === 'company' && item.id === orphan.id), 'no standalone placeholder row');
   assert.ok(!list.items.some((item) => item.name === NO_COMPANY_NAME), 'no row named after the placeholder');
@@ -92,12 +92,23 @@ test('the profile and the card name no company for a contact without Azienda, th
   assert.equal(card.company, null, 'the card API agrees with the list: no company');
 });
 
-test('isNoCompany uses the same normalization as the company lookup (review #654)', () => {
-  for (const name of ['Senza azienda', 'SENZA AZIENDA', '  Senza   azienda  ']) {
-    assert.equal(isNoCompany({ name }), true, JSON.stringify(name));
+test('isNoCompany reads the core placeholder flag, never the name (backlog:ac65e448fcb4)', () => {
+  assert.equal(isNoCompany({ name: 'Senza azienda', placeholder: true }), true);
+  assert.equal(isNoCompany({ name: 'Senza azienda', placeholder: 1 }), true);
+  // A real company keeps the flag down whatever its name is — even the
+  // placeholder's own name reads as a company.
+  for (const company of [
+    { name: 'Senza azienda', placeholder: false },
+    { name: 'SENZA AZIENDA', placeholder: false },
+    { name: '  Senza   azienda  ', placeholder: false },
+    { name: 'Senza aziende srl', placeholder: false },
+    { name: 'Senza azienda' },
+    { name: 'Senza azienda', placeholder: 0 },
+    null,
+    undefined,
+  ]) {
+    assert.equal(isNoCompany(company), false, JSON.stringify(company));
   }
-  assert.equal(isNoCompany({ name: 'Senza aziende srl' }), false);
-  assert.equal(isNoCompany(null), false);
 });
 
 test('a named Azienda still files the contact under that company', async (t) => {
@@ -110,12 +121,23 @@ test('a named Azienda still files the contact under that company', async (t) => 
   assert.equal(list.items.find((item) => item.id === contact.id)?.company?.name, 'Palestra Esempio');
 });
 
-test('the backoffice hides exactly the placeholder customer-data writes (one name, one rule)', () => {
+test('the backoffice hides the flagged placeholder and shows a real company whatever its name (backlog:ac65e448fcb4)', () => {
   // The static admin bundle cannot import a package: its copy is pinned here.
   assert.equal(ADMIN_NO_COMPANY_NAME, NO_COMPANY_NAME);
-  for (const name of ['Senza azienda', 'SENZA AZIENDA', '  Senza   azienda  ', 'Palestra Esempio']) {
-    assert.equal(shownCompanyName({ company: { name } }) === null, isNoCompany({ name }), JSON.stringify(name));
+  assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: true } }), null);
+  assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: 1 } }), null);
+  // A real company shows — even with the placeholder's own name.
+  for (const company of [
+    { name: 'Senza azienda', placeholder: false },
+    { name: 'SENZA AZIENDA', placeholder: false },
+    { name: 'Palestra Esempio', placeholder: false },
+    { name: 'Senza azienda' },
+    { name: 'Palestra Esempio' },
+  ]) {
+    assert.equal(shownCompanyName({ company }), company.name.trim(), JSON.stringify(company));
   }
+  assert.equal(shownCompanyName({ company: null }), null);
+  assert.equal(shownCompanyName({ company: { name: '  ' } }), null);
 });
 
 test('review #654 giro 4: an explicit «Senza azienda» never reuses another customer placeholder', async (t) => {
@@ -162,4 +184,34 @@ test('GET /api/companies hides placeholders: the «Nuova offerta» list and the 
   assert.ok(!body.items.some((company) => isNoCompany(company)), 'no placeholder in the company list');
   assert.ok(!body.items.some((company) => company?.name === NO_COMPANY_NAME), 'no row named after the placeholder');
   assert.deepEqual(body.items.map((company) => company.id), [real.id], 'the real company still lists');
+});
+
+test('a real company named «Senza azienda» reads as a company everywhere (backlog:ac65e448fcb4)', async (t) => {
+  const { app } = scene(t);
+  // Created through the company path it is real: the flag stays down.
+  const real = await app.services.companies.create({ name: 'Senza azienda', domain: null }, { actor: OPERATOR });
+  assert.equal(real.placeholder, false);
+  const stored = await app.services.companies.get(real.id);
+  assert.equal(isNoCompany(stored), false, 'the stored row is not a placeholder');
+  // A contact filed under it names the company in the list …
+  const contact = await app.services.contacts.create({
+    companyId: real.id, firstName: 'Vera', lastName: 'Azienda', email: 'vera@senzazienda.invalid',
+  }, { actor: OPERATOR });
+  const list = await app.listCustomers({});
+  assert.equal(list.items.find((item) => item.id === contact.id)?.company?.name, 'Senza azienda');
+  // … in the profile and in the card …
+  const profile = await app.readCustomerProfile({ resource: 'contact', id: contact.id });
+  assert.equal(profile.identity.company?.name, 'Senza azienda');
+  const card = shapeCustomerCard(profile, { resource: 'contact', id: contact.id });
+  assert.equal(card.company?.name, 'Senza azienda');
+  assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: false } }), 'Senza azienda');
+  // … and two real same-named companies still pair as duplicate suspects.
+  const twin = await app.services.companies.create({ name: 'Senza azienda', domain: null }, { actor: OPERATOR });
+  await app.proposeDataCleanup({ actor: { type: 'agent', id: 'pulizia-test' } });
+  const candidates = await app.modules.get('duplicate-candidate').service.list({ limit: 500 });
+  assert.ok(
+    candidates.some((row) => row.leftResource === 'company' && row.rightResource === 'company'
+      && JSON.stringify(row).includes(real.id) && JSON.stringify(row).includes(twin.id)),
+    'real same-named companies still pair as duplicates',
+  );
 });

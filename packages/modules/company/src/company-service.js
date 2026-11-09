@@ -50,6 +50,7 @@ export class CompanyService {
         id: nextWriteId('record'),
         name,
         domain,
+        placeholder,
         createdAt: timestamp,
         updatedAt: timestamp,
       };
@@ -70,13 +71,14 @@ export class CompanyService {
         operation: 'company.create',
         target: '',
         contractVersion: 'write.v1',
-        input: { name, domain },
+        input: { name, domain, placeholder },
       }, async ({ emit }) => {
         const timestamp = nowIso();
         const company = {
           id: nextWriteId('record'),
           name,
           domain,
+          placeholder,
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -99,6 +101,7 @@ export class CompanyService {
       id: nextWriteId('record'),
       name,
       domain,
+      placeholder,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -214,6 +217,10 @@ function mapCompanyRow(row) {
     id: row.id,
     name: row.name,
     domain: row.domain,
+    // The «no company» flag (backlog:ac65e448fcb4): every reader keys on
+    // this, never on the name — a real company keeps false whatever its
+    // name is. SQLite stores 0/1, other callers may carry a boolean.
+    placeholder: row.placeholder === true || row.placeholder === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
