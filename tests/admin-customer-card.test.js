@@ -1714,10 +1714,12 @@ test('Dettagli › Modifica › Salva sends ONE PATCH, however many times it fir
 
 test('a contact typed without Azienda shows no Azienda on the scheda (production 07/11)', async () => {
   assert.equal(NO_COMPANY_NAME, 'Senza azienda', 'the same reserved name customer-data writes');
-  assert.equal(shownCompanyName({ company: { id: 'k0', name: 'Senza azienda' } }), null);
+  assert.equal(shownCompanyName({ company: { id: 'k0', name: 'Senza azienda', placeholder: true } }), null);
   assert.equal(shownCompanyName({ company: { id: 'k1', name: 'Palestra Esempio' } }), 'Palestra Esempio');
+  // A real company shows whatever its name is — never hidden by name.
+  assert.equal(shownCompanyName({ company: { id: 'k2', name: 'Senza azienda', placeholder: false } }), 'Senza azienda');
   assert.equal(shownCompanyName({ company: null }), null);
-  const card = { ...CARD, company: { id: 'k0', name: NO_COMPANY_NAME } };
+  const card = { ...CARD, company: { id: 'k0', name: NO_COMPANY_NAME, placeholder: true } };
   const mount = await renderCard(stubClient({ card, profile: OPPORTUNITY_ONLY_PROFILE }));
   assert.ok(!mount.textContent.includes(NO_COMPANY_NAME), 'the reserved company never reads as an Azienda');
   const facts = mount.findAll('span').filter((node) => node.getAttribute('class') === 'bo-scheda-fact-label');
@@ -1945,10 +1947,13 @@ test('review #654: a contact without Azienda picks its own placeholder id under 
   // The card API names no company for the placeholder (customer-data profile).
   const viaApi = await pickFor({ ...CARD, company: null }, ownProfile);
   assert.equal(viaApi, 'k-own', 'the offer files under the contact own placeholder');
-  // An older server still naming the placeholder: same pick, never its name.
-  const viaOld = await pickFor({ ...CARD, company: { id: 'k-own', name: NO_COMPANY_NAME } }, ownProfile);
+  // A server still naming the flagged placeholder: same pick, never its name.
+  const viaOld = await pickFor({ ...CARD, company: { id: 'k-own', name: NO_COMPANY_NAME, placeholder: true } }, ownProfile);
   assert.equal(viaOld, 'k-own');
-  assert.equal(shownCompanyName({ company: { name: '  SENZA   azienda ' } }), null, 'same normalization as the server');
+  // The flag (backlog:ac65e448fcb4) hides the placeholder; a real company
+  // with that name still shows.
+  assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: true } }), null);
+  assert.equal(shownCompanyName({ company: { name: '  Senza azienda ', placeholder: false } }), 'Senza azienda');
 });
 
 // Backlog e9b4fc2f: «Scrivi» opens the composer inside the scheda with the
