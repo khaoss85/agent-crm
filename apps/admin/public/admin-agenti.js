@@ -289,9 +289,12 @@ function editableField(proposal) {
 export function isDecisionUnavailable(error) {
   const record = error && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
-  if (record.status === 405) return true;
+  const missing = code === '' || code === 'BO_AGENT_ROUTE_UNKNOWN' || code === 'BO_AGENT_DECISION_UNAVAILABLE';
+  // Review #688 giro 2: a 405 is a missing route only with a routing code,
+  // never with a domain refusal.
+  if (record.status === 405) return missing || code === 'ADMIN_METHOD_NOT_ALLOWED' || code === 'NOT_FOUND';
   if (record.status !== 404) return false;
-  if (code === '' || code === 'BO_AGENT_ROUTE_UNKNOWN' || code === 'BO_AGENT_DECISION_UNAVAILABLE') return true;
+  if (missing) return true;
   return code === 'NOT_FOUND' && record.message === 'Route not found';
 }
 
@@ -615,6 +618,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
      * @type {Map<string, { kind: string, keys: Map<string, string> }>}
      */
     queued: new Map(),
+    /**
+     * Review #688 giro 2: the keys of an edit still queued. An edit never
+     * moves the run out of `proposed`, so it does not lock the row past a
+     * reload; re-saving the same text reuses its key.
+     * @type {Map<string, Map<string, string>>}
+     */
+    reviseKeys: new Map(),
     /** Review #688: a decision on a run that is gone, said above the list after the reload. */
     daFareError: '',
   };
@@ -683,17 +693,27 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       const queued = state.queued.get(runId) ?? null;
       state.decisions.set(runId, {
         busy: null, pending: queued !== null, unavailable: false, error: '', mode: null, reason: '', drafts: new Map(),
-        keys: queued !== null ? queued.keys : new Map(),
+        keys: queued !== null ? queued.keys : (state.reviseKeys.get(runId) ?? new Map()),
       });
     }
     return /** @type {any} */ (state.decisions.get(runId));
   }
 
-  /** Review #688: a queued decision is forgotten only once its run left `proposed`. */
+  /**
+   * Review #688: a queued approval or refusal is forgotten only once its run
+   * left `proposed`. A queued edit never moves the run, so a reload unlocks
+   * its row (giro 2) and keeps its keys for a re-save of the same text.
+   */
   function forgetSettledQueue() {
-    for (const runId of [...state.queued.keys()]) {
+    const proposed = (runId) => {
       const run = state.runs.find((row) => row && row.id != null && String(row.id) === runId);
-      if (!run || run.outcome !== 'proposed') state.queued.delete(runId);
+      return Boolean(run) && run.outcome === 'proposed';
+    };
+    for (const [runId, entry] of [...state.queued.entries()]) {
+      if (entry.kind === 'revise' || !proposed(runId)) state.queued.delete(runId);
+    }
+    for (const runId of [...state.reviseKeys.keys()]) {
+      if (!proposed(runId)) state.reviseKeys.delete(runId);
     }
   }
 
@@ -768,6 +788,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         // run leaves `proposed`, and a retry reuses the same key.
         decision.pending = true;
         state.queued.set(item.runId, { kind, keys: decision.keys });
+        if (kind === 'revise') state.reviseKeys.set(item.runId, decision.keys);
       } else if (isDecisionUnavailable(error)) {
         decision.unavailable = true;
         decision.keys.delete(keyId);

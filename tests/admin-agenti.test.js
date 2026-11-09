@@ -865,3 +865,48 @@ test('review #688 P3: Modifica shows «Salvo…» while its edit flies', async (
   assert.equal(findButton(mount, 'edit').textContent, 'Salvo…');
   assert.equal(findButton(mount, 'edit').getAttribute('aria-busy'), 'true');
 });
+
+test('review #688 giro 2 P1: a queued edit unlocks after Ricarica and a re-save of the same text reuses its key', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let queue = true;
+  const client = driveClient({
+    onRevise: (body, runs) => {
+      if (queue) throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 });
+      return { run: { id: body.runId, outcome: 'proposed' } };
+    },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const save = async (text) => {
+    findButton(mount, 'edit').dispatch('click');
+    const area = mount.findAll('textarea').find((node) => node.getAttribute('data-proposal') === '0');
+    area.value = text;
+    area.dispatch('input');
+    findButton(mount, 'save-edit').dispatch('click');
+    await flush();
+  };
+  await save('Ciao Giulia, giovedì alle 18?');
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE), 'the edit is queued');
+  assert.equal(findButton(mount, 'approve').disabled, true, 'locked while it flies');
+  findButton(mount, 'reload-dafare').dispatch('click');
+  await flush();
+  for (const action of ['approve', 'edit', 'reject']) {
+    assert.equal(findButton(mount, action).disabled, false, `${action} unlocked after Ricarica: an edit never leaves «proposed»`);
+  }
+  queue = false;
+  await save('Ciao Giulia, giovedì alle 18?');
+  const posts = client.calls.filter((call) => call.method === 'POST' && call.path === '/api/agents/revise');
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].key, posts[0].key, 'the same text goes again under the same key');
+  assert.ok(mount.textContent.includes('Modifica salvata'));
+});
+
+test('review #688 giro 2 P2: a 405 with a domain code is a real refusal, not «Non ancora disponibile»', () => {
+  assert.equal(isDecisionUnavailable({ status: 405, code: 'AGENT_RUN_UNKNOWN' }), false);
+  assert.equal(isDecisionUnavailable({ status: 405, code: 'BO_AGENT_RUN_REFUSED' }), false);
+  for (const code of [undefined, 'ADMIN_METHOD_NOT_ALLOWED', 'NOT_FOUND', 'BO_AGENT_ROUTE_UNKNOWN', 'BO_AGENT_DECISION_UNAVAILABLE']) {
+    assert.equal(isDecisionUnavailable({ status: 405, code }), true, String(code));
+  }
+});
