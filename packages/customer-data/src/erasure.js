@@ -112,9 +112,12 @@ function erasureReasonCode(value) {
  * The evidence sections that can hold signed business, and the module each
  * needs to exist. A section whose module is not composed holds no rows in
  * this application, so there is nothing of that kind to keep — this is a
- * deployment fact, not uncertainty. A section whose module IS composed must
- * prove absence (readable, zero, complete); a failed read or a bounded page
- * fails closed instead of erasing a customer the law requires kept.
+ * deployment fact, not uncertainty. A section whose module IS composed but
+ * offers no complete read (no list()) is uncertainty, not emptiness: the
+ * erasure refuses instead of treating the unreadable as zero. A composed
+ * and readable section must prove absence (readable, zero, complete); a
+ * failed read or a bounded page fails closed instead of erasing a customer
+ * the law requires kept.
  */
 const EVIDENCE_MODULES = Object.freeze([
   { key: 'orders', module: 'order' },
@@ -125,7 +128,12 @@ const EVIDENCE_MODULES = Object.freeze([
 function erasureEvidenceIsProven({ modules, profile }) {
   return EVIDENCE_MODULES.every(({ key, module }) => {
     const service = optional(modules, module);
-    if (!service || typeof service.list !== 'function') return true;
+    // Not composed: nothing of that kind can exist in this application, so
+    // this is a deployment fact, not uncertainty. Composed but offering no
+    // complete read: absence is unproven — the erasure refuses instead of
+    // reading the gap as zero (ERASURE_EVIDENCE_UNREADABLE).
+    if (!service) return true;
+    if (typeof service.list !== 'function') return false;
     const section = profile?.[key] ?? null;
     return section?.available === true
       && (section?.count ?? 0) === 0
@@ -335,87 +343,91 @@ export function createErasureOperations({ database, modules, events, core, names
     const subject = { resource, id: id.trim() };
 
     const erasureSvc = trusted(modules, names.erasure);
-    const replayed = (await deciding(erasureSvc, {
-      subjectResource: subject.resource, subjectId: subject.id,
-    }))[0] ?? null;
-    if (replayed) {
-      return replayReceipt(replayed);
-    }
-
     const contactsSvc = optional(modules, 'contact');
-    const stored = await readHost(subject);
-    if (!stored) {
-      throw new AppError('cliente non trovato', {
-        code: 'ERASURE_SUBJECT_NOT_FOUND', status: 404,
-      });
-    }
-
-    // The whole canonical cluster goes together: linked records are one
-    // customer by a human decision, and erasing half would leave the other
-    // half naming the same person.
-    const cluster = await canonicalClusterFor({ modules, names, subject });
-    const members = cluster.members.map((member) => ({
-      resource: member.resource, id: member.id,
-      owner: member.owner ?? 'host', ownerPackage: member.ownerPackage ?? null,
-    }));
-
-    // A company erasure cascades to its contacts: contact PII linked only
-    // by companyId is personal data of the same customer. The contact list
-    // is a bounded display page, so the cascade asks for the widest page
-    // the service allows and refuses when it comes back full; a failed list
-    // refuses too (ERASURE_CASCADE_UNREADABLE).
-    if (subject.resource === 'company' && contactsSvc && typeof contactsSvc.list === 'function') {
-      const linked = await listContactsOfCompany(contactsSvc, subject.id);
-      if (linked.length >= CUSTOMER_SCAN_LIMIT) {
-        throw new AppError(
-          'questa azienda ha troppi contatti collegati per verificarli tutti in una lettura: la cancellazione è bloccata finché la lettura non è completa',
-          {
-            code: 'ERASURE_CASCADE_INCOMPLETE', status: 409,
-            details: Object.freeze({ subject: { ...subject } }),
-          },
-        );
-      }
-      for (const row of linked) {
-        if (!row || typeof row.id !== 'string' || row.id === '') continue;
-        const candidate = { resource: 'contact', id: row.id, owner: 'host', ownerPackage: null };
-        if (!members.some((member) => subjectKey(member) === subjectKey(candidate))) {
-          members.push(candidate);
-        }
-      }
-    }
-    // The legal gate, through the one status rule every reader shares.
-    const profile = await profileFor({ modules, core, names, subject });
-    if (profile?.status?.value === 'cliente') {
-      const counts = {
-        orders: profile.orders?.count ?? null,
-        contracts: profile.contracts?.count ?? null,
-        subscriptions: profile.subscriptions?.count ?? null,
-      };
-      throw new AppError(
-        'questo cliente ha documenti firmati (ordini, contratti o abbonamenti) e la legge chiede di conservarli: la cancellazione è bloccata',
-        {
-          code: 'ERASURE_BLOCKED_SIGNED_BUSINESS', status: 409,
-          details: Object.freeze({ subject: { ...subject }, counts }),
-        },
-      );
-    }
-    if (!erasureEvidenceIsProven({ modules, profile })) {
-      throw new AppError(
-        'non si può verificare che non ci siano documenti firmati (ordini, contratti o abbonamenti): la cancellazione è bloccata finché le letture non sono complete',
-        {
-          code: 'ERASURE_EVIDENCE_UNREADABLE', status: 409,
-          details: Object.freeze({
-            subject: { ...subject },
-            statusReason: profile?.status?.reason ?? null,
-          }),
-        },
-      );
-    }
 
     const now = new Date().toISOString();
     const actorId = String(actor.id ?? 'unknown');
     const ctx = { now, actor, actorId };
     const receipt = await database.transactionAsync(async () => {
+      // Every read that decides this erasure runs inside the same
+      // transaction as the writes below: a row created, linked or signed
+      // between a read and a write cannot slip through the decision.
+      const replayed = (await deciding(erasureSvc, {
+        subjectResource: subject.resource, subjectId: subject.id,
+      }))[0] ?? null;
+      if (replayed) {
+        return replayReceipt(replayed);
+      }
+
+      const stored = await readHost(subject);
+      if (!stored) {
+        throw new AppError('cliente non trovato', {
+          code: 'ERASURE_SUBJECT_NOT_FOUND', status: 404,
+        });
+      }
+
+      // The whole canonical cluster goes together: linked records are one
+      // customer by a human decision, and erasing half would leave the other
+      // half naming the same person.
+      const cluster = await canonicalClusterFor({ modules, names, subject });
+      const members = cluster.members.map((member) => ({
+        resource: member.resource, id: member.id,
+        owner: member.owner ?? 'host', ownerPackage: member.ownerPackage ?? null,
+      }));
+
+      // A company erasure cascades to its contacts: contact PII linked only
+      // by companyId is personal data of the same customer. The contact list
+      // is a bounded display page, so the cascade asks for the widest page
+      // the service allows and refuses when it comes back full; a failed list
+      // refuses too (ERASURE_CASCADE_UNREADABLE).
+      if (subject.resource === 'company' && contactsSvc && typeof contactsSvc.list === 'function') {
+        const linked = await listContactsOfCompany(contactsSvc, subject.id);
+        if (linked.length >= CUSTOMER_SCAN_LIMIT) {
+          throw new AppError(
+            'questa azienda ha troppi contatti collegati per verificarli tutti in una lettura: la cancellazione è bloccata finché la lettura non è completa',
+            {
+              code: 'ERASURE_CASCADE_INCOMPLETE', status: 409,
+              details: Object.freeze({ subject: { ...subject } }),
+            },
+          );
+        }
+        for (const row of linked) {
+          if (!row || typeof row.id !== 'string' || row.id === '') continue;
+          const candidate = { resource: 'contact', id: row.id, owner: 'host', ownerPackage: null };
+          if (!members.some((member) => subjectKey(member) === subjectKey(candidate))) {
+            members.push(candidate);
+          }
+        }
+      }
+      // The legal gate, through the one status rule every reader shares.
+      const profile = await profileFor({ modules, core, names, subject });
+      if (profile?.status?.value === 'cliente') {
+        const counts = {
+          orders: profile.orders?.count ?? null,
+          contracts: profile.contracts?.count ?? null,
+          subscriptions: profile.subscriptions?.count ?? null,
+        };
+        throw new AppError(
+          'questo cliente ha documenti firmati (ordini, contratti o abbonamenti) e la legge chiede di conservarli: la cancellazione è bloccata',
+          {
+            code: 'ERASURE_BLOCKED_SIGNED_BUSINESS', status: 409,
+            details: Object.freeze({ subject: { ...subject }, counts }),
+          },
+        );
+      }
+      if (!erasureEvidenceIsProven({ modules, profile })) {
+        throw new AppError(
+          'non si può verificare che non ci siano documenti firmati (ordini, contratti o abbonamenti): la cancellazione è bloccata finché le letture non sono complete',
+          {
+            code: 'ERASURE_EVIDENCE_UNREADABLE', status: 409,
+            details: Object.freeze({
+              subject: { ...subject },
+              statusReason: profile?.status?.reason ?? null,
+            }),
+          },
+        );
+      }
+
       const notes = [];
       // 1. The subjects: the cluster, the cascade, and the company a last
       //    contact leaves behind. Decided inside the transaction, so the
