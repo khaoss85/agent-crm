@@ -4315,3 +4315,48 @@ test('review #683: a move still queued on the server reads neutral, never as an 
   const status = mount.findAll('small').find((node) => node.getAttribute('role') === 'status');
   assert.equal(status?.textContent, 'Non ancora confermato: ricarica la scheda tra poco.');
 });
+
+test('c1649d1d: the scheda Storia stati names who moved the offer from which stage to which', async () => {
+  const profile = {
+    ...PLACED_QUOTE_PROFILE,
+    opportunities: {
+      ...PLACED_QUOTE_PROFILE.opportunities,
+      items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+    },
+  };
+  const audit = [
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T11:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'spettro', fromPipelineStage: 'fantasma' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T12:00:00.000Z',
+      data: { owner: 'marco' },
+    },
+  ];
+  const mount = await renderCard(stubClient({
+    profile, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] }, audit,
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(text.includes('Storia stati'), 'the history block is titled');
+  assert.ok(text.includes('da Richiesta info a Prova · da elena'),
+    'a pipeline move reads who, from which stage to which, with the actor the record corroborates');
+  assert.ok(!text.includes('fantasma') && !text.includes('spettro'),
+    'a move whose side has no label never paints a raw key');
+});
+
+test('c1649d1d: an unreadable audit trail reads one honest line', async () => {
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+    auditError: new Error('boom'),
+  }));
+  await flushClicks(5);
+  assert.ok(mount.textContent.includes('Storia stati non leggibile.'),
+    'the trail failure is honest, and the card stands');
+});
