@@ -414,7 +414,9 @@ test('review #661 P1: a retry after a lost answer reuses the same sourceKey and 
   input.dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
   await flush();
-  assert.ok(textOf(mount).includes('Non riesco a dare l’incarico adesso'));
+  // backlog:7cc35edab50c: the lost answer is a network fault (code NETWORK,
+  // status 0), so it reads as a connection failure, never as a refusal.
+  assert.ok(textOf(mount).includes('Connessione non riuscita, riprova.'));
   mount.querySelector('form').dispatch('submit', {});
   await flush();
   const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
