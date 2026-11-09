@@ -27,6 +27,7 @@ import {
   nextAppointment,
   upcomingAppointment,
   readAppointmentNames,
+  buildChannelInvite,
   oggiDateLine,
   renderOggi,
   romeDayKey,
@@ -808,8 +809,8 @@ test('Oggi strip with Gmail and Calendar connected counts them and links Connett
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  // Stripe cannot be connected here, so it is not in the denominator (08/11).
-  assert.ok(mount.textContent.includes('2 di 8 collegati'), 'Gmail plus Calendar read as two connected');
+  // The prototype count: «x di 9», Stripe included (9c7d1477a8d4).
+  assert.ok(mount.textContent.includes('2 di 9 collegati'), 'Gmail plus Calendar read as two connected');
   assert.ok(!mount.textContent.includes('Collega Email'), 'Email is not invited once Gmail is connected');
   const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
   assert.ok(strip, 'the strip renders');
@@ -1412,11 +1413,13 @@ test('5083e7a77c26: the strip count equals the list it names', () => {
   assert.ok(strip, 'the strip renders');
   const count = /(\d+) di (\d+) collegati/.exec(strip.textContent);
   assert.ok(count, 'the strip carries a count');
-  const named = /Collega (.+) per (?:non perdere|avere)/.exec(strip.textContent);
+  const named = /Collega (.+) per non perdere nessun lead(?: \((.+)\))?/.exec(strip.textContent);
   assert.ok(named, 'the strip names the channels to connect');
   const names = named[1].split(', ');
-  assert.equal(Number(count[1]) + names.length, Number(count[2]), `«${count[0]}» and ${names.length} names tell one story`);
-  assert.equal(count[0], '2 di 8 collegati', 'Stripe, which nothing here connects, is not counted');
+  // The aside names the missing channels that are not leads to connect here.
+  const aside = named[2] ? named[2].split('; ').flatMap((part) => part.replace(/ (dal Profilo|non ancora disponibil[ei])$/, '').split(/, | e /)) : [];
+  assert.equal(Number(count[1]) + names.length + aside.length, Number(count[2]), `«${count[0]}», ${names.length} names and ${aside.length} apart tell one story`);
+  assert.equal(count[0], '2 di 9 collegati', 'the prototype count, Stripe included');
   assert.ok(!names.includes('Email') && !names.includes('Google Calendar'), 'connected channels are not invited');
 });
 
@@ -1474,47 +1477,6 @@ test('5083e7a77c26: a stored channel alias counts as its channel, never as a ten
   assert.ok(!count.missing.some((entry) => entry.channel === 'calendar' || entry.channel === 'email'));
   assert.ok(count.missing.some((entry) => entry.channel === 'facebook'), 'a pending Messenger row leaves Facebook to connect');
   assert.equal(countConnectedNine([{ channel: 'google-calendar', status: 'active' }]), 1);
-});
-
-const NINE_STRIPE_MISSING = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form', 'calendar'];
-
-// Owner decision 08/11 on #680: the lead promise only when every name is a
-// lead channel; with Google Calendar or Stripe in the list, a neutral line.
-test('#680: the invite promises leads only when it names lead channels only', () => {
-  const render = (connections) => {
-    const doc = createFakeDocument();
-    const mount = createMount();
-    renderOggi({
-      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
-      home: {
-        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections,
-        availability: { work: true, appointments: true, channels: true },
-      },
-    });
-    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
-  };
-  const leadsOnly = render(['whatsapp', 'instagram', 'email', 'voice', 'site-form', 'calendar', 'stripe']
-    .map((channel) => ({ channel, status: 'active' })));
-  assert.ok(leadsOnly.includes('Collega Facebook, TikTok per non perdere nessun lead'), leadsOnly);
-  // Stripe is never invited (production 08/11): nothing here connects it.
-  const withStripe = render(NINE_STRIPE_MISSING.map((channel) => ({ channel, status: 'active' })));
-  assert.equal(withStripe, '', 'only Stripe left: no invite at all');
-  // Google Calendar is invited when the profile offers it: no lead promise then.
-  const offered = { connections: { available: true, items: [{ connector: 'calendar', status: 'not_connected' }] } };
-  const doc = createFakeDocument();
-  const mount = createMount();
-  renderOggi({
-    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
-    home: {
-      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], profile: offered,
-      connections: ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form'].map((channel) => ({ channel, status: 'active' })),
-      availability: { work: true, appointments: true, channels: true },
-    },
-  });
-  const calendar = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
-  assert.ok(calendar.includes('7 di 8 collegati'), calendar);
-  assert.ok(calendar.includes('Collega Google Calendar per avere tutto in un posto'), calendar);
-  assert.ok(!calendar.includes('Stripe'), 'never Stripe');
 });
 
 test('#680 P2-3: an inactive extra channel never widens the count', async () => {
@@ -1768,4 +1730,67 @@ test('2a075e2d9250: the day paints on the essentials; names and the call recap f
   assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
   assert.equal(mount.querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
   assert.equal(execute.__focused, true);
+});
+
+// Production 08/11 after #687 (9c7d1477a8d4): the prototype wins — «x di 9»
+// always, the prototype line «per non perdere nessun lead» always, and the
+// names are the connectable lead channels missing; a missing channel that
+// is not a lead channel to connect here is named apart, so the promise
+// adds up with the count.
+test('9c7d1477a8d4: the invite counts of 9, keeps the prototype line and names only connectable lead channels', () => {
+  const strip = (connections, profile = null) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    renderOggi({
+      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections, profile,
+        availability: { work: true, appointments: true, channels: true },
+      },
+    });
+    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  };
+  const presti = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'op@presti.it' },
+        { connector: 'calendar', status: 'connected', account: 'op@presti.it' },
+      ],
+    },
+  };
+  const live = strip([{ channel: 'whatsapp', status: 'active' }], presti);
+  assert.ok(live.includes('3 di 9 collegati'), live);
+  assert.ok(live.includes('Collega Instagram, Facebook, TikTok, Telefono, Form sito per non perdere nessun lead (Stripe non ancora disponibile) →'), live);
+  const demo = strip([]);
+  assert.ok(demo.includes('0 di 9 collegati'), demo);
+  assert.ok(demo.includes('per non perdere nessun lead'), demo);
+  assert.ok(demo.includes('(Google Calendar e Stripe non ancora disponibili)'), demo);
+  const offered = strip([], { connections: { available: true, items: [{ connector: 'calendar', status: 'not_connected' }] } });
+  assert.ok(offered.includes('(Google Calendar dal Profilo; Stripe non ancora disponibile)'), offered);
+  for (const text of [live, demo, offered]) {
+    assert.ok(!text.includes('avere tutto in un posto'), 'no other line than the prototype one');
+    assert.ok(!/Collega [^(]*Stripe/.test(text) && !/Collega [^(]*Google Calendar/.test(text), 'Calendar and Stripe are never invited');
+  }
+});
+
+// Review #692 P2: Oggi stays on the spec's nine — a linked channel outside
+// the nine (SMS) never turns the strip into «1 di 10».
+test('#692 P2: Oggi counts of the nine only, an active SMS included', () => {
+  const invite = buildChannelInvite({ connections: [{ channel: 'sms', status: 'active' }] });
+  assert.equal(invite.connected, 0);
+  assert.equal(invite.total, 9);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      connections: [{ channel: 'sms', status: 'active' }],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  assert.ok(strip.includes('0 di 9 collegati'), strip);
+  assert.ok(!strip.includes('di 10'), 'never «di 10» on Oggi');
 });
