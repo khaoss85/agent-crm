@@ -141,8 +141,10 @@ test('humanReadError and humanWriteError name the wait on a starting signal', ()
   const starting = { status: 503, code: 'WORKSPACE_STARTING' };
   assert.equal(humanReadError(starting, { failed: 'Lettura fallita.', ...quiet }), WAKE_WAIT_TEXT);
   assert.equal(humanWriteError(starting, { failed: 'Scrittura rifiutata.', ...quiet }), WAKE_WAIT_TEXT);
-  // A bare 503 stays the honest failure, even after the retry ran.
-  const refused = { status: 503, code: 'OPERATION_FAULT_X' };
+  // A named 503 refusal stays the honest failure, even after the retry ran
+  // (an unnamed 503 hiccup reads as a connection fault since backlog
+  // 7cc35edab50c; see tests/admin-bo-write-errors.test.js).
+  const refused = { status: 503, code: 'OPERATION_FAILED' };
   assert.equal(humanReadError(refused, { failed: 'Lettura fallita.', ...quiet }), 'Lettura fallita.');
   assert.equal(humanWriteError(refused, { failed: 'Scrittura rifiutata.', ...quiet }), 'Scrittura rifiutata.');
 });

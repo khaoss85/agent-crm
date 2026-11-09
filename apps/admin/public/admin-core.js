@@ -722,12 +722,14 @@ export function isNetworkFailure(error) {
 export function humanWriteError(error, { failed, notComposed = null, log = null } = {}) {
   const { code, status, message, report } = normalizeFailure(error, log);
   report('[bo] scrittura rifiutata', { code, status, message });
-  if (isNetworkFailure(error)) return 'Connessione non riuscita, riprova.';
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   // B4 wake-up (backlog:5a40c73e54aa): a write that met a waking service was
-  // never refused — name the wait, not «rifiutata».
+  // never refused — name the wait, not «rifiutata». The explicit starting
+  // signal wins over the generic network text: it proves the server was
+  // waking, so the operator waits instead of retrying at once.
   const wait = wakeWaitText(error);
   if (wait !== null) return wait;
+  if (isNetworkFailure(error)) return 'Connessione non riuscita, riprova.';
   if (status === 405 || code === 'METHOD_NOT_ALLOWED') {
     return 'Il server non permette questa operazione qui. Chiedi a un operatore di abilitare la funzione e riprova.';
   }
