@@ -153,7 +153,7 @@ test('a final refusal during the read-back ends it in Italian (AI off)', async (
   await search(view, mount);
   await flush(30);
   assert.equal(reads(client).length, 1, 'AI off is final, not read again');
-  assert.ok(mount.textContent.includes('L’AI è spenta in questo spazio'), mount.textContent);
+  assert.ok(mount.textContent.includes('AI spenta per questo spazio'), mount.textContent);
   assert.ok(!mount.textContent.includes('Calendar phrase refused'));
 });
 
