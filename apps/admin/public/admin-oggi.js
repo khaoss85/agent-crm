@@ -259,6 +259,26 @@ function subjectDisplayLabel(row, names = {}) {
 }
 
 /**
+ * The next call's guest name, or null when no name exists yet — never a
+ * stand-in noun. The next-call card (verification 09/11, backlog
+ * 1a3a0ba236c0) must not print «il cliente» before the name: with no
+ * stored or profile name it waits for the name with a neutral
+ * placeholder, never a presumed customer.
+ */
+const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
+
+/**
+ * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} appointment
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+function appointmentGuestName(appointment, names = {}) {
+  const key = inboxSubjectKey(appointment);
+  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null;
+  return fromProfile ?? readableName(nonEmptyText(appointment?.subjectLabel));
+}
+
+/**
  * One advisor action from an open follow-up. The CTA completes the real
  * work-task (same server action the Work section uses); the motive names the
  * record that opened it.
@@ -345,7 +365,7 @@ function appointmentPrepAction(appointment) {
   if (!id) return null;
   const time = romeTime(appointment?.startsAt);
   if (!time) return null;
-  const label = subjectDisplayLabel(appointment);
+  const label = appointmentGuestName(appointment) ?? APPOINTMENT_GUEST_LABEL;
   const href = cardHrefForSubject(appointment) ?? recordDetailHref('appointment', id);
   return Object.freeze({
     id: `bo04:appointment:${id}`,
@@ -718,7 +738,7 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
   if (appointment == null) return null;
   const id = nonEmptyText(appointment?.id) ?? '';
   const time = romeTime(appointment?.startsAt) ?? '—';
-  const who = subjectDisplayLabel(appointment, names);
+  const who = appointmentGuestName(appointment, names) ?? APPOINTMENT_GUEST_LABEL;
   const when = briefWhen(appointment?.startsAt, now);
   // Today's call keeps the short line; a later day names its day.
   const opening = when.startsWith('oggi ') ? `Appuntamento delle ${time}` : `Appuntamento di ${when}`;

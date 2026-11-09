@@ -246,8 +246,9 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   // not the empty «Collega il primo canale» either.
   const linked = rows.some((row) => row.connected);
   // The hero reads the table's own pills (production 08/11, 3a3e6eaf C9/
-  // C20): a linked row that is not `Attivo` (Importazione, Da
-  // sistemare…) means not everything is synced, even with nothing to fix.
+  // C20; C18 1a3a0ba236c0): a linked row that is not `Attivo`
+  // (Importazione, `in attesa del primo evento`, Da sistemare…) means
+  // not everything is synced, even with nothing to fix.
   const waiting = rows.some((row) => row.connected && row.pill !== null && row.pill.tone !== 'attivo');
   const bound = linked || rows.some((row) => row.present === true);
   const detail = !bound
@@ -530,15 +531,17 @@ export function grantExpiring(iso, nowMs = Date.now()) {
 
 /**
  * The pill of one table row, in the spec's words (C20: `Attivo`,
- * `Permesso in scadenza`, `Importazione`). A binding with no traffic yet
- * (`idle`) is linked and healthy, so it reads `Attivo` — production 08/11
- * showed «In attesa», a word the spec does not have. A binding that really
- * broke (`attention`, `down`) is a state the spec does not list: the
- * closest honest word is `Da sistemare`, the name of the section that
- * says what to do about it. `Attivo` (and `Importazione`) need an active
- * binding (review #692): a suspended, pending or revoked binding reads
- * `Da sistemare` whatever its health says.
- * @param {{ expiringAt: string | null, importing: boolean, worst: string }} agg
+ * `Permesso in scadenza`, `Importazione`). A calm active row that never
+ * moved anything yet — no update instant and zero events (C18, backlog
+ * 1a3a0ba236c0) — reads `in attesa del primo evento`, never `Attivo`:
+ * production 08/11 read `Attivo` there and the hero called it synced. A
+ * binding that really broke (`attention`, `down`) is a state the spec
+ * does not list: the closest honest word is `Da sistemare`, the name of
+ * the section that says what to do about it. `Attivo` (and
+ * `Importazione`) need an active binding (review #692): a suspended,
+ * pending or revoked binding reads `Da sistemare` whatever its health
+ * says.
+ * @param {{ expiringAt: string | null, importing: boolean, worst: string, lastAt: string | null, received: number }} agg
  * @param {number} nowMs
  * @param {boolean} hasActive whether one binding of the row is active
  */
@@ -547,6 +550,7 @@ function channelPill(agg, nowMs, hasActive) {
   if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
   const calm = agg.worst === 'ok' || agg.worst === 'idle';
   if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
+  if (calm && agg.lastAt === null && agg.received === 0) return { text: 'in attesa del primo evento', tone: 'attesa' };
   if (calm) return { text: 'Attivo', tone: 'attivo' };
   return { text: 'Da sistemare', tone: 'altro' };
 }

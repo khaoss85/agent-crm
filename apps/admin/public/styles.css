@@ -1570,6 +1570,9 @@ select.bo-spazi-input { flex: none; }
 .bo-sync-pill[data-pill="attivo"] { background: var(--accent-soft); color: var(--accent); }
 .bo-sync-pill[data-pill="permesso"] { background: var(--pending-soft); color: var(--pending-ink); }
 .bo-sync-pill[data-pill="importazione"] { background: var(--data-soft); color: var(--data-ink); }
+/* Voce 1a3a0ba236c0 (C18): waiting for the first event is informational
+ * like an import in corso — the same pair, no new colour. */
+.bo-sync-pill[data-pill="attesa"] { background: var(--data-soft); color: var(--data-ink); }
 .bo-sync-pill[data-pill="altro"] { background: var(--human-soft); color: var(--human-ink); }
 .bo-sync-row-off .bo-sync-namewrap, .bo-sync-row-off td:nth-child(2), .bo-sync-row-off td:nth-child(3) { opacity: .6; }
 .bo-sync-channels .bo-sync-table .bo-sync-fix-action { background: var(--muted); border-color: var(--muted); color: var(--paper); padding: 5px 12px; font-size: 12px; }
