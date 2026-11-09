@@ -436,7 +436,7 @@ export function createModuleAdmin(deps) {
       // referente, so the form holds one Referente field only.
       contactRow.appendChild(el(doc, 'label', { text: 'Contatto (facoltativo)', attrs: { for: contactId } }));
       contactSelect = el(doc, 'select', { attrs: { id: contactId, name: 'contact' } });
-      contactSelect.appendChild(el(doc, 'option', { text: 'Nessun referente specifico', attrs: { value: '' } }));
+      contactSelect.appendChild(el(doc, 'option', { text: 'Nessun contatto specifico', attrs: { value: '' } }));
       contactRow.appendChild(contactSelect);
       contactHint = el(doc, 'small', { class: 'field-error hidden' });
       contactRow.appendChild(contactHint);
@@ -450,7 +450,7 @@ export function createModuleAdmin(deps) {
         contactHint.textContent = '';
         contactHint.setAttribute('class', 'field-error hidden');
         while (contactSelect.firstChild) contactSelect.removeChild(contactSelect.firstChild);
-        contactSelect.appendChild(el(doc, 'option', { text: 'Nessun referente specifico', attrs: { value: '' } }));
+        contactSelect.appendChild(el(doc, 'option', { text: 'Nessun contatto specifico', attrs: { value: '' } }));
         if (chosen === '') return;
         let contacts = null;
         try {
@@ -636,10 +636,15 @@ export function createModuleAdmin(deps) {
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
       const failures = {};
+      // A plain handle such as `coach-guido` is not detectable by shape
+      // alone, so with a readable roster every unresolved pick is refused
+      // (backlog:ddf7f416 P2); an unreadable roster keeps the free-text
+      // degradation instead of a blocked screen.
+      const rosterReadable = Array.isArray(roster?.labels) && roster.labels.length > 0;
       if (title === '') failures.title = 'Il titolo è obbligatorio.';
       if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250.00).';
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
-      else if (resolveTeamName(picked, roster) === null && isTechnicalHandle(picked)) failures.owner = 'Scegli il referente tra i membri del team.';
+      else if (resolveTeamName(picked, roster) === null && (isTechnicalHandle(picked) || rosterReadable)) failures.owner = 'Scegli il referente tra i membri del team.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
         showErrors(failures);

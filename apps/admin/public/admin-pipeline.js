@@ -1128,11 +1128,15 @@ export function createPipelineBoard(deps) {
     // Backlog ddf7f416: badge and title read the roster name, never a member id.
     if (typeof record.owner === 'string' && record.owner) {
       const display = ownerName(record.owner);
-      card.appendChild(el(doc, 'p', {
-        class: 'card-owner',
-        text: ownerInitials(display),
-        attrs: { title: display },
-      }));
+      // No badge for an unresolvable owner (backlog:ddf7f416 P2): a badge
+      // on the em dash would read `·` with title `—`, worse than none.
+      if (display !== '—') {
+        card.appendChild(el(doc, 'p', {
+          class: 'card-owner',
+          text: ownerInitials(display),
+          attrs: { title: display },
+        }));
+      }
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
     const closeDay = dayOf(record.expectedCloseDate);

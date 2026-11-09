@@ -646,6 +646,32 @@ test('ddf7f416: renderNew(opportunity) with a readable roster starts on an empty
   assert.equal(rows[0].owner, 'Guido Conti', 'the chosen member name is stored');
 });
 
+// Voce ddf7f416 (review P2 head 74e580fd): with a readable roster an
+// unresolved pick is refused even when it is a plain handle — a simple
+// handle such as `coach-guido` is not detectable by shape alone, so the
+// guard refuses every unresolved value and never stores it on the record.
+test('ddf7f416: with a readable roster an unresolved plain handle is refused on write', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const members = [
+    { subject: 'coach-guido', displayName: 'Guido Conti' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({
+    doc, mount, client: rosterClient(baseUrl, members), navigate: () => {}, storage: memoryStorage(),
+  });
+  const form = await admin.renderNew('opportunity');
+  assert.equal(form.__inputs.owner.tagName, 'SELECT', 'a readable roster gives the members select');
+  form.__inputs.company.value = company.id;
+  form.__inputs.title.value = 'Pacchetto 10 ingressi';
+  form.__inputs.value.value = '250.00';
+  form.__inputs.owner.value = 'pluto';
+  await form.__submit({ preventDefault() {} });
+  assert.ok(mount.textContent.includes('Scegli il referente tra i membri del team.'), 'an unresolved handle is refused');
+  assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write with an unresolved owner');
+});
+
 // Voce 96e7b579: without a scheda pick the operator chooses the cliente in
 // the form, from the server company and contact lists — never a typed id,
 // never an invented customer. The server re-checks the pair on write.

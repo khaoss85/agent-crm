@@ -1236,6 +1236,22 @@ test('a member handle paints nome e cognome on the board through the team roster
   assert.ok(cells[6].textContent.includes('Guido Conti'), 'the Lista referente cell names the member');
 });
 
+// Backlog ddf7f416 (review P2 head 74e580fd): a card whose owner the roster
+// cannot resolve shows no referente badge — never a `·` badge titled `—`.
+test('a card with an unresolvable technical owner shows no referente badge', async () => {
+  const records = [record('a', 'discovery', { owner: 'github|99' })];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.ok(card, 'the card still renders');
+  const badge = card.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'card-owner');
+  assert.equal(badge, undefined, 'no badge for an unresolvable owner');
+  assert.ok(!card.textContent.includes('·'), 'no dot initial leaks onto the card');
+});
+
 function newOfferMenu(mount) {
   return mount.findAll('div').find((node) => node.getAttribute('data-newoffer') === 'menu');
 }
