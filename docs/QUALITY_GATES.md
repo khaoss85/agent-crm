@@ -305,8 +305,13 @@ the shared total —
 past a dozen files the run splits into up to four parallel parts that pull
 one file at a time from a shared queue (fixed round-robin slices left two
 parts idle while two others timed out on agent-crm#621), so a core-wide
-fan-in still fits the bound, and a run that still times out fails red
-naming the files that remained; each file's, part's and the run's elapsed
+fan-in still fits the bound; the queue holds the core suite first and the
+dropped remainder behind it, nearest first, draining while the bound allows
+(backlog:3335fd28: an oversized selection whose ~198 dropped tests never
+ran). A run that still times out fails red naming the core and bonus files
+that remained — unless only bonus files are unrun with the core green and
+nothing failed, which warns naming them instead of failing red over
+coverage the step could not fit; each file's, part's and the run's elapsed
 time are logged;
 each phase prints its own elapsed time and the script prints the total on
 success, so the bound stays readable in the log. A phase that cannot fit
