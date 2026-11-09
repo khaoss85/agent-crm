@@ -14,6 +14,13 @@ import { elFor } from './admin-ui.js';
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { parseEuroToCents } from './admin-catalog.js';
 import { offerStageLabel } from './admin-labels.js';
+import { shownCompanyName } from './admin-customer-card.js';
+import {
+  fetchTeamRoster,
+  isTechnicalHandle,
+  paintOwnerName,
+  resolveTeamName,
+} from './admin-members.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -73,30 +80,24 @@ function periodLabel(count, interval) {
  */
 const LIST_LIMIT = 200;
 
-/** UUID shape: never painted as a name, it is a technical id, not a person. */
-const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * Documented service identities: technical handles, never a person's name.
- * (Admin mutations write `admin-ui`; the system writes with `system`.)
+ * Display name of an audit actor (backlog:ddf7f416): nome e cognome, never
+ * a technical id and never the generic `utente`. The system reads
+ * `sistema`; a roster subject reads its member name; any other id paints
+ * only when the record corroborates it as a human display value (the
+ * painted referente, the contact or the company the deal stores). Anything
+ * else misses (null) so the caller degrades honestly — the history omits
+ * the author, the fact reads an em dash.
  */
-const SERVICE_ACTORS = new Set(['admin-ui']);
-
-/**
- * Display name of an audit actor. A technical id is never painted: the
- * system reads `sistema`, UUIDs and known service handles read `utente`,
- * and any other id paints only when the record corroborates it as a human
- * display value (the referente, the contact or the company the deal
- * stores). Empty actors stay an em dash.
- */
-function actorLabel(entry, record) {
+function actorLabel(entry, record, roster) {
   if (entry?.actorType === 'system') return 'sistema';
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
-  if (id === '') return '—';
-  if (UUID_SHAPE.test(id) || SERVICE_ACTORS.has(id)) return 'utente';
-  const known = [record?.owner, record?.contactName, record?.companyName]
-    .filter((value) => typeof value === 'string' && value !== '');
-  return known.includes(id) ? id : 'utente';
+  if (id === '') return null;
+  const team = resolveTeamName(id, roster);
+  if (team !== null) return team;
+  const known = [paintOwnerName(record?.owner, roster), record?.contactName, record?.companyName]
+    .filter((value) => typeof value === 'string' && value !== '' && value !== '—');
+  return known.includes(id) ? id : null;
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -175,11 +176,16 @@ export function createOfferDetail(deps) {
     let schema;
     let record;
     let quotes;
+    let roster;
     let auditItems;
     let auditUnreadable = false;
     try {
       schema = await client.request('/api/schema');
       record = await readOffer(offerId);
+      // The team roster names the humans behind member handles
+      // (backlog:ddf7f416). Best-effort like the audit trail: a refused or
+      // unreadable list keeps the stored values, never a failed page.
+      roster = await fetchTeamRoster(client);
       quotes = await fetchLinked('quote', 'opportunityId', record.id);
       try {
         const audit = await client.request(
@@ -202,9 +208,14 @@ export function createOfferDetail(deps) {
     if (token !== renderToken || !record || typeof record !== 'object') return;
     clear();
 
-    const customer = typeof record.contactName === 'string' && record.contactName !== ''
-      ? record.contactName
-      : (typeof record.companyName === 'string' && record.companyName !== '' ? record.companyName : null);
+    // Who the deal is for (backlog:ddf7f416): the contact name first; the
+    // reserved `Senza azienda` company is no customer, so it never paints
+    // as `Per Senza azienda` (same rule as the scheda's shownCompanyName).
+    const contact = typeof record.contactName === 'string' && record.contactName.trim() !== ''
+      ? record.contactName.trim()
+      : null;
+    const customer = contact
+      ?? shownCompanyName({ company: { name: record.companyName } });
 
     // Design (Dan 06/11): the deal reads like the quote — a card with who it
     // is for, the stage and the value up front, the facts in one strip, the
@@ -229,14 +240,16 @@ export function createOfferDetail(deps) {
     sheet.appendChild(hero);
 
     // Who created the deal: the actor of its creation event, read through the
-    // same rule as the history (never a technical id); no event, a dash.
+    // same rule as the history (nome e cognome, never a technical id and
+    // never `utente`); no event or no resolvable author, a dash.
     const createdEvent = auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null;
+    const createdBy = createdEvent !== null ? actorLabel(createdEvent, record, roster) : null;
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
-      ['Referente', typeof record.owner === 'string' && record.owner !== '' ? record.owner : '—'],
+      ['Referente', paintOwnerName(record.owner, roster)],
       ['Fase', stageLabel(schema, record)],
       ['Chiusura prevista', close ?? '—'],
-      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record) : '—'],
+      ['Creata da', createdBy ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {
@@ -251,7 +264,7 @@ export function createOfferDetail(deps) {
     // pipeline card editor): importo, chiusura, referente.
     const editWrap = el('div', 'offer-edit');
     sheet.appendChild(editWrap);
-    paintEdit(editWrap, record, offerId, token);
+    paintEdit(editWrap, record, offerId, token, roster);
     mount.appendChild(page);
 
     const quotesPanel = el('div', 'offer-quotes');
@@ -278,14 +291,64 @@ export function createOfferDetail(deps) {
     for (const entry of auditItems) {
       const row = el('p', 'history-event');
       row.appendChild(el('span', 'history-when', italianDay(entry?.createdAt) ?? '—'));
-      row.appendChild(el('span', 'history-what', `${auditActionLabel(entry?.action)} · da ${actorLabel(entry, record)}`));
+      // An unresolvable author omits the `da …` tail: the row never claims
+      // a technical id or the generic `utente` wrote it.
+      const author = actorLabel(entry, record, roster);
+      const what = author !== null ? `${auditActionLabel(entry?.action)} · da ${author}` : auditActionLabel(entry?.action);
+      row.appendChild(el('span', 'history-what', what));
       historyPanel.appendChild(row);
     }
     page.appendChild(historyPanel);
   }
 
+  /**
+   * The single Referente field (backlog:ddf7f416): the members select when
+   * the roster names anyone, else the one free-text field — never both.
+   * Either way `inputs.owner` exposes `.value`, so the save flow is
+   * unchanged. The stored value preselects even when it is not a member
+   * (an old handle stays choosable until the operator picks a member).
+   */
+  function addOwnerField(form, inputs, id, make, current, roster) {
+    const fieldRow = make('div', 'field-row');
+    const inputId = `offer-${id}-owner`;
+    const labelNode = make('label', undefined, 'Referente');
+    labelNode.setAttribute('for', inputId);
+    fieldRow.appendChild(labelNode);
+    const labels = Array.isArray(roster?.labels) ? roster.labels : [];
+    const stored = typeof current === 'string' ? current.trim() : '';
+    if (labels.length === 0) {
+      const input = make('input');
+      input.setAttribute('id', inputId);
+      input.setAttribute('name', 'owner');
+      input.setAttribute('type', 'text');
+      input.value = stored;
+      fieldRow.appendChild(input);
+      form.appendChild(fieldRow);
+      inputs.owner = input;
+      return;
+    }
+    const select = make('select', undefined, '');
+    select.setAttribute('id', inputId);
+    select.setAttribute('name', 'owner');
+    select.setAttribute('required', 'required');
+    if (stored !== '' && !labels.includes(resolveTeamName(stored, roster) ?? stored)) {
+      const keep = make('option', undefined, paintOwnerName(stored, roster));
+      keep.setAttribute('value', stored);
+      select.appendChild(keep);
+    }
+    for (const name of labels) {
+      const option = make('option', undefined, name);
+      option.setAttribute('value', name);
+      select.appendChild(option);
+    }
+    select.value = resolveTeamName(stored, roster) ?? stored;
+    fieldRow.appendChild(select);
+    form.appendChild(fieldRow);
+    inputs.owner = select;
+  }
+
   /** Edit form (or its opener) for the three commercial facts. */
-  function paintEdit(wrap, record, offerId, token) {
+  function paintEdit(wrap, record, offerId, token, roster) {
     while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
     const id = String(record.id);
     if (!editing) {
@@ -293,7 +356,7 @@ export function createOfferDetail(deps) {
       edit.setAttribute('type', 'button');
       const startEdit = () => {
         editing = true;
-        paintEdit(wrap, record, offerId, token);
+        paintEdit(wrap, record, offerId, token, roster);
       };
       edit.addEventListener('click', startEdit);
       wrap.appendChild(edit);
@@ -325,19 +388,29 @@ export function createOfferDetail(deps) {
       value: Number.isSafeInteger(record.valueCents) ? (record.valueCents / 100).toFixed(2) : '',
     });
     addField('expiry', 'Chiusura', { type: 'date', value: dayOf(record.expectedCloseDate) ?? '' });
-    addField('owner', 'Referente', { value: typeof record.owner === 'string' ? record.owner : '' });
+    // The referente is the members select (backlog:ddf7f416): one field,
+    // never free text plus a second select. Without a readable roster the
+    // single free-text field stays, so operators who cannot list the team
+    // can still correct the deal.
+    addOwnerField(form, inputs, id, el, typeof record.owner === 'string' ? record.owner : '', roster);
 
     let busy = false;
     const save = async (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       if (busy) return;
       const cents = parseEuroToCents(inputs.value.value);
-      const owner = String(inputs.owner.value ?? '').trim();
+      const picked = String(inputs.owner.value ?? '').trim();
+      // A roster subject chosen or typed resolves to its member name before
+      // the write, so a handle never lands back on the record. A technical
+      // value the roster cannot resolve is refused, never stored.
+      const resolved = resolveTeamName(picked, roster) ?? picked;
+      const owner = resolved;
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
       const failures = {};
       if (cents === null) failures.value = "Il valore è obbligatorio, in euro (es. 250.00).";
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
+      else if (resolveTeamName(picked, roster) === null && isTechnicalHandle(picked)) failures.owner = 'Scegli il referente tra i membri del team.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
         errorNode.textContent = Object.values(failures)[0];
@@ -360,7 +433,7 @@ export function createOfferDetail(deps) {
     };
     const cancelEdit = () => {
       editing = false;
-      paintEdit(wrap, record, offerId, token);
+      paintEdit(wrap, record, offerId, token, roster);
     };
     form.addEventListener('submit', save);
     const saveButton = el('button', undefined, 'Salva');
