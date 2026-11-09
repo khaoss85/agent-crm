@@ -671,11 +671,38 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
 }
 
 /**
+ * Whether a failure means the write never got a usable answer from the
+ * server (backlog:7cc35edab50c, production 07/11: a 502 from the /bo edge
+ * read «Scrittura del pannello rifiutata», as if the panel had refused):
+ * fetch rejected (a TypeError, status 0), a timeout, or a 502/503/504
+ * gateway hiccup. A refusal the server really named — an LLM_* code (the
+ * pilot forwards AI-off at 502), a *_CANCELLED or *_OUTCOME_UNKNOWN outcome —
+ * stays a refusal, never a connection fault. The queued re-read (review
+ * #664) shares this line through transientReadFailure, so the two cannot
+ * drift apart.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function isNetworkFailure(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 0) return true;
+  if (status === null) {
+    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
+  }
+  return status === 502 || status === 503 || status === 504;
+}
+
+/**
  * Regola per le scritture (backlog:9046f940): una scrittura rifiutata non
  * resta mai in silenzio — vicino al comando compare un testo italiano che
  * dice cosa è successo e cosa fare. Il dettaglio tecnico va solo nel log,
  * mai nel DOM. Lo stato 405 (operazione non permessa) e il 422 (dati non
- * validi) hanno un testo proprio; tutto il resto risponde `failed`.
+ * validi) hanno un testo proprio; tutto il resto risponde `failed`. Un
+ * guasto di rete (backlog:7cc35edab50c) non è un rifiuto: risponde
+ * «Connessione non riuscita, riprova.» e il comando resta a schermo per la
+ * riprova, mai il testo di un rifiuto.
  *
  * @param {unknown} error the rejection from `client.request`
  * @param {{ failed: string, notComposed?: string|null, log?: (message: string, cause: unknown) => void }} options
@@ -683,6 +710,7 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
 export function humanWriteError(error, { failed, notComposed = null, log = null } = {}) {
   const { code, status, message, report } = normalizeFailure(error, log);
   report('[bo] scrittura rifiutata', { code, status, message });
+  if (isNetworkFailure(error)) return 'Connessione non riuscita, riprova.';
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   if (status === 405 || code === 'METHOD_NOT_ALLOWED') {
     return 'Il server non permette questa operazione qui. Chiedi a un operatore di abilitare la funzione e riprova.';
@@ -863,11 +891,11 @@ function transientReadFailure(error) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
   if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
+  // The network line lives in isNetworkFailure (backlog:7cc35edab50c);
+  // here stay the server hiccups worth one more read.
+  if (isNetworkFailure(error)) return true;
   const status = typeof record.status === 'number' ? record.status : null;
-  if (status === 0) return true;
-  if (status === null) {
-    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
-  }
+  if (status === null) return false;
   return status >= 500 || status === 408 || status === 425 || status === 429;
 }
 
