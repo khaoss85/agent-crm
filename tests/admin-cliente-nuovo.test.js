@@ -748,6 +748,48 @@ test('a corrected email after the rescue updates the customer, never a duplicate
   assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
 });
 
+test('a wholly different customer after the rescue takes a full apply, never a PATCH (backlog:053d5cac)', async () => {
+  const store = memoryStore();
+  let notes = 0;
+  let applies = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    if (path === '/api/customer-data/import/apply') {
+      applies += 1;
+      return accepted({ id: applies === 1 ? 'c9' : 'c10', resource: 'contact' }, 'CREATED_RECORD');
+    }
+    if (path === '/api/contacts/c9') return { id: 'c9', firstName: 'Mario', lastName: 'Rossi', email: 'mario@esempio.it' };
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda on a lost session');
+  // The operator types a genuinely different person, not a correction.
+  setValue(rendered.mount, 'nome', 'Luigi Verdi');
+  setValue(rendered.mount, 'email', 'luigi@esempio.it');
+  setValue(rendered.mount, 'azienda', 'Palestra Nuova');
+  clickSave(rendered.mount);
+  await flush();
+  const calls = appliesOf(client);
+  assert.equal(calls.length, 2, 'a different customer takes the full apply, not the rescued subject');
+  assert.equal(calls[1].body.rows[0].email, 'luigi@esempio.it', 'the second apply carries the new person');
+  assert.equal(client.calls.filter((call) => call.path === '/api/contacts/c9').length, 0,
+    'no PATCH overwrites the already-created contact');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c10', 'the resumed save lands on the new scheda');
+  assert.equal(readNewCustomerDraft(store), null, 'a completed save leaves no draft behind');
+});
+
 test('a resumed save skips the steps already done before the session died', async () => {
   const store = memoryStore();
   let values = 0;

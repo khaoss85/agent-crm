@@ -672,16 +672,29 @@ export function createCustomerFormView(deps) {
         const cleanNome = values.nome.trim();
         const cleanAzienda = values.azienda.trim();
         // Resume: the customer may already exist from a session-loss rescue.
-        // The rescue draft carries its subject: Salva always resumes on it,
-        // never a second apply — a corrected email updates the customer
-        // instead of duplicating it (backlog:053d5cac).
+        // The rescue draft carries its subject: Salva resumes on it only
+        // while the live form still overlaps it — a corrected email updates
+        // the customer instead of duplicating it (backlog:053d5cac). A
+        // wholly different customer typed after the rescue (no shared
+        // identity at all) takes the full import/apply path, never a PATCH
+        // over the already-created contact.
         const resumed = readNewCustomerDraft(drafts, draftScope());
         const kept = resumed?.created !== null && resumed?.created !== undefined
           && resumed?.created?.resource === 'contact' ? resumed : null;
+        const keptEmail = kept !== null ? normalizeResumeEmail(kept.email) : '';
+        const liveEmail = normalizeResumeEmail(cleanEmail);
+        const keptNome = kept !== null ? String(kept.nome ?? '').trim() : '';
+        const keptAzienda = kept !== null ? String(kept.azienda ?? '').trim() : '';
         const sameIdentity = kept !== null
-          && normalizeResumeEmail(kept.email) === normalizeResumeEmail(cleanEmail)
-          && String(kept.nome ?? '').trim() === cleanNome
-          && String(kept.azienda ?? '').trim() === cleanAzienda;
+          && keptEmail === liveEmail
+          && keptNome === cleanNome
+          && keptAzienda === cleanAzienda;
+        // An empty email is no identity: two customers without an email are
+        // not the same person, so the overlap needs a real address or the
+        // same nome+azienda pair.
+        const sameCustomer = kept !== null
+          && ((keptEmail !== '' && keptEmail === liveEmail)
+            || (keptNome === cleanNome && keptAzienda === cleanAzienda));
         let subject;
         let done = new Set();
         let warning = null;
@@ -691,7 +704,7 @@ export function createCustomerFormView(deps) {
           // never completed, never a second apply.
           subject = kept.created;
           done = new Set(kept.done);
-        } else if (kept !== null) {
+        } else if (sameCustomer) {
           // Same customer, edited base fields: reuse the subject and write
           // the edits back instead of a second apply, which would only
           // duplicate it. Nome and email go through the scheda's governed
