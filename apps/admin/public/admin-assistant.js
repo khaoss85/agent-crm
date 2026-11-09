@@ -257,7 +257,9 @@ export function italianDates(label) {
 function recordSource(module, id, label) {
   if (!isSafeModule(module) || !isSafeRecordId(id)) return null;
   // Voce a684ecf5: la fonte mostra il nome, mai l'id grezzo — l'ultima
-  // rete resta neutra invece di ripiegare sull'id.
+  // rete resta neutra invece di ripiegare sull'id. Le neutre uguali nello
+  // stesso elenco prendono l'ordinale in chi chiama (takeSources o la
+  // risposta con uniqueLabels), mai qui: la singola fonte non vede le altre.
   const text = shortText(italianDates(label), 80) || 'Record senza nome';
   return {
     kind: 'record',
@@ -414,14 +416,25 @@ async function readRecords(client, module, limit = SUGGESTION_READ_LIMIT, traceR
  * @param {number} max
  */
 function takeSources(rows, module, labelOf, max = SUGGESTION_MAX_SOURCES) {
-  /** @type {Source[]} */
-  const sources = [];
+  if (!isSafeModule(module)) return [];
+  const candidates = [];
   for (const row of rows) {
-    if (sources.length >= max) break;
-    const source = recordSource(module, row?.id, labelOf(row));
-    if (source !== null) sources.push(source);
+    if (candidates.length >= max) break;
+    if (!isSafeRecordId(row?.id)) continue;
+    candidates.push(row);
   }
-  return sources;
+  // Voce a684ecf5: stessa soglia ordinale di thread e lead (uniqueLabels) —
+  // due righe con lo stesso testo visibile non condividono mai un'etichetta
+  // identica, nemmeno quando la rete neutra scatta («Record senza nome»,
+  // «Opportunità senza titolo», «(senza testo)», «Segnalazione senza titolo»).
+  const distinct = uniqueLabels(candidates.map((row) => shortText(italianDates(labelOf(row)), 80) || 'Record senza nome'));
+  return candidates.map((row, index) => ({
+    kind: 'record',
+    module,
+    id: row.id,
+    label: distinct[index],
+    href: `#/modules/${module}/${encodeURIComponent(row.id)}`,
+  }));
 }
 
 /** @param {unknown} value */
@@ -661,26 +674,43 @@ async function answerRicontattare(client) {
 /**
  * Customer names behind signal lead ids (voce a684ecf5): leadId is a
  * contact or company record id, so the panel reads those modules and
- * names the customer — never the raw id. Unknown ids stay neutral.
+ * names the customer — never the raw id. The lookup pages are capped at
+ * FREE_DATA_READ_LIMIT while signals rank from up to SIGNAL_READ_LIMIT
+ * rows, so a leadId missing from the truncated page is NOT «senza nome»:
+ * the caller labels it with the lookup bound instead of asserting an
+ * unknown name as fact.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {Array<TraceRead>} traceReads
  */
 async function signalLeadNames(client, traceReads) {
   /** @type {Map<string, string>} */
   const names = new Map();
+  /** @type {Set<string>} */
+  const seen = new Set();
   const [contacts, companies] = await Promise.all([
     readRecords(client, 'contact', FREE_DATA_READ_LIMIT, traceReads),
     readRecords(client, 'company', FREE_DATA_READ_LIMIT, traceReads),
   ]);
   for (const row of contacts ?? []) {
+    if (isSafeRecordId(row?.id)) seen.add(/** @type {string} */ (row.id));
     const name = contactDisplayName(row);
     if (name !== '' && isSafeRecordId(row?.id)) names.set(/** @type {string} */ (row.id), name);
   }
   for (const row of companies ?? []) {
+    if (isSafeRecordId(row?.id)) seen.add(/** @type {string} */ (row.id));
     const name = companyDisplayName(row);
     if (name !== '' && isSafeRecordId(row?.id)) names.set(/** @type {string} */ (row.id), name);
   }
-  return names;
+  return {
+    names,
+    seen,
+    capped: (contacts?.length ?? 0) >= FREE_DATA_READ_LIMIT
+      || (companies?.length ?? 0) >= FREE_DATA_READ_LIMIT,
+    missing: [
+      ...(contacts === null ? ['contact'] : []),
+      ...(companies === null ? ['company'] : []),
+    ],
+  };
 }
 
 /** Segnali caldi: behavioral-signal di packages/intelligence, per lead. */
@@ -706,21 +736,32 @@ async function answerSegnali(client) {
   }
   // Voce a684ecf5: ogni riga nomina il cliente, mai l'id grezzo
   // (contact/<uuid>). Stessa fonte di verità per righe, fonti e «Apri:».
-  const leadNames = await signalLeadNames(client, answer.trace.reads);
-  const leadLabel = (leadId) => leadNames.get(leadId) ?? 'Lead senza nome';
+  const lookup = await signalLeadNames(client, answer.trace.reads);
+  for (const module of lookup.missing) {
+    answer.unavailable.push(module === 'contact'
+      ? 'Lead: modulo contact non leggibile in questo spazio.'
+      : 'Aziende: modulo company non leggibile in questo spazio.');
+  }
+  // Un leadId fuori dalla pagina troncata non è «senza nome»: lo dice il
+  // bound di lookup, come le altre risposte (lead-day «prime 50 lette»).
+  const leadLabel = (leadId) => lookup.names.get(leadId)
+    ?? (!lookup.seen.has(leadId) && lookup.capped
+      ? `Lead oltre le prime ${FREE_DATA_READ_LIMIT} lette`
+      : 'Lead senza nome');
   const distinct = uniqueLabels(ranked.map(([leadId]) => leadLabel(leadId)));
   const labelByLead = new Map(ranked.map(([leadId], index) => [leadId, distinct[index]]));
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = signals.length >= SIGNAL_READ_LIMIT;
-  answer.lines.push(`${signals.length} segnali su ${byLead.size} lead${capped ? ` (prime ${signals.length} lette)` : ''}:`);
+  const lookupBound = lookup.capped ? ` (nomi tra le prime ${FREE_DATA_READ_LIMIT} lette)` : '';
+  answer.lines.push(`${signals.length} segnali su ${byLead.size} lead${capped ? ` (prime ${signals.length} lette)` : ''}${lookupBound}:`);
   const sourceRows = [];
   for (const [leadId, list] of ranked) {
     const latest = newestFirst(list)[0];
     answer.lines.push(`• ${labelByLead.get(leadId)}: ${list.length} segnali (ultimo: ${shortText(latest?.signalType, 30) || '?'})`);
     sourceRows.push(latest);
   }
-  answer.sources.push(...takeSources(sourceRows, 'behavioral-signal', (row) => `${shortText(row?.signalType, 30) || 'segnale'} · ${labelByLead.get(row?.leadId) ?? 'Lead senza nome'}`));
+  answer.sources.push(...takeSources(sourceRows, 'behavioral-signal', (row) => `${shortText(row?.signalType, 30) || 'segnale'} · ${labelByLead.get(row?.leadId) ?? leadLabel(row?.leadId)}`));
   const first = answer.sources[0];
   if (first) {
     answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
@@ -858,9 +899,13 @@ async function answerChiusura(client) {
       ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}${pageNote}.`
       : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}${pageNote}.`);
     pushStageLines(answer, stageCount, stageTotals);
-    for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${labelOf(row)}`);
-    }
+    // Voce a684ecf5: due opportunità senza nome non sono la stessa riga —
+    // ordinali come thread e lead, così «Apri:» apre sempre la prima giusta.
+    const listed = open.slice(0, SUGGESTION_MAX_LISTED);
+    const distinctListed = uniqueLabels(listed.map((row) => labelOf(row)));
+    listed.forEach((row, index) => {
+      answer.lines.push(`• ${distinctListed[index]}`);
+    });
     return answer;
   }
   // Board-aware scope, like admin-pipeline.js renderAll: only rows placed on
@@ -912,16 +957,23 @@ async function answerChiusura(client) {
     for (const row of offOpen) accumulateStage(row, offCount, offTotals, legacyStageOf);
     answer.lines.push(`${offOpen.length} fuori pipeline ${board.name}${capped ? ' tra le lette' : ''} (la board non le mostra, senza link).`);
     pushStageLines(answer, offCount, offTotals);
-    for (const row of offOpen.slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${labelOf(row)}`);
-    }
+    const listedOff = offOpen.slice(0, SUGGESTION_MAX_LISTED);
+    const distinctOff = uniqueLabels(listedOff.map((row) => labelOf(row)));
+    listedOff.forEach((row, index) => {
+      answer.lines.push(`• ${distinctOff[index]}`);
+    });
   }
+  // Voce a684ecf5: stesse ordinali anche nelle fonti, una per riga colocata.
+  const placed = [];
   for (const row of openPlaced) {
-    if (answer.sources.length >= SUGGESTION_MAX_SOURCES) break;
+    if (placed.length >= SUGGESTION_MAX_SOURCES) break;
     if (!isSafeRecordId(row?.id)) continue;
-    const label = labelOf(row);
-    answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label, href: boardHref });
+    placed.push(row);
   }
+  const distinctPlaced = uniqueLabels(placed.map((row) => labelOf(row)));
+  placed.forEach((row, index) => {
+    answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label: distinctPlaced[index], href: boardHref });
+  });
   const first = answer.sources[0];
   if (first) {
     answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
@@ -974,9 +1026,12 @@ async function answerLeadSito(client) {
     return answer;
   }
   answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
-  for (const row of inbound.slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${shortText(row?.body, 60) || '(senza testo)'}`);
-  }
+  // Voce a684ecf5: due messaggi senza testo non sono la stessa riga.
+  const listedSite = inbound.slice(0, SUGGESTION_MAX_LISTED);
+  const distinctSite = uniqueLabels(listedSite.map((row) => shortText(row?.body, 60) || '(senza testo)'));
+  listedSite.forEach((row, index) => {
+    answer.lines.push(`• ${distinctSite[index]}`);
+  });
   answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => shortText(row?.body, 60) || '(senza testo)'));
   const first = inbound[0];
   if (isSafeRecordId(first?.conversationId)) {

@@ -1718,6 +1718,27 @@ test('a684ecf5: segnali senza nome restano neutri, mai id', async () => {
   assert.ok(visible.includes('Lead senza nome'), visible);
 });
 
+test('a684ecf5: segnale fuori dalla pagina nomi dice il bound, mai id', async () => {
+  const contacts = Array.from({ length: 50 }, (_, index) => ({
+    id: `contact-pagina-${index}`, firstName: 'Pagina', lastName: `Contatto ${index}`,
+  }));
+  const client = stubClient({
+    '/api/modules/behavioral-signal/records?limit=100': {
+      items: [
+        { id: 'sig-1', leadId: 'contact-fuori-pagina', signalType: 'pricing-page-visited', observedAt: '2026-10-20T07:00:00.000Z' },
+      ],
+    },
+    '/api/modules/contact/records?limit=50': { items: contacts },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:segnali');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('contact-fuori-pagina'), visible);
+  assert.ok(!visible.includes('Lead senza nome'), visible);
+  assert.ok(visible.includes('Lead oltre le prime 50 lette'), visible);
+  assert.ok(visible.includes('nomi tra le prime 50 lette'), visible);
+});
+
 test('a684ecf5: opportunita senza nome resta neutra, mai id', async () => {
   const client = stubClient({
     '/api/opportunities': {
@@ -1739,6 +1760,34 @@ test('a684ecf5: opportunita senza nome resta neutra, mai id', async () => {
   const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
   const visible = visibleTexts(answer);
   assert.ok(!visible.includes('opp-grezzo'), visible);
+  assert.ok(visible.includes('Opportunità senza titolo'), visible);
+});
+
+test('a684ecf5: due opportunita senza nome hanno ordinali diversi', async () => {
+  const client = stubClient({
+    '/api/opportunities': {
+      items: [
+        { id: 'opp-1', stage: 'proposal', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', valueCents: 100000, currency: 'EUR' },
+        { id: 'opp-2', stage: 'proposal', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', valueCents: 200000, currency: 'EUR' },
+      ],
+    },
+    '/api/schema': {
+      pipelines: [{
+        name: 'b2b-sales', module: 'opportunity',
+        stages: [
+          { key: 'proposal', type: 'open', label: 'Proposta' },
+          { key: 'won', type: 'won', label: 'Vinta' },
+          { key: 'lost', type: 'lost', label: 'Persa' },
+        ],
+      }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('opp-1'), visible);
+  assert.ok(!visible.includes('opp-2'), visible);
+  assert.ok(visible.includes('Opportunità senza titolo · 1'), visible);
+  assert.ok(visible.includes('Opportunità senza titolo · 2'), visible);
 });
 
 test('a684ecf5: messaggio senza testo resta neutro, mai id', async () => {
@@ -1752,6 +1801,24 @@ test('a684ecf5: messaggio senza testo resta neutro, mai id', async () => {
   const answer = await runSuggestion(client, 'bo04:sequenze:lead-sito');
   const visible = visibleTexts(answer);
   assert.ok(!visible.includes('msg-grezzo'), visible);
+  assert.ok(visible.includes('(senza testo)'), visible);
+});
+
+test('a684ecf5: due messaggi senza testo hanno ordinali diversi', async () => {
+  const client = stubClient({
+    '/api/modules/interaction-message/records?limit=100': {
+      items: [
+        { id: 'msg-1', direction: 'inbound', channel: 'website-form', conversationId: 'conv-1' },
+        { id: 'msg-2', direction: 'inbound', channel: 'website-form', conversationId: 'conv-2' },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:sequenze:lead-sito');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('msg-1'), visible);
+  assert.ok(!visible.includes('msg-2'), visible);
+  assert.ok(visible.includes('(senza testo) · 1'), visible);
+  assert.ok(visible.includes('(senza testo) · 2'), visible);
 });
 
 test('a684ecf5: problema senza titolo resta neutro, mai id', async () => {
@@ -1764,6 +1831,25 @@ test('a684ecf5: problema senza titolo resta neutro, mai id', async () => {
   const answer = await runSuggestion(client, 'bo04:oggi:urgenti');
   const visible = visibleTexts(answer);
   assert.ok(!visible.includes('issue-grezzo'), visible);
+  assert.ok(visible.includes('Segnalazione senza titolo'), visible);
+});
+
+test('a684ecf5: due problemi senza titolo hanno ordinali diversi', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': { items: [] },
+    '/api/modules/data-quality-issue/records?limit=50': {
+      items: [
+        { id: 'issue-1', status: 'open' },
+        { id: 'issue-2', status: 'open' },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:oggi:urgenti');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('issue-1'), visible);
+  assert.ok(!visible.includes('issue-2'), visible);
+  assert.ok(visible.includes('Segnalazione senza titolo · 1'), visible);
+  assert.ok(visible.includes('Segnalazione senza titolo · 2'), visible);
 });
 
 test('a684ecf5: spazio non attivo dice spento e come si accende', () => {
