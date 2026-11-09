@@ -50,7 +50,8 @@ test('technical handles are detected by shape', () => {
 
 test('the painted referente is a name or a dash, never an id', () => {
   assert.equal(paintOwnerName('coach-guido', ROSTER), 'Guido Conti');
-  assert.equal(paintOwnerName('maria', ROSTER), 'maria', 'an operator-typed name paints as-is');
+  assert.equal(paintOwnerName('maria', ROSTER), '—', 'a readable roster that cannot resolve the value paints a dash, never a bare handle');
+  assert.equal(paintOwnerName('maria', emptyRoster()), 'maria', 'without a readable roster the stored value still paints');
   assert.equal(paintOwnerName('00000000-0000-4000-8000-000000000000', ROSTER), 'Elena Rossi');
   assert.equal(paintOwnerName('00000000-0000-4000-8000-000000000000', emptyRoster()), '—', 'an unresolvable UUID degrades to a dash');
   assert.equal(paintOwnerName('github|99', ROSTER), '—');

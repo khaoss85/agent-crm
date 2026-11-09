@@ -110,8 +110,12 @@ export function resolveTeamName(value, roster) {
 
 /**
  * The referente one offer screen paints: the roster name for a member
- * subject, the stored human name otherwise, and an em dash for an empty
- * or technical value that the roster cannot resolve — never an id.
+ * subject or a known member label, and an em dash for anything the
+ * roster cannot resolve — never an id, never a bare handle. When the
+ * roster names nobody (an unreadable or empty membership list) the
+ * stored value still paints as-is, so the screen degrades instead of
+ * going blank. A readable roster that cannot resolve the value means
+ * the record holds a stale handle, not a chosen name: paint a dash.
  * @param {unknown} owner
  * @param {{bySubject: Map<string, string>, labels: Array<string>}|null} roster
  * @returns {string}
@@ -119,5 +123,10 @@ export function resolveTeamName(value, roster) {
 export function paintOwnerName(owner, roster) {
   const raw = typeof owner === 'string' ? owner.trim() : '';
   if (raw === '') return '—';
-  return resolveTeamName(raw, roster) ?? (isTechnicalHandle(raw) ? '—' : raw);
+  const hit = resolveTeamName(raw, roster);
+  if (hit !== null) return hit;
+  if (isTechnicalHandle(raw)) return '—';
+  const labels = Array.isArray(roster?.labels) ? roster.labels : null;
+  if (labels !== null && labels.length > 0) return '—';
+  return raw;
 }

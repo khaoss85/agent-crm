@@ -379,6 +379,10 @@ export function createModuleAdmin(deps) {
         const select = el(doc, 'select', { attrs: { id: inputId, name: 'owner' } });
         select.setAttribute('required', 'required');
         select.setAttribute('aria-describedby', `${inputId}-error`);
+        // No silent default: the empty option starts selected so `required`
+        // refuses the submit until the operator picks a member — the form
+        // never files the first roster name without an explicit choice.
+        select.appendChild(el(doc, 'option', { text: 'Scegli il referente', attrs: { value: '' } }));
         for (const name of labels) {
           select.appendChild(el(doc, 'option', { text: name, attrs: { value: name } }));
         }

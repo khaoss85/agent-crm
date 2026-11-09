@@ -125,6 +125,21 @@ function clientFor(baseUrl) {
   };
 }
 
+// Voce ddf7f416 (review P1 head 74e580fd): with a readable roster the new-offer
+// Referente is a members select that starts on an empty option, so `required`
+// refuses the submit until the operator picks a member — never the first
+// roster name by silent default.
+function rosterClient(baseUrl, members) {
+  const base = clientFor(baseUrl);
+  return {
+    request(path, options) {
+      enforceAdminWriteGate(path, options);
+      if (String(path) === '/api/spine/memberships') return { items: members };
+      return base.request(path, options);
+    },
+  };
+}
+
 function setup(t, { partner = true, supplier = false } = {}) {
   return startServer(t, (app) => {
     if (partner) inMemoryModule(app, partnerModule(), partnerValidator);
@@ -599,6 +614,36 @@ test('714433c2: renderNew(opportunity) validates before writing', async (t) => {
   await form.__submit({ preventDefault() {} });
   assert.ok(mount.textContent.includes('Il valore è obbligatorio'), 'a hostile value is refused');
   assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write on a bad value');
+});
+
+test('ddf7f416: renderNew(opportunity) with a readable roster starts on an empty Referente and refuses a silent default', async (t) => {
+  const { app, baseUrl } = await startServer(t, () => {});
+  const company = await app.services.companies.create({ name: 'Palestra Esempio' }, { actor: ACTOR });
+  const members = [
+    { subject: 'coach-guido', displayName: 'Guido Conti' },
+    { subject: '00000000-0000-4000-8000-000000000000', displayName: 'Elena Rossi' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({
+    doc, mount, client: rosterClient(baseUrl, members), navigate: () => {}, storage: memoryStorage(),
+  });
+  const form = await admin.renderNew('opportunity');
+  assert.equal(form.__inputs.owner.tagName, 'SELECT', 'a readable roster gives the members select');
+  const options = form.__inputs.owner.findAll('option');
+  assert.equal(options[0].getAttribute('value'), '', 'the select starts on an empty option');
+  assert.equal(form.__inputs.owner.value, '', 'no member is preselected');
+  form.__inputs.company.value = company.id;
+  form.__inputs.title.value = 'Pacchetto 10 ingressi';
+  form.__inputs.value.value = '250.00';
+  await form.__submit({ preventDefault() {} });
+  assert.ok(mount.textContent.includes('Il referente è obbligatorio.'), 'an untouched Referente is refused');
+  assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write without an explicit choice');
+  form.__inputs.owner.value = 'Guido Conti';
+  await form.__submit({ preventDefault() {} });
+  const rows = app.services.opportunities.list({ companyId: company.id });
+  assert.equal(rows.length, 1, 'one opportunity filed after an explicit choice');
+  assert.equal(rows[0].owner, 'Guido Conti', 'the chosen member name is stored');
 });
 
 // Voce 96e7b579: without a scheda pick the operator chooses the cliente in
