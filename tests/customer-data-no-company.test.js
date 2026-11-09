@@ -186,3 +186,22 @@ test('a real company named «Senza azienda» reads as a company everywhere (back
     'real same-named companies still pair as duplicates',
   );
 });
+
+test('sender resolution never matches a placeholder company by name (backlog:ac65e448fcb4)', async (t) => {
+  const { app } = scene(t);
+  // The placeholder carries the explicit domain as evidence (review #654),
+  // so a sender naming that exact company and domain is the sharp case: the
+  // core adapters must hide the placeholder (the portable copy mirrors them).
+  const imported = await applyOne(app, { firstName: 'Mario', email: 'mario@acme.example', domain: 'acme.example' }, 'crm-export');
+  const contact = await app.services.contacts.get(imported.receipts[0].subject.id);
+  const placeholder = await app.services.companies.get(contact.companyId);
+  assert.equal(placeholder.placeholder, true);
+  assert.equal(placeholder.domain, 'acme.example');
+  const answer = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000099',
+    companyName: 'Senza azienda', domain: 'acme.example', actor: OPERATOR,
+  });
+  assert.equal(answer.rule, 'none', 'no company rule fires on a placeholder');
+  assert.deepEqual(answer.candidates, [], 'the placeholder is never a resolution candidate');
+  assert.equal(answer.contact, null, 'no contact is created from a placeholder match');
+});
