@@ -207,15 +207,16 @@ export async function profileFor({ modules, core, names, subject }) {
         opportunityService, { companyIds, contactIds, opportunityIds: new Set() }, subject);
     } catch { opportunityRead = null; }
   }
-  // Voce 1e89d516cfc3 (recidiva di cc525cd6a3c5, verifica 07/11 21:53Z su
-  // Presti Group): on a contact card the commercial sections hold only this
-  // contact's records. A company-linked opportunity (empty contactId, like
-  // production 3795a020) matched every contact card under its company, so
-  // Ada Rossi, Bea Bianchi and Fio Neri all read the same OFFERTA
-  // line. The explicit contact link wins: a contact card keeps an
-  // opportunity only when its contactId names this customer's contact, and
-  // the quote hop below follows that narrowed set. A company-linked offer
-  // belongs to the company card, which keeps the wide rule.
+  // Voce 1e89d516cfc3 (recidiva di cc525cd6a3c5, verifica 07/11 21:53Z
+  // sulla prima azienda cliente, 40 contatti sotto una sola azienda): on a
+  // contact card the commercial sections hold only this contact's records.
+  // A company-linked opportunity (empty contactId) matched every contact
+  // card under its company, so three contacts of the same company all read
+  // the same offer line. The explicit contact link wins: a contact card
+  // keeps an opportunity only when its contactId names this customer's
+  // contact, and the quote hop below follows that narrowed set. A
+  // company-linked offer belongs to the company card, which keeps the
+  // wide rule.
   if (subject?.resource === 'contact' && opportunityRead?.rows) {
     opportunityRead = {
       ...opportunityRead,
