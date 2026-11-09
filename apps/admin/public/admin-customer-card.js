@@ -3034,10 +3034,23 @@ export function createCustomerCardView(deps) {
    * Backlog c1649d1d: «Storia stati» — the state moves of the shown offer
    * (who, from which stage to which, when), read from the same audit trail
    * the offer detail paints. The trail is decoration: it fills after the
-   * card, an unreadable trail reads one honest line, and an offer with no
-   * move yet reads none. A move whose side has no label is skipped, never a
-   * raw key on screen.
+   * card, an unreadable trail reads one honest line (and logs its cause,
+   * never its payload), and an offer with no move yet reads none. A move
+   * whose side has no label reads the generic Italian line, like the
+   * detail — never a raw key, and never a false-empty history when the
+   * pipelines are unavailable.
    */
+
+  /** Log a decoration-read failure with its cause, never its payload. */
+  function logHistoryFailure(error) {
+    if (typeof console !== 'undefined' && typeof console.error === 'function') {
+      console.error('[bo] offerta non leggibile', {
+        area: 'scheda-stati',
+        code: error?.code ?? null,
+        status: Number(error?.status ?? 0) || null,
+      });
+    }
+  }
   function historyTarget(first, fromQuote) {
     if (!first || typeof first !== 'object') return null;
     if (fromQuote) {
@@ -3058,27 +3071,41 @@ export function createCustomerCardView(deps) {
     box.appendChild(loading);
     const fill = (items) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
-      const moves = (Array.isArray(items) ? items : [])
-        .map((entry) => ({ entry, move: stageMoveOf(entry) }))
-        .filter(({ move }) => move !== null)
-        .map(({ entry, move }) => ({ entry, words: stageMoveLabels(pipelines, move) }))
-        .filter(({ words }) => words !== null)
-        .slice(0, 5);
-      if (moves.length === 0) {
+      const rows = [];
+      for (const entry of Array.isArray(items) ? items : []) {
+        const move = stageMoveOf(entry);
+        if (move === null) continue;
+        const words = stageMoveLabels(pipelines, move);
+        const who = auditActorLabel(entry, [owner, companyName]);
+        const when = italianDateTime(entry?.createdAt) ?? '—';
+        if (words === null) {
+          // Review giro 1 (P2): the audit holds a move but no side has a
+          // label (pipelines unavailable, unknown keys). Like the detail,
+          // the row reads the generic Italian line — never a raw key, and
+          // never a false «no moves» message for moves that exist.
+          const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
+          rows.push(`${what} · da ${who} · ${when}`);
+        } else {
+          rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
+        }
+        if (rows.length >= 5) break;
+      }
+      if (rows.length === 0) {
         box.appendChild(el('p', 'bo-muted', 'Ancora nessun cambio di stato.'));
         return;
       }
-      for (const { entry, words } of moves) {
-        const who = auditActorLabel(entry, [owner, companyName]);
-        const when = italianDateTime(entry?.createdAt) ?? '—';
-        box.appendChild(el('p', 'bo-scheda-offer-history', `da ${words.from} a ${words.to} · da ${who} · ${when}`));
+      for (const text of rows) {
+        box.appendChild(el('p', 'bo-scheda-offer-history', text));
       }
     };
     void client.request(
       `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`,
     ).then(
       (answer) => fill(answer?.items),
-      () => {
+      (error) => {
+        // Review giro 1 (P2): the rejection cause reaches on-call, like the
+        // detail does — code and status only, never payload or PII.
+        logHistoryFailure(error);
         if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
       },
     );
