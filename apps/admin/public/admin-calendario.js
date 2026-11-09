@@ -291,6 +291,23 @@ function personKeyOf(value) {
 }
 
 /**
+ * backlog:810ed0bf — the control-plane same-person key of a roster row
+ * (`operatorAccountId`, one per human), or null when the roster carries
+ * none. The pilot forwards it beside the subject when it knows it, so the
+ * Team card unites one member's identities (broker, github, google) even
+ * when they carry different mailboxes. Only this documented key merges:
+ * generic `personKey`/`personId`/`userId` fields have no producer contract
+ * in this repo, and two unrelated humans sharing one would merge into a
+ * single unbookable row — so they never merge here.
+ * @param {any} member
+ */
+function rosterPersonId(member) {
+  if (!member || typeof member !== 'object') return null;
+  const value = member.operatorAccountId;
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+/**
  * Member creation instant (epoch ms), or null when the roster carries none.
  * The roster's own order is the fallback: it lists members oldest first.
  * @param {any} member
@@ -312,9 +329,11 @@ function memberBornAt(member) {
  * the human behind every subject, and one human can hold several subjects
  * (`github|…`, `google|…`, mailbox): subjects merge into one row ONLY when
  * both the mailbox and the display name match (trimmed, case-insensitive) —
- * the same rule as Spazi e accessi (backlog:f4a1f250, agent-crm#644). A
- * mailbox alone never merges: two distinct humans on a shared mailbox
- * (info@…) stay two rows. A shared display name alone never merges either —
+ * the same rule as Spazi e accessi (backlog:f4a1f250, agent-crm#644) — or
+ * when the roster carries the same control-plane person key
+ * (`operatorAccountId`, backlog:810ed0bf). A mailbox alone never merges: two
+ * distinct humans on a shared mailbox (info@…) stay two rows. A shared
+ * display name alone never merges either —
  * two email-less homonyms are two humans, two rows with distinct booking
  * identities and ordinal labels («Rossi (1)», «Rossi (2)» in
  * member-creation order, never a technical id). A group
@@ -337,29 +356,45 @@ export function personRows(named, hidden, members) {
   const groups = [];
   const bySubject = new Map();
   const byIdentity = new Map();
+  const byPerson = new Map();
   const groupFor = (subject) => bySubject.get(subject) ?? null;
   for (const member of roster) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
+    const personId = rosterPersonId(member);
     const email = personKeyOf(member.email);
     const display = cleanPersonText(member.displayName);
     // One human holds one mailbox under one name: two subjects merge into
     // one person row ONLY when both the mailbox and the display name match
-    // (trimmed, case-insensitive) — the Spazi e accessi rule (agent-crm#644).
-    // A shared mailbox alone never merges two humans, and a shared display
-    // name alone never merges two email-less homonyms either.
+    // (trimmed, case-insensitive) — the Spazi e accessi rule (agent-crm#644,
+    // backlog:f4a1f250) — or when the roster carries the same control-plane
+    // person key (backlog:810ed0bf). A shared mailbox alone never merges two
+    // humans, and a shared display name alone never merges two email-less
+    // homonyms either.
     const nameKey = display === null ? null : display.replace(/\s+/g, ' ').toLowerCase();
     const key = email === null || nameKey === null ? null : `${email}\u0000${nameKey}`;
-    let group = (key !== null && byIdentity.get(key)) || null;
+    let group = (personId !== null && byPerson.get(personId))
+      || (key !== null && byIdentity.get(key))
+      || null;
     if (!group) {
-      group = { subjects: [], displayName: null, email: null, born: null, bornIndex: groups.length };
+      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
       groups.push(group);
-      if (key !== null) byIdentity.set(key, group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
     const born = memberBornAt(member);
     if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
+    if (personId !== null && group.personId === null) {
+      group.personId = personId;
+      byPerson.set(personId, group);
+    }
+    // First identity wins: a subject joining by person key still answers to
+    // its own mailbox-plus-name, so a later subject matching that pair —
+    // with or without a person key — lands on the same row. Never moves an
+    // identity another row already claimed.
+    if (key !== null && !byIdentity.has(key)) {
+      byIdentity.set(key, group);
+    }
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
     }
@@ -646,6 +681,85 @@ export function serviceKeyFor(typed, names) {
   const wanted = text.toLowerCase();
   const hits = [...names.entries()].filter(([, name]) => String(name).trim().toLowerCase() === wanted);
   return hits.length === 1 ? hits[0][0] : text;
+}
+
+/** A listino product key: lowercase slug, like the booking server requires. */
+const CATALOG_SLUG_RE = /^[a-z][a-z0-9-]{0,47}$/;
+
+/**
+ * backlog:810ed0bf — the catalog slug of a product or offer name
+ * («Lezione prova» → `lezione-prova`): lowercase, spaces and underscores
+ * become one hyphen, anything outside the key alphabet drops out. Empty
+ * when the name holds no slug character at all — never guessed.
+ * @param {unknown} value
+ */
+export function slugifyServiceKey(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-').replace(/^-+/, '').replace(/-+$/, '').slice(0, 48);
+}
+
+/** Minor units of one `one_time` component, or null when it fixes no hour price. @param {any} only */
+function catalogSingleAmount(only) {
+  if (!only || typeof only !== 'object') return null;
+  if (only.chargeType !== 'one_time') return null;
+  const amount = only.pricingModel === 'per_unit'
+    ? only.unitAmountCents
+    : (only.pricingModel === 'flat_fee' ? only.flatAmountCents : undefined);
+  return Number.isSafeInteger(amount) && amount >= 0 ? amount : null;
+}
+
+/**
+ * backlog:810ed0bf — the bookable services of a `GET /api/catalog/products`
+ * answer: one entry per active product with an active offer fixing one
+ * `one_time` hour price — the same singles rule the booking worker uses, so
+ * the menu never offers a pack, a subscription or a price the worker would
+ * refuse. The key is the product sku the week titles already read as the
+ * listino key, slugified from the product name when the sku is no key;
+ * a product with no key and no nameable offer stays out. First
+ * bookable offer wins per product, first product wins per key.
+ * @param {unknown} payload
+ */
+export function catalogBookingServices(payload) {
+  const products = Array.isArray(payload?.products) ? payload.products : [];
+  const out = [];
+  const seen = new Set();
+  for (const product of products) {
+    if (!product || typeof product !== 'object' || product.active !== true) continue;
+    const sku = typeof product.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+    const name = typeof product.name === 'string' ? product.name.trim() : '';
+    if (name === '' || name.length > 200) continue;
+    const offers = Array.isArray(product.offers) ? product.offers : [];
+    for (const offer of offers) {
+      if (!offer || typeof offer !== 'object' || offer.active !== true) continue;
+      // The claim and the menu label only speak EUR (the form prices in
+      // EUR and the claim hardcodes currency:'EUR'): a non-EUR single
+      // would be mislabeled and misbooked, so it stays out of the menu.
+      const currency = offer.currency === 'EUR' ? 'EUR' : null;
+      if (currency === null) continue;
+      const components = Array.isArray(offer.components) ? offer.components : [];
+      if (components.length !== 1) continue;
+      const priceCents = catalogSingleAmount(components[0]);
+      if (priceCents === null) continue;
+      const key = CATALOG_SLUG_RE.test(sku) ? sku : slugifyServiceKey(name);
+      if (key === '' || seen.has(key)) continue;
+      seen.add(key);
+      out.push(Object.freeze({ key, name, priceCents, currency }));
+      break;
+    }
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * backlog:810ed0bf — minor units to the price text the manual form paints
+ * (`4500` → `'45.00'`), two decimals, dot separator like the form hint.
+ * Null when the amount is no integer of cents.
+ * @param {unknown} priceCents
+ */
+export function formatPriceCents(priceCents) {
+  if (!Number.isSafeInteger(priceCents) || priceCents < 0) return null;
+  return `${Math.floor(priceCents / 100)}.${String(priceCents % 100).padStart(2, '0')}`;
 }
 
 /**
@@ -1253,6 +1367,8 @@ export function createCalendarioView(deps) {
   async function loadServices() {
     /** @type {Map<string, string>} */
     const names = new Map();
+    /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
+    let bookable = [];
     try {
       const answer = await client.request('/api/catalog/products?limit=200');
       for (const product of Array.isArray(answer?.products) ? answer.products : []) {
@@ -1260,6 +1376,9 @@ export function createCalendarioView(deps) {
         const name = typeof product?.name === 'string' ? product.name.trim() : '';
         if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
       }
+      // The manual form's service menu (backlog:810ed0bf): the same
+      // singles rule the booking worker applies, read once with the names.
+      bookable = catalogBookingServices(answer);
     } catch (error) {
       // No catalog in this project (or a stale bundle): the readable key
       // stays. Anything else is unexpected and logged without the message.
@@ -1272,6 +1391,10 @@ export function createCalendarioView(deps) {
       }
     }
     state.services = names;
+    state.catalogServices = bookable;
+    // The service menu paints from this read: repaint once it settles while
+    // the calendar is still mounted (same guard as the roster read).
+    if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**
@@ -3009,13 +3132,19 @@ export function createCalendarioView(deps) {
       form.appendChild(input);
       return input;
     }
-    // One option per SUBJECT under the person label: the value stays the
-    // exact opaque identity the operator chose or the draft named, never
-    // remapped to the group primary — a silent remap would book (or fail)
-    // as a different identity with no notice that the choice changed.
+    // One option per PERSON under the person label (backlog:810ed0bf:
+    // the Team card and this menu read the same personRows, so three
+    // identities of Dan are one «Dan» here too). The row's option carries
+    // the exact chosen or drafted subject — never the row primary — so
+    // the claim books precisely the identity the operator or the AI
+    // named, with no silent remap to another opaque subject.
+    const currentRow = current === '' ? null : groupOf(current);
     const shown = current;
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.flatMap((row) => row.ids.map((subject) => ({ value: subject, label: row.label })))];
+      ...rows.map((row) => ({
+        value: currentRow === row && current !== '' ? current : row.id,
+        label: row.label,
+      }))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {
@@ -3029,6 +3158,105 @@ export function createCalendarioView(deps) {
       return select;
     }
     return wrap;
+  }
+
+  /**
+   * backlog:810ed0bf — the manual form's service field: a menu of the
+   * bookable catalog singles (the same singles rule the booking worker
+   * applies, read once with the week labels), never free text. The first
+   * entry is preselected — the first bookable single, the same singles
+   * rule the worker's default-service is confirmed against — and the price
+   * field prefills from the chosen entry. The price follows every service
+   * change; a typed price sticks until the service changes again. Without
+   * a readable catalog the old typed field stays, and the server refuses
+   * unknown keys in Italian under the field.
+   * @param {any} form @param {any} priceInput
+   */
+  function renderServiceChoice(form, priceInput) {
+    const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : null;
+    const paintUnder = (node) => {
+      if (state.serviceError) {
+        // Production 07/11: a refused service names its cause under the
+        // field, never «Riprova più tardi». The hint clears on input AND
+        // on change: a menu switch fires change only, and a stale refusal
+        // must never stay painted under the newly chosen service.
+        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
+        node.setAttribute('aria-invalid', 'true');
+        const clear = () => {
+          state.serviceError = '';
+          hint.setAttribute('class', 'field-error hidden');
+          node.setAttribute('aria-invalid', 'false');
+        };
+        node.addEventListener('input', clear);
+        node.addEventListener('change', clear);
+        form.appendChild(hint);
+      }
+    };
+    if (bookable === null || bookable.length === 0) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
+      if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      paintUnder(input);
+      return input;
+    }
+    const kept = typeof state.manual?.serviceKey === 'string' ? state.manual.serviceKey : '';
+    const drafted = typeof state.draftFill?.serviceKey === 'string' ? state.draftFill.serviceKey : '';
+    const wanted = kept !== '' ? kept : drafted;
+    // A kept or drafted service is never replaced by the default: the
+    // match is case-insensitive (plus the catalog-name mapping), and an
+    // unknown key keeps the typed value in a text field instead of
+    // booking a service the operator never chose. Only with nothing kept
+    // and nothing drafted does the first entry preselect.
+    const mapped = serviceKeyFor(wanted, state.services);
+    const match = bookable.find((entry) => entry.key === wanted)
+      ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
+      ?? bookable.find((entry) => entry.key === mapped)
+      ?? (wanted === '' ? bookable[0] : null);
+    if (match === null) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
+      input.value = wanted;
+      state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      paintUnder(input);
+      return input;
+    }
+    const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
+    const options = bookable.map((entry) => ({
+      value: entry.key,
+      label: `${entry.name} · ${priceText(entry)} €`,
+    }));
+    const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
+    const select = wrap.querySelector('select') ?? wrap;
+    select.value = match.key;
+    const track = () => {
+      const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
+      state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      if (chosen !== null && priceInput) {
+        priceInput.value = priceText(chosen);
+        state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+      }
+    };
+    select.addEventListener('input', track);
+    select.addEventListener('change', track);
+    // The default is already chosen (backlog:810ed0bf): the price paints
+    // with it unless the operator already typed their own price. The
+    // default never lands in state: the claim, the snapshot and the next
+    // render all read the live menu, so a preselect stored here could
+    // never shadow a later draft as a «kept» choice (a kept choice is
+    // only what the operator or an absorbed draft actually set).
+    if (priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
+      priceInput.value = priceText(match);
+      state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+    }
+    form.appendChild(wrap);
+    paintUnder(select);
+    return select;
   }
 
   function renderManual() {
@@ -3059,13 +3287,21 @@ export function createCalendarioView(deps) {
     // The person is chosen from the known team, never typed as an opaque id
     // while the team is known (fetta 9): the select owns the claim value.
     inputs.teamMemberId = renderPersonChoice(form);
-    // The service rides the listino product key the server books: no
-    // listino-backed picker exists in the framework yet (nominated missing
-    // capability, never simulated), so the key stays typed — but the label
-    // names no technical concept (fetta 9, C22).
+    // The price rides the chosen catalog entry (backlog:810ed0bf): it
+    // prefills from the menu default and follows every service change
+    // until the operator types their own price.
+    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', placeholder: 'Prezzo EUR (es. 45.00)' } });
+    if (state.manual?.price != null) priceInput.value = String(state.manual.price);
+    priceInput.addEventListener('input', () => {
+      state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
+    });
+    // The service is a catalog menu with the default already chosen, never
+    // free text (backlog:810ed0bf): the claim sends the menu key the worker
+    // books by, with its price precompiled beside it.
+    inputs.serviceKey = renderServiceChoice(form, priceInput);
+    form.appendChild(priceInput);
+    inputs.price = priceInput;
     const fields = [
-      ['serviceKey', 'text', 'Servizio'],
-      ['price', 'text', 'Prezzo EUR (es. 45.00)'],
       ['date', 'date', 'Giorno'],
       ['start', 'time', 'Inizio'],
       ['end', 'time', 'Fine'],
@@ -3083,18 +3319,6 @@ export function createCalendarioView(deps) {
       });
       inputs[name] = input;
       form.appendChild(input);
-      if (name === 'serviceKey' && state.serviceError) {
-        // Production 07/11: a typed service the listino does not know read
-        // «Riprova più tardi». The cause is this field: say it right here.
-        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
-        input.setAttribute('aria-invalid', 'true');
-        input.addEventListener('input', () => {
-          state.serviceError = '';
-          hint.setAttribute('class', 'field-error hidden');
-          input.setAttribute('aria-invalid', 'false');
-        });
-        form.appendChild(hint);
-      }
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -3106,15 +3330,37 @@ export function createCalendarioView(deps) {
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
-        // The select offers every subject, so a known draft lands on its
-        // exact identity (never remapped); a pipe outsider never paints —
-        // its identity already rides in state for the claim only.
+        // The select offers one row per person whose option carries the
+        // exact drafted subject, so a draft naming a known identity lands
+        // on the person's row AND books that exact identity; a pipe
+        // outsider never paints — its identity already rides in state for
+        // the claim only.
         const raw = String(draft.teamMemberId);
         const people = personRows(parseMemberFilter(state.memberFilter), state.hiddenMembers, state.members);
         const person = people.find((row) => row.ids.includes(raw));
-        if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
+        if (inputs.teamMemberId?.tagName === 'SELECT') {
+          if (person) inputs.teamMemberId.value = raw;
+        } else if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
       }
-      if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
+      if (draft.serviceKey) {
+        // The service is a menu (backlog:810ed0bf): a drafted key the
+        // catalog knows lands on its option (case-insensitively, like the
+        // menu match); an unknown one already paints as typed text from
+        // the menu render, so here it only needs its value confirmed.
+        const rawService = String(draft.serviceKey);
+        if (inputs.serviceKey?.tagName === 'SELECT') {
+          const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : [];
+          const hit = bookable.find((entry) => entry.key === rawService)
+            ?? bookable.find((entry) => entry.key === rawService.toLowerCase())
+            ?? null;
+          if (hit !== null) {
+            inputs.serviceKey.value = hit.key;
+            const priceText = formatPriceCents(hit.priceCents) ?? '';
+            if (inputs.price) inputs.price.value = priceText;
+            state.manual = { ...(state.manual ?? {}), serviceKey: hit.key, price: priceText };
+          }
+        } else inputs.serviceKey.value = rawService;
+      }
       if (draft.notes) inputs.notes.value = String(draft.notes);
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
@@ -3388,6 +3634,11 @@ export function createCalendarioView(deps) {
     // profile positively reports no connected calendar.
     void loadMembers();
     void loadCalendar();
+    // The service menu reads the catalog on entry (backlog:810ed0bf), not
+    // only with the first week: the manual form shows its options and its
+    // preselected default before any member is named. Shared in-flight
+    // with the week labels; the settled read repaints while mounted.
+    void ensureServices();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
   }

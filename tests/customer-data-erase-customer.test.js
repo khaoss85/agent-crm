@@ -525,3 +525,19 @@ test('purging enriched fields clears the email snapshot too: no PII copy survive
     assert.equal(row.subjectLabel, null, 'no email snapshot survives the purge');
   }
 });
+
+test('erasing the last contact of a placeholder erases the placeholder with it: no orphan «Senza azienda» (backlog:ece81578305d)', async (t) => {
+  const { app } = await scene(t);
+  const placeholder = await app.services.companies.create({ name: 'Senza azienda', domain: 'uno.invalid' });
+  const solo = await app.services.contacts.create({
+    companyId: placeholder.id, firstName: 'Anna', lastName: 'Solo', email: 'anna@uno.invalid',
+  });
+  const receipt = await app.eraseCustomer({
+    resource: 'contact', id: solo.id, confirm: true, reason: 'richiesta-interessato', actor: OPERATOR,
+  });
+  assert.equal(receipt.outcome, 'erased');
+  const reread = await app.services.companies.get(placeholder.id);
+  assert.equal(reread.name, 'Azienda cancellata', 'the orphan placeholder is erased with its contact');
+  assert.equal(reread.domain, null, 'the domain evidence goes with it');
+  assert.equal((await erasureRows(app, 'company', placeholder.id)).length, 1, 'one registry row for the placeholder');
+});

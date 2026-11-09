@@ -134,11 +134,18 @@ export class OpportunityService {
    * @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context]
    */
   async applyManaged(id, patch, context = {}) {
-    await Promise.resolve(this.get(id));
+    // Voce c1649d1d9670: the stored row is the only honest source of the
+    // stage a pipeline move leaves: when the patch names a new pipeline
+    // stage, the audit carries the previous one too, so the scheda history
+    // reads who moved what from which stage to which, and when. A placement
+    // (no stored stage yet) records no `from`: it is an entry, not a move.
+    const current = await Promise.resolve(this.get(id));
     /** @type {{column: string, value: unknown}[]} */
     const values = [];
     /** @type {Record<string, unknown>} */
     const changes = {};
+    const fromPipelineStage = typeof current?.pipelineStage === 'string' && current.pipelineStage !== ''
+      ? current.pipelineStage : null;
     const columns = {
       pipelineKey: 'pipeline_key',
       pipelineStage: 'pipeline_stage',
@@ -159,6 +166,13 @@ export class OpportunityService {
       }
       values.push({ column, value });
       changes[field] = value;
+    }
+    if (Object.hasOwn(changes, 'pipelineStage')
+      && typeof changes.pipelineStage === 'string'
+      && changes.pipelineStage !== ''
+      && fromPipelineStage !== null
+      && changes.pipelineStage !== fromPipelineStage) {
+      changes.fromPipelineStage = fromPipelineStage;
     }
     if (!values.length) return Promise.resolve(this.get(id));
     values.push({ column: 'updated_at', value: nowIso() });

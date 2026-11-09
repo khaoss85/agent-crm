@@ -848,6 +848,46 @@ test('a refused creation says so in Italian and keeps the panel', async () => {
   assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open with its text');
 });
 
+test('backlog:7cc35edab50c: a 502 creation reads connection-failed and Crea retries', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = createDriveClient();
+  let creates = 0;
+  const client = {
+    calls: inner.calls,
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/sequences/create') {
+        creates += 1;
+        if (creates === 1) {
+          // A verdict-less gateway hiccup (the /bo edge answers 502 with
+          // no BO verdict; review agent-crm#696 keeps named BO verdicts
+          // out of the connection text).
+          throw Object.assign(new Error('Bad Gateway'), { status: 502, code: 'UNKNOWN' });
+        }
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  setField(mount, 'seq-name', 'Riprova rete');
+  setField(mount, 'seq-step-0-template', 'Ciao');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes('Connessione non riuscita, riprova.'), 'the 502 reads as a connection fault');
+  assert.ok(!mount.textContent.includes('Scrittura del pannello rifiutata'), 'the generic refusal never shows');
+  assert.ok(!mount.textContent.includes('502'), 'no raw status on screen');
+  assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open for the retry');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  assert.equal(creates, 2, 'Crea posts again (the first attempt threw before the stub recorded it)');
+  assert.ok(mount.textContent.includes('Riprova rete'), 'the elenco shows the retried sequence');
+});
+
 test('Crea con l\u2019AI proposes without a POST and creates only on confirm', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

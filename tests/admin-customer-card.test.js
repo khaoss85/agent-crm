@@ -185,7 +185,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -226,6 +226,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (failCalls) throw Object.assign(new Error('Not Found'), { status: 404 });
         if (callsError) throw callsError;
         return calls;
+      }
+      if (path.startsWith('/api/audit')) {
+        if (auditError) throw auditError;
+        return { items: audit };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -4310,4 +4314,98 @@ test('review #683: a move still queued on the server reads neutral, never as an 
   assert.equal(fieldError, undefined, 'no error line');
   const status = mount.findAll('small').find((node) => node.getAttribute('role') === 'status');
   assert.equal(status?.textContent, 'Non ancora confermato: ricarica la scheda tra poco.');
+});
+
+test('c1649d1d: the scheda Storia stati names who moved the offer from which stage to which', async () => {
+  const profile = {
+    ...PLACED_QUOTE_PROFILE,
+    opportunities: {
+      ...PLACED_QUOTE_PROFILE.opportunities,
+      items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+    },
+  };
+  const audit = [
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T11:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'spettro', fromPipelineStage: 'fantasma' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T12:00:00.000Z',
+      data: { owner: 'marco' },
+    },
+  ];
+  const mount = await renderCard(stubClient({
+    profile, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] }, audit,
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(text.includes('Storia stati'), 'the history block is titled');
+  assert.ok(text.includes('da Richiesta info a Prova · da elena'),
+    'a pipeline move reads who, from which stage to which, with the actor the record corroborates');
+  assert.ok(!text.includes('fantasma') && !text.includes('spettro'),
+    'a move whose side has no label never paints a raw key');
+  assert.ok(text.includes('Cambio di stato · da elena'),
+    'an unlabelled move still reads the generic Italian line, like the detail');
+});
+
+test('c1649d1d: an unreadable audit trail reads one honest line', async () => {
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+    auditError: new Error('boom'),
+  }));
+  await flushClicks(5);
+  assert.ok(mount.textContent.includes('Storia stati non leggibile.'),
+    'the trail failure is honest, and the card stands');
+});
+
+test('review giro 1: a rejected audit read logs its cause, never its payload', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const mount = await renderCard(stubClient({
+      profile: PLACED_QUOTE_PROFILE,
+      schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+      auditError: Object.assign(new Error('down'), { code: 'UNKNOWN', status: 500 }),
+    }));
+    await flushClicks(5);
+    assert.ok(mount.textContent.includes('Storia stati non leggibile.'),
+      'the operator still reads one honest line');
+  } finally {
+    console.error = original;
+  }
+  const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
+  assert.equal(reads.length, 1, 'the trail failure is logged once');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', status: 500 },
+    'on-call sees area, code and status');
+});
+
+test('review giro 1: moves without pipelines read generic lines, never a false empty', async () => {
+  const profile = {
+    ...PLACED_QUOTE_PROFILE,
+    opportunities: {
+      ...PLACED_QUOTE_PROFILE.opportunities,
+      items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+    },
+  };
+  const audit = [
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+    },
+  ];
+  const mount = await renderCard(stubClient({
+    profile, schema: { pipelineContract: 1, pipelines: [] }, audit,
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(!text.includes('Ancora nessun cambio di stato.'),
+    'real moves never read as no moves when the pipelines are unavailable');
+  assert.ok(text.includes('Cambio di stato · da elena'),
+    'the move reads the generic Italian line, like the detail');
 });
