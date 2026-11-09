@@ -1,7 +1,7 @@
 // @ts-check
 
 import { NotFoundError, ValidationError } from '../../../core/src/errors.js';
-import { requiredString, optionalString } from '../../../core/src/validation.js';
+import { requiredString, optionalString, optionalBoolean } from '../../../core/src/validation.js';
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
 import { nextWriteId } from '../../../core/src/write-ids.js';
@@ -16,17 +16,22 @@ export class CompanyService {
   }
 
   /**
-   * @param {{name: unknown, domain?: unknown}} input
+   * @param {{name: unknown, domain?: unknown, placeholder?: unknown}} input
    * @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string}} [context]
    */
   async create(input, context = {}) {
     const name = requiredString(input.name, 'name');
     const domain = optionalString(input.domain, 'domain')?.toLowerCase() ?? null;
+    // The «no company» flag (backlog:ac65e448fcb4): set only by the
+    // customer-data placeholder path. A real company keeps false, whatever
+    // its name is — readers never match the name.
+    const placeholder = optionalBoolean(input.placeholder, 'placeholder') ?? false;
     const insertFor = (company) => ({
       kind: 'insert', table: 'companies', values: [
         { column: 'id', value: company.id },
         { column: 'name', value: company.name },
         { column: 'domain', value: company.domain },
+        { column: 'placeholder', value: company.placeholder ? 1 : 0 },
         { column: 'created_at', value: company.createdAt },
         { column: 'updated_at', value: company.updatedAt },
       ],

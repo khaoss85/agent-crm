@@ -261,6 +261,19 @@ const DATA_PLANE_MIGRATIONS = [
           CHECK(recovery_policy IN ('terminal_unknown', 'reconcilable_at_least_once'));
     `,
   },
+  {
+    version: 11,
+    name: 'company_placeholder_flag',
+    // Byte-identical to the V11 intent render (checked by
+    // spine-v2-m3a-dialect-intent): the flag behind a contact that names no
+    // company (backlog:ac65e448fcb4), plus the one-time repair of the
+    // name-based rows agent-crm#654 wrote. Runtime reads use the flag only.
+    sql: `
+      ALTER TABLE companies ADD COLUMN placeholder INTEGER NOT NULL DEFAULT 0 CHECK(placeholder BETWEEN 0 AND 1);
+
+      UPDATE companies SET placeholder = 1 WHERE name = 'Senza azienda';
+    `,
+  },
 ];
 
 /**
