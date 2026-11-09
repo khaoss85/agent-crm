@@ -3868,6 +3868,63 @@ test('personRows merges one human on the roster person key across mailboxes', ()
   assert.equal(noKey.length, 2, 'without the person key different mailboxes stay two rows');
 });
 
+// backlog:3ce220e6 — AC-2 of backlog:810ed0bf as the Mac saw it on 09/11:
+// three identities of Dan (broker, github, google) with different mailboxes
+// and NO control-plane person key are one «Dan» row, and every identity
+// stays visible inside the row.
+test('personRows merges one human on the shared display name without the person key', () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', displayName: 'Dan', email: 'dan-broker@example.com' },
+    { subject: 'github|48571113', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'google|1049abc', role: 'owner', displayName: 'Dan', email: 'dan@gmail.com' },
+    { subject: 'sara', role: 'operator', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  const named = ['broker|dan', 'github|48571113', 'google|1049abc', 'sara'];
+  const rows = personRows(named, [], members);
+  assert.equal(rows.length, 2, 'three identities of Dan are one row, plus Sara');
+  assert.deepEqual(rows[0].ids, ['broker|dan', 'github|48571113', 'google|1049abc']);
+  assert.equal(rows[0].label, 'Dan');
+  assert.deepEqual(
+    rows[0].identities,
+    ['dan-broker@example.com', 'dan@example.com', 'dan@gmail.com'],
+    'every identity stays visible inside the row',
+  );
+  assert.equal(rows[1].label, 'Sara');
+});
+
+// backlog:3ce220e6 — the Team card and the manual person menu paint one Dan
+// row with his three identities, never three Dan rows.
+test('the Team card and the person menu show one Dan row with his identities', async () => {
+  const members = [
+    { subject: 'broker|dan', role: 'owner', displayName: 'Dan', email: 'dan-broker@example.com' },
+    { subject: 'github|48571113', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+    { subject: 'google|1049abc', role: 'owner', displayName: 'Dan', email: 'dan@gmail.com' },
+    { subject: 'sara', role: 'operator', displayName: 'Sara', email: 'sara@example.com' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({
+    memberships: members,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const view = createCalendarioView({ doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const danToggles = teamToggles(mount).filter((node) => node.textContent.includes('Dan'));
+  assert.equal(danToggles.length, 1, 'the Team card shows Dan once');
+  for (const mailbox of ['dan-broker@example.com', 'dan@example.com', 'dan@gmail.com']) {
+    assert.ok(danToggles[0].textContent.includes(mailbox), `the Team row names ${mailbox}`);
+  }
+  const people = mount.querySelector('select[name="teamMemberId"]').findAll('option')
+    .map((node) => node.textContent);
+  const danOptions = people.filter((text) => text.startsWith('Dan'));
+  assert.equal(danOptions.length, 1, 'the person menu shows Dan once');
+  for (const mailbox of ['dan-broker@example.com', 'dan@example.com', 'dan@gmail.com']) {
+    assert.ok(danOptions[0].includes(mailbox), `the menu row names ${mailbox}`);
+  }
+  assert.ok(people.some((text) => text === 'Sara'), 'Sara keeps her own row');
+});
+
 // backlog:810ed0bf — the manual form paints the service as a catalog menu
 // (never free text) with the first entry preselected and its price
 // prefilled; the team menu holds one row per person.

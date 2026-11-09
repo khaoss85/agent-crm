@@ -347,11 +347,13 @@ export function personRows(named, hidden, members) {
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
-  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
+  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, personId: string|null, nameKey: string|null, born: number|null, bornIndex: number}>} */
   const groups = [];
   const bySubject = new Map();
   const byEmail = new Map();
   const byPerson = new Map();
+  const byName = new Map();
+  const mailBySubject = new Map();
   const groupFor = (subject) => bySubject.get(subject) ?? null;
   for (const member of roster) {
     const subject = member.subject;
@@ -359,19 +361,24 @@ export function personRows(named, hidden, members) {
     const personId = rosterPersonId(member);
     const email = personKeyOf(member.email);
     const display = cleanPersonText(member.displayName);
-    // One human shares one mailbox — or one control-plane person key when
-    // the roster carries it (backlog:810ed0bf): either merges two subjects
-    // into one person row. A shared display name alone never merges — two
-    // email-less homonyms are two humans, two rows.
+    const nameKey = personKeyOf(display);
+    // One human shares one mailbox, one control-plane person key, or one
+    // display name (backlog:3ce220e6): the roster the pilot forwards carries
+    // no person key, and one human's identities (broker, github, google)
+    // carry different mailboxes, so the shared name is the same-person
+    // signal that is left. Different names never merge.
     let group = (personId !== null && byPerson.get(personId))
       || (email !== null && byEmail.get(email))
+      || (nameKey !== null && byName.get(nameKey))
       || null;
     if (!group) {
-      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
+      group = { subjects: [], displayName: null, email: null, personId: null, nameKey: null, born: null, bornIndex: groups.length };
       groups.push(group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
+    const rawMail = cleanPersonText(member.email);
+    if (rawMail !== null && !mailBySubject.has(subject)) mailBySubject.set(subject, rawMail);
     const born = memberBornAt(member);
     if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
     if (personId !== null && group.personId === null) {
@@ -381,6 +388,10 @@ export function personRows(named, hidden, members) {
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
       byEmail.set(email, group);
+    }
+    if (nameKey !== null && group.nameKey === null) {
+      group.nameKey = nameKey;
+      if (!byName.has(nameKey)) byName.set(nameKey, group);
     }
     if (group.displayName === null && display !== null) group.displayName = display;
   }
@@ -433,15 +444,33 @@ export function personRows(named, hidden, members) {
     ));
     ranked.forEach((entry, index) => ordinalOf.set(entry.group, index + 1));
   }
+  // One readable descriptor per booked subject, in roster order: the mailbox
+  // the roster knows for it, else the identity kind (`github` in
+  // `github|…`), never a raw pipe id. Multi-identity rows paint them so the
+  // operator sees every identity the row books, hides or shows.
+  const descriptorOf = (subject) => {
+    const mail = mailBySubject.get(subject) ?? null;
+    if (mail !== null) return mail;
+    const cut = subject.indexOf('|');
+    if (cut === -1) return subject;
+    const kind = subject.slice(0, cut).trim().toLowerCase();
+    return kind === '' ? null : kind;
+  };
   return painted.map(({ group, primary, name, listed, base }) => {
     const ordinal = ordinalOf.get(group);
     const label = ordinal === undefined ? base : `${base} (${ordinal})`;
+    const identities = [];
+    for (const subject of group.subjects) {
+      const descriptor = descriptorOf(subject);
+      if (descriptor !== null && !identities.includes(descriptor)) identities.push(descriptor);
+    }
     return {
       ids: [...group.subjects],
       id: primary,
       name,
       label,
       listed,
+      identities,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
       active: listed && group.subjects.some((subject) => !off.has(subject)),
@@ -1863,6 +1892,13 @@ export function createCalendarioView(deps) {
       toggle.appendChild(box);
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
       toggle.appendChild(el(doc, 'span', { text: row.label }));
+      // One row per person, every identity visible inside it (backlog:3ce220e6):
+      // the badges name each booked identity behind the row, never a pipe id.
+      if (row.identities.length > 1) {
+        for (const identity of row.identities) {
+          toggle.appendChild(el(doc, 'span', { className: 'badge', attrs: { 'aria-hidden': 'true' }, text: identity }));
+        }
+      }
       toggle.addEventListener('click', () => {
         // A toggle click is the operator's own choice: the roster auto-fill
         // no longer owns the filter from here on.
@@ -3197,7 +3233,7 @@ export function createCalendarioView(deps) {
     const options = [{ value: '', label: 'Scegli una persona…' },
       ...rows.map((row) => ({
         value: currentRow === row && current !== '' ? current : row.id,
-        label: row.label,
+        label: row.identities.length > 1 ? `${row.label} (${row.identities.join(', ')})` : row.label,
       }))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
