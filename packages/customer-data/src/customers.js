@@ -281,8 +281,13 @@ export const PHONE_SEARCH_MIN_DIGITS = 3;
  * the digits of a held phone («333» finds «+39333123456»), ranked 1.
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} phone the phone-designated value (the held phone beside
+ *   the row), or nothing when the caller has no phone: the digit rule below
+ *   reads ONLY this value, never name/email/company digits, so «333» never
+ *   matches «user333@example.com» (review agent-crm#707: digit-substring
+ *   false positives).
  */
-export function searchRank(parts, needle) {
+export function searchRank(parts, needle, phone = '') {
   if (!Array.isArray(needle) || needle.length === 0) return 0;
   const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
   let rank = 0;
@@ -299,18 +304,17 @@ export function searchRank(parts, needle) {
   if (!failed) return rank;
   // A needle carrying digits is also a phone search (backlog:7d82fd84):
   // every non-numeric word must still match by the word rules above, and
-  // the joined digits must sit inside the digits of a held phone, so «333»
-  // finds «+39333123456» and «Ada 333» finds Ada Rossi by her phone. Ranked
-  // like an infix match, never a word start.
+  // the joined digits must sit inside the digits of the HELD phone, so
+  // «333» finds «+39333123456» and «Ada 333» finds Ada Rossi by her phone.
+  // Ranked like an infix match, never a word start.
   const numeric = needle.filter((word) => /^[0-9]+$/.test(word));
   const text = needle.filter((word) => !/^[0-9]+$/.test(word));
   if (numeric.length > 0) {
     const digits = numeric.join('');
     const textOk = text.every((wanted) => words.some((word) => word.startsWith(wanted))
       || (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))));
-    if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS && parts
-      .filter((part) => typeof part === 'string' && part !== '')
-      .some((part) => phoneDigitsOf(part).includes(digits))) {
+    if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS
+      && phoneDigitsOf(phone).includes(digits)) {
       return 1;
     }
   }
@@ -326,9 +330,10 @@ export function phoneDigitsOf(value) {
  * Whether a customer's searchable parts match the needle (see searchRank).
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} phone the phone-designated value (see searchRank)
  */
-export function matchesSearch(parts, needle) {
-  return searchRank(parts, needle) >= 0;
+export function matchesSearch(parts, needle, phone = '') {
+  return searchRank(parts, needle, phone) >= 0;
 }
 
 /** The searchable parts of a shaped list row: name, email, company, phone. @param {any} row */
@@ -387,7 +392,7 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     }
     if (query.canale !== 'all' && !(row?.channels ?? []).includes(query.canale)) return false;
     if (channelHits.length > 0 && !channelHits.some((channel) => (row?.channels ?? []).includes(channel))) return false;
-    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle)) return false;
+    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle, row?.phone?.value)) return false;
     if (viewExtra.ricontattareOggi === true && row?.nextStep?.dueAt?.slice(0, 10) !== today && !(row?.nextStep?.overdue === true)) return false;
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
     // «Da leggere»: only rows with unread inbound messages. A null
@@ -438,7 +443,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
   // chosen order holds inside each group (Array#sort is stable).
   const textNeedle = searchNeedle(query.q ?? '');
   if (textNeedle.length > 0) {
-    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle)]));
+    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle, row?.phone?.value)]));
     sorted.sort((a, b) => rankOf.get(a) - rankOf.get(b));
   }
 

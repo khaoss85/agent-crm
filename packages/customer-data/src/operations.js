@@ -612,11 +612,17 @@ function subjectsByIndex(storedRows) {
  * @param {{get?: unknown}} service contact or company service
  * @param {unknown} id
  */
-async function exactSubjectRecord(service, id) {
+async function exactSubjectRecord(service, id, spaceId = 'unknown') {
   if (!service || typeof service.get !== 'function' || typeof id !== 'string' || id === '') return null;
   try {
     return await service.get(id);
-  } catch {
+  } catch (error) {
+    // A subject that cannot be read is skipped, never invented — but the
+    // cause is logged with the space, so a failure nobody can diagnose is
+    // impossible (review agent-crm#707: swallowed identity-store errors).
+    console.error(
+      `[accordo] customer search subject unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${spaceId})`.trim(),
+    );
     return null;
   }
 }
@@ -637,8 +643,12 @@ async function exactSubjectRecord(service, id) {
  * phone-substring rule.
  * @param {{modules: any, names: any}} runtime
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} spaceId the space being searched, for the failure log
+ * @param {unknown} rawQuery the unparsed query text: a pasted number keeps
+ *   its separators here, so the exact lookup below can probe the stored
+ *   legacy format as typed (review agent-crm#707: formatted identities)
  */
-async function phoneIdentitySubjects({ modules, names }, needle) {
+async function phoneIdentitySubjects({ modules, names }, needle, spaceId = 'unknown', rawQuery = '') {
   if (!Array.isArray(needle) || needle.length === 0) return [];
   const digits = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
   if (digits.length < PHONE_SEARCH_MIN_DIGITS) return [];
@@ -650,41 +660,69 @@ async function phoneIdentitySubjects({ modules, names }, needle) {
       found.set(`${resource}:${id}`, { resource, id });
     }
   };
-  // A full number is looked up by exact key (phone:+<digits>), per
-  // phone-bearing system: an exact read is complete, so a number past every
-  // bound is still found. Stored phone identities keep the leading `+`
-  // (normalizeChannelHandle), but legacy rows may not — try both forms.
+  const logSwallowed = (error, what) => {
+    // A degraded identity read never silences its cause (review
+    // agent-crm#707): the search reaches less far, and the log names the
+    // error, its code and the space.
+    console.error(
+      `[accordo] customer phone ${what} unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${spaceId})`.trim(),
+    );
+  };
+  // A full number is looked up by exact key, per phone-bearing system: an
+  // exact read is complete, so a number past every bound is still found.
+  // Stored phone identities keep the leading `+` (normalizeChannelHandle),
+  // but legacy rows may not — and legacy sms/voice/tel/mobile rows keep the
+  // separators as typed (trimmed, never compacted). So besides the compact
+  // `+<digits>` and bare `<digits>` forms, probe the pasted number as typed:
+  // a user pasting '+39 333 1234567' finds the legacy row stored exactly
+  // that way. Every candidate needs 7 or more digits (the E.164 minimum the
+  // scheda dials), so a short query never fans out into exact reads.
   if (digits.length >= 7 && typeof identitySvc.listWhere === 'function') {
+    const candidates = new Set([`+${digits}`, digits]);
+    for (const token of String(rawQuery ?? '').match(/\+?[0-9][0-9 ()\-./]*/g) ?? []) {
+      const typed = token.trim().replace(/[ ()\-./]+$/, '');
+      const compact = typed.replace(/[^0-9]/g, '');
+      if (compact.length >= 7) {
+        candidates.add(typed);
+        candidates.add(`+${compact}`);
+        candidates.add(compact);
+      }
+    }
     for (const system of PHONE_BEARING_SYSTEMS) {
-      for (const externalId of [`+${digits}`, digits]) {
+      for (const externalId of candidates) {
         try {
           for (const row of await identitySvc.listWhere({ sourceKey: `${system}:${externalId}` })) {
             if (row?.status === 'active' || row?.status == null) keep(row?.subjectResource, row?.subjectId);
           }
-        } catch {
+        } catch (error) {
           // An identity shape the service does not declare stays unread,
           // never misread — the substring scan below still runs.
+          logSwallowed(error, 'exact identity lookup');
         }
       }
     }
   }
   // Partial digits match as a substring of the held number's digits, over
   // one bounded identity read (the record service's display page, newest
-  // first, clamped by its own cap).
+  // first, clamped by its own cap). A null status is a legacy row from
+  // before status was recorded: it reads like an active one, here and where
+  // the row is shaped below — otherwise an exact hit above would lose its
+  // phone value downstream (review agent-crm#707: null-status tolerance).
   try {
     const rows = typeof identitySvc.list === 'function'
       ? await identitySvc.list({ limit: CUSTOMER_IDENTITY_SCAN_LIMIT })
       : [];
     for (const row of rows ?? []) {
-      if (row?.status !== 'active') continue;
+      if (row?.status !== 'active' && row?.status != null) continue;
       if (!PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) continue;
       if (!phoneDigitsOf(row?.externalId).includes(digits)) continue;
       keep(row?.subjectResource, row?.subjectId);
       if (found.size >= CUSTOMER_SCAN_LIMIT) break;
     }
-  } catch {
+  } catch (error) {
     // An unreadable identity scan leaves the exact lookups above: a phone
     // search never refuses, it only reaches less far.
+    logSwallowed(error, 'identity scan');
   }
   return [...found.values()];
 }
@@ -724,19 +762,44 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // instance) adds the customers past the display bound whose name, email
   // or company match. Past the ceiling the answer stays complete:false and
   // the screens say the list is partial.
-  // backlog:7d82fd84 (review #678 giro-2 P3): the ceiling is shared but the
-  // company budget is reserved — contacts scan up to the ceiling minus
-  // CUSTOMER_SEARCH_COMPANY_RESERVE, companies up to the reserve — so a
-  // contact scan that fills its budget never starves the company scan. Digits
-  // in the query also scan the held identities for the digit substring
-  // (plus an exact identity-key lookup for a full number), so a phone held
-  // beside a customer past the subject scans is still found.
+  // backlog:7d82fd84 (review #678 giro-2 P3, review agent-crm#707): the
+  // ceiling is shared and the remainder is preserved, never split fixed —
+  // contacts scan up to the ceiling minus CUSTOMER_SEARCH_COMPANY_RESERVE,
+  // companies up to the ceiling minus the contacts actually read (at least
+  // the reserve), so a small contact table leaves its unused budget to the
+  // companies. And when the contact scan fills its budget while companies
+  // are few, the leftover company budget re-scans the contacts deeper, so
+  // a contact past position 4000 is still found. Past the ceiling the
+  // answer stays complete:false. Digits in the query also scan the held
+  // identities for the digit substring (plus an exact identity-key lookup
+  // for a full number), so a phone held beside a customer past the subject
+  // scans is still found.
   const needle = searchNeedle(query.q ?? '');
   if (!complete && needle.length > 0
     && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
-    const scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE });
-    const scannedCompaniesAll = await companiesSvc.scan({ limit: CUSTOMER_SEARCH_COMPANY_RESERVE });
-    const phoneSubjects = await phoneIdentitySubjects({ modules, names }, needle);
+    let scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE });
+    const scannedCompaniesAll = await companiesSvc.scan({
+      limit: Math.max(
+        CUSTOMER_SEARCH_COMPANY_RESERVE,
+        CUSTOMER_SEARCH_SCAN_LIMIT - scannedContactsAll.length,
+      ),
+    });
+    if (scannedContactsAll.length === CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE
+      && scannedCompaniesAll.length < Math.max(
+        CUSTOMER_SEARCH_COMPANY_RESERVE,
+        CUSTOMER_SEARCH_SCAN_LIMIT - scannedContactsAll.length,
+      )) {
+      // The contact budget filled while companies left budget unused: spend
+      // the leftover on a deeper contact scan (newest first, so this
+      // supersedes the scan above).
+      scannedContactsAll = await contactsSvc.scan({
+        limit: Math.max(
+          CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE,
+          CUSTOMER_SEARCH_SCAN_LIMIT - scannedCompaniesAll.length,
+        ),
+      });
+    }
+    const phoneSubjects = await phoneIdentitySubjects({ modules, names }, needle, query.spaceId, query.q ?? '');
     const phoneCompanies = [];
     const phoneContacts = [];
     const knownContactIds = new Set([...contacts, ...scannedContactsAll].map((contact) => contact?.id).filter(Boolean));
@@ -744,10 +807,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     for (const subject of phoneSubjects) {
       if (subject.resource === 'contact' && !knownContactIds.has(subject.id)) {
         knownContactIds.add(subject.id);
-        phoneContacts.push(await exactSubjectRecord(contactsSvc, subject.id));
+        phoneContacts.push(await exactSubjectRecord(contactsSvc, subject.id, query.spaceId));
       } else if (subject.resource === 'company' && !knownCompanyIds.has(subject.id)) {
         knownCompanyIds.add(subject.id);
-        const record = await exactSubjectRecord(companiesSvc, subject.id);
+        const record = await exactSubjectRecord(companiesSvc, subject.id, query.spaceId);
         if (record !== null) {
           phoneCompanies.push(record);
         }
@@ -755,33 +818,48 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     }
     const companyNameById = new Map([...companies, ...scannedCompaniesAll, ...phoneCompanies]
       .map((company) => [company.id, company?.name ?? null]));
+    // The scan rows carry no phone (the record holds none — the phone lives
+    // beside it as an identity), so the pre-filter below can only judge the
+    // text half of the needle (review agent-crm#707: a digit pre-filter over
+    // phone-less parts drops true in-scan phone matches). A digit-only
+    // query keeps every scanned row as a candidate and lets the shaped-row
+    // filter — which sees the held phone — decide; a mixed query pre-filters
+    // on its text words only. Without digits the needle is unchanged.
+    const textNeedle = needle.filter((word) => !/^[0-9]+$/.test(word));
+    const digitNeedle = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
+    const hasDigits = digitNeedle.length >= PHONE_SEARCH_MIN_DIGITS;
     const scannedContacts = new Set(contacts.map((contact) => contact.id));
     const extraContacts = scannedContactsAll
-      .filter((contact) => !scannedContacts.has(contact.id) && matchesSearch(
-        [contact?.firstName, contact?.lastName, contact?.email, companyNameById.get(contact?.companyId)],
-        needle,
-      ))
-      .slice(0, CUSTOMER_SCAN_LIMIT);
+      .filter((contact) => !scannedContacts.has(contact.id)
+        && (textNeedle.length === 0 || matchesSearch(
+          [contact?.firstName, contact?.lastName, contact?.email, companyNameById.get(contact?.companyId)],
+          textNeedle,
+        )));
+    // A digit-carrying query is decided by the shaped-row filter (which
+    // sees the held phone), so its candidates skip the display-size cap —
+    // still bounded by the search scans above, never the whole table.
+    const cappedExtraContacts = hasDigits ? extraContacts : extraContacts.slice(0, CUSTOMER_SCAN_LIMIT);
     for (const contact of phoneContacts) {
       if (contact !== null && !scannedContacts.has(contact.id)
-        && !extraContacts.some((entry) => entry.id === contact.id)) {
-        if (extraContacts.length < CUSTOMER_SCAN_LIMIT) extraContacts.push(contact);
+        && !cappedExtraContacts.some((entry) => entry.id === contact.id)) {
+        cappedExtraContacts.push(contact);
       }
     }
     const scannedCompanies = new Set(companies.map((company) => company.id));
-    const behindExtra = new Set([...extraContacts.map((contact) => contact?.companyId),
+    const behindExtra = new Set([...cappedExtraContacts.map((contact) => contact?.companyId),
       ...phoneContacts.map((contact) => contact?.companyId)].filter(Boolean));
-    const extraCompanies = scannedCompaniesAll
+    const extraCompaniesUncapped = scannedCompaniesAll
       .filter((company) => !scannedCompanies.has(company.id)
-        && (behindExtra.has(company.id) || matchesSearch([company?.name], needle)))
-      .slice(0, CUSTOMER_SCAN_LIMIT);
+        && (behindExtra.has(company.id) || textNeedle.length === 0
+          || matchesSearch([company?.name], textNeedle)));
+    const extraCompanies = hasDigits ? extraCompaniesUncapped : extraCompaniesUncapped.slice(0, CUSTOMER_SCAN_LIMIT);
     for (const company of phoneCompanies) {
       if (!scannedCompanies.has(company.id)
         && !extraCompanies.some((entry) => entry.id === company.id)) {
-        if (extraCompanies.length < CUSTOMER_SCAN_LIMIT) extraCompanies.push(company);
+        extraCompanies.push(company);
       }
     }
-    contacts = [...contacts, ...extraContacts];
+    contacts = [...contacts, ...cappedExtraContacts];
     companies = [...companies, ...extraCompanies];
   }
   // Erased customers leave Clienti and the search (backlog:d271d723): the
@@ -855,7 +933,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const identitiesBySubject = new Map(subjectKeys.map((key) => [key, []]));
   for (const row of identities.rows) {
     const key = keyOf(row.subjectResource, row.subjectId);
-    if (identitiesBySubject.has(key) && row?.status === 'active') identitiesBySubject.get(key).push(row);
+    // A null status is a legacy row from before status was recorded: it
+    // reads like an active one (review agent-crm#707), so an exact phone
+    // hit keeps its phone value instead of shaping a phone-less row.
+    if (identitiesBySubject.has(key) && (row?.status === 'active' || row?.status == null)) {
+      identitiesBySubject.get(key).push(row);
+    }
   }
 
   const opportunities = await batched('opportunity', [

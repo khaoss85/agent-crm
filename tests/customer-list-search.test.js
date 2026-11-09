@@ -167,22 +167,56 @@ test('7d82fd84: the shared search ceiling reserves a budget for companies', asyn
   const scans = reads.filter((entry) => entry.method === 'scan');
   assert.deepEqual(
     scans.map((entry) => [entry.name, entry.limit]),
-    [['contact', CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE], ['company', CUSTOMER_SEARCH_COMPANY_RESERVE]],
-    'contacts scan up to the ceiling minus the reserve, companies up to the reserve',
+    [['contact', CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE],
+      ['company', CUSTOMER_SEARCH_COMPANY_RESERVE],
+      ['contact', CUSTOMER_SEARCH_SCAN_LIMIT - (CUSTOMER_SCAN_LIMIT + 1)]],
+    'contacts scan up to the ceiling minus the reserve, companies up to the reserve, '
+    + 'then contacts re-scan the leftover company budget (few companies here)',
   );
-  const scanned = scans.reduce((sum, entry) => sum + entry.limit, 0);
-  assert.ok(scanned <= CUSTOMER_SEARCH_SCAN_LIMIT, `the scan asked for ${scanned} rows, at most the ceiling`);
-  // A company past the reserve is not read, and the answer stays partial.
+  // A company past the shared remainder is not read, and the answer stays partial.
   const farReads = [];
   const farModules = boundedModules(
     senders(CUSTOMER_SCAN_LIMIT),
-    [...Array.from({ length: CUSTOMER_SEARCH_COMPANY_RESERVE }, (_, index) => ({ id: `co${index}`, name: `Riempitivo ${index}` })),
+    [...Array.from({ length: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SCAN_LIMIT }, (_, index) => ({ id: `co${index}`, name: `Riempitivo ${index}` })),
       { id: 'co-far', name: 'Prova Lontana Srl' }],
     farReads,
   );
   const far = await listCustomerRecords({ modules: farModules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova Lontana', pageSize: '10' });
-  assert.ok(!far.items.some((item) => item.id === 'co-far'), 'past the reserve the company is not read');
+  assert.ok(!far.items.some((item) => item.id === 'co-far'), 'past the shared ceiling the company is not read');
   assert.equal(far.complete, false, 'the answer stays partial');
+});
+
+test('review agent-crm#707 P1: a small contact table leaves its budget to companies', async () => {
+  // Regression: with 100 contacts the fixed 4000/1000 split capped the
+  // companies at 1000, while the remainder (4900) reaches position ~2000.
+  const reads = [];
+  const companies = [
+    ...Array.from({ length: 2000 }, (_, index) => ({ id: `co-f${index}`, name: `Riempitivo ${index}` })),
+    { id: 'co-prova', name: 'Prova Oltre Srl' },
+  ];
+  const modules = boundedModules(senders(100), companies, reads);
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova Oltre', pageSize: '10' });
+  assert.ok(page.items.some((item) => item.id === 'co-prova'), 'the company past position 1000 is found on the remainder');
+  assert.equal(page.complete, false, 'the answer stays partial');
+  const scans = reads.filter((entry) => entry.method === 'scan');
+  assert.deepEqual(
+    scans.map((entry) => [entry.name, entry.limit]),
+    [['contact', CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE],
+      ['company', CUSTOMER_SEARCH_SCAN_LIMIT - 100]],
+    'companies scan up to the ceiling minus the contacts actually read',
+  );
+});
+
+test('review agent-crm#707 P1: a contact past position 4000 is found when companies are few', async () => {
+  // Symmetric regression: contacts at scan positions 4000-4999 were capped
+  // at 4000 even when the companies left budget unused.
+  const target = { id: 'c-deep', companyId: null, firstName: 'Prova', lastName: 'Profonda', email: null };
+  const tail = senders(100).map((contact, index) => ({ ...contact, id: `g-tail${index}` }));
+  const contacts = [...senders(4100), target, ...tail];
+  const modules = boundedModules(contacts, [{ id: 'co1', name: 'Studio Uno' }]);
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova Profonda', pageSize: '10' });
+  assert.ok(page.items.some((item) => item.id === 'c-deep'), 'the contact past position 4000 is found on the leftover company budget');
+  assert.equal(page.complete, false, 'the answer stays partial');
 });
 
 test('7d82fd84: a digit-only query matches a held phone by substring', () => {
@@ -222,6 +256,120 @@ test('7d82fd84: a phone search finds a customer past the subject scans through i
   const missing = await run({ q: '99988', pageSize: '10' });
   assert.equal(missing.items.length, 0, 'digits nothing holds find nobody');
   assert.equal(missing.complete, false, 'the answer stays partial');
+});
+
+test('review agent-crm#707 P2: a digit query finds an in-scan contact by its held phone', async () => {
+  // Regression: the pre-filter judged phone-less scan rows, so a contact in
+  // the scan window whose phone matches was dropped before the shaped-row
+  // filter (which sees the phone) could match it.
+  const mario = { id: 'c-mario', companyId: null, firstName: 'Mario', lastName: 'Bianchi', email: 'mario@example.com' };
+  const contacts = [...senders(600), mario, ...senders(100).map((contact, index) => ({ ...contact, id: `g-t${index}` }))];
+  const identities = [
+    {
+      sourceKey: 'whatsapp:+393331234567', system: 'whatsapp', externalId: '+393331234567',
+      subjectResource: 'contact', subjectId: 'c-mario', status: 'active',
+    },
+  ];
+  const modules = boundedModules(contacts, [], [], { identities });
+  const run = (request) => listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, request);
+  const byDigits = await run({ q: '333', pageSize: '10' });
+  assert.ok(byDigits.items.some((item) => item.id === 'c-mario'), 'digit-only finds the in-scan phone match');
+  const mixed = await run({ q: 'Mario 333', pageSize: '10' });
+  assert.ok(mixed.items.some((item) => item.id === 'c-mario'), 'name plus digits still finds it');
+  assert.equal(byDigits.complete, false, 'the answer stays partial');
+});
+
+test('review agent-crm#707 P2: digits in a name or email never count as a phone match', () => {
+  // Regression: the digit-substring rule read every part, so '333' matched
+  // user333@example.com (or 'Studio 333') with no phone held.
+  const noPhone = shapeCustomerRow({
+    contact: { id: 'c-digits', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: 'user333@example.com' },
+    company: { id: 'co-blu', name: 'Studio Blu' },
+  }, {});
+  assert.deepEqual(hits([noPhone], '333'), [], 'email digits without a held phone match nothing');
+  const withPhone = shapeCustomerRow({
+    contact: { id: 'c-tel', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: 'user333@example.com' },
+    company: null,
+  }, {
+    identitiesBySubject: new Map([['contact:c-tel', [{ system: 'whatsapp', externalId: '+393331234567' }]]]),
+  });
+  assert.deepEqual(hits([withPhone], '333'), ['Ada Rossi'], 'the same digits match once a phone holds them');
+});
+
+test('review agent-crm#707 P2: a pasted formatted number finds its legacy identity', async () => {
+  // Regression: legacy sms/voice/tel/mobile identities keep separators, so
+  // the compact-only exact lookup missed them and only the 500-row page
+  // could reach them.
+  const older = { id: 'p-legacy', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: null };
+  const identities = [
+    {
+      sourceKey: 'sms:+39 333 1234567', system: 'sms', externalId: '+39 333 1234567',
+      subjectResource: 'contact', subjectId: 'p-legacy', status: 'active',
+    },
+  ];
+  const modules = boundedModules([...senders(CUSTOMER_SEARCH_SCAN_LIMIT), older], [], [], { identities });
+  const run = (request) => listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, request);
+  const page = await run({ q: '+39 333 1234567', pageSize: '10' });
+  assert.deepEqual(page.items.map((item) => item.name), ['Ada Rossi'], 'the pasted format finds the legacy identity');
+  assert.equal(page.items[0].phone?.value, '+39 333 1234567', 'the held phone reads on the row');
+});
+
+test('review agent-crm#707 P2: a null-status legacy identity still reads its phone', async () => {
+  // Regression: the exact lookup accepted null-status rows, but the scan
+  // and the shaping below kept active-only, so the hit lost its phone.
+  const older = { id: 'p-null', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: null };
+  const identities = [
+    {
+      sourceKey: 'phone:+393331234567', system: 'phone', externalId: '+393331234567',
+      subjectResource: 'contact', subjectId: 'p-null', status: null,
+    },
+  ];
+  const modules = boundedModules([...senders(CUSTOMER_SEARCH_SCAN_LIMIT), older], [], [], { identities });
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: '+393331234567', pageSize: '10' });
+  assert.deepEqual(page.items.map((item) => item.name), ['Ada Rossi'], 'the null-status identity still finds its subject');
+  assert.equal(page.items[0].phone?.value, '+393331234567', 'the phone survives shaping');
+});
+
+test('review agent-crm#707 P2: identity-store failures are logged with the space', async () => {
+  // Regression: swallowed identity-store errors degraded the search with
+  // no log line naming error, code and space.
+  const failing = {
+    get: async () => { throw Object.assign(new Error('Unknown contact x'), { code: 'NOT_FOUND' }); },
+    list: async () => senders(500),
+    scan: async () => [],
+  };
+  const boom = Object.assign(new Error('identity store down'), { code: 'STORE_DOWN' });
+  const map = new Map([
+    ['contact', { service: failing }],
+    ['company', { service: failing }],
+    ['external-identity', {
+      service: {
+        listWhere: async (shape = {}) => {
+          // The exact identity-key reads fail; the batched subject reads
+          // behind the list answer nothing, so the list itself still reads.
+          if (shape && typeof shape.sourceKey === 'string') throw boom;
+          return [];
+        },
+        list: async () => { throw boom; },
+      },
+    }],
+  ]);
+  const modules = { get: (name) => { const entry = map.get(name); if (!entry) throw Object.assign(new Error(`Unknown module ${name}`), { code: 'MODULE_NOT_FOUND' }); return entry; } };
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args.join(' ')); };
+  try {
+    const page = await listCustomerRecords(
+      { modules, core: {}, names: { identity: 'external-identity' } },
+      { q: '+393331234567', spaceId: 'spazio-1', pageSize: '10' },
+    );
+    assert.equal(page.items.length, 0, 'a failed identity read answers empty, never throws');
+    assert.equal(page.complete, false, 'the answer stays partial');
+  } finally {
+    console.error = original;
+  }
+  assert.ok(logged.some((line) => line.includes('STORE_DOWN') && line.includes('spazio-1')),
+    'the failure is logged with its code and the space');
 });
 
 test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {
