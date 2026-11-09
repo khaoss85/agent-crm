@@ -191,6 +191,12 @@ function renderSqliteStatement(statement) {
     void extra;
     return `ALTER TABLE ${statement.table} ADD COLUMN ${rendered};`;
   }
+  if (statement.kind === 'executeSql') {
+    if (typeof statement.sql !== 'string' || !statement.sql.includes('{table}')) {
+      throw new Error('executeSql needs a sql template naming {table}');
+    }
+    return `${statement.sql.split('{table}').join(statement.table)}`;
+  }
   if (statement.kind === 'createTrigger') {
     const ofClause = statement.ofColumns?.length ? ` OF ${statement.ofColumns.join(', ')}` : '';
     const when = renderTriggerWhen(statement.when, 'sqlite');
@@ -270,6 +276,12 @@ function renderPostgresStatement(statement, physical) {
   if (statement.kind === 'addColumn') {
     return `ALTER TABLE ${tableName(statement.table)} ADD COLUMN ${renderColumn(statement.column, 'postgres', ident).sql};`;
   }
+  if (statement.kind === 'executeSql') {
+    if (typeof statement.sql !== 'string' || !statement.sql.includes('{table}')) {
+      throw new Error('executeSql needs a sql template naming {table}');
+    }
+    return `${statement.sql.split('{table}').join(tableName(statement.table))}`;
+  }
   if (statement.kind === 'createTrigger') {
     const functionPhysical = physicalOf(physical, statement.name);
     const functionIdent = qualifyPostgresIdent(schema, functionPhysical);
@@ -313,6 +325,7 @@ export function collectLogicalNamespace(statements) {
     if (statement.kind === 'createIndex') names.push(statement.name);
     if (statement.kind === 'createTrigger') names.push(statement.name);
     if (statement.kind === 'addColumn') names.push(statement.table);
+    if (statement.kind === 'executeSql') names.push(statement.table);
   }
   return names;
 }

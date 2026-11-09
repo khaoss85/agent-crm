@@ -553,6 +553,28 @@ const V10_STATEMENTS = [
  * and must hash to the released checksums; PostgreSQL SQL is rendered from the
  * same structure and is never translated from SQLite text.
  */
+/** The placeholder flag behind a contact that names no company (backlog:ac65e448fcb4). */
+const V11_STATEMENTS = [
+  {
+    kind: 'addColumn',
+    table: 'companies',
+    column: integer('placeholder', {
+      notNull: true,
+      defaultSql: '0',
+      check: { kind: 'between', min: 0, max: 1 },
+    }),
+  },
+  {
+    kind: 'executeSql',
+    table: 'companies',
+    // One-time repair, never a read rule: rows the name-based placeholder
+    // path (agent-crm#654) wrote carry the exact name, so they take the
+    // flag now. Every runtime read uses the flag only — the name never
+    // marks a placeholder again.
+    sql: "UPDATE {table} SET placeholder = 1 WHERE name = 'Senza azienda';",
+  },
+];
+
 export const CORE_SCHEMA_INTENT = Object.freeze([
   Object.freeze({ version: 1, name: 'initial_crm_schema', plane: 'data', statements: Object.freeze(V1_STATEMENTS) }),
   Object.freeze({ version: 2, name: 'opportunity_source_key', plane: 'data', statements: Object.freeze(V2_STATEMENTS) }),
@@ -564,6 +586,7 @@ export const CORE_SCHEMA_INTENT = Object.freeze([
   Object.freeze({ version: 8, name: 'schema_migrations_checksum', plane: 'ledger', statements: Object.freeze(V8_STATEMENTS) }),
   Object.freeze({ version: 9, name: 'spine_durable_jobs', plane: 'data', statements: Object.freeze(V9_STATEMENTS) }),
   Object.freeze({ version: 10, name: 'spine_reconcilable_job_recovery', plane: 'data', statements: Object.freeze(V10_STATEMENTS) }),
+  Object.freeze({ version: 11, name: 'company_placeholder_flag', plane: 'data', statements: Object.freeze(V11_STATEMENTS) }),
 ]);
 
 /**
