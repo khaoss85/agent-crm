@@ -6,7 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, offerStageLabel, offerStateLabel } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, italianDateTime, offerStageLabel, offerStateLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
@@ -3026,7 +3026,62 @@ export function createCustomerCardView(deps) {
       wrap.appendChild(stageError);
       box.appendChild(wrap);
     }
+    paintStateHistory(box, historyTarget(first, fromQuote), profile, pipelines);
     return true;
+  }
+
+  /**
+   * Backlog c1649d1d: «Storia stati» — the state moves of the shown offer
+   * (who, from which stage to which, when), read from the same audit trail
+   * the offer detail paints. The trail is decoration: it fills after the
+   * card, an unreadable trail reads one honest line, and an offer with no
+   * move yet reads none. A move whose side has no label is skipped, never a
+   * raw key on screen.
+   */
+  function historyTarget(first, fromQuote) {
+    if (!first || typeof first !== 'object') return null;
+    if (fromQuote) {
+      return typeof first.opportunityId === 'string' && first.opportunityId !== '' ? first.opportunityId : null;
+    }
+    return typeof first.id === 'string' && first.id !== '' ? first.id : null;
+  }
+
+  function paintStateHistory(box, targetId, profile, pipelines) {
+    if (typeof targetId !== 'string' || targetId === '') return;
+    const owner = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
+      ? profile.opportunities.items.find((candidate) => candidate?.id === targetId)?.owner ?? null
+      : null;
+    const companyName = typeof profile?.identity?.company?.name === 'string'
+      && profile.identity.company.name !== '' ? profile.identity.company.name : null;
+    box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
+    const loading = el('p', 'bo-muted', 'Caricamento…');
+    box.appendChild(loading);
+    const fill = (items) => {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      const moves = (Array.isArray(items) ? items : [])
+        .map((entry) => ({ entry, move: stageMoveOf(entry) }))
+        .filter(({ move }) => move !== null)
+        .map(({ entry, move }) => ({ entry, words: stageMoveLabels(pipelines, move) }))
+        .filter(({ words }) => words !== null)
+        .slice(0, 5);
+      if (moves.length === 0) {
+        box.appendChild(el('p', 'bo-muted', 'Ancora nessun cambio di stato.'));
+        return;
+      }
+      for (const { entry, words } of moves) {
+        const who = auditActorLabel(entry, [owner, companyName]);
+        const when = italianDateTime(entry?.createdAt) ?? '—';
+        box.appendChild(el('p', 'bo-scheda-offer-history', `da ${words.from} a ${words.to} · da ${who} · ${when}`));
+      }
+    };
+    void client.request(
+      `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`,
+    ).then(
+      (answer) => fill(answer?.items),
+      () => {
+        if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
+      },
+    );
   }
 
   // Terminal booking states, mirroring APPOINTMENT_TERMINAL in

@@ -185,7 +185,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -226,6 +226,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (failCalls) throw Object.assign(new Error('Not Found'), { status: 404 });
         if (callsError) throw callsError;
         return calls;
+      }
+      if (path.startsWith('/api/audit')) {
+        if (auditError) throw auditError;
+        return { items: audit };
       }
       throw new Error(`unexpected request ${path}`);
     },
