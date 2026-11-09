@@ -625,9 +625,49 @@ test('a failed Conferma names the manual form, never a code', async () => {
     await new Promise((resolve) => setImmediate(resolve));
   }
   const notes = texts(mount, 'p');
-  assert.ok(notes.includes('Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.'));
+  assert.ok(notes.includes('Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo «Nuovo appuntamento».'));
   assert.ok(!notes.some((text) => text.includes('serviceKey')), 'no validation jargon leaks to the operator');
 });
+
+// backlog:3771ac637027: a refused slot Conferma pointed at «il modulo qui
+// sotto». A slot Conferma only follows a phrase draft, which opens and
+// fills the manual form: the sentence names that form by its title and the
+// card offers no «Compila a mano», the form being already open.
+for (const { label, failure, sentence } of [
+  {
+    label: 'a generic refusal',
+    failure: () => new Error('serviceKey must be the listino product key'),
+    sentence: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo «Nuovo appuntamento».',
+  },
+  {
+    label: 'a service refusal',
+    failure: () => Object.assign(new Error('Calendar change refused'), { status: 422, code: 'BO_APPOINTMENT_SERVICE_REFUSED' }),
+    sentence: 'Conferma non riuscita: scegli un servizio dal listino nel modulo «Nuovo appuntamento».',
+  },
+]) {
+  test(`3771ac637027: ${label} on a slot Conferma names the open form, never «qui sotto»`, async () => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const draft = { teamMemberId: 'marco', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' };
+    const slots = [{ startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z' }];
+    const client = stubClient({ phrase: draft, slots, failConfirmWith: failure() });
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+    await view.render();
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    for (let round = 0; round < 7; round += 1) await new Promise((resolve) => setImmediate(resolve));
+    const panel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-manual'));
+    assert.ok((panel.getAttribute('class') ?? '').split(' ').includes('open'), 'the phrase draft opened the form');
+    mount.querySelector('.cal-slots').findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+    for (let round = 0; round < 4; round += 1) await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(texts(mount, 'p').includes(sentence), texts(mount, 'p').join(' | '));
+    assert.ok(!mount.textContent.includes('qui sotto'), 'never a form «qui sotto»');
+    assert.equal(mount.querySelector('.cal-ai').findAll('button').filter((node) => node.textContent === 'Compila a mano').length, 0,
+      'no «Compila a mano» for a form already open');
+    const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-manual'));
+    assert.equal(form.querySelector('h2').textContent, 'Nuovo appuntamento', 'the named form is the one on screen');
+  });
+}
 
 test('the search button stays disabled while searching', async () => {
   const doc = createFakeDocument();

@@ -519,6 +519,15 @@ export function slotInGrid(startsAt, endsAt) {
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
+/**
+ * backlog:3771ac637027 — slot Conferma refusals the manual form fixes. They
+ * name the form by its title, never «qui sotto»: a slot Conferma only
+ * exists after a phrase draft, which opens and fills the form
+ * (fillManual), so the form is always open here — but it sits in the
+ * rail, or in the popover beside the grid, not necessarily below the card.
+ */
+const CONFIRM_SERVICE_NOTE = 'Conferma non riuscita: scegli un servizio dal listino nel modulo «Nuovo appuntamento».';
+const CONFIRM_FORM_NOTE = 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo «Nuovo appuntamento».';
 export const PHRASE_RESUME_EVERY_MS = 3000;
 export const PHRASE_RESUME_ROUNDS = 20;
 
@@ -2900,7 +2909,7 @@ export function createCalendarioView(deps) {
       // production 07/11): said under the field before anything is sent —
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
-      state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+      state.aiNote = CONFIRM_SERVICE_NOTE;
       renderAll();
       return;
     }
@@ -2924,10 +2933,10 @@ export function createCalendarioView(deps) {
       if (refusal !== null && isServiceRefusal(error)) {
         // The cause is the service field: say it there, and point at it here.
         state.serviceError = refusal;
-        state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+        state.aiNote = CONFIRM_SERVICE_NOTE;
       } else {
         state.aiNote = humanWriteError(error, {
-          failed: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.',
+          failed: CONFIRM_FORM_NOTE,
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
       }
