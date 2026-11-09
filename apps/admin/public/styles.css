@@ -1333,10 +1333,14 @@ select.bo-spazi-input { flex: none; }
    block shows title, time, initials and the WA marker only. */
 .cal-wrap { display: grid; gap: 18px; }
 /* Supervisor design pass: the prototype's header and two-column layout. */
-.cal-wrap .panel-heading { align-items: flex-end; margin-bottom: 0; flex-wrap: wrap; }
-.cal-wrap .panel-heading .eyebrow { text-transform: uppercase; margin-bottom: 10px; }
-.cal-wrap .panel-heading h2 { margin: 0; font-size: clamp(32px, 4vw, 50px); line-height: 1; letter-spacing: -.03em; }
-.cal-wrap .panel-heading .lede { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
+.cal-wrap .cal-page-head { align-items: flex-end; margin-bottom: 0; flex-wrap: wrap; }
+.cal-wrap .cal-page-head .eyebrow { text-transform: uppercase; margin-bottom: 10px; }
+/* backlog:29bb3f2c0d64: the prototype title size, the same as Sequenze and
+ * Clienti (46px top) — for the page title only. Production 08/11: the rule
+ * once read every `.panel-heading h2` and blew the detail card title up to
+ * 46px; the card keeps the 15px title of the prototype card below. */
+.cal-wrap .cal-page-title { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
+.cal-wrap .cal-page-head .lede { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
 .cal-wrap .actions { display: flex; align-items: center; gap: 8px; }
 .cal-wrap .actions [data-role="week-interval"] { padding: 0 8px; font-size: 16px; font-weight: 700; white-space: nowrap; }
 .cal-wrap .actions > .ui-btn { height: 38px; min-width: 38px; padding: 0 12px; border-radius: 10px; font-size: 14px; font-weight: 700; }
@@ -1346,6 +1350,9 @@ select.bo-spazi-input { flex: none; }
 .cal-main { min-width: 0; position: relative; }
 .cal-wrap .panel { box-shadow: none; border-radius: 16px; border-color: var(--line-soft); padding: 18px; }
 .cal-wrap .panel > h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: 0; }
+/* The selected-appointment card (prototype: 15px bold title, × on its right). */
+.cal-wrap .cal-detail-head { align-items: flex-start; gap: 8px; margin-bottom: 6px; flex-wrap: nowrap; }
+.cal-wrap .cal-detail-title { margin: 0; font-size: 15px; line-height: 1.3; letter-spacing: 0; font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
 .cal-ai { background: var(--agent-card); border-color: var(--agent-line) !important; }
 .cal-ai > h2 { font-size: 14px !important; color: var(--agent-ink); }
 .cal-ai .lede { margin: 0 0 10px; font-size: 13px; line-height: 1.45; }
@@ -1391,6 +1398,15 @@ select.bo-spazi-input { flex: none; }
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
+/* backlog:29bb3f2c0d64: the channel pill on blocks and in the detail card,
+ * and the «↔ Google Calendar» line, in the prototype's mono and tints. */
+.cal-pill { display: inline-block; border-radius: 4px; padding: 0 4px; font-family: var(--mono); font-size: 9px; font-weight: 700; white-space: nowrap; }
+.cal-pill-google { background: var(--data-soft); color: var(--data-ink); }
+.cal-pill-link { background: var(--agent-soft); color: var(--agent-ink); }
+.cal-via { display: inline-block; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; background: var(--surface-soft); color: var(--ink); }
+.cal-via-google { background: var(--data-soft); color: var(--data-ink); }
+.cal-via-link { background: var(--agent-soft); color: var(--agent-ink); }
+.cal-sync { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--data-ink); }
 /* Press-and-drag on the grid (supervisor design pass 03/11): the chosen
  * half hours read as one accent block, the form opens beside it. */
 .cal-day { cursor: cell; touch-action: none; user-select: none; }
@@ -1435,7 +1451,7 @@ select.bo-spazi-input { flex: none; }
    * ~580px row on a 390px phone: stack the header and let the actions wrap
    * into equal buttons instead. Scoped to the calendario view so no other
    * header changes shape. */
-  .cal-wrap .panel-heading { flex-direction: column; align-items: stretch; }
+  .cal-wrap .cal-page-head { flex-direction: column; align-items: stretch; }
   .cal-wrap .actions { flex-shrink: 1; flex-wrap: wrap; width: auto; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }

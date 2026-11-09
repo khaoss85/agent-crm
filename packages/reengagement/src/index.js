@@ -24,12 +24,13 @@ import {
  * never proposes an opted-out customer.
  *
  * It owns no records (MEM_ACC_REUSE): candidates arrive as caller values,
- * approval rows stay `space-ai-proposal` in space-permissions, follow-up
- * tasks stay `work-task` in work, and the send stays the channels outbox.
- * The proposal values this package returns already fit
- * `space-ai-proposal.propose-action`, and the permission that turns a
- * proposal into an autonomous send is the existing `send-without-approval`
- * switch — no new permission, no new table.
+ * the approval queue is the agents package's `teammate-run` (backlog:
+ * fd36da512b0e — «Da fare» lists the runs with outcome `proposed`, so
+ * `createReengagementExecutor` is the `execute` seam of `run-due` and the
+ * human approves, edits or rejects that row), follow-up tasks stay
+ * `work-task` in work, and the send stays the channels outbox. The
+ * permission that turns a proposal into an autonomous send is the existing
+ * `send-without-approval` switch — no new permission, no new table.
  *
  * `draftText` is the wording edge, injected at composition like the
  * channels llm handover: without it the scan refuses with a code instead
@@ -39,9 +40,9 @@ import {
  *
  * What is deliberately NOT here: the daily timer (the deployment owns the
  * schedule), the inbox and window reads (channels owns them), the approval
- * recording and the send (the caller does both after the human or the
- * switch decides). The operation below computes; executing stays the
- * consumer's job, like an approved `space-ai-proposal`.
+ * row (agents records the run) and the send (the deployment's applyAction
+ * seam, after the human or the switch decides). The operation below
+ * computes; executing stays the consumer's job.
  */
 
 export const REENGAGEMENT_DOMAIN = REENGAGEMENT_PACKAGE;
@@ -63,7 +64,9 @@ export function createReengagementPackage(options = {}) {
     name: REENGAGEMENT_DOMAIN,
     // 1: f50ad5c9 — daily scan over caller customers, window-honest routes,
     // approval-shaped proposals, no records of its own.
-    version: 1,
+    // 2: fd36da512b0e — proposals travel as teammate-run rows («Da fare»)
+    // through the run-due executor, never as space-ai-proposal rows.
+    version: 2,
     label: 'Re-engagement agent',
     description:
       'The teammate agent that re-contacts silent customers: selects who arrived from WhatsApp, Instagram '
@@ -112,7 +115,8 @@ export function createReengagementPackage(options = {}) {
     /** Function-free, additive schema metadata. */
     metadata() {
       return {
-        reengagementContract: 1,
+        reengagementContract: 2,
+        approvalQueue: 'teammate-run',
         inboundChannels: [...REENGAGEMENT_INBOUND_CHANNELS],
         windowedChannels: [...REENGAGEMENT_WINDOW_CHANNELS],
         defaultQuietDays: REENGAGEMENT_DEFAULT_QUIET_DAYS,
@@ -123,8 +127,8 @@ export function createReengagementPackage(options = {}) {
           'daily schedule: the deployment owns the timer; the operation only computes one scan',
           'window observation: channels owns the inbox read; windowState arrives as a caller value',
           'wording: llm owns the composer; draftText is the injected seam',
-          'approval rows: space-ai-proposal owns them; the caller records the returned values',
-          'sends: the channels outbox owns them; executing an approved proposal stays the caller job',
+          'approval rows: the agents package records each run as a teammate-run; createReengagementExecutor is its run-due execute seam',
+          'sends: the channels outbox owns them; the deployment applyAction seam executes an approved proposal',
         ],
       };
     },
@@ -140,6 +144,9 @@ export {
   REENGAGEMENT_INBOUND_CHANNELS,
   REENGAGEMENT_PACKAGE,
   REENGAGEMENT_PERMISSION,
+  REENGAGEMENT_MAX_PAYLOAD_CHARS,
+  REENGAGEMENT_MAX_PROPOSALS_PER_RUN,
   REENGAGEMENT_WINDOW_CHANNELS,
+  createReengagementExecutor,
   scanReengagement,
 } from './reengagement.js';

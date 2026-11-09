@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
+import { createHttpServer } from '../apps/server/src/index.js';
 import { NO_COMPANY_NAME, isNoCompany } from '../packages/customer-data/src/sender.js';
 import { shapeCustomerCard } from '../packages/customer-hub/src/card.js';
 import { NO_COMPANY_NAME as ADMIN_NO_COMPANY_NAME, shownCompanyName } from '../apps/admin/public/admin-customer-card.js';
@@ -133,4 +134,32 @@ test('review #654 giro 4: an explicit «Senza azienda» never reuses another cus
   const receipt = companyOnly.receipts[0];
   assert.notEqual(receipt.reasonCode, 'MATCHED_EXISTING', 'no match onto a contact placeholder');
   assert.notEqual(receipt.subject?.id, anna.companyId);
+});
+
+test('GET /api/companies hides placeholders: the «Nuova offerta» list and the Aziende surfaces pick real companies only (backlog:ece81578305d)', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    app.close();
+  });
+
+  // Two contacts without Azienda mint two placeholders behind them …
+  await applyOne(app, { firstName: 'Anna', email: 'anna@uno.invalid' });
+  await applyOne(app, { firstName: 'Bruno', email: 'bruno@due.invalid' });
+  // … beside one real company.
+  const real = await app.services.companies.create({ name: 'Palestra Esempio', domain: null }, { actor: OPERATOR });
+  assert.equal((await app.services.companies.list({ limit: 50 })).filter((company) => isNoCompany(company)).length, 2);
+
+  const body = await fetch(`${baseUrl}/api/companies?limit=100`).then((response) => response.json());
+  assert.ok(Array.isArray(body.items), 'the endpoint answers a list');
+  assert.ok(!body.items.some((company) => isNoCompany(company)), 'no placeholder in the company list');
+  assert.ok(!body.items.some((company) => company?.name === NO_COMPANY_NAME), 'no row named after the placeholder');
+  assert.deepEqual(body.items.map((company) => company.id), [real.id], 'the real company still lists');
 });

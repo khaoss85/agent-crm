@@ -27,13 +27,11 @@ import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import {
-  CHANNEL_CONNECT_ROUTES,
+  channelConnectRoute,
   countedChannel,
   NINE_CHANNELS,
-  PROFILE_CONNECTOR_CHANNELS,
   channelConnectionCount,
   mergeProfileConnections,
-  profileOffersConnector,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -158,6 +156,15 @@ export function timeAgo(iso, nowMs = Date.now()) {
 }
 
 /**
+ * «1 evento ricevuto», «<n> eventi ricevuti»: the count in Italian, never
+ * «1 eventi» (production 08/11, the Email row and the hero subtitle).
+ * @param {number} count
+ */
+export function eventsReceived(count) {
+  return count === 1 ? '1 evento ricevuto' : `${count} eventi ricevuti`;
+}
+
+/**
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
  */
 function entriesOf(activity) {
@@ -222,6 +229,14 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   const received = entries.reduce((total, entry) => total
     + (entry !== null && typeof entry === 'object' && entry.inbox !== null && typeof entry.inbox === 'object'
       && Number.isSafeInteger(entry.inbox.received) && entry.inbox.received > 0 ? entry.inbox.received : 0), 0);
+  const rows = syncChannelTable(activity, nowMs);
+  // The freshest update the table itself shows when the payload carries no
+  // top-level instant (the pilot omits it before the first round).
+  if (lastAt === null) {
+    for (const row of rows) {
+      if (row.connected && typeof row.lastAt === 'string' && row.lastAt !== '' && (lastAt === null || row.lastAt > lastAt)) lastAt = row.lastAt;
+    }
+  }
   const tempo = syncing ? 'in corso…' : (lastAt === null ? null : syncAgo(lastAt, nowMs));
   // Voce 3a3e6eaf: with no channel linked nothing can be "all synced" —
   // the headline says so and the hero offers Collega instead of a pull.
@@ -229,16 +244,20 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   // #680 P2-2): a space whose only binding is suspended reads «0 di 9», so
   // the hero never calls it synced. It still has something to fix, so it is
   // not the empty «Collega il primo canale» either.
-  const rows = syncChannelTable(activity, nowMs);
   const linked = rows.some((row) => row.connected);
+  // The hero reads the table's own pills (production 08/11, 3a3e6eaf C9/
+  // C20): a linked row that is not `Attivo` (Importazione, Da
+  // sistemare…) means not everything is synced, even with nothing to fix.
+  const waiting = rows.some((row) => row.connected && row.pill !== null && row.pill.tone !== 'attivo');
   const bound = linked || rows.some((row) => row.present === true);
   const detail = !bound
     ? 'Collega il primo canale: messaggi ed eventi arriveranno qui.'
     : !linked && !syncing
       ? 'Nessun collegamento è attivo: sistemali qui sotto, finché restano fermi non arriva niente.'
+      // C10: always the prototype's «<aggiornamento> · <n> eventi» line.
       : tempo === null
-        ? 'Ancora nessun movimento registrato.'
-        : `Ultimo aggiornamento ${tempo} · ${received} eventi ricevuti in tutto.`;
+        ? `Nessun aggiornamento ancora · ${eventsReceived(received)} in tutto.`
+        : `Ultimo aggiornamento ${tempo} · ${eventsReceived(received)} in tutto.`;
   if (syncing) {
     return { tone: 'syncing', title: 'Sincronizzazione in corso', detail, count: total };
   }
@@ -248,7 +267,7 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   if (!linked) {
     return { tone: 'fix', title: 'Nessun canale attivo', detail, count: total };
   }
-  if (total > 0) {
+  if (total > 0 || waiting) {
     return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: total };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
@@ -473,16 +492,12 @@ export function withProfileConnections(activity, profile = null) {
  * connect it (backlog:cf365ada15b9). A catalogued channel opens its guided
  * flow; Google Calendar opens Profilo when the profile offers the Google
  * connector (that is where its Collega lives); Stripe has no connect
- * screen, so it stays `Non disponibile` rather than a Collega to nowhere.
+ * screen, so it reads `non collegato` with no Collega to nowhere.
  * @param {string} channel
  * @param {unknown} [profile]
  */
 export function syncConnectRoute(channel, profile = null) {
-  if (cataloguedChannel(channel)) return `#/connettori/${channel}`;
-  if (!Object.hasOwn(CHANNEL_CONNECT_ROUTES, channel)) return null;
-  const offered = Object.entries(PROFILE_CONNECTOR_CHANNELS)
-    .some(([connector, served]) => served === channel && profileOffersConnector(profile, connector));
-  return offered ? CHANNEL_CONNECT_ROUTES[channel] : null;
+  return channelConnectRoute(channel, { guided: CONNECTOR_CATALOG.map((entry) => entry.channel), profile });
 }
 
 /** Days before expiry that light the `Permesso in scadenza` pill and card. */
@@ -511,6 +526,29 @@ export function grantDaysLeft(iso, nowMs = Date.now()) {
 export function grantExpiring(iso, nowMs = Date.now()) {
   const days = grantDaysLeft(iso, nowMs);
   return days !== null && days <= SYNC_GRANT_EXPIRING_DAYS;
+}
+
+/**
+ * The pill of one table row, in the spec's words (C20: `Attivo`,
+ * `Permesso in scadenza`, `Importazione`). A binding with no traffic yet
+ * (`idle`) is linked and healthy, so it reads `Attivo` — production 08/11
+ * showed «In attesa», a word the spec does not have. A binding that really
+ * broke (`attention`, `down`) is a state the spec does not list: the
+ * closest honest word is `Da sistemare`, the name of the section that
+ * says what to do about it. `Attivo` (and `Importazione`) need an active
+ * binding (review #692): a suspended, pending or revoked binding reads
+ * `Da sistemare` whatever its health says.
+ * @param {{ expiringAt: string | null, importing: boolean, worst: string }} agg
+ * @param {number} nowMs
+ * @param {boolean} hasActive whether one binding of the row is active
+ */
+function channelPill(agg, nowMs, hasActive) {
+  if (!hasActive) return { text: 'Da sistemare', tone: 'altro' };
+  if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
+  const calm = agg.worst === 'ok' || agg.worst === 'idle';
+  if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
+  if (calm) return { text: 'Attivo', tone: 'attivo' };
+  return { text: 'Da sistemare', tone: 'altro' };
 }
 
 /**
@@ -570,15 +608,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
     const connected = agg.list.some((entry) => entry.status === 'active');
     // A blocked binding never poses as importing: the expiry and the
     // running import read only on bindings that are otherwise calm.
-    const pill = present
-      ? (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
-        ? { text: 'Permesso in scadenza', tone: 'permesso' }
-        : agg.importing && agg.worst === 'ok'
-          ? { text: 'Importazione', tone: 'importazione' }
-          : agg.worst === 'ok'
-            ? { text: 'Attivo', tone: 'attivo' }
-            : { text: healthLabel(agg.worst), tone: 'altro' })
-      : null;
+    const pill = present ? channelPill(agg, nowMs, connected) : null;
     // Google Calendar and Stripe have no catalog entry and no detail flow:
     // their rows never route to the "Connettore sconosciuto" dead end
     // (P2 Codex su #415).
@@ -602,13 +632,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
   for (const [channel, list] of byChannel) {
     if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
     const agg = aggregate(channel, list);
-    const pill = agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)
-      ? { text: 'Permesso in scadenza', tone: 'permesso' }
-      : agg.importing && agg.worst === 'ok'
-        ? { text: 'Importazione', tone: 'importazione' }
-        : agg.worst === 'ok'
-          ? { text: 'Attivo', tone: 'attivo' }
-          : { text: healthLabel(agg.worst), tone: 'altro' };
+    const pill = channelPill(agg, nowMs, list.some((entry) => entry.status === 'active'));
     const extraCatalogued = cataloguedChannel(channel);
     rows.push({
       channel,
@@ -866,7 +890,21 @@ export function createSyncView(deps) {
     }
   }
 
-  async function load() {
+  // Only the latest load writes the state: a slower, older one never
+  // repaints over a newer answer.
+  let loadGeneration = 0;
+
+  /**
+   * Every read starts at once (production 08/11: the space sat on «Carico
+   * Stato sync…» about 12 s while schema, activity, profile and candidates
+   * went one after the other). Each read is fail-soft on its own; the
+   * screen paints (`onMinimum`) as soon as schema and activity are in, and
+   * the profile and the identity candidates complete it when they land.
+   * @param {() => void} [onMinimum]
+   */
+  async function load(onMinimum) {
+    const generation = ++loadGeneration;
+    const current = () => generation === loadGeneration;
     try {
       state.spaceId = readSpace();
     } catch {
@@ -878,50 +916,55 @@ export function createSyncView(deps) {
     state.profile = null;
     state.candidates = [];
     state.candidatesError = null;
-    let schema;
-    try {
-      schema = await client.request('/api/schema');
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
-    }
-    const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
-    // Any composed channels domain reads the activity: the shared hosting
-    // composes the read-only «Reader Channels» domain, which carries no
-    // channelsContract, and the screen used to answer «non composti» there
-    // with Gmail and Calendar connected (production, 04/11).
-    state.channelsReady = Boolean(meta);
-    if (!state.channelsReady || state.spaceId.trim() === '') return;
-    try {
-      state.activity = await client.request(
-        `/api/connectors/activity?spaceId=${encodeURIComponent(state.spaceId.trim())}`,
-      );
-      state.loaded = true;
-    } catch (error) {
-      state.loadError = errorOf(error);
-      return;
-    }
+    const space = state.spaceId.trim();
+    /** @param {Promise<any>} promise */
+    const settle = (promise) => promise.then((value) => ({ ok: true, value, error: null }), (error) => ({ ok: false, value: null, error }));
+    const ask = (path) => settle(Promise.resolve().then(() => client.request(path)));
+    const schemaRead = ask('/api/schema');
+    const activityRead = space === '' ? null : ask(`/api/connectors/activity?spaceId=${encodeURIComponent(space)}`);
     // The profile links (Gmail, Calendar, Meta) through the same
     // GET /api/profile read Oggi and Profilo use (backlog:cf365ada15b9):
     // the shared count needs them on both screens, and Google Calendar's
     // Collega exists only where the profile offers it. Fail-soft: an
     // unreadable profile adds nothing and offers nothing.
-    try {
-      const answer = await client.request('/api/profile');
-      state.profile = answer !== null && typeof answer === 'object' ? answer : null;
-    } catch {
-      state.profile = null;
-    }
+    const profileRead = space === '' ? null : ask('/api/profile');
     // Unresolved identity candidates for the purple cards: the same
     // records endpoint the shell badge counts (MEM_ACC_REUSE), narrowed to
     // the unresolved rows on the server — a resolved history beyond the
     // page bound must never hide an outstanding decision. The cards still
     // ignore anything but unresolved, so an unfiltered answer stays safe.
-    try {
-      const read = await client.request('/api/modules/duplicate-candidate/records?filter.status=unresolved&limit=100');
-      state.candidates = Array.isArray(read?.items) ? read.items : [];
+    const candidatesRead = space === '' ? null : ask('/api/modules/duplicate-candidate/records?filter.status=unresolved&limit=100');
+    const schema = await schemaRead;
+    if (!current()) return;
+    if (!schema.ok) {
+      state.loadError = errorOf(schema.error);
+      return;
+    }
+    const meta = schema.value?.domains?.channels?.metadata ?? schema.value?.domains?.channels;
+    // Any composed channels domain reads the activity: the shared hosting
+    // composes the read-only «Reader Channels» domain, which carries no
+    // channelsContract, and the screen used to answer «non composti» there
+    // with Gmail and Calendar connected (production, 04/11).
+    state.channelsReady = Boolean(meta);
+    if (!state.channelsReady || activityRead === null) return;
+    const activity = await activityRead;
+    if (!current()) return;
+    if (!activity.ok) {
+      state.loadError = errorOf(activity.error);
+      return;
+    }
+    state.activity = activity.value;
+    state.loaded = true;
+    if (typeof onMinimum === 'function') onMinimum();
+    const [profile, candidates] = await Promise.all([profileRead, candidatesRead]);
+    if (!current()) return;
+    state.profile = profile !== null && profile.ok && profile.value !== null && typeof profile.value === 'object'
+      ? profile.value : null;
+    if (candidates !== null && candidates.ok) {
+      state.candidates = Array.isArray(candidates.value?.items) ? candidates.value.items : [];
       state.candidatesError = null;
-    } catch (error) {
+    } else if (candidates !== null) {
+      const error = candidates.error;
       state.candidates = [];
       // An uncomposed module (or an older Admin) is an expected absence,
       // not a fault: zero cards, silent. A failed read is a distinct state:
@@ -964,7 +1007,8 @@ export function createSyncView(deps) {
   }
 
   async function renderView() {
-    await load();
+    // Paint as soon as the minimum is in, then once more with the rest.
+    await load(() => render());
     if (state.loadError !== null) toast(state.loadError, true);
     render();
   }
@@ -1003,6 +1047,10 @@ export function createSyncView(deps) {
   // toast at the end, a second click ignored while it runs.
   function renderHeroPull(activity, syncing) {
     const keys = syncChannelTable(activity).flatMap((row) => row.keys);
+    // Nothing importable, nothing to pull (production 08/11, 3a3e6eaf C11:
+    // in Presti the button stayed disabled with no reason): no action
+    // possible, so no button — never a dead control.
+    if (keys.length === 0 && !syncing) return null;
     const button = el(
       doc,
       'button',
@@ -1023,7 +1071,7 @@ export function createSyncView(deps) {
       button.setAttribute('aria-hidden', 'true');
       return button;
     }
-    if (syncing || keys.length === 0) button.setAttribute('disabled', '');
+    if (syncing) button.setAttribute('disabled', '');
     button.addEventListener('click', () => {
       void syncAll(keys);
     });
@@ -1144,9 +1192,9 @@ export function createSyncView(deps) {
   // The prototype's `Canali` card (BO-F6-16, fetta 2): nine fixed rows with
   // the mark, the name plus the fixed direction line, `agg. …`, `<n> eventi
   // ricevuti` (cumulative — the payload has no daily counter, P2 Codex su
-  // #415) and the pill — `Collega` for a catalogued channel with no binding,
-  // an honest `Non disponibile` for the fixed rows no catalog can connect
-  // (Google Calendar, Stripe). No
+  // #415) and the pill — `Collega` where the row can be connected, an honest
+  // `non collegato` with no button for a row nothing here connects (Stripe,
+  // Google Calendar without the profile's Google connector, C19). No
   // per-row pull: the prototype pulls globally from the hero, and the
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
@@ -1158,6 +1206,8 @@ export function createSyncView(deps) {
     // the table, so it counts and so does its place — «1 di 10» (review
     // #647 P2); a row that is not active (suspended, pending) keeps its
     // pill but is not «collegato».
+    // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
+    // included, plus a linked channel outside the nine (review #647).
     const count = channelConnectionCount(entriesOf(activity));
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
@@ -1197,13 +1247,13 @@ export function createSyncView(deps) {
         undefined,
         !present ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
-      line.appendChild(el(doc, 'td', undefined, !present ? '—' : `${row.received} eventi ricevuti`));
+      line.appendChild(el(doc, 'td', undefined, !present ? '—' : eventsReceived(row.received)));
       const stateCell = doc.createElement('td');
       if (!present) {
         // A row connects where the product connects it (backlog:cf365ada15b9):
         // the guided flow for a catalogued channel, Profilo for Google
         // Calendar when the profile offers it. Only a row nothing here can
-        // connect (Stripe) reads `Non disponibile` — never a `Collega` to
+        // connect (Stripe) reads `non collegato` — never a `Collega` to
         // "Connettore sconosciuto" (P2 Codex su #415).
         const route = typeof row.connectRoute === 'string' ? row.connectRoute : null;
         if (!readOnly() && route !== null) {
@@ -1216,10 +1266,11 @@ export function createSyncView(deps) {
             go(route);
           });
           stateCell.appendChild(link);
-        } else if (route !== null) {
-          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
         } else {
-          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'Non disponibile'));
+          // C19 has only `non collegato` for an unlinked row: a row nothing
+          // here can connect (Stripe) says that, with no Collega it could
+          // not keep — never the off-spec «Non disponibile».
+          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
         }
       } else {
         const pill = el(doc, 'span', 'bo-sync-pill', row.pill.text);

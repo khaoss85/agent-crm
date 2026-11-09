@@ -5,11 +5,11 @@ capabilities. It **requires nothing**.
 
 | | |
 |---|---|
-| Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item`, `enriched-field`, `enrichment-opt-out` |
+| Owns | `customer-import-run`, `customer-import-row`, `external-identity`, `duplicate-candidate`, `canonical-link`, `data-quality-issue`, `customer-bulk-run`, `customer-bulk-item`, `enriched-field`, `enrichment-opt-out`, `customer-erasure-log` |
 | Requires | **nothing** |
 | Offers | `customer-identity@1`, `customer-profile@1`, `channel-sender@1`, `customer-channel-origins@1` |
 | Actions | `duplicate-candidate.link-canonical-identity`, `duplicate-candidate.unlink-canonical-identity`, `duplicate-candidate.dismiss-duplicate-candidate`, `data-quality-issue.govern-data-quality-issue` |
-| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins`, `extract-customer-enrichment`, `read-customer-enrichment-proposals`, `decide-enrichment-proposal` (ADR-032) |
+| Operations | `preview-customer-import`, `apply-customer-import`, `apply-bulk-customer-action`, `export-customer-records`, `read-customer-profile`, `apply-contact-enrichment`, `import-google-contacts`, `opt-out-contact-enrichment`, `count-customer-channel-origins`, `extract-customer-enrichment`, `read-customer-enrichment-proposals`, `decide-enrichment-proposal`, `erase-customer` (ADR-032) |
 | Policies | `deterministic-customer-match@1` |
 | ADR | ADR-037 · ExecPlan `docs/plans/customer-data-foundation-v1.md` |
 
@@ -53,7 +53,7 @@ not a description of this package anywhere.
 for m in customer-import-run customer-import-row external-identity \
          duplicate-candidate canonical-link data-quality-issue \
          customer-bulk-run customer-bulk-item enriched-field \
-         enrichment-opt-out; do
+         enrichment-opt-out customer-erasure-log; do
   npm run crm -- module create packages/customer-data/modules/$m.module.json --apply
 done
 ```

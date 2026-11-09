@@ -1,6 +1,6 @@
 {
   "manifestVersion": 1,
-  "revision": 1,
+  "revision": 2,
   "name": "teammate-run",
   "description": "One recorded execution of one teammate assignment (backlog:8986f4459f0f): agent, assignment, cost and outcome of every run, including runs the spending cap stopped. A run that proposes actions waits for a human approval; a run that produces a versioned artifact carries it inline with its version. (backlog:8986f4459f0f)",
   "table": "teammate_runs",
@@ -69,7 +69,8 @@
         "applied",
         "artifact",
         "capped",
-        "failed"
+        "failed",
+        "rejected"
       ]
     },
     {

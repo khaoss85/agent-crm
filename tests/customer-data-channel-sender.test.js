@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { boot, project } from './helpers/customer-data-project.js';
-import { createSubjectForRow, leadNamesForEmail } from '../packages/customer-data/src/sender.js';
+import { NO_COMPANY_NAME, createSubjectForRow, isNoCompany, leadNamesForEmail } from '../packages/customer-data/src/sender.js';
 
 /**
  * **Channel sender resolution (backlog:a4f40325).**
@@ -412,7 +412,9 @@ test('malformed sender requests are refused before anything is read or written',
 test('a nameless email sender becomes a lead named from its address, never Unknown (backlog:1a4d9b30)', async (t) => {
   const { app } = await scene(t, 'sender-nameless-lead');
 
-  // A dotted local part names first and last; the company is the domain.
+  // A dotted local part names first and last; with no Azienda the company is
+  // the contact's own placeholder (backlog:ece81578305d) — never the email
+  // domain, outside the import.
   const dotted = await app.resolveChannelSender({
     channel: 'email', handle: 'marco.rossi@azienda.example', actor: ACTOR,
   });
@@ -421,7 +423,8 @@ test('a nameless email sender becomes a lead named from its address, never Unkno
   assert.equal(marco.first_name, 'Marco');
   assert.equal(marco.last_name, 'Rossi');
   const marcoCompany = app.database.raw.prepare('SELECT * FROM companies WHERE id = ?').get(marco.company_id);
-  assert.equal(marcoCompany.name, 'azienda.example');
+  assert.equal(marcoCompany.name, NO_COMPANY_NAME);
+  assert.equal(isNoCompany(marcoCompany), true);
 
   // A single-token local part still creates its lead, with no English placeholder.
   const single = await app.resolveChannelSender({
@@ -498,6 +501,28 @@ test('createSubjectForRow names before writing the company (rev-agent-crm-606, P
     /local part/,
   );
   assert.deepEqual(calls, [], 'the refused name wrote nothing, not even the company');
+});
+
+test('createSubjectForRow never derives a company from the email unless the import asks (backlog:ece81578305d)', async () => {
+  const made = [];
+  const core = {
+    findCompaniesByNormalizedName: async () => [],
+    createCompany: async (row) => { made.push(row); return { id: `c${made.length}`, ...row }; },
+    createContact: async (row) => ({ id: 'p1', ...row }),
+  };
+  const row = () => ({
+    email: 'mario@acme.example', firstName: 'Mario', lastName: 'Rossi', companyName: null, domain: 'acme.example',
+  });
+  // Outside the import the default takes the placeholder path …
+  await createSubjectForRow(core, row(), ACTOR);
+  assert.equal(made[0].name, NO_COMPANY_NAME, 'the default never turns the email domain into a company');
+  await createSubjectForRow(core, row(), ACTOR, {});
+  assert.equal(made[1].name, NO_COMPANY_NAME, 'an empty options object is the same default');
+  await createSubjectForRow(core, row(), ACTOR, { companyFromEmail: false });
+  assert.equal(made[2].name, NO_COMPANY_NAME, 'the import keeps its explicit opt-out');
+  // … while the import may still ask for the domain-derived company.
+  await createSubjectForRow(core, row(), ACTOR, { companyFromEmail: true });
+  assert.equal(made[3].name, 'acme.example', 'only an explicit companyFromEmail:true derives from the email');
 });
 
 test('leadNamesForEmail falls back to the local part and refuses an empty one (arbitration 06/11, P3)', () => {

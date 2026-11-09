@@ -196,17 +196,18 @@ test('transition rules: stale, same-stage, unknown, lost-reason, wrong pipeline 
     (error) => error.code === 'TERMINAL_STAGE',
   );
 
-  // An opportunity with NO pipeline state (created directly, not converted)
-  // cannot be moved: stable 409, never an invented stage.
+  // Voce ba47a73b: a directly created opportunity enters the space pipeline
+  // at its default stage in the same write — never an orphan null-pipeline
+  // row — so it moves along the board instead of refusing NO_PIPELINE.
   const company = await app.services.companies.create({ name: 'Direct Co' }, { actor });
   const direct = await app.services.opportunities.create(
     { companyId: company.id, name: 'Direct', valueCents: 1, owner: 'x' }, { actor },
   );
-  assert.equal(app.services.opportunities.get(direct.id).pipelineKey, null, 'directly created opportunities carry no pipeline state');
-  await assert.rejects(
-    () => opportunities.action(direct.id, 'move-stage', { toStage: 'demo' }),
-    (error) => error.status === 409 && error.code === 'NO_PIPELINE',
-  );
+  const placed = app.services.opportunities.get(direct.id);
+  assert.equal(placed.pipelineKey, 'b2b-sales', 'a directly created opportunity enters the space pipeline');
+  assert.equal(placed.pipelineStage, 'discovery');
+  const directMoved = await opportunities.action(direct.id, 'move-stage', { toStage: 'demo', fromStage: 'discovery' });
+  assert.equal(directMoved.result.record.pipelineStage, 'demo');
 
   // Corrupted stage (out-of-band write) refuses safely.
   app.database.raw.prepare("UPDATE opportunities SET pipeline_stage = 'ghost' WHERE id = ?").run(opportunity.id);
@@ -314,8 +315,9 @@ test('legacy stage machine and pipeline state coexist without cross-talk', async
   assert.equal(afterMove.stage, legacyBefore, 'legacy stage untouched by pipeline moves');
   assert.equal(afterMove.pipelineStage, 'demo');
 
-  // A legacy (M0) opportunity: the renewal workflow moves the LEGACY stage
-  // and never writes pipeline state.
+  // A legacy (M0) renewal: the renewal workflow moves the LEGACY stage
+  // (voce ba47a73b: the creation itself already entered the space pipeline
+  // at its default stage, in the same write).
   const seeded = await app.seedDemo();
   const run = await app.workflows.run(
     'request-opportunity-stage-change',
@@ -325,13 +327,12 @@ test('legacy stage machine and pipeline state coexist without cross-talk', async
   assert.equal(run.status, 'completed');
   const legacy = app.services.opportunities.get(seeded.standardRenewal.id);
   assert.equal(legacy.stage, 'proposal', 'legacy workflow still owns the legacy column');
-  assert.equal(legacy.pipelineKey, null, 'legacy workflow never writes pipeline state');
-  assert.equal(legacy.pipelineStage, null);
-  // Legacy stage never places a record on the board or allows a pipeline move.
-  await assert.rejects(
-    () => client.module('opportunity').action(legacy.id, 'move-stage', { toStage: 'demo' }),
-    (error) => error.status === 409 && error.code === 'NO_PIPELINE',
-  );
+  assert.equal(legacy.pipelineKey, 'b2b-sales', 'the creation entered the space pipeline at its default stage');
+  assert.equal(legacy.pipelineStage, 'discovery');
+  assert.equal(legacy.pipelineStage, 'discovery', 'the legacy stage move never touches the pipeline position');
+  // The renewal sits on the board, so its card moves.
+  const legacyMoved = await client.module('opportunity').action(legacy.id, 'move-stage', { toStage: 'demo', fromStage: 'discovery' });
+  assert.equal(legacyMoved.result.record.pipelineStage, 'demo');
 });
 
 test('conversion + pipeline entry are one transaction: entry failure rolls back everything', async (t) => {
@@ -507,18 +508,9 @@ test('a second pipeline shape proves the contract is not hardcoded to one stage 
   const opportunity = await app.services.opportunities.create(
     { companyId: company.id, name: 'Alt deal', valueCents: 42, owner: 'x' }, { actor },
   );
-  // No conversion path here: enter the pipeline through the adapter capability
-  // the same way convert does, then walk the alternative stages.
-  const adapterEnter = await app.runAction({
-    module: 'opportunity', action: 'move-stage', recordId: opportunity.id,
-    input: { toStage: 'handshake' }, actor,
-  }).catch((error) => error);
-  assert.equal(adapterEnter.code, 'NO_PIPELINE', 'not on the board until entered');
-  await app.services.opportunities.applyManaged(
-    opportunity.id,
-    { pipelineKey: 'quick-close', pipelineStage: 'contact', stageEnteredAt: '2026-08-05T00:00:00.000Z' },
-    { actor },
-  );
+  // Voce ba47a73b: no conversion path here either, yet the creation enters
+  // the declared default stage in the same write.
+  assert.equal(app.services.opportunities.get(opportunity.id).pipelineStage, 'contact');
   const moved = await app.runAction({
     module: 'opportunity', action: 'move-stage', recordId: opportunity.id,
     input: { toStage: 'handshake', fromStage: 'contact' }, actor,

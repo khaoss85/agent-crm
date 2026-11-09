@@ -25,6 +25,8 @@ import {
   PACKAGE_DECLARATION_FREEZE_TESTS,
   REPO_WIDE_GUARDS,
   REPO_WIDE_GUARD_EXCLUSIONS,
+  STEP_BUDGET_SEC,
+  bonusQueue,
   buildFileImports,
   changedTestFiles,
   digestDirectorySuites,
@@ -43,6 +45,7 @@ import {
   runTestShards,
   shardCountFor,
   testJobs,
+  timeoutVerdict,
   withCharacterizationTests,
   withKernelBoundaryTests,
   withPackageDeclarationFreezeTests,
@@ -248,11 +251,11 @@ test('the real graph builder follows a packages/ barrel to the importing test', 
   }
 });
 
-test('parseArgs defaults to origin/main with the 270 s step bound', () => {
+test('parseArgs defaults to origin/main with the 420 s run bound', () => {
   assert.deepEqual(parseArgs([]), {
     base: 'origin/main',
     list: false,
-    timeoutSec: 270,
+    timeoutSec: 420,
     selectTimeoutSec: 60,
     maxSelected: 50,
   });
@@ -267,14 +270,14 @@ test('parseArgs consumes --base and --timeout-sec values instead of re-reading t
   );
   assert.deepEqual(
     parseArgs(['--base', 'FETCH_HEAD']),
-    { base: 'FETCH_HEAD', list: false, timeoutSec: 270, selectTimeoutSec: 60, maxSelected: 50 },
+    { base: 'FETCH_HEAD', list: false, timeoutSec: 420, selectTimeoutSec: 60, maxSelected: 50 },
   );
 });
 
 test('parseArgs consumes --select-timeout-sec and --max-selected', () => {
   assert.deepEqual(
     parseArgs(['--select-timeout-sec', '30', '--max-selected', '10']),
-    { base: 'origin/main', list: false, timeoutSec: 270, selectTimeoutSec: 30, maxSelected: 10 },
+    { base: 'origin/main', list: false, timeoutSec: 420, selectTimeoutSec: 30, maxSelected: 10 },
   );
 });
 
@@ -400,12 +403,36 @@ test('fallbackPlan resolves skip, warned fallback and refuse without a selection
 });
 
 test('runBudgetSec yields to the selection phase inside the step budget', () => {
-  assert.equal(runBudgetSec(270, 0.1), 270);
-  assert.equal(runBudgetSec(270, 60), 235);
+  const { timeoutSec } = parseArgs([]);
+  // The default run bound sits under the step budget, so a quick selection
+  // keeps all of it.
+  assert.ok(timeoutSec < STEP_BUDGET_SEC - 5, 'the run bound fits inside the step budget');
+  assert.equal(runBudgetSec(timeoutSec, 0.1), timeoutSec);
+  // A slow selection eats into the run, never past the step budget.
+  assert.equal(runBudgetSec(timeoutSec, 60), Math.min(timeoutSec, STEP_BUDGET_SEC - 5 - 60));
+  assert.ok(runBudgetSec(timeoutSec, 60) + 60 <= STEP_BUDGET_SEC);
   // Never below a minute, even when the selection ate the step.
-  assert.equal(runBudgetSec(270, 290), 60);
+  assert.equal(runBudgetSec(timeoutSec, STEP_BUDGET_SEC + 20), 60);
   // A custom run timeout is kept when it is the tighter bound.
   assert.equal(runBudgetSec(120, 0.1), 120);
+  // An explicit step budget is honoured (the old 270 s / 300 s pair).
+  assert.equal(runBudgetSec(270, 60, 300), 235);
+});
+
+test('the step budget leaves gtm:check at least a minute inside the fast job cap', () => {
+  // The touched tests and gtm:check run one after the other in one lane of
+  // scripts/ci-fast.sh, killed together at the fast step's HEAVY_JOB_MAX_SEC.
+  // gtm:check took 7-15 s on the green fast runs of 2026-11-08: a minute
+  // keeps four times that free. Raising the step budget past it fails here.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  const step = workflow.split('\n').find((line) => line.includes('scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh'));
+  assert.ok(step, 'the fast step runs scripts/ci-fast.sh under scripts/ci-heavy.sh');
+  const cap = Number(/HEAVY_JOB_MAX_SEC=(\d+)/.exec(step)?.[1]);
+  assert.ok(Number.isInteger(cap) && cap > 0, `the fast step sets HEAVY_JOB_MAX_SEC: ${step}`);
+  assert.ok(STEP_BUDGET_SEC + 60 <= cap, `step budget ${STEP_BUDGET_SEC}s + 60s for gtm:check exceeds the ${cap}s cap`);
+  const fast = readFileSync(join(repoRoot, 'scripts/ci-fast.sh'), 'utf8');
+  assert.match(fast, /touched_then_gtm\(\) \{\n(?:.*\n)*?.*ci-touched-tests\.js.*\n.*gtm:check/, 'gtm:check still follows the touched tests in their lane');
 });
 
 test('selection is end to end on a throwaway repository with real git', () => {
@@ -1795,6 +1822,75 @@ test('runTestShards times out naming the running and the still-queued files', as
     assert.deepEqual(result.remaining, ['slow1.test.js', 'slow2.test.js', 'quick.test.js']);
     assert.notEqual(result.status, 0);
     assert.equal(result.completedShards, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an oversized selection queues every dropped test behind the core, nearest first', () => {
+  // VERIFIER_BACK backlog:3335fd28 (08/11): planGate/fallbackPlan fell back
+  // to the PR-owned changed tests and the ~198 dropped selected tests never
+  // ran — skipped, against "mai saltata". The run queue must hold the whole
+  // mapped selection: the core suite first, the dropped remainder behind it
+  // in nearest-first order, so the run bound — not the plan — decides how
+  // far the step drains, and every file the bound does not reach is named.
+  const distances = new Map([
+    ['tests/far.test.js', 5],
+    ['tests/mine.test.js', 3],
+    ['tests/near.test.js', 1],
+  ]);
+  assert.deepEqual(bonusQueue(distances, ['tests/mine.test.js']), ['tests/near.test.js', 'tests/far.test.js']);
+  assert.deepEqual(bonusQueue(distances, ['tests/mine.test.js', 'tests/near.test.js', 'tests/far.test.js']), []);
+  assert.deepEqual(bonusQueue(new Map(), ['tests/mine.test.js']), []);
+});
+
+test('a timeout with the core finished warns naming the bonus remainder, never green silently', () => {
+  // The core suite ran green; only bonus files the bound did not reach
+  // remain, with no failure anywhere: warn naming them, since the full
+  // suite on `main` stays the safety net behind the remainder.
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/far.test.js'], []), 'warn');
+});
+
+test('a timeout with core files remaining fails red', () => {
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/mine.test.js', 'tests/far.test.js'], []), 'fail');
+});
+
+test('a timeout after a file failed fails red even when the core finished', () => {
+  // A failure anywhere must fail the step: a warn-green here would hide it.
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], ['tests/far.test.js'], ['tests/far.test.js']), 'fail');
+});
+
+test('runTestShards names the files that failed', async () => {
+  const dir = scratchTests({
+    'ok.test.js': "import test from 'node:test';\ntest('ok passes', () => {});\n",
+    'bad.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bad fails', () => { assert.equal(1, 2); });\n",
+  });
+  try {
+    const result = await runTestShards(['ok.test.js', 'bad.test.js'], { parts: 2, timeoutSec: 120, cwd: dir });
+    assert.equal(result.timedOut, false);
+    assert.deepEqual(result.remaining, []);
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(result.failedFiles, ['bad.test.js']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a timeout over core plus bonus drains the core and warns on the bonus remainder', async () => {
+  // The queue the cure builds for an oversized selection: the core first,
+  // the dropped remainder behind it. The bound hits mid-bonus with the core
+  // finished and green: warn, naming the bonus files that remained.
+  const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
+  const dir = scratchTests({
+    'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
+    'bonus.test.js': sleeper,
+  });
+  try {
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['bonus.test.js']);
+    assert.deepEqual(result.failedFiles, []);
+    assert.equal(timeoutVerdict(['core.test.js'], result.remaining, result.failedFiles), 'warn');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

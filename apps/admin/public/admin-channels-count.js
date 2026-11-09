@@ -172,26 +172,51 @@ export function channelCountName(channel) {
 }
 
 /**
+ * Where one channel connects in this backoffice, or null when nothing here
+ * can connect it. A channel of the guided flow (`guided`, the
+ * CONNECTOR_CATALOG ids) opens `#/connettori/<channel>`; Google Calendar
+ * opens Profilo when the profile offers the Google connector (that is where
+ * its Collega lives); Stripe has no connect screen. One answer for the
+ * Stato sync `Collega`, the Personalizza card and the Oggi invite.
+ * @param {string} channel
+ * @param {{ guided?: ReadonlyArray<string>, profile?: unknown }} [options]
+ */
+export function channelConnectRoute(channel, { guided = [], profile = null } = {}) {
+  if (typeof channel !== 'string' || channel === '') return null;
+  if (Array.isArray(guided) && guided.includes(channel)) return `#/connettori/${channel}`;
+  if (!Object.hasOwn(CHANNEL_CONNECT_ROUTES, channel)) return null;
+  const offered = Object.entries(PROFILE_CONNECTOR_CHANNELS)
+    .some(([connector, served]) => served === channel && profileOffersConnector(profile, connector));
+  return offered ? CHANNEL_CONNECT_ROUTES[channel] : null;
+}
+
+/**
  * The one connected-channels count: `connected` of `total`, and the
  * `missing` channels (universe minus connected, table order) with their
  * names. Rows should already carry the profile links
  * (`mergeProfileConnections`).
+ *
+ * The universe is always the spec's nine (C16/C27: «<n> di 9 collegati»),
+ * Stripe included even though nothing connects it yet: what may be
+ * *invited* is the screen's decision (Oggi names only the connectable lead
+ * channels), never a smaller denominator.
  * @param {unknown} rows connection-like rows ({ channel, status })
  * @returns {{ connected: number, total: number, connectedChannels: ReadonlyArray<string>, missing: ReadonlyArray<{ channel: string, label: string }> }}
  */
 export function channelConnectionCount(rows) {
   const list = Array.isArray(rows) ? rows : [];
-  const universe = [...NINE_CHANNEL_IDS];
   const active = new Set();
+  const extras = [];
   for (const row of list) {
     if (row == null || typeof row !== 'object') continue;
     const channel = countedChannel(row.channel);
     if (channel === '' || row.status !== 'active') continue;
     // Only a linked channel widens the universe (review #680 P2-3): a
     // pending SMS row is not a tenth channel to invite.
-    if (!universe.includes(channel)) universe.push(channel);
+    if (!NINE_CHANNEL_IDS.includes(channel) && !extras.includes(channel)) extras.push(channel);
     active.add(channel);
   }
+  const universe = [...NINE_CHANNEL_IDS, ...extras];
   const connectedChannels = universe.filter((channel) => active.has(channel));
   const missing = universe
     .filter((channel) => !active.has(channel))
