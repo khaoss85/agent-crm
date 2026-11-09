@@ -202,10 +202,18 @@ test('segnali: raggruppati per lead da behavioral-signal (intelligence)', async 
         { id: 'sig-3', leadId: 'lead-b', signalType: 'pricing-page-visited', observedAt: '2026-10-20T08:30:00.000Z' },
       ],
     },
+    '/api/modules/contact/records?limit=50': {
+      items: [{ id: 'lead-a', firstName: 'Marco', lastName: 'Rossi' }],
+    },
+    '/api/modules/company/records?limit=50': {
+      items: [{ id: 'lead-b', name: 'Acme S.r.l.' }],
+    },
   });
   const answer = await runSuggestion(client, 'bo04:clienti:segnali');
   assert.deepEqual(sourceIds(answer), ['sig-2', 'sig-3']);
-  assert.ok(answer.lines.some((line) => line.includes('lead-a') && line.includes('2 segnali')));
+  // Voce a684ecf5: le righe nominano i clienti, mai gli id grezzi.
+  assert.ok(answer.lines.some((line) => line.includes('Marco Rossi') && line.includes('2 segnali')));
+  assert.ok(!answer.lines.some((line) => line.includes('lead-a') || line.includes('lead-b')));
 });
 
 test('chiusura: somme intere per fase, mai float', async () => {
@@ -728,12 +736,14 @@ test('pannello: i tre stati (attivo solo Suggerisci, spazio non attivo, chiave m
   assert.ok(suggestOnly.mount.textContent.includes('suggerisce le risposte ai messaggi (Suggerisci)'));
   assert.ok(!suggestOnly.mount.textContent.includes('finché la chiave OpenAI non è configurata'));
   assert.ok(!suggestOnly.mount.textContent.includes('non attivo in questo spazio'));
-  // Spazio non attivo: la riga lo dice, senza parlare di chiave.
+  // Spazio non attivo (voce a684ecf5): spento + come si accende, senza chiave e senza dire cosa farebbe da acceso.
   const spaceOff = await openWith({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
   assert.equal(spaceOff.panel.getState().mode, 'dry-run');
   assert.equal(spaceOff.mount.findAll('input').length, 0);
   assert.ok(spaceOff.mount.textContent.includes('non attivo in questo spazio'));
-  assert.ok(spaceOff.mount.textContent.includes('(Suggerisci)'));
+  assert.ok(spaceOff.mount.textContent.includes('titolare'));
+  assert.ok(!spaceOff.mount.textContent.includes('(Suggerisci)'));
+  assert.ok(!spaceOff.mount.textContent.includes('suggerisce'));
   assert.ok(!spaceOff.mount.textContent.includes('finché la chiave OpenAI non è configurata'));
   // Chiave mancante: solo qui compare la frase della chiave.
   const noKey = await openWith({ freeQuestions: 'disabled', code: 'LLM_SECRET_UNAVAILABLE' });
@@ -1651,4 +1661,113 @@ test('5a1e6d8dc42e: FONTI e «Apri:» dicono le date in italiano, mai l’ISO gr
   // Any label with an ISO instant (the server's free answer too) reads Italian.
   assert.equal(italianDates('Appuntamento 2026-11-07T13:30:00Z con Ada'), 'Appuntamento 7 nov, 14:30 con Ada');
   assert.equal(italianDates('Nota senza data'), 'Nota senza data');
+});
+
+// Voce a684ecf5 (verifica Mac 09/11 sul rilascio f88eb0f): nel pannello
+// Assistente mai un id grezzo, solo il nome del cliente. Il messaggio da
+// spento dice che è spento e come si accende, senza descrivere cosa
+// farebbe da acceso.
+
+function visibleTexts(answer) {
+  return [
+    ...(answer.lines ?? []),
+    ...(answer.sources ?? []).map((source) => source.label),
+    ...(answer.actions ?? []).map((action) => action.label),
+    ...(answer.actions ?? []).map((action) => action.confirmLabel ?? ''),
+  ].join('\n');
+}
+
+test('a684ecf5: segnali con nomi cliente, mai id grezzi', async () => {
+  const client = stubClient({
+    '/api/modules/behavioral-signal/records?limit=100': {
+      items: [
+        { id: 'sig-1', leadId: 'contact-9', signalType: 'pricing-page-visited', observedAt: '2026-10-20T07:00:00.000Z' },
+        { id: 'sig-2', leadId: 'contact-9', signalType: 'demo-requested', observedAt: '2026-10-20T08:00:00.000Z' },
+        { id: 'sig-3', leadId: 'contact-7', signalType: 'pricing-page-visited', observedAt: '2026-10-20T08:30:00.000Z' },
+      ],
+    },
+    '/api/modules/contact/records?limit=50': {
+      items: [
+        { id: 'contact-9', firstName: 'Marco', lastName: 'Rossi' },
+        { id: 'contact-7', firstName: 'Sara', lastName: 'Bianchi' },
+      ],
+    },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:segnali');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('contact-9'), visible);
+  assert.ok(!visible.includes('contact-7'), visible);
+  assert.ok(visible.includes('Marco Rossi'), visible);
+  assert.ok(visible.includes('Sara Bianchi'), visible);
+});
+
+test('a684ecf5: segnali senza nome restano neutri, mai id', async () => {
+  const client = stubClient({
+    '/api/modules/behavioral-signal/records?limit=100': {
+      items: [
+        { id: 'sig-1', leadId: 'contact-sconosciuto', signalType: 'pricing-page-visited', observedAt: '2026-10-20T07:00:00.000Z' },
+      ],
+    },
+    '/api/modules/contact/records?limit=50': { items: [] },
+    '/api/modules/company/records?limit=50': { items: [] },
+  });
+  const answer = await runSuggestion(client, 'bo04:clienti:segnali');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('contact-sconosciuto'), visible);
+  assert.ok(visible.includes('Lead senza nome'), visible);
+});
+
+test('a684ecf5: opportunita senza nome resta neutra, mai id', async () => {
+  const client = stubClient({
+    '/api/opportunities': {
+      items: [
+        { id: 'opp-grezzo', stage: 'proposal', pipelineKey: 'b2b-sales', pipelineStage: 'proposal', valueCents: 100000, currency: 'EUR' },
+      ],
+    },
+    '/api/schema': {
+      pipelines: [{
+        name: 'b2b-sales', module: 'opportunity',
+        stages: [
+          { key: 'proposal', type: 'open', label: 'Proposta' },
+          { key: 'won', type: 'won', label: 'Vinta' },
+          { key: 'lost', type: 'lost', label: 'Persa' },
+        ],
+      }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:pipeline:chiusura');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('opp-grezzo'), visible);
+});
+
+test('a684ecf5: messaggio senza testo resta neutro, mai id', async () => {
+  const client = stubClient({
+    '/api/modules/interaction-message/records?limit=100': {
+      items: [
+        { id: 'msg-grezzo', direction: 'inbound', channel: 'website-form', conversationId: 'conv-1' },
+      ],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:sequenze:lead-sito');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('msg-grezzo'), visible);
+});
+
+test('a684ecf5: problema senza titolo resta neutro, mai id', async () => {
+  const client = stubClient({
+    '/api/modules/conversation/records?limit=50': { items: [] },
+    '/api/modules/data-quality-issue/records?limit=50': {
+      items: [{ id: 'issue-grezzo', status: 'open' }],
+    },
+  });
+  const answer = await runSuggestion(client, 'bo04:oggi:urgenti');
+  const visible = visibleTexts(answer);
+  assert.ok(!visible.includes('issue-grezzo'), visible);
+});
+
+test('a684ecf5: spazio non attivo dice spento e come si accende', () => {
+  assert.ok(ASSISTANT_SPACE_DISABLED_NOTICE.includes('non attivo in questo spazio'));
+  assert.ok(ASSISTANT_SPACE_DISABLED_NOTICE.includes('titolare'));
+  assert.ok(!ASSISTANT_SPACE_DISABLED_NOTICE.includes('suggerisce'), ASSISTANT_SPACE_DISABLED_NOTICE);
 });
