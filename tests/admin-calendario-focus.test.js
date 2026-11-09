@@ -71,7 +71,7 @@ test('739c0c81f55c: the phrase typed before the team list arrives keeps value, f
   const mount = createMount();
   const gate = makeGate();
   const client = rosterClient(gate);
-  const view = createCalendarioView({ doc, mount, client, now: () => NOW });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => NOW });
   await view.render();
   const typed = mount.querySelector('textarea[name="phrase"]');
   assert.ok(typed, 'the phrase box paints at once');
@@ -101,7 +101,7 @@ test('739c0c81f55c: a repaint never steals focus the operator put elsewhere', as
   const doc = focusingDocument();
   const mount = createMount();
   const gate = makeGate();
-  const view = createCalendarioView({ doc, mount, client: rosterClient(gate), now: () => NOW });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: rosterClient(gate), now: () => NOW });
   await view.render();
   const typed = mount.querySelector('textarea[name="phrase"]');
   typed.value = 'trova 30 minuti';
