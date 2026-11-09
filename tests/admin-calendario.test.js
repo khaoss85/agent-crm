@@ -1994,6 +1994,25 @@ test('personRows keeps email-less homonyms as separate rows', () => {
   assert.ok(rows[0].id !== rows[1].id, 'toggling and booking keep distinct identities');
 });
 
+// backlog:f4a1f250 (agent-crm#644): the Calendario merges the Team with the
+// same rule as Spazi e accessi — mailbox AND display name, never the mailbox
+// alone. Two distinct humans on one shared mailbox (info@…) stay two rows,
+// while two subjects of one human (same mailbox, same name) stay one row.
+test('personRows keeps two names on a shared mailbox as separate rows', () => {
+  const members = [
+    { subject: 'm|1', role: 'member', displayName: 'Marco', email: 'info@example.com' },
+    { subject: 's|2', role: 'member', displayName: 'Sara', email: 'info@example.com' },
+    { subject: 'm|3', role: 'member', displayName: 'Marco', email: ' INFO@example.com ' },
+  ];
+  const rows = personRows(['m|1', 's|2', 'm|3'], [], members);
+  assert.equal(rows.length, 2, 'one shared mailbox with two names is two humans');
+  assert.deepEqual(rows[0].ids, ['m|1', 'm|3'], 'same mailbox and same name still merge across subjects');
+  assert.equal(rows[0].label, 'Marco');
+  assert.deepEqual(rows[1].ids, ['s|2']);
+  assert.equal(rows[1].label, 'Sara');
+  assert.ok(rows[0].id !== rows[1].id, 'toggling and booking keep distinct identities');
+});
+
 // backlog:df55cf25 (owner 04/11, single source of truth): one grouping table
 // holding every person-row case — the merged cures of #549 and this one. The
 // ordinal follows member creation (member.createdAt when the roster carries
@@ -2016,6 +2035,24 @@ test('personRows grouping table: merge, homonyms, ordinals', () => {
       members: [
         { subject: 'x|1', role: 'member', displayName: 'Dan', email: 'Dan@Example.com' },
         { subject: 'x|2', role: 'member', displayName: 'Dan', email: 'dan@example.com' },
+      ],
+      want: [{ ids: ['x|1', 'x|2'], label: 'Dan' }],
+    },
+    {
+      name: 'a shared mailbox with two names stays two rows (backlog:f4a1f250)',
+      named: ['m|1', 's|2'],
+      members: [
+        { subject: 'm|1', role: 'member', displayName: 'Marco', email: 'info@example.com' },
+        { subject: 's|2', role: 'member', displayName: 'Sara', email: 'info@example.com' },
+      ],
+      want: [{ ids: ['m|1'], label: 'Marco' }, { ids: ['s|2'], label: 'Sara' }],
+    },
+    {
+      name: 'mailbox and name match despite case and spaces',
+      named: ['x|1', 'x|2'],
+      members: [
+        { subject: 'x|1', role: 'member', displayName: 'Dan', email: 'dan@example.com' },
+        { subject: 'x|2', role: 'member', displayName: '  DAN  ', email: ' DAN@Example.com ' },
       ],
       want: [{ ids: ['x|1', 'x|2'], label: 'Dan' }],
     },

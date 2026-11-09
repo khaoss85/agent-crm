@@ -310,11 +310,14 @@ function memberBornAt(member) {
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
  * the human behind every subject, and one human can hold several subjects
- * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
- * mailbox (unique per person), so Dan is one row called Dan. A shared
- * display name alone never merges — two email-less homonyms are two humans,
- * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
- * «Rossi (2)» in member-creation order, never a technical id). A group
+ * (`github|…`, `google|…`, mailbox): subjects merge into one row ONLY when
+ * both the mailbox and the display name match (trimmed, case-insensitive) —
+ * the same rule as Spazi e accessi (backlog:f4a1f250, agent-crm#644). A
+ * mailbox alone never merges: two distinct humans on a shared mailbox
+ * (info@…) stay two rows. A shared display name alone never merges either —
+ * two email-less homonyms are two humans, two rows with distinct booking
+ * identities and ordinal labels («Rossi (1)», «Rossi (2)» in
+ * member-creation order, never a technical id). A group
  * with no roster name and no mailbox paints the
  * operator's own typed words, unless they look like a technical subject
  * (a pipe id never paints anywhere); such a row falls back to the generic
@@ -333,20 +336,25 @@ export function personRows(named, hidden, members) {
   /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
   const groups = [];
   const bySubject = new Map();
-  const byEmail = new Map();
+  const byIdentity = new Map();
   const groupFor = (subject) => bySubject.get(subject) ?? null;
   for (const member of roster) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
     const email = personKeyOf(member.email);
     const display = cleanPersonText(member.displayName);
-    // One human shares one mailbox: only a shared mailbox merges two
-    // subjects into one person row. A shared display name alone never
-    // merges — two email-less homonyms are two humans, two rows.
-    let group = (email !== null && byEmail.get(email)) || null;
+    // One human holds one mailbox under one name: two subjects merge into
+    // one person row ONLY when both the mailbox and the display name match
+    // (trimmed, case-insensitive) — the Spazi e accessi rule (agent-crm#644).
+    // A shared mailbox alone never merges two humans, and a shared display
+    // name alone never merges two email-less homonyms either.
+    const nameKey = display === null ? null : display.replace(/\s+/g, ' ').toLowerCase();
+    const key = email === null || nameKey === null ? null : `${email}\u0000${nameKey}`;
+    let group = (key !== null && byIdentity.get(key)) || null;
     if (!group) {
       group = { subjects: [], displayName: null, email: null, born: null, bornIndex: groups.length };
       groups.push(group);
+      if (key !== null) byIdentity.set(key, group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
@@ -354,7 +362,6 @@ export function personRows(named, hidden, members) {
     if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
-      byEmail.set(email, group);
     }
     if (group.displayName === null && display !== null) group.displayName = display;
   }
