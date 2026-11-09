@@ -3761,7 +3761,7 @@ for (const code of ['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']) {
     mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
     clickButton(mount, 'Trova slot liberi');
     await flushMany();
-    assert.ok(texts(mount, 'p').includes('L’AI è spenta in questo spazio: usa il modulo qui sotto.'));
+    assert.ok(texts(mount, 'p').includes('AI spenta per questo spazio: puoi compilare l’appuntamento a mano.'));
     assert.ok(!mount.textContent.includes('Ricerca non riuscita'));
     assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'the phrase box is off');
     const find = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
@@ -4032,7 +4032,7 @@ test('APPOINTMENTS_AI_UNAVAILABLE keeps the phrase box and never says the AI is 
   mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
   await flushMany();
-  assert.ok(!mount.textContent.includes('L’AI è spenta'), 'a transient outage is not a space switch');
+  assert.ok(!mount.textContent.includes('AI spenta'), 'a transient outage is not a space switch');
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'the phrase box stays usable');
   assert.equal(calendarRefusalText({ code: 'APPOINTMENTS_AI_UNAVAILABLE' }), null);
 });

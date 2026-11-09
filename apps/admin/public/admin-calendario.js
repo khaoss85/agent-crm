@@ -681,9 +681,30 @@ export function calendarRefusalText(error) {
   if (code === 'BO_APPOINTMENT_SERVICE_REFUSED' || record.details?.field === 'serviceKey') {
     return 'Scegli un servizio dal listino: questo servizio non c’è.';
   }
+  // backlog:3771ac637027 (production 08/11): never «usa il modulo qui
+  // sotto» — the manual form is closed until asked for. The card paints a
+  // «Compila a mano» button beside these sentences (aiBlockOf).
   if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') {
-    return 'L’AI è spenta in questo spazio: usa il modulo qui sotto.';
+    return 'AI spenta per questo spazio: puoi compilare l’appuntamento a mano.';
   }
+  if (code === 'LLM_DAILY_CAP_EXCEEDED') {
+    return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
+  }
+  return null;
+}
+
+/**
+ * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
+ * 'off' (AI switched off or not configured for the space) or 'cap' (the
+ * daily AI spend ceiling, 429). Both offer «Compila a mano»; null for any
+ * other refusal.
+ * @param {unknown} error
+ * @returns {'off'|'cap'|null}
+ */
+export function aiBlockOf(error) {
+  const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+  if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') return 'off';
+  if (code === 'LLM_DAILY_CAP_EXCEEDED') return 'cap';
   return null;
 }
 
@@ -1017,6 +1038,10 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
+    /** The last phrase refusal blocked the AI ('off' or 'cap'): the card offers «Compila a mano». @type {'off'|'cap'|null} */
+    aiBlocked: null,
+    /** The last phrase answer carried no draft: the card offers «Compila a mano» too. */
+    phraseNoDraft: false,
     /** The space the view last rendered for, so a switch drops that space's search. @type {string|null} */
     renderedSpace: null,
     /** The phrase POST was queued and is being read back: the card says «Sto cercando…». */
@@ -2346,6 +2371,24 @@ export function createCalendarioView(deps) {
    * claim the manual form below holds; a missing customer, service or price
    * fails closed with a plain sentence naming the manual form.
    */
+  /**
+   * backlog:3771ac637027 — «Compila a mano» from the phrase card: opens the
+   * manual form like «Compila manualmente» and carries the phrase into its
+   * Note field when the operator has not written a note yet, so nothing
+   * typed is lost. Focus lands on the form's first field.
+   */
+  function openManualFromPhrase() {
+    const phrase = String(state.phrase ?? '').trim();
+    state.manualOpen = true;
+    if (phrase !== '' && String(state.manual?.notes ?? '').trim() === '') {
+      state.manual = { ...(state.manual ?? {}), notes: phrase.slice(0, 2000) };
+    }
+    renderAll();
+    const target = state.manualFirst;
+    if (target && typeof target.focus === 'function') target.focus();
+    if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
+  }
+
   function renderAi() {
     const panel = el(doc, 'div', { className: 'panel cal-ai' });
     panel.appendChild(el(doc, 'h2', { text: '✦ Fissa con una frase' }));
@@ -2394,6 +2437,20 @@ export function createCalendarioView(deps) {
     }
     if (state.draft) panel.appendChild(renderDraft(state.draft));
     if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
+    // backlog:3771ac637027: with the AI off or over today's ceiling the way
+    // forward is the manual form, opened right here — the same form as
+    // «Nuovo appuntamento › Compila manualmente» (also when the phrase gave
+    // no draft). No «Accendi l'AI»: no /bo screen switches the AI on (the
+    // pilot's operator does), so none is offered rather than a button that
+    // leads nowhere.
+    if (!state.aiLoading && (aiOff || state.aiBlocked !== null || state.phraseNoDraft)) {
+      const manual = uiButton(doc, {
+        variant: 'secondary', small: true, label: 'Compila a mano',
+        attrs: { type: 'button', 'data-action': 'phrase-manual' },
+      });
+      manual.addEventListener('click', () => openManualFromPhrase());
+      panel.appendChild(manual);
+    }
     if (state.proposals.length > 0) {
       const list = el(doc, 'div', { className: 'cal-slots' });
       for (const slot of state.proposals.slice(0, 24)) {
@@ -2498,6 +2555,8 @@ export function createCalendarioView(deps) {
     state.draftNote = '';
     state.proposals = [];
     state.aiNote = '';
+    state.aiBlocked = null;
+    state.phraseNoDraft = false;
     renderAll();
     // The phrase that asks this request (review #664): the queued id and the
     // answer both ride with it, never with a later edit of the textarea.
@@ -2514,7 +2573,8 @@ export function createCalendarioView(deps) {
       const draft = answer?.draft ?? null;
       state.draft = draft;
       if (!draft) {
-        state.draftNote = 'Nessuna bozza dalla frase: usa il modulo qui sotto.';
+        state.draftNote = 'Nessuna bozza dalla frase: riscrivila, o compila l’appuntamento a mano.';
+        state.phraseNoDraft = true;
         return;
       }
       const member = typeof draft.teamMemberId === 'string' ? draft.teamMemberId : '';
@@ -2616,6 +2676,7 @@ export function createCalendarioView(deps) {
       }
       const refusal = calendarRefusalText(error);
       if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
+      state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
         ? 'La frase indica un momento già passato: prova con un giorno futuro.'
@@ -3351,6 +3412,8 @@ export function createCalendarioView(deps) {
       state.phraseWaiting = false;
       state.phrasePending = null;
       state.aiNote = '';
+      state.aiBlocked = null;
+      state.phraseNoDraft = false;
       // Review #690 (P1): the customer search of space A dies with the
       // switch too — no pending timer fires under B, no answer read for A
       // paints A's customer names in B, and A's query, results and picked
