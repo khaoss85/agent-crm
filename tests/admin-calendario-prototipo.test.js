@@ -72,7 +72,7 @@ async function open(options) {
   const doc = createFakeDocument();
   const mount = createMount();
   const api = client(options);
-  const view = createCalendarioView({ doc, mount, client: api, now: () => NOW });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: api, now: () => NOW });
   await view.render();
   await settle();
   return { mount, api };
@@ -162,12 +162,34 @@ test('review #678: with the calendar state unknown the Google line names only th
 
 test('29bb3f2c0d64 (b): the title uses the prototype size of the other /bo screens', () => {
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
-  const rule = css.split('\n').find((line) => line.startsWith('.cal-wrap .panel-heading h2 {'));
+  const rule = css.split('\n').find((line) => line.startsWith('.cal-wrap .cal-page-title {'));
   assert.ok(rule, 'the calendar title rule exists');
   assert.match(rule, /font-size: clamp\(32px, 4vw, 46px\)/, rule);
   assert.doesNotMatch(rule, /50px/, 'never the 50px title');
   const clienti = css.split('\n').find((line) => line.startsWith('.bo-clienti-title {'));
   assert.match(clienti, /clamp\(32px, 4vw, 46px\)/, 'the same size as Clienti');
+});
+
+test('29bb3f2c0d64 (production 08/11): the page title rule never reaches the detail card title', async () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const lines = css.split('\n');
+  // No rule sizes every heading of a calendar panel: the 46px title was
+  // `.cal-wrap .panel-heading h2`, which the detail card heading matched.
+  assert.ok(!lines.some((line) => /^\s*\.cal-wrap \.panel-heading h2\b/.test(line)), 'no blanket panel-heading h2 rule');
+  const titleRules = lines.filter((line) => /clamp\(32px, 4vw, 46px\)/.test(line) && line.includes('.cal-'));
+  assert.deepEqual(titleRules.map((line) => line.split('{')[0].trim()), ['.cal-wrap .cal-page-title'], 'the 46px size is the page title only');
+  const card = lines.find((line) => line.startsWith('.cal-wrap .cal-detail-title {'));
+  assert.ok(card, 'the detail card has its own title rule');
+  assert.match(card, /font-size: 15px/, 'the 15px card title of the prototype');
+  // The markup carries the classes the rules select.
+  const { mount } = await open();
+  assert.equal(mount.querySelector('.cal-page-title')?.textContent, 'Agenda del team');
+  blockOf(mount, '10:00').dispatch('click');
+  await settle();
+  const detail = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  const title = detail.querySelector('h2');
+  assert.equal(title.getAttribute('class'), 'cal-detail-title', 'the card title is a card title');
+  assert.ok(!(detail.querySelector('div').getAttribute('class') ?? '').includes('cal-page-head'), 'the card heading is not the page heading');
 });
 
 test('29bb3f2c0d64 (c): a proposed slot names the weekday', () => {
@@ -192,7 +214,7 @@ test('29bb3f2c0d64 (d): a space with no people still shows the empty grid with i
 test('29bb3f2c0d64 (d): with the roster unread the grid paints under the naming prompt', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({
+  const view = createCalendarioView({ searchDelayMs: 0,
     doc,
     mount,
     client: {

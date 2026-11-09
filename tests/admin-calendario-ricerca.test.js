@@ -26,7 +26,7 @@ function client(answer) {
 async function search(answer, text) {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: client(answer), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: client(answer), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const field = mount.querySelector('input[name="customerSearch"]');
   field.value = text;

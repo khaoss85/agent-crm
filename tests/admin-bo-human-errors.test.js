@@ -341,7 +341,7 @@ test('calendario: a failed week read never renders the message', async () => {
   for (const client of [failingClient(), missingClient()]) {
     const doc = createFakeDocument();
     const mount = createMount();
-    const view = createCalendarioView({
+    const view = createCalendarioView({ searchDelayMs: 0,
       doc,
       mount,
       client,
@@ -716,7 +716,7 @@ test('le frasi elencate non appaiono in nessuna vista montata', async () => {
       await createCustomerListView({ doc, mount, client: failingClient(), storage: memStore(), notify: () => {} }).render();
     }],
     ['calendario', async (doc, mount) => {
-      await createCalendarioView({ doc, mount, client: failingClient(), now: () => new Date('2026-10-27T10:00:00Z') }).render();
+      await createCalendarioView({ searchDelayMs: 0, doc, mount, client: failingClient(), now: () => new Date('2026-10-27T10:00:00Z') }).render();
     }],
     ['pipeline', async (doc, mount) => { await createPipelineBoard({ doc, mount, client: failingClient() }).renderBoard('b2b-sales'); }],
     ['reporting', async (doc, mount) => {
