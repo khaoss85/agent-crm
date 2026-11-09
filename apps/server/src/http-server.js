@@ -23,6 +23,7 @@ import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { AGENT_CATALOG, catalogAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
   buildDashboardModel,
@@ -1526,7 +1527,13 @@ export function buildRouter(app) {
 
   router.add('GET', '/api/companies', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
-    return { items: await app.services.companies.list({ limit: parseLimit(query.limit) }) };
+    const items = await app.services.companies.list({ limit: parseLimit(query.limit) });
+    // Backlog ece81578305d: a «no company» placeholder stands behind one
+    // contact and is never a company to pick — neither the Aziende surfaces
+    // nor the «Nuova offerta» company list (same endpoint) show it. The
+    // predicate keys on the core placeholder flag once voce ac65e448fcb4
+    // lands, on the reserved name until then.
+    return { items: items.filter((company) => !isNoCompany(company)) };
   });
   router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
@@ -1575,9 +1582,19 @@ export function buildRouter(app) {
       }),
     };
   });
+  // Voce ba47a73b: an offer created from the scheda (POST /api/opportunities)
+  // takes the space's default pipeline at its first stage, shows on the board
+  // at once, and its card can move. Creation and pipeline entry are one
+  // INSERT inside opportunities.create (the registry is read and validated
+  // before the first write): never a create plus a second managed write, so
+  // a failing placement refuses the creation instead of orphaning a
+  // null-pipeline row while the POST reports an error. With no pipeline
+  // installed the offer keeps the legacy null pipeline state.
   router.add('POST', '/api/opportunities', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.opportunities.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+    const context = writeContext(app, { actor, identity, organizationId, headers });
+    const created = await app.services.opportunities.create(body ?? {}, context);
+    return respond(201, await app.services.opportunities.get(created.id));
   });
   router.add('GET', '/api/opportunities/:id', async ({ params, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');

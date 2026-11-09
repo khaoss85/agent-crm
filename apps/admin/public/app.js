@@ -721,6 +721,8 @@ const connectorsView = createConnectorsView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The shell's live space, like Stato sync (backlog:24a57904a428).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   toast,
 });
 
@@ -735,6 +737,8 @@ const connectorDetailView = createConnectorDetailView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The shell's live space, like Stato sync (backlog:24a57904a428).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   // The session role for the read-only state: observers watch without
   // touching, like on Stato sync.
   role: () => shellUser?.role ?? null,

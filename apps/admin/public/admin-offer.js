@@ -13,6 +13,7 @@
 import { elFor } from './admin-ui.js';
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { parseEuroToCents } from './admin-catalog.js';
+import { auditActorLabel, offerStageLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -30,6 +31,25 @@ function auditActionLabel(action) {
   if (action === 'opportunity.updated') return 'Offerta aggiornata';
   if (action === 'opportunity.stage_changed') return 'Cambio di fase';
   return 'Variazione registrata';
+}
+
+/**
+ * Backlog c1649d1d: the history line of one audit entry — who, from which
+ * stage to which, when. A state move reads `da <from> a <to>` in the
+ * operator's Italian (a pipeline move `Cambio di stato`, a core move `Cambio
+ * di fase`); a side without a label falls back to the generic line, never a
+ * raw key. Anything that is not a move keeps the action label with the actor.
+ */
+function historyLine(entry, schema, record) {
+  const when = italianDay(entry?.createdAt) ?? '—';
+  const who = auditActorLabel(entry, [record?.owner, record?.contactName, record?.companyName]);
+  const move = stageMoveOf(entry);
+  const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
+  if (move !== null && words !== null) {
+    const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
+    return { when, what: `${what} · da ${words.from} a ${words.to} · da ${who}` };
+  }
+  return { when, what: `${auditActionLabel(entry?.action)} · da ${who}` };
 }
 
 /** Italian label of a quote status; unknown states stay an em dash. */
@@ -72,30 +92,13 @@ function periodLabel(count, interval) {
  */
 const LIST_LIMIT = 200;
 
-/** UUID shape: never painted as a name, it is a technical id, not a person. */
-const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
- * Documented service identities: technical handles, never a person's name.
- * (Admin mutations write `admin-ui`; the system writes with `system`.)
- */
-const SERVICE_ACTORS = new Set(['admin-ui']);
-
-/**
- * Display name of an audit actor. A technical id is never painted: the
- * system reads `sistema`, UUIDs and known service handles read `utente`,
- * and any other id paints only when the record corroborates it as a human
- * display value (the referente, the contact or the company the deal
- * stores). Empty actors stay an em dash.
+ * Display name of an audit actor: the shared vocabulary in admin-labels.js
+ * (backlog c1649d1d), corroborated by this deal's human display values (the
+ * referente, the contact or the company the deal stores).
  */
 function actorLabel(entry, record) {
-  if (entry?.actorType === 'system') return 'sistema';
-  const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
-  if (id === '') return '—';
-  if (UUID_SHAPE.test(id) || SERVICE_ACTORS.has(id)) return 'utente';
-  const known = [record?.owner, record?.contactName, record?.companyName]
-    .filter((value) => typeof value === 'string' && value !== '');
-  return known.includes(id) ? id : 'utente';
+  return auditActorLabel(entry, [record?.owner, record?.contactName, record?.companyName]);
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -114,15 +117,13 @@ export function createOfferDetail(deps) {
 
   const money = (cents, currency) => formatAmount(cents, currency);
 
-  /** Italian label of the record's pipeline stage, or an em dash. */
+  /**
+   * Italian label of the record's stage, or an em dash. Backlog
+   * a551982c06eb: the same words as the scheda and the Pipeline board
+   * (offerStageLabel in admin-labels.js).
+   */
   function stageLabel(schema, record) {
-    const pipelines = Array.isArray(schema?.pipelines) ? schema.pipelines : [];
-    const key = record.pipelineStage ?? record.stage;
-    for (const pipeline of pipelines) {
-      const stage = (pipeline?.stages ?? []).find((candidate) => candidate?.key === key);
-      if (stage) return stage.label ?? '—';
-    }
-    return '—';
+    return offerStageLabel(schema?.pipelines, record) ?? '—';
   }
 
   /**
@@ -277,9 +278,10 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
     }
     for (const entry of auditItems) {
+      const line = historyLine(entry, schema, record);
       const row = el('p', 'history-event');
-      row.appendChild(el('span', 'history-when', italianDay(entry?.createdAt) ?? '—'));
-      row.appendChild(el('span', 'history-what', `${auditActionLabel(entry?.action)} · da ${actorLabel(entry, record)}`));
+      row.appendChild(el('span', 'history-when', line.when));
+      row.appendChild(el('span', 'history-what', line.what));
       historyPanel.appendChild(row);
     }
     page.appendChild(historyPanel);

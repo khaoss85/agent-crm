@@ -18,13 +18,16 @@
 //   Idempotency-Key. Nothing else writes from here.
 //
 // Honest gaps, said on screen and never faked:
-// - the package exposes approve-run only, and only with the deployment's
-//   applyAction seam, which this composition does not wire; there is no
-//   reject or edit operation. Approva / Modifica / Rifiuta render disabled
-//   with one note saying so;
-// - no timer runs the agents here (run-due needs the deployment's execute
-//   seam), so an assignment waits: the screen says so instead of implying
-//   the agent is working;
+// - backlog:31a76b6f19a3: Approva, Rifiuta and Modifica post
+//   `POST /api/agents/approve` { spaceId, runId },
+//   `POST /api/agents/reject` { spaceId, runId, reason? } and
+//   `POST /api/agents/revise` { spaceId, runId, index, payload } — the
+//   run's id, never its source key; the deployment routes them through its
+//   worker to approve-run, reject-run and revise-run. A deployment that
+//   does not route one yet (404/405) reads «Non ancora disponibile in
+//   questo spazio», never a technical error;
+// - the deployment's worker runs due assignments (pilot#458): proposals
+//   land in «Da fare», and each assignment says how its last run went;
 // - «autonomia» is the package invariant, not a setting: every proposal
 //   waits for a human approval, so the card says exactly that;
 // - spend this month is summed from the run rows with the package's own
@@ -48,16 +51,29 @@ export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In 
 /** The one autonomy the package supports: proposals always wait. */
 export const AGENT_AUTONOMY_LABEL = 'Chiede sempre il tuo ok';
 
-/** Why the Da fare controls are disabled — one honest sentence. */
-export const DA_FARE_DISABLED_NOTE = 'Approvare, modificare o rifiutare da qui non è ancora collegato: '
-  + 'arriva quando gli agenti lavoreranno davvero in questo spazio.';
+/** A decision route this deployment does not serve yet (404/405): neutral (backlog:31a76b6f19a3). */
+export const DA_FARE_UNAVAILABLE_NOTE = 'Non ancora disponibile in questo spazio.';
 
-/** Why nothing is in Da fare yet, even with assignments. */
-export const AGENTS_IDLE_NOTE = 'Per ora gli agenti ricevono gli incarichi ma non partono ancora da soli. '
-  + 'Quando lavoreranno, le loro proposte arriveranno qui e aspetteranno il tuo ok.';
+/** What «Da fare» holds when it is empty (backlog:31a76b6f19a3: the agents do run now). */
+export const AGENTS_IDLE_NOTE = 'Quando un agente propone qualcosa, la proposta arriva qui e aspetta il tuo ok. '
+  + 'Sotto ogni incarico vedi com’è andato l’ultimo giro.';
+
+/** A move the server still holds: neutral, never an error (backlog:31a76b6f19a3). */
+export const DA_FARE_PENDING_NOTE = 'Non ancora confermato: ricarica tra poco per vedere l’esito.';
+
+/** The last run of an assignment in the operator's words (backlog:31a76b6f19a3). */
+export const RUN_OUTCOME_LABEL = Object.freeze({
+  started: 'in corso',
+  proposed: 'proposte in «Da fare»',
+  applied: 'approvato e applicato',
+  artifact: 'niente da proporre',
+  capped: 'fermo, tetto di spesa raggiunto',
+  failed: 'non riuscito',
+  rejected: 'rifiutato',
+});
 
 export const ASSIGNMENT_STATUS_LABEL = Object.freeze({
-  active: 'In attesa di partire',
+  active: 'Attivo',
   paused: 'In pausa',
   completed: 'Fatto',
 });
@@ -148,7 +164,8 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         sourceKey: String(row.sourceKey ?? ''),
         phrase: String(row.phrase).trim(),
         schedule: describeSchedule(row),
-        status: ASSIGNMENT_STATUS_LABEL[row.status] ?? 'Stato sconosciuto',
+        status: assignmentStatusLabel(row, runs),
+        lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
@@ -166,6 +183,38 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
     });
   }
   return cards;
+}
+
+/**
+ * Backlog 31a76b6f19a3: an active assignment reads «Attivo» once the worker
+ * ran it at least once, or when it recurs with its next run scheduled;
+ * «In attesa di partire» only while it never started.
+ * @param {any} assignment @param {Array<any>} runs
+ */
+export function assignmentStatusLabel(assignment, runs) {
+  if (assignment?.status !== 'active') return ASSIGNMENT_STATUS_LABEL[assignment?.status] ?? 'Stato sconosciuto';
+  const key = String(assignment.sourceKey ?? '');
+  const ran = key !== '' && (Array.isArray(runs) ? runs : []).some((run) => run && run.assignmentSourceKey === key);
+  const recurring = assignment.cadence !== 'once' && Number.isFinite(Date.parse(String(assignment.nextRunAt ?? '')));
+  return ran || recurring ? ASSIGNMENT_STATUS_LABEL.active : 'In attesa di partire';
+}
+
+/**
+ * Backlog 31a76b6f19a3: how the last run of one assignment went —
+ * «Ultimo giro: niente da proporre, 7 nov, 14:30» — so a run that found
+ * nothing to propose is seen somewhere. Null when the assignment never ran.
+ * @param {Array<any>} runs @param {string} assignmentSourceKey
+ * @returns {string | null}
+ */
+export function lastRunLine(runs, assignmentSourceKey) {
+  if (assignmentSourceKey === '') return null;
+  const at = (run) => String(run?.decidedAt ?? run?.startedAt ?? '');
+  const last = (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
+    .sort((a, b) => at(b).localeCompare(at(a)))[0];
+  if (!last) return null;
+  const stamp = romeStamp(at(last) || null);
+  return `Ultimo giro: ${RUN_OUTCOME_LABEL[last.outcome]}${stamp === '' ? '' : `, ${stamp}`}`;
 }
 
 /**
@@ -203,8 +252,50 @@ export function buildCatalogItems({ catalog = [], agents = [] }) {
  * @param {any} proposal
  */
 function proposalLine(proposal) {
+  const shown = editableField(proposal);
+  return shown !== null ? shown.value.trim() : (text(proposal?.action) ?? 'Azione senza nome');
+}
+
+/**
+ * The text fields a proposal line reads, in the one order the row and
+ * «Modifica» share (review #688: the editor opened another field than the
+ * one shown).
+ */
+const PROPOSAL_TEXT_FIELDS = Object.freeze(['summary', 'text', 'title']);
+
+/**
+ * Backlog 31a76b6f19a3: the text field a proposal line shows — and the one
+ * «Modifica» edits — or null when it carries none.
+ * @param {any} proposal
+ * @returns {{ field: string, value: string } | null}
+ */
+function editableField(proposal) {
   const payload = proposal?.payload && typeof proposal.payload === 'object' ? proposal.payload : {};
-  return text(payload.summary) ?? text(payload.text) ?? text(payload.title) ?? text(proposal?.action) ?? 'Azione senza nome';
+  for (const field of PROPOSAL_TEXT_FIELDS) {
+    if (typeof payload[field] === 'string' && payload[field].trim() !== '') return { field, value: payload[field] };
+  }
+  return null;
+}
+
+/**
+ * Whether a decision route is simply not served here (backlog
+ * 31a76b6f19a3, review #688): a 405 from the mount, or a 404 that names the
+ * route as missing — no domain code, the routers' «Route not found», the
+ * deployment's unknown agents route, or a deployment whose framework has
+ * no such operation yet. Any other 404 (a run that is gone) and every
+ * AGENT_ refusal is a real answer, never hidden.
+ * @param {unknown} error
+ */
+export function isDecisionUnavailable(error) {
+  const record = error && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const missing = code === '' || code === 'BO_AGENT_ROUTE_UNKNOWN' || code === 'BO_AGENT_DECISION_UNAVAILABLE';
+  // Review #688 giro 2: a 405 is a missing route only with a routing code,
+  // never with a domain refusal.
+  if (record.status === 405) return missing || code === 'ADMIN_METHOD_NOT_ALLOWED' || code === 'NOT_FOUND';
+  if (record.status !== 404) return false;
+  if (missing) return true;
+  return code === 'NOT_FOUND' && record.message === 'Route not found';
 }
 
 /**
@@ -222,6 +313,8 @@ export function buildDaFare({ runs = [], agents = [], assignments = [] }) {
     .sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')))
     .map((run) => {
       let lines = [];
+      /** @type {Array<{ index: number, field: string, value: string }>} */
+      let edits = [];
       let unreadable = false;
       try {
         // Already-parsed arrays read as they are; any other shape is
@@ -230,16 +323,22 @@ export function buildDaFare({ runs = [], agents = [], assignments = [] }) {
           ? run.proposals
           : JSON.parse(typeof run.proposals === 'string' ? run.proposals : (run.proposals == null ? '[]' : 'not-json'));
         lines = Array.isArray(parsed) ? parsed.map(proposalLine) : [];
+        edits = Array.isArray(parsed) ? parsed.map(editableField).map((edit, index) => (edit ? { index, ...edit } : null)).filter(Boolean) : [];
         if (!Array.isArray(parsed)) unreadable = true;
       } catch {
         unreadable = true;
       }
       return {
+        // The run's source key names the run for the package operations
+        // (agent-crm#684); the id is what the buttons send (backlog
+        // 31a76b6f19a3) — the deployment refuses the key.
         runSourceKey: String(run.sourceKey),
+        runId: run.id == null || String(run.id).trim() === '' ? null : String(run.id).trim(),
         agentName: names.get(run.agentSourceKey) ?? 'Agente sconosciuto',
         phrase: phrases.get(run.assignmentSourceKey) ?? null,
         startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
         lines,
+        edits,
         unreadable,
       };
     });
@@ -504,6 +603,30 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addKeys: new Map(),
     addError: '',
     notice: '',
+    /**
+     * Backlog 31a76b6f19a3: one Approva per run id — busy while the request
+     * flies (a double click sends one request), then a done/pending/error
+     * line in Italian. The key stays the same until the answer is known.
+     * @type {Map<string, { busy: boolean, pending: boolean, error: string, key: string | null }>}
+     */
+    decisions: new Map(),
+    /**
+     * Review #688: decisions still queued on the server, by run id, with
+     * the Idempotency-Key each kind was sent under. A reload never forgets
+     * them — the row stays locked and a retry reuses its key — until the
+     * run leaves `proposed`.
+     * @type {Map<string, { kind: string, keys: Map<string, string> }>}
+     */
+    queued: new Map(),
+    /**
+     * Review #688 giro 2: the keys of an edit still queued. An edit never
+     * moves the run out of `proposed`, so it does not lock the row past a
+     * reload; re-saving the same text reuses its key.
+     * @type {Map<string, Map<string, string>>}
+     */
+    reviseKeys: new Map(),
+    /** Review #688: a decision on a run that is gone, said above the list after the reload. */
+    daFareError: '',
   };
 
   function invalidate() {
@@ -527,6 +650,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.capped = data.capped;
     state.unavailable = data.unavailable;
     state.loaded = true;
+    forgetSettledQueue();
     return true;
   }
 
@@ -560,6 +684,136 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         failed: 'Non riesco ad aggiungere l’agente adesso: riprova tra poco.',
         notComposed: 'Gli agenti non sono attivi in questo spazio.',
       });
+      paint();
+    }
+  }
+
+  function decisionOf(runId) {
+    if (!state.decisions.has(runId)) {
+      const queued = state.queued.get(runId) ?? null;
+      state.decisions.set(runId, {
+        busy: null, pending: queued !== null, unavailable: false, error: '', mode: null, reason: '', drafts: new Map(),
+        keys: queued !== null ? queued.keys : (state.reviseKeys.get(runId) ?? new Map()),
+      });
+    }
+    return /** @type {any} */ (state.decisions.get(runId));
+  }
+
+  /**
+   * Review #688: a queued approval or refusal is forgotten only once its run
+   * left `proposed`. A queued edit never moves the run, so a reload unlocks
+   * its row (giro 2) and keeps its keys for a re-save of the same text.
+   */
+  function forgetSettledQueue() {
+    const proposed = (runId) => {
+      const run = state.runs.find((row) => row && row.id != null && String(row.id) === runId);
+      return Boolean(run) && run.outcome === 'proposed';
+    };
+    for (const [runId, entry] of [...state.queued.entries()]) {
+      if (entry.kind === 'revise' || !proposed(runId)) state.queued.delete(runId);
+    }
+    for (const runId of [...state.reviseKeys.keys()]) {
+      if (!proposed(runId)) state.reviseKeys.delete(runId);
+    }
+  }
+
+  /**
+   * Backlog 31a76b6f19a3: one decision on a Da fare run — Approva,
+   * Rifiuta or Modifica — as one keyed POST with the run's id. While it
+   * flies the row is locked (a double click sends one request); then an
+   * Italian outcome. A queued answer (BO_*_PENDING) reads neutral and keeps
+   * the row locked until the list is read again; a route this deployment
+   * does not serve reads «Non ancora disponibile», never an error.
+   * @param {any} item @param {'approve' | 'reject' | 'revise'} kind @param {Record<string, unknown>} extra
+   */
+  async function decide(item, kind, extra = {}) {
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
+    if (!item.runId || !state.space) return;
+    const decision = decisionOf(item.runId);
+    if (decision.busy !== null || decision.pending) return;
+    // Review #688: the space is fixed at the click; an answer that lands
+    // after the operator moved to another space is dropped, never painted
+    // on the space now shown.
+    const space = state.space;
+    const left = () => readSpace() !== space || state.space !== space;
+    decision.busy = kind;
+    decision.error = '';
+    decision.unavailable = false;
+    state.notice = '';
+    state.daFareError = '';
+    const keyId = kind === 'revise' ? `revise:${String(extra.index)}:${JSON.stringify(extra.payload)}` : kind;
+    if (!decision.keys.has(keyId)) decision.keys.set(keyId, issueAdminKey());
+    paint();
+    try {
+      const answer = await bound.request(`/api/agents/${kind}`, {
+        method: 'POST',
+        body: { spaceId: space, runId: item.runId, ...extra },
+        idempotencyKey: decision.keys.get(keyId),
+      });
+      if (left()) {
+        await render();
+        return;
+      }
+      state.queued.delete(item.runId);
+      if (kind === 'revise') {
+        // The run keeps waiting in Da fare with the edited proposal.
+        decision.busy = null;
+        decision.mode = null;
+        decision.keys.delete(keyId);
+        state.notice = `Modifica salvata: la proposta di ${item.agentName} aspetta ancora il tuo ok.`;
+      } else {
+        state.decisions.delete(item.runId);
+        state.notice = kind === 'approve'
+          ? (answer?.duplicate === true
+            ? `La proposta di ${item.agentName} era già approvata.`
+            : `Approvato: la proposta di ${item.agentName} è applicata.`)
+          : (answer?.duplicate === true
+            ? `La proposta di ${item.agentName} era già rifiutata.`
+            : `Rifiutata: la proposta di ${item.agentName} non sarà applicata.`);
+      }
+      if (await reload()) paint();
+    } catch (error) {
+      if (left()) {
+        await render();
+        return;
+      }
+      decision.busy = null;
+      const code = typeof error?.code === 'string' ? error.code : '';
+      if (/^BO_[A-Z_]*PENDING$/.test(code)) {
+        // Still queued on the server: the outcome is unknown, never a
+        // failure. Locked — across reloads too (review #688) — until the
+        // run leaves `proposed`, and a retry reuses the same key.
+        decision.pending = true;
+        state.queued.set(item.runId, { kind, keys: decision.keys });
+        if (kind === 'revise') state.reviseKeys.set(item.runId, decision.keys);
+      } else if (isDecisionUnavailable(error)) {
+        decision.unavailable = true;
+        decision.keys.delete(keyId);
+      } else if (error?.status === 404) {
+        // The run is gone (deleted, or never in this space): say it above
+        // the list and read the list again, so the stale row leaves.
+        decision.keys.delete(keyId);
+        state.decisions.delete(item.runId);
+        state.daFareError = humanWriteError(error, {
+          failed: 'Questa proposta non c’è più: ho ricaricato l’elenco.',
+          notComposed: 'Questa proposta non c’è più: ho ricaricato l’elenco.',
+        });
+        if (await reload()) paint();
+        return;
+      } else {
+        decision.keys.delete(keyId);
+        decision.error = humanWriteError(error, {
+          failed: kind === 'approve'
+            ? 'Non riesco ad approvare adesso: riprova tra poco.'
+            : kind === 'reject'
+              ? 'Non riesco a rifiutare adesso: riprova tra poco.'
+              : 'Non riesco a salvare la modifica adesso: riprova tra poco.',
+          notComposed: 'Gli agenti non sono attivi in questo spazio.',
+        });
+      }
       paint();
     }
   }
@@ -637,6 +891,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         const item = el(documentNode, 'li', 'bo-agent-assignment');
         item.appendChild(el(documentNode, 'p', 'bo-agent-phrase', `«${assignment.phrase}»`));
         item.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
+        if (assignment.lastRun) item.appendChild(el(documentNode, 'p', 'bo-agent-lastrun', assignment.lastRun));
         list.appendChild(item);
       }
       box.appendChild(list);
@@ -703,6 +958,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     head.appendChild(el(documentNode, 'h3', null, 'Da fare'));
     if (items.length > 0) head.appendChild(el(documentNode, 'span', 'bo-agenti-count', String(items.length)));
     section.appendChild(head);
+    if (state.daFareError !== '') section.appendChild(el(documentNode, 'p', 'bo-seq-error', state.daFareError));
     if (items.length === 0) {
       section.appendChild(uiEmpty(documentNode, { title: 'Niente da approvare', text: AGENTS_IDLE_NOTE }));
       page.appendChild(section);
@@ -711,7 +967,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const list = el(documentNode, 'div', 'bo-dafare-list');
     for (const item of items) {
       const row = el(documentNode, 'article', 'bo-dafare-item');
-      row.setAttribute('data-run', item.runSourceKey);
+      if (item.runId) row.setAttribute('data-run', item.runId);
       const top = el(documentNode, 'div', 'bo-dafare-head');
       top.appendChild(uiBadge(documentNode, { authority: 'agent', text: item.agentName }));
       const stamp = romeStamp(item.startedAt);
@@ -725,16 +981,108 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       for (const line of item.lines) ul.appendChild(el(documentNode, 'li', null, line));
       if (item.lines.length > 0) row.appendChild(ul);
       const actions = el(documentNode, 'div', 'bo-dafare-actions');
-      for (const [label, variant, action] of [['Approva', 'cta', 'approve'], ['Modifica', 'secondary', 'edit'], ['Rifiuta', 'refusal', 'reject']]) {
-        const button = uiButton(documentNode, { variant, small: true, label, attrs: { type: 'button', 'data-action': action, title: DA_FARE_DISABLED_NOTE } });
-        button.disabled = true;
-        actions.appendChild(button);
-      }
+      const decision = item.runId ? decisionOf(item.runId) : null;
+      // A row without an id has nothing to send; an unreadable proposal is
+      // never approved or edited blind (it can still be refused).
+      const locked = decision === null || decision.busy !== null || decision.pending;
+      const button = (label, variant, action, busyLabel, onClick, off = false) => {
+        // Review #688: Modifica's request is a «revise».
+        const flying = decision !== null && (decision.busy === action || (action === 'edit' && decision.busy === 'revise'));
+        const node = uiButton(documentNode, {
+          variant, small: true, label: flying ? busyLabel : label,
+          attrs: { type: 'button', 'data-action': action },
+        });
+        node.disabled = locked || off;
+        if (flying) node.setAttribute('aria-busy', 'true');
+        node.addEventListener('click', onClick);
+        actions.appendChild(node);
+      };
+      button('Approva', 'cta', 'approve', 'Approvo…', () => { void decide(item, 'approve'); }, item.unreadable);
+      button('Modifica', 'secondary', 'edit', 'Salvo…', () => {
+        if (!decision || locked) return;
+        decision.mode = decision.mode === 'edit' ? null : 'edit';
+        paint();
+      }, item.unreadable || item.edits.length === 0);
+      button('Rifiuta', 'refusal', 'reject', 'Rifiuto…', () => {
+        if (!decision || locked) return;
+        decision.mode = decision.mode === 'reject' ? null : 'reject';
+        paint();
+      });
       row.appendChild(actions);
+      if (decision && decision.mode === 'edit' && !decision.pending) {
+        const editor = el(documentNode, 'div', 'bo-dafare-edit');
+        for (const edit of item.edits) {
+          const draftKey = `${edit.index}:${edit.field}`;
+          const area = el(documentNode, 'textarea', 'ui-field bo-dafare-edit-text');
+          area.setAttribute('aria-label', `Testo della proposta ${edit.index + 1}`);
+          area.setAttribute('data-proposal', String(edit.index));
+          // The deployment's bound for an edited text (pilot#463).
+          area.setAttribute('maxlength', '2000');
+          area.value = decision.drafts.has(draftKey) ? decision.drafts.get(draftKey) : edit.value;
+          area.addEventListener('input', () => { decision.drafts.set(draftKey, String(area.value ?? '')); });
+          editor.appendChild(area);
+          const save = uiButton(documentNode, {
+            variant: 'primary', small: true, label: decision.busy === 'revise' ? 'Salvo…' : 'Salva modifica',
+            attrs: { type: 'button', 'data-action': 'save-edit', 'data-proposal': String(edit.index) },
+          });
+          save.disabled = locked;
+          save.addEventListener('click', () => {
+            const value = String((decision.drafts.has(draftKey) ? decision.drafts.get(draftKey) : area.value) ?? '').trim();
+            if (value === '') {
+              decision.error = 'Scrivi il testo della proposta, poi salva.';
+              paint();
+              return;
+            }
+            void decide(item, 'revise', { index: edit.index, payload: { [edit.field]: value } });
+          });
+          editor.appendChild(save);
+        }
+        row.appendChild(editor);
+      }
+      if (decision && decision.mode === 'reject' && !decision.pending) {
+        const box = el(documentNode, 'div', 'bo-dafare-reject');
+        const input = el(documentNode, 'input', 'ui-field');
+        input.setAttribute('type', 'text');
+        input.setAttribute('maxlength', '280');
+        input.setAttribute('aria-label', 'Motivo del rifiuto (facoltativo)');
+        input.setAttribute('placeholder', 'Motivo (facoltativo)');
+        input.value = decision.reason;
+        input.addEventListener('input', () => { decision.reason = String(input.value ?? ''); });
+        box.appendChild(input);
+        const confirm = uiButton(documentNode, {
+          variant: 'refusal', small: true, label: decision.busy === 'reject' ? 'Rifiuto…' : 'Conferma rifiuto',
+          attrs: { type: 'button', 'data-action': 'confirm-reject' },
+        });
+        confirm.disabled = locked;
+        confirm.addEventListener('click', () => {
+          const reason = String(decision.reason ?? input.value ?? '').trim();
+          void decide(item, 'reject', reason === '' ? {} : { reason });
+        });
+        box.appendChild(confirm);
+        const cancel = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-reject' } });
+        cancel.disabled = decision.busy !== null;
+        cancel.addEventListener('click', () => { decision.mode = null; paint(); });
+        box.appendChild(cancel);
+        row.appendChild(box);
+      }
+      if (decision?.pending) {
+        const note = el(documentNode, 'p', 'bo-muted bo-dafare-pending', DA_FARE_PENDING_NOTE);
+        note.setAttribute('role', 'status');
+        const again = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Ricarica', attrs: { type: 'button', 'data-action': 'reload-dafare' } });
+        again.addEventListener('click', () => { void render(); });
+        note.appendChild(el(documentNode, 'span', null, ' '));
+        note.appendChild(again);
+        row.appendChild(note);
+      }
+      if (decision?.unavailable) {
+        const note = el(documentNode, 'p', 'bo-muted bo-dafare-unavailable', DA_FARE_UNAVAILABLE_NOTE);
+        note.setAttribute('role', 'status');
+        row.appendChild(note);
+      }
+      if (decision && decision.error !== '') row.appendChild(el(documentNode, 'p', 'bo-seq-error', decision.error));
       list.appendChild(row);
     }
     section.appendChild(list);
-    section.appendChild(el(documentNode, 'p', 'bo-seq-note bo-dafare-note', DA_FARE_DISABLED_NOTE));
     page.appendChild(section);
   }
 
@@ -832,6 +1180,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.notice = '';
       state.addError = '';
     }
+    // A fresh read is the truth for the row state; a decision still queued
+    // stays locked through state.queued (review #688) until its run leaves
+    // `proposed`.
+    state.decisions = new Map();
     state.loaded = false;
     paint();
     if (await reload()) paint();

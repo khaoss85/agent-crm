@@ -27,6 +27,15 @@ set -euo pipefail
 name="$1"; shift
 [ "${1:-}" = "--" ] && shift
 core="${ACCORDO_CORE_HEAVY_JOB:-${HOME:-}/dev/_work/minimal-core-versions/current/tools/minimal/heavy-job.sh}"
+# The nightly measurement (job verify, ACCORDO_HEAVY_QUEUE=ci) runs in the CI server's own queue,
+# ~/ci-server/heavy.sh, not in the shared one: six pieces each waiting behind another factory's
+# stage held a runner for hours and left the PR gates queued (server, 08/11, decision of the Leader).
+# Since 08/11 the PR gate (job fast) waits there too: in the shared queue it held a runner for
+# 20-25 min behind other factories. The whole job waits there on purpose. An explicit
+# ACCORDO_CORE_HEAVY_JOB still wins.
+if [ -z "${ACCORDO_CORE_HEAVY_JOB:-}" ] && [ "${ACCORDO_HEAVY_QUEUE:-}" = ci ] && [ -f "${HOME:-}/ci-server/heavy.sh" ]; then
+  core="${HOME:-}/ci-server/heavy.sh"
+fi
 if [ -f "$core" ]; then
   conf="${ACCORDO_HEAVY_JOB_CONF:-${HOME:-}/.config/environment.d/60-heavy-job.conf}"
   if [ -f "$conf" ]; then

@@ -300,6 +300,15 @@ export async function extractProductDrafts({ documentText, complete, maxDrafts =
  * PRODUCT_IMPORT_ROW_DECIDED. Never decide a row with an unconditional
  * write.
  *
+ * On sync storage the claim is one synchronous unit (backlog:dc423e525af2,
+ * the same contract as the llm spend claim in agent-crm#651): the owned
+ * service runs it on its own sync handle, and the portable facade of the
+ * async app — which keeps `database` private — publishes `mutationSync`
+ * handing the sync transaction handle to its callback. An async body inside
+ * a SQLite savepoint is never atomic (the savepoint covers the whole shared
+ * connection, so a concurrent request lands inside it and shares its
+ * rollback), so `mutationAsync` runs only on async storage.
+ *
  * @param {any} rows the product-import-row managed service
  * @param {string} rowId @param {{status: string, productId: string|null}} decision
  * @param {{actor: unknown}} context
@@ -309,12 +318,17 @@ async function claimDecidedRow(rows, rowId, decision, context) {
   const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
   const columnOf = (name) => fields?.find((field) => field?.name === name)?.column ?? null;
   const columns = { status: columnOf('status'), productId: columnOf('productId') };
-  const syncApi = rows?.database?.storage?.sync;
-  const syncMutation = syncApi
+  const storage = rows?.database?.storage;
+  const syncApi = storage?.sync;
+  const ownedSync = syncApi
     && typeof syncApi.execute === 'function'
     && typeof syncApi.savepoint === 'function'
     && typeof rows.mutationSync === 'function';
-  const asyncMutation = typeof rows.mutationAsync === 'function';
+  // The portable facade (no `database` on it) publishes `mutationSync` only
+  // on sync storage, handing the transaction handle to its callback.
+  const facadeSync = !storage && typeof rows?.mutationSync === 'function';
+  const syncMutation = ownedSync || facadeSync;
+  const asyncMutation = typeof rows?.mutationAsync === 'function';
   if (!manifest || typeof manifest.table !== 'string' || typeof manifest.name !== 'string'
     || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
     || typeof rows.get !== 'function'
@@ -360,12 +374,20 @@ async function claimDecidedRow(rows, rowId, decision, context) {
   };
   let updated;
   if (syncMutation) {
-    updated = rows.mutationSync(() => {
+    updated = rows.mutationSync((handed) => {
+      // The owned service hands nothing (its handle is `syncApi`); the
+      // portable facade hands the sync transaction handle.
+      const tx = ownedSync ? syncApi : handed;
+      if (!tx || typeof tx.execute !== 'function') {
+        throw new AppError('product-import storage cannot prove an atomic row claim', {
+          code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
+        });
+      }
       // The committing write is gated where it executes: a decision that
       // fired after the fresh read above still lands zero rows.
-      const claimed = syncApi.execute(statement);
+      const claimed = tx.execute(statement);
       if (Number(claimed?.affectedRows ?? 0) !== 1) decided();
-      rows.audit.record(auditEvent, syncApi);
+      rows.audit.record(auditEvent, tx);
       return rows.get(rowId);
     });
   } else {

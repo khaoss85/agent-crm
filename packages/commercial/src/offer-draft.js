@@ -1,14 +1,15 @@
 // @ts-check
 
 import { AppError, ValidationError, requireQuantity } from '../../core/index.js';
-import { applyDiscount, checkedAdd, checkedMultiply } from './money.js';
+import { applyDiscount, checkedAdd, computeComponentAmount } from './money.js';
 
 /**
  * AI-suggested offer draft from one operator sentence (backlog:7847b4cf,
  * «Bozza dell'offerta da una frase»): the /bo panel's «scrivi …» line fills
  * the offer fields by itself. The member types a sentence («offerta 10
  * ingressi con sconto 10%») and this module answers what the panel fills
- * in: `{ title?, valueCents?, currency?, expectedCloseDate?, catalogOfferIds? }`.
+ * in: `{ title?, valueCents?, currency?, expectedCloseDate?, catalogOfferIds?, lines }`
+ * (`lines`: the rows the panel renders, backlog:8efd56406c7e).
  *
  * What it reuses, per MEM_ACC_REUSE: the `llm-complete@1` capability's
  * audited `suggest` purpose — this module never talks to a provider. The
@@ -69,6 +70,15 @@ function requireText(value, field, max) {
  * A `null` price means the catalog carries no single unit price for that
  * offer (tiers, mixed components): such a line can still be drafted, but
  * the draft carries no computed total rather than a guessed one.
+ *
+ * Each offer also names its `pricingModel` (`flat_fee` for a forfait,
+ * `per_unit` otherwise, defaulting to `per_unit` when the caller does not
+ * say): the line list amount follows the one domain quantity rule in
+ * `money.computeComponentAmount` — a flat fee is charged once per line and
+ * the quantity never multiplies it — so a forfait row stays at its price
+ * whatever the quantity, while unit rows keep multiplying. Only the two
+ * plain models are accepted here: anything tiered drafts with a null price
+ * above instead of a guessed total.
  */
 function normalizeOffers(offers) {
   if (!Array.isArray(offers)) {
@@ -84,7 +94,14 @@ function normalizeOffers(offers) {
       priceCents: null,
       currency: null,
       maxDiscountBps: null,
+      pricingModel: 'per_unit',
     };
+    if (offer.pricingModel !== undefined && offer.pricingModel !== null) {
+      if (offer.pricingModel !== 'flat_fee' && offer.pricingModel !== 'per_unit') {
+        throw new ValidationError(`offers[${index}].pricingModel must be 'flat_fee' or 'per_unit'`, { field: 'offers' });
+      }
+      normalized.pricingModel = offer.pricingModel;
+    }
     if (offer.priceCents !== undefined && offer.priceCents !== null) {
       if (!Number.isSafeInteger(offer.priceCents) || offer.priceCents < 0) {
         throw new ValidationError(`offers[${index}].priceCents must be an integer of at least 0`, { field: 'offers' });
@@ -163,6 +180,20 @@ export function effectiveDiscountCeiling(offerMaxDiscountBps, policyMaxDiscountB
   return caps.length === 0 ? null : Math.min(...caps);
 }
 
+/**
+ * One line's list amount from its catalog price and quantity, through the
+ * one domain quantity rule (`money.computeComponentAmount`, ADR-016): a
+ * `flat_fee` (forfait) price is charged once per line whatever the
+ * quantity, a `per_unit` price multiplies. Callers only reach here with a
+ * non-null catalog price, so the component is always plain and priced.
+ */
+function draftListAmount(offer, quantity) {
+  const component = offer.pricingModel === 'flat_fee'
+    ? { pricingModel: 'flat_fee', unitAmountCents: null, flatAmountCents: offer.priceCents, tiers: [] }
+    : { pricingModel: 'per_unit', unitAmountCents: offer.priceCents, flatAmountCents: null, tiers: [] };
+  return computeComponentAmount(component, quantity).listAmountCents;
+}
+
 export function buildOfferDraftMessages({ prompt, offers, policy }) {
   // The space ceiling is the space policy's own: a per-offer allowance binds
   // only its own line (shown beside that offer below), so the message never
@@ -175,7 +206,10 @@ export function buildOfferDraftMessages({ prompt, offers, policy }) {
   const offerLines = listed.map((offer) => {
     const price = offer.priceCents === null ? 'prezzo a listino' : `${offer.priceCents} cent`;
     const cap = effectiveDiscountCeiling(offer.maxDiscountBps, policy.maxDiscountBps);
-    return `- ${offer.offerId}${offer.name ? ` — ${offer.name}` : ''} (${price}`
+    // A forfait is a single price for the whole line: the model reads it
+    // here so it drafts quantity 1 instead of multiplying the price itself.
+    const model = offer.pricingModel === 'flat_fee' ? ', forfait (prezzo unico per riga)' : '';
+    return `- ${offer.offerId}${offer.name ? ` — ${offer.name}` : ''} (${price}${model}`
       + `${cap === null || cap === undefined ? '' : `, sconto massimo ${cap / 100}%`})`;
   }).join('\n');
   return [
@@ -254,7 +288,7 @@ function normalizeTitle(value) {
  *
  * @param {{
  *   prompt: string,
- *   offers: Array<{offerId: string, name?: string, priceCents?: number | null, currency?: string | null, maxDiscountBps?: number | null}>,
+ *   offers: Array<{offerId: string, name?: string, priceCents?: number | null, currency?: string | null, maxDiscountBps?: number | null, pricingModel?: 'flat_fee' | 'per_unit' | null}>,
  *   policy?: {maxDiscountBps?: number | null, currency?: string | null} | null,
  *   complete?: ((request: {messages: Array<{role: string, content: string}>, maxTokens: number}) => Promise<{text: string, dryRun?: boolean}>) | null,
  *   maxTokens?: number
@@ -384,8 +418,8 @@ export async function suggestOfferDraft({
     try {
       let total = 0;
       for (const { offer: id, quantity, discountBps } of accepted) {
-        const price = /** @type {number} */ (offerById.get(id)?.priceCents);
-        const list = checkedMultiply(price, quantity, 'offer draft list');
+        const catalogOffer = /** @type {{ priceCents: number, pricingModel: string }} */ (offerById.get(id));
+        const list = draftListAmount(catalogOffer, quantity);
         total = checkedAdd(total, applyDiscount(list, discountBps).netAmountCents, 'offer draft total');
       }
       valueCents = total;
@@ -397,12 +431,40 @@ export async function suggestOfferDraft({
   const validatedCloseDate = normalizeCloseDate(parsed.expectedCloseDate);
   const expectedCloseDate = accepted.length === 0 ? null : validatedCloseDate;
   const title = accepted.length === 0 ? null : normalizeTitle(parsed.title);
+  // The rows the panel renders (backlog:8efd56406c7e): one per accepted
+  // catalog offer, in model order, with the catalog's own product (offerId
+  // and name), quantity, unit price and the line discount. The line net is
+  // the same applyDiscount() rule as the total, per line; a line without a
+  // catalog price carries no net rather than a guessed one, exactly like
+  // the total. catalogOfferIds stays beside lines for the older panel.
+  const rows = Object.freeze(accepted.map(({ offer: id, quantity, discountBps }) => {
+    const catalogOffer = offerById.get(id);
+    let netCents = null;
+    if (catalogOffer?.priceCents !== null && catalogOffer?.priceCents !== undefined) {
+      try {
+        const list = draftListAmount(catalogOffer, quantity);
+        netCents = applyDiscount(list, discountBps).netAmountCents;
+      } catch {
+        netCents = null;
+      }
+    }
+    return Object.freeze({
+      offerId: id,
+      ...(typeof catalogOffer?.name === 'string' && catalogOffer.name !== '' ? { name: catalogOffer.name } : {}),
+      quantity,
+      ...(catalogOffer?.priceCents !== null && catalogOffer?.priceCents !== undefined ? { priceCents: catalogOffer.priceCents } : {}),
+      ...(typeof catalogOffer?.currency === 'string' ? { currency: catalogOffer.currency } : {}),
+      discountBps,
+      ...(netCents === null ? {} : { netCents }),
+    });
+  }));
   const draft = {
     ...(title === null ? {} : { title }),
     ...(valueCents === null ? {} : { valueCents }),
     ...(currency === null ? {} : { currency }),
     ...(expectedCloseDate === null ? {} : { expectedCloseDate }),
     catalogOfferIds: Object.freeze([...new Set(accepted.map(({ offer }) => offer))]),
+    lines: rows,
   };
   return Object.freeze({
     status: 'ok',

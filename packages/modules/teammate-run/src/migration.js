@@ -39,6 +39,38 @@ export const teammateRunMigrations = [
       "CREATE INDEX IF NOT EXISTS teammate_runs_assignment_source_key ON teammate_runs(assignment_source_key);" + '\n' +
       "CREATE INDEX IF NOT EXISTS teammate_runs_source_package ON teammate_runs(source_package);",
   },
+  {
+    name: "evolve_teammate_runs_r2",
+    sql:
+      "CREATE TABLE teammate_runs__evolve__r2 (" + '\n' +
+      "  id TEXT PRIMARY KEY," + '\n' +
+      "  source_key TEXT UNIQUE," + '\n' +
+      "  space_id TEXT," + '\n' +
+      "  agent_source_key TEXT," + '\n' +
+      "  assignment_source_key TEXT," + '\n' +
+      "  started_at TEXT," + '\n' +
+      "  cost_cents INTEGER," + '\n' +
+      "  outcome TEXT CHECK(outcome IN ('started', 'proposed', 'applied', 'artifact', 'capped', 'failed', 'rejected'))," + '\n' +
+      "  proposals TEXT," + '\n' +
+      "  artifact TEXT," + '\n' +
+      "  artifact_version INTEGER," + '\n' +
+      "  note TEXT," + '\n' +
+      "  decided_at TEXT," + '\n' +
+      "  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system'))," + '\n' +
+      "  actor_id TEXT," + '\n' +
+      "  source_package TEXT," + '\n' +
+      "  source_action TEXT," + '\n' +
+      "  created_at TEXT NOT NULL," + '\n' +
+      "  updated_at TEXT NOT NULL" + '\n' +
+      ") STRICT;" + '\n' +
+      "INSERT INTO teammate_runs__evolve__r2 (id, source_key, space_id, agent_source_key, assignment_source_key, started_at, cost_cents, outcome, proposals, artifact, artifact_version, note, decided_at, actor_type, actor_id, source_package, source_action, created_at, updated_at) SELECT id, source_key, space_id, agent_source_key, assignment_source_key, started_at, cost_cents, outcome, proposals, artifact, artifact_version, note, decided_at, actor_type, actor_id, source_package, source_action, created_at, updated_at FROM teammate_runs;" + '\n' +
+      "DROP TABLE teammate_runs;" + '\n' +
+      "ALTER TABLE teammate_runs__evolve__r2 RENAME TO teammate_runs;" + '\n' +
+      "CREATE INDEX IF NOT EXISTS teammate_runs_space_id ON teammate_runs(space_id);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS teammate_runs_agent_source_key ON teammate_runs(agent_source_key);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS teammate_runs_assignment_source_key ON teammate_runs(assignment_source_key);" + '\n' +
+      "CREATE INDEX IF NOT EXISTS teammate_runs_source_package ON teammate_runs(source_package);",
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */

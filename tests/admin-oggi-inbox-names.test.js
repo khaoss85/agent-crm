@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildInbox, loadOggiData } from '../apps/admin/public/admin-oggi.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { nameFromProfile, readableName } from '../apps/admin/public/admin-labels.js';
 
 /**
  * Production 07/11: every «Da rispondere» row read «Cliente». The pilot's
@@ -70,4 +71,30 @@ test('loadOggiData reads the shown customers’ names from their profiles, fail-
   assert.equal(seen.filter((path) => path.startsWith('/api/customer-data/profile/')).length, 3, 'one read per shown subject');
   const inbox = buildInbox({ messages: data.inboxMessages, conversations: data.inboxConversations, names: data.inboxNames, now: NOW });
   assert.deepEqual(inbox.rows.map((row) => row.name), ['@lia.marroni', 'Ada Rossi', 'Contatto senza nome']);
+});
+
+// backlog:5083e7a77c26 (c): Oggi read «PayPal Unknown». Before #606
+// (fe6e8299) the Gmail sender path created contacts with
+// `lastName: 'Unknown'`; those rows are still stored. The sender reads by
+// its real words, and a name made only of placeholders falls to the handle.
+test('5083e7a77c26: a stored «Unknown» never reaches the sender name', () => {
+  assert.equal(nameFromProfile({ identity: { contact: { firstName: 'PayPal', lastName: 'Unknown' } } }), 'PayPal');
+  assert.equal(nameFromProfile({ identity: { contact: { firstName: 'Unknown', lastName: 'Unknown' }, company: { name: 'paypal.com' } } }), 'paypal.com');
+  assert.equal(nameFromProfile({ identity: { contact: { firstName: 'Guido', lastName: '—' } } }), 'Guido');
+  assert.equal(nameFromProfile({ identity: { contact: { firstName: 'Unknown', lastName: 'unknown' } } }), null);
+  assert.equal(readableName('Mario Rossi'), 'Mario Rossi', 'a real name is untouched');
+
+  const message = { conversationId: 'cp', direction: 'inbound', channel: 'email', body: 'Ricevuta', occurredAt: '2026-11-07T14:50:00Z', ...host, subjectId: 'pp', remoteHandle: 'service@paypal.it' };
+  const fromLabel = buildInbox({
+    messages: [message],
+    conversations: [{ id: 'cp', channel: 'email', status: 'open', ...host, subjectId: 'pp', subjectLabel: 'PayPal Unknown' }],
+    now: NOW,
+  });
+  assert.equal(fromLabel.rows[0].name, 'PayPal', 'the stored label drops its placeholder word');
+  const onlyPlaceholder = buildInbox({
+    messages: [message],
+    conversations: [{ id: 'cp', channel: 'email', status: 'open', ...host, subjectId: 'pp', subjectLabel: 'Unknown Unknown' }],
+    now: NOW,
+  });
+  assert.equal(onlyPlaceholder.rows[0].name, 'service@paypal.it', 'nothing real left: the sender handle names the row');
 });
