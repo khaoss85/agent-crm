@@ -860,8 +860,10 @@ test('backlog:7cc35edab50c: a 502 creation reads connection-failed and Crea retr
       if (path === '/api/sequences/create') {
         creates += 1;
         if (creates === 1) {
-          throw Object.assign(new Error('Scrittura del pannello rifiutata'),
-            { status: 502, code: 'BO_CRM_SUBMIT_FAILED' });
+          // A verdict-less gateway hiccup (the /bo edge answers 502 with
+          // no BO verdict; review agent-crm#696 keeps named BO verdicts
+          // out of the connection text).
+          throw Object.assign(new Error('Bad Gateway'), { status: 502, code: 'UNKNOWN' });
         }
       }
       return inner.request(path, options);

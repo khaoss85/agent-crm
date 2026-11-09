@@ -677,9 +677,16 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
  * fetch rejected (a TypeError, status 0), a timeout, or a 502/503/504
  * gateway hiccup. A refusal the server really named — an LLM_* code (the
  * pilot forwards AI-off at 502), a *_CANCELLED or *_OUTCOME_UNKNOWN outcome —
- * stays a refusal, never a connection fault. The queued re-read (review
- * #664) shares this line through transientReadFailure, so the two cannot
- * drift apart.
+ * stays a refusal, never a connection fault. So does a verdict the server
+ * already named at 502/503/504 (review agent-crm#696): a failed BO write
+ * (BO_SEND_FAILED, answered 502) ends the owning wait as «non inviato» and
+ * a queued one (BO_*_PENDING, answered 504) is read back under its
+ * requestId — neither must print «Connessione non riuscita, riprova.» and
+ * invite the same POST again. The same holds for a refused body and an
+ * unconfigured bridge at those statuses, and for the transient read miss
+ * (BO_SEND_STATUS_FAILED): the owning flow keeps reading it back, it never
+ * re-POSTs. The queued re-read (review #664) shares this line through
+ * transientReadFailure, so the two cannot drift apart.
  * @param {unknown} error the rejection from `client.request`
  */
 export function isNetworkFailure(error) {
@@ -691,7 +698,8 @@ export function isNetworkFailure(error) {
   if (status === null) {
     return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
   }
-  return status === 502 || status === 503 || status === 504;
+  if (status !== 502 && status !== 503 && status !== 504) return false;
+  return !/_(FAILED|PENDING|REFUSED|NOT_CONFIGURED)$/.test(code) && !/REFUSALS?$/.test(code);
 }
 
 /**

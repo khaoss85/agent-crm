@@ -66,9 +66,11 @@ test('humanWriteError falls back to the caller text otherwise', () => {
 test('humanWriteError names a network fault, never the panel refusal', () => {
   const failed = 'Non riesco a creare la sequenza adesso: riprova più tardi.';
   for (const error of [
-    writeError('Scrittura del pannello rifiutata', { code: 'BO_CRM_SUBMIT_FAILED', status: 502 }),
-    writeError('Scrittura del pannello rifiutata', { code: 'BO_BRIDGE_NOT_CONFIGURED', status: 503 }),
+    writeError('Bad Gateway', { code: 'UNKNOWN', status: 502 }),
+    writeError('Bad Gateway', { code: 'BAD_GATEWAY', status: 502 }),
+    writeError('Service Unavailable', { code: 'UNKNOWN', status: 503 }),
     writeError('gateway', { code: 'UNKNOWN', status: 504 }),
+    writeError('Gateway Timeout', { code: 'GATEWAY_TIMEOUT', status: 504 }),
     new TypeError('fetch failed'),
     Object.assign(new Error('socket hang up'), { status: 0 }),
     Object.assign(new Error('timed out'), { name: 'TimeoutError' }),
@@ -93,6 +95,27 @@ test('humanWriteError keeps a true refusal distinct from a network fault', () =>
   );
 });
 
+// Review agent-crm#696 (P2): a verdict the server already named at
+// 502/503/504 is an answer, never «Connessione non riuscita, riprova.».
+// A failed BO write ends its wait as «non inviato» with a fresh key, a
+// queued one is read back under its requestId — the same POST again would
+// loop under the same key or risk a duplicate write.
+test('humanWriteError keeps a named BO verdict distinct from a network fault', () => {
+  const failed = 'Non riesco a dare l’incarico adesso: riprova tra poco.';
+  for (const error of [
+    writeError('failed', { code: 'BO_SEND_FAILED', status: 502 }),
+    writeError('status miss', { code: 'BO_SEND_STATUS_FAILED', status: 502 }),
+    writeError('queued', { code: 'BO_SEND_PENDING', status: 504 }),
+    writeError('queued', { code: 'BO_DRAFT_PENDING', status: 504 }),
+    writeError('refused', { code: 'BO_CRM_BODY_REFUSED', status: 503 }),
+    writeError('no bridge', { code: 'BO_BRIDGE_NOT_CONFIGURED', status: 503 }),
+  ]) {
+    const text = humanWriteError(error, { failed });
+    assert.equal(text, failed, `a named verdict never reads as a connection fault: ${error.code}@${error.status}`);
+    assert.ok(!/Connessione non riuscita/.test(text), 'no press-again invitation on a verdict');
+  }
+});
+
 test('isNetworkFailure draws the line between no-answer and refusal', () => {
   for (const error of [
     writeError('down', { code: 'UNKNOWN', status: 502 }),
@@ -112,6 +135,12 @@ test('isNetworkFailure draws the line between no-answer and refusal', () => {
     writeError('gone', { code: 'NOT_FOUND', status: 404 }),
     writeError('off', { code: 'LLM_SPACE_DISABLED', status: 502 }),
     writeError('cancelled', { code: 'BO_SEND_CANCELLED', status: 502 }),
+    writeError('failed', { code: 'BO_SEND_FAILED', status: 502 }),
+    writeError('status miss', { code: 'BO_SEND_STATUS_FAILED', status: 502 }),
+    writeError('queued', { code: 'BO_SEND_PENDING', status: 504 }),
+    writeError('queued', { code: 'BO_PHRASE_PENDING', status: 504 }),
+    writeError('refused', { code: 'BO_APPOINTMENT_SERVICE_REFUSED', status: 503 }),
+    writeError('no bridge', { code: 'BO_BRIDGE_NOT_CONFIGURED', status: 503 }),
     new Error('plain bug, no status'),
   ]) {
     assert.equal(isNetworkFailure(error), false, `refusal or bug: ${String(error?.code ?? error)}`);
