@@ -428,10 +428,13 @@ async function readIdentity({ modules, subject, cluster }) {
  * @param {{resource: string, id: string} | null} [subject] the card being shaped (narrows contact-scoped rows on contact cards)
  */
 
-// An exact-match id no stored row can carry (ids are UUIDs or short keys):
-// the empty-hop probe below asks for it, so a declared reference answers
-// with zero rows while an undeclared one rejects, as always.
-const EMPTY_HOP_SENTINEL = '\0empty-hop';
+// An exact-match id no stored row can carry: the nil UUID is valid text on
+// every adapter (PostgreSQL rejects NUL bytes in text parameters, so a
+// NUL-bearing probe throws there instead of answering zero rows) and no
+// generated id is ever nil, so a declared reference answers with zero rows
+// while an undeclared one rejects, as always. A row carrying it would be
+// dropped below, never shown.
+const EMPTY_HOP_SENTINEL = '00000000-0000-0000-0000-000000000000';
 
 /**
  * One section's rows for this customer (see above for the read contract).

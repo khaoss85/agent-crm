@@ -220,3 +220,44 @@ test('a quote item carries its opportunity stage and pipeline placement', async 
   assert.equal(item.pipelineKey, 'accordo-sales');
   assert.equal(item.pipelineStage, 'proposta', 'the opportunity item carries its pipeline stage');
 });
+
+/**
+ * Voce 1e89d516cfc3, review giro 2 (P2 sulla testa c28bebaa): the empty-hop
+ * probe must carry no NUL byte. PostgreSQL rejects NUL in text parameters,
+ * so a NUL-bearing probe throws on the supported PostgreSQL adapter instead
+ * of answering zero rows — and the suppressed error leaves the section
+ * `available: false`, the same «offerte non disponibili» this change fixes.
+ * Proved through a contact with no opportunities behind a PostgreSQL-like
+ * `listWhere` that refuses NUL the way PostgreSQL does: the quotes section
+ * still reads available with zero rows.
+ */
+test('an empty-hop probe carries no NUL byte: a PostgreSQL-like store still reads zero quotes, never unavailable', async (t) => {
+  const root = project(t, { withCommercial: true });
+  const context = await boot(root, join(root, 'data', 'offer-empty-hop-pg.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+
+  const company = await app.services.companies.create({ name: 'Palestra', domain: 'palestra.example' }, { actor: ACTOR });
+  const bea = await app.services.contacts.create(
+    { companyId: company.id, firstName: 'Bea', lastName: 'Bianchi', email: 'bea@palestra.example' }, { actor: ACTOR });
+
+  const quoteService = app.modules.get('quote').service;
+  const realListWhere = quoteService.listWhere.bind(quoteService);
+  quoteService.listWhere = async (filters) => {
+    for (const value of Object.values(filters)) {
+      const values = Array.isArray(value) ? value : [value];
+      for (const one of values) {
+        if (typeof one === 'string' && one.includes('\0')) {
+          throw new Error('invalid byte sequence for encoding "UTF8": 0x00');
+        }
+      }
+    }
+    return realListWhere(filters);
+  };
+  t.after(() => { quoteService.listWhere = realListWhere; });
+
+  const profile = await app.readCustomerProfile({ actor: ACTOR, resource: 'contact', id: bea.id });
+  assert.equal(profile.quotes.available, true, 'zero quotes reads available, never unavailable, on a NUL-refusing store');
+  assert.deepEqual(profile.quotes.items, [], 'a contact with no opportunities holds no quote');
+  assert.equal(profile.quotes.count, 0);
+});
