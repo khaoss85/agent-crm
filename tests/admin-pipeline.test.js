@@ -41,7 +41,7 @@ function record(id, stage, extra = {}) {
   };
 }
 
-function stubClient(records, { failMove, pipelines } = {}) {
+function stubClient(records, { failMove, pipelines, memberships } = {}) {
   const calls = [];
   return {
     calls,
@@ -49,6 +49,7 @@ function stubClient(records, { failMove, pipelines } = {}) {
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return { pipelineContract: 1, pipelines: pipelines ?? [PIPELINE] };
+      if (path === '/api/spine/memberships') return { items: memberships ?? [] };
       if (options.method === 'POST') {
         if (failMove) throw Object.assign(new Error(failMove.message), failMove);
         return { ok: true };
@@ -1203,6 +1204,36 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   assert.equal(closeOf('a')?.textContent, 'chiusura 2026-11-20', 'C13: close line follows `chiusura <data>`');
   assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
   assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
+});
+
+// Backlog ddf7f416: referente con nome e cognome, mai id. A stored member
+// handle resolves through the team roster on the board: the card badge and
+// its title, the filter voice and the Lista cell all read the member name.
+test('a member handle paints nome e cognome on the board through the team roster', async () => {
+  const records = [record('a', 'discovery', { owner: 'coach-guido' })];
+  const memberships = [
+    { subject: 'coach-guido', displayName: 'Guido Conti', email: 'guido@palestra.it', role: 'owner', status: 'active' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records, { memberships }) });
+  await board.renderBoard('b2b-sales');
+
+  const badge = mount.findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'card-owner');
+  assert.ok(badge, 'the card keeps its referente badge');
+  assert.equal(badge.textContent, 'GC', 'the badge initials read the member name');
+  assert.equal(badge.getAttribute('title'), 'Guido Conti', 'the badge title names the member');
+  assert.ok(!mount.textContent.includes('coach-guido'), 'the handle never paints');
+
+  const menu = mount.findAll('div').find((node) => node.getAttribute('data-filtermenu') === 'owner');
+  const voices = menu.findAll('button').filter((node) => node.getAttribute('data-menu-voice') === 'owner');
+  assert.ok(voices.some((voice) => voice.textContent.includes('Guido Conti')), 'the filter voice names the member');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
+  const list = mount.findAll('div').find((node) => node.getAttribute('data-listview') === 'records');
+  const row = list.findAll('tr').find((node) => node.getAttribute('data-record') === 'a');
+  const cells = row.findAll('td');
+  assert.ok(cells[6].textContent.includes('Guido Conti'), 'the Lista referente cell names the member');
 });
 
 function newOfferMenu(mount) {

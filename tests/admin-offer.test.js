@@ -44,7 +44,7 @@ function offerRecord(overrides = {}) {
   };
 }
 
-function stubClient({ record: recordOverride, quotes = [], lines = [], versions = [], audit = [], failPatch = null, failAudit = null, failLinked = null } = {}) {
+function stubClient({ record: recordOverride, quotes = [], lines = [], versions = [], audit = [], memberships = null, failPatch = null, failAudit = null, failLinked = null } = {}) {
   const record = recordOverride ?? offerRecord();
   const calls = [];
   return {
@@ -53,6 +53,10 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
+      if (path === '/api/spine/memberships') {
+        if (memberships === null) return { items: [] };
+        return { items: memberships };
+      }
       if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
       if (path === '/api/opportunities/off1' && options.method === 'PATCH') {
         if (failPatch) throw Object.assign(new Error(failPatch.message), failPatch);
@@ -150,8 +154,11 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(text.includes('Creata'), 'the creation event paints in Italian');
   assert.ok(text.includes('Cambio di fase'), 'the stage event paints in Italian');
   // A UUID actor is a technical id, never a name; a named actor paints.
+  // Backlog ddf7f416: an unresolvable author omits the `da …` tail — never
+  // the id, never the generic `utente`.
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID in visible text');
-  assert.ok(text.includes('utente'), 'the UUID actor degrades to a generic word');
+  assert.ok(!text.includes('utente'), 'no generic utente word for an unresolvable author');
+  assert.ok(text.includes('Cambio di fase'), 'the stage event paints without its unresolvable author');
   assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
   assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
   // The quote opens in the quote page, never inline.
@@ -232,9 +239,51 @@ test('technical actor handles never paint, even off the UUID shape', async () =>
   const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [], audit }) });
   await view.renderOfferDetail('off1');
   const text = mount.textContent;
+  // Backlog ddf7f416: an unresolvable author reads a dash in the facts and
+  // omits the `da …` tail in the history — never an id, never `utente`.
+  const fact = (label) => {
+    const cell = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'offer-fact'
+      && node.childNodes[0]?.textContent === label);
+    return cell ? cell.childNodes[1].textContent : null;
+  };
   assert.ok(!text.includes('admin-ui'), 'the service handle never paints');
   assert.ok(!text.includes('stranger-handle'), 'an uncorroborated handle never paints');
-  assert.ok(text.includes('Creata · da utente'), 'the author degrades to a generic word');
+  assert.ok(!text.includes('utente'), 'no generic utente word anywhere');
+  assert.ok(!text.includes('da utente'), 'no generic author tail');
+  assert.equal(fact('Creata da'), '—', 'an unresolvable author reads a dash');
+  assert.ok(text.includes('Creata'), 'the creation event still paints, without its author');
+});
+
+// Backlog ddf7f416: referente e autore con nome e cognome, mai id o
+// «utente». A stored member handle resolves through the team roster on the
+// detail: the Referente fact, the Creata da fact and the history author all
+// read the member name.
+test('a member handle paints nome e cognome through the team roster', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const memberships = [
+    { subject: 'coach-guido', displayName: 'Guido Conti', email: 'guido@palestra.it', role: 'owner', status: 'active' },
+  ];
+  const audit = [
+    { action: 'opportunity.created', actorId: 'coach-guido', actorType: 'user', createdAt: '2026-10-02T09:15:00.000Z' },
+  ];
+  const view = createOfferDetail({
+    doc,
+    mount,
+    client: stubClient({ record: offerRecord({ owner: 'coach-guido' }), quotes: [], audit, memberships }),
+  });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  const fact = (label) => {
+    const cell = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'offer-fact'
+      && node.childNodes[0]?.textContent === label);
+    return cell ? cell.childNodes[1].textContent : null;
+  };
+  assert.equal(fact('Referente'), 'Guido Conti', 'the referente fact reads the member name');
+  assert.equal(fact('Creata da'), 'Guido Conti', 'the author fact reads the member name');
+  assert.ok(!text.includes('coach-guido'), 'the handle never paints');
+  assert.ok(!text.includes('utente'), 'no generic utente word');
+  assert.ok(text.includes('Creata · da Guido Conti'), 'the history names the author');
 });
 
 test('a full linked page says it shows only the first rows', async () => {

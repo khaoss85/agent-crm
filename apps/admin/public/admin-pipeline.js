@@ -38,6 +38,7 @@
 import { formatAmount, humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { offerStageLabel } from './admin-labels.js';
+import { fetchTeamRoster, paintOwnerName } from './admin-members.js';
 
 const BOARD_LIMIT = 200;
 /** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
@@ -212,11 +213,13 @@ export function createPipelineBoard(deps) {
 
   /** Guard against stale async responses overwriting a newer board. */
   let renderToken = 0;
+  /** Team roster for referente names (backlog:ddf7f416), best-effort. */
+  let roster = null;
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
-  /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
-  let cached = { pipeline: null, pipelines: [], records: [] };
+  /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>, roster: any}} */
+  let cached = { pipeline: null, pipelines: [], records: [], roster: null };
   /** Name of the pipeline the current filter state belongs to. A filter set
    * on pipeline A must never silently empty pipeline B after a switch. */
   let filteredPipeline = null;
@@ -235,6 +238,16 @@ export function createPipelineBoard(deps) {
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
+  }
+
+  /**
+   * The referente one card, row, pill or risk line paints (backlog:ddf7f416):
+   * nome e cognome from the team roster, never a member id. A stored human
+   * name paints as-is; an unresolvable technical value reads an em dash.
+   * @param {unknown} value
+   */
+  function ownerName(value) {
+    return paintOwnerName(value, cached.roster);
   }
 
   /** @param {string} message @param {{retry?: () => void}} [options] */
@@ -345,6 +358,11 @@ export function createPipelineBoard(deps) {
         ? `/api/opportunities?limit=${BOARD_LIMIT}`
         : `/api/modules/${encodeURIComponent(pipeline.module)}/records?limit=${BOARD_LIMIT}`;
       records = (await client.request(listPath)).items ?? [];
+      // The team roster names the humans behind member handles
+      // (backlog:ddf7f416). Best-effort like every decoration read: a
+      // refused or unreadable list keeps the stored values, never a failed
+      // board. paintOwnerName degrades an unresolvable id to a dash.
+      roster = await fetchTeamRoster(client);
     } catch (error) {
       if (token !== renderToken) return;
       showMessage(humanReadError(error, { failed: 'La pipeline non si è potuta leggere. Riprova più tardi.' }), { retry: () => renderBoard(pipelineName) });
@@ -360,7 +378,7 @@ export function createPipelineBoard(deps) {
       state.stage = '';
       state.created = '';
     }
-    cached = { pipeline, pipelines: composed, records };
+    cached = { pipeline, pipelines: composed, records, roster };
     // A fresh server read may have moved the records: a pending Conferma
     // from the previous read is stale, never replayed onto the new truth.
     pendingConfirm.clear();
@@ -678,10 +696,10 @@ export function createPipelineBoard(deps) {
     toolbar.appendChild(renderFilterMenu({
       key: 'owner',
       label: 'Referente',
-      valueText: state.owner || 'Tutti',
+      valueText: state.owner ? ownerName(state.owner) : 'Tutti',
       filterLabel: 'Filtra per referente',
       current: state.owner,
-      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: owner }))],
+      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: ownerName(owner) }))],
       onPick: (picked) => { state.owner = picked; },
     }));
     toolbar.appendChild(renderFilterMenu({
@@ -903,8 +921,11 @@ export function createPipelineBoard(deps) {
     // No global ranking across currencies: raw cents are not comparable
     // without exchange rates, so the risk line shows only when every valued
     // open offer shares one currency (Codex P2 on #467).
-    const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
-      ? riskiest.owner
+    const riskOwner = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
+      ? ownerName(riskiest.owner)
+      : null;
+    const riskName = riskOwner !== null && riskOwner !== '—'
+      ? riskOwner
       : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
         ? riskiest.companyName
         : null;
@@ -971,7 +992,7 @@ export function createPipelineBoard(deps) {
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
       row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
       row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? record.owner : '—' }));
+      row.appendChild(el(doc, 'td', { text: ownerName(record.owner) }));
       body.appendChild(row);
     }
     table.appendChild(body);
@@ -1104,11 +1125,13 @@ export function createPipelineBoard(deps) {
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     // BO-F6-10 C15: the referente badge shows the initials; the accessible
     // title carries the full name. Class hook unchanged (supervisor owns CSS).
+    // Backlog ddf7f416: badge and title read the roster name, never a member id.
     if (typeof record.owner === 'string' && record.owner) {
+      const display = ownerName(record.owner);
       card.appendChild(el(doc, 'p', {
         class: 'card-owner',
-        text: ownerInitials(record.owner),
-        attrs: { title: record.owner },
+        text: ownerInitials(display),
+        attrs: { title: display },
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
