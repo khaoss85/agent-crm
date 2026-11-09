@@ -255,6 +255,22 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   assert.equal(link.textContent, 'Vedi another-pipeline');
 });
 
+test('past BOARD_LIMIT the off-pipeline counts say they are partial (250 offers)', async () => {
+  // Backlog 13f43804: 250 offers over the 200-record read — both counts are
+  // lower bounds and must say so, never read as exact.
+  const onBoard = Array.from({ length: 190 }, (_, i) => record(`r${i}`, 'discovery'));
+  const offBoard = Array.from({ length: 60 }, (_, i) => ({ ...record(`o${i}`, 'discovery'), pipelineKey: 'other' }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient([...onBoard, ...offBoard]) });
+  await board.renderBoard('b2b-sales');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the off-pipeline count is a button');
+  assert.equal(toggle.textContent, 'almeno 60 offerte di altre pipeline', 'truncated toggle is a lower bound');
+  assert.ok(mount.textContent.includes('e almeno altre 10'), 'unlisted remainder is a lower bound');
+  assert.ok(!mount.textContent.includes('e altre 10.') && !mount.textContent.includes('e altre 10 '), 'no exact remainder phrasing');
+});
+
 test('the off-pipeline disclosure uses the Italian plural for several records', async () => {
   const records = [
     record('a', 'discovery'),
