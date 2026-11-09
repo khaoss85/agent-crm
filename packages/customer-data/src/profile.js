@@ -207,6 +207,23 @@ export async function profileFor({ modules, core, names, subject }) {
         opportunityService, { companyIds, contactIds, opportunityIds: new Set() }, subject);
     } catch { opportunityRead = null; }
   }
+  // Voce 1e89d516cfc3 (recidiva di cc525cd6a3c5, verifica 07/11 21:53Z
+  // sulla prima azienda cliente, 40 contatti sotto una sola azienda): on a
+  // contact card the commercial sections hold only this contact's records.
+  // A company-linked opportunity (empty contactId) matched every contact
+  // card under its company, so three contacts of the same company all read
+  // the same offer line. The explicit contact link wins: a contact card
+  // keeps an opportunity only when its contactId names this customer's
+  // contact, and the quote hop below follows that narrowed set. A
+  // company-linked offer belongs to the company card, which keeps the
+  // wide rule.
+  if (subject?.resource === 'contact' && opportunityRead?.rows) {
+    opportunityRead = {
+      ...opportunityRead,
+      rows: opportunityRead.rows.filter((row) => row?.contactId != null && row.contactId !== ''
+        && contactIds.has(row.contactId)),
+    };
+  }
   const opportunityIds = new Set((opportunityRead?.rows ?? []).map((row) => row.id));
   // A quote carries no human name of its own; the scheda names it after the
   // opportunity it was made for, resolved here from the same read above.
@@ -410,6 +427,18 @@ async function readIdentity({ modules, subject, cluster }) {
  * @param {{companyIds: Set<string>, contactIds: Set<string>, opportunityIds: Set<string>}} references
  * @param {{resource: string, id: string} | null} [subject] the card being shaped (narrows contact-scoped rows on contact cards)
  */
+
+// An exact-match id no stored row can carry: the nil UUID is valid text on
+// every adapter (PostgreSQL rejects NUL bytes in text parameters, so a
+// NUL-bearing probe throws there instead of answering zero rows) and no
+// generated id is ever nil, so a declared reference answers with zero rows
+// while an undeclared one rejects, as always. A row carrying it would be
+// dropped below, never shown.
+const EMPTY_HOP_SENTINEL = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * One section's rows for this customer (see above for the read contract).
+ */
 async function readSectionRows(service, references, subject = null) {
   const shapes = [
     { companyId: [...references.companyIds] },
@@ -441,6 +470,35 @@ async function readSectionRows(service, references, subject = null) {
       if (!result.ok) continue;
       queryable = true;
       for (const row of result.rows) byId.set(row.id, row);
+    }
+    if (!queryable) {
+      // Voce 1e89d516cfc3: a dropped empty hop on a declared reference
+      // proves zero rows, not an unreadable section. A contact with no
+      // opportunities of its own narrows the quote hop to the empty set,
+      // while the company/contact shapes the quote module never declared
+      // keep rejecting — without this the quotes section answers
+      // available:false and the scheda reads «offerte non disponibili»
+      // for a customer who plainly has none. Each emptied shape is
+      // probed with a sentinel id that matches no row: declared means
+      // the empty set stands (zero rows, exact), undeclared stays
+      // unreadable, exactly as before.
+      const dropped = shapes.filter((filters) =>
+        !Object.values(filters).some((value) => Array.isArray(value) && value.length > 0));
+      for (const filters of dropped) {
+        const probe = Object.fromEntries(Object.entries(filters).map(([field, value]) => (
+          Array.isArray(value) ? [field, [EMPTY_HOP_SENTINEL]] : [field, value]
+        )));
+        try {
+          const rows = await service.listWhere(probe);
+          if (!Array.isArray(rows)) continue;
+          queryable = true;
+          for (const row of rows) {
+            if (row?.id !== EMPTY_HOP_SENTINEL) byId.set(row.id, row);
+          }
+        } catch {
+          // Undeclared, like any other rejecting shape: skipped.
+        }
+      }
     }
     return queryable
       ? { readable: true, rows: newestFirst([...byId.values()]), complete: true }
