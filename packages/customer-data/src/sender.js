@@ -261,8 +261,12 @@ export function isNoCompany(company) {
  * @param {any} core
  * @param {{email: string|null, firstName: string|null, lastName: string|null, companyName: string|null, domain: string|null}} row
  * @param {any} actor
- * @param {{companyFromEmail?: boolean}} [options] `companyFromEmail: false`
- *   (the import apply) never derives a company from the email domain.
+ * @param {{companyFromEmail?: boolean}} [options] Defaults to false
+ *   (backlog:ece81578305d): the company is never derived from the email
+ *   domain — a contact without Azienda takes its own placeholder. Only the
+ *   import may pass `companyFromEmail: true` where a domain-derived company
+ *   is intended; every other caller (sender resolution, enrichment) leaves
+ *   the default.
  */
 export async function createSubjectForRow(core, row, actor, options = {}) {
   if (!core || typeof core.createCompany !== 'function') {
@@ -281,7 +285,7 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     // An explicit «Senza azienda» names no company (review #654, giro 4):
     // it takes the contact's own placeholder, never another customer's.
     const reservedName = Boolean(row.companyName) && isNoCompany({ name: row.companyName });
-    if ((!row.companyName && options.companyFromEmail === false) || reservedName) {
+    if ((!row.companyName && options.companyFromEmail !== true) || reservedName) {
       // Production 07/11: a customer typed or imported with no Azienda got
       // the email domain as its company («esempio.invalid»). The core still
       // needs a company behind a contact, so the contact gets its own

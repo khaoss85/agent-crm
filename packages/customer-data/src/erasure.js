@@ -556,11 +556,14 @@ export function createErasureOperations({ database, modules, events, core, names
   }
 
   /**
-   * The company an erased contact leaves without contacts goes with it.
-   * Kept when siblings exist (a full page still proves one), and kept when
-   * the siblings cannot be read: absence unproven never erases a company
-   * that may be shared. The contact and company reads themselves fail
-   * closed — only «not found» means none.
+   * The company an erased contact leaves without contacts goes with it —
+   * including a «no company» placeholder (backlog:ece81578305d): it stands
+   * behind that contact only, so with no contacts left it is erased with
+   * it instead of lingering as an orphan. Kept when siblings exist (a full
+   * page still proves one), and kept when the siblings cannot be read:
+   * absence unproven never erases a company that may be shared. The
+   * contact and company reads themselves fail closed — only «not found»
+   * means none.
    */
   async function orphanCompanyOf(member, erased, notes) {
     const contact = await readHost(member);
@@ -583,8 +586,12 @@ export function createErasureOperations({ database, modules, events, core, names
       return null;
     }
     const company = await readHost({ resource: 'company', id: contact.companyId });
-    if (!company || isNoCompany(company)) return null;
-    notes.push('l’azienda collegata non ha altri contatti ed è cancellata con questo cliente');
+    if (!company) return null;
+    if (isNoCompany(company)) {
+      notes.push('il segnaposto «Senza azienda» non ha altri contatti ed è cancellato con questo cliente');
+    } else {
+      notes.push('l’azienda collegata non ha altri contatti ed è cancellata con questo cliente');
+    }
     return { resource: 'company', id: company.id, owner: 'host', ownerPackage: null };
   }
 
