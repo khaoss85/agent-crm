@@ -573,6 +573,9 @@ export function createCustomerFormView(deps) {
     /** The customer exists but its note was refused: say so here, beside the form. */
     const showNoteRefused = (subject) => {
       created = true;
+      // f0d425d0: the customer exists, so the badge recounts even though the
+      // operator stays on the form to read the warning.
+      emitSaved();
       save.disabled = true;
       while (noteWarning.firstChild) noteWarning.removeChild(noteWarning.firstChild);
       noteWarning.appendChild(el('span', undefined, `${NOTE_NOT_SAVED_WARNING} `));

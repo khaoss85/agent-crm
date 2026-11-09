@@ -196,6 +196,27 @@ test('a throwing onSaved never blocks the landing on the scheda (f0d425d0)', asy
   assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
 });
 
+test('a refused note still notifies onSaved: the customer exists (f0d425d0)', async () => {
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      throw Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 400, code: 'BO_CRM_BODY_REFUSED' });
+    }
+    return accepted({ id: 'c7', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  let saved = 0;
+  const rendered = render(client, { onSaved: () => { saved += 1; } });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', 'Una nota.');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'the operator stays on the form to read the warning');
+  assert.equal(saved, 1, 'the badge recounts the created customer at once');
+});
+
 test('Salva links the phone with a second single-row apply', async () => {
   const client = stubClient((path, body) => {
     if (body.system === MANUAL_PHONE_SYSTEM) return accepted({ id: 'c1', resource: 'contact' }, 'MATCHED_EXISTING');
