@@ -1634,6 +1634,9 @@ test('1a3a0ba236c0: the next-call card waits for the name, never «il cliente»'
   assert.equal(brief.title, 'un ospite da confermare');
   const [named] = buildAdvisorActions({ tasks: [], appointments: [APPT_TODAY], now: OGGI_NOW }).actions;
   assert.equal(named.title, 'Prepara la call con Giulia Romano', 'a known name still prints');
+  const profileOnly = { ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' };
+  const [fromProfile] = buildAdvisorActions({ tasks: [], appointments: [profileOnly], now: OGGI_NOW, names: { 'contact:fio': 'Fio Neri' } }).actions;
+  assert.equal(fromProfile.title, 'Prepara la call con Fio Neri', 'a profile-only name prints on the prep card, like the brief (1a3a0ba236c0 P1)');
 });
 
 /**
