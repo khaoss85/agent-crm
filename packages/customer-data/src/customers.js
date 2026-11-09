@@ -34,6 +34,25 @@ export const CUSTOMER_SCAN_LIMIT = 500;
 export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
 
 /**
+ * Rows of the shared search ceiling reserved for companies
+ * (backlog:7d82fd84, review #678 giro-2 P3): contacts are scanned up to the
+ * ceiling minus this reserve, companies up to the reserve, so a contact
+ * scan that fills its budget never starves the company scan. Past either
+ * bound the answer stays complete:false.
+ */
+export const CUSTOMER_SEARCH_COMPANY_RESERVE = 1000;
+
+/**
+ * Rows of the bounded identity scan behind a phone search (backlog:7d82fd84):
+ * a digit-only query also scans the held identities for the digit
+ * substring, so a phone held beside a customer past the subject scans is
+ * still found. A fixed bound, never the whole table; past it the answer
+ * stays complete:false. A full number (7 or more digits) is also looked up
+ * by exact identity key, complete by construction.
+ */
+export const CUSTOMER_IDENTITY_SCAN_LIMIT = 1000;
+
+/**
  * Bound of the last-contact preview in a list row (prototype "04 Clienti":
  * the Ultimo contatto cell shows the channel mark plus a short message
  * excerpt, never the full body). Single-line: newlines collapse to spaces.
@@ -242,13 +261,24 @@ export function searchNeedle(q) {
 export const SEARCH_INFIX_MIN_CHARS = 4;
 
 /**
+ * Digits in a query name a phone number, not words (backlog:7d82fd84,
+ * review #678 giro-2 P3): the numeric words joined match as one substring
+ * of the digits of a held phone, so «333» finds «+39333123456» while «ada»
+ * still never matches inside «Canada». Fewer digits match nothing, so a
+ * one- or two-digit query does not match every phone on the page.
+ */
+export const PHONE_SEARCH_MIN_DIGITS = 3;
+
+/**
  * How a customer's searchable parts match the needle (backlog:d128847d21fc,
  * review #678): 0 when every needle word starts some word of the parts, 1
  * when every needle word matches but some only inside a word, -1 when one
  * does not match. A word of at least SEARCH_INFIX_MIN_CHARS letters may sit
  * inside a word («ovanni» finds «Giovanni», «xample» an «example» mailbox);
  * a shorter one only at the start, so «ada» finds «Ada Rossi» but not
- * «Canada». Case and accents never matter.
+ * «Canada». Case and accents never matter. Digits in the needle are also a
+ * phone search (backlog:7d82fd84): the numeric words joined match inside
+ * the digits of a held phone («333» finds «+39333123456»), ranked 1.
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
  */
@@ -256,15 +286,40 @@ export function searchRank(parts, needle) {
   if (!Array.isArray(needle) || needle.length === 0) return 0;
   const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
   let rank = 0;
+  let failed = false;
   for (const wanted of needle) {
     if (words.some((word) => word.startsWith(wanted))) continue;
     if (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))) {
       rank = 1;
       continue;
     }
-    return -1;
+    failed = true;
+    break;
   }
-  return rank;
+  if (!failed) return rank;
+  // A needle carrying digits is also a phone search (backlog:7d82fd84):
+  // every non-numeric word must still match by the word rules above, and
+  // the joined digits must sit inside the digits of a held phone, so «333»
+  // finds «+39333123456» and «Ada 333» finds Ada Rossi by her phone. Ranked
+  // like an infix match, never a word start.
+  const numeric = needle.filter((word) => /^[0-9]+$/.test(word));
+  const text = needle.filter((word) => !/^[0-9]+$/.test(word));
+  if (numeric.length > 0) {
+    const digits = numeric.join('');
+    const textOk = text.every((wanted) => words.some((word) => word.startsWith(wanted))
+      || (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))));
+    if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS && parts
+      .filter((part) => typeof part === 'string' && part !== '')
+      .some((part) => phoneDigitsOf(part).includes(digits))) {
+      return 1;
+    }
+  }
+  return -1;
+}
+
+/** The digits of a value, for the phone-substring rule. @param {unknown} value */
+export function phoneDigitsOf(value) {
+  return String(value ?? '').replace(/[^0-9]/g, '');
 }
 
 /**

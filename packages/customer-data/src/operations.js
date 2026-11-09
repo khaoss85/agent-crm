@@ -7,9 +7,11 @@ import { createErasureOperations, isErased, readErasedSubjects } from './erasure
 import { aggregateChannelOrigins } from './capability-channel-origins.js';
 import { deriveCustomerStatus } from './customer-status.js';
 import {
-  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES, CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_SCAN_LIMIT,
-  CUSTOMER_SORTS, CUSTOMER_VIEWS, applyCustomerListQuery, channelWordsIn, filterCustomerRows,
-  matchesSearch, parseCustomerListQuery, searchNeedle, shapeCustomerRow,
+  CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_IDENTITY_SCAN_LIMIT, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES,
+  CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_COMPANY_RESERVE, CUSTOMER_SEARCH_SCAN_LIMIT,
+  CUSTOMER_SORTS, CUSTOMER_VIEWS, PHONE_BEARING_SYSTEMS, PHONE_SEARCH_MIN_DIGITS,
+  applyCustomerListQuery, channelWordsIn, filterCustomerRows,
+  matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
 import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './import.js';
@@ -604,6 +606,90 @@ function subjectsByIndex(storedRows) {
 }
 
 /**
+ * One record by exact id, or null when it cannot be read (backlog:7d82fd84):
+ * an identity that points at a deleted record must not break the search —
+ * its subject is skipped, never invented.
+ * @param {{get?: unknown}} service contact or company service
+ * @param {unknown} id
+ */
+async function exactSubjectRecord(service, id) {
+  if (!service || typeof service.get !== 'function' || typeof id !== 'string' || id === '') return null;
+  try {
+    return await service.get(id);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The subjects behind a digit-only search (backlog:7d82fd84, review #678
+ * giro-2 P3): the needle's joined digits name a phone number, so the held
+ * identities are scanned for the digit substring on phone-bearing systems.
+ * The digits are the needle's numeric words joined (so «Ada 333» scans for
+ * «333»); a full number (7 or more digits, the E.164 minimum the scheda
+ * dials) is also looked up by exact identity key — complete by
+ * construction, so a number past every scan bound is still found. The
+ * substring scan is bounded (CUSTOMER_IDENTITY_SCAN_LIMIT over the identity
+ * display page, newest first), never the whole table; past it the answer
+ * stays complete:false. Without an identity service, or without digits in
+ * the needle, no subject: never an invented match. The name half of a mixed
+ * query is enforced later by the row filter, which matches the same
+ * phone-substring rule.
+ * @param {{modules: any, names: any}} runtime
+ * @param {Array<string>} needle from searchNeedle
+ */
+async function phoneIdentitySubjects({ modules, names }, needle) {
+  if (!Array.isArray(needle) || needle.length === 0) return [];
+  const digits = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
+  if (digits.length < PHONE_SEARCH_MIN_DIGITS) return [];
+  const identitySvc = optional(modules, names?.identity);
+  if (!identitySvc) return [];
+  const found = new Map();
+  const keep = (resource, id) => {
+    if ((resource === 'contact' || resource === 'company') && typeof id === 'string' && id !== '') {
+      found.set(`${resource}:${id}`, { resource, id });
+    }
+  };
+  // A full number is looked up by exact key (phone:+<digits>), per
+  // phone-bearing system: an exact read is complete, so a number past every
+  // bound is still found. Stored phone identities keep the leading `+`
+  // (normalizeChannelHandle), but legacy rows may not — try both forms.
+  if (digits.length >= 7 && typeof identitySvc.listWhere === 'function') {
+    for (const system of PHONE_BEARING_SYSTEMS) {
+      for (const externalId of [`+${digits}`, digits]) {
+        try {
+          for (const row of await identitySvc.listWhere({ sourceKey: `${system}:${externalId}` })) {
+            if (row?.status === 'active' || row?.status == null) keep(row?.subjectResource, row?.subjectId);
+          }
+        } catch {
+          // An identity shape the service does not declare stays unread,
+          // never misread — the substring scan below still runs.
+        }
+      }
+    }
+  }
+  // Partial digits match as a substring of the held number's digits, over
+  // one bounded identity read (the record service's display page, newest
+  // first, clamped by its own cap).
+  try {
+    const rows = typeof identitySvc.list === 'function'
+      ? await identitySvc.list({ limit: CUSTOMER_IDENTITY_SCAN_LIMIT })
+      : [];
+    for (const row of rows ?? []) {
+      if (row?.status !== 'active') continue;
+      if (!PHONE_BEARING_SYSTEMS.includes(String(row?.system ?? '').toLowerCase())) continue;
+      if (!phoneDigitsOf(row?.externalId).includes(digits)) continue;
+      keep(row?.subjectResource, row?.subjectId);
+      if (found.size >= CUSTOMER_SCAN_LIMIT) break;
+    }
+  } catch {
+    // An unreadable identity scan leaves the exact lookups above: a phone
+    // search never refuses, it only reaches less far.
+  }
+  return [...found.values()];
+}
+
+/**
  * The customer list read (BO-F1-05). Module-level so tests drive it with a
  * fake module map; the operation above hands it the composed runtime.
  *
@@ -634,18 +720,41 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // search over a truncated scan could never find an older customer — a
   // space with hundreds of fresh contacts (a mailbox sync) hid «Prova …»
   // created the day before. With text to search, one bounded search scan
-  // (newest first, CUSTOMER_SEARCH_SCAN_LIMIT rows across contacts and
-  // companies together, never the whole table: the web runs on a small
+  // (newest first, never the whole table: the web runs on a small
   // instance) adds the customers past the display bound whose name, email
   // or company match. Past the ceiling the answer stays complete:false and
   // the screens say the list is partial.
+  // backlog:7d82fd84 (review #678 giro-2 P3): the ceiling is shared but the
+  // company budget is reserved — contacts scan up to the ceiling minus
+  // CUSTOMER_SEARCH_COMPANY_RESERVE, companies up to the reserve — so a
+  // contact scan that fills its budget never starves the company scan. Digits
+  // in the query also scan the held identities for the digit substring
+  // (plus an exact identity-key lookup for a full number), so a phone held
+  // beside a customer past the subject scans is still found.
   const needle = searchNeedle(query.q ?? '');
   if (!complete && needle.length > 0
     && typeof contactsSvc.scan === 'function' && typeof companiesSvc.scan === 'function') {
-    const scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT });
-    const companyBudget = Math.max(0, CUSTOMER_SEARCH_SCAN_LIMIT - scannedContactsAll.length);
-    const scannedCompaniesAll = companyBudget > 0 ? await companiesSvc.scan({ limit: companyBudget }) : [];
-    const companyNameById = new Map([...companies, ...scannedCompaniesAll].map((company) => [company.id, company?.name ?? null]));
+    const scannedContactsAll = await contactsSvc.scan({ limit: CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE });
+    const scannedCompaniesAll = await companiesSvc.scan({ limit: CUSTOMER_SEARCH_COMPANY_RESERVE });
+    const phoneSubjects = await phoneIdentitySubjects({ modules, names }, needle);
+    const phoneCompanies = [];
+    const phoneContacts = [];
+    const knownContactIds = new Set([...contacts, ...scannedContactsAll].map((contact) => contact?.id).filter(Boolean));
+    const knownCompanyIds = new Set([...companies, ...scannedCompaniesAll].map((company) => company?.id).filter(Boolean));
+    for (const subject of phoneSubjects) {
+      if (subject.resource === 'contact' && !knownContactIds.has(subject.id)) {
+        knownContactIds.add(subject.id);
+        phoneContacts.push(await exactSubjectRecord(contactsSvc, subject.id));
+      } else if (subject.resource === 'company' && !knownCompanyIds.has(subject.id)) {
+        knownCompanyIds.add(subject.id);
+        const record = await exactSubjectRecord(companiesSvc, subject.id);
+        if (record !== null) {
+          phoneCompanies.push(record);
+        }
+      }
+    }
+    const companyNameById = new Map([...companies, ...scannedCompaniesAll, ...phoneCompanies]
+      .map((company) => [company.id, company?.name ?? null]));
     const scannedContacts = new Set(contacts.map((contact) => contact.id));
     const extraContacts = scannedContactsAll
       .filter((contact) => !scannedContacts.has(contact.id) && matchesSearch(
@@ -653,12 +762,25 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         needle,
       ))
       .slice(0, CUSTOMER_SCAN_LIMIT);
+    for (const contact of phoneContacts) {
+      if (contact !== null && !scannedContacts.has(contact.id)
+        && !extraContacts.some((entry) => entry.id === contact.id)) {
+        if (extraContacts.length < CUSTOMER_SCAN_LIMIT) extraContacts.push(contact);
+      }
+    }
     const scannedCompanies = new Set(companies.map((company) => company.id));
-    const behindExtra = new Set(extraContacts.map((contact) => contact?.companyId).filter(Boolean));
+    const behindExtra = new Set([...extraContacts.map((contact) => contact?.companyId),
+      ...phoneContacts.map((contact) => contact?.companyId)].filter(Boolean));
     const extraCompanies = scannedCompaniesAll
       .filter((company) => !scannedCompanies.has(company.id)
         && (behindExtra.has(company.id) || matchesSearch([company?.name], needle)))
       .slice(0, CUSTOMER_SCAN_LIMIT);
+    for (const company of phoneCompanies) {
+      if (!scannedCompanies.has(company.id)
+        && !extraCompanies.some((entry) => entry.id === company.id)) {
+        if (extraCompanies.length < CUSTOMER_SCAN_LIMIT) extraCompanies.push(company);
+      }
+    }
     contacts = [...contacts, ...extraContacts];
     companies = [...companies, ...extraCompanies];
   }

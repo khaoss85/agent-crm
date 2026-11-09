@@ -5,7 +5,9 @@ import { ContactService } from '../packages/modules/contact/src/contact-service.
 import { CompanyService } from '../packages/modules/company/src/company-service.js';
 import {
   CUSTOMER_SCAN_LIMIT,
+  CUSTOMER_SEARCH_COMPANY_RESERVE,
   CUSTOMER_SEARCH_SCAN_LIMIT,
+  PHONE_SEARCH_MIN_DIGITS,
   applyCustomerListQuery,
   parseCustomerListQuery,
   shapeCustomerRow,
@@ -67,12 +69,19 @@ test('d128847d21fc: accents never matter', () => {
 
 /**
  * Contact and company services shaped like the real ones: `list` newest
- * first capped at 500, `scan` newest first capped at its own ceiling, and
- * no `listWhere` (ContactService and CompanyService have none). Every
- * read limit is recorded so the ceiling can be proven.
+ * first capped at 500, `scan` newest first capped at its own ceiling, `get`
+ * by id, and no `listWhere` (ContactService and CompanyService have none).
+ * The identity service mirrors the generated record service: exact
+ * `listWhere` plus a `list` display page newest first capped at 500, no
+ * `scan`. Every read limit is recorded so the ceiling can be proven.
  */
-function boundedModules(contacts, companies, reads = []) {
+function boundedModules(contacts, companies, reads = [], { identities = null } = {}) {
   const service = (name, rows) => ({
+    get: async (id) => {
+      const found = rows.find((entry) => entry?.id === id);
+      if (!found) throw Object.assign(new Error(`Unknown ${name} ${id}`), { code: 'NOT_FOUND' });
+      return found;
+    },
     list: async ({ limit = 100 } = {}) => {
       const capped = Math.min(limit, 500);
       reads.push({ name, method: 'list', limit: capped });
@@ -88,6 +97,25 @@ function boundedModules(contacts, companies, reads = []) {
     ['contact', { service: service('contact', contacts) }],
     ['company', { service: service('company', companies) }],
   ]);
+  if (identities !== null) {
+    map.set('external-identity', {
+      service: {
+        listWhere: async (shape = {}) => {
+          reads.push({ name: 'external-identity', method: 'listWhere', shape });
+          // Like the real record service, an array value is an IN shape
+          // (the batched reads of the list operation rely on it).
+          return identities.filter((entry) => Object.entries(shape).every(([key, value]) => (
+            Array.isArray(value) ? value.includes(entry?.[key]) : entry?.[key] === value
+          )));
+        },
+        list: async ({ limit = 100 } = {}) => {
+          const capped = Math.min(limit, 500);
+          reads.push({ name: 'external-identity', method: 'list', limit: capped });
+          return identities.slice(0, capped);
+        },
+      },
+    });
+  }
   return {
     get: (name) => {
       const entry = map.get(name);
@@ -120,20 +148,80 @@ test('d128847d21fc: a customer older than the scan bound is still found by name'
   assert.ok(!unfiltered.items.some((item) => item.id === 'p1'), 'without text the bounded scan is unchanged');
 });
 
-test('d128847d21fc: the search scan has a fixed ceiling across contacts and companies', async () => {
+test('7d82fd84: the shared search ceiling reserves a budget for companies', async () => {
   assert.equal(CUSTOMER_SEARCH_SCAN_LIMIT, 5000, 'the named ceiling');
-  // The customer sits past the ceiling: the scan never reads the whole
-  // table, so it is not found and the answer says the list is partial.
-  const older = { id: 'p1', companyId: null, firstName: 'Prova verifica', lastName: '07/11', email: null };
+  assert.equal(CUSTOMER_SEARCH_COMPANY_RESERVE, 1000, 'the named company reserve');
+  // Contacts fill their whole budget: companies are still scanned up to the
+  // reserve, so a company-name search finds a company the contact scan
+  // alone could never reach.
   const reads = [];
-  const modules = boundedModules([...senders(CUSTOMER_SEARCH_SCAN_LIMIT), older], [{ id: 'co1', name: 'Prova Srl' }], reads);
-  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova', pageSize: '10' });
-  assert.ok(!page.items.some((item) => item.id === 'p1'), 'past the ceiling the customer is not read');
+  const fillers = (count, prefix) => Array.from({ length: count }, (_, index) => ({ id: `co-${prefix}${index}`, name: `${prefix} ${index}` }));
+  const modules = boundedModules(
+    senders(CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE),
+    [...fillers(CUSTOMER_SCAN_LIMIT, 'Riempitivo'), { id: 'co1', name: 'Prova Srl' }],
+    reads,
+  );
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova Srl', pageSize: '10' });
+  assert.ok(page.items.some((item) => item.id === 'co1'), 'the company is found on its reserved budget');
   assert.equal(page.complete, false, 'the answer stays partial');
-  const scanned = reads.filter((entry) => entry.method === 'scan').reduce((sum, entry) => sum + entry.limit, 0);
+  const scans = reads.filter((entry) => entry.method === 'scan');
+  assert.deepEqual(
+    scans.map((entry) => [entry.name, entry.limit]),
+    [['contact', CUSTOMER_SEARCH_SCAN_LIMIT - CUSTOMER_SEARCH_COMPANY_RESERVE], ['company', CUSTOMER_SEARCH_COMPANY_RESERVE]],
+    'contacts scan up to the ceiling minus the reserve, companies up to the reserve',
+  );
+  const scanned = scans.reduce((sum, entry) => sum + entry.limit, 0);
   assert.ok(scanned <= CUSTOMER_SEARCH_SCAN_LIMIT, `the scan asked for ${scanned} rows, at most the ceiling`);
-  assert.ok(!reads.some((entry) => entry.name === 'company' && entry.method === 'scan'),
-    'a full contact scan leaves no company budget: the ceiling is shared');
+  // A company past the reserve is not read, and the answer stays partial.
+  const farReads = [];
+  const farModules = boundedModules(
+    senders(CUSTOMER_SCAN_LIMIT),
+    [...Array.from({ length: CUSTOMER_SEARCH_COMPANY_RESERVE }, (_, index) => ({ id: `co${index}`, name: `Riempitivo ${index}` })),
+      { id: 'co-far', name: 'Prova Lontana Srl' }],
+    farReads,
+  );
+  const far = await listCustomerRecords({ modules: farModules, core: {}, names: { identity: 'external-identity' } }, { q: 'Prova Lontana', pageSize: '10' });
+  assert.ok(!far.items.some((item) => item.id === 'co-far'), 'past the reserve the company is not read');
+  assert.equal(far.complete, false, 'the answer stays partial');
+});
+
+test('7d82fd84: a digit-only query matches a held phone by substring', () => {
+  assert.equal(PHONE_SEARCH_MIN_DIGITS, 3, 'the named digit floor');
+  const phoneRow = (firstName, lastName, phone) => shapeCustomerRow({
+    contact: { id: `c-${firstName}-${lastName}`, companyId: null, firstName, lastName, email: null },
+    company: null,
+  }, {
+    identitiesBySubject: new Map([[`contact:c-${firstName}-${lastName}`, [{ system: 'whatsapp', externalId: phone }]]]),
+  });
+  const rows = [phoneRow('Ada', 'Rossi', '+393331234567')];
+  assert.deepEqual(hits(rows, '333'), ['Ada Rossi'], 'middle digits find the phone');
+  assert.deepEqual(hits(rows, '+393331234567'), ['Ada Rossi'], 'the full number finds the phone');
+  assert.deepEqual(hits(rows, '33'), [], 'fewer digits than the floor match nothing');
+  assert.deepEqual(hits(rows, '999'), [], 'digits the phone does not hold match nothing');
+  assert.deepEqual(hits(rows, 'Ada 333'), ['Ada Rossi'], 'a name plus digits still finds it');
+});
+
+test('7d82fd84: a phone search finds a customer past the subject scans through its identity', async () => {
+  // The contact sits past every subject scan; only its held identity names it.
+  const older = { id: 'p-tel', companyId: null, firstName: 'Ada', lastName: 'Rossi', email: null };
+  const identities = [
+    {
+      sourceKey: 'phone:+393331234567', system: 'phone', externalId: '+393331234567',
+      subjectResource: 'contact', subjectId: 'p-tel', status: 'active',
+    },
+  ];
+  const modules = boundedModules([...senders(CUSTOMER_SEARCH_SCAN_LIMIT), older], [], [], { identities });
+  const run = (request) => listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, request);
+  const full = await run({ q: '+393331234567', pageSize: '10' });
+  assert.deepEqual(full.items.map((item) => item.name), ['Ada Rossi'], 'the exact number finds the customer past every scan');
+  assert.equal(full.items[0].phone?.value, '+393331234567', 'the held phone reads on the row');
+  assert.equal(full.complete, false, 'the scan stays declared partial');
+  const partial = await run({ q: '333123', pageSize: '10' });
+  assert.deepEqual(partial.items.map((item) => item.name), ['Ada Rossi'], 'partial digits find it through the identity scan');
+  assert.equal(partial.complete, false, 'the scan stays declared partial');
+  const missing = await run({ q: '99988', pageSize: '10' });
+  assert.equal(missing.items.length, 0, 'digits nothing holds find nobody');
+  assert.equal(missing.complete, false, 'the answer stays partial');
 });
 
 test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {
