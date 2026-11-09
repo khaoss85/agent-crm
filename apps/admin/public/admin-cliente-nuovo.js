@@ -331,11 +331,16 @@ export function applyRefusalText(receipt) {
 
 /**
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
- *   notify?: (message: string) => void, submissions?: any, storage?: any,
+ *   notify?: (message: string) => void, onSaved?: () => void, submissions?: any, storage?: any,
  *   draftStorage?: any, spaceId?: unknown, operator?: unknown}} deps
  */
 export function createCustomerFormView(deps) {
-  const { doc, mount, navigate = () => {}, notify = () => {} } = deps;
+  const { doc, mount, navigate = () => {}, notify = () => {}, onSaved = () => {} } = deps;
+  // f0d425d0: the shell badge (Clienti count) refreshes on every creation.
+  // A failing refresh never blocks the navigation to the new scheda.
+  const emitSaved = () => {
+    try { onSaved(); } catch { /* the badge stays stale, the scheda still opens */ }
+  };
   const store = deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? null : globalThis.localStorage);
   // The kept draft lives apart from the submissions store: tab-scoped, so a
   // login round-trip (same-tab replace) brings it back while another tab,
@@ -829,6 +834,7 @@ export function createCustomerFormView(deps) {
         if (updateWarning !== null) warning = warning === null ? updateWarning : `${warning} ${updateWarning}`;
         clearNewCustomerDraft(drafts, draftScope());
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
+        emitSaved();
         if (warning !== null) notify(warning);
       } catch (error) {
         if (token !== renderToken) return;
@@ -989,6 +995,7 @@ export function createCustomerFormView(deps) {
             }
           }
           navigate(`#/customer-card/${subject.resource}/${subject.id}`);
+          emitSaved();
           if (warning !== null) ctx.notify(warning);
         } catch (err) {
           if (token !== renderToken) return;

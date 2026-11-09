@@ -159,6 +159,43 @@ test('Salva creates the customer and lands on its scheda', async () => {
   assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
 });
 
+test('Salva notifies onSaved so the Clienti badge recounts at once (f0d425d0)', async () => {
+  const client = stubClient(() => accepted());
+  let saved = 0;
+  const rendered = render(client, { onSaved: () => { saved += 1; } });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
+  assert.equal(saved, 1, 'the shell recounts the badge without leaving the page');
+});
+
+test('a refused apply never notifies onSaved (f0d425d0)', async () => {
+  const client = stubClient(() => ({ receipts: [{ outcome: 'rejected', reasonCode: 'AMBIGUOUS_CANDIDATES', subject: null }] }));
+  let saved = 0;
+  const rendered = render(client, { onSaved: () => { saved += 1; } });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda without a created subject');
+  assert.equal(saved, 0, 'no recount without a created customer');
+});
+
+test('a throwing onSaved never blocks the landing on the scheda (f0d425d0)', async () => {
+  const client = stubClient(() => accepted());
+  const rendered = render(client, { onSaved: () => { throw new Error('badge offline'); } });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
+});
+
 test('Salva links the phone with a second single-row apply', async () => {
   const client = stubClient((path, body) => {
     if (body.system === MANUAL_PHONE_SYSTEM) return accepted({ id: 'c1', resource: 'contact' }, 'MATCHED_EXISTING');
