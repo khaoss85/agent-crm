@@ -3256,6 +3256,30 @@ test('composer AI: a hand-edited text asks inline before a version replaces it, 
   assert.equal(client.drafts.length, 1, 'no new draft call');
 });
 
+// Muse P2 on #737: a second pick while a confirmation is open updates it in
+// place; «Tieni il mio» brings back the draft line with Annulla, never the
+// first confirmation.
+test('composer AI: a second pick over an open confirmation keeps Annulla and Tieni il mio restores the draft line', async () => {
+  const { panel, area } = await pickedComposer();
+  const edited = `${threeVersions.diretta} A presto, Laura`;
+  area.value = edited;
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  aiPicks(panel)[0].dispatch('click');
+  await flushComposer();
+  assert.match(panel.textContent, /versione Corta\?/, 'the open confirmation now names the last pick');
+  assert.doesNotMatch(panel.textContent, /versione Lunga\?/);
+  assert.equal(panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-keep').length, 1, 'one confirmation, never two');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-keep').dispatch('click');
+  assert.equal(area.value, edited);
+  assert.doesNotMatch(panel.textContent, /Sostituire il testo modificato/);
+  assert.match(panel.textContent, /rileggila e modificala prima di inviare/, 'the draft line is back');
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+});
+
 test('composer AI: Rigenera asks three new versions that replace the old choice', async () => {
   const { client, panel, go } = await pickedComposer();
   assert.equal(go.textContent, 'Rigenera');

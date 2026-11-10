@@ -1440,6 +1440,11 @@ export function createCustomerCardView(deps) {
     let filled = null;
     /** @type {any[]} */
     let pickButtons = [];
+    // The line as it was before an open «Sostituire…?» confirmation, taken
+    // once (Muse P2 on #737): a second pick while one is open updates it in
+    // place, and «Tieni il mio» always brings back the draft line.
+    /** @type {any[]|null} */
+    let beforeConfirm = null;
     const markPicked = (kind) => {
       for (const node of pickButtons) node.setAttribute('aria-pressed', node.getAttribute('data-version') === kind ? 'true' : 'false');
     };
@@ -1463,6 +1468,7 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('p', 'bo-composer-ai-off', sentence));
     };
     const say = (sentence, undo = false) => {
+      beforeConfirm = null;
       while (line.firstChild) line.removeChild(line.firstChild);
       line.textContent = '';
       if (sentence === '') return;
@@ -1619,7 +1625,8 @@ export function createCustomerCardView(deps) {
                 return;
               }
               // Hand edits never go in silence: ask inline, never a browser dialog.
-              const before = Array.from(line.childNodes ?? []);
+              if (beforeConfirm === null) beforeConfirm = Array.from(line.childNodes ?? []);
+              const before = beforeConfirm;
               while (line.firstChild) line.removeChild(line.firstChild);
               line.textContent = '';
               line.appendChild(el('span', undefined, `Sostituire il testo modificato con la versione ${version.label}? `));
@@ -1631,6 +1638,7 @@ export function createCustomerCardView(deps) {
               keep.setAttribute('type', 'button');
               keep.setAttribute('data-action', 'composer-ai-keep');
               keep.addEventListener('click', () => {
+                beforeConfirm = null;
                 while (line.firstChild) line.removeChild(line.firstChild);
                 line.textContent = '';
                 for (const node of before) line.appendChild(node);
