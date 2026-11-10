@@ -1,6 +1,7 @@
 // @ts-check
 
-import { AppError, htmlToText, isPlaceholderBody } from '../../core/index.js';
+import { AppError } from '../../core/index.js';
+import { htmlToText, isPlaceholderBody } from '../../core/message-preview.js';
 import {
   GMAIL_MAX_ATTACHMENTS,
   GMAIL_MAX_TEXT,

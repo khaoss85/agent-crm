@@ -1,6 +1,7 @@
 // @ts-check
 
-import { ValidationError, messagePreview } from '../../core/index.js';
+import { ValidationError } from '../../core/index.js';
+import { messagePreview } from '../../core/message-preview.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
 import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
