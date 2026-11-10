@@ -668,9 +668,11 @@ test('the operation previews the latest message body, never a call', async () =>
   assert.equal(withCall.lastContactChannel, 'phone');
   assert.equal(withCall.lastContactText, null, 'the newer call names no body, so no excerpt is invented');
   const hostile = (await run({
-    messages: [{ ...message, id: 'm2', occurredAt: '2026-10-22T10:00:00.000Z', body: '<img src=x onerror=alert(1)>' }],
+    messages: [{ ...message, id: 'm2', occurredAt: '2026-10-22T10:00:00.000Z', body: '<img src=x onerror=alert(1)> ciao' }],
   })).items.find((item) => item.name === 'Guido Presti');
-  assert.equal(hostile.lastContactText, '<img src=x onerror=alert(1)>', 'the server keeps the text verbatim; escaping stays the view\u2019s');
+  // Dan 10/11: previews read like Gmail, so markup never reaches the cell;
+  // the view still renders the text as text (escaping stays the view's).
+  assert.equal(hostile.lastContactText, 'ciao', 'markup is stripped from the preview, the words stay');
 });
 
 test('826e377c: the CANALI column unions held identities with observed message channels', () => {
