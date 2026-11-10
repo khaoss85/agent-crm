@@ -981,7 +981,8 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   assertCustomerItalian(text, 'proven-empty card');
   assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
   assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'proven absence carries no hedge');
-  assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
+  assert.ok(!text.includes('Nessuna offerta firmata'), '2f2d22f2: the old confirmed-none line is gone');
+  assert.ok(!text.includes('Offerta'), '2f2d22f2: a readable-but-empty commercial page hides the offer card');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
 });
 
@@ -1579,7 +1580,7 @@ test('826e377c: observed rows on any labeled channel render with no buttons', as
   assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
-test('a customer with no linked offer reads none registered, never another customer offer', async () => {
+test('2f2d22f2: a customer with no linked offer shows no offer card, never another customer offer', async () => {
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
@@ -1588,8 +1589,49 @@ test('a customer with no linked offer reads none registered, never another custo
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!titles.includes('Offerta'), 'the offer card stays hidden without an offer');
+  assert.ok(!text.includes('Nessuna offerta firmata'), 'no confirmed-none line without an offer');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
+});
+
+test('2f2d22f2: a half-readable commercial page keeps the offer card with its unavailable line', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: { available: false, items: null, reason: 'the commercial package is not composed' },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(titles.includes('Offerta'), 'the half-readable offer card stays');
+  assert.ok(text.includes('offerte non disponibili'), 'the unavailable side reads a fixed Italian line');
+  assert.ok(!text.includes('Nessuna offerta firmata'), 'a half read never claims a confirmed none');
+});
+
+test('2f2d22f2: the card names its customer to the shell breadcrumb, once per name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, ['Guido Presti'], 'the name fires once, not on every re-read');
+});
+
+test('2f2d22f2: a failed card read clears the shell breadcrumb', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient({ cardError: failure }), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, [null], 'the shell falls back to plain Clienti');
 });
 
 test('backlog:32820692: attachments render on the card: thumbnail, player, icon with name', async () => {

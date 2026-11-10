@@ -643,6 +643,20 @@ export function createCustomerCardView(deps) {
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
+  // Voce 2f2d22f2: the shell breadcrumb follows the shown customer. The hook
+  // fires only when the shown name changes — the card name on a good read,
+  // null when the card read fails — so a re-read of the same scheda does
+  // not repaint the shell crumb. Without a shell hook nothing fires.
+  const onCustomerTitle = typeof deps.onCustomerTitle === 'function' ? deps.onCustomerTitle : null;
+  let lastTitle;
+  let titleKnown = false;
+  const emitTitle = (name) => {
+    const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
+    if (titleKnown && title === lastTitle) return;
+    titleKnown = true;
+    lastTitle = title;
+    if (onCustomerTitle) onCustomerTitle(title);
+  };
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
@@ -2832,31 +2846,32 @@ export function createCustomerCardView(deps) {
     // first row here is this customer's own. A quote carries no human name of
     // its own, so it reads after the opportunity it was made for; the state
     // reads in Italian, never a raw English status or a bare record id.
-    // Voce 1a066ddfe42a: uncomposed offer packages hide the whole block;
-    // a composed-but-empty one reads «Nessuna offerta firmata».
+    // Voce 1a066ddfe42a: uncomposed offer packages hide the whole block.
+    // Voce 2f2d22f2: the card shows an offer only when there is one — a
+    // readable-but-empty commercial page hides the whole block too, instead
+    // of reading «Nessuna offerta firmata».
     const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items) ? profile.quotes.items : null;
     const opportunities = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
       ? profile.opportunities.items : null;
     if (quotes === null && opportunities === null) return false;
-    box.appendChild(el('h4', undefined, 'Offerta'));
     const fromQuote = (quotes ?? []).length > 0;
     const first = fromQuote ? quotes[0] : ((opportunities ?? [])[0] ?? null);
     if (!first) {
-      // No linked offer: only when BOTH commercial sections were readable
-      // (even empty) the customer plainly has none. An empty opportunities
-      // read never proves there are no quotes when the quotes read itself
-      // failed — the unavailable reason reads instead, never a confirmed
-      // absence.
-      if (quotes !== null && opportunities !== null) {
-        box.appendChild(el('p', 'bo-muted', 'Nessuna offerta firmata'));
-        return true;
-      }
+      // No linked offer: when BOTH commercial sections were readable (even
+      // empty) the customer plainly has none, and the card stays hidden —
+      // the scheda reads an offer only when one exists. An empty
+      // opportunities read never proves there are no quotes when the quotes
+      // read itself failed — the unavailable reason reads instead, never a
+      // confirmed absence.
+      if (quotes !== null && opportunities !== null) return false;
+      box.appendChild(el('h4', undefined, 'Offerta'));
       // The unavailable reason stays in the API response and the logs, never
       // on screen: production reasons are English system phrases, and the
       // scheda reads only fixed Italian (voce 1a066ddf).
       box.appendChild(el('p', 'bo-muted', 'offerte non disponibili'));
       return true;
     }
+    box.appendChild(el('h4', undefined, 'Offerta'));
     const rawName = fromQuote ? (first?.opportunityName ?? first?.name) : first?.name;
     const name = typeof rawName === 'string' && rawName !== '' ? rawName : 'offerta';
     // Backlog a551982c06eb: the state is the offer's stage, as the Pipeline
@@ -3335,6 +3350,7 @@ export function createCustomerCardView(deps) {
     // A newer render started while this one loaded: it owns the screen.
     if (renderToken !== cardRenderToken) return;
     if (loaded.cardError) {
+      emitTitle(null);
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
@@ -3365,6 +3381,7 @@ export function createCustomerCardView(deps) {
       pendingDrafts = { ...retainedDrafts, ...(pendingDrafts ?? {}) };
     }
     retainedDrafts = null;
+    emitTitle(card?.name ?? null);
     try {
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,

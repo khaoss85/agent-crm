@@ -611,6 +611,13 @@ const customerCardView = createCustomerCardView({
     if (assistantPanel) void assistantPanel.open(screenId, draft, customer);
     else toast('Apri la barra AI (⌘K) e descrivi cosa vuoi fare per questo cliente.');
   },
+  // Voce 2f2d22f2: the breadcrumb follows the shown customer — «Clienti /
+  // <nome>» once the card names one, plain «Clienti» while it loads or when
+  // the read fails. The router already paints «Clienti» on entry (syncShell),
+  // so the hook only narrows it to the name.
+  onCustomerTitle: (name) => {
+    if (shellView) shellView.update({ screenLabel: name ? `Clienti / ${name}` : 'Clienti' });
+  },
 });
 
 // Clienti list (BO-F1-05, backlog:80b25fb0): the table alone, no import tool.
