@@ -633,12 +633,15 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; margin: 0 -12px; padding: 14px 12px 8px; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; margin: 0 -12px; padding: 6px 12px; }
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; font-size: 13px; font-weight: 750; }
+  .bo-topbar .bo-phonebar-space .bo-space-badge { width: 24px; height: 24px; font-size: 10px; }
+  .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 13px; line-height: 1.25; }
+  .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 11px; line-height: 1.3; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
-  .bo-ai { flex: none; margin-left: 0; }
-  .bo-crumb { white-space: normal; }
-  .bo-main > .bo-topbar + * { margin-top: 6px; }
+  .bo-ai { flex: none; margin-left: 0; height: 36px; }
+  .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+  .bo-main > .bo-topbar + * { margin-top: 4px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
 

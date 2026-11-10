@@ -175,3 +175,19 @@ test('stylesheet: ☰ hidden on desktop, modal drawer and compact bar up to 700p
   assert.doesNotMatch(css, /\.bo-nav \{ flex-direction: row;/, 'the 300px horizontal strip is gone');
   assert.doesNotMatch(block, /#[0-9a-fA-F]{3,6}\b/, 'no new colour');
 });
+
+test('stylesheet: the phone bar fits the 120px content budget (backlog:4419cc25e2df)', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const phone = css.indexOf('@media (max-width: 700px) {\n  /* design: shell telefono');
+  assert.ok(phone !== -1, 'the phone shell block exists');
+  const block = css.slice(phone, css.indexOf('\n}\n', phone));
+  // Row budget, worst case (long space name with role): topbar padding 12px
+  // + first row 44px + two 2px gaps + single-line crumb 16px + AI bar 36px
+  // + 4px content margin = 118px, so the content starts within 120px.
+  assert.match(block, /\.bo-topbar \{[^}]*padding: 6px 12px;/, 'the phone bar keeps 12px of vertical padding');
+  assert.match(block, /\.bo-topbar \{[^}]*gap: 2px/, 'the phone bar rows sit 2px apart');
+  assert.match(block, /\.bo-ai \{[^}]*height: 36px;/, 'the phone AI bar is 36px tall');
+  assert.match(block, /\.bo-crumb \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis;/, 'the crumb never wraps to a second row');
+  assert.match(block, /\.bo-main > \.bo-topbar \+ \* \{ margin-top: 4px; \}/, 'the content follows 4px under the bar');
+  assert.match(block, /\.bo-topbar \.bo-phonebar-space \{[^}]*padding: 6px 8px;/, 'the phone space row stays compact');
+});
