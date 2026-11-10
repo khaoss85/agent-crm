@@ -106,9 +106,14 @@ export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => ADDRESS_WORD.test(word))) return null;
-  const text = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase())).join(' ');
+  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
+
+/** A trailing no-reply marker (`Noreply`, `NO-REPLY`), any case (production 10/11). */
+const NO_REPLY_WORD = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
 
 /**
  * Display name from a read-only customer profile
