@@ -96,6 +96,18 @@ test('the service lines of Italian and English newsletters drop, the customer\'s
   assert.equal(previewLastContactText('Scrivimi a mario@example.com, grazie'), 'Scrivimi a mario@example.com, grazie');
 });
 
+test('format and zero-width characters never reach a preview', () => {
+  // Presti 10/11: «Pagamento confermato» followed by runs of LRM/RLM.
+  const hidden = [0x200b, 0x200c, 0x200d, 0x200e, 0x200f, 0x2060, 0xfeff, 0x034f, 0x00ad];
+  const run = String.fromCharCode(0x200e, 0x200f, 0x20, 0x200e, 0x200f);
+  assert.equal(previewLastContactText(`Pagamento confermato ${run} ${run}`), 'Pagamento confermato');
+  for (const code of hidden) {
+    const mark = String.fromCharCode(code);
+    const preview = previewLastContactText(`${mark}Paga${mark}mento ${mark} confermato${mark}`, `Ricevuta${mark}`);
+    assert.equal(preview, 'Ricevuta — Pagamento confermato', `U+${code.toString(16).padStart(4, '0')} is removed, the word stays whole`);
+  }
+});
+
 test('the Clienti row reads the stored mail subject of the latest message', () => {
   const row = shapeCustomerRow(
     { contact: { id: 'c1', firstName: 'Mario', lastName: 'Rossi', email: 'mario@example.com' }, company: null },

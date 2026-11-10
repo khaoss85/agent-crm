@@ -95,7 +95,13 @@ const SERVICE_PHRASE_RES = Object.freeze([
   /\bview (?:this (?:e-?mail|message|newsletter) )?(?:in (?:your |a )?(?:web )?browser|as a web ?page)[.!:]?/gi,
   /\bview (?:this |the )?(?:e-?mail|message|newsletter) online[.!:]?/gi,
 ]);
-const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200d\u2060\ufeff\u00ad\u034f]/g;
+const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+/**
+ * Format and zero-width characters (Dan 10/11, Presti: «Pagamento confermato» followed by
+ * runs of LRM/RLM): removed, never turned into a space, so a soft hyphen or a joiner
+ * inside a word keeps the word whole.
+ */
+const INVISIBLE_RE = /[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\u3164\ufeff\uffa0]/g;
 
 /**
  * HTML to readable text, line breaks kept: comments, scripts, styles,
@@ -155,7 +161,7 @@ function decodeEntities(text) {
 
 /**
  * Any message text to one clean line for a preview: markup and hidden
- * preheaders out, entities decoded, URLs (bare, `<…>`, `[…]`, `(…)`) and
+ * preheaders out, entities decoded, format and zero-width characters out, URLs (bare, `<…>`, `[…]`, `(…)`) and
  * image placeholders out, decorative rows out, the known service lines
  * out, whitespace collapsed. '' when nothing readable remains.
  * @param {unknown} value
@@ -163,7 +169,7 @@ function decodeEntities(text) {
  */
 export function cleanPreviewText(value) {
   if (typeof value !== 'string' || value === '') return '';
-  let text = decodeEntities(htmlToText(value)).replace(CONTROL_RE, ' ');
+  let text = decodeEntities(htmlToText(value)).replace(INVISIBLE_RE, '').replace(CONTROL_RE, ' ');
   for (const re of IMAGE_RES) text = text.replace(re, ' ');
   for (const re of URL_RES) text = text.replace(re, ' ');
   text = text.replace(DECORATIVE_RE, ' ');
