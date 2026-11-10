@@ -1886,7 +1886,10 @@ test('a timeout over core plus bonus drains the core and warns on the bonus rema
     'bonus.test.js': sleeper,
   });
   try {
-    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    // The bound must cover process spawn on a loaded shared runner (a no-op
+    // file took over 3 s on 2026-11-10); the 30 s sleeper still exceeds it,
+    // so the timeout path this test proves is unchanged.
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 10, cwd: dir });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['bonus.test.js']);
     assert.deepEqual(result.failedFiles, []);

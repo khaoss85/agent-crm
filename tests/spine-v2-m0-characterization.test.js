@@ -129,10 +129,13 @@ test('M0 records PostgreSQL-shaped --db input as legacy SQLite path semantics, n
   const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'accordo-m0-db-semantics-')));
   try {
     const shapedInput = 'postgresql://sentinel.invalid/accordo';
+    // The child runs real migrations: on a loaded shared runner that exceeds
+    // 10 s (seen 10.4 s on 2026-11-10), so the bound keeps headroom. The pin
+    // below is the receipt and the SQLite semantics, never the wall time.
     const result = spawnSync(process.execPath, [cli, 'db:migrate', '--db', shapedInput], {
       cwd: workspace,
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: 60_000,
     });
     assert.equal(result.status, 0, result.stderr);
     const sqlitePath = join(workspace, 'postgresql:', 'sentinel.invalid', 'accordo');
