@@ -3051,6 +3051,51 @@ test('composer AI: a prompt fills message and empty subject, editable, and nothi
   assert.deepEqual(toasts, []);
 });
 
+test('composer AI (backlog:01289e73): three versions offer a choice, never one text at once', async () => {
+  const versions = {
+    corta: 'Ciao Guido!',
+    lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova con piacere.',
+    diretta: 'Guido, ci vediamo giovedì alle 18 per la prova.',
+  };
+  const client = draftClient({ ...versions, subject: 'Prova di giovedì' });
+  const { panel, toasts } = await openComposerMount({ client });
+  const { input, go, area, subject } = aiParts(panel);
+  area.value = 'Il mio testo';
+  input.value = 'ricordagli la prova di giovedì';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, 'Il mio testo', 'no version fills the field before the member picks one');
+  const picks = panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta']);
+  assert.match(panel.textContent, /Scegli la versione da usare/);
+  picks[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, versions.lunga, 'the picked wording fills the message, editable');
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.equal(go.textContent, 'Rigenera');
+  assert.equal(client.posts.length, 0, 'the draft never sends');
+  assert.deepEqual(toasts, []);
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla is offered after the pick');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+});
+
+test('composer AI (backlog:01289e73): a single-text answer from an older pilot still fills at once', async () => {
+  const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova di giovedì';
+  go.dispatch('click');
+  await flushComposer();
+  assert.deepEqual(
+    panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick'),
+    [],
+    'no choice buttons on a legacy single-text answer',
+  );
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.');
+});
+
 test('composer AI: existing text is replaced with an Annulla that restores it once', async () => {
   const client = draftClient({ body: 'Testo dell’AI' });
   const { panel } = await openComposerMount({ client });

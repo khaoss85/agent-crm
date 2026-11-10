@@ -1366,12 +1366,16 @@ export function createCustomerCardView(deps) {
    * «Chiedi all'AI» (Dan 05/11: the composer is agentic — a prompt writes
    * the text, as an alternative to writing it from scratch). The prompt goes
    * to `POST /api/customer-hub/messages/draft` { spaceId, contactId, channel,
-   * prompt } → { subject?, body }: the server drafts from the customer's
-   * own history through the space LLM gate and never sends. The draft lands
-   * in the message field, editable; the previous text can be restored once
-   * with «Annulla»; Invia stays the person's click. AI off (503
-   * LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without the
-   * route (404/405) turns the row into one honest line, never a dead button.
+   * prompt } → { corta, lunga, diretta, subject? } (backlog:01289e73): the
+   * server drafts three labeled wordings from the customer's own history
+   * through the space LLM gate and never sends. The member picks one of
+   * the three — Corta, Lunga or Diretta — and it lands in the message
+   * field, editable; the previous text can be restored once with «Annulla»;
+   * Invia stays the person's click. A single-text answer from a pilot
+   * before the three-version cure still fills the field at once. AI off
+   * (503 LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without
+   * the route (404/405) turns the row into one honest line, never a dead
+   * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
   function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
@@ -1521,22 +1525,50 @@ export function createCustomerCardView(deps) {
         // shared per-customer draft; a superseded one never overwrites the
         // newer draft (review #664).
         if (gone()) return;
+        // Three labeled wordings the member chooses from (backlog:01289e73):
+        // the pilot's own labels (`corta`, `lunga`, `diretta`), one
+        // vocabulary for the same choice on every surface.
+        const kinds = [['corta', 'Corta'], ['lunga', 'Lunga'], ['diretta', 'Diretta']];
+        const versions = [];
+        for (const [kind, label] of kinds) {
+          const wording = typeof answer?.[kind] === 'string' ? answer[kind].trim() : '';
+          if (wording !== '') versions.push({ kind, label, text: wording.slice(0, 2000) });
+        }
+        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
+        const subjectField = subject();
+        // Regenerating keeps the person's original, never a previous AI draft.
+        const fill = (picked) => {
+          if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
+          text.value = picked;
+          if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
+          changed();
+          go.textContent = 'Rigenera';
+          const kept = baseline();
+          say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
+          if (typeof text.focus === 'function') text.focus();
+        };
+        if (versions.length === kinds.length) {
+          while (line.firstChild) line.removeChild(line.firstChild);
+          line.appendChild(el('span', undefined, 'Scegli la versione da usare:'));
+          for (const version of versions) {
+            line.appendChild(el('span', undefined, ' '));
+            const pick = el('button', 'bo-composer-ai-pick', version.label);
+            pick.setAttribute('type', 'button');
+            pick.setAttribute('data-action', 'composer-ai-pick');
+            pick.setAttribute('data-version', version.kind);
+            pick.addEventListener('click', () => { if (!gone()) fill(version.text); });
+            line.appendChild(pick);
+          }
+          return;
+        }
+        // A single-text answer from a pilot before the three-version cure
+        // still fills the field at once, never a dead choice.
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
           return;
         }
-        const subjectField = subject();
-        // Regenerating keeps the person's original, never a previous AI draft.
-        if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
-        text.value = drafted.slice(0, 2000);
-        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
-        if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
-        changed();
-        go.textContent = 'Rigenera';
-        const kept = baseline();
-        say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
-        if (typeof text.focus === 'function') text.focus();
+        fill(drafted.slice(0, 2000));
       } catch (error) {
         if (gone()) return;
         const code = error?.code ?? null;
