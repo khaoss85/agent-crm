@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,8 +41,9 @@ const PUBLIC_DIR = join(root, 'apps/admin/public');
 
 const fakeScript = (src) => ({ getAttribute: (name) => (name === 'src' ? src : null) });
 const fakeLink = (href) => ({ getAttribute: (name) => (name === 'href' ? href : null) });
-const fakeDoc = ({ scripts = [], links = [], fields = [], banner = null } = {}) => {
-  const state = { appended: [], banner };
+const fakeDoc = ({ scripts = [], links = [], fields = [], banner = null, existing = [] } = {}) => {
+  const state = { appended: [], banner, insertedFirst: false };
+  const children = [...existing];
   return {
     querySelectorAll: (selector) => {
       if (String(selector).includes('script')) return scripts;
@@ -62,13 +64,37 @@ const fakeDoc = ({ scripts = [], links = [], fields = [], banner = null } = {}) 
       };
     },
     body: {
+      get firstChild() {
+        return children[0] ?? null;
+      },
       appendChild: (el) => {
+        children.push(el);
         state.appended.push(el);
         state.banner = el;
         return el;
       },
+      insertBefore: (el, ref) => {
+        const at = children.indexOf(ref);
+        if (at === -1) {
+          children.push(el);
+        } else {
+          children.splice(at, 0, el);
+          if (at === 0) state.insertedFirst = true;
+        }
+        state.appended.push(el);
+        state.banner = el;
+        return el;
+      },
+      prepend: (el) => {
+        children.unshift(el);
+        state.appended.push(el);
+        state.banner = el;
+        state.insertedFirst = true;
+        return el;
+      },
     },
     _state: state,
+    _children: children,
   };
 };
 const fakeField = ({ tag = 'TEXTAREA', value = '', type = null, disabled = false } = {}) => ({
@@ -231,6 +257,37 @@ test('ensureUpdateBanner shows the exact notice once, text only', () => {
   assert.equal(doc._state.appended.length, 1);
   first.click();
   assert.equal(updated, 1);
+});
+
+test('0d4c5c44: the notice joins the flow first, never over the navigation', () => {
+  resetVersionWatchState();
+  const sidebar = { id: 'boSidebar' };
+  const doc = fakeDoc({ existing: [sidebar] });
+  const banner = ensureUpdateBanner(doc);
+  assert.ok(banner, 'the banner is created');
+  assert.equal(doc._children[0], banner, 'first child: it pushes the shell down');
+  assert.equal(doc._children[1], sidebar, 'the sidebar follows the banner');
+  assert.equal(doc._state.insertedFirst, true);
+  assert.equal(doc._state.appended.length, 1, 'still a single banner');
+});
+
+test('0d4c5c44: the banner shows even where prepend is missing', () => {
+  resetVersionWatchState();
+  const doc = fakeDoc({ existing: [{ id: 'boSidebar' }] });
+  delete doc.body.insertBefore;
+  delete doc.body.prepend;
+  const banner = ensureUpdateBanner(doc);
+  assert.ok(banner, 'the banner falls back to append');
+  assert.equal(doc._state.appended.length, 1);
+  assert.equal(banner.textContent, BO_UPDATE_NOTICE);
+});
+
+test('0d4c5c44: the banner style is in-flow, never a fixed overlay', () => {
+  const css = readFileSync(join(PUBLIC_DIR, 'styles.css'), 'utf8');
+  const rule = css.match(/\.bo-update-banner\s*\{[^}]*\}/);
+  assert.ok(rule, 'the banner rule exists');
+  assert.ok(!/position\s*:\s*fixed/.test(rule[0]), 'no fixed overlay over sidebar and topbar');
+  assert.ok(/position\s*:\s*static/.test(rule[0]), 'in-flow: it pushes the shell down at 1440 and 390');
 });
 
 test('checkBundleVersion never reloads on its own: clean or dirty, only the notice', async () => {

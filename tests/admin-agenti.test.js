@@ -752,16 +752,29 @@ test('31a76b6f19a3: a queued refusal reads neutral and stays locked', async () =
   for (const action of ['approve', 'edit', 'reject']) assert.equal(findButton(mount, action).disabled, true, `${action} locked`);
 });
 
-test('31a76b6f19a3: an assignment reads «Attivo» once it ran or recurs with a next run, «In attesa di partire» only if it never started', () => {
+test('31a76b6f19a3, narrowed by 43e8e7c563c3: an assignment reads «Attivo» only once it ran; a recurring one that never ran waits for its first run', () => {
   const runs = [{ assignmentSourceKey: 'a-ran', outcome: 'artifact' }];
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran', status: 'active', cadence: 'once' }, runs), 'Attivo', 'it ran');
-  assert.equal(assignmentStatusLabel({ sourceKey: 'a-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
-    'Attivo', 'recurring with its next run scheduled');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-13T08:00:00.000Z' },
+    [{ assignmentSourceKey: 'a-ran-weekly', outcome: 'artifact' }]), 'Attivo', 'recurring, ran once');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-13T08:00:00.000Z' }, runs),
+    'In attesa del primo giro, 13 nov, 09:00', 'recurring with its next run scheduled, never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-once', status: 'active', cadence: 'once', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
     'In attesa di partire', 'a one-off that never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-new', status: 'active', cadence: 'weekly' }, runs), 'In attesa di partire', 'nothing scheduled, never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-bad', status: 'active', cadence: 'weekly', nextRunAt: 'not-a-date' }, runs),
+    'In attesa di partire', 'unreadable next run, never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-done', status: 'completed' }, runs), 'Fatto');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-p', status: 'paused' }, runs), 'In pausa');
+});
+
+test('43e8e7c563c3: a weekly «ogni venerdì» assignment that never ran shows «In attesa del primo giro» with the next date, never «Attivo»', () => {
+  const friday = { sourceKey: 'a-friday', status: 'active', cadence: 'weekly', weekday: 5, timeOfDay: '09:00', nextRunAt: '2026-11-13T08:00:00.000Z' };
+  assert.equal(describeSchedule(friday), 'Ogni venerdì alle 09:00');
+  const label = assignmentStatusLabel(friday, []);
+  assert.ok(label.startsWith('In attesa del primo giro'), `waits for the first run, got ${label}`);
+  assert.ok(label.includes('13 nov'), `names the next date, got ${label}`);
+  assert.ok(!label.includes('Attivo'), `never reads «Attivo» before the first run, got ${label}`);
 });
 
 test('review #688 P1: an answer that lands after a space switch is dropped, never painted on the space now shown', async () => {

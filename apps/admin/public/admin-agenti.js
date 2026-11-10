@@ -186,17 +186,25 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
 }
 
 /**
- * Backlog 31a76b6f19a3: an active assignment reads «Attivo» once the worker
- * ran it at least once, or when it recurs with its next run scheduled;
- * «In attesa di partire» only while it never started.
+ * Backlog 43e8e7c563c3 (narrows 31a76b6f19a3): an active assignment reads
+ * «Attivo» only once the worker ran it at least once. A recurring one that
+ * never ran reads «In attesa del primo giro» with its next run date, never
+ * «Attivo» — the Mac check of 09/11 found «ogni venerdì» reading «Attivo»
+ * before its first run, which tells the operator it already works.
+ * Anything else that never started reads «In attesa di partire».
  * @param {any} assignment @param {Array<any>} runs
  */
 export function assignmentStatusLabel(assignment, runs) {
   if (assignment?.status !== 'active') return ASSIGNMENT_STATUS_LABEL[assignment?.status] ?? 'Stato sconosciuto';
   const key = String(assignment.sourceKey ?? '');
   const ran = key !== '' && (Array.isArray(runs) ? runs : []).some((run) => run && run.assignmentSourceKey === key);
-  const recurring = assignment.cadence !== 'once' && Number.isFinite(Date.parse(String(assignment.nextRunAt ?? '')));
-  return ran || recurring ? ASSIGNMENT_STATUS_LABEL.active : 'In attesa di partire';
+  if (ran) return ASSIGNMENT_STATUS_LABEL.active;
+  const next = typeof assignment?.nextRunAt === 'string' ? assignment.nextRunAt : '';
+  if (assignment?.cadence !== 'once' && Number.isFinite(Date.parse(next))) {
+    const stamp = romeStamp(next);
+    return stamp === '' ? 'In attesa del primo giro' : `In attesa del primo giro, ${stamp}`;
+  }
+  return 'In attesa di partire';
 }
 
 /**
