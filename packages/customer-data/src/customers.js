@@ -2,7 +2,7 @@
 
 import { ValidationError } from '../../core/index.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
-import { contactDisplayName, shownCompanyOf } from './display-name.js';
+import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
 /**
  * **The customer list (BO-F1-05): one page of customers, server-side.**
@@ -439,7 +439,7 @@ export function shapeCustomerRow(subject, reads = {}) {
   // The one display rule (display-name.js, production 10/11): placeholders
   // dropped, never an address as a name.
   const shownCompany = shownCompanyOf(company, contact);
-  const name = contact ? contactDisplayName(contact) : (shownCompany?.name ?? company?.name ?? null);
+  const name = contact ? contactDisplayName(contact) : companyDisplayName(company);
   const identities = reads.identitiesBySubject?.get(key) ?? [];
   const observed = reads.observedChannelsBySubject?.get(key) ?? [];
   // Review giro-6 on 826e377c (P1 head f1ed030c): the held side keeps

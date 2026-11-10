@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import {
-  contactDisplayName, isPlaceholderCompanyName, labelFromEmail, readableName, registrableDomain,
+  companyDisplayName, contactDisplayName, isPlaceholderCompanyName, labelFromEmail, readableName, registrableDomain,
 } from '../packages/customer-data/src/display-name.js';
 import { shapeCustomerRow } from '../packages/customer-data/src/customers.js';
 import { contactNamesFor, leadNamesForEmail } from '../packages/customer-data/src/sender.js';
@@ -61,6 +61,7 @@ test('the browser twin reads every stored name exactly like the package rule', (
   const samples = [
     ...CASES.map(([first, last]) => `${first} ${last}`),
     'Fastweb —', 'PayPal Unknown', 'Unknown', '—', '', '  ', BOUNCE, `Mittente: ${BOUNCE}`, 'Studio Ä Ñ', 'none',
+    'Studio @ Home', 'Caffè @ Roma', '@studio', 'x@y', `<${BOUNCE}>`, `"${BOUNCE}"`,
   ];
   for (const sample of samples) {
     assert.equal(browserReadableName(sample), readableName(sample), JSON.stringify(sample));
@@ -174,4 +175,38 @@ test('new contacts from Gmail are born with a readable name', () => {
     { firstName: 'Mario', lastName: 'Rossi' }, 'an agreeing first name keeps the surname from the address');
   assert.deepEqual(contactNamesFor({ firstName: 'PayPal', lastName: 'Unknown', email: 'assistenza@paypal.it' }),
     { firstName: 'PayPal', lastName: '—' }, 'a placeholder never becomes a stored surname');
+});
+
+test('review #739 P2: only an address-shaped word hides a name, never a lone @', () => {
+  assert.equal(readableName('Studio @ Home'), 'Studio @ Home');
+  assert.equal(contactDisplayName({ firstName: 'Studio', lastName: '@ Home', email: 'info@studio.it' }), 'Studio @ Home');
+  assert.equal(isPlaceholderCompanyName('Caffè @ Roma'), false);
+  assert.equal(readableName(`<${BOUNCE}>`), null, 'a bracketed address is still an address');
+});
+
+test('review #739 P1: a name that is only the token of its technical address is no name', () => {
+  // Intake still stores a non-empty first name (the core requires one); the
+  // reader never shows the token, old records included.
+  assert.deepEqual(leadNamesForEmail('x9f8e7d6c5@gmail.com'), { firstName: 'X9f8e7d6c5', lastName: '—' });
+  const stored = contactNamesFor({ email: 'x9f8e7d6c5@gmail.com' });
+  assert.equal(contactDisplayName({ ...stored, email: 'x9f8e7d6c5@gmail.com' }), null,
+    'a personal mailbox token: no name, the screen says «senza nome»');
+  assert.equal(contactDisplayName({ firstName: '9xq7exampletoken42', lastName: 'Abc', email: BOUNCE }), 'Google',
+    'a token stored before this PR reads the domain label');
+  assert.equal(contactDisplayName({ firstName: 'Mario', lastName: 'Rossi', email: 'x9f8e7d6c5@gmail.com' }), 'Mario Rossi',
+    'a real name beside a token address stays');
+});
+
+test('review #739 P3: a placeholder company subject and a legacy profile never show the placeholder or an address', () => {
+  assert.equal(companyDisplayName({ name: 'Unknown (assistenza@paypal.it)' }), null);
+  assert.equal(companyDisplayName({ name: ' Palestra Esempio ' }), 'Palestra Esempio');
+  const row = shapeCustomerRow({ contact: null, company: { id: 'co9', name: 'Unknown (assistenza@paypal.it)' } }, {});
+  assert.equal(row.name, null, 'the list then says «Cliente senza nome»');
+  const section = (available) => ({ available, count: 0, items: [] });
+  const legacy = shapeCustomerCard({
+    externalIdentities: [], subscriptions: section(false), orders: section(false), contracts: section(false),
+    opportunities: section(false), quotes: section(false), status: { value: 'contatto', reason: 'x' },
+    identity: { contact: { firstName: 'Mittente:', lastName: BOUNCE, email: BOUNCE }, company: null },
+  }, { resource: 'contact', id: 'c1' });
+  assert.equal(legacy.name, null, 'a legacy profile never prints the bounce address');
 });

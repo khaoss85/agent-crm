@@ -88,6 +88,9 @@ const NAME_PLACEHOLDERS = new Set([
   'unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', 'none', '-', '—', '–',
 ]);
 
+/** An address-shaped word; a lone `@` or a handle is not one (review #739). */
+const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
+
 /**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
  * «PayPal»), null when nothing real is left. A name that carries an
@@ -102,7 +105,7 @@ const NAME_PLACEHOLDERS = new Set([
 export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
-  if (words.some((word) => word.includes('@'))) return null;
+  if (words.some((word) => ADDRESS_WORD.test(word))) return null;
   const text = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase())).join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }

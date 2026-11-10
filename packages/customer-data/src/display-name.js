@@ -48,16 +48,22 @@ const PERSONAL_MAIL_DOMAINS = new Set([
 ]);
 
 /**
+ * A word shaped like an address (`x@y.com`, `<x@y.com>`): a lone `@` or a
+ * handle (`@ Home`, `@studio`) is not one (review #739).
+ */
+const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
+
+/**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
  * «PayPal»), null when nothing real is left. A name that carries an
- * address (`Mittente: x@y.com`) names nobody: null.
+ * address-shaped word (`Mittente: x@y.com`) names nobody: null.
  * @param {unknown} value
  * @returns {string | null}
  */
 export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
-  if (words.some((word) => word.includes('@'))) return null;
+  if (words.some((word) => ADDRESS_WORD.test(word))) return null;
   const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()));
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
@@ -131,7 +137,40 @@ export function isTechnicalLocalPart(email) {
 export function contactDisplayName(contact) {
   if (!contact) return null;
   const parts = [contact.firstName, contact.lastName].filter((part) => typeof part === 'string');
-  return readableName(parts.join(' ')) ?? labelFromEmail(contact.email);
+  const name = readableName(parts.join(' '));
+  if (name !== null && !isTokenName(name, contact.email)) return name;
+  return labelFromEmail(contact.email);
+}
+
+/**
+ * Whether a stored name is only the machine token of its own technical
+ * address (review #739): the lead path names a contact from its local part,
+ * so `x9f8e7d6c5@gmail.com` was stored as «X9f8e7d6c5» and
+ * `32ez…-abc@…google.com` as «32ez… Abc». Such a name is no name: the
+ * reader falls to the domain label, or to none.
+ * @param {string} name
+ * @param {unknown} email
+ */
+function isTokenName(name, email) {
+  if (!isTechnicalLocalPart(email)) return false;
+  const text = String(email).trim().toLowerCase();
+  const local = text.slice(0, text.lastIndexOf('@')).split('+')[0] ?? '';
+  const tokens = local.split(/[._-]+/).filter(Boolean);
+  const said = name.toLowerCase();
+  return tokens.length > 0 && (said === tokens[0] || said === tokens.join(' '));
+}
+
+/**
+ * The name a company subject is shown by: its stored name, or null for a
+ * placeholder (`Unknown (assistenza@…)`) — the screen then says «senza
+ * nome» in its own words, never the placeholder (review #739).
+ * @param {{name?: unknown} | null | undefined} company
+ * @returns {string | null}
+ */
+export function companyDisplayName(company) {
+  const name = company?.name;
+  if (typeof name !== 'string' || isPlaceholderCompanyName(name)) return null;
+  return name.trim();
 }
 
 /**

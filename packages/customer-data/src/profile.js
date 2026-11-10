@@ -1,7 +1,7 @@
 // @ts-check
 
 import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
-import { contactDisplayName, shownCompanyOf } from './display-name.js';
+import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 import { deriveCustomerStatus } from './customer-status.js';
 
 /**
@@ -408,7 +408,7 @@ async function readIdentity({ modules, subject, cluster }) {
     // The name every screen shows (display-name.js, production 10/11):
     // computed here by the owning package, so the card, Oggi and Calendario
     // read it through the capability instead of re-deriving it.
-    displayName: contact ? contactDisplayName(contact) : (shownCompany?.name ?? null),
+    displayName: contact ? contactDisplayName(contact) : companyDisplayName(shownCompany),
     company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name, domain: shownCompany.domain ?? null }) : null,
     contact: contact ? Object.freeze({
       id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName,
