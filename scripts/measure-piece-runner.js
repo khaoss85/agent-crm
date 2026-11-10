@@ -76,6 +76,15 @@ export async function runPieceFiles(options) {
     heartbeatSec = HEARTBEAT_SEC,
     log = (line) => process.stderr.write(`${line}\n`),
   } = options;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw new Error(`runPieceFiles: concurrency must be a whole number of at least 1, got ${concurrency}.`);
+  }
+  const duplicates = files.filter((file, k) => files.indexOf(file) !== k);
+  if (duplicates.length > 0) {
+    // A file run twice would be counted twice, and its two summaries would
+    // collide in the per-file map: refuse instead of measuring a wrong corpus.
+    throw new Error(`runPieceFiles: duplicate test files: ${[...new Set(duplicates)].join(', ')}.`);
+  }
   const reporter = fileURLToPath(new URL('./measurement-reporter.js', import.meta.url));
   const scratch = mkdtempSync(join(tmpdir(), 'accordo-measure-files-'));
   /** @type {Map<string, { child: import('node:child_process').ChildProcess, started: number }>} */
@@ -111,7 +120,8 @@ export async function runPieceFiles(options) {
     const reportPath = join(scratch, `${spawned++}.jsonl`);
     const started = Date.now();
     const child = spawn(process.execPath,
-      ['--no-warnings', '--test',
+      // --test-concurrency=2 as the single-run piece always passed it.
+      ['--no-warnings', '--test', '--test-concurrency=2',
         '--test-reporter=spec', '--test-reporter-destination=stdout',
         `--test-reporter=${reporter}`, `--test-reporter-destination=${reportPath}`, file],
       { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });

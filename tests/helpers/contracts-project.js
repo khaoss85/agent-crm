@@ -126,9 +126,33 @@ const templates = new Map();
 /** @type {string | undefined} */
 let templateParent;
 
-/** @param {Parameters<typeof project>[1]} options */
+/**
+ * A stable cache key: keys sorted at every depth, so `{ a, b }` and `{ b, a }`
+ * (and nested `priceRules` written in another order) name the same build.
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function stableKey(value) {
+  if (Array.isArray(value)) return `[${value.map(stableKey).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort()
+      .filter((key) => /** @type {Record<string, unknown>} */ (value)[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${stableKey(/** @type {Record<string, unknown>} */ (value)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+/**
+ * One build per key. `buildProject` is synchronous (spawnSync all the way
+ * down), so two builds can never interleave inside one process: the first
+ * call fills the map before any other call can run, and every later call for
+ * the same key copies that one build. Separate test processes each build into
+ * their own mkdtemp parent, so they never share a directory either.
+ * @param {Parameters<typeof project>[1]} options
+ */
 function projectTemplate(options) {
-  const key = JSON.stringify(Object.entries(options ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  const key = stableKey(options ?? {});
   const cached = templates.get(key);
   if (cached && existsSync(cached)) return cached;
   if (templateParent === undefined) {
