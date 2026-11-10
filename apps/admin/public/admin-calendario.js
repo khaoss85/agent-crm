@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { nameFromProfile } from './admin-labels.js';
+import { isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -357,8 +357,10 @@ export function personRows(named, hidden, members) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
     const personId = rosterPersonId(member);
-    const email = personKeyOf(member.email);
-    const display = cleanPersonText(member.displayName);
+    // The shared member filter (admin-labels.js, production 10/11): a broker
+    // mailbox or a provider id never names or merges a person.
+    const email = personKeyOf(memberText(member.email));
+    const display = memberText(member.displayName);
     // One human shares one mailbox — or one control-plane person key when
     // the roster carries it (backlog:810ed0bf): either merges two subjects
     // into one person row. A shared display name alone never merges — two
@@ -407,7 +409,7 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    const base = name ?? (listed && !isTechnicalMemberText(primary) ? primary : 'Membro del team');
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -469,7 +471,7 @@ export function resolveMemberName(subject, named, members) {
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
-  if (!subject.includes('|')) return subject;
+  if (!isTechnicalMemberText(subject)) return subject;
   return null;
 }
 
@@ -2788,7 +2790,7 @@ export function createCalendarioView(deps) {
       // names only who is shown, never the whole team), keeps the search.
       const knownTeam = Array.isArray(state.members)
         && personRows([], [], state.members).length > 0;
-      if (memberIds.length === 0 && knownTeam && !member.includes('|')) {
+      if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
         state.draftNote = '';
         state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
         // The return skips the prefill after the search: fill the form here,
@@ -3308,8 +3310,8 @@ export function createCalendarioView(deps) {
     const known = rows.length > 0 && (current === '' || groupOf(current) !== null);
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
-      if (current !== '' && !current.includes('|')) input.value = current;
-      if (current.includes('|')) {
+      if (current !== '' && !isTechnicalMemberText(current)) input.value = current;
+      if (current !== '' && isTechnicalMemberText(current)) {
         // A pipe id never paints: the visible field stays empty while the
         // opaque identity rides in state for the claim only.
         state.manual = { ...(state.manual ?? {}), teamMemberId: current };
@@ -3537,7 +3539,7 @@ export function createCalendarioView(deps) {
         const person = people.find((row) => row.ids.includes(raw));
         if (inputs.teamMemberId?.tagName === 'SELECT') {
           if (person) inputs.teamMemberId.value = raw;
-        } else if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
+        } else if (person || !isTechnicalMemberText(raw)) inputs.teamMemberId.value = raw;
       }
       if (draft.serviceKey) {
         // The service is a menu (backlog:810ed0bf): a drafted key the

@@ -33,7 +33,7 @@
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { nameFromProfile, readableName } from './admin-labels.js';
+import { memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -623,14 +623,16 @@ function buildTodayAgendaRows(appointments = [], now = new Date()) {
  * @param {Date} [now]
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
-export function buildTodayAgenda(appointments = [], now = new Date(), names = {}) {
+export function buildTodayAgenda(appointments = [], now = new Date(), names = {}, members = []) {
   const today = buildTodayAgendaRows(appointments, now);
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
     // The prototype's second line under each appointment ("chi"): who the
-    // appointment is with — the team member holding the slot, else a short
-    // honest cue from the notes. Never invented when neither exists.
-    const team = nonEmptyText(row?.teamMemberId);
+    // appointment is with — the team member's name from the roster, else a
+    // short honest cue from the notes. Never invented when neither exists,
+    // and never the member's technical id (production 10/11 read
+    // «broker+…@accordo.invalid» and «google|…» here).
+    const team = memberLabel(row?.teamMemberId, members);
     const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
@@ -1157,6 +1159,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     inboxNames: {},
     /** Customer names of the agenda and next-call subjects, by `resource:id`. */
     appointmentNames: {},
+    /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
+    members: [],
     next: null,
   };
   // Backlog 2a075e2d9250 (production fc3fa62: the day at 8–20 s cold,
@@ -1233,11 +1237,20 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const subject = outcome.next != null && interactions
     ? { subjectResource: outcome.next.subjectResource, subjectId: outcome.next.subjectId }
     : null;
-  const [inboxNames, appointmentNames] = await Promise.all([
+  const withMember = outcome.appointments.some((row) => nonEmptyText(row?.teamMemberId) !== null);
+  const [inboxNames, appointmentNames, members] = await Promise.all([
     outcome.inboxAvailable
       ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now)
       : Promise.resolve({}),
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
+    // The roster names the member holding each slot: read only when a slot
+    // names one, fail-soft (the line then falls back to the notes cue).
+    withMember
+      ? client.request('/api/spine/memberships').then(
+        (answer) => (Array.isArray(answer?.items) ? answer.items : []),
+        (error) => { noteReadFailure('memberships', error); return []; },
+      )
+      : Promise.resolve([]),
     (async () => {
       if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
       try {
@@ -1257,6 +1270,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   ]);
   outcome.inboxNames = inboxNames;
   outcome.appointmentNames = appointmentNames;
+  outcome.members = members;
   return outcome;
 }
 
@@ -1834,7 +1848,7 @@ export function createOggiView(deps) {
     const actions = merged.slice(0, ADVISOR_ACTION_LIMIT);
     const capped = built.capped || merged.length > ADVISOR_ACTION_LIMIT;
     lastActions = actions;
-    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {});
+    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {}, last.members ?? []);
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {} })
       : null;
