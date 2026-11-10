@@ -15,7 +15,7 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  * (stylesheet rules below).
  */
 
-function mountShell() {
+function mountShell(overrides = {}) {
   const doc = createFakeDocument();
   doc.body = createMount();
   const sidebar = createMount();
@@ -28,8 +28,8 @@ function mountShell() {
   const fire = (type, event) => { for (const handler of handlers[type] ?? []) handler(event); };
   const view = createShellView({
     doc, sidebar, topbar,
-    spaces: [{ id: 'prova', name: 'Spazio di prova', initials: 'SP' }],
-    user: { name: 'Elena Rinaldi', email: 'elena@example.it' },
+    spaces: overrides.spaces ?? [{ id: 'prova', name: 'Spazio di prova', initials: 'SP' }],
+    user: overrides.user ?? { name: 'Elena Rinaldi', email: 'elena@example.it' },
     screenId: 'oggi', screenLabel: 'Oggi',
     navigate: (hash) => navigated.push(hash),
     win,
@@ -176,18 +176,81 @@ test('stylesheet: ☰ hidden on desktop, modal drawer and compact bar up to 700p
   assert.doesNotMatch(block, /#[0-9a-fA-F]{3,6}\b/, 'no new colour');
 });
 
-test('stylesheet: the phone bar fits the 120px content budget (backlog:4419cc25e2df)', () => {
+test('the phone content starts within 120px at 390px, short and long names with role (backlog:4419cc25e2df)', () => {
+  // Rendered measurement, not stylesheet literals: the row structure comes
+  // from the mounted top bar, the row heights from the computed stylesheet
+  // values, and the load-bearing assertion is the stacked total against the
+  // 120px budget. Growing a height, widening a padding or adding a bar row
+  // moves the total and fails this test. At 390px the 700px phone block
+  // applies; its grid (minmax(0, 1fr) auto, path and AI bar spanning both
+  // columns) keeps long names on the first row with an ellipsis instead of
+  // growing new rows.
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   const phone = css.indexOf('@media (max-width: 700px) {\n  /* design: shell telefono');
   assert.ok(phone !== -1, 'the phone shell block exists');
   const block = css.slice(phone, css.indexOf('\n}\n', phone));
-  // Row budget, worst case (long space name with role): topbar padding 12px
-  // + first row 44px + two 2px gaps + single-line crumb 16px + AI bar 36px
-  // + 4px content margin = 118px, so the content starts within 120px.
-  assert.match(block, /\.bo-topbar \{[^}]*padding: 6px 12px;/, 'the phone bar keeps 12px of vertical padding');
-  assert.match(block, /\.bo-topbar \{[^}]*gap: 2px/, 'the phone bar rows sit 2px apart');
-  assert.match(block, /\.bo-ai \{[^}]*height: 36px;/, 'the phone AI bar is 36px tall');
-  assert.match(block, /\.bo-crumb \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis;/, 'the crumb never wraps to a second row');
-  assert.match(block, /\.bo-main > \.bo-topbar \+ \* \{ margin-top: 4px; \}/, 'the content follows 4px under the bar');
-  assert.match(block, /\.bo-topbar \.bo-phonebar-space \{[^}]*padding: 6px 8px;/, 'the phone space row stays compact');
+  // A value the budget cannot parse fails by name instead of silently
+  // passing on a stale constant.
+  const px = (source, pattern, name) => {
+    const found = source.match(pattern);
+    assert.ok(found, `${name} is declared, so the budget stays measurable`);
+    return Number(found[1]);
+  };
+  const ratio = (source, pattern, name) => {
+    const found = source.match(pattern);
+    assert.ok(found, `${name} is declared, so the budget stays measurable`);
+    return Number(found[1]);
+  };
+  const barPadV = 2 * px(block, /\.bo-topbar \{[^}]*padding: (\d+)px \d+px;/, 'phone bar vertical padding');
+  const rowGap = px(block, /\.bo-topbar \{[^}]*gap: (\d+)px/, 'phone bar row gap');
+  const toggleH = px(block, /\.bo-menu-toggle \{[^}]*height: (\d+)px;/, 'phone menu button height');
+  const badgeH = px(block, /\.bo-space-badge \{[^}]*height: (\d+)px;/, 'phone space badge height');
+  const spacePadV = 2 * px(block, /\.bo-phonebar-space \{[^}]*padding: (\d+)px \d+px;/, 'phone space row vertical padding');
+  const nameLine = px(block, /\.bo-space-name \{[^}]*font-size: (\d+)px;/, 'phone space name size')
+    * ratio(block, /\.bo-space-name \{[^}]*line-height: ([\d.]+);/, 'phone space name line height');
+  const roleLine = px(block, /\.bo-space-role \{[^}]*font-size: (\d+)px;/, 'phone space role size')
+    * ratio(block, /\.bo-space-role \{[^}]*line-height: ([\d.]+);/, 'phone space role line height');
+  const crumbLine = px(css, /\.bo-crumb \{[^}]*font-size: (\d+)px;/, 'crumb size')
+    * ratio(block, /\.bo-crumb \{[^}]*line-height: ([\d.]+);/, 'phone crumb line height');
+  const aiH = px(block, /\.bo-ai \{[^}]*height: (\d+)px;/, 'phone AI bar height');
+  const contentGap = px(block, /\.bo-main > \.bo-topbar \+ \* \{[^}]*margin-top: (\d+)px;/, 'gap between the bar and the content');
+  assert.doesNotMatch(css, /\.bo-nav \{ flex-direction: row;/, 'diagnostic: the 300px horizontal strip is gone');
+  assert.match(block, /\.bo-crumb \{[^}]*white-space: nowrap;/, 'diagnostic: the crumb keeps one line');
+  const hasClass = (node, cls) => String(node.getAttribute('class') ?? '').split(/\s+/).includes(cls);
+  const cases = [
+    {
+      label: 'short name without a role',
+      spaces: [{ id: 'prova', name: 'Spazio di prova', initials: 'SP' }],
+      user: { name: 'Elena Rinaldi', email: 'elena@example.it' },
+      withRole: false,
+    },
+    {
+      label: 'long name with a role',
+      spaces: [{ id: 'prova', name: 'Spazio di prova molto lungo per il taglio', initials: 'SP' }],
+      user: { name: 'Elena Rinaldi', email: 'elena@example.it', role: 'owner' },
+      withRole: true,
+    },
+  ];
+  for (const { label, spaces, user, withRole } of cases) {
+    const { topbar } = mountShell({ spaces, user });
+    const rows = topbar.childNodes.filter((node) => typeof node.tagName === 'string');
+    assert.deepEqual(
+      rows.map((node) => String(node.getAttribute('class') ?? '').split(/\s+/)[0]),
+      ['bo-phonebar-space', 'bo-menu-toggle', 'bo-crumb', 'bo-ai'],
+      `${label}: the phone bar renders three rows (space + menu button, path, AI bar)`,
+    );
+    const spaceText = rows[0].findAll('span').find((node) => hasClass(node, 'bo-space-text'));
+    assert.ok(spaceText, `${label}: the space label renders`);
+    const stacked = spaceText.childNodes.filter((node) => typeof node.tagName === 'string');
+    assert.equal(stacked.length, withRole ? 2 : 1, `${label}: the role stacks inside the first row, never as a new bar row`);
+    const textStack = withRole ? nameLine + roleLine : nameLine;
+    const firstRow = Math.max(toggleH, badgeH > textStack ? badgeH + spacePadV : textStack + spacePadV);
+    const crumb = rows[2];
+    assert.ok(
+      crumb.textContent.includes(spaces[0].name) && crumb.textContent.includes('Oggi'),
+      `${label}: the rendered path still names the space and the screen`,
+    );
+    const total = barPadV + firstRow + rowGap + crumbLine + rowGap + aiH + contentGap;
+    assert.ok(total <= 120, `${label}: the content starts at ${total.toFixed(1)}px, within the 120px budget`);
+  }
 });
