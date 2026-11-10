@@ -44,6 +44,7 @@ import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
+import { memberText } from './admin-labels.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -237,13 +238,6 @@ const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
 /** Liveliest status first: a person reads «sospeso» only when no subject is live. */
 const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
 
-/** @param {unknown} value */
-function personText(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  return text === '' ? null : text;
-}
-
 /**
  * Avatar initials for a person name: the first letter of the first two
  * words («Daniele Pelleri» → «DP»), or the subject rule for one word.
@@ -269,8 +263,9 @@ function nameInitials(name) {
  * people. Nothing merges in the backend: the row keeps every subject, and
  * removal suspends each of them.
  *
- * Without enrichment the row reads exactly as before: the subject is the
- * name and the status sits under it. Sorted by name, then subject, so the
+ * Without enrichment the subject is the name when it reads as one, else
+ * «Membro del team» — never a technical subject (production 10/11) — and
+ * the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown}>} members
  */
@@ -284,8 +279,11 @@ export function buildTeamRows(members = []) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
     if (seen.has(member.subject)) continue;
     seen.add(member.subject);
-    const email = personText(member.email);
-    const displayName = personText(member.displayName);
+    // Never a technical identity on screen (production 10/11: the team read
+    // «broker+…@accordo.invalid»): the shared member filter drops a broker
+    // mailbox or a provider id the enrichment carried as name or email.
+    const email = memberText(member.email);
+    const displayName = memberText(member.displayName);
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
@@ -304,7 +302,11 @@ export function buildTeamRows(members = []) {
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
-      const name = person.displayName ?? person.email ?? subject;
+      // No readable name or mailbox: the subject when it reads as a word,
+      // else a generic label — never a technical subject (`google|…`,
+      // `broker+…`), the same fallback the Calendario team uses.
+      const readable = person.displayName ?? person.email ?? memberText(subject);
+      const name = readable ?? 'Membro del team';
       const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
       const role = known.length > 0
         ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
@@ -322,7 +324,9 @@ export function buildTeamRows(members = []) {
         removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
         name,
         email: person.email,
-        initials: person.displayName !== null ? nameInitials(person.displayName) : memberInitials(name),
+        initials: person.displayName !== null
+          ? nameInitials(person.displayName)
+          : (readable !== null ? memberInitials(readable) : '·'),
         role: spaceRoleLabel(role),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
       };
