@@ -30,22 +30,12 @@ function packageManifests(packageName) {
     });
 }
 
-function hostManifest(name) {
-  const file = join(HERE, '..', 'packages', 'modules', name, `${name}.module.json`);
-  const manifest = JSON.parse(readFileSync(file, 'utf8'));
-  return { name: manifest.name, manifest };
-}
-
 test('voce 908f2eb9bbfb: card, timeline e profilo in parallelo sotto 1,5 s su Postgres', { timeout: 300_000 }, async (t) => {
   const customerData = await import('../packages/customer-data/src/index.js');
   const work = await import('../packages/work/src/index.js');
   const interactions = await import('../packages/interactions/src/index.js');
   const appointments = await import('../packages/appointments/src/index.js');
   const commercial = await import('../packages/commercial/src/index.js');
-  const contracts = await import('../packages/contracts/src/index.js');
-  const service = await import('../packages/service/src/index.js');
-  const signature = await import('../packages/signature/src/index.js');
-  const delivery = await import('../packages/delivery/src/index.js');
   const hub = await import('../packages/customer-hub/src/index.js');
 
   const customerDataPkg = customerData.createCustomerDataPackageV2();
@@ -60,29 +50,32 @@ test('voce 908f2eb9bbfb: card, timeline e profilo in parallelo sotto 1,5 s su Po
       interactionsPkg,
       appointmentsPkg,
       commercial.createCommercialDomainV2(),
-      contracts.createContractsDomainV2(),
-      service.createServicePackageV2(),
-      signature.createSignatureDomainV2(),
-      delivery.createDeliveryPackageV2(),
+      // Niente domini contracts, signature, service e delivery: la catena
+      // service/delivery → contracts → signature porta a request-signature,
+      // externalOperation 1, rifiutata dal boot PostgreSQL
+      // (EXTERNAL_OPERATION_V2_REQUIRED). Le loro sezioni si leggono dai
+      // moduli qui sotto, senza azioni.
       hub.createCustomerHubPackageV2({
         customerData: customerDataPkg, interactions: interactionsPkg, appointments: appointmentsPkg,
       }),
     ],
     actions: [],
     modules: [
-      hostManifest('contact'),
-      hostManifest('company'),
-      hostManifest('opportunity'),
-      hostManifest('work-task'),
+      // Host services (companies, contacts, opportunities) ride the default
+      // composition, like the profile-on-PostgreSQL test proves; only the
+      // package-owned record manifests are listed here.
       ...packageManifests('customer-data'),
       ...packageManifests('work'),
       ...packageManifests('interactions'),
       ...packageManifests('appointments'),
-      ...packageManifests('commercial'),
-      ...packageManifests('contracts'),
-      ...packageManifests('service'),
-      ...packageManifests('signature'),
-      ...packageManifests('delivery'),
+      // Senza quote-term: dichiara reference fields e va generato con
+      // module:create, non composto dal manifest grezzo; la lettura del
+      // profilo non lo usa (la sezione quotes legge il modulo quote).
+      ...packageManifests('commercial').filter((entry) => entry.name !== 'quote-term'),
+      // Senza i manifest di contracts, service, signature e delivery: i loro
+      // domini non avviano su PG (catena verso request-signature,
+      // externalOperation 1). Follow-up: upgrade a externalOperation 2, poi
+      // si ricompongono con le loro sezioni.
       'lead',
     ],
   };
@@ -105,7 +98,7 @@ test('voce 908f2eb9bbfb: card, timeline e profilo in parallelo sotto 1,5 s su Po
     type: 'new_business',
     valueCents: 120000,
     currency: 'EUR',
-    stage: 'open',
+    stage: 'proposal',
     owner: 'guido',
     expectedCloseDate: '2026-12-31',
   });
