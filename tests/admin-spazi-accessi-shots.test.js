@@ -88,7 +88,7 @@ const SHOTS_SKIP = CHROMIUM_RUNS ? false : 'Chromium binary missing or unrunnabl
 
 const FIXTURE_SCRIPT = `
 ${ADMIN_WRITE_GATE_BROWSER_PRELUDE}
-import { createSpaziAccessiView } from './admin-spazi-accessi.js';
+import { SPAZI_AI_MASTER, createSpaziAccessiView } from './admin-spazi-accessi.js';
 const SPACES = [
   { id: 'spazio-1', name: 'Negozio via Roma', initials: 'NE' },
   { id: 'spazio-2', name: 'Palestra centro', initials: 'PA' },
@@ -128,6 +128,12 @@ const view = createSpaziAccessiView({
   onPickSpace: function () {},
 });
 await view.render();
+// backlog:2c3156a4: the master «AI dello spazio» switch sits above the five.
+const toggles = Array.from(document.querySelectorAll('button[role="switch"]'));
+const masterToggles = toggles.filter((node) => node.getAttribute('aria-label') === SPAZI_AI_MASTER.label);
+const masterTop = masterToggles.length === 1 ? masterToggles[0].getBoundingClientRect().top : null;
+const masterAbove = masterToggles.length === 1 && toggles[0] === masterToggles[0]
+  && toggles.slice(1).every((node) => node.getBoundingClientRect().top > masterTop);
 const panels = document.querySelector('.bo-spazi-panels');
 const teamRect = document.querySelector('.bo-spazi-team-panel')
   ? document.querySelector('.bo-spazi-team-panel').getBoundingClientRect()
@@ -146,7 +152,9 @@ const probe = {
   pills: document.querySelectorAll('.bo-spazi-role').length,
   pillText: document.querySelector('.bo-spazi-role')
     ? document.querySelector('.bo-spazi-role').textContent : null,
-  switches: document.querySelectorAll('button[role="switch"]').length,
+  switches: toggles.length,
+  master: masterToggles.length,
+  masterAbove,
   stats: Array.from(document.querySelectorAll('.bo-spazi-stat'), (node) => node.textContent),
   apri: Array.from(document.querySelectorAll('button')).filter((node) => node.textContent === 'Apri').length,
   panelsDirection: panels ? getComputedStyle(panels).flexDirection : null,
@@ -279,7 +287,9 @@ test('the spazi screen renders in a real browser: desktop PNG, team and AI side 
   assert.equal(probe.members, 2, 'both team members render');
   assert.equal(probe.avatars, 2, 'every member has an avatar');
   assert.equal(probe.pills, 2, 'every member has a role pill');
-  assert.equal(probe.switches, 5, 'the five AI switches render');
+  assert.equal(probe.switches, 6, 'the master AI switch plus the five render');
+  assert.equal(probe.master, 1, 'exactly one master «AI dello spazio» switch');
+  assert.equal(probe.masterAbove, true, 'the master sits above the five');
   assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], 'both cards paint the real C7 statistic');
   assert.equal(probe.apri, 1, 'the non-active card paints Apri, the active one marks Stai lavorando qui');
   assert.equal(probe.panelsDirection, 'row', 'team and AI panels share one row on desktop');
@@ -296,7 +306,9 @@ test('the spazi screen renders in a real browser: phone PNG without sideways scr
   assert.ok(dom.includes('<title>spazi-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
   assert.equal(probe.members, 2, 'the phone render holds the team');
-  assert.equal(probe.switches, 5, 'the phone render holds the five AI switches');
+  assert.equal(probe.switches, 6, 'the phone render holds the master plus the five AI switches');
+  assert.equal(probe.master, 1, 'the phone render holds one master switch');
+  assert.equal(probe.masterAbove, true, 'on the phone the master sits above the five');
   assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], 'the phone render holds both card statistics');
   assert.equal(probe.apri, 1, 'the phone render holds Apri on the non-active card');
   assert.equal(probe.panelsDirection, 'column', 'the panels stack in one column on the phone');
