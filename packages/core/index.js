@@ -199,6 +199,20 @@ export { createDefinitionVersionStore, isDefinitionVersionDrift } from './src/de
 // could manufacture the very proof it is subject to.
 export { TRANSACTION_PROOF, proveCallerTransaction } from './src/transaction-witness.js';
 
+// ---- message previews (Dan 10/11) ----
+// One rule for every message preview and every HTML body read: «Oggetto —
+// estratto pulito», no URLs, markup, hidden preheaders or boilerplate. The
+// /bo shell carries a byte-identical copy (apps/admin/public/admin-message-preview.js).
+export {
+  MESSAGE_PREVIEW_CHARS,
+  cleanMessageBody,
+  cleanPreviewText,
+  hasMarkup,
+  htmlToText,
+  isPlaceholderBody,
+  messagePreview,
+} from './src/message-preview.js';
+
 // ---- money (ADR-014/016) ----
 // Integer minor units, never floats, with the framework's shared bounds. A
 // package that stores or renders an amount uses these rather than inventing
