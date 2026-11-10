@@ -111,7 +111,9 @@ sul ☰. PNG: `telefono/4419-oggi-390-menu-chiuso.png`,
 ## backlog:aaafeded28af — criteri [supervisor] con Chromium sul server (AC-1)
 
 Pilota `983968d`, spazio di prova `spazio-prova-bo`, sessione di prova
-(mai il login di Dan): 4 test, 4 PASSA in 23 s.
+(mai il login di Dan): ogni criterio qui sotto apre la schermata, clicca,
+controlla la richiesta e la risposta di rete e il testo atteso, e ha
+scritto da solo la sua riga PASSA in `aaafeded28af/ESITO.md`.
 
 - `oggi-da-rispondere`: 11 chiamate /bo/api
 - `scheda-nota`: `POST /bo/api/customer-hub/notes` → 201
