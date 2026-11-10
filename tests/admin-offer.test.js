@@ -338,6 +338,36 @@ test('Modifica prefills from the record and Salva PATCHes the three facts', asyn
   assert.ok(mount.textContent.includes('guido'), 'the re-rendered detail shows the saved referente');
 });
 
+// Voce ddf7f416 (review P2 head ccb5a42): with a readable roster a plain
+// stale handle does not survive the detail edit — saving without picking a
+// member is refused exactly like create refuses it, and picking a member
+// stores the stable subject.
+test('a stale plain handle is refused on edit save until a member is picked', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const memberships = [
+    { subject: 'coach-guido', displayName: 'Guido Conti', email: 'guido@palestra.it', role: 'owner', status: 'active' },
+  ];
+  const client = stubClient({ record: offerRecord({ owner: 'pluto' }), quotes: [], audit: [], memberships });
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  assert.equal(form.__editInputs.owner.tagName, 'SELECT', 'a readable roster gives the members select');
+  assert.equal(form.__editInputs.owner.value, 'pluto', 'the stale handle stays choosable until a member is picked');
+  form.__editInputs.value.value = '300.50';
+  await form.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH with the stale handle');
+  assert.ok(form.__editError.textContent.includes('Scegli il referente tra i membri del team.'), 'the refuse names the team');
+  form.__editInputs.owner.value = 'coach-guido';
+  await form.__save({ preventDefault() {} });
+  const patches = client.calls.filter((call) => call.method === 'PATCH');
+  assert.equal(patches.length, 1, 'one PATCH after picking a member');
+  assert.equal(JSON.parse(patches[0].body).owner, 'coach-guido', 'the stable subject is stored, never the stale handle');
+});
+
 test('the edit validates before writing and keeps the form on a refused save', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

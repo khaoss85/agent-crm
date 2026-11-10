@@ -633,17 +633,25 @@ test('ddf7f416: renderNew(opportunity) with a readable roster starts on an empty
   const options = form.__inputs.owner.findAll('option');
   assert.equal(options[0].getAttribute('value'), '', 'the select starts on an empty option');
   assert.equal(form.__inputs.owner.value, '', 'no member is preselected');
+  assert.deepEqual(
+    options.slice(1).map((option) => [option.getAttribute('value'), option.textContent]),
+    [
+      ['00000000-0000-4000-8000-000000000000', 'Elena Rossi'],
+      ['coach-guido', 'Guido Conti'],
+    ],
+    'options carry the stable subject as value and the name as title',
+  );
   form.__inputs.company.value = company.id;
   form.__inputs.title.value = 'Pacchetto 10 ingressi';
   form.__inputs.value.value = '250.00';
   await form.__submit({ preventDefault() {} });
   assert.ok(mount.textContent.includes('Il referente è obbligatorio.'), 'an untouched Referente is refused');
   assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write without an explicit choice');
-  form.__inputs.owner.value = 'Guido Conti';
+  form.__inputs.owner.value = 'coach-guido';
   await form.__submit({ preventDefault() {} });
   const rows = app.services.opportunities.list({ companyId: company.id });
   assert.equal(rows.length, 1, 'one opportunity filed after an explicit choice');
-  assert.equal(rows[0].owner, 'Guido Conti', 'the chosen member name is stored');
+  assert.equal(rows[0].owner, 'coach-guido', 'the stable member subject is stored, never the painted name');
 });
 
 // Voce ddf7f416 (review P2 head 74e580fd): with a readable roster an

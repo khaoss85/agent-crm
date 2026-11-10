@@ -83,9 +83,14 @@ function ownerInitials(name) {
 /**
  * @param {Record<string, any>} record
  * @param {{q: string, owner: string, stage: string, created: string}} filters
+ * @param {(value: unknown) => string} paintOwnerNameFor
  */
-function matchesFilters(record, filters) {
-  if (filters.owner && record.owner !== filters.owner) return false;
+function matchesFilters(record, filters, paintOwnerNameFor) {
+  // The Referente pill is keyed on the painted identity (backlog:ddf7f416
+  // P2): raw values that paint to the same title are one person, so one
+  // voice matches every raw value painting to it — never two identical
+  // voices splitting one human.
+  if (filters.owner && paintOwnerNameFor(record.owner) !== filters.owner) return false;
   if (filters.stage && record.pipelineStage !== filters.stage) return false;
   if (filters.q) {
     const haystack = [record.name, record.companyName, record.contactName]
@@ -399,7 +404,7 @@ export function createPipelineBoard(deps) {
     const offDefinition = onBoard.filter((record) => !stageKeys.has(record.pipelineStage));
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
     const offPipeline = records.length - onBoard.length;
-    const visible = placed.filter((record) => matchesFilters(record, state));
+    const visible = placed.filter((record) => matchesFilters(record, state, ownerName));
 
     const panel = el(doc, 'section', { class: 'panel panel-wide pipeline-board-panel' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
@@ -693,13 +698,18 @@ export function createPipelineBoard(deps) {
     // BO-F6-10 C8: the three prototype pills — `Referente Tutti`,
     // `Creata Sempre`, `Stati Tutti` — with the check on the active voice.
     const owners = [...new Set(onBoard.map((record) => record.owner).filter((owner) => typeof owner === 'string' && owner))].sort();
+    // One voice per painted title: raw values that paint alike (a legacy
+    // handle and its member subject, two stale values) share one voice
+    // whose value is the title itself, so matchesFilters above reunites
+    // them instead of showing duplicate identical voices.
+    const ownerTitles = [...new Set(owners.map((owner) => ownerName(owner)))].sort((a, b) => a.localeCompare('it'));
     toolbar.appendChild(renderFilterMenu({
       key: 'owner',
       label: 'Referente',
       valueText: state.owner ? ownerName(state.owner) : 'Tutti',
       filterLabel: 'Filtra per referente',
       current: state.owner,
-      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: ownerName(owner) }))],
+      voices: [{ value: '', title: 'Tutti' }, ...ownerTitles.map((title) => ({ value: title, title }))],
       onPick: (picked) => { state.owner = picked; },
     }));
     toolbar.appendChild(renderFilterMenu({

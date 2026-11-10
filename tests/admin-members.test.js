@@ -6,6 +6,7 @@ import {
   isTechnicalHandle,
   paintOwnerName,
   resolveTeamName,
+  resolveTeamSubject,
   teamRoster,
 } from '../apps/admin/public/admin-members.js';
 
@@ -73,4 +74,40 @@ test('a readable roster lists its members', async () => {
     },
   });
   assert.deepEqual(roster.labels, ['Guido Conti']);
+});
+
+// Voce ddf7f416 (review giro 2 su ccb5a42): one table holding every case of
+// the earlier rounds and this one. The record stores the stable subject;
+// the screens paint the name only at render.
+test('store-subject paint-name: every referente case in one table', () => {
+  const renamed = teamRoster([
+    { subject: 'coach-guido', displayName: 'Guido Verdi' },
+    { subject: '00000000-0000-4000-8000-000000000000', displayName: 'Elena Rossi' },
+  ]);
+  const homonyms = teamRoster([
+    { subject: 'guido-a', displayName: 'Guido Conti' },
+    { subject: 'guido-b', displayName: 'Guido Conti' },
+  ]);
+  const cases = [
+    // [stored or picked, roster, subject kept, name painted]
+    // Earlier rounds: handles resolve, stale values dash, empty roster degrades.
+    ['coach-guido', ROSTER, 'coach-guido', 'Guido Conti'],
+    ['Guido Conti', ROSTER, 'coach-guido', 'Guido Conti'],
+    ['maria', ROSTER, null, '—'],
+    ['00000000-0000-4000-8000-000000000000', ROSTER, '00000000-0000-4000-8000-000000000000', 'Elena Rossi'],
+    ['00000000-0000-4000-8000-000000000000', emptyRoster(), null, '—'],
+    ['maria', emptyRoster(), null, 'maria'],
+    ['github|99', ROSTER, null, '—'],
+    ['', ROSTER, null, '—'],
+    // This round: a rename repaints stored subjects, never orphans them.
+    ['coach-guido', renamed, 'coach-guido', 'Guido Verdi'],
+    // This round: homonyms stay distinct subjects under one painted name.
+    ['guido-a', homonyms, 'guido-a', 'Guido Conti'],
+    ['guido-b', homonyms, 'guido-b', 'Guido Conti'],
+    ['Guido Conti', homonyms, null, 'Guido Conti'],
+  ];
+  for (const [value, roster, subject, painted] of cases) {
+    assert.equal(resolveTeamSubject(value, roster), subject, `subject of ${JSON.stringify(value)}`);
+    assert.equal(paintOwnerName(value, roster), painted, `paint of ${JSON.stringify(value)}`);
+  }
 });

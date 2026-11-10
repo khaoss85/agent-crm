@@ -22,7 +22,7 @@ import {
 } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
-import { fetchTeamRoster, isTechnicalHandle, resolveTeamName } from './admin-members.js';
+import { fetchTeamRoster, isTechnicalHandle, resolveTeamSubject } from './admin-members.js';
 
 function memoryStorage() {
   /** @type {Map<string, string>} */
@@ -361,8 +361,12 @@ export function createModuleAdmin(deps) {
     // The single Referente field (backlog:ddf7f416): the members select
     // when the roster names anyone, else the one free-text field. Either
     // way `inputs.owner` exposes `.value`, so the submit flow is unchanged.
+    // A select option carries the stable roster subject as its value and
+    // the member name as its title: the record stores the subject, never
+    // the painted name, so renames repaint and homonyms stay distinct.
     function addOwnerField(team) {
       const labels = Array.isArray(team?.labels) ? team.labels : [];
+      const bySubject = team?.bySubject instanceof Map ? team.bySubject : null;
       const row = el(doc, 'div', { class: 'field-row' });
       const inputId = 'field-opportunity-owner';
       const labelNode = el(doc, 'label', { text: 'Referente', attrs: { for: inputId } });
@@ -383,8 +387,11 @@ export function createModuleAdmin(deps) {
         // refuses the submit until the operator picks a member — the form
         // never files the first roster name without an explicit choice.
         select.appendChild(el(doc, 'option', { text: 'Scegli il referente', attrs: { value: '' } }));
-        for (const name of labels) {
-          select.appendChild(el(doc, 'option', { text: name, attrs: { value: name } }));
+        const members = bySubject !== null
+          ? [...bySubject].sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'it'))
+          : labels.map((name) => [name, name]);
+        for (const [subject, name] of members) {
+          select.appendChild(el(doc, 'option', { text: name, attrs: { value: subject } }));
         }
         row.appendChild(select);
         form.appendChild(row);
@@ -401,7 +408,7 @@ export function createModuleAdmin(deps) {
     // when the roster names anyone — one field, never free text plus a
     // second select. Without a readable roster the single free-text field
     // stays, so operators who cannot list the team can still create. The
-    // resolved member name is stored, never a handle.
+    // stable roster subject is stored, never a handle or a painted name.
     // The roster read is best-effort: a refused or unreadable membership
     // list keeps the free-text field, never a blocked screen.
     const roster = await fetchTeamRoster(client);
@@ -456,7 +463,7 @@ export function createModuleAdmin(deps) {
         try {
           contacts = (await client.request(`/api/contacts?companyId=${encodeURIComponent(chosen)}&limit=100`)).items ?? [];
         } catch {
-          contactHint.textContent = 'I referenti non si sono caricati: prosegui senza referente o riprova.';
+          contactHint.textContent = 'I contatti non si sono caricati: prosegui senza contatto o riprova.';
           contactHint.setAttribute('class', 'field-error');
           return;
         }
@@ -628,10 +635,11 @@ export function createModuleAdmin(deps) {
       }
       const title = String(inputs.title.value ?? '').trim();
       const picked = String(inputs.owner.value ?? '').trim();
-      // A roster subject chosen or typed resolves to its member name before
-      // the write, so a handle never lands on the new record. A technical
-      // value the roster cannot resolve is refused, never stored.
-      const owner = resolveTeamName(picked, roster) ?? picked;
+      // The record keeps the stable roster subject, never the painted
+      // display name: a later rename repaints every record instead of
+      // orphaning it, and homonyms never collide. A technical value the
+      // roster cannot resolve is refused, never stored.
+      const owner = resolveTeamSubject(picked, roster) ?? picked;
       const cents = parseEuroToCents(inputs.value.value);
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
@@ -644,7 +652,7 @@ export function createModuleAdmin(deps) {
       if (title === '') failures.title = 'Il titolo è obbligatorio.';
       if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250.00).';
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
-      else if (resolveTeamName(picked, roster) === null && (isTechnicalHandle(picked) || rosterReadable)) failures.owner = 'Scegli il referente tra i membri del team.';
+      else if (resolveTeamSubject(picked, roster) === null && (isTechnicalHandle(picked) || rosterReadable)) failures.owner = 'Scegli il referente tra i membri del team.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
         showErrors(failures);

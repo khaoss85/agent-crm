@@ -520,6 +520,32 @@ test('search and the Referente, Creata, Stati pills narrow both views (C8)', asy
   assert.match(summaryText(mount), /5 offerte/, 'Sempre restores the full board');
 });
 
+// Voce ddf7f416 (review P2 head ccb5a42): the Referente pill is keyed on
+// the painted identity — a legacy handle and its member subject share one
+// voice, and picking it keeps both records instead of splitting one human.
+test('Referente pill groups raw values by painted name into one voice', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const records = [
+    record('a', 'discovery', { owner: 'coach-guido' }),
+    record('b', 'discovery', { owner: 'Guido Conti' }),
+  ];
+  const memberships = [{ subject: 'coach-guido', displayName: 'Guido Conti' }];
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records, { memberships }) });
+  await board.renderBoard('b2b-sales');
+  assert.match(summaryText(mount), /2 offerte/);
+
+  const menu = mount.findAll('div').find((node) => node.getAttribute('data-filtermenu') === 'owner');
+  const voices = menu.findAll('button')
+    .filter((node) => node.getAttribute('data-menu-voice') === 'owner' && node.getAttribute('data-value') !== '')
+    .map((node) => node.getAttribute('data-value'));
+  assert.deepEqual(voices, ['Guido Conti'], 'one voice for one human, never two identical titles');
+
+  pickVoice(mount, 'owner', 'Guido Conti');
+  assert.match(summaryText(mount), /2 offerte/, 'the voice keeps both the legacy and the subject record');
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente Guido Conti'), 'the pill names the painted referente');
+});
+
 test('Azzera filtri resets search and every pill', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

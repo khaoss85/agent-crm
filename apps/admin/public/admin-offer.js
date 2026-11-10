@@ -20,6 +20,7 @@ import {
   isTechnicalHandle,
   paintOwnerName,
   resolveTeamName,
+  resolveTeamSubject,
 } from './admin-members.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -305,8 +306,11 @@ export function createOfferDetail(deps) {
    * The single Referente field (backlog:ddf7f416): the members select when
    * the roster names anyone, else the one free-text field — never both.
    * Either way `inputs.owner` exposes `.value`, so the save flow is
-   * unchanged. The stored value preselects even when it is not a member
-   * (an old handle stays choosable until the operator picks a member).
+   * unchanged. Options carry the stable roster subject as value and the
+   * member name as title. The stored value preselects its member even
+   * when it is a legacy name or handle (a legacy value resolves to its
+   * subject, or stays choosable as a keep-option until the operator picks
+   * a member).
    */
   function addOwnerField(form, inputs, id, make, current, roster) {
     const fieldRow = make('div', 'field-row');
@@ -315,6 +319,7 @@ export function createOfferDetail(deps) {
     labelNode.setAttribute('for', inputId);
     fieldRow.appendChild(labelNode);
     const labels = Array.isArray(roster?.labels) ? roster.labels : [];
+    const bySubject = roster?.bySubject instanceof Map ? roster.bySubject : null;
     const stored = typeof current === 'string' ? current.trim() : '';
     if (labels.length === 0) {
       const input = make('input');
@@ -331,17 +336,21 @@ export function createOfferDetail(deps) {
     select.setAttribute('id', inputId);
     select.setAttribute('name', 'owner');
     select.setAttribute('required', 'required');
-    if (stored !== '' && !labels.includes(resolveTeamName(stored, roster) ?? stored)) {
+    const storedSubject = resolveTeamSubject(stored, roster);
+    if (stored !== '' && storedSubject === null) {
       const keep = make('option', undefined, paintOwnerName(stored, roster));
       keep.setAttribute('value', stored);
       select.appendChild(keep);
     }
-    for (const name of labels) {
+    const members = bySubject !== null
+      ? [...bySubject].sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'it'))
+      : labels.map((name) => [name, name]);
+    for (const [subject, name] of members) {
       const option = make('option', undefined, name);
-      option.setAttribute('value', name);
+      option.setAttribute('value', subject);
       select.appendChild(option);
     }
-    select.value = resolveTeamName(stored, roster) ?? stored;
+    select.value = storedSubject ?? stored;
     fieldRow.appendChild(select);
     form.appendChild(fieldRow);
     inputs.owner = select;
@@ -400,17 +409,18 @@ export function createOfferDetail(deps) {
       if (busy) return;
       const cents = parseEuroToCents(inputs.value.value);
       const picked = String(inputs.owner.value ?? '').trim();
-      // A roster subject chosen or typed resolves to its member name before
-      // the write, so a handle never lands back on the record. A technical
-      // value the roster cannot resolve is refused, never stored.
-      const resolved = resolveTeamName(picked, roster) ?? picked;
-      const owner = resolved;
+      // The same guard as the create form (backlog:ddf7f416 P2): the
+      // record keeps the stable roster subject, and with a readable
+      // roster every unresolved pick is refused — a plain stale handle
+      // never survives an edit while create would refuse it.
+      const rosterReadable = Array.isArray(roster?.labels) && roster.labels.length > 0;
+      const owner = resolveTeamSubject(picked, roster) ?? picked;
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
       const failures = {};
       if (cents === null) failures.value = "Il valore è obbligatorio, in euro (es. 250.00).";
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
-      else if (resolveTeamName(picked, roster) === null && isTechnicalHandle(picked)) failures.owner = 'Scegli il referente tra i membri del team.';
+      else if (resolveTeamSubject(picked, roster) === null && (isTechnicalHandle(picked) || rosterReadable)) failures.owner = 'Scegli il referente tra i membri del team.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
         errorNode.textContent = Object.values(failures)[0];

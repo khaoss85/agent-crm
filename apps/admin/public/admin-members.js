@@ -109,6 +109,35 @@ export function resolveTeamName(value, roster) {
 }
 
 /**
+ * Resolve a picked or stored referente value to the stable roster subject
+ * the record keeps: a roster subject reads itself, a display label reads
+ * its single member, and anything else misses (null) so the caller can
+ * refuse it. The record stores the subject — never the painted display
+ * name — so a later rename repaints every record and two members sharing
+ * one display name (homonyms) stay distinct instead of collapsing to one
+ * stored value. A homonym label is ambiguous and misses on purpose: the
+ * operator picks the member from the select, whose option values are the
+ * subjects, never the labels.
+ * @param {unknown} value
+ * @param {{bySubject: Map<string, string>, labels: Array<string>}|null} roster
+ * @returns {string|null}
+ */
+export function resolveTeamSubject(value, roster) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (text === '') return null;
+  const bySubject = roster?.bySubject;
+  if (!(bySubject instanceof Map)) return null;
+  if (bySubject.has(text)) return text;
+  let found = null;
+  for (const [subject, display] of bySubject) {
+    if (display !== text) continue;
+    if (found !== null) return null;
+    found = subject;
+  }
+  return found;
+}
+
+/**
  * The referente one offer screen paints: the roster name for a member
  * subject or a known member label, and an em dash for anything the
  * roster cannot resolve — never an id, never a bare handle. When the
