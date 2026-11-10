@@ -946,6 +946,20 @@ test('ed0552dc1933: two operator keys never merge, even on the same name with in
   assert.ok(rows.every((row) => row.name === 'Daniele Pelleri'));
 });
 
+test('ed0552dc1933 review (Codex P2): two explicit operator keys bridge no group — the shared mailbox does not pull a stranger in', () => {
+  const rows = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'active', displayName: 'Anna Bianchi', email: 'squadra@esempio.it', operatorAccountId: 'op-1' },
+    { subject: 'b', role: 'operator', status: 'active', displayName: 'Anna Bianchi', email: 'squadra@esempio.it', operatorAccountId: 'op-2' },
+    { subject: 'c', role: 'observer', status: 'active', displayName: 'Anna Due', email: 'anna2@esempio.it', operatorAccountId: 'op-2' },
+  ]);
+  assert.equal(rows.length, 2, 'no single row across the two operator accounts');
+  const anna1 = rows.find((row) => row.subjects.includes('a'));
+  const anna2 = rows.find((row) => row.subjects.includes('b'));
+  assert.deepEqual(anna1.subjects, ['a'], 'the first account keeps its own row');
+  assert.deepEqual(anna2.subjects, ['b', 'c'], 'the second account still unites its own subjects');
+  assert.deepEqual(anna1.removable, ['a'], 'removing the first row never suspends the stranger');
+});
+
 test('ed0552dc1933: the painted team names Daniele once and shows no broker mailbox', async () => {
   const members = [
     { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },

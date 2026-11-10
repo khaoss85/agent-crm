@@ -297,10 +297,12 @@ function rosterPersonKey(member) {
  * Subjects merge into one row on the control-plane person key first
  * (backlog:810ed0bfd505 AC-2: `operatorAccountId`, one per human), then —
  * only without that key — when both the mailbox and the display name match
- * (trimmed, case-insensitive). A mailbox alone never merges: a shared
- * mailbox (info@…) or stale enrichment could fold a different human into
- * the row, hide them and let «Rimuovi» suspend them. A name alone never
- * merges either: two homonyms without email are two people. Nothing merges
+ * (trimmed, case-insensitive). Two explicit person keys never fold into one
+ * row: the mailbox fallback joins only a group with no key of its own, or
+ * the same key. A mailbox alone never merges: a shared mailbox (info@…)
+ * or stale enrichment could fold a different human into the row, hide them
+ * and let «Rimuovi» suspend them. A name alone never merges either: two
+ * homonyms without email are two people. Nothing merges
  * in the backend: the row keeps every subject, and removal suspends each
  * of them. Internal broker mailboxes (`…@accordo.invalid`) never paint:
  * the row shows the person's first real mailbox, or no email line when
@@ -313,7 +315,7 @@ function rosterPersonKey(member) {
  */
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
-  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, roles: unknown[], statuses: unknown[]}>} */
+  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, key: string|null, roles: unknown[], statuses: unknown[]}>} */
   const people = [];
   const byIdentity = new Map();
   const byPersonKey = new Map();
@@ -328,11 +330,23 @@ export function buildTeamRows(members = []) {
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    let person = (personKey !== null && byPersonKey.get(personKey)) || (key !== null && byIdentity.get(key)) || null;
+    let person = (personKey !== null && byPersonKey.get(personKey)) || null;
+    if (person === null && key !== null) {
+      const candidate = byIdentity.get(key) ?? null;
+      // Two explicit operator keys never fold into one row: the mailbox
+      // fallback only joins a group with no key of its own, or the same
+      // key — otherwise a shared mailbox would bridge two operator
+      // accounts and «Rimuovi» would suspend a stranger (Codex P2 on
+      // backlog:ed0552dc1933).
+      if (candidate !== null && (personKey === null || candidate.key === null || candidate.key === personKey)) {
+        person = candidate;
+      }
+    }
     if (person === null) {
-      person = { subjects: [], live: [], displayName: null, email: null, roles: [], statuses: [] };
+      person = { subjects: [], live: [], displayName: null, email: null, key: null, roles: [], statuses: [] };
       people.push(person);
     }
+    if (person.key === null) person.key = personKey;
     if (personKey !== null && !byPersonKey.has(personKey)) byPersonKey.set(personKey, person);
     if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
     person.subjects.push(member.subject);
