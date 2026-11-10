@@ -1,0 +1,190 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+
+/**
+ * Voce 908f2eb9bbfb (secondo ritorno, AC-3): la scheda dipinge nome e
+ * cronologia appena arrivano, senza aspettare il profilo.
+ *
+ * Repro del NON PASSA osservato in produzione: aprendo la scheda dal link
+ * diretto, `load()` aspettava TUTTE le letture (card, timeline, profile,
+ * enriched, calls, fields, schema) prima di dipingere qualsiasi cosa, così
+ * la pagina restava bianca per l'intera lettura del profilo (5-6 s). Ora la
+ * prima pittura (nome + cronologia) scatta appena card e timeline si
+ * sistemano; le sezioni del profilo si aggiungono quando arrivano.
+ */
+
+const CARD = {
+  customerCardContract: 1,
+  subject: { resource: 'contact', id: 'c-ada' },
+  name: 'Ada Rossi',
+  company: { id: 'co-presti', name: 'Presti Group' },
+  phone: { available: true, value: '+39 333 0000001', system: 'whatsapp', reason: null },
+  email: 'ada@presti.example',
+  socials: [],
+  status: { value: 'contatto', reason: 'no signed business on record' },
+  activePackage: {
+    available: true, count: 0, countIsComplete: true, countNote: null, truncated: false,
+    active: [], items: [], reason: null,
+  },
+  notes: { available: false, items: null, reason: 'no notes composed' },
+  history: { available: false, items: [], count: 0, truncated: false, completeTimeline: false, reason: 'no history' },
+  headline: {
+    city: { available: false, value: null, reason: 'no city on record' },
+    origin: { available: true, system: 'whatsapp', firstObservedAt: '2026-11-01T10:00:00.000Z', reason: null },
+    assignee: { available: false, value: null, reason: 'no referente on record' },
+  },
+};
+
+const TIMELINE = {
+  customerTimelineContract: 1,
+  subject: { resource: 'contact', id: 'c-ada' },
+  conversations: { available: true, count: 1, truncated: false, items: [], unthreadedMessages: 0, unthreadedCalls: 0 },
+  entries: {
+    available: true,
+    count: 1,
+    truncated: false,
+    items: [
+      {
+        entry: 'message', id: 'm1', conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+        sync: 'received', body: 'Ciao, vorrei prenotare una prova', teamAuthorId: null,
+        remoteHandle: '+39 333 0000001', errorCode: null, occurredAt: '2026-11-02T09:00:00.000Z',
+      },
+    ],
+  },
+  appointments: { available: true, count: 0, truncated: false, items: [] },
+  contactPoints: { available: true, count: 1, items: [] },
+  readState: { available: false },
+  timelineNote: 'Accordo-managed threads and bookings only.',
+};
+
+const PROFILE = {
+  customerProfileContract: 1,
+  subject: { resource: 'contact', id: 'c-ada' },
+  canonicalIdentity: {
+    linked: false,
+    clusterKey: null,
+    canonical: { resource: 'contact', id: 'c-ada', role: 'canonical' },
+    members: [
+      {
+        resource: 'contact', id: 'c-ada', role: 'canonical',
+        decisionId: null, decidedAt: null, reason: null, decidedBy: null,
+      },
+    ],
+    note: 'stands for itself',
+  },
+  identity: {
+    company: { id: 'co-presti', name: 'Presti Group' },
+    contact: { id: 'c-ada', email: 'ada@presti.example', firstName: 'Ada', lastName: 'Rossi' },
+  },
+  externalIdentities: [
+    {
+      system: 'whatsapp', externalId: '+39 333 0000001',
+      subject: { resource: 'contact', id: 'c-ada' },
+      firstObservedAt: '2026-11-01T10:00:00.000Z', lastObservedAt: '2026-11-02T09:00:00.000Z',
+    },
+  ],
+  opportunities: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+  quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+  orders: { available: false, reason: 'not composed', items: null, count: null },
+  contracts: { available: false, reason: 'not composed', items: null, count: null },
+  subscriptions: { available: false, reason: 'not composed', items: null, count: null },
+  deliveryProjects: { available: false, reason: 'not composed', items: null, count: null },
+  serviceCoverages: { available: false, reason: 'not composed', items: null, count: null },
+  supportCases: { available: false, reason: 'not composed', items: null, count: null },
+  workTasks: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+  successions: { available: false, reason: 'not composed', items: null, count: null },
+  status: { value: 'contatto', reason: 'no signed business on record' },
+  dataQualityIssues: [],
+  duplicateCandidates: [],
+  completeTimeline: false,
+  timelineNote: 'This profile spans Accordo-managed records only.',
+  limitations: [],
+};
+
+const flush = async (rounds = 10) => {
+  for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
+};
+
+/**
+ * A client whose card/timeline/profile reads stay pending until the test
+ * releases them; every other read answers at once. Writes are recorded.
+ */
+function deferredClient() {
+  const gates = new Map();
+  const gate = (name) => {
+    if (!gates.has(name)) {
+      let release;
+      const promise = new Promise((resolve, reject) => { release = { resolve, reject }; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name);
+  };
+  const writes = [];
+  const client = {
+    writes,
+    gates,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if ((options?.method ?? 'GET') !== 'GET') {
+        writes.push({ path, method: options.method });
+        return {};
+      }
+      if (path.startsWith('/api/customer-hub/card/')) return gate('card').promise;
+      if (path.startsWith('/api/customer-hub/timeline/')) return gate('timeline').promise;
+      if (path.startsWith('/api/customer-data/profile/')) return gate('profile').promise;
+      if (path.startsWith('/api/customer-data/enriched/')) return { customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c-ada' }, linked: false, optedOut: null, items: [] };
+      if (path.startsWith('/api/customer-data/fields')) return path.includes('/values') ? { values: [] } : { definitions: [] };
+      if (path === '/api/schema') return { pipelines: [] };
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  return client;
+}
+
+test('voce 908f2eb9bbfb: first paint shows the name and the timeline while the profile is still pending', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const view = createCustomerCardView({ doc, mount, client });
+  const shown = view.renderCard('contact', 'c-ada');
+  await flush(3);
+  assert.ok(!mount.textContent.includes('Ada Rossi'), 'nothing paints before card and timeline settle');
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush();
+  const early = mount.textContent;
+  assert.ok(early.includes('Ada Rossi'), 'the name paints as soon as card and timeline settle');
+  assert.ok(early.includes('Ciao, vorrei prenotare una prova'), 'the timeline paints with the name, without the profile');
+  assert.ok(!early.includes('Scheda non disponibile'), 'no failure panel while the profile is still pending');
+  client.gates.get('profile').release.resolve(PROFILE);
+  await shown;
+  await flush(3);
+  const full = mount.textContent;
+  assert.ok(full.includes('Ada Rossi'), 'the name stays after the profile lands');
+  assert.ok(full.includes('via WhatsApp'), 'the profile sections fill in when the profile lands');
+});
+
+test('voce 908f2eb9bbfb: a late profile failure leaves the painted name and timeline, error only on Dettagli', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const view = createCustomerCardView({ doc, mount, client });
+  const shown = view.renderCard('contact', 'c-ada');
+  await flush(3);
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush();
+  assert.ok(mount.textContent.includes('Ada Rossi'), 'the name paints before the profile settles');
+  const failure = Object.assign(new Error('pool esaurito'), { status: 503 });
+  client.gates.get('profile').release.reject(failure);
+  await shown;
+  await flush(3);
+  const text = mount.textContent;
+  assert.ok(text.includes('Ada Rossi'), 'the name stays when the profile fails late');
+  assert.ok(text.includes('Ciao, vorrei prenotare una prova'), 'the timeline stays when the profile fails late');
+  assert.ok(!text.includes('Scheda non disponibile'), 'a late profile failure never fails the whole scheda');
+  assert.ok(text.includes('Riprova più tardi'), 'the failed section names the retry');
+});

@@ -727,12 +727,32 @@ export function createCustomerCardView(deps) {
     ? { value: null, error: null }
     : settled);
 
-  async function load(resource, id) {
-    const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
-    const spaceId = activeSpaceId();
-    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw, schemaRaw] = await Promise.all([
+  // Voce 908f2eb9bbfb (secondo ritorno, AC-3): the old all-at-once load kept
+  // a direct-link open blank for the whole profile read. The load is split:
+  // `loadFirst` settles only what the first paint needs (identity + timeline)
+  // and `loadRest` settles the profile-fed sections. Both halves keep the
+  // settle-per-read contract, so a slow or failing read in one half never
+  // fails the other.
+  async function loadFirst(encoded) {
+    const [card, timelineRaw] = await Promise.all([
       settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
       settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
+    ]);
+    // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
+    // retry — the package is not composed for this reader, so the read stays
+    // null and the section keeps its honest not-composed state. Only a
+    // non-404 failure names the retry error on the section.
+    const timeline = nullOn404(timelineRaw);
+    return {
+      card: card.value,
+      cardError: card.error,
+      timeline: timeline.value,
+      timelineError: timeline.error,
+    };
+  }
+
+  async function loadRest(encoded, resource, id, spaceId) {
+    const [profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw, schemaRaw] = await Promise.all([
       settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
@@ -758,17 +778,12 @@ export function createCustomerCardView(deps) {
     // retry — the package is not composed for this reader, so the read stays
     // null and the section keeps its honest not-composed state. Only a
     // non-404 failure names the retry error on the section.
-    const timeline = nullOn404(timelineRaw);
     const profile = nullOn404(profileRaw);
     const enrichment = nullOn404(enrichmentRaw);
     const calls = nullOn404(callsRaw);
     const fieldDefs = nullOn404(fieldDefsRaw);
     const fieldValues = nullOn404(fieldValuesRaw);
     return {
-      card: card.value,
-      cardError: card.error,
-      timeline: timeline.value,
-      timelineError: timeline.error,
       profile: profile.value,
       profileError: profile.error,
       enrichment: enrichment.value,
@@ -3326,18 +3341,34 @@ export function createCustomerCardView(deps) {
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
     // id) used to blank the scheda with neither the card nor the error panel.
-    let loaded;
+    let encoded;
+    let spaceId;
     try {
-      loaded = await load(resource, id);
+      encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
+      spaceId = activeSpaceId();
     } catch (error) {
-      loaded = { card: null, cardError: error };
+      if (renderToken !== cardRenderToken) return;
+      const panel = el('div', 'bo-scheda-error');
+      panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
+      panel.appendChild(el('p', 'bo-muted', humanReadError(error, {
+        failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
+      })));
+      if (key === shownKey) retainedDrafts = readDrafts(mount) ?? retainedDrafts;
+      show(panel, key === shownKey ? key : null);
+      return;
+    }
+    let first;
+    try {
+      first = await loadFirst(encoded);
+    } catch (error) {
+      first = { card: null, cardError: error };
     }
     // A newer render started while this one loaded: it owns the screen.
     if (renderToken !== cardRenderToken) return;
-    if (loaded.cardError) {
+    if (first.cardError) {
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
-      panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
+      panel.appendChild(el('p', 'bo-muted', humanReadError(first.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
       // Review #612 round 3: a failed re-read of the scheda already shown
@@ -3347,11 +3378,7 @@ export function createCustomerCardView(deps) {
       show(panel, key === shownKey ? key : null);
       return;
     }
-    const {
-      card, timeline, timelineError, profile, profileError,
-      enrichment, enrichmentError, calls, callsError,
-      fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
-    } = loaded;
+    const { card, timeline, timelineError } = first;
     // C13: the re-read behind `Aggiorna` — the same enriched route the load
     // uses, with the same honest 404. Anything else still rejects, so the
     // button toasts the Italian retry instead of inventing rows.
@@ -3366,22 +3393,48 @@ export function createCustomerCardView(deps) {
     }
     retainedDrafts = null;
     try {
-      buildAndShow(key, resource, id, {
-        card, timeline, timelineError, profile, profileError,
-        enrichment, enrichmentError, calls, callsError,
-        fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
-      });
+      if (key === shownKey) {
+        // A re-read of the scheda already shown keeps the old one up while
+        // it loads and swaps in the same tick — no blank flash, no lost
+        // drafts: the atomic swap review #612 protects.
+        const rest = await loadRest(encoded, resource, id, spaceId);
+        if (renderToken !== cardRenderToken) return;
+        buildAndShow(key, resource, id, {
+          card, timeline, timelineError, ...rest, reloadEnrichment,
+        });
+      } else {
+        // Voce 908f2eb9bbfb (secondo ritorno, AC-3): a first open paints
+        // the shell — the header (name) and the center timeline — as soon
+        // as the card and the timeline settle. The profile-fed sides fill
+        // in when their reads land, so a slow profile never holds the name
+        // and the timeline hostage on a direct link.
+        const shell = buildShell(resource, id, { card, timeline, timelineError });
+        show(shell.panel, key, [shell.left, shell.right]);
+        const rest = await loadRest(encoded, resource, id, spaceId);
+        if (renderToken !== cardRenderToken) return;
+        fillSides(shell.left, shell.right, resource, id, {
+          card, timeline, timelineError, ...rest, reloadEnrichment,
+        });
+      }
     } finally {
       pendingDrafts = null;
     }
     markRead(resource, id, timeline);
   }
 
-  function buildAndShow(key, resource, id, {
-    card, timeline, timelineError, profile, profileError,
-    enrichment, enrichmentError, calls, callsError,
-    fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
-  }) {
+  // Supervisor design pass: every section is its own card, like the
+  // prototype; a section that hides itself (returns false) leaves no card.
+  const section = (col, cls, fn, ...args) => {
+    const box = el('section', `bo-scheda-card${cls ? ` ${cls}` : ''}`);
+    const shown = fn(box, ...args);
+    if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
+  };
+
+  // Voce 908f2eb9bbfb (secondo ritorno, AC-3): the shell the first paint
+  // shows — the header (name) and the center timeline only. The side columns
+  // mount empty and `fillSides` fills them when the profile-fed reads land,
+  // so a slow profile never holds the name and the timeline hostage.
+  function buildShell(resource, id, { card, timeline, timelineError }) {
     const panel = el('div', 'bo-scheda');
     header(panel, card, resource, id);
     const grid = el('div', 'bo-scheda-grid');
@@ -3389,13 +3442,26 @@ export function createCustomerCardView(deps) {
     const left = el('div', 'bo-scheda-col bo-scheda-col-side');
     const center = el('div', 'bo-scheda-col bo-scheda-col-main');
     const right = el('div', 'bo-scheda-col bo-scheda-col-side');
-    // Supervisor design pass: every section is its own card, like the
-    // prototype; a section that hides itself (returns false) leaves no card.
-    const section = (col, cls, fn, ...args) => {
-      const box = el('section', `bo-scheda-card${cls ? ` ${cls}` : ''}`);
-      const shown = fn(box, ...args);
-      if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
-    };
+    if (timelineError) {
+      section(center, 'bo-scheda-card-timeline', (box) => {
+        box.appendChild(el('h4', undefined, 'Tutti i contatti'));
+        readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
+      });
+    } else {
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
+    }
+    grid.appendChild(left);
+    grid.appendChild(center);
+    grid.appendChild(right);
+    panel.appendChild(grid);
+    return { panel, left, right };
+  }
+
+  function fillSides(left, right, resource, id, {
+    card, timeline, timelineError, profile, profileError,
+    enrichment, enrichmentError, calls, callsError,
+    fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+  }) {
     section(left, '', quickActions, card, {
       resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
     });
@@ -3407,14 +3473,6 @@ export function createCustomerCardView(deps) {
       section(left, '', customFields, { defs: fieldDefs, values: fieldValues, resource, id });
     }
     section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
-    if (timelineError) {
-      section(center, 'bo-scheda-card-timeline', (box) => {
-        box.appendChild(el('h4', undefined, 'Tutti i contatti'));
-        readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
-      });
-    } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
-    }
     if (callsError) {
       section(right, 'bo-scheda-ai', (box) => {
         box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
@@ -3431,10 +3489,11 @@ export function createCustomerCardView(deps) {
     section(right, '', nextSteps, profile, profileError, { resource, id });
     section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
-    grid.appendChild(left);
-    grid.appendChild(center);
-    grid.appendChild(right);
-    panel.appendChild(grid);
+  }
+
+  function buildAndShow(key, resource, id, all) {
+    const { panel, left, right } = buildShell(resource, id, all);
+    fillSides(left, right, resource, id, all);
     show(panel, key, [left, right]);
   }
 
