@@ -565,6 +565,43 @@ test('the phrase drafts parameters from one sentence through the composed LLM', 
   assert.equal(parsed.dryRun, false);
 });
 
+// backlog:913c61ec — «giovedì alle 15» carries the weekday and the hour into
+// the draft as Europe/Rome wall time (Thursday 12 November 2026, 15:00 CET),
+// never a 00:00 midnight. The model answer is stubbed at the seam; the test
+// pins the contract the draft keeps: exact instants plus their Rome weekday
+// and clock, the two things the 07/11 lotto 1 verification found missing.
+test('the phrase carries «giovedì alle 15» into the draft as Thursday 15:00 Rome', async () => {
+  const service = fakeAppointments();
+  const phraseLlm = {
+    async complete() {
+      // 15:00 in Europe/Rome (CET) on Thursday 12 November 2026.
+      return {
+        text: '{"teamMemberId": "coach-guido", "serviceKey": "pt-single", "startsAt": "2026-11-12T14:00:00.000Z", "endsAt": "2026-11-12T14:30:00.000Z"}',
+        dryRun: false,
+      };
+    },
+  };
+  const parsed = await capabilityFor({ service, phraseLlm })
+    .parseBookingPhrase({ spaceId: 'spazio-prova', phrase: 'giovedì alle 15 con Guido' });
+  assert.deepEqual(parsed.draft, {
+    teamMemberId: 'coach-guido',
+    serviceKey: 'pt-single',
+    startsAt: '2026-11-12T14:00:00.000Z',
+    endsAt: '2026-11-12T14:30:00.000Z',
+  });
+  const starts = new Date(parsed.draft.startsAt);
+  assert.equal(
+    new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'long' }).format(starts),
+    'giovedì',
+    'the weekday of the sentence lands in the draft',
+  );
+  const clock = new Intl.DateTimeFormat('it-IT', {
+    timeZone: 'Europe/Rome', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(starts);
+  assert.equal(clock === '24:00' ? '00:00' : clock, '15:00', 'the hour lands in the draft, never an invented 00:00');
+  assert.equal(service.rows.length, 0, 'a draft never writes');
+});
+
 test('the phrase refuses without a handle and on an unusable draft', async () => {
   const service = fakeAppointments();
   const cap = capabilityFor({ service });
