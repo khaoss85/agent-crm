@@ -219,6 +219,45 @@ export function isDashboardPayload(model) {
   return typeof csv.filename === 'string' && typeof csv.content === 'string';
 }
 
+/**
+ * backlog:07a101585207 / b3d88f6e38ef (famiglia F5): the person a dashboard
+ * owner names, as the team names them — the profile name from the roster
+ * (`teamPeople`, the Calendario rule), the owner's own words when they read
+ * as a name, «Membro del team» otherwise. Never a slug like «coach-guido».
+ * @param {unknown} owner
+ * @param {unknown} people `teamPeople` rows
+ */
+export function ownerName(owner, people) {
+  return personLabel(owner, Array.isArray(people) ? people : []) ?? 'Membro del team';
+}
+
+/**
+ * The dashboard as the operator reads it: team rows and the «Cosa noto»
+ * sentences name people, never the owner id the registry stores. `owners`
+ * keeps the raw ids — the filter sends them back to the server.
+ * @param {any} model a dashboard payload
+ * @param {unknown} roster `/api/spine/memberships` items
+ */
+export function withPersonNames(model, roster) {
+  const people = teamPeople(roster);
+  const owners = [...new Set([
+    ...(Array.isArray(model?.owners) ? model.owners : []),
+    ...(Array.isArray(model?.team) ? model.team.map((entry) => entry?.owner) : []),
+  ].filter((owner) => typeof owner === 'string' && owner !== ''))];
+  const names = new Map(owners.map((owner) => [owner, ownerName(owner, people)]));
+  // Longest first, so «coach-guido-2» is never half-replaced by «coach-guido».
+  const ordered = [...owners].sort((a, b) => b.length - a.length);
+  const say = (text) => (typeof text === 'string'
+    ? ordered.reduce((out, owner) => (owner === names.get(owner) ? out : out.split(owner).join(names.get(owner))), text)
+    : text);
+  return {
+    ...model,
+    ownerNames: names,
+    team: (model.team ?? []).map((entry) => ({ ...entry, owner: names.get(entry?.owner) ?? ownerName(entry?.owner, people) })),
+    insights: (model.insights ?? []).map((insight) => ({ ...insight, text: say(insight?.text) })),
+  };
+}
+
 /** Hash route of the "+ Nuovo modulo" screen. */
 export const NUOVO_MODULO_ROUTE = '#/nuovo-modulo';
 
@@ -336,6 +375,7 @@ export function reportingSummary(rows) {
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
 import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { personLabel, teamPeople } from './admin-labels.js';
 
 /**
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
@@ -471,12 +511,13 @@ export function createReportingView(deps) {
     // shape is the supervisor's vestito (styles.css); the structure and
     // the recalculation contract are here.
     for (const owner of model.owners ?? []) {
-      const sigla = pill(ownerSigla(owner), dashboard.owner === owner, () => {
+      const name = model.ownerNames?.get(owner) ?? ownerName(owner, []);
+      const sigla = pill(ownerSigla(name), dashboard.owner === owner, () => {
         dashboard.owner = owner;
         renderReporting();
       });
-      sigla.setAttribute('title', String(owner));
-      sigla.setAttribute('aria-label', String(owner));
+      sigla.setAttribute('title', name);
+      sigla.setAttribute('aria-label', name);
       sigla.setAttribute('data-owner', String(owner));
       people.appendChild(sigla);
     }
@@ -857,6 +898,18 @@ export function createReportingView(deps) {
       }));
       return;
     }
+    // The team names people by their profile name (famiglia F5): an
+    // unreadable roster leaves the owners' own words, never an error.
+    let roster = [];
+    if ((model.owners ?? []).length > 0 || (model.team ?? []).length > 0) {
+      try {
+        const answer = await client.request('/api/spine/memberships');
+        roster = Array.isArray(answer?.items) ? answer.items : [];
+      } catch (error) {
+        log('reporting team read failed', { name: error?.name ?? 'Error', status: error?.status ?? null, code: error?.code ?? null });
+      }
+    }
+    model = withPersonNames(model, roster);
     dashboardFilters(filtersHost, model);
     if (model.truncated) {
       host.appendChild(el(doc, 'p', { class: 'lede', text: 'Dati parziali: oltre 1000 righe lette, i totali sono troncati.' }));

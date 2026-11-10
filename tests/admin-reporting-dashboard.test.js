@@ -657,7 +657,8 @@ test('c3e66b36ddb7: every number comes from the declared analytics registry, rea
   const { view, requests } = harness();
   await view.renderReporting();
   const sources = new Set(requests.map((path) => path.split('?')[0]));
-  assert.deepEqual([...sources].sort(), ['/api/modules/reporting/records', '/api/reporting/dashboard']);
+  // The team roster only names the people (famiglia F5): it carries no number.
+  assert.deepEqual([...sources].sort(), ['/api/modules/reporting/records', '/api/reporting/dashboard', '/api/spine/memberships']);
 });
 
 test('c3e66b36ddb7: filters sit beside the title — one active period, Tutti and the person sigle', async () => {

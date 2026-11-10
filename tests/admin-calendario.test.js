@@ -3862,7 +3862,9 @@ test('personRows merges one human on the roster person key across mailboxes', ()
   const rows = personRows(['broker|dan', 'github|48571113', 'google|1049abc', 'sara'], [], members);
   assert.equal(rows.length, 2, 'three subjects of Dan are one row, plus Sara');
   assert.deepEqual(rows[0].ids, ['broker|dan', 'github|48571113', 'google|1049abc']);
-  assert.equal(rows[0].label, 'Dan');
+  // The profile name of the person: the full name beats a short one
+  // (teamPeople, backlog:3ce220e60c33).
+  assert.equal(rows[0].label, 'Daniele Pelleri');
   assert.equal(rows[1].label, 'Sara');
   const noKey = personRows(['broker|dan', 'github|48571113'], [], [
     { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com' },
@@ -3910,7 +3912,8 @@ test('the manual form offers the catalog menu with the default and price prefill
   );
   const people = mount.querySelector('select[name="teamMemberId"]').findAll('option')
     .map((node) => node.textContent);
-  assert.equal(people.filter((text) => text === 'Dan').length, 1, 'three identities of Dan are one menu row');
+  assert.equal(people.filter((text) => text === 'Daniele Pelleri').length, 1, 'three identities of Dan are one menu row');
+  assert.ok(!people.includes('Dan'), 'no second row for another identity of Dan');
   assert.ok(people.includes('Sara'), 'Sara keeps her row');
   // Switching the service follows the price; the claim books menu keys.
   service.value = 'lezione-prova';
