@@ -446,8 +446,10 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   assert.ok(suggest.path.includes('teamMemberIds=marco'), 'the drafted person is searched');
   assert.ok(suggest.path.includes('slotMinutes=30'), 'the drafted duration is searched');
   // Production 07/11: the drafted day bounds the search (Rome Thu 22 Oct).
-  assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search covers the drafted day');
-  assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and only that day');
+  // backlog:913c61ec: a drafted time narrows it further — from 16:00 Rome to
+  // the end of the painted hours (18:00 Rome), never the whole day.
+  assert.ok(suggest.path.includes('from=2026-10-22T14%3A00'), 'the search starts at the drafted time');
+  assert.ok(suggest.path.includes('to=2026-10-22T16%3A00'), 'and ends with the painted hours of that day');
   // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
   const list = mount.querySelector('.cal-slots');
   assert.ok(list, 'the proposal rows render');
