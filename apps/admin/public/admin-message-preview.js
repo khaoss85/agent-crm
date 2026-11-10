@@ -38,14 +38,20 @@ const HIDDEN_ELEMENT_RE = new RegExp(
   'gi',
 );
 /**
- * A tag name, then a space, `/` or `>`: `<mario@example.com>` and
- * `<https://…>` are not tags and stay text.
+ * The HTML tag names mail bodies carry (Office `o:`/`v:` included). Only
+ * these count as tags when bare: `<S> <M> <L>`, `<nome>`,
+ * `<mario@example.com>` and `<https://…>` in plain text stay text.
  */
-const TAG_NAME = '[a-zA-Z][\\w-]*(?::[\\w-]+)?(?=[\\s/>])';
+const HTML_TAG_NAMES = '(?:a|abbr|b|big|blockquote|body|br|center|code|col|colgroup|dd|div|dl|dt|em|font|footer|form|h[1-6]|head|header|hr|html|i|iframe|img|input|li|link|main|meta|nav|ol|p|picture|pre|section|small|source|span|strike|strong|style|sub|sup|svg|table|tbody|td|tfoot|th|thead|title|tr|tt|u|ul|wbr|script|template|xml|[ov]:[\\w-]+)';
+const TAG_NAME = HTML_TAG_NAMES + '(?=[\\s/>])';
+/** Any other name counts only with an attribute: `<x-foo class=\x22…\x22>`. */
+const ATTRIBUTED_TAG = '[a-zA-Z][\\w:-]*\\s+[a-zA-Z][\\w:-]*\\s*=';
+/** A closing tag of any name: `</x-card>` is never plain text. */
+const CLOSING_TAG = '<\\/[a-zA-Z][\\w:-]*\\s*>';
 /** A whole tag, quote-aware. */
-const TAG_RE = new RegExp('<\\/?' + TAG_NAME + IN_TAG + '*>', 'g');
+const TAG_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')' + IN_TAG + '*>|' + CLOSING_TAG, 'gi');
 /** A tag cut by a length fence: `<div style=…` with no `>` until the end. */
-const CUT_TAG_RE = /<\/?[a-zA-Z][\w-]*(?:\s[^<>]*)?$/;
+const CUT_TAG_RE = new RegExp('<\\/?' + HTML_TAG_NAMES + '(?:\\s[^<>]*)?$', 'i');
 const BLOCK_OPEN_RE = /<(p|div|li|tr|table|blockquote|h[1-6])(?=[\s/>])/gi;
 const BLOCK_CLOSE_RE = /<\/(p|div|li|tr|table|blockquote|h[1-6])\s*>/gi;
 const BREAK_RE = /<br\b[^<>]*>/gi;
@@ -59,7 +65,7 @@ const ATTRIBUTE_NAMES = '(?:id|class|style|width|height|align|valign|bgcolor|bac
 const ATTRIBUTE = ATTRIBUTE_NAMES + '\\s*=\\s*(?:\\x22[^\\x22]*(?:\\x22|$)|\\x27[^\\x27]*(?:\\x27|$))';
 const ATTRIBUTE_RESIDUE_RE = new RegExp('(^|[\\s>])' + ATTRIBUTE + '(?:\\s+' + ATTRIBUTE + ')*\\s*\\/?>?', 'gi');
 /** Any sign of markup: a tag, a cut tag or attribute residue. */
-const MARKUP_HINT_RE = new RegExp('<\\/?' + TAG_NAME + '|<\\/?[a-zA-Z][\\w-]*$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
+const MARKUP_HINT_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
 
 const NAMED_ENTITIES = Object.freeze({
   amp: '&', lt: '<', gt: '>', quot: '\u0022', apos: '\u0027', nbsp: ' ',
@@ -87,7 +93,11 @@ const DECORATIVE_RE = /(?:[*=_~#\u2500-\u257f-][ \t]?){4,}/g;
  * only, so a customer writing about «la versione web» keeps their words.
  */
 const SERVICE_PHRASE_RES = Object.freeze([
-  /\bse non (?:riesci a )?(?:visualizzi|vedi|leggi)(?: correttamente)?(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))?(?: correttamente)?(?: o le immagini)?[,:]?(?: (?:clicca|apri|visualizza|vai)(?: qui| sul link)?(?: per (?:visualizzarla|vederla|aprirla|leggerla)| per visualizzare (?:la|questa) (?:e-?mail|mail|newsletter|versione (?:web|online)))?(?: (?:online|nel (?:tuo )?browser|sul web))?)?[.!:]?/gi,
+  // «se non + verbo» alone is the customer's sentence («se non leggi il
+  // contratto, chiamami»): only «correttamente» or a newsletter tail
+  // («clicca qui», «apri sul link», «nel browser») makes it a service line.
+  /\bse non (?:riesci a )?(?:visualizzi|vedi|leggi)(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))? correttamente(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))?(?: o le immagini)?[,:]?(?: (?:clicca|apri|visualizza|vai)(?: qui| sul link)?(?: per (?:visualizzarla|vederla|aprirla|leggerla)| per visualizzare (?:la|questa) (?:e-?mail|mail|newsletter|versione (?:web|online)))?(?: (?:online|nel (?:tuo )?browser|sul web))?)?[.!:]?/gi,
+  /\bse non (?:riesci a )?(?:visualizzi|vedi|leggi)(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))?[,:]? (?:clicca|apri|visualizza|vai) (?:qui|sul link)(?: per (?:visualizzarla|vederla|aprirla|leggerla)| per visualizzare (?:la|questa) (?:e-?mail|mail|newsletter|versione (?:web|online)))?(?: (?:online|nel (?:tuo )?browser|sul web))?[.!:]?/gi,
   /\b(?:visualizza|apri|leggi|vedi) (?:la |questa )?(?:versione (?:web|online)(?: (?:della|di questa) (?:e-?mail|mail|newsletter))?|(?:e-?mail|mail|newsletter|messaggio) (?:nel (?:tuo )?browser|online|sul web|come pagina web))[.!:]?/gi,
   /\b(?:clicca|click) (?:qui|here) (?:per (?:visualizzarla|vederla|leggerla)(?: (?:online|nel (?:tuo )?browser))?|to view (?:it |this (?:e-?mail|message) )?(?:in (?:your |a )?(?:web )?browser|online))[.!:]?/gi,
   /\b(?:having )?trouble viewing this (?:e-?mail|message)\??/gi,
@@ -169,7 +179,8 @@ function decodeEntities(text) {
  */
 export function cleanPreviewText(value) {
   if (typeof value !== 'string' || value === '') return '';
-  let text = decodeEntities(htmlToText(value)).replace(INVISIBLE_RE, '').replace(CONTROL_RE, ' ');
+  // Decode first, strip after: «&lt;script&gt;» never comes back as markup.
+  let text = htmlToText(decodeEntities(value)).replace(INVISIBLE_RE, '').replace(CONTROL_RE, ' ');
   for (const re of IMAGE_RES) text = text.replace(re, ' ');
   for (const re of URL_RES) text = text.replace(re, ' ');
   text = text.replace(DECORATIVE_RE, ' ');
@@ -183,22 +194,31 @@ export function cleanPreviewText(value) {
 
 /**
  * True when a stored body is a stand-in rather than the message: nothing
- * readable after `cleanPreviewText`, or links make up at least half of its
- * visible characters (a plain part that is a list of tracking URLs).
+ * readable once URLs, markup and the known service lines are gone. A short
+ * message with a long link («Ciao, vedi https://…») is a message.
  * @param {unknown} value
  */
 export function isPlaceholderBody(value) {
-  if (typeof value !== 'string') return true;
-  if (cleanPreviewText(value) === '') return true;
-  const visible = value.replace(/\s+/g, '').length;
-  const links = (value.match(new RegExp(URL_START + '\\S+', 'gi')) ?? []).join('').length;
-  return visible > 0 && links * 2 >= visible;
+  return typeof value !== 'string' || cleanPreviewText(value) === '';
+}
+
+const LINK_HOST_RE = /(?:https?:\/\/(?:[^\s/?#@<>[\]()]*@)?|\bwww\.)([a-z0-9.-]+\.[a-z]{2,})/i;
+
+/**
+ * The host of the first link in a text, `www.` dropped; '' without one.
+ * @param {string} text
+ */
+function linkHost(text) {
+  const match = LINK_HOST_RE.exec(text);
+  return match ? match[1].toLowerCase().replace(/^www\./, '') : '';
 }
 
 /**
  * The preview line of a message, like a mail client: «Oggetto — estratto»
  * when the message has a subject, the clean excerpt otherwise, the subject
- * alone when the body cleans to nothing. A body that opens with its own
+ * alone when the body cleans to nothing, the host of its first link when a
+ * message is only a link (a WhatsApp or form message with just a URL). A
+ * body that opens with its own
  * subject does not repeat it. Bounded to `max` characters, an ellipsis
  * included. '' when there is nothing to show.
  * @param {unknown} body
@@ -215,7 +235,8 @@ export function messagePreview(body, options = {}) {
     && (excerpt.length === subject.length || /[\s|•·:,;.!?–—-]/.test(excerpt[subject.length]))) {
     excerpt = excerpt.slice(subject.length).replace(/^[\s|•·:,;.!?–—-]+/, '');
   }
-  const line = subject !== '' && excerpt !== '' ? `${subject} — ${excerpt}` : (subject || excerpt);
+  const line = subject !== '' && excerpt !== '' ? `${subject} — ${excerpt}` : (subject || excerpt
+    || (typeof body === 'string' ? linkHost(body) : ''));
   if (line.length <= max) return line;
   return `${line.slice(0, max - 1).trimEnd()}…`;
 }

@@ -167,7 +167,7 @@ const RECEIPT_HTML = '<html><head><title>Ricevuta</title><style>p{color:#333}</s
   + '<div style="color:#333">Grazie per il tuo acquisto.</div></body></html>';
 
 test('the Gmail reader skips a placeholder plain part and strips the HTML part clean', () => {
-  for (const plain of [HTML_CAPABLE, FASTWEB.split('\n')[0], 'https://example.com/a?x=1\nhttps://example.com/b?y=2 Vai']) {
+  for (const plain of [HTML_CAPABLE, FASTWEB.split('\n')[0], 'https://example.com/a?x=1\nhttps://example.com/b?y=2']) {
     const event = normalizeGmailRestMessage(restMail({ plain, html: RECEIPT_HTML }), 'presti-pilota@example.com');
     assert.match(event.text, /Ciao Mario,\nil pagamento di 49 € è confermato\./, `a stand-in plain part (${plain.slice(0, 20)}) gives way to the HTML`);
     assert.match(event.text, /Grazie per il tuo acquisto\./);
@@ -186,4 +186,53 @@ test('a full body keeps its text and loses only markup residue', () => {
   assert.equal(core.cleanMessageBody('Ciao <b>Mario</b>,<br>a presto'), 'Ciao Mario,\na presto');
   assert.equal(core.cleanMessageBody('Mario <mario@example.com> ha scritto'), 'Mario <mario@example.com> ha scritto',
     'an address in angle brackets is not markup');
+});
+
+test('Muse giro 1 P1: a short message with a long link is a message, never a stand-in', () => {
+  const short = 'Ciao, vedi qui https://example.com/preventivi/2026/11/offerta-definitiva-per-mario-rossi?utm_source=whatsapp&utm_medium=chat&id=8f2a9c';
+  assert.equal(core.isPlaceholderBody(short), false);
+  const event = normalizeGmailRestMessage(restMail({ plain: short, html: RECEIPT_HTML }), 'presti-pilota@example.com');
+  assert.equal(event.text, short, 'the plain part with the real words wins over the HTML');
+  assert.equal(core.isPlaceholderBody('https://example.com/a https://example.com/b'), true, 'links alone are still a stand-in');
+});
+
+test('Muse giro 1 P2: encoded markup never comes back as markup', () => {
+  const preview = previewLastContactText('Ciao &lt;script&gt;alert(1)&lt;/script&gt; a presto &lt;b&gt;Mario&lt;/b&gt;');
+  assert.doesNotMatch(preview, /<|>/, preview);
+  assert.equal(preview, 'Ciao a presto Mario', 'a decoded script goes whole, like any script');
+});
+
+test('Muse giro 1 P2: «se non + verbo» in the customer\'s words is never a service line', () => {
+  for (const words of [
+    'Se non leggi il contratto, chiamami.',
+    'se non vedi la mail, scrivimi su WhatsApp',
+    'Se non visualizzi il preventivo dimmelo',
+  ]) {
+    assert.equal(previewLastContactText(words), words);
+  }
+  assert.equal(previewLastContactText('Se non visualizzi la mail clicca qui. Ciao Mario'), 'Ciao Mario',
+    'the newsletter tail still makes it a service line');
+});
+
+test('Muse giro 1 P2: a message that is only a link previews the link host', () => {
+  const now = new Date('2026-11-10T12:00:00.000Z');
+  const inbox = buildInbox({
+    now,
+    conversations: [],
+    messages: [
+      { id: 'w1', conversationId: 'wa1', channel: 'whatsapp', direction: 'inbound', occurredAt: '2026-11-10T10:00:00.000Z', body: 'https://www.example.com/listino-2026.pdf', remoteHandle: '+390000000000' },
+    ],
+  });
+  assert.equal(inbox.rows[0].preview, 'example.com', 'never «Messaggio senza testo» for a link');
+  assert.equal(previewLastContactText('https://maps.example.org/?q=via+roma'), 'maps.example.org');
+});
+
+test('Muse giro 1 P2: angle brackets in plain text are not tags', () => {
+  assert.equal(previewLastContactText('Taglie disponibili <S> <M> <L>, scrivimi <nome> e cognome'),
+    'Taglie disponibili <S> <M> <L>, scrivimi <nome> e cognome');
+  const body = 'Taglie <S> <M> <L>\nFirma: <nome>';
+  assert.equal(core.hasMarkup(body), false);
+  assert.equal(core.cleanMessageBody(body), body, 'the scheda keeps them');
+  assert.equal(core.cleanMessageBody('<S> e <b>grassetto</b>'), '<S> e grassetto', 'known HTML tags still go');
+  assert.equal(core.cleanMessageBody('<x-card class="a">Ciao</x-card>'), 'Ciao', 'an unknown tag with attributes, and its closing tag, go');
 });
