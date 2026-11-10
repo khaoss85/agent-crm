@@ -1181,7 +1181,7 @@ document.getElementById('probe').textContent = JSON.stringify({
 });
 document.title = 'stato-sync-ready';`;
     case 'spazi-accessi': return `
-import { createSpaziAccessiView } from './admin-spazi-accessi.js';
+import { SPAZI_AI_MASTER, createSpaziAccessiView } from './admin-spazi-accessi.js';
 const SPACES = ${JSON.stringify(DEMO_SPACES)};
 const MEMBERS = ${JSON.stringify(DEMO_MEMBERS)};
 const TEAM_AGENTS = ${JSON.stringify(DEMO_AGENTS)};
@@ -1220,6 +1220,12 @@ const view = createSpaziAccessiView({
   onPickSpace: function () {},
 });
 await view.render();
+// backlog:2c3156a4: the master «AI dello spazio» switch sits above the five.
+const toggles = Array.from(document.querySelectorAll('#view-module button[role="switch"]'));
+const masterToggles = toggles.filter((node) => node.getAttribute('aria-label') === SPAZI_AI_MASTER.label);
+const masterTop = masterToggles.length === 1 ? masterToggles[0].getBoundingClientRect().top : null;
+const masterAbove = masterToggles.length === 1 && toggles[0] === masterToggles[0]
+  && toggles.slice(1).every((node) => node.getBoundingClientRect().top > masterTop);
 document.getElementById('probe').textContent = JSON.stringify({
   spaces: document.querySelectorAll('#view-module .bo-spazi-card').length,
   here: document.querySelector('#view-module .bo-spazi-here')
@@ -1227,7 +1233,9 @@ document.getElementById('probe').textContent = JSON.stringify({
   members: document.querySelectorAll('#view-module .bo-spazi-member').length,
   avatars: document.querySelectorAll('#view-module .bo-spazi-avatar').length,
   pills: document.querySelectorAll('#view-module .bo-spazi-role').length,
-  switches: document.querySelectorAll('#view-module button[role="switch"]').length,
+  switches: toggles.length,
+  master: masterToggles.length,
+  masterAbove,
   stats: Array.from(document.querySelectorAll('#view-module .bo-spazi-stat'), (node) => node.textContent),
   apri: Array.from(document.querySelectorAll('#view-module button')).filter((node) => node.textContent === 'Apri').length,
   agents: document.querySelectorAll('#view-module .bo-agent-member').length,
@@ -1650,7 +1658,11 @@ export function assertProbe(name, probe) {
       // tests/admin-spazi-accessi-shots.test.js.
       if (probe.spaces !== 3) throw new Error(`spazi-accessi: the probe holds ${String(probe.spaces)} spaces, expected 3`);
       if (probe.members !== 2) throw new Error(`spazi-accessi: the probe holds ${String(probe.members)} members, expected 2`);
-      if (probe.switches !== 5) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 5`);
+      // backlog:2c3156a4: the master «AI dello spazio» plus the five, the
+      // master first and painted above them.
+      if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
+      if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
+      if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
       // C7: both cards paint the real statistic (2 active connectors,
       // 2 rendered members, exact total 3). A card that cannot count paints
       // no row, so the gate requires both rows here.
