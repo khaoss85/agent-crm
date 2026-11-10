@@ -96,7 +96,7 @@ test('Spazi e accessi: one row for Dan, «Rimuovi» covers all his identities, t
 test('Oggi (memberLabel): every identity of Dan reads the profile name', () => {
   for (const subject of DAN_IDS) assert.equal(memberLabel(subject, ROSTER), 'Daniele Pelleri');
   assert.equal(memberLabel('coach-guido', ROSTER), 'Guido Bianchi');
-  assert.equal(memberLabel('coach-guido', []), null, 'an unknown slug is never a name');
+  assert.equal(memberLabel('coach-guido', []), 'Coach Guido', 'an unknown slug reads as words, never as the id');
 });
 
 test('personLabel: a roster slug reads the profile name; an unknown slug reads as words, never the id', () => {
@@ -106,6 +106,57 @@ test('personLabel: a roster slug reads the profile name; an unknown slug reads a
   assert.equal(personLabel('Marco Rossi', []), 'Marco Rossi', 'a typed name stays');
   assert.equal(personLabel('user-12345', []), null);
   assert.equal(personLabel('broker+x@accordo.invalid', []), null);
+});
+
+test('review Muse #750 P2: a real mailbox owner stays on screen, only technical ones hide', () => {
+  assert.equal(personLabel('mario.rossi@esempio.it', []), 'mario.rossi@esempio.it');
+  assert.equal(personLabel('mario.rossi@esempio.it', ROSTER), 'mario.rossi@esempio.it');
+  assert.equal(personLabel('broker+adopted-1@accordo.invalid', []), null);
+  assert.equal(personLabel('google|1049', []), null);
+});
+
+test('review Muse #750 P2: a real name with a hyphen is never treated as a slug', () => {
+  const people = teamPeople([{ subject: 'google|77', displayName: 'anna-maria', email: 'am@example.com' }]);
+  assert.equal(people[0].label, 'anna-maria', 'a displayName is a name, whatever its shape');
+  assert.equal(memberLabel('google|77', [{ subject: 'google|77', displayName: 'anna-maria' }]), 'anna-maria');
+  // Only a stored id reads as words: a nameless roster slug, an offer owner.
+  assert.equal(teamPeople([{ subject: 'coach-guido' }])[0].label, 'Coach Guido');
+});
+
+test('review Muse #750 P2: «Cosa noto» swaps every owner once, never a name just written in', () => {
+  const roster = [
+    { subject: 'coach-guido', displayName: 'Guido Bianchi' },
+    { subject: 'Bianchi', displayName: 'Luca Neri' },
+  ];
+  const model = {
+    owners: ['coach-guido', 'Bianchi'], team: [],
+    insights: [{ text: 'coach-guido tiene i lead: spostarli a Bianchi.' }],
+  };
+  assert.equal(withPersonNames(model, roster).insights[0].text, 'Guido Bianchi tiene i lead: spostarli a Luca Neri.');
+});
+
+test('review Muse #750 P2: Pipeline and Offerta show a mailbox referente as written', async () => {
+  const owner = 'mario.rossi@esempio.it';
+  const client = (base) => ({
+    async request(path, options) {
+      if (path.startsWith('/api/modules/opportunity/records/') || path.startsWith('/api/opportunities')) {
+        const answer = await base.request(path, options);
+        return answer.items ? { items: answer.items.map((item) => ({ ...item, owner })) } : { ...answer, owner };
+      }
+      return base.request(path, options);
+    },
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createOfferDetail({ doc, mount, client: client(offerClient(ROSTER)) }).renderOfferDetail('off1');
+  const facts = Object.fromEntries(mount.findAll('p')
+    .filter((node) => node.getAttribute('class') === 'offer-fact')
+    .map((node) => [node.findAll('span')[0].textContent, node.findAll('span')[1].textContent]));
+  assert.equal(facts.Referente, owner);
+  const boardMount = createMount();
+  await createPipelineBoard({ doc: createFakeDocument(), mount: boardMount, client: client(offerClient(ROSTER)) }).renderBoard('b2b-sales');
+  assert.match(textOf(boardMount), /mario\.rossi@esempio\.it/);
+  assert.doesNotMatch(textOf(boardMount), /Membro del team/);
 });
 
 function dashboard() {

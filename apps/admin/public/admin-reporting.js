@@ -245,10 +245,15 @@ export function withPersonNames(model, roster) {
     ...(Array.isArray(model?.team) ? model.team.map((entry) => entry?.owner) : []),
   ].filter((owner) => typeof owner === 'string' && owner !== ''))];
   const names = new Map(owners.map((owner) => [owner, ownerName(owner, people)]));
-  // Longest first, so «coach-guido-2» is never half-replaced by «coach-guido».
+  // One pass over the sentence (review Muse #750): every owner is matched in
+  // the original text only, longest first, so a name just written in is
+  // never rewritten by another owner.
   const ordered = [...owners].sort((a, b) => b.length - a.length);
-  const say = (text) => (typeof text === 'string'
-    ? ordered.reduce((out, owner) => (owner === names.get(owner) ? out : out.split(owner).join(names.get(owner))), text)
+  const pattern = ordered.length === 0
+    ? null
+    : new RegExp(ordered.map((owner) => owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+  const say = (text) => (typeof text === 'string' && pattern !== null
+    ? text.replace(pattern, (owner) => names.get(owner) ?? owner)
     : text);
   return {
     ...model,

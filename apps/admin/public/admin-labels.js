@@ -181,9 +181,10 @@ export function isTechnicalMemberText(value) {
 }
 
 /**
- * A lower-case id joined by `-` or `_` («coach-guido», a UUID): a roster
- * slug, never a name (backlog:b3d88f6e38ef, ddf7f416ad22). A name an
- * operator typed has a capital or a space («Anna-Maria», «Marco»).
+ * A lower-case id joined by `-` or `_` («coach-guido», a UUID): the shape
+ * of a stored id (a roster subject, an offer owner), read through
+ * `subjectText` — never applied to a displayName, so a real name with a
+ * hyphen («anna-maria») is never hidden (review Muse #750).
  */
 const SLUG_SHAPE = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
 
@@ -195,8 +196,23 @@ const SLUG_SHAPE = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
  * @returns {string | null}
  */
 export function memberText(value) {
-  if (typeof value !== 'string' || isTechnicalMemberText(value) || SLUG_SHAPE.test(value.trim())) return null;
+  if (typeof value !== 'string' || isTechnicalMemberText(value)) return null;
   return value.trim();
+}
+
+/**
+ * A stored id (a roster subject, an offer referente, a reporting owner) as
+ * words, or null (backlog:b3d88f6e38ef, ddf7f416ad22): a technical id never
+ * shows, a slug reads as words («coach-guido» → «Coach Guido»; one with
+ * digits, like «user-12345» or a UUID, names nobody), anything else — a
+ * typed name, a real mailbox — reads as itself.
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function subjectText(value) {
+  const text = memberText(value);
+  if (text === null) return null;
+  return SLUG_SHAPE.test(text) ? slugAsName(text) : text;
 }
 
 /**
@@ -265,7 +281,7 @@ function profileName(names) {
  * Team, «Scegli una persona…», Calendario, Spazi e accessi, Oggi, Reporting
  * and the offer screens all read people through this one function.
  * @param {unknown} roster `/api/spine/memberships` items
- * @returns {Array<{subjects: string[], members: any[], keys: string[], name: string|null, email: string|null, label: string, born: number|null, index: number}>}
+ * @returns {Array<{subjects: string[], members: any[], keys: string[], name: string|null, email: string|null, known: boolean, label: string, born: number|null, index: number}>}
  */
 export function teamPeople(roster) {
   const list = Array.isArray(roster) ? roster : [];
@@ -307,13 +323,14 @@ export function teamPeople(roster) {
   }
   const rows = people.map((person) => {
     const name = profileName(person.names);
-    const plain = person.subjects.map((subject) => memberText(subject)).find((text) => text !== null) ?? null;
+    const plain = person.subjects.map((subject) => subjectText(subject)).find((text) => text !== null) ?? null;
     return {
       subjects: person.subjects,
       members: person.members,
       keys: person.keys,
       name,
       email: person.email,
+      known: name !== null || person.email !== null || plain !== null,
       base: name ?? person.email ?? plain ?? 'Membro del team',
       born: person.born,
       index: person.index,
@@ -352,21 +369,17 @@ export function personOf(id, rosterOrPeople) {
 /**
  * The words a screen shows for a person id it stores (an offer referente,
  * a reporting owner, an audit actor): the person label from the team, else
- * the id itself when it reads as a name an operator typed («Marco Rossi»),
- * else null — never an address, a provider id or a slug.
+ * the id as words (`subjectText`: a typed name or a real mailbox reads as
+ * itself, a slug as words), else null — never a technical mailbox or a
+ * provider id.
  * @param {unknown} id
  * @param {unknown} rosterOrPeople
  * @returns {string | null}
  */
 export function personLabel(id, rosterOrPeople) {
   const row = personOf(id, rosterOrPeople);
-  if (row !== null) {
-    if (row.name !== null || row.email !== null) return row.label;
-    return row.subjects.map(slugAsName).find((name) => name !== null) ?? null;
-  }
-  const typed = memberText(id);
-  if (typed !== null) return typed.includes('@') ? null : typed;
-  return slugAsName(id);
+  if (row !== null) return row.known ? row.label : null;
+  return subjectText(id);
 }
 
 /**
@@ -383,7 +396,7 @@ export function memberLabel(subject, members) {
   if (typeof subject !== 'string' || subject.trim() === '') return null;
   const row = teamPeople(members).find((person) => person.subjects.includes(subject)) ?? null;
   if (row !== null) return row.name;
-  const typed = memberText(subject);
+  const typed = subjectText(subject);
   return typed !== null && !typed.includes('@') ? typed : null;
 }
 

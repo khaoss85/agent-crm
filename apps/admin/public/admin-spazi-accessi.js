@@ -44,7 +44,7 @@ import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
-import { memberText, teamPeople } from './admin-labels.js';
+import { subjectText, teamPeople } from './admin-labels.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -293,7 +293,7 @@ export function buildTeamRows(members = []) {
       // No readable name or mailbox: the subject when it reads as a word,
       // else a generic label — never a technical subject (`google|…`,
       // `broker+…`), the same fallback the Calendario team uses.
-      const readable = person.displayName ?? person.email ?? memberText(subject);
+      const readable = person.displayName ?? person.email ?? subjectText(subject);
       const name = readable ?? 'Membro del team';
       const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
       const role = known.length > 0
