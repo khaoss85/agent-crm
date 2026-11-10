@@ -250,6 +250,9 @@ export function hasUnsavedWork(doc) {
  * Show the persistent update notice, or return the one already on screen.
  * The whole notice is one button: its label is the notice itself, so the
  * operator reads and confirms in one gesture. Text only, never markup.
+ * The banner joins the normal flow as the first child of the body, so it
+ * pushes the shell (sidebar, topbar, actions) down instead of overlaying
+ * it (backlog:0d4c5c44): at any width it never covers navigation.
  * @param {{ getElementById?: Function, createElement?: Function, body?: any } | undefined} [doc]
  * @param {{ onUpdate?: Function }} [options]
  */
@@ -274,7 +277,18 @@ export function ensureUpdateBanner(doc, options = {}) {
     banner.addEventListener('click', () => {
       if (typeof onUpdate === 'function') onUpdate(banner);
     });
-    source.body.appendChild(banner);
+    const body = source.body;
+    try {
+      if (body.firstChild && typeof body.insertBefore === 'function') {
+        body.insertBefore(banner, body.firstChild);
+      } else if (typeof body.prepend === 'function') {
+        body.prepend(banner);
+      } else {
+        body.appendChild(banner);
+      }
+    } catch {
+      body.appendChild(banner);
+    }
     return banner;
   } catch {
     return null;

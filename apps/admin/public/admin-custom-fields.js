@@ -119,9 +119,14 @@ export async function postSubjectNote(client, { resource, id, text }) {
   // (the framework's record-subject-note input). `text` was refused by the
   // /bo edge (400 BO_CRM_BODY_REFUSED, production 07/11) and by the
   // framework itself, so every Nuovo cliente note was lost.
+  // The Nuovo cliente field is a textarea, while the scheda writes from a
+  // single-line input: a line break would refuse the whole note (400, the
+  // framework's safe text allows no control characters), so breaks fold to
+  // a space. Text without them travels byte-identical.
+  const body = typeof text === 'string' ? text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ') : text;
   return client.request('/api/customer-hub/notes', {
     method: 'POST',
-    body: JSON.stringify({ resource, id, body: text }),
+    body: JSON.stringify({ resource, id, body }),
   });
 }
 
