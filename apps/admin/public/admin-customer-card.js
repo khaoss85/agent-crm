@@ -1393,7 +1393,11 @@ export function createCustomerCardView(deps) {
    * server drafts three labeled wordings from the customer's own history
    * through the space LLM gate and never sends. The member picks one of
    * the three — Corta, Lunga or Diretta — and it lands in the message
-   * field, editable; the previous text can be restored once with «Annulla»;
+   * field, editable. The three stay on screen until the send or the close
+   * (production 10/11): another pick refills the field with no new call,
+   * after an inline «Sostituire il testo modificato?» if the member edited
+   * it; Rigenera asks three new ones. The previous text can be restored
+   * once with «Annulla»;
    * Invia stays the person's click. A single-text answer from a pilot
    * before the three-version cure still fills the field at once. AI off
    * (503 LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without
@@ -1419,12 +1423,26 @@ export function createCustomerCardView(deps) {
     go.setAttribute('data-action', 'composer-ai-generate');
     const line = el('p', 'bo-composer-ai-line', '');
     line.setAttribute('aria-live', 'polite');
+    // The three versions live in their own row, so a pick or a message in
+    // `line` never wipes them (production 10/11: after «Diretta» the other
+    // two were gone and only Rigenera — a new AI call — brought them back).
+    const choice = el('div', 'bo-composer-ai-picks');
     const field = el('div', 'bo-composer-ai-field');
     field.appendChild(mark);
     field.appendChild(prompt);
     field.appendChild(go);
     row.appendChild(field);
+    row.appendChild(choice);
     row.appendChild(line);
+    // The wording the AI last put in the field: a different field value
+    // means the member edited it by hand.
+    /** @type {string|null} */
+    let filled = null;
+    /** @type {any[]} */
+    let pickButtons = [];
+    const markPicked = (kind) => {
+      for (const node of pickButtons) node.setAttribute('aria-pressed', node.getAttribute('data-version') === kind ? 'true' : 'false');
+    };
     let busy = false;
     // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
     // lives in composerAiPending, outside this row (review #664): the next
@@ -1456,6 +1474,8 @@ export function createCustomerCardView(deps) {
         back.addEventListener('click', () => {
           const kept = baseline();
           if (kept === null) return;
+          filled = null;
+          markPicked(null);
           text.value = kept.text;
           // Muse P2 on #599: with no subject field mounted (channel switched
           // to WhatsApp) the undone subject goes to the shared draft, so the
@@ -1469,6 +1489,12 @@ export function createCustomerCardView(deps) {
         line.appendChild(el('span', undefined, ' · '));
         line.appendChild(back);
       }
+    };
+    // The line under an AI draft: reread it, and Annulla when there is a
+    // text of the person's own to go back to.
+    const sayDrafted = () => {
+      const kept = baseline();
+      say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
     };
     async function generate() {
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
@@ -1559,31 +1585,66 @@ export function createCustomerCardView(deps) {
         }
         const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
         // Regenerating keeps the person's original, never a previous AI draft.
-        const fill = (picked) => {
+        const fill = (picked, kind = null) => {
           // Muse #718 P2: read the live subject at pick time — a channel
           // switch between the answer and the pick replaces the input.
           const subjectField = subject();
           if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
           text.value = picked;
+          filled = picked;
+          markPicked(kind);
           if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
           changed();
-          go.textContent = 'Rigenera';
-          const kept = baseline();
-          say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
+          // A pick during a Rigenera in flight leaves Genera's own label alone.
+          if (!busy) go.textContent = 'Rigenera';
+          sayDrafted();
           if (typeof text.focus === 'function') text.focus();
         };
         if (versions.length === kinds.length) {
-          while (line.firstChild) line.removeChild(line.firstChild);
-          line.appendChild(el('span', undefined, 'Scegli la versione da usare:'));
+          while (choice.firstChild) choice.removeChild(choice.firstChild);
+          pickButtons = [];
+          choice.appendChild(el('span', undefined, 'Scegli la versione da usare:'));
           for (const version of versions) {
-            line.appendChild(el('span', undefined, ' '));
             const pick = el('button', 'bo-composer-ai-pick', version.label);
             pick.setAttribute('type', 'button');
             pick.setAttribute('data-action', 'composer-ai-pick');
             pick.setAttribute('data-version', version.kind);
-            pick.addEventListener('click', () => { if (!gone()) fill(version.text); });
-            line.appendChild(pick);
+            pick.setAttribute('aria-pressed', 'false');
+            // Only a closed or reopened composer retires the versions: a
+            // Rigenera in flight leaves them working until the new three.
+            pick.addEventListener('click', () => {
+              if (stale()) return;
+              if (filled === null || text.value === filled) {
+                fill(version.text, version.kind);
+                return;
+              }
+              // Hand edits never go in silence: ask inline, never a browser dialog.
+              const before = Array.from(line.childNodes ?? []);
+              while (line.firstChild) line.removeChild(line.firstChild);
+              line.textContent = '';
+              line.appendChild(el('span', undefined, `Sostituire il testo modificato con la versione ${version.label}? `));
+              const replace = el('button', 'bo-composer-ai-undo', 'Sostituisci');
+              replace.setAttribute('type', 'button');
+              replace.setAttribute('data-action', 'composer-ai-replace');
+              replace.addEventListener('click', () => { if (!stale()) fill(version.text, version.kind); });
+              const keep = el('button', 'bo-composer-ai-undo', 'Tieni il mio');
+              keep.setAttribute('type', 'button');
+              keep.setAttribute('data-action', 'composer-ai-keep');
+              keep.addEventListener('click', () => {
+                while (line.firstChild) line.removeChild(line.firstChild);
+                line.textContent = '';
+                for (const node of before) line.appendChild(node);
+              });
+              line.appendChild(replace);
+              line.appendChild(el('span', undefined, ' · '));
+              line.appendChild(keep);
+            });
+            choice.appendChild(pick);
+            pickButtons.push(pick);
           }
+          // A new set after a pick: the field keeps the earlier wording,
+          // none of the new three is selected yet.
+          if (filled !== null) sayDrafted();
           return;
         }
         // A single-text answer from a pilot before the three-version cure
@@ -1593,6 +1654,8 @@ export function createCustomerCardView(deps) {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
           return;
         }
+        while (choice.firstChild) choice.removeChild(choice.firstChild);
+        pickButtons = [];
         fill(drafted.slice(0, 2000));
       } catch (error) {
         if (gone()) return;

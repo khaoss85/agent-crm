@@ -3183,6 +3183,90 @@ test('composer AI (backlog:01289e73): a pick after a channel switch fills the li
   assert.equal(live.value, 'Prova di giovedì', 'the title lands in the subject the member sees');
 });
 
+// Production 10/11 12:41Z (seguito di #718): after a pick the three
+// versions stay on screen; switching version refills the field with no new
+// draft call, and a hand-edited text is never replaced in silence.
+const aiPicks = (panel) => panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+const threeVersions = {
+  corta: 'Ciao Guido!',
+  lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova con piacere.',
+  diretta: 'Guido, ci vediamo giovedì alle 18 per la prova.',
+};
+async function pickedComposer() {
+  const client = draftClient({ ...threeVersions, subject: 'Prova di giovedì' });
+  const { panel, toasts } = await openComposerMount({ client });
+  const parts = aiParts(panel);
+  parts.area.value = 'Il mio testo';
+  parts.input.value = 'ricordagli la prova di giovedì';
+  parts.go.dispatch('click');
+  await flushComposer();
+  aiPicks(panel)[2].dispatch('click');
+  await flushComposer();
+  return { client, panel, toasts, ...parts };
+}
+
+test('composer AI: after a pick the three versions stay, the picked one is marked, a switch calls nothing', async () => {
+  const { client, panel, area, subject, toasts } = await pickedComposer();
+  assert.equal(area.value, threeVersions.diretta);
+  assert.equal(subject.value, 'Prova di giovedì');
+  const picks = aiPicks(panel);
+  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta'], 'the three versions stay after the pick');
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the picked version reads as selected');
+  picks[0].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.corta, 'switching refills the field with the other version');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.equal(client.drafts.length, 1, 'a switch never asks the draft route again');
+  assert.equal(client.posts.length, 0, 'the draft never sends');
+  assert.deepEqual(toasts, []);
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays offered');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'Annulla keeps the versions, none selected');
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.lunga, 'after Annulla a pick fills again, no confirmation over the person’s own text');
+  assert.equal(client.drafts.length, 1);
+});
+
+test('composer AI: a hand-edited text asks inline before a version replaces it, and Tieni il mio keeps it', async () => {
+  const { client, panel, area } = await pickedComposer();
+  area.value = `${threeVersions.diretta} A presto, Laura`;
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, `${threeVersions.diretta} A presto, Laura`, 'the edits are never replaced in silence');
+  assert.match(panel.textContent, /Sostituire il testo modificato/);
+  const keep = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-keep');
+  assert.ok(keep, 'the member can keep the edited text');
+  keep.dispatch('click');
+  assert.equal(area.value, `${threeVersions.diretta} A presto, Laura`);
+  assert.doesNotMatch(panel.textContent, /Sostituire il testo modificato/);
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the selection stays on the kept version');
+  // Replace when confirmed.
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  const replace = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-replace');
+  assert.ok(replace, 'Sostituisci confirms inline');
+  replace.dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.lunga);
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+  assert.equal(client.drafts.length, 1, 'no new draft call');
+});
+
+test('composer AI: Rigenera asks three new versions that replace the old choice', async () => {
+  const { client, panel, go } = await pickedComposer();
+  assert.equal(go.textContent, 'Rigenera');
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts.length, 2, 'Rigenera is the one way to ask again');
+  const picks = aiPicks(panel);
+  assert.equal(picks.length, 3, 'one set of versions, never two');
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'new versions start unpicked');
+});
+
 test('composer AI (backlog:01289e73): a single-text answer from an older pilot still fills at once', async () => {
   const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
   const { panel } = await openComposerMount({ client });
