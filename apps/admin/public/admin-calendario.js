@@ -2689,6 +2689,10 @@ export function createCalendarioView(deps) {
     const askedSpace = readSpace();
     try {
       const answer = await phraseAnswer({ resumeId, seq });
+      // e98e7a346b37: the asking space left while the answer was on its way
+      // (space switch bumps phraseSeq in render): nothing of it paints here —
+      // neither the note nor the lock — the new space never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.phraseWaiting = false;
       // An edit while the answer was on its way never relabels it: the
       // draft paints under the phrase that asked it (review #664 P3).
@@ -2722,8 +2726,9 @@ export function createCalendarioView(deps) {
         if (shown.length > 0) await loadWeek(shown);
         // A pager move during the preload leaves this answer unpublished:
         // the guard must never read a week other than the named one
-        // (review #657, round 5).
-        if (state.weekKeys !== wantedKeys) return;
+        // (review #657, round 5). A space switch owns the card now
+        // (e98e7a346b37): nothing of the old space paints here.
+        if (state.weekKeys !== wantedKeys || readSpace() !== askedSpace) return;
       }
       const bounds = suggestBounds(dayKey);
       if (!bounds) {
@@ -2762,14 +2767,15 @@ export function createCalendarioView(deps) {
       // (nobody named, the filter shows marco and the phrase names sara, a
       // moved week the grid could not load), the guard reads theirs too — a
       // failed read proposes nothing, never an unguarded list (review #657).
-      if (state.weekKeys !== searchKeys) return;
+      // A space switch owns the card now (e98e7a346b37).
+      if (state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       let heldWeek = null;
       try {
         heldWeek = await heldWeekFor(searchIds, searchKeys);
       } catch {
         heldWeek = null;
       }
-      if (state.weekKeys !== searchKeys) return;
+      if (state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       if (!heldWeek) {
         state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
         return;
@@ -2785,6 +2791,9 @@ export function createCalendarioView(deps) {
       const record = error !== null && typeof error === 'object' ? error : {};
       // A newer search or a route away owns the card now: touch nothing.
       if (record.code === 'PHRASE_STALE') return;
+      // e98e7a346b37: a late refusal from the space just left never locks or
+      // labels the new space — it never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -2798,7 +2807,7 @@ export function createCalendarioView(deps) {
         return;
       }
       const refusal = calendarRefusalText(error);
-      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
+      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(askedSpace);
       state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
