@@ -159,9 +159,17 @@ export function shapeCustomerCard(profile, subject) {
   if (!contact && !company) {
     throw new NotFoundError(String(resource ?? 'Customer'), String(id ?? 'unknown'));
   }
-  const name = contact
-    ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
-    : company?.name ?? null;
+  // The provider's display name (customer-data display-name.js, production
+  // 10/11): placeholders dropped, never an address as a name. A profile from
+  // before the field keeps the legacy join.
+  const providedName = profile.identity?.displayName;
+  const name = typeof providedName === 'string' && providedName !== ''
+    ? providedName
+    : (providedName === null
+      ? null
+      : (contact
+        ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
+        : company?.name ?? null));
   const email = contact?.email ?? null;
 
   const identities = Array.isArray(profile.externalIdentities) ? profile.externalIdentities : [];

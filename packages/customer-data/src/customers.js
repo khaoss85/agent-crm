@@ -1,7 +1,8 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
-import { CHANNEL_SYSTEMS, isNoCompany } from './sender.js';
+import { CHANNEL_SYSTEMS } from './sender.js';
+import { contactDisplayName, shownCompanyOf } from './display-name.js';
 
 /**
  * **The customer list (BO-F1-05): one page of customers, server-side.**
@@ -435,9 +436,10 @@ export function shapeCustomerRow(subject, reads = {}) {
   const id = contact?.id ?? company?.id ?? null;
   if (!id) throw new ValidationError('a customer row needs a contact or a company', { field: 'id' });
   const key = `${resource}:${id}`;
-  const name = contact
-    ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
-    : company?.name ?? null;
+  // The one display rule (display-name.js, production 10/11): placeholders
+  // dropped, never an address as a name.
+  const shownCompany = shownCompanyOf(company, contact);
+  const name = contact ? contactDisplayName(contact) : (shownCompany?.name ?? company?.name ?? null);
   const identities = reads.identitiesBySubject?.get(key) ?? [];
   const observed = reads.observedChannelsBySubject?.get(key) ?? [];
   // Review giro-6 on 826e377c (P1 head f1ed030c): the held side keeps
@@ -477,7 +479,8 @@ export function shapeCustomerRow(subject, reads = {}) {
     name, resource, id,
     // The reserved «no company» behind a contact typed without Azienda
     // reads as no company (production 07/11), never as a company name.
-    company: company && !(contact && isNoCompany(company)) ? Object.freeze({ id: company.id, name: company.name }) : null,
+    // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
+    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),

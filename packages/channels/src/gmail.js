@@ -361,7 +361,10 @@ export function decodeGmailSubject(value) {
  */
 export function splitGmailDisplayName(name) {
   const tokens = String(name ?? '').trim().replace(/^"|"$/g, '').trim().split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return { firstName: null, lastName: null };
+  // A display name carrying an address (`"Mittente: x@y.com" <x@y.com>`)
+  // names nobody (production 10/11): the contact takes its names from the
+  // address instead, never the address as a name.
+  if (tokens.length === 0 || tokens.some((token) => token.includes('@'))) return { firstName: null, lastName: null };
   const clip = (text) => text.slice(0, 128) === '' ? null : text.slice(0, 128);
   if (tokens.length === 1) return { firstName: clip(tokens[0]), lastName: null };
   return { firstName: clip(tokens[0]), lastName: clip(tokens.slice(1).join(' ')) };
