@@ -7,7 +7,7 @@ import { previewLastContactText, shapeCustomerRow } from '../packages/customer-d
 import { normalizeGmailRestMessage } from '../packages/channels/src/gmail-http.js';
 import { buildInbox } from '../apps/admin/public/admin-oggi.js';
 import * as shell from '../apps/admin/public/admin-message-preview.js';
-import * as core from '../packages/core/index.js';
+import * as core from '../packages/core/src/message-preview.js';
 
 /**
  * Message previews read like Gmail (Dan 10/11): «Oggetto — estratto
@@ -44,7 +44,7 @@ test('the /bo shell copy is byte-identical to the core source', () => {
   const copy = readFileSync(fileURLToPath(new URL('../apps/admin/public/admin-message-preview.js', import.meta.url)), 'utf8');
   assert.equal(copy, source, 'apps/admin/public/admin-message-preview.js must be a copy of packages/core/src/message-preview.js');
   assert.equal(shell.messagePreview, shell.messagePreview);
-  assert.equal(typeof core.messagePreview, 'function', 'the core index exports the preview');
+  assert.equal(typeof core.messagePreview, 'function', 'the core source exports the preview');
 });
 
 test('the Clienti row previews Dan\'s production examples clean', () => {

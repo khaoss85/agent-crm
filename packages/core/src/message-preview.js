@@ -97,7 +97,7 @@ const SERVICE_PHRASE_RES = Object.freeze([
 ]);
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 /**
- * Format and zero-width characters (Dan 10/11, Presti: «Pagamento confermato» followed by
+ * Format and zero-width characters (Dan 10/11: «Pagamento confermato» followed by
  * runs of LRM/RLM): removed, never turned into a space, so a soft hyphen or a joiner
  * inside a word keeps the word whole.
  */
