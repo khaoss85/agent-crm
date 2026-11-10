@@ -361,12 +361,21 @@ export function leadNamesForEmail(email) {
  */
 export function contactNamesFor(sender) {
   const fallback = leadNamesForEmail(sender.email);
-  const first = readableName(sender.firstName ?? null);
+  // The pieces a name repeats from its own address are dropped field by
+  // field (production 10/11, seguito P3 di #743): `Amazon.it It` as first
+  // name reads `Amazon.it`, and a last name keeps only what the first name
+  // did not already say (`Amazon.it` + `It Rossi` → `Rossi`; `It` alone →
+  // no last name).
+  const readFirst = readableName(sender.firstName ?? null);
+  const first = readFirst === null ? null : nameWithoutAddressEchoes(readFirst, sender.email);
   const rawLast = readableName(sender.lastName ?? null);
-  // A last name that only repeats the address (`Amazon.it` + `It`) is no
-  // last name (production 10/11).
-  const last = first !== null && rawLast !== null
-    && nameWithoutAddressEchoes(`${first} ${rawLast}`, sender.email) === first ? null : rawLast;
+  let last = rawLast;
+  if (rawLast !== null) {
+    const said = first === null ? 0 : first.split(/\s+/).length;
+    const joined = nameWithoutAddressEchoes(first === null ? rawLast : `${first} ${rawLast}`, sender.email) ?? '';
+    const rest = joined.split(/\s+/).filter((word) => word !== '').slice(said).join(' ');
+    last = rest !== '' ? rest : null;
+  }
   if (first === null) return { firstName: fallback.firstName, lastName: last ?? fallback.lastName };
   if (last !== null) return { firstName: first, lastName: last };
   const agrees = first.toLowerCase() === fallback.firstName.toLowerCase();
