@@ -102,7 +102,52 @@ export const WORK_MODULES = ['work-task', 'work-activity'];
  *   proven rather than asserted. `priceRules` registers the BO-F2-04 catalog
  *   price rules (`createCatalogPriceRules`) alongside the starter policies.
  */
-export function project(t, {
+export function project(t, options = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'accordo-contracts-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  cpSync(projectTemplate(options), root, { recursive: true });
+  return root;
+}
+
+/**
+ * Built projects, one per option set, for the life of this test process
+ * (backlog:3d560518f3e2). Building one runs the real CLI once per record
+ * manifest — 26 to 50 `accordo module create` processes, 15-70 s each build on
+ * the loaded CI server — and a file of six to fifteen tests rebuilt the same
+ * project for every test: tests/contracts-review.test.js (6) and
+ * tests/work-operations-e2e.test.js (15) alone held a measure piece for over
+ * ten minutes. The build is deterministic over an unchanged checkout and
+ * embeds no absolute path, so each test now gets a fresh private copy of the
+ * one build: the same files, still a throwaway root per test, still built by
+ * the real CLI and module factory.
+ * @type {Map<string, string>}
+ */
+const templates = new Map();
+/** @type {string | undefined} */
+let templateParent;
+
+/** @param {Parameters<typeof project>[1]} options */
+function projectTemplate(options) {
+  const key = JSON.stringify(Object.entries(options ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  const cached = templates.get(key);
+  if (cached && existsSync(cached)) return cached;
+  if (templateParent === undefined) {
+    templateParent = mkdtempSync(join(tmpdir(), 'accordo-contracts-templates-'));
+    const parent = templateParent;
+    process.once('exit', () => rmSync(parent, { recursive: true, force: true }));
+  }
+  const root = join(templateParent, String(templates.size));
+  rmSync(root, { recursive: true, force: true });
+  buildProject(root, options);
+  templates.set(key, root);
+  return root;
+}
+
+/**
+ * @param {string} root an absent or empty directory the project is built into
+ * @param {Parameters<typeof project>[1]} [options]
+ */
+function buildProject(root, {
   withDomain = true, withDelivery = false, withCustomPackage = false, withService = false, priceRules = null,
   // M16a. `withLifecycleTables` applies the record modules WITHOUT composing the
   // package, which is how the absence/detach case is built: the rows must
@@ -115,8 +160,6 @@ export function project(t, {
   // hard `requires` would stop every other composition here from booting.
   withWork = false, withWorkTables = withWork, followUp = false,
 } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'accordo-contracts-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
   for (const entry of ['packages', 'apps', 'examples', 'package.json']) {
     cpSync(join(repoRoot, entry), join(root, entry), { recursive: true });
   }
