@@ -256,29 +256,67 @@ function nameInitials(name) {
 }
 
 /**
+ * Broker mailboxes the roster enrichment carries for subjects born from the
+ * login broker (`broker+…@accordo.invalid`): they name no human mailbox, so
+ * they never paint on screen and never stand in for a real address
+ * (backlog:ed0552dc1933). Matching is on the domain only, case-insensitive;
+ * any other mailbox still paints, including example `.invalid` ones.
+ * @param {unknown} email
+ */
+function isInternalMailbox(email) {
+  if (typeof email !== 'string') return false;
+  const at = email.lastIndexOf('@');
+  if (at < 0) return false;
+  const domain = email.slice(at + 1).trim().toLowerCase();
+  return domain === 'accordo.invalid' || domain.endsWith('.accordo.invalid');
+}
+
+/**
+ * backlog:810ed0bfd505 AC-2 — the control-plane same-person key of a roster
+ * row (`operatorAccountId`, one per human), or null when the roster carries
+ * none. The same union the Calendario team reads (`personRows` there): this
+ * key unites one member's identities (broker, github, google) even when
+ * they carry different mailboxes. Only this documented key merges —
+ * generic `personKey`/`userId`-style fields have no producer contract here,
+ * and two unrelated humans sharing one would fold into a single row.
+ * @param {unknown} member
+ */
+function rosterPersonKey(member) {
+  if (!member || typeof member !== 'object') return null;
+  const value = /** @type {{operatorAccountId?: unknown}} */ (member).operatorAccountId;
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+/**
  * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
- * carry, beside each opaque subject, the control-plane displayName and email
- * the pilot enriches it with — the same fields the Calendario team reads.
- * One human can hold several subjects (an adopted broker member and the
- * Google one: prod 07/11 listed «Daniele Pelleri» twice). The roster carries
- * no person id, so subjects merge into one row ONLY when both the mailbox
- * and the display name match (trimmed, case-insensitive). A mailbox alone
- * never merges: a shared mailbox (info@…) or stale enrichment could fold a
- * different human into the row, hide them and let «Rimuovi» suspend them.
- * A name alone never merges either: two homonyms without email are two
- * people. Nothing merges in the backend: the row keeps every subject, and
- * removal suspends each of them.
+ * carry, beside each opaque subject, the control-plane displayName, email
+ * and `operatorAccountId` the pilot enriches it with — the same fields the
+ * Calendario team reads. One human can hold several subjects (an adopted
+ * broker member, the github one and the Google one: prod 07/11 listed
+ * «Daniele Pelleri» twice with `broker+…@accordo.invalid` mailboxes).
+ * Subjects merge into one row on the control-plane person key first
+ * (backlog:810ed0bfd505 AC-2: `operatorAccountId`, one per human), then —
+ * only without that key — when both the mailbox and the display name match
+ * (trimmed, case-insensitive). A mailbox alone never merges: a shared
+ * mailbox (info@…) or stale enrichment could fold a different human into
+ * the row, hide them and let «Rimuovi» suspend them. A name alone never
+ * merges either: two homonyms without email are two people. Nothing merges
+ * in the backend: the row keeps every subject, and removal suspends each
+ * of them. Internal broker mailboxes (`…@accordo.invalid`) never paint:
+ * the row shows the person's first real mailbox, or no email line when
+ * the roster carries none — the name is then the profile displayName.
  *
  * Without enrichment the row reads exactly as before: the subject is the
  * name and the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
- * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown}>} members
+ * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
  */
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
   /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, roles: unknown[], statuses: unknown[]}>} */
   const people = [];
   const byIdentity = new Map();
+  const byPersonKey = new Map();
   const seen = new Set();
   for (const member of list) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
@@ -286,20 +324,26 @@ export function buildTeamRows(members = []) {
     seen.add(member.subject);
     const email = personText(member.email);
     const displayName = personText(member.displayName);
+    const personKey = rosterPersonKey(member);
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    let person = key === null ? null : byIdentity.get(key) ?? null;
+    let person = (personKey !== null && byPersonKey.get(personKey)) || (key !== null && byIdentity.get(key)) || null;
     if (person === null) {
-      person = { subjects: [], live: [], displayName: null, email, roles: [], statuses: [] };
+      person = { subjects: [], live: [], displayName: null, email: null, roles: [], statuses: [] };
       people.push(person);
-      if (key !== null) byIdentity.set(key, person);
     }
+    if (personKey !== null && !byPersonKey.has(personKey)) byPersonKey.set(personKey, person);
+    if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
     person.subjects.push(member.subject);
     if (member.status !== 'suspended') person.live.push(member.subject);
     person.roles.push(member.role);
     person.statuses.push(member.status);
     if (person.displayName === null) person.displayName = displayName;
+    // The row shows a real mailbox only: an internal broker mailbox never
+    // stands in for one, so the first real mailbox of the person wins
+    // whatever the store order.
+    if (person.email === null && email !== null && !isInternalMailbox(email)) person.email = email;
   }
   return people
     .map((person) => {
