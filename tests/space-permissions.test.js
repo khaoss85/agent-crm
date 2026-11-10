@@ -140,6 +140,13 @@ test('gate with the master off returns proposal for every switch, keeping the sw
   assert.equal(open.decision, 'allow', 'master on leaves the five to decide one by one');
 });
 
+// Muse #734 P2: an untrimmed id reads the stored switch, never the default.
+test('isAiActionAllowed trims the space id for both the master and the switch', () => {
+  const rows = [{ spaceId: 'presti-group', permission: 'drafts', enabled: false }];
+  assert.equal(isAiActionAllowed('  presti-group  ', 'drafts', rows), false);
+  assert.equal(isAiActionAllowed('presti-group', 'drafts', rows), false);
+});
+
 test('space id is opaque but shaped: empty and hostile ids refused', () => {
   assert.equal(checkSpaceId('  presti-group  '), 'presti-group');
   for (const bad of ['', '   ', null, undefined, 42, 'a'.repeat(129), 'space\nid', 'space\x00id']) {

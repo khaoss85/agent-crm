@@ -139,9 +139,11 @@ export function isAiEnabled(spaceId, overrideRows = []) {
  * @returns {boolean} true only when both the master and the switch are on
  */
 export function isAiActionAllowed(spaceId, permission, overrideRows = []) {
+  // Muse #734 P2: trim once, so the master and the switch read the same id.
+  const id = checkSpaceId(spaceId);
   const rows = Array.isArray(overrideRows) ? overrideRows : [];
-  if (!isAiEnabled(spaceId, rows)) return false;
-  return effectivePermission(spaceId, permission, rows);
+  if (!isAiEnabled(id, rows)) return false;
+  return effectivePermission(id, permission, rows);
 }
 
 /**
