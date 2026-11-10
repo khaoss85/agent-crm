@@ -210,3 +210,16 @@ test('review #739 P3: a placeholder company subject and a legacy profile never s
   }, { resource: 'contact', id: 'c1' });
   assert.equal(legacy.name, null, 'a legacy profile never prints the bounce address');
 });
+
+test('review #739 giro 2: human handles with a number stay people, Oggi honors the provider null, Gmail keeps a lone @', () => {
+  for (const email of ['marco123@azienda.it', 'mario.rossi123@azienda.it', 'giuseppe1985@azienda.it']) {
+    assert.notEqual(leadNamesForEmail(email).firstName, 'Azienda', email);
+  }
+  assert.deepEqual(leadNamesForEmail('mario.rossi123@azienda.it'), { firstName: 'Mario', lastName: 'Rossi123' });
+  assert.equal(contactDisplayName({ firstName: 'Marco123', lastName: 'Rossi', email: 'marco123@azienda.it' }), 'Marco123 Rossi');
+  assert.equal(leadNamesForEmail(BOUNCE).firstName, 'Google', 'a generated id is still technical');
+  assert.equal(nameFromProfile({ identity: { displayName: null, contact: { firstName: 'X9f8e7d6c5', lastName: '—' } } }), null,
+    'Oggi and Calendario read the same «no name» as the scheda');
+  assert.deepEqual(splitGmailDisplayName('Studio @ Home'), { firstName: 'Studio', lastName: '@ Home' });
+  assert.deepEqual(splitGmailDisplayName(`<${BOUNCE}>`), { firstName: null, lastName: null });
+});

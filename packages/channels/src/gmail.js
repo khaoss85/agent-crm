@@ -354,6 +354,13 @@ export function decodeGmailSubject(value) {
 }
 
 /**
+ * An address-shaped word in a display name; a lone `@` or a handle
+ * (`Studio @ Home`) is not one. Same shape as customer-data's
+ * display-name.js reader (review #739 giro 2).
+ */
+const DISPLAY_ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
+
+/**
  * Split a display name into first/last: the first token names, the rest
  * describes. Bounded to the sender-evidence limits; longer text truncates
  * instead of refusing the whole message over a cosmetic field.
@@ -364,7 +371,7 @@ export function splitGmailDisplayName(name) {
   // A display name carrying an address (`"Mittente: x@y.com" <x@y.com>`)
   // names nobody (production 10/11): the contact takes its names from the
   // address instead, never the address as a name.
-  if (tokens.length === 0 || tokens.some((token) => token.includes('@'))) return { firstName: null, lastName: null };
+  if (tokens.length === 0 || tokens.some((token) => DISPLAY_ADDRESS_WORD.test(token))) return { firstName: null, lastName: null };
   const clip = (text) => text.slice(0, 128) === '' ? null : text.slice(0, 128);
   if (tokens.length === 1) return { firstName: clip(tokens[0]), lastName: null };
   return { firstName: clip(tokens[0]), lastName: clip(tokens.slice(1).join(' ')) };

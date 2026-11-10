@@ -125,6 +125,9 @@ export function nameFromProfile(profile) {
   // one rule every screen reads, with the domain label for a nameless
   // address. A profile from before the field keeps the join below.
   const provided = profile?.identity?.displayName;
+  // An explicit null is the provider's verdict «no name» (review #739 giro
+  // 2): only a profile without the field falls back to the join below.
+  if (provided === null) return null;
   if (typeof provided === 'string') return readableName(provided);
   const contact = profile?.identity?.contact ?? null;
   const full = readableName([contact?.firstName, contact?.lastName]

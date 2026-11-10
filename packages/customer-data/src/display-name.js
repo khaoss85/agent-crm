@@ -123,8 +123,23 @@ export function isTechnicalLocalPart(email) {
   if (/^(?:no[._-]?reply|do[._-]?not[._-]?reply|mailer[._-]?daemon|postmaster|bounces?|notifications?|notify|alerts?)$/.test(local)) {
     return true;
   }
-  return local.split(/[._-]+/).some((token) => token.length >= 24
-    || (token.length >= 8 && /\d/.test(token) && /\p{L}/u.test(token)));
+  return local.split(/[._-]+/).some(isMachineToken);
+}
+
+/**
+ * A machine id, not a human handle (review #739 giro 2): very long, or at
+ * least 10 characters mixing letters and digits the way generated ids do —
+ * opening with digits (`32ezyaggtanwlm`) or switching between letters and
+ * digits three times or more (`x9f8e7d6c5`). A name with a number after it
+ * (`marco123`, `giuseppe1985`) stays a person.
+ * @param {string} token
+ */
+function isMachineToken(token) {
+  if (token.length >= 24) return true;
+  if (token.length < 10 || !/\d/.test(token) || !/\p{L}/u.test(token)) return false;
+  if (/^\d/.test(token)) return true;
+  const switches = (token.match(/(?:\p{L}(?=\d)|\d(?=\p{L}))/gu) ?? []).length;
+  return switches >= 3;
 }
 
 /**
