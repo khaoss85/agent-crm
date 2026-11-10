@@ -40,8 +40,6 @@ import { bindAdminMutations } from './admin-submission.js';
 import { offerStageLabel } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
-/** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
-const OFF_PIPELINE_LISTED = 50;
 
 /**
  * @param {Document} doc
@@ -381,9 +379,6 @@ export function createPipelineBoard(deps) {
     const offDefinition = onBoard.filter((record) => !stageKeys.has(record.pipelineStage));
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
     const offPipeline = records.length - onBoard.length;
-    // Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
-    // the read hits the cap every count below is a lower bound, never exact.
-    const truncated = records.length >= BOARD_LIMIT;
     const visible = placed.filter((record) => matchesFilters(record, state));
 
     const panel = el(doc, 'section', { class: 'panel panel-wide pipeline-board-panel' });
@@ -423,7 +418,7 @@ export function createPipelineBoard(deps) {
       }));
     }
     if (offPipeline > 0 || composedPipelineNames(pipelines).length > 1) {
-      titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline, truncated));
+      titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name));
     }
     const tools = renderToolbar(pipeline, onBoard);
     tools.appendChild(renderSummary(visible));
@@ -741,110 +736,50 @@ export function createPipelineBoard(deps) {
   }
 
   /**
-   * Pipeline switch (backlog:1cb4cc48): records of other pipelines are
-   * excluded by documented behavior, never silently hidden. The count
-   * still names how many offers live on the other boards, and when the
-   * space composes more than one pipeline a selector replaces the old
-   * "(non mostrata)" line — every composed pipeline is one choice away.
-   * With a single composed pipeline the legacy links stay, so an
-   * out-of-band record still names where the operator can go see it. A
-   * key outside the route grammar cannot be linked: it stays in the
-   * count, never in an href. Every value renders as text, never HTML.
+   * Pipeline switch (backlog:1cb4cc48): the selector is always on screen
+   * when offers live outside the current board, so the choice is never
+   * invisible. Choices are the composed pipelines (with their label) plus
+   * the off-board record keys (the key itself as label), sorted; the board
+   * on screen is always one of the choices and stays selected, so every
+   * board is one choice away. A key outside the route grammar can never
+   * become a route, so it stays out of the choices. Every value renders
+   * as text, never HTML. There is no count-and-links row: the selector
+   * replaces «N offerte di un'altra pipeline» and the «Vedi <key>» links.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
-   * @param {boolean} truncated whether the read hit BOARD_LIMIT (counts are lower bounds)
    */
-  function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline, truncated) {
+  function renderPipelineSwitch(pipelines, records, pipelineName) {
     const box = el(doc, 'div', { class: 'hint pipeline-switch' });
-    if (offPipeline > 0) {
-      box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated));
-    }
-    if (composedPipelineNames(pipelines).length > 1) {
-      const selectId = 'pipeline-switch';
-      box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
-      const select = el(doc, 'select', { attrs: { id: selectId } });
-      for (const name of composedPipelineNames(pipelines)) {
-        const defined = pipelines.find((candidate) => candidate?.name === name);
-        const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
-        select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
-      }
-      select.value = pipelineName;
-      select.addEventListener('change', () => {
-        const next = select.value;
-        if (typeof next === 'string' && next !== '' && next !== pipelineName) {
-          if (typeof deps.navigate === 'function') deps.navigate(`#/pipelines/${next}`);
-        }
-      });
-      box.appendChild(select);
-      return box;
-    }
-    const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
-      .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
+    const composed = composedPipelineNames(pipelines);
+    const hasOffBoard = records.some((record) => record?.pipelineKey !== pipelineName);
+    if (composed.length <= 1 && !hasOffBoard) return box;
+    const offBoard = [...new Set(
+      records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')),
+    )]
+      .filter((key) => key !== '' && key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
       .sort();
-    others.forEach((key, index) => {
-      box.appendChild(el(doc, 'span', { text: index === 0 ? '' : ' · ' }));
-      const link = el(doc, 'a', { attrs: { href: `#/pipelines/${encodeURIComponent(key)}` } });
-      link.textContent = `Vedi ${key}`;
-      box.appendChild(link);
-    });
-    return box;
-  }
-
-  /**
-   * Backlog 1e939a362c7c: «N offerte di altre pipeline» opens those offers.
-   * The count is a button that unfolds them in place — each one a link to
-   * its offer page (#/offerte/<id>) with its stage in the same words as the
-   * scheda (offerStageLabel) — so an offer placed on another board, or on
-   * none, is one click away and never only a number.
-   * Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
-   * the read is truncated both counts below are lower bounds and say so
-   * («almeno N»): the true totals can only be higher.
-   * @param {Array<Record<string, any>>} pipelines
-   * @param {Array<Record<string, any>>} records
-   * @param {string} pipelineName
-   * @param {number} offPipeline
-   * @param {boolean} truncated whether the read hit BOARD_LIMIT
-   */
-  function renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated) {
-    const wrap = el(doc, 'span', { class: 'pipeline-off' });
-    const one = offPipeline === 1;
-    const toggle = el(doc, 'button', {
-      class: 'link-button',
-      text: `${truncated ? 'almeno ' : ''}${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline`,
-      attrs: { type: 'button', 'data-action': 'show-off-pipeline', 'aria-expanded': 'false' },
-    });
-    const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
-    const others = records.filter((record) => record.pipelineKey !== pipelineName).slice(0, OFF_PIPELINE_LISTED);
-    for (const record of others) {
-      const item = el(doc, 'li');
-      const id = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
-      const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
-      const stage = offerStageLabel(pipelines, record);
-      const text = stage ? `${name} · ${stage}` : name;
-      if (id === null) {
-        item.appendChild(el(doc, 'span', { text }));
-      } else {
-        const link = el(doc, 'a', { attrs: { href: `#/offerte/${encodeURIComponent(id)}` } });
-        link.textContent = text;
-        item.appendChild(link);
+    const names = [...new Set([
+      ...composed,
+      ...offBoard,
+      ...(/^[a-z][a-z0-9-]*$/.test(typeof pipelineName === 'string' ? pipelineName : '') ? [pipelineName] : []),
+    ])].sort();
+    const selectId = 'pipeline-switch';
+    box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
+    const select = el(doc, 'select', { attrs: { id: selectId } });
+    for (const name of names) {
+      const defined = (Array.isArray(pipelines) ? pipelines : []).find((candidate) => candidate?.name === name);
+      const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
+      select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
+    }
+    select.value = pipelineName;
+    select.addEventListener('change', () => {
+      const next = select.value;
+      if (typeof next === 'string' && next !== '' && next !== pipelineName) {
+        if (typeof deps.navigate === 'function') deps.navigate(`#/pipelines/${next}`);
       }
-      list.appendChild(item);
-    }
-    if (offPipeline > others.length) {
-      list.appendChild(el(doc, 'li', {
-        class: 'muted',
-        text: `e ${truncated ? 'almeno ' : ''}altre ${offPipeline - others.length}`,
-      }));
-    }
-    toggle.addEventListener('click', () => {
-      const open = toggle.getAttribute('aria-expanded') === 'true';
-      toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
-      list.setAttribute('class', open ? 'pipeline-off-list hidden' : 'pipeline-off-list');
     });
-    wrap.appendChild(toggle);
-    wrap.appendChild(el(doc, 'span', { text: '. ' }));
-    wrap.appendChild(list);
-    return wrap;
+    box.appendChild(select);
+    return box;
   }
 
   /** Count + per-currency totals over the filtered set (currencies never summed). */
