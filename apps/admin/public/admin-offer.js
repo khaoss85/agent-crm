@@ -55,8 +55,10 @@ function historyLine(entry, schema, record, roster) {
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
   if (move !== null && words !== null) {
     const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
+    if (who === null) return { when, what: `${what} · da ${words.from} a ${words.to}` };
     return { when, what: `${what} · da ${words.from} a ${words.to} · da ${who}` };
   }
+  if (who === null) return { when, what: `${auditActionLabel(entry?.action)}` };
   return { when, what: `${auditActionLabel(entry?.action)} · da ${who}` };
 }
 
@@ -102,17 +104,20 @@ const LIST_LIMIT = 200;
 
 /**
  * Display name of an audit actor (backlog:ddf7f416, c1649d1d): nome e
- * cognome, never a technical id and never the generic `utente` when the
- * roster names the actor. A roster subject reads its member name through
- * the roster; anything else falls back to the shared vocabulary in
- * admin-labels.js, corroborated by this deal's painted human display
- * values (the referente, the contact or the company the deal stores).
+ * cognome, never a technical id and never the generic `utente`. A roster
+ * subject reads its member name through the roster; anything else falls
+ * back to the shared vocabulary in admin-labels.js, corroborated by this
+ * deal's painted human display values (the referente, the contact or the
+ * company the deal stores). Unresolvable authors read null: the facts show
+ * a dash and the history omits the `da …` tail.
  */
 function actorLabel(entry, record, roster) {
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   const team = id !== '' ? resolveTeamName(id, roster) : null;
   if (team !== null) return team;
-  return auditActorLabel(entry, [paintOwnerName(record?.owner, roster), record?.contactName, record?.companyName]);
+  const label = auditActorLabel(entry, [paintOwnerName(record?.owner, roster), record?.contactName, record?.companyName]);
+  if (label === 'utente' || label === '—') return null;
+  return label;
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -304,7 +309,6 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
     }
     for (const entry of auditItems) {
-      const line = historyLine(entry, schema, record);
       const row = el('p', 'history-event');
       const line = historyLine(entry, schema, record, roster);
       row.appendChild(el('span', 'history-when', line.when));
