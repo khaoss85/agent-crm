@@ -644,6 +644,10 @@ const customerFormView = createCustomerFormView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
+  // f0d425d0: after a creation the Clienti badge recounts at once, without
+  // leaving the page. refreshShellCounts reads the live count and degrades
+  // to unknown on a failed read — it never throws onto the navigation.
+  onSaved: () => { void refreshShellCounts(); },
   // B4 (backlog:5a40c73e54aa): the half-written customer survives the login
   // round-trip in the tab store, and returns after sign-in. Tab-scoped (never
   // the shared shell storage), keyed by space and operator, so another
@@ -699,6 +703,8 @@ const connectorsView = createConnectorsView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The shell's live space, like Stato sync (backlog:24a57904a428).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   toast,
 });
 
@@ -713,6 +719,8 @@ const connectorDetailView = createConnectorDetailView({
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
   storage: shellStorage,
+  // The shell's live space, like Stato sync (backlog:24a57904a428).
+  spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   // The session role for the read-only state: observers watch without
   // touching, like on Stato sync.
   role: () => shellUser?.role ?? null,

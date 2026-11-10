@@ -22,6 +22,23 @@ export const CUSTOMER_EVIDENCE_KEYS = Object.freeze(['orders', 'contracts', 'sub
 /**
  * @param {{orders?: any, contracts?: any, subscriptions?: any}} evidence
  */
+/**
+ * Whether the absence of signed business is proven: every evidence section
+ * readable with a complete zero count. Anything else — a package that is
+ * not readable here, or a count taken from a bounded page — is uncertainty,
+ * never a claim none exist. Shared with the erasure gate (erasure.js), so
+ * the readers and the irreversible operation fail closed on the same rule.
+ * @param {{orders?: any, contracts?: any, subscriptions?: any}} evidence
+ */
+export function signedAbsenceIsProven({ orders = null, contracts = null, subscriptions = null } = {}) {
+  const sections = { orders, contracts, subscriptions };
+  return CUSTOMER_EVIDENCE_KEYS.every(
+    (key) => sections[key]?.available === true
+      && (sections[key]?.count ?? 0) === 0
+      && sections[key]?.countIsComplete !== false,
+  );
+}
+
 export function deriveCustomerStatus({ orders = null, contracts = null, subscriptions = null } = {}) {
   const sections = { orders, contracts, subscriptions };
   const found = CUSTOMER_EVIDENCE_KEYS
@@ -33,15 +50,10 @@ export function deriveCustomerStatus({ orders = null, contracts = null, subscrip
     if (section.countIsComplete === false) return `${key}: partially readable`;
     return `${key}: none on record`;
   };
-  const absenceIsProven = CUSTOMER_EVIDENCE_KEYS.every(
-    (key) => sections[key]?.available === true
-      && (sections[key]?.count ?? 0) === 0
-      && sections[key]?.countIsComplete !== false,
-  );
   if (found.length > 0) {
     return Object.freeze({ value: 'cliente', reason: `signed business on record: ${found.join(', ')}` });
   }
-  if (absenceIsProven) {
+  if (signedAbsenceIsProven({ orders, contracts, subscriptions })) {
     return Object.freeze({
       value: 'contatto',
       reason: 'no orders, contracts or subscriptions reference this customer — quotes and opportunities alone do not promote a contact',

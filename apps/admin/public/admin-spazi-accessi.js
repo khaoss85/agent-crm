@@ -44,6 +44,7 @@ import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
+import { memberText } from './admin-labels.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -89,6 +90,22 @@ export const SPAZI_AI_DEFAULTS = Object.freeze({
   'book-appointments': true,
   'move-offers': true,
 });
+
+/**
+ * The master AI switch of one space (backlog:2c3156a47f8e): one on/off for
+ * the whole AI, above the five single switches. Key and default mirror
+ * `packages/space-permissions` — the drift test pins the pair. With the
+ * master off every AI action becomes a proposal to approve, no matter what
+ * the five say; with it on, the five decide one by one.
+ */
+export const SPAZI_AI_MASTER = Object.freeze({
+  key: 'ai-enabled',
+  label: 'AI dello spazio',
+  line: 'Accende e spegne tutta l\u2019AI di questo spazio. Da spenta, ogni azione diventa una proposta da approvare.',
+});
+
+/** Master default, mirrored from the package — a space with no master row runs with the AI on. */
+export const SPAZI_AI_MASTER_DEFAULT = true;
 
 /**
  * Italian names for the control-plane membership roles the spine mirrors —
@@ -221,13 +238,6 @@ const ROLE_RANK = Object.freeze(['owner', 'operator', 'observer']);
 /** Liveliest status first: a person reads «sospeso» only when no subject is live. */
 const STATUS_RANK = Object.freeze(['active', 'invited', 'pending']);
 
-/** @param {unknown} value */
-function personText(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  return text === '' ? null : text;
-}
-
 /**
  * Avatar initials for a person name: the first letter of the first two
  * words («Daniele Pelleri» → «DP»), or the subject rule for one word.
@@ -253,8 +263,9 @@ function nameInitials(name) {
  * people. Nothing merges in the backend: the row keeps every subject, and
  * removal suspends each of them.
  *
- * Without enrichment the row reads exactly as before: the subject is the
- * name and the status sits under it. Sorted by name, then subject, so the
+ * Without enrichment the subject is the name when it reads as one, else
+ * «Membro del team» — never a technical subject (production 10/11) — and
+ * the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown}>} members
  */
@@ -268,8 +279,11 @@ export function buildTeamRows(members = []) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
     if (seen.has(member.subject)) continue;
     seen.add(member.subject);
-    const email = personText(member.email);
-    const displayName = personText(member.displayName);
+    // Never a technical identity on screen (production 10/11: the team read
+    // «broker+…@accordo.invalid»): the shared member filter drops a broker
+    // mailbox or a provider id the enrichment carried as name or email.
+    const email = memberText(member.email);
+    const displayName = memberText(member.displayName);
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
@@ -288,7 +302,11 @@ export function buildTeamRows(members = []) {
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
-      const name = person.displayName ?? person.email ?? subject;
+      // No readable name or mailbox: the subject when it reads as a word,
+      // else a generic label — never a technical subject (`google|…`,
+      // `broker+…`), the same fallback the Calendario team uses.
+      const readable = person.displayName ?? person.email ?? memberText(subject);
+      const name = readable ?? 'Membro del team';
       const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
       const role = known.length > 0
         ? [...known].sort((a, b) => ROLE_RANK.indexOf(/** @type {string} */ (a)) - ROLE_RANK.indexOf(/** @type {string} */ (b)))[0]
@@ -306,7 +324,9 @@ export function buildTeamRows(members = []) {
         removable: [...(person.live.length > 0 ? person.live : person.subjects)].sort(),
         name,
         email: person.email,
-        initials: person.displayName !== null ? nameInitials(person.displayName) : memberInitials(name),
+        initials: person.displayName !== null
+          ? nameInitials(person.displayName)
+          : (readable !== null ? memberInitials(readable) : '·'),
         role: spaceRoleLabel(role),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
       };
@@ -339,6 +359,22 @@ export function effectiveSwitches(spaceId, overrideRows = []) {
       enabled: flipped ? flipped.enabled === true : SPAZI_AI_DEFAULTS[entry.key] === true,
     };
   });
+}
+
+/**
+ * The master AI state of one space: the flipped master row wins, the
+ * package default (on) covers a space with no master row. Rows of another
+ * space never leak in — only rows carrying this space id are honored.
+ * @param {string} spaceId
+ * @param {Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>} [overrideRows]
+ * @returns {boolean} true while the space AI is on
+ */
+export function masterEnabled(spaceId, overrideRows = []) {
+  const rows = Array.isArray(overrideRows) ? overrideRows : [];
+  const flipped = rows.find(
+    (row) => row && typeof row === 'object' && row.spaceId === spaceId && row.permission === SPAZI_AI_MASTER.key,
+  );
+  return flipped ? flipped.enabled === true : SPAZI_AI_MASTER_DEFAULT === true;
 }
 
 /**
@@ -901,16 +937,32 @@ export function createSpaziAccessiView(deps) {
   function renderSwitches(box, space) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-ai-panel' });
     section.appendChild(el(doc, 'h3', { text: '\u2726 Cosa pu\u00F2 fare l\u2019AI' }));
-    section.appendChild(el(doc, 'p', {
-      text: `Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`,
-      cls: 'bo-muted',
-    }));
     if (state.overrides === null) {
       section.appendChild(el(doc, 'p', { text: state.switchesUnavailable ?? 'Permessi non disponibili.', cls: 'bo-muted' }));
       box.appendChild(section);
       return;
     }
-    const switches = effectiveSwitches(space.id, state.overrides);
+    // The master switch (backlog:2c3156a47f8e) renders first and its state
+    // is the panel's headline: with the master off the five stay visible
+    // with their own honest values but disabled, because they decide
+    // nothing until the master is back on.
+    const master = masterEnabled(space.id, state.overrides);
+    section.appendChild(el(doc, 'p', {
+      text: master
+        ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
+        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: ogni azione diventa una proposta da approvare, finch\u00E9 non la riaccendi.`,
+      cls: 'bo-muted',
+    }));
+    const switches = [
+      {
+        key: SPAZI_AI_MASTER.key,
+        label: SPAZI_AI_MASTER.label,
+        line: SPAZI_AI_MASTER.line,
+        enabled: master,
+        master: true,
+      },
+      ...effectiveSwitches(space.id, state.overrides),
+    ];
     const list = el(doc, 'div', { cls: 'bo-spazi-switches' });
     for (const entry of switches) {
       const row = el(doc, 'div', { cls: 'bo-spazi-switch' });
@@ -923,7 +975,7 @@ export function createSpaziAccessiView(deps) {
         attrs: { type: 'button', role: 'switch', 'aria-checked': entry.enabled ? 'true' : 'false', 'aria-label': entry.label },
       });
       toggle.setAttribute('data-on', entry.enabled ? 'true' : 'false');
-      toggle.disabled = state.busy;
+      toggle.disabled = state.busy || (master === false && entry.master !== true);
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.refusal = null;
@@ -937,9 +989,13 @@ export function createSpaziAccessiView(deps) {
         const pending = state.confirmFlip;
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
         confirmBox.appendChild(el(doc, 'p', {
-          text: pending.to
-            ? `Accendere \u00AB${entry.label}\u00BB? Da accesa, l\u2019AI agisce da sola.`
-            : `Spegnere \u00AB${entry.label}\u00BB? Da spenta, diventa una proposta da approvare.`,
+          text: entry.master === true
+            ? (pending.to
+              ? 'Accendere l\u2019AI dello spazio? Da accesa, i cinque interruttori decidono uno per uno.'
+              : 'Spegnere l\u2019AI dello spazio? Da spenta, ogni azione diventa una proposta da approvare.')
+            : (pending.to
+              ? `Accendere \u00AB${entry.label}\u00BB? Da accesa, l\u2019AI agisce da sola.`
+              : `Spegnere \u00AB${entry.label}\u00BB? Da spenta, diventa una proposta da approvare.`),
           cls: 'bo-muted',
         }));
         const yes = el(doc, 'button', { text: 'Conferma', cls: 'bo-spazi-open', attrs: { type: 'button' } });

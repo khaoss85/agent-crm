@@ -28,7 +28,7 @@ export const teammateRunModuleDefinition = Object.freeze({
     {"name":"assignmentSourceKey","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"startedAt","type":"timestamp","required":false,"unique":false,"writable":"managed"},
     {"name":"costCents","type":"integer","required":false,"unique":false,"writable":"managed"},
-    {"name":"outcome","type":"enum","required":false,"unique":false,"writable":"managed","values":["started","proposed","applied","artifact","capped","failed"]},
+    {"name":"outcome","type":"enum","required":false,"unique":false,"writable":"managed","values":["started","proposed","applied","artifact","capped","failed","rejected"]},
     {"name":"proposals","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"artifact","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"artifactVersion","type":"integer","required":false,"unique":false,"writable":"managed"},

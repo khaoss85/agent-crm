@@ -66,7 +66,7 @@ export function createSpacePermissionGateCapability(config) {
     name: 'space-permission-gate',
     version: 1,
     description:
-      'Gate AI actions per space: allow what the space switched on, propose what it switched off. Records proposals inside the caller\u2019s transaction; executes nothing, grants no cross-space read and no approval.',
+      'Gate AI actions per space: allow what the space switched on, propose what it switched off (and propose everything while the ai-enabled master is off). Records proposals inside the caller\u2019s transaction; executes nothing, grants no cross-space read and no approval.',
     /**
      * @param {{modules?: any, consumer?: string, now?: () => string}} context
      * `now` is the server clock the capability stamps proposals with; without

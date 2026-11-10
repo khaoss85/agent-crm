@@ -1,0 +1,244 @@
+{
+  "4419:oggi:bar": {
+    "ok": true,
+    "failures": [],
+    "innerWidth": 390,
+    "docScrollWidth": 390,
+    "topbarH": 110,
+    "contentTop": 114,
+    "crumb": "Studio Aurora / Oggi",
+    "crumbVisible": true,
+    "toggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "sidebarShownWhenClosed": false
+  },
+  "4419:clienti:bar": {
+    "ok": false,
+    "failures": [
+      "innerWidth 612 != 390",
+      "docScrollWidth 612 > 390"
+    ],
+    "innerWidth": 612,
+    "docScrollWidth": 612,
+    "topbarH": 110,
+    "contentTop": 114,
+    "crumb": "Studio Aurora / Clienti",
+    "crumbVisible": true,
+    "toggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "sidebarShownWhenClosed": false
+  },
+  "4419:cliente:bar": {
+    "ok": true,
+    "failures": [],
+    "innerWidth": 390,
+    "docScrollWidth": 390,
+    "topbarH": 110,
+    "contentTop": 114,
+    "crumb": "Studio Aurora / Clienti",
+    "crumbVisible": true,
+    "toggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "sidebarShownWhenClosed": false
+  },
+  "4419:calendario:bar": {
+    "ok": true,
+    "failures": [],
+    "innerWidth": 390,
+    "docScrollWidth": 390,
+    "topbarH": 110,
+    "contentTop": 114,
+    "crumb": "Studio Aurora / Calendario",
+    "crumbVisible": true,
+    "toggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "sidebarShownWhenClosed": false
+  },
+  "4419:tap-open": {
+    "tapTarget": {
+      "w": 44,
+      "h": 44,
+      "hit": true
+    },
+    "expanded": "true",
+    "drawer": true,
+    "role": "dialog",
+    "inView": {
+      "x": 0,
+      "w": 300
+    },
+    "active": "Oggi",
+    "focus": "inside-drawer"
+  },
+  "4419:toggle-reachable-when-open": {
+    "toggleOnTop": true,
+    "hitIs": "bo-menu-toggle ui-btn ui-btn-secondary"
+  },
+  "4419:tap-close": {
+    "expanded": "false",
+    "drawer": false
+  },
+  "4419:enter-open": {
+    "expanded": "true",
+    "drawer": true,
+    "focusInDrawer": true
+  },
+  "4419:esc-close": {
+    "expanded": "false",
+    "drawer": false,
+    "focusOnToggle": true
+  },
+  "d7c78:composer-open": {
+    "box": [
+      0,
+      0,
+      390,
+      844
+    ],
+    "fields": [
+      "INPUT:16px",
+      "INPUT:16px",
+      "TEXTAREA:16px"
+    ],
+    "overflow": 0,
+    "innerWidth": 390,
+    "sendText": [
+      "Invia su Email"
+    ]
+  },
+  "d7c78:message-sent": {
+    "writes": [
+      {
+        "method": "POST",
+        "path": "/api/customer-hub/messages",
+        "body": "{\"spaceId\":\"spazio-demo\",\"resource\":\"contact\",\"id\":\"c1\",\"channel\":\"email\",\"text\":\"Ciao, ti confermo la prova di giovedì.\",\"connectionKey\":\"gmail-1\",\"messageKey\":\"ad24fb72-cc0f-4047-845d-e52376727f4d\"}",
+        "answer": "{\"channel\":\"email\",\"to\":\"demo@example.test\",\"jobId\":\"job-1\"}"
+      }
+    ],
+    "toast": []
+  },
+  "d7c78:offer-open": {
+    "box": [
+      0,
+      0,
+      390,
+      844
+    ],
+    "fields": [
+      "Descrivi l’offerta all’AI:16px",
+      "offer-title:16px",
+      "offer-value:16px",
+      "offer-expiry:16px",
+      "offer-owner:16px"
+    ],
+    "overflow": 0,
+    "innerWidth": 390,
+    "buttons": [
+      "–",
+      "✕",
+      "Compila",
+      "Crea offerta"
+    ]
+  },
+  "d7c78:offer-fields": [
+    {
+      "i": 0,
+      "name": "",
+      "label": "Descrivi l’offerta all’AI",
+      "placeholder": "Descrivi l’offerta: «10 lezioni PT a 350 €, valida fino a fine mese»"
+    },
+    {
+      "i": 1,
+      "name": "offer-title",
+      "label": "Titolo",
+      "placeholder": "Pacchetto 10 lezioni"
+    },
+    {
+      "i": 2,
+      "name": "offer-value",
+      "label": "Valore (€)",
+      "placeholder": "350.00"
+    },
+    {
+      "i": 3,
+      "name": "offer-owner",
+      "label": "Referente",
+      "placeholder": "Chi la segue"
+    }
+  ],
+  "d7c78:offer-sent": {
+    "writes": [
+      {
+        "method": "POST",
+        "path": "/api/opportunities",
+        "body": "{\"companyId\":\"co1\",\"contactId\":\"c1\",\"name\":\"Pacchetto 10 lezioni\",\"valueCents\":25000,\"currency\":\"EUR\",\"owner\":\"Elena Rinaldi\"}",
+        "answer": "{\"opportunity\":{\"id\":\"opp-new\",\"title\":\"Offerta demo\",\"status\":\"open\"},\"id\":\"opp-new\"}"
+      }
+    ],
+    "notes": []
+  },
+  "d7c78:calendar-before": {
+    "confirms": 2,
+    "firstConfirm": [
+      103,
+      43
+    ],
+    "draggable": 0,
+    "overflow": 0,
+    "innerWidth": 390,
+    "grid": [
+      366
+    ]
+  },
+  "d7c78:calendar-booked": {
+    "writes": [
+      {
+        "method": "POST",
+        "path": "/api/appointments/confirm",
+        "body": "{\"spaceId\":\"spazio-demo\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"currency\":\"EUR\",\"startsAt\":\"2026-10-22T14:00:00.000Z\",\"endsAt\":\"2026-10-22T14:30:00.000Z\",\"notes\":\"taglio per Ada\",\"sourceKey\":\"calendario:marco:2026-10-22T14:00:00.000Z:senza-cliente\",\"source\":{\"package\":\"host\",\"action\":\"calendar-book\"},\"confirmed\":true}",
+        "answer": "{\"decision\":\"booked\",\"appointment\":{\"id\":\"appt-new\",\"spaceId\":\"spazio-demo\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"curr"
+      }
+    ],
+    "notes": [
+      "Prenotato: marco · 22 ott 16:00."
+    ],
+    "overflowAfter": {
+      "overflow": 0,
+      "innerWidth": 390
+    }
+  },
+  "d7c78:calendar-wrong-space-control": {
+    "writes": [
+      {
+        "method": "POST",
+        "path": "/api/appointments/confirm",
+        "body": "{\"spaceId\":\"spazio-demo\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"currency\":\"EUR\",\"startsAt\":\"2026-10-22T14:00:00.000Z\",\"endsAt\":\"2026-10-22T14:30:00.000Z\",\"notes\":\"taglio per Ada\",\"sourceKey\":\"calendario:marco:2026-10-22T14:00:00.000Z:senza-cliente\",\"source\":{\"package\":\"host\",\"action\":\"calendar-book\"},\"confirmed\":true}",
+        "status": 400,
+        "refused": [
+          "spaceId=\"spazio-demo\""
+        ]
+      }
+    ],
+    "booked": false
+  }
+}

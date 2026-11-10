@@ -188,6 +188,18 @@ export function createAccordoApp(options = {}) {
   const modules = new ModuleRegistry();
   const providers = new ProviderRegistry();
 
+  // Code-first pipeline registry (ADR-014, voce ba47a73b: composed before
+  // the opportunity module so creations enter the default pipeline in the
+  // same write). Staged-eligible targets are the modules that actually
+  // STORE pipeline state — today the explicitly action-eligible core
+  // modules (opportunity, via core migration v3). A generated module has
+  // no pipeline columns yet (manifest-declared pipeline state is future
+  // work), so a pipeline targeting one would register cleanly but be
+  // permanently unusable — rejected at startup instead, fail closed.
+  const ACTION_ELIGIBLE_CORE_MODULES = new Set(['opportunity']);
+  const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
+  for (const definition of generatedPipelines) pipelines.register(definition);
+
   const companyModule = createCompanyModule({ database, audit, events });
   modules.register(companyModule);
 
@@ -205,6 +217,7 @@ export function createAccordoApp(options = {}) {
     events,
     companies: companyModule.service,
     contacts: contactModule.service,
+    pipelines,
   });
   modules.register(opportunityModule);
 
@@ -251,19 +264,9 @@ export function createAccordoApp(options = {}) {
   // definition throws here and stops startup rather than exposing a
   // half-working action.
   const generatedModuleNames = new Set(generatedModules.map((generated) => generated.name));
-  const ACTION_ELIGIBLE_CORE_MODULES = new Set(['opportunity']);
   const actionModuleExists = (name) => generatedModuleNames.has(name) || ACTION_ELIGIBLE_CORE_MODULES.has(name);
   const actions = new ActionRegistry({ moduleExists: actionModuleExists });
   for (const definition of generatedActions) actions.register(definition);
-
-  // Code-first pipeline registry (ADR-014). Staged-eligible targets are the
-  // modules that actually STORE pipeline state — today the explicitly
-  // action-eligible core modules (opportunity, via core migration v3). A
-  // generated module has no pipeline columns yet (manifest-declared pipeline
-  // state is future work), so a pipeline targeting one would register cleanly
-  // but be permanently unusable — rejected at startup instead, fail closed.
-  const pipelines = new PipelineRegistry({ moduleExists: (name) => ACTION_ELIGIBLE_CORE_MODULES.has(name) });
-  for (const definition of generatedPipelines) pipelines.register(definition);
 
   // Optional domain packages (ADR-018 addendum). The kernel knows only the
   // generic contract: a package contributes actions and versioned policies,

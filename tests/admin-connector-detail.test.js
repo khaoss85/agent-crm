@@ -22,11 +22,13 @@ import { fileURLToPath } from 'node:url';
 import {
   CONNECTOR_DETAIL_CHANNELS,
   catalogFor,
+  consumerLine,
   consumersForChannel,
   createConnectorDetailView,
   detailSections,
   directionOf,
   isConnectorDetailChannel,
+  italianUnitName,
   renewalSection,
   statusLabel,
 } from '../apps/admin/public/admin-connector-detail.js';
@@ -153,7 +155,71 @@ test('"skill che lo usano" shows only declared dependencies', () => {
   // The detail section carries the same record key as the other six.
   const sections = detailSections({ entry: ENTRY, connection: CONNECTION });
   assert.equal(sections.skillCheLoUsano.connectionKey, CONNECTION.connectionKey);
-  assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('appointments')));
+  assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('Appuntamenti')));
+});
+
+// backlog:a55e4c5336dd — the connector page speaks the CRM reader's
+// Italian: consumer rows name units in Italian and never print edge codes,
+// and «Collega in 3 passi» wears the theme buttons.
+test('a55e4c53: consumer rows show Italian names, never codes', () => {
+  const banned = [
+    'propose-channel-reply',
+    'BO-F1-07',
+    'channels outbox',
+    'channel-sender@1',
+    'channel-template-send@1',
+    'queueTemplate',
+    'reply stop',
+    'outbox',
+    'inbox',
+    'Dipendenze dichiarate nel repo',
+  ];
+  assert.equal(italianUnitName('appointments'), 'Appuntamenti');
+  assert.equal(italianUnitName('sequences'), 'Sequenze');
+  assert.equal(italianUnitName('channels'), 'Canali');
+  assert.equal(italianUnitName('customer-data'), 'Dati clienti');
+  assert.equal(italianUnitName('skill:build-custom-domain-package'), 'Pacchetti su misura');
+  assert.equal(italianUnitName('appointments', 'Etichetta viva'), 'Etichetta viva');
+  assert.equal(italianUnitName('unknown-unit'), 'Funzione del prodotto');
+  for (const channel of CONNECTOR_DETAIL_CHANNELS) {
+    const entry = CONNECTOR_CATALOG.find((row) => row.channel === channel);
+    if (!entry) continue;
+    const sections = detailSections({
+      entry,
+      connection: { ...CONNECTION, channel, connectionKey: `k:${channel}` },
+    });
+    assert.ok(sections.skillCheLoUsano.lines.length > 0, `${channel}: consumer rows render`);
+    for (const line of sections.skillCheLoUsano.lines) {
+      for (const needle of banned) {
+        assert.ok(!line.includes(needle), `${channel}: no «${needle}» in «${line}»`);
+      }
+    }
+    // The Italian name of every declared unit reaches the line.
+    for (const row of consumersForChannel(channel)) {
+      assert.ok(
+        sections.skillCheLoUsano.lines.some((line) => line.includes(consumerLine(row, italianUnitName))),
+        `${channel}: «${row.unit}» renders its Italian row`,
+      );
+    }
+  }
+});
+
+test('a55e4c53: «Collega in 3 passi» wears the theme buttons', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ connectors: [] }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('whatsapp');
+  await flush();
+  const go = mount.findAll('a').find((node) => node.textContent === 'Collega in 3 passi');
+  assert.ok(go, 'the 3-step link renders when nothing is connected');
+  const cls = go.getAttribute('class') ?? '';
+  assert.ok(cls.includes('ui-btn-cta'), `the link wears the theme call-to-action («${cls}»)`);
 });
 
 function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true, grants = [], renewed = [] } = {}) {
@@ -632,4 +698,39 @@ test('the observer watches the renewal without touching it', async () => {
   await flush();
   assert.ok(mount.textContent.includes('Rinnovo del permesso'), 'the section stays visible');
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'renew-grant').length, 0);
+});
+
+// backlog:cf365ada15b9 (d): the detail printed the raw import state
+// («Sincronizzazione: done») and the raw connection status («Stato: active»).
+test('cf365ada15b9: the detail says import and connection states in Italian', () => {
+  for (const [status, word] of [['done', 'completata'], ['running', 'in corso'], ['failed', 'non riuscita'], ['weird', 'stato sconosciuto']]) {
+    const sections = detailSections({
+      entry: ENTRY,
+      connection: { ...CONNECTION, importable: true, sync: { status, importedEvents: 3, createdContacts: 1, unresolvedContacts: 0 } },
+    });
+    const lines = [...sections.interruttori.lines, ...sections.dettagliTecnici.lines];
+    assert.ok(lines.some((line) => line.includes(`Sincronizzazione: ${word}`)), `${status} reads «${word}»`);
+    assert.ok(lines.some((line) => line.startsWith(`Cronologia: ${word}`)), `history ${status} reads «${word}»`);
+    assert.ok(!lines.some((line) => new RegExp(`\\b${status}\\b`).test(line) && status !== word), `no raw «${status}»`);
+    assert.ok(lines.some((line) => line === 'Stato: Collegato.'), 'the connection status reads Collegato, not active');
+    assert.ok(!lines.some((line) => /\bactive\b/.test(line)), 'no raw «active»');
+  }
+});
+
+test('24a57904a428: the detail read carries the live space, whatever storage says', async () => {
+  for (const stored of ['', 'altro-spazio']) {
+    const doc = createFakeDocument();
+    const mount = createMount(doc);
+    const calls = [];
+    const view = createConnectorDetailView({
+      doc, mount, client: stubClient({ calls }),
+      storage: { getItem: () => stored, setItem: () => {} },
+      spaceId: () => 'presti',
+      navigate: () => {},
+    });
+    await view.render('whatsapp');
+    await flush();
+    const reads = calls.filter((path) => String(path).startsWith('/api/connectors?'));
+    assert.deepEqual(reads, ['/api/connectors?spaceId=presti'], `the read names the live space (stored «${stored}»)`);
+  }
 });

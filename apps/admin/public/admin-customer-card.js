@@ -6,8 +6,9 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, offerStageLabel, offerStateLabel } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
+import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
   defineField,
@@ -191,7 +192,9 @@ const durationParts = (sec) => {
  * @param {unknown} value
  */
 export function teamName(value) {
-  if (!isHumanHandle(value)) return null;
+  // A provider id or the broker's reserved mailbox is no name (production
+  // 10/11: `broker+…@accordo.invalid` read «Broker»), shared filter.
+  if (!isHumanHandle(value) || isTechnicalMemberText(value)) return null;
   const text = String(value).trim();
   const isEmail = text.includes('@');
   // An e-mail never shows its domain: the local part, without a `+tag`.
@@ -298,6 +301,59 @@ export function shownOfferState(first, fromQuote, opportunities, pipelines) {
     pipelineKey: row.pipelineKey, pipelineStage: row.pipelineStage, stage: row.stage ?? row.status,
   });
   return (parent === null ? null : offerStageLabel(pipelines, parent)) ?? offerStateLabel(first.status);
+}
+
+/**
+ * Backlog 1e939a362c7c: the «Cambia stato» menu of the scheda offer line,
+ * for every offer — a quote line acts on the opportunity it was made for.
+ * An offer placed on a composed pipeline moves through that pipeline's
+ * stages, on the same `move-stage` action the Pipeline board posts (the
+ * line shows the pipeline stage, so the menu moves exactly that). An offer
+ * outside any pipeline keeps the governed core workflow
+ * (`POST /api/opportunities/:id/stage`). Null when no opportunity is known,
+ * or when it is placed on a pipeline this reader does not compose (never a
+ * core move the line would not show).
+ * @param {any} first the shown row (quote or opportunity)
+ * @param {boolean} fromQuote
+ * @param {Array<any> | null} opportunities the profile's opportunity rows
+ * @param {unknown} pipelines `/api/schema` pipelines
+ * @returns {{ id: string, kind: 'pipeline', pipeline: any, current: string, voices: Array<{ key: string, label: string, type: string }> }
+ *   | { id: string, kind: 'core', current: string, voices: Array<{ key: string, label: string, type: string }> } | null}
+ */
+export function offerStageMenu(first, fromQuote, opportunities, pipelines) {
+  if (!first || typeof first !== 'object') return null;
+  const row = fromQuote && typeof first.opportunityId === 'string' && Array.isArray(opportunities)
+    ? opportunities.find((candidate) => candidate?.id === first.opportunityId) ?? null
+    : null;
+  const id = fromQuote ? first.opportunityId : first.id;
+  if (typeof id !== 'string' || id === '') return null;
+  const pick = (joined, own) => (typeof joined === 'string' && joined !== '' ? joined : (typeof own === 'string' && own !== '' ? own : null));
+  const pipelineKey = fromQuote ? pick(first.opportunityPipelineKey, row?.pipelineKey) : pick(first.pipelineKey, null);
+  const pipelineStage = fromQuote ? pick(first.opportunityPipelineStage, row?.pipelineStage) : pick(first.pipelineStage, null);
+  const coreStage = fromQuote ? pick(first.opportunityStage, row?.stage ?? row?.status) : pick(first.stage, first.status);
+  if (pipelineKey !== null && pipelineStage !== null) {
+    const pipeline = (Array.isArray(pipelines) ? pipelines : [])
+      .find((candidate) => candidate?.name === pipelineKey && Array.isArray(candidate?.stages));
+    if (!pipeline || typeof pipeline.module !== 'string' || pipeline.module === '') return null;
+    // Review #683: a stage the pipeline no longer defines (drift, «Fuori
+    // definizione» on the board) offers no move — the server would refuse
+    // every one with 409 PIPELINE_STATE_CORRUPT, like the board knows.
+    if (!pipeline.stages.some((stage) => stage?.key === pipelineStage)) return null;
+    const voices = pipeline.stages
+      .filter((stage) => typeof stage?.key === 'string' && stage.key !== pipelineStage)
+      .map((stage) => ({
+        key: stage.key,
+        label: typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : stage.key,
+        type: typeof stage.type === 'string' ? stage.type : 'open',
+      }));
+    return voices.length > 0 ? { id, kind: 'pipeline', pipeline, current: pipelineStage, voices } : null;
+  }
+  if (coreStage === null) return null;
+  const current = coreStage.toLowerCase();
+  const voices = offerStageTargets(current).map((stage) => ({
+    key: stage, label: offerStateLabel(stage) ?? stage, type: 'core',
+  }));
+  return voices.length > 0 ? { id, kind: 'core', current, voices } : null;
 }
 
 const PACKAGE_STATUS_LABELS = Object.freeze({ active: 'attivo' });
@@ -545,6 +601,29 @@ export function phoneRefusalText(error) {
   }
   humanReadError(error, { failed: own });
   return isItalianSentence(record.message) ? String(record.message).trim() : own;
+}
+
+const DETAILS_SAVE_FAILED = 'Salvataggio non riuscito. Riprova più tardi.';
+const EMAIL_TAKEN_REFUSAL = 'Questa email è già di un altro cliente';
+
+/**
+ * Voce 5e13c9ef: «Dettagli» Salva said «Salvataggio non riuscito…» even for
+ * a 409 the server already names (CONFLICT, email taken by another customer:
+ * contact-service EMAIL_TAKEN_MESSAGE). A 409 now reads its own reason —
+ * the server's Italian sentence when it sends one, else the same reason in
+ * our words; anything else (other 4xx, 5xx, network) keeps the generic retry
+ * line through humanReadError, exactly as before.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function detailsRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status
+    : (record.code === 'CONFLICT' ? 409 : null);
+  if (status !== 409) {
+    return humanReadError(error, { failed: DETAILS_SAVE_FAILED });
+  }
+  humanReadError(error, { failed: EMAIL_TAKEN_REFUSAL });
+  return isItalianSentence(record.message) ? String(record.message).trim() : EMAIL_TAKEN_REFUSAL;
 }
 
 /**
@@ -1312,12 +1391,20 @@ export function createCustomerCardView(deps) {
    * «Chiedi all'AI» (Dan 05/11: the composer is agentic — a prompt writes
    * the text, as an alternative to writing it from scratch). The prompt goes
    * to `POST /api/customer-hub/messages/draft` { spaceId, contactId, channel,
-   * prompt } → { subject?, body }: the server drafts from the customer's
-   * own history through the space LLM gate and never sends. The draft lands
-   * in the message field, editable; the previous text can be restored once
-   * with «Annulla»; Invia stays the person's click. AI off (503
-   * LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without the
-   * route (404/405) turns the row into one honest line, never a dead button.
+   * prompt } → { corta, lunga, diretta, subject? } (backlog:01289e73): the
+   * server drafts three labeled wordings from the customer's own history
+   * through the space LLM gate and never sends. The member picks one of
+   * the three — Corta, Lunga or Diretta — and it lands in the message
+   * field, editable. The three stay on screen until the send or the close
+   * (production 10/11): another pick refills the field with no new call,
+   * after an inline «Sostituire il testo modificato?» if the member edited
+   * it; Rigenera asks three new ones. The previous text can be restored
+   * once with «Annulla»;
+   * Invia stays the person's click. A single-text answer from a pilot
+   * before the three-version cure still fills the field at once. AI off
+   * (503 LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without
+   * the route (404/405) turns the row into one honest line, never a dead
+   * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
   function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
@@ -1338,12 +1425,31 @@ export function createCustomerCardView(deps) {
     go.setAttribute('data-action', 'composer-ai-generate');
     const line = el('p', 'bo-composer-ai-line', '');
     line.setAttribute('aria-live', 'polite');
+    // The three versions live in their own row, so a pick or a message in
+    // `line` never wipes them (production 10/11: after «Diretta» the other
+    // two were gone and only Rigenera — a new AI call — brought them back).
+    const choice = el('div', 'bo-composer-ai-picks');
     const field = el('div', 'bo-composer-ai-field');
     field.appendChild(mark);
     field.appendChild(prompt);
     field.appendChild(go);
     row.appendChild(field);
+    row.appendChild(choice);
     row.appendChild(line);
+    // The wording the AI last put in the field: a different field value
+    // means the member edited it by hand.
+    /** @type {string|null} */
+    let filled = null;
+    /** @type {any[]} */
+    let pickButtons = [];
+    // The line as it was before an open «Sostituire…?» confirmation, taken
+    // once (Muse P2 on #737): a second pick while one is open updates it in
+    // place, and «Tieni il mio» always brings back the draft line.
+    /** @type {any[]|null} */
+    let beforeConfirm = null;
+    const markPicked = (kind) => {
+      for (const node of pickButtons) node.setAttribute('aria-pressed', node.getAttribute('data-version') === kind ? 'true' : 'false');
+    };
     let busy = false;
     // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
     // lives in composerAiPending, outside this row (review #664): the next
@@ -1364,6 +1470,7 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('p', 'bo-composer-ai-off', sentence));
     };
     const say = (sentence, undo = false) => {
+      beforeConfirm = null;
       while (line.firstChild) line.removeChild(line.firstChild);
       line.textContent = '';
       if (sentence === '') return;
@@ -1375,6 +1482,8 @@ export function createCustomerCardView(deps) {
         back.addEventListener('click', () => {
           const kept = baseline();
           if (kept === null) return;
+          filled = null;
+          markPicked(null);
           text.value = kept.text;
           // Muse P2 on #599: with no subject field mounted (channel switched
           // to WhatsApp) the undone subject goes to the shared draft, so the
@@ -1388,6 +1497,12 @@ export function createCustomerCardView(deps) {
         line.appendChild(el('span', undefined, ' · '));
         line.appendChild(back);
       }
+    };
+    // The line under an AI draft: reread it, and Annulla when there is a
+    // text of the person's own to go back to.
+    const sayDrafted = () => {
+      const kept = baseline();
+      say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
     };
     async function generate() {
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
@@ -1467,22 +1582,91 @@ export function createCustomerCardView(deps) {
         // shared per-customer draft; a superseded one never overwrites the
         // newer draft (review #664).
         if (gone()) return;
+        // Three labeled wordings the member chooses from (backlog:01289e73):
+        // the pilot's own labels (`corta`, `lunga`, `diretta`), one
+        // vocabulary for the same choice on every surface.
+        const kinds = [['corta', 'Corta'], ['lunga', 'Lunga'], ['diretta', 'Diretta']];
+        const versions = [];
+        for (const [kind, label] of kinds) {
+          const wording = typeof answer?.[kind] === 'string' ? answer[kind].trim() : '';
+          if (wording !== '') versions.push({ kind, label, text: wording.slice(0, 2000) });
+        }
+        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
+        // Regenerating keeps the person's original, never a previous AI draft.
+        const fill = (picked, kind = null) => {
+          // Muse #718 P2: read the live subject at pick time — a channel
+          // switch between the answer and the pick replaces the input.
+          const subjectField = subject();
+          if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
+          text.value = picked;
+          filled = picked;
+          markPicked(kind);
+          if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
+          changed();
+          // A pick during a Rigenera in flight leaves Genera's own label alone.
+          if (!busy) go.textContent = 'Rigenera';
+          sayDrafted();
+          if (typeof text.focus === 'function') text.focus();
+        };
+        if (versions.length === kinds.length) {
+          while (choice.firstChild) choice.removeChild(choice.firstChild);
+          pickButtons = [];
+          choice.appendChild(el('span', undefined, 'Scegli la versione da usare:'));
+          for (const version of versions) {
+            const pick = el('button', 'bo-composer-ai-pick', version.label);
+            pick.setAttribute('type', 'button');
+            pick.setAttribute('data-action', 'composer-ai-pick');
+            pick.setAttribute('data-version', version.kind);
+            pick.setAttribute('aria-pressed', 'false');
+            // Only a closed or reopened composer retires the versions: a
+            // Rigenera in flight leaves them working until the new three.
+            pick.addEventListener('click', () => {
+              if (stale()) return;
+              if (filled === null || text.value === filled) {
+                fill(version.text, version.kind);
+                return;
+              }
+              // Hand edits never go in silence: ask inline, never a browser dialog.
+              if (beforeConfirm === null) beforeConfirm = Array.from(line.childNodes ?? []);
+              const before = beforeConfirm;
+              while (line.firstChild) line.removeChild(line.firstChild);
+              line.textContent = '';
+              line.appendChild(el('span', undefined, `Sostituire il testo modificato con la versione ${version.label}? `));
+              const replace = el('button', 'bo-composer-ai-undo', 'Sostituisci');
+              replace.setAttribute('type', 'button');
+              replace.setAttribute('data-action', 'composer-ai-replace');
+              replace.addEventListener('click', () => { if (!stale()) fill(version.text, version.kind); });
+              const keep = el('button', 'bo-composer-ai-undo', 'Tieni il mio');
+              keep.setAttribute('type', 'button');
+              keep.setAttribute('data-action', 'composer-ai-keep');
+              keep.addEventListener('click', () => {
+                beforeConfirm = null;
+                while (line.firstChild) line.removeChild(line.firstChild);
+                line.textContent = '';
+                for (const node of before) line.appendChild(node);
+              });
+              line.appendChild(replace);
+              line.appendChild(el('span', undefined, ' · '));
+              line.appendChild(keep);
+            });
+            choice.appendChild(pick);
+            pickButtons.push(pick);
+          }
+          // A new set after a pick: the field keeps the earlier wording,
+          // none of the new three is selected yet.
+          if (filled !== null) sayDrafted();
+          return;
+        }
+        // A single-text answer from a pilot before the three-version cure
+        // still fills the field at once, never a dead choice.
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
           return;
         }
-        const subjectField = subject();
-        // Regenerating keeps the person's original, never a previous AI draft.
-        if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
-        text.value = drafted.slice(0, 2000);
-        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
-        if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
-        changed();
-        go.textContent = 'Rigenera';
-        const kept = baseline();
-        say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
-        if (typeof text.focus === 'function') text.focus();
+        while (choice.firstChild) choice.removeChild(choice.firstChild);
+        pickButtons = [];
+        fill(drafted.slice(0, 2000));
       } catch (error) {
         if (gone()) return;
         const code = error?.code ?? null;
@@ -2182,8 +2366,9 @@ export function createCustomerCardView(deps) {
         if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
-        error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
-        toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
+        const refusal = detailsRefusalText(err);
+        error.textContent = refusal;
+        toast(refusal, true);
       } finally {
         detailsInFlight.delete(flightKey);
         busy = false;
@@ -2413,7 +2598,7 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
+          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? 'un membro del team'}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
@@ -2844,81 +3029,217 @@ export function createCustomerCardView(deps) {
     // /api/opportunities/:id/stage), never a direct write: a renewal moving
     // to proposal past the approval threshold lands in «in attesa di
     // approvazione» with a toast saying so, like the pipeline board. The
-    // menu acts on exactly the stato the line shows: when the line reads a
-    // quote (no governed stage transition exists for quotes), there is no
-    // menu — the quote's state changes from the quotes screen. A refused
+    // menu acts on exactly the stato the line shows: since backlog
+    // a551982c06eb that is the offer's stage even on a quote line, so the
+    // menu acts on the quote's opportunity (the quote's own approval
+    // changes from the quotes screen). A refused
     // move keeps the menu with the server's Italian error, and a completed
     // move re-reads the card so the line is the server's state, never an
     // optimistic copy. The header Cliente/Contatto pill stays derived (see
     // customer-status.js): this menu does not touch it.
-    const shownOpportunity = fromQuote ? null : first;
-    if (shownOpportunity && typeof shownOpportunity.id === 'string' && shownOpportunity.id !== ''
-      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
-      const current = String(shownOpportunity.status ?? '').toLowerCase();
-      const targets = offerStageTargets(current);
-      if (targets.length > 0) {
-        const wrap = el('div', 'bo-scheda-stage-menu');
-        const button = el('button', undefined, 'Cambia stato');
-        button.setAttribute('type', 'button');
-        button.setAttribute('aria-haspopup', 'menu');
-        button.setAttribute('aria-expanded', 'false');
-        button.setAttribute('data-action', 'change-offer-stage');
-        const menu = el('div', 'bo-scheda-stage-voices hidden');
-        menu.setAttribute('role', 'menu');
-        const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
-        const syncMenu = () => {
-          button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
-        };
-        const close = () => {
-          if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
-          syncMenu();
-        };
-        button.addEventListener('click', () => {
-          menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
-          syncMenu();
-        });
-        button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-        menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
-        const stageError = el('small', 'field-error', '');
-        let stageBusy = false;
-        for (const stage of targets) {
-          const voice = el('button', undefined, offerStatusLabel(stage) ?? stage);
-          voice.setAttribute('type', 'button');
-          voice.setAttribute('role', 'menuitem');
-          voice.setAttribute('data-stage', stage);
-          voice.addEventListener('click', async () => {
-            if (stageBusy) return;
-            stageBusy = true;
-            stageError.textContent = '';
-            try {
-              const result = await client.request(
-                `/api/opportunities/${encodeURIComponent(shownOpportunity.id)}/stage`,
-                { method: 'POST', body: JSON.stringify({ targetStage: stage }) },
-              );
-              close();
-              // The stage route returns the workflow envelope
-              // { runId, status, output }: the approval gate reads in
-              // output.outcome, never in a top-level outcome.
-              toast(result?.output?.outcome === 'approval_required'
-                ? 'Stato aggiornato: serve un\u2019approvazione'
-                : 'Stato aggiornato');
-              await renderCard(offerCtx.resource, offerCtx.id);
-            } catch (error) {
-              stageError.textContent = humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' });
-              toast(humanReadError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' }), true);
-            } finally {
-              stageBusy = false;
-            }
-          });
-          menu.appendChild(voice);
+    // Backlog 1e939a362c7c: every offer has the menu — a quote line acts on
+    // its opportunity, a placed offer moves through its pipeline (see
+    // offerStageMenu).
+    const stageMenu = offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string'
+      ? offerStageMenu(first, fromQuote, opportunities, pipelines) : null;
+    if (stageMenu) {
+      const wrap = el('div', 'bo-scheda-stage-menu');
+      const button = el('button', undefined, 'Cambia stato');
+      button.setAttribute('type', 'button');
+      button.setAttribute('aria-haspopup', 'menu');
+      button.setAttribute('aria-expanded', 'false');
+      button.setAttribute('data-action', 'change-offer-stage');
+      const menu = el('div', 'bo-scheda-stage-voices hidden');
+      menu.setAttribute('role', 'menu');
+      const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+      const syncMenu = () => {
+        button.setAttribute('aria-expanded', isClosed() ? 'false' : 'true');
+      };
+      const close = () => {
+        if (!isClosed()) menu.setAttribute('class', 'bo-scheda-stage-voices hidden');
+        syncMenu();
+      };
+      button.addEventListener('click', () => {
+        menu.setAttribute('class', isClosed() ? 'bo-scheda-stage-voices' : 'bo-scheda-stage-voices hidden');
+        syncMenu();
+      });
+      button.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      menu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') close(); });
+      const stageError = el('small', 'field-error', '');
+      const stageStatus = el('small', 'bo-muted', '');
+      stageStatus.setAttribute('role', 'status');
+      let stageBusy = false;
+      const failed = 'Stato non aggiornato. Riprova più tardi.';
+      /** One move: the pipeline's move-stage action or the governed core workflow. */
+      const move = async (voice, reason = null) => {
+        if (stageBusy) return;
+        stageBusy = true;
+        stageError.textContent = '';
+        stageStatus.textContent = '';
+        try {
+          if (stageMenu.kind === 'pipeline') {
+            const input = { toStage: voice.key, fromStage: stageMenu.current };
+            if (reason) input.reason = reason;
+            await client.request(
+              `/api/modules/${encodeURIComponent(stageMenu.pipeline.module)}/records/${encodeURIComponent(stageMenu.id)}/actions/move-stage`,
+              { method: 'POST', body: JSON.stringify(input) },
+            );
+            close();
+            toast(`Spostata in ${voice.label}.`);
+          } else {
+            const result = await client.request(
+              `/api/opportunities/${encodeURIComponent(stageMenu.id)}/stage`,
+              { method: 'POST', body: JSON.stringify({ targetStage: voice.key }) },
+            );
+            close();
+            // The stage route returns the workflow envelope
+            // { runId, status, output }: the approval gate reads in
+            // output.outcome, never in a top-level outcome.
+            toast(result?.output?.outcome === 'approval_required'
+              ? 'Stato aggiornato: serve un\u2019approvazione'
+              : 'Stato aggiornato');
+          }
+          await renderCard(offerCtx.resource, offerCtx.id);
+        } catch (error) {
+          // Review #683: a move the server still holds (the pilot queue) is
+          // not a failure — it reads neutral, like «Non ancora confermato»
+          // on the board, never as an error.
+          if (error?.code === 'BO_CRM_PENDING') {
+            close();
+            const pending = 'Non ancora confermato: ricarica la scheda tra poco.';
+            stageStatus.textContent = pending;
+            toast(pending);
+            return;
+          }
+          const text = humanReadError(error, { failed });
+          stageError.textContent = text;
+          toast(text, true);
+        } finally {
+          stageBusy = false;
         }
-        wrap.appendChild(button);
-        wrap.appendChild(menu);
-        wrap.appendChild(stageError);
-        box.appendChild(wrap);
+      };
+      // A pipeline won/lost stage asks the board's own Conferma (shared
+      // component, never a native confirm()): the question names the offer,
+      // a lost stage needs the reason, and only Conferma posts.
+      const confirmPanel = createStageConfirm(doc);
+      let confirmVoice = null;
+      const offerName = name;
+      confirmPanel.yes.addEventListener('click', () => {
+        if (!confirmVoice) return;
+        const answer = readStageConfirm(confirmPanel, confirmVoice);
+        if (!answer.ok) return;
+        void move(confirmVoice, answer.reason ?? null);
+      });
+      confirmPanel.no.addEventListener('click', () => {
+        confirmVoice = null;
+        confirmPanel.box.setAttribute('class', 'card-confirm hidden');
+      });
+      for (const voiceDef of stageMenu.voices) {
+        const voice = el('button', undefined, voiceDef.label);
+        voice.setAttribute('type', 'button');
+        voice.setAttribute('role', 'menuitem');
+        voice.setAttribute('data-stage', voiceDef.key);
+        voice.addEventListener('click', () => {
+          if (stageMenu.kind === 'pipeline' && stageNeedsConfirm(voiceDef)) {
+            confirmVoice = voiceDef;
+            close();
+            showStageConfirm(confirmPanel, offerName, voiceDef);
+            return;
+          }
+          void move(voiceDef);
+        });
+        menu.appendChild(voice);
       }
+      wrap.appendChild(button);
+      wrap.appendChild(menu);
+      wrap.appendChild(confirmPanel.box);
+      wrap.appendChild(stageStatus);
+      wrap.appendChild(stageError);
+      box.appendChild(wrap);
     }
+    paintStateHistory(box, historyTarget(first, fromQuote), profile, pipelines);
     return true;
+  }
+
+  /**
+   * Backlog c1649d1d: «Storia stati» — the state moves of the shown offer
+   * (who, from which stage to which, when), read from the same audit trail
+   * the offer detail paints. The trail is decoration: it fills after the
+   * card, an unreadable trail reads one honest line (and logs its cause,
+   * never its payload), and an offer with no move yet reads none. A move
+   * whose side has no label reads the generic Italian line, like the
+   * detail — never a raw key, and never a false-empty history when the
+   * pipelines are unavailable.
+   */
+
+  /** Log a decoration-read failure with its cause, never its payload. */
+  function logHistoryFailure(error) {
+    if (typeof console !== 'undefined' && typeof console.error === 'function') {
+      console.error('[bo] offerta non leggibile', {
+        area: 'scheda-stati',
+        code: error?.code ?? null,
+        status: Number(error?.status ?? 0) || null,
+      });
+    }
+  }
+  function historyTarget(first, fromQuote) {
+    if (!first || typeof first !== 'object') return null;
+    if (fromQuote) {
+      return typeof first.opportunityId === 'string' && first.opportunityId !== '' ? first.opportunityId : null;
+    }
+    return typeof first.id === 'string' && first.id !== '' ? first.id : null;
+  }
+
+  function paintStateHistory(box, targetId, profile, pipelines) {
+    if (typeof targetId !== 'string' || targetId === '') return;
+    const owner = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
+      ? profile.opportunities.items.find((candidate) => candidate?.id === targetId)?.owner ?? null
+      : null;
+    const companyName = typeof profile?.identity?.company?.name === 'string'
+      && profile.identity.company.name !== '' ? profile.identity.company.name : null;
+    box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
+    const loading = el('p', 'bo-muted', 'Caricamento…');
+    box.appendChild(loading);
+    const fill = (items) => {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      const rows = [];
+      for (const entry of Array.isArray(items) ? items : []) {
+        const move = stageMoveOf(entry);
+        if (move === null) continue;
+        const words = stageMoveLabels(pipelines, move);
+        const who = auditActorLabel(entry, [owner, companyName]);
+        const when = italianDateTime(entry?.createdAt) ?? '—';
+        if (words === null) {
+          // Review giro 1 (P2): the audit holds a move but no side has a
+          // label (pipelines unavailable, unknown keys). Like the detail,
+          // the row reads the generic Italian line — never a raw key, and
+          // never a false «no moves» message for moves that exist.
+          const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
+          rows.push(`${what} · da ${who} · ${when}`);
+        } else {
+          rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
+        }
+        if (rows.length >= 5) break;
+      }
+      if (rows.length === 0) {
+        box.appendChild(el('p', 'bo-muted', 'Ancora nessun cambio di stato.'));
+        return;
+      }
+      for (const text of rows) {
+        box.appendChild(el('p', 'bo-scheda-offer-history', text));
+      }
+    };
+    void client.request(
+      `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`,
+    ).then(
+      (answer) => fill(answer?.items),
+      (error) => {
+        // Review giro 1 (P2): the rejection cause reaches on-call, like the
+        // detail does — code and status only, never payload or PII.
+        logHistoryFailure(error);
+        if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
+      },
+    );
   }
 
   // Terminal booking states, mirroring APPOINTMENT_TERMINAL in

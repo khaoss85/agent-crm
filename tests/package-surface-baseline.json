@@ -5,15 +5,15 @@
       "name": "agents",
       "dir": "agents",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "724798875769a59eed58283d6e5699416d84477a559bc98c835b0b9e92e19341"
+      "version": 2,
+      "fingerprint": "5be32a42ab3d7d61e8e4bac590a32100d821ce8a5781c6fa9e3b874fe28eef31"
     },
     {
       "name": "agents",
       "dir": "agents",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "724798875769a59eed58283d6e5699416d84477a559bc98c835b0b9e92e19341"
+      "version": 2,
+      "fingerprint": "5be32a42ab3d7d61e8e4bac590a32100d821ce8a5781c6fa9e3b874fe28eef31"
     },
     {
       "name": "appointments",
@@ -89,15 +89,15 @@
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "80b8f4a00cd2ce146ab30862d0f6933f782b3b42fa8dbca236b4d30f8e7f2433"
+      "version": 5,
+      "fingerprint": "e81aa717df9d2481f4e5df7c54222719ed8c337289f782da2e9b1a95c02ce254"
     },
     {
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "11bf06d395d3a9cc289188250c7a51148aaad39c6e59ba8a1cf345b7e1505395"
+      "version": 5,
+      "fingerprint": "da75e0d39f9934cd249de99521b3b292737612f2eb2faf3ad982447657d0ee08"
     },
     {
       "name": "customer-hub",
@@ -173,15 +173,15 @@
       "name": "llm",
       "dir": "llm",
       "graph": "contract1",
-      "version": 1,
+      "version": 2,
       "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
     },
     {
       "name": "llm",
       "dir": "llm",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
+      "version": 2,
+      "fingerprint": "85476a40475f03522fcf5bd352fe6d70d6a0bafada95487e9797d553258273fb"
     },
     {
       "name": "magic-link",
@@ -222,15 +222,15 @@
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "9afdf16d5e4f1f7e1b6a8fe5de05fa0181b4d609af65de6c8f1d1d686b020d63"
+      "version": 2,
+      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
     },
     {
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "9afdf16d5e4f1f7e1b6a8fe5de05fa0181b4d609af65de6c8f1d1d686b020d63"
+      "version": 2,
+      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
     },
     {
       "name": "sequences",
@@ -292,15 +292,15 @@
       "name": "space-permissions",
       "dir": "space-permissions",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "d2fdd631817bf0a345741271b5d67a2fb8cf0ca5f9d66c1516bd4199bbce9f96"
+      "version": 2,
+      "fingerprint": "0c5fdf419f834536c59908e4aa71094b569ea5b1e0f27c81d390a37ca0d27c61"
     },
     {
       "name": "space-permissions",
       "dir": "space-permissions",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "30b7cf14acc43431ba9b9a1a1156e311cd35253dc850a0910c4530fa64d45c43"
+      "version": 2,
+      "fingerprint": "4f3717a04ee62c60e9038f3f03cc1d833e45d359140114e100c9480c26ddb9dc"
     },
     {
       "name": "work",

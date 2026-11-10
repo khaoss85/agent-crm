@@ -79,7 +79,7 @@ test('Sequenze → Calendario with a slow Sequenze response keeps the Calendario
   // The operator moves to Calendario: the router invalidates Sequenze, then
   // the calendar paints its own screen into the shared mount.
   sequenzeView.invalidate();
-  const calendarioView = createCalendarioView({ doc, mount, client: calendarioClient(), now: () => NOW });
+  const calendarioView = createCalendarioView({ searchDelayMs: 0, doc, mount, client: calendarioClient(), now: () => NOW });
   await calendarioView.render();
   assert.ok(mount.querySelector('.cal-wrap') !== null, 'the calendar screen is up');
   // The slow Sequenze answer lands now: it must not repaint.
@@ -101,7 +101,7 @@ test('a late Oggi answer never repaints over a deep-linked Calendario', async ()
   const pending = oggiView.render({ spaceName: 'Presti', userName: 'Daniele', links: [], now: NOW });
   // The router leaves the home for the deep link: invalidate, then paint.
   oggiView.invalidate();
-  const calendarioView = createCalendarioView({ doc, mount, client: calendarioClient(), now: () => NOW });
+  const calendarioView = createCalendarioView({ searchDelayMs: 0, doc, mount, client: calendarioClient(), now: () => NOW });
   await calendarioView.render();
   assert.ok(mount.querySelector('.cal-wrap') !== null, 'the calendar screen is up');
   gate.release();

@@ -1,7 +1,7 @@
 // @ts-check
 
 import { randomUUID } from 'node:crypto';
-import { ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
+import { AppError, ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import {
   enumValue,
   nonNegativeInteger,
@@ -71,13 +71,48 @@ const PIPELINE_MANAGED_FIELDS = Object.freeze([
 ]);
 
 export class OpportunityService {
-  /** @param {{database: any, audit: any, events: any, companies: any, contacts: any}} dependencies */
-  constructor({ database, audit, events, companies, contacts }) {
+  /** @param {{database: any, audit: any, events: any, companies: any, contacts: any, pipelines?: {forModule: (name: string) => any} | null}} dependencies */
+  constructor({ database, audit, events, companies, contacts, pipelines = null }) {
     this.database = database;
     this.audit = audit;
     this.events = events;
     this.companies = companies;
     this.contacts = contacts;
+    this.pipelines = pipelines ?? null;
+  }
+
+  /**
+   * Voce ba47a73b: the default pipeline placement for a new opportunity.
+   * Resolved and validated BEFORE the first write, so a misconfigured
+   * registry (or a registry failure) refuses the creation instead of
+   * leaving an orphan null-pipeline row behind. Returns null when no
+   * pipeline targets the opportunity module: the documented deterministic
+   * default is legacy null pipeline state, never an invented stage.
+   */
+  #defaultPipelinePlacement() {
+    const registry = this.pipelines;
+    const pipeline = registry && typeof registry.forModule === 'function'
+      ? registry.forModule('opportunity')
+      : null;
+    if (!pipeline) return null;
+    const name = pipeline.name;
+    const defaultStage = pipeline.defaultStage;
+    if (typeof name !== 'string' || name === '' || typeof defaultStage !== 'string' || defaultStage === '') {
+      throw new AppError('Opportunity pipeline is misconfigured: name and defaultStage must be non-empty strings', {
+        code: 'PIPELINE_MISCONFIGURED',
+        status: 500,
+        details: { pipeline: typeof name === 'string' ? name : null },
+      });
+    }
+    if (Array.isArray(pipeline.stages)
+      && !pipeline.stages.some((stage) => stage && stage.key === defaultStage)) {
+      throw new AppError(`Opportunity pipeline "${name}" defaultStage "${defaultStage}" is not one of its stages`, {
+        code: 'PIPELINE_MISCONFIGURED',
+        status: 500,
+        details: { pipeline: name, defaultStage },
+      });
+    }
+    return { pipelineKey: name, pipelineStage: defaultStage, stageEnteredAt: nowIso() };
   }
 
   /** @param {Record<string, unknown>} input */
@@ -99,11 +134,18 @@ export class OpportunityService {
    * @param {string} id @param {Record<string, unknown>} patch @param {{actor?: unknown}} [context]
    */
   async applyManaged(id, patch, context = {}) {
-    await Promise.resolve(this.get(id));
+    // Voce c1649d1d9670: the stored row is the only honest source of the
+    // stage a pipeline move leaves: when the patch names a new pipeline
+    // stage, the audit carries the previous one too, so the scheda history
+    // reads who moved what from which stage to which, and when. A placement
+    // (no stored stage yet) records no `from`: it is an entry, not a move.
+    const current = await Promise.resolve(this.get(id));
     /** @type {{column: string, value: unknown}[]} */
     const values = [];
     /** @type {Record<string, unknown>} */
     const changes = {};
+    const fromPipelineStage = typeof current?.pipelineStage === 'string' && current.pipelineStage !== ''
+      ? current.pipelineStage : null;
     const columns = {
       pipelineKey: 'pipeline_key',
       pipelineStage: 'pipeline_stage',
@@ -124,6 +166,13 @@ export class OpportunityService {
       }
       values.push({ column, value });
       changes[field] = value;
+    }
+    if (Object.hasOwn(changes, 'pipelineStage')
+      && typeof changes.pipelineStage === 'string'
+      && changes.pipelineStage !== ''
+      && fromPipelineStage !== null
+      && changes.pipelineStage !== fromPipelineStage) {
+      changes.fromPipelineStage = fromPipelineStage;
     }
     if (!values.length) return Promise.resolve(this.get(id));
     values.push({ column: 'updated_at', value: nowIso() });
@@ -169,6 +218,12 @@ export class OpportunityService {
    */
   async create(input, context = {}) {
     this.#rejectManagedInput(input);
+    // Voce ba47a73b: the default pipeline placement is resolved and
+    // validated before the first write. Creation and pipeline entry are
+    // one INSERT (never create plus a second managed write), so a failing
+    // placement refuses the creation instead of orphaning a null-pipeline
+    // row that the POST would then report as an error.
+    const placement = this.#defaultPipelinePlacement();
     const companyId = requiredString(input.companyId, 'companyId');
     await Promise.resolve(this.companies.get(companyId));
     const contactId = optionalString(input.contactId, 'contactId');
@@ -194,6 +249,13 @@ export class OpportunityService {
       // (e.g. 'lead-conversion:<leadId>'); a partial UNIQUE index makes a
       // duplicate origin impossible at the database layer.
       sourceKey: optionalString(input.sourceKey, 'sourceKey'),
+      // Server-managed pipeline state (migration v3): written here, in the
+      // same INSERT as the creation, never accepted from public input.
+      pipelineKey: placement?.pipelineKey ?? null,
+      pipelineStage: placement?.pipelineStage ?? null,
+      stageEnteredAt: placement?.stageEnteredAt ?? null,
+      closedAt: null,
+      closeReason: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -498,6 +560,9 @@ function opportunityValues(opportunity) {
     ['name', opportunity.name], ['type', opportunity.type], ['value_cents', opportunity.valueCents],
     ['currency', opportunity.currency], ['stage', opportunity.stage], ['owner', opportunity.owner],
     ['expected_close_date', opportunity.expectedCloseDate], ['source_key', opportunity.sourceKey],
+    ['pipeline_key', opportunity.pipelineKey], ['pipeline_stage', opportunity.pipelineStage],
+    ['stage_entered_at', opportunity.stageEnteredAt], ['closed_at', opportunity.closedAt],
+    ['close_reason', opportunity.closeReason],
     ['created_at', opportunity.createdAt], ['updated_at', opportunity.updatedAt],
   ].map(([column, value]) => ({ column, value }));
 }

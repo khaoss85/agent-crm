@@ -6,6 +6,33 @@ import { requiredString, requiredEmail, optionalString } from '../../../core/src
 import { nowIso } from '../../../core/src/time.js';
 import { isSyncStorage, storageMany, storageMaybeOne, storageMutate } from '../../../core/src/storage-runtime.js';
 
+/**
+ * A refused email change, in the shell's own words (voce d8fb9fcc): the
+ * Dettagli panel shows the sentence and the field stays editable with its
+ * old value, never a silent duplicate. The code stays `CONFLICT`, the
+ * sentence is Italian.
+ */
+const EMAIL_TAKEN_MESSAGE = 'Questa email è già di un altro cliente';
+
+/**
+ * A taken email refuses the same on every storage (voce d8fb9fcc): SQLite
+ * reports `UNIQUE constraint failed`, Postgres `duplicate key value
+ * violates unique constraint` with SQLSTATE 23505, and some drivers only
+ * the code. Anything else travels on untouched.
+ * @param {unknown} error
+ */
+function isTakenEmail(error) {
+  if (error instanceof Error) {
+    if (error.message.includes('UNIQUE constraint failed')) return true;
+    if (error.message.includes('duplicate key value violates unique constraint')) return true;
+  }
+  if (error !== null && typeof error === 'object') {
+    const code = /** @type {any} */ (error).code;
+    if (code === '23505' || code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
+  }
+  return false;
+}
+
 export class ContactService {
   /** @param {{database: any, audit: any, events: any, companies: any}} dependencies */
   constructor({ database, audit, events, companies }) {
@@ -59,10 +86,10 @@ export class ContactService {
       }
     } catch (error) {
       if (error instanceof ConflictError) {
-        throw new ConflictError(`A contact already uses ${contact.email}`, { email: contact.email });
+        throw new ConflictError(EMAIL_TAKEN_MESSAGE, { email: contact.email });
       }
-      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-        throw new ConflictError(`A contact already uses ${contact.email}`, { email: contact.email });
+      if (isTakenEmail(error)) {
+        throw new ConflictError(EMAIL_TAKEN_MESSAGE, { email: contact.email });
       }
       throw error;
     }
@@ -145,10 +172,10 @@ export class ContactService {
       }
     } catch (error) {
       if (error instanceof ConflictError) {
-        throw new ConflictError(`A contact already uses ${next.email}`, { email: next.email });
+        throw new ConflictError(EMAIL_TAKEN_MESSAGE, { email: next.email });
       }
-      if (error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
-        throw new ConflictError(`A contact already uses ${next.email}`, { email: next.email });
+      if (isTakenEmail(error)) {
+        throw new ConflictError(EMAIL_TAKEN_MESSAGE, { email: next.email });
       }
       throw error;
     }
@@ -178,7 +205,27 @@ export class ContactService {
       orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
     }, mapContactRow);
   }
+
+  /**
+   * A bounded search scan (backlog:d128847d21fc): newest first like
+   * `list`, but with a larger fixed ceiling (SCAN_MAX_ROWS) for a caller
+   * that filters in memory and must reach past the display page — the
+   * customer search. Not reachable over HTTP: the route keeps `list` and
+   * its 500 cap.
+   * @param {{limit?: number}} [options]
+   */
+  scan(options = {}) {
+    const requested = Number.isInteger(options.limit) ? options.limit : SCAN_MAX_ROWS;
+    const limit = Math.min(Math.max(requested, 1), SCAN_MAX_ROWS);
+    return storageMany(this.database, {
+      kind: 'select', table: 'contacts', columns: '*',
+      orderBy: [{ column: 'created_at', direction: 'desc' }], limit,
+    }, mapContactRow);
+  }
 }
+
+/** The ceiling of one search scan: a fixed bound, never the whole table. */
+export const SCAN_MAX_ROWS = 5000;
 
 /** @param {any} contact */
 function contactValues(contact) {
