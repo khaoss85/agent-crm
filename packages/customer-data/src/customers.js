@@ -480,7 +480,11 @@ export function shapeCustomerRow(subject, reads = {}) {
     // The reserved «no company» behind a contact typed without Azienda
     // reads as no company (production 07/11), never as a company name.
     // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
-    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
+    // A company subject named by a placeholder (`Unknown (…)`) lists no
+    // company line either: the row keeps its id, never the placeholder
+    // (review #739 giro 3).
+    company: shownCompany && companyDisplayName(shownCompany) !== null
+      ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),

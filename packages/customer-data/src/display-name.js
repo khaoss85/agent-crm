@@ -64,9 +64,52 @@ export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => ADDRESS_WORD.test(word))) return null;
-  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()));
+  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !MAILBOX_ID_WORD(word));
+  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
+}
+
+/**
+ * A no-reply marker the sender appended to its name (production 10/11:
+ * «UniCredit S.p.A. Noreply», «Whirlpool Servizio Assistenza NO-REPLY»),
+ * any case. Dropped only at the end: a word in the middle stays.
+ */
+const NO_REPLY_WORD = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
+
+/**
+ * A mailbox id used as a name (production 10/11: «filiale_458»): an
+ * underscore with digits is how a mailbox is numbered, never how a person
+ * or a company is written.
+ * @param {string} word
+ */
+function MAILBOX_ID_WORD(word) {
+  return word.includes('_') && /\d/.test(word);
+}
+
+/**
+ * The name without the pieces it repeats from its own address (production
+ * 10/11: «Amazon.it It», the `it` of `amazon.it` written again as a word):
+ * a word equal to a label of the email domain that the name already said
+ * earlier — as a word or as a dotted part — is dropped. A first mention
+ * stays («Amazon» from `amazon.it` is the name).
+ * @param {string} name
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function nameWithoutAddressEchoes(name, email) {
+  const text = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const labels = new Set(text.slice(text.lastIndexOf('@') + 1).split('.').filter((label) => label !== ''));
+  const said = new Set();
+  const kept = [];
+  for (const word of name.split(/\s+/).filter((part) => part !== '')) {
+    const bare = word.toLowerCase().replace(/[^\p{L}\p{N}.-]/gu, '');
+    if (kept.length > 0 && labels.has(bare) && said.has(bare)) continue;
+    kept.push(word);
+    for (const part of bare.split('.')) if (part !== '') said.add(part);
+  }
+  const out = kept.join(' ');
+  return out !== '' ? out : null;
 }
 
 /**
@@ -101,6 +144,9 @@ export function labelFromEmail(email) {
   const domain = registrableDomain(email);
   if (domain === null) return null;
   if (PERSONAL_MAIL_DOMAINS.has(domain)) {
+    // A machine mailbox at a personal provider (`noreply@gmail.com`) names
+    // nobody: never «Noreply» as a person (review #739 giro 3).
+    if (isTechnicalLocalPart(email)) return null;
     const text = String(email).trim();
     const local = text.slice(0, text.lastIndexOf('@')).split('+')[0] ?? '';
     if (!/^\p{L}+(?:[._-]\p{L}+){0,3}$/u.test(local) || local.length > 40) return null;
@@ -152,7 +198,8 @@ function isMachineToken(token) {
 export function contactDisplayName(contact) {
   if (!contact) return null;
   const parts = [contact.firstName, contact.lastName].filter((part) => typeof part === 'string');
-  const name = readableName(parts.join(' '));
+  const read = readableName(parts.join(' '));
+  const name = read === null ? null : nameWithoutAddressEchoes(read, contact.email);
   if (name !== null && !isTokenName(name, contact.email)) return name;
   return labelFromEmail(contact.email);
 }

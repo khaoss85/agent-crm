@@ -6,7 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
@@ -639,6 +639,10 @@ export function shownCompanyName(card) {
   // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
   const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
   if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  // A stored placeholder (`Unknown (assistenza@…)`) is no company either
+  // (review #739 giro 3): the same rule as customer-data
+  // `isPlaceholderCompanyName`, through the browser twin.
+  if (readableName(name.replace(/\([^)]*\)/g, ' ')) === null) return null;
   return name;
 }
 

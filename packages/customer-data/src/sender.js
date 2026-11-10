@@ -7,7 +7,7 @@ import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
 } from './normalize.js';
 import { assertMatchResult } from './policy.js';
-import { isTechnicalLocalPart, labelFromEmail, readableName } from './display-name.js';
+import { isTechnicalLocalPart, labelFromEmail, nameWithoutAddressEchoes, readableName } from './display-name.js';
 import {
   deciding, orderedPair, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -362,7 +362,11 @@ export function leadNamesForEmail(email) {
 export function contactNamesFor(sender) {
   const fallback = leadNamesForEmail(sender.email);
   const first = readableName(sender.firstName ?? null);
-  const last = readableName(sender.lastName ?? null);
+  const rawLast = readableName(sender.lastName ?? null);
+  // A last name that only repeats the address (`Amazon.it` + `It`) is no
+  // last name (production 10/11).
+  const last = first !== null && rawLast !== null
+    && nameWithoutAddressEchoes(`${first} ${rawLast}`, sender.email) === first ? null : rawLast;
   if (first === null) return { firstName: fallback.firstName, lastName: last ?? fallback.lastName };
   if (last !== null) return { firstName: first, lastName: last };
   const agrees = first.toLowerCase() === fallback.firstName.toLowerCase();

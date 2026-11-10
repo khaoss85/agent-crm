@@ -160,8 +160,25 @@ function legacyName(contact, company) {
   const joined = contact
     ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim()
     : String(company?.name ?? '').trim();
-  return joined === '' || /[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+/.test(joined) ? null : joined;
+  // The provider's rule (customer-data display-name.js `readableName`),
+  // restated here because the hub imports no other domain package: an
+  // address-shaped word names nobody, placeholder words are dropped
+  // (review #739 giro 3: «PayPal Unknown», «Fastweb —»).
+  // tests/customer-display-name.test.js runs both on the same table.
+  const words = joined.split(/\s+/).filter((word) => word !== '');
+  if (words.some((word) => LEGACY_ADDRESS_WORD.test(word))) return null;
+  const kept = words.filter((word) => !LEGACY_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0 && LEGACY_NO_REPLY.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const text = kept.join(' ');
+  return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
+
+const LEGACY_NO_REPLY = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
+
+const LEGACY_ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
+const LEGACY_PLACEHOLDERS = new Set([
+  'unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', 'none', '-', '—', '–',
+]);
 
 export function shapeCustomerCard(profile, subject) {
   const resource = subject?.resource;
