@@ -908,6 +908,74 @@ test('6b44b0e9fcdf review: a mailbox alone never merges — different or missing
   assert.deepEqual(rows.find((row) => row.subjects.includes('c')).subjects, ['c'], 'a nameless subject is not folded in by mailbox');
 });
 
+test('ed0552dc1933: the adopted broker, github and google subjects of one operator are one row, and no @accordo.invalid paints', () => {
+  const members = [
+    { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'google|1049', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'daniele@esempio.it', operatorAccountId: 'op-1' },
+  ];
+  const rows = buildTeamRows(members);
+  assert.equal(rows.length, 1, 'the same person reads once, not twice');
+  const [dan] = rows;
+  assert.equal(dan.name, 'Daniele Pelleri', 'the row carries the profile name');
+  assert.deepEqual(dan.subjects, ['broker|adopted-abc', 'broker|github-48571113', 'google|1049'], 'the row keeps every subject');
+  assert.deepEqual(dan.removable, ['broker|adopted-abc', 'broker|github-48571113', 'google|1049']);
+  assert.equal(dan.email, 'daniele@esempio.it', 'the row shows the real mailbox, never the broker one');
+  assert.equal(dan.initials, 'DP');
+  assert.equal(dan.role, 'Titolare', 'a person holding two roles shows the stronger one');
+  assert.ok(!JSON.stringify(dan).includes('accordo.invalid'), 'no internal mailbox survives in the row');
+});
+
+test('ed0552dc1933: only broker subjects still read as one profile row with no email line', () => {
+  const rows = buildTeamRows([
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@ACCORDO.INVALID', operatorAccountId: 'op-1' },
+    { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Daniele Pelleri');
+  assert.equal(rows[0].email, null, 'an internal mailbox is not a row email, even uppercase');
+});
+
+test('ed0552dc1933: two operator keys never merge, even on the same name with internal mailboxes', () => {
+  const rows = buildTeamRows([
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'broker|adopted-xyz', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-xyz@accordo.invalid', operatorAccountId: 'op-2' },
+  ]);
+  assert.equal(rows.length, 2, 'different humans stay two rows');
+  assert.ok(rows.every((row) => row.email === null), 'no internal mailbox paints on either row');
+  assert.ok(rows.every((row) => row.name === 'Daniele Pelleri'));
+});
+
+test('ed0552dc1933 review (Codex P2): two explicit operator keys bridge no group — the shared mailbox does not pull a stranger in', () => {
+  const rows = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'active', displayName: 'Anna Bianchi', email: 'squadra@esempio.it', operatorAccountId: 'op-1' },
+    { subject: 'b', role: 'operator', status: 'active', displayName: 'Anna Bianchi', email: 'squadra@esempio.it', operatorAccountId: 'op-2' },
+    { subject: 'c', role: 'observer', status: 'active', displayName: 'Anna Due', email: 'anna2@esempio.it', operatorAccountId: 'op-2' },
+  ]);
+  assert.equal(rows.length, 2, 'no single row across the two operator accounts');
+  const anna1 = rows.find((row) => row.subjects.includes('a'));
+  const anna2 = rows.find((row) => row.subjects.includes('b'));
+  assert.deepEqual(anna1.subjects, ['a'], 'the first account keeps its own row');
+  assert.deepEqual(anna2.subjects, ['b', 'c'], 'the second account still unites its own subjects');
+  assert.deepEqual(anna1.removable, ['a'], 'removing the first row never suspends the stranger');
+});
+
+test('ed0552dc1933: the painted team names Daniele once and shows no broker mailbox', async () => {
+  const members = [
+    { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.invalid' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
+  await v.render();
+  await flush();
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.deepEqual(names, ['Daniele Pelleri', 'Marco Ferri'], 'Daniele appears once');
+  assert.ok(!text(mount).includes('accordo.invalid'), 'no internal broker mailbox on screen');
+  assert.ok(!text(mount).includes('broker|adopted-abc') && !text(mount).includes('broker|github-48571113'), 'no technical subject on screen');
+  assert.match(text(mount), /2 persone/, 'the card statistic counts people, not subjects');
+});
+
 test('6b44b0e9fcdf review: the person status is deterministic and reads sospeso only when every subject is suspended', () => {
   const person = (statuses) => buildTeamRows(statuses.map((status, index) => ({
     subject: `s${index}`, role: 'operator', status, displayName: 'Ada Neri', email: 'ada@esempio.invalid',

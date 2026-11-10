@@ -250,30 +250,54 @@ function nameInitials(name) {
 }
 
 /**
+ * backlog:810ed0bfd505 AC-2 — the control-plane same-person key of a roster
+ * row (`operatorAccountId`, one per human), or null when the roster carries
+ * none. The same union the Calendario team reads (`personRows` there): this
+ * key unites one member's identities (broker, github, google) even when
+ * they carry different mailboxes. Only this documented key merges —
+ * generic `personKey`/`userId`-style fields have no producer contract here,
+ * and two unrelated humans sharing one would fold into a single row.
+ * @param {unknown} member
+ */
+function rosterPersonKey(member) {
+  if (!member || typeof member !== 'object') return null;
+  const value = /** @type {{operatorAccountId?: unknown}} */ (member).operatorAccountId;
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+/**
  * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
- * carry, beside each opaque subject, the control-plane displayName and email
- * the pilot enriches it with — the same fields the Calendario team reads.
- * One human can hold several subjects (an adopted broker member and the
- * Google one: prod 07/11 listed «Daniele Pelleri» twice). The roster carries
- * no person id, so subjects merge into one row ONLY when both the mailbox
- * and the display name match (trimmed, case-insensitive). A mailbox alone
- * never merges: a shared mailbox (info@…) or stale enrichment could fold a
- * different human into the row, hide them and let «Rimuovi» suspend them.
- * A name alone never merges either: two homonyms without email are two
- * people. Nothing merges in the backend: the row keeps every subject, and
- * removal suspends each of them.
+ * carry, beside each opaque subject, the control-plane displayName, email
+ * and `operatorAccountId` the pilot enriches it with — the same fields the
+ * Calendario team reads. One human can hold several subjects (an adopted
+ * broker member, the github one and the Google one: prod 07/11 listed
+ * «Daniele Pelleri» twice with `broker+…@accordo.invalid` mailboxes).
+ * Subjects merge into one row on the control-plane person key first
+ * (backlog:810ed0bfd505 AC-2: `operatorAccountId`, one per human), then —
+ * only without that key — when both the mailbox and the display name match
+ * (trimmed, case-insensitive). Two explicit person keys never fold into one
+ * row: the mailbox fallback joins only a group with no key of its own, or
+ * the same key. A mailbox alone never merges: a shared mailbox (info@…)
+ * or stale enrichment could fold a different human into the row, hide them
+ * and let «Rimuovi» suspend them. A name alone never merges either: two
+ * homonyms without email are two people. Nothing merges
+ * in the backend: the row keeps every subject, and removal suspends each
+ * of them. Internal broker mailboxes (`…@accordo.invalid`) never paint:
+ * the row shows the person's first real mailbox, or no email line when
+ * the roster carries none — the name is then the profile displayName.
  *
  * Without enrichment the subject is the name when it reads as one, else
  * «Membro del team» — never a technical subject (production 10/11) — and
  * the status sits under it. Sorted by name, then subject, so the
  * list is stable regardless of store order.
- * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown}>} members
+ * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
  */
 export function buildTeamRows(members = []) {
   const list = Array.isArray(members) ? members : [];
-  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, roles: unknown[], statuses: unknown[]}>} */
+  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, key: string|null, roles: unknown[], statuses: unknown[]}>} */
   const people = [];
   const byIdentity = new Map();
+  const byPersonKey = new Map();
   const seen = new Set();
   for (const member of list) {
     if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
@@ -284,20 +308,38 @@ export function buildTeamRows(members = []) {
     // mailbox or a provider id the enrichment carried as name or email.
     const email = memberText(member.email);
     const displayName = memberText(member.displayName);
+    const personKey = rosterPersonKey(member);
     const key = email === null || displayName === null
       ? null
       : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    let person = key === null ? null : byIdentity.get(key) ?? null;
-    if (person === null) {
-      person = { subjects: [], live: [], displayName: null, email, roles: [], statuses: [] };
-      people.push(person);
-      if (key !== null) byIdentity.set(key, person);
+    let person = (personKey !== null && byPersonKey.get(personKey)) || null;
+    if (person === null && key !== null) {
+      const candidate = byIdentity.get(key) ?? null;
+      // Two explicit operator keys never fold into one row: the mailbox
+      // fallback only joins a group with no key of its own, or the same
+      // key — otherwise a shared mailbox would bridge two operator
+      // accounts and «Rimuovi» would suspend a stranger (Codex P2 on
+      // backlog:ed0552dc1933).
+      if (candidate !== null && (personKey === null || candidate.key === null || candidate.key === personKey)) {
+        person = candidate;
+      }
     }
+    if (person === null) {
+      person = { subjects: [], live: [], displayName: null, email: null, key: null, roles: [], statuses: [] };
+      people.push(person);
+    }
+    if (person.key === null) person.key = personKey;
+    if (personKey !== null && !byPersonKey.has(personKey)) byPersonKey.set(personKey, person);
+    if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
     person.subjects.push(member.subject);
     if (member.status !== 'suspended') person.live.push(member.subject);
     person.roles.push(member.role);
     person.statuses.push(member.status);
     if (person.displayName === null) person.displayName = displayName;
+    // The row shows a real mailbox only (`memberText` already dropped the
+    // broker/technical ones), so the first real mailbox of the person wins
+    // whatever the store order.
+    if (person.email === null) person.email = email;
   }
   return people
     .map((person) => {
