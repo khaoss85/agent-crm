@@ -41,28 +41,42 @@ export function listSourceFiles(root) {
   return walk(root, ignoredPaths).filter((file) => file.endsWith('.js') || file.endsWith('.mjs'));
 }
 
-/** @type {Map<string, string | null>} directory → nearest package.json "type" */
-const typeCache = new Map();
+/**
+ * What the nearest package.json says about the module format:
+ * `module` / `commonjs` (its "type"), `none` (no package.json, or one without
+ * "type"), or `unknown` — an unreadable or invalid package.json, or a "type"
+ * that is not one of those strings. node decides `unknown` its own way
+ * (it accepts an unknown string, refuses a non-string or broken JSON), so
+ * those files go to `node --check` instead of a guess.
+ * @typedef {'module' | 'commonjs' | 'none' | 'unknown'} PackageKind
+ */
+
+/** @type {Map<string, PackageKind>} directory → kind of its nearest package.json */
+const kindCache = new Map();
 
 /**
- * The `"type"` of the nearest package.json above `file`, or null.
  * @param {string} file
- * @returns {string | null}
+ * @returns {PackageKind}
  */
-function packageType(file) {
+function packageKind(file) {
   const seen = [];
   let directory = dirname(file);
-  let found = null;
+  /** @type {PackageKind} */
+  let found = 'none';
   for (;;) {
-    if (typeCache.has(directory)) { found = typeCache.get(directory) ?? null; break; }
+    const cached = kindCache.get(directory);
+    if (cached) { found = cached; break; }
     seen.push(directory);
     const manifest = join(directory, 'package.json');
     if (existsSync(manifest)) {
       try {
-        const type = JSON.parse(readFileSync(manifest, 'utf8')).type;
-        found = typeof type === 'string' ? type : null;
+        const parsed = JSON.parse(readFileSync(manifest, 'utf8'));
+        const type = parsed && typeof parsed === 'object' ? parsed.type : null;
+        found = type === undefined ? 'none'
+          : type === 'module' || type === 'commonjs' ? type
+            : 'unknown';
       } catch {
-        found = null;
+        found = 'unknown';
       }
       break;
     }
@@ -70,7 +84,7 @@ function packageType(file) {
     if (parent === directory) break;
     directory = parent;
   }
-  for (const directory of seen) typeCache.set(directory, found);
+  for (const directory of seen) kindCache.set(directory, found);
   return found;
 }
 
@@ -113,8 +127,19 @@ function parseCommonJs(source, file) {
  * @returns {string | null}
  */
 export function checkFile(file) {
-  const source = readFileSync(file, 'utf8');
-  const type = file.endsWith('.mjs') ? 'module' : packageType(file);
+  let source;
+  try {
+    source = readFileSync(file, 'utf8');
+  } catch (error) {
+    // Unreadable, or gone since the walk: a named failure, never a crash
+    // that hides every other file's verdict.
+    const failure = /** @type {NodeJS.ErrnoException} */ (error);
+    return `${file}\ncannot be read: ${failure.code ?? failure.message}`;
+  }
+  const kind = packageKind(file);
+  // An unknown package scope is node's call, file by file.
+  if (kind === 'unknown') return confirm(file);
+  const type = file.endsWith('.mjs') ? 'module' : kind;
   let error;
   if (type === 'module') {
     error = parseModule(source, file);
@@ -153,7 +178,11 @@ function walk(directory, ignoredPaths) {
     if (ignored.has(name)) continue;
     const path = join(directory, name);
     if (ignoredPaths.has(path)) continue;
-    if (statSync(path).isDirectory()) results.push(...walk(path, ignoredPaths));
+    let isDirectory = false;
+    // Gone between readdir and stat: listed anyway, so a source file that
+    // vanished mid-run is reported by name by checkFile instead of crashing here.
+    try { isDirectory = statSync(path).isDirectory(); } catch { isDirectory = false; }
+    if (isDirectory) results.push(...walk(path, ignoredPaths));
     else results.push(path);
   }
   return results;
