@@ -17,6 +17,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SPAZI_AI_DEFAULTS,
+  SPAZI_AI_MASTER,
+  SPAZI_AI_MASTER_DEFAULT,
   SPAZI_AI_SWITCHES,
   buildSpaziCards,
   buildTeamRows,
@@ -237,7 +239,7 @@ test('team and AI panels share one row container, members show avatar and role p
   assert.match(text(mount), /attivo/, 'the status stays next to the subject, in Italian');
 });
 
-test('the screen lists spaces with roles, team and the five switches', async () => {
+test('the screen lists spaces with roles, team, the master AI switch and the five switches (backlog:2c3156a47f8e)', async () => {
   const members = [
     { subject: 'owner-1', role: 'owner', status: 'active' },
     { subject: 'marco', role: 'operator', status: 'active' },
@@ -257,13 +259,39 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   assert.doesNotMatch(rendered, /postazione/);
   assert.match(rendered, /marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
+  assert.equal(SPAZI_AI_MASTER.key, 'ai-enabled');
+  assert.equal(SPAZI_AI_MASTER_DEFAULT, true);
+  assert.ok(rendered.includes(SPAZI_AI_MASTER.label), 'the master AI switch is listed first');
+  assert.ok(rendered.includes(SPAZI_AI_MASTER.line), 'the master AI switch explains itself');
+  assert.match(rendered, /AI dello spazio: accesa/);
   for (const entry of SPAZI_AI_SWITCHES) {
     assert.ok(rendered.includes(entry.label), `switch ${entry.key} is listed`);
     assert.ok(rendered.includes(entry.line), `switch ${entry.key} explains itself`);
   }
   const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
-  assert.equal(toggles.length, 5);
+  assert.equal(toggles.length, 6);
+  assert.equal(toggles[0].getAttribute('aria-label'), SPAZI_AI_MASTER.label);
+  assert.equal(toggles[0].getAttribute('aria-checked'), 'true');
   assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione')?.getAttribute('aria-checked'), 'false');
+});
+
+test('with the master AI switch off the screen says spenta and locks the five (backlog:2c3156a47f8e)', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /AI dello spazio: spenta/);
+  const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.equal(toggles.length, 6);
+  const master = toggles.find((node) => node.getAttribute('aria-label') === SPAZI_AI_MASTER.label);
+  assert.equal(master?.getAttribute('aria-checked'), 'false');
+  assert.equal(master?.disabled, false, 'the master stays flippable while everything else locks');
+  for (const node of toggles) {
+    if (node.getAttribute('aria-label') === SPAZI_AI_MASTER.label) continue;
+    assert.equal(node.disabled, true, `${node.getAttribute('aria-label')} locks while the master is off`);
+  }
 });
 
 test('a refused team read renders as a refusal, not an empty team', async () => {
