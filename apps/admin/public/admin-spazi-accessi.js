@@ -503,6 +503,49 @@ export function createSpaziAccessiView(deps) {
     /** @type {string | null} */ fixSpace: null,
   };
 
+  // The «+ Nuovo spazio di lavoro» menu (C11/C20): Escape or an outside
+  // click closes it — the same contract as the Nuova sequenza menu, scoped
+  // to this view's menu wrap. Toggling the menu repaints the whole view, so
+  // the node that had keyboard focus is gone after render(): opening moves
+  // focus to the first menu entry, closing returns it to the opener, and Tab
+  // continues from there. Only an outside pointer click leaves focus where
+  // the user put it.
+  const isInsideNewSpaceWrap = (node) => {
+    let current = node ?? null;
+    while (current) {
+      const classes = typeof current.getAttribute === 'function'
+        ? String(current.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
+        : [];
+      if (classes.includes('bo-spazi-newwrap')) return true;
+      current = current.parentNode ?? null;
+    }
+    return false;
+  };
+  function refocusNewSpaceToggle(intoMenu) {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const target = mount.querySelector(
+      intoMenu ? 'button[data-voice="nuovo-spazio-ai"]' : 'button[data-menu="nuovo-spazio"]',
+    );
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+  function closeNewSpaceMenu(refocus) {
+    state.newSpaceMenuOpen = false;
+    render();
+    if (refocus === true) refocusNewSpaceToggle(false);
+  }
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('click', (event) => {
+      if (state.newSpaceMenuOpen && !isInsideNewSpaceWrap(event?.target ?? null)) {
+        closeNewSpaceMenu(false);
+      }
+    });
+    doc.addEventListener('keydown', (event) => {
+      if ((event?.key === 'Escape' || event?.key === 'Esc') && state.newSpaceMenuOpen) {
+        closeNewSpaceMenu(true);
+      }
+    });
+  }
+
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
@@ -749,40 +792,60 @@ export function createSpaziAccessiView(deps) {
     // C11: the dashed box stays last; its menu carries the verbatim C20
     // voices. Creation itself lives in the control plane (no capability
     // here), so picking a voice never invents a space.
-    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder' });
+    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder bo-spazi-newwrap' });
     const adderToggle = el(doc, 'button', {
       text: '+ Nuovo spazio di lavoro',
       cls: 'bo-spazi-quiet',
       attrs: {
         type: 'button',
+        'data-menu': 'nuovo-spazio',
         'aria-haspopup': 'true',
         'aria-expanded': state.newSpaceMenuOpen ? 'true' : 'false',
       },
     });
     adderToggle.disabled = state.busy;
-    adderToggle.addEventListener('click', () => {
+    adderToggle.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
       state.newSpaceMenuOpen = !state.newSpaceMenuOpen;
       state.newSpaceNote = null;
       render();
+      // The repaint replaced the toggle: keep keyboard focus on it when the
+      // menu just closed, move it to the first entry when it just opened.
+      refocusNewSpaceToggle(state.newSpaceMenuOpen);
+    });
+    adderToggle.addEventListener('keydown', (event) => {
+      if ((event?.key === 'Escape' || event?.key === 'Esc') && state.newSpaceMenuOpen) {
+        closeNewSpaceMenu(true);
+      }
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
       const menu = el(doc, 'div', { cls: 'ui-add-menu', attrs: { role: 'menu', 'aria-label': 'Nuovo spazio di lavoro' } });
-      const aiVoice = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Descrivi l\u2019attivit\u00E0, propongo canali e team' });
+      const aiVoice = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Descrivi l\u2019attivit\u00E0, propongo canali e team', attrs: { 'data-voice': 'nuovo-spazio-ai' } });
       aiVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = null;
         say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
         render();
+        refocusNewSpaceToggle(false);
       });
-      const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
+      const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore', attrs: { 'data-voice': 'nuovo-spazio-manuale' } });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
         render();
+        refocusNewSpaceToggle(false);
       });
       menu.appendChild(aiVoice);
       menu.appendChild(manualVoice);
+      menu.addEventListener('click', (event) => {
+        event?.stopPropagation?.();
+      });
+      menu.addEventListener('keydown', (event) => {
+        if (event?.key === 'Escape' || event?.key === 'Esc') {
+          closeNewSpaceMenu(true);
+        }
+      });
       adder.appendChild(menu);
     }
     if (state.newSpaceNote !== null) {
