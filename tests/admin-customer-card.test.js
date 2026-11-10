@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createCustomerCardView,
+  detailsRefusalText,
   failedSendReason,
   mergeLinkedIdentities,
   observedDirections,
@@ -1726,6 +1727,85 @@ test('a contact typed without Azienda shows no Azienda on the scheda (production
   assert.ok(!mount.textContent.includes(NO_COMPANY_NAME), 'the reserved company never reads as an Azienda');
   const facts = mount.findAll('span').filter((node) => node.getAttribute('class') === 'bo-scheda-fact-label');
   assert.ok(!facts.some((node) => node.textContent === 'Azienda'), 'no Azienda row for it');
+});
+
+// Voce 5e13c9ef: saving Dettagli with an email another customer holds is
+// refused 409 CONFLICT by the server (contact-service EMAIL_TAKEN_MESSAGE).
+// The scheda must show that message, not the generic retry line.
+test('5e13c9ef: Dettagli Salva on a taken email shows the 409 message', async () => {
+  const seen = [];
+  const taken = () => {
+    throw Object.assign(new Error('Questa email è già di un altro cliente'), { code: 'CONFLICT', status: 409 });
+  };
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, taken);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  assert.ok(save, 'Salva is in the form');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'email').value = 'altrui@palestra-esempio.it';
+  save.dispatch('click');
+  await flushClicks();
+
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error'
+    && node.textContent !== '');
+  assert.equal(fieldError?.textContent, 'Questa email è già di un altro cliente',
+    'the field names the 409 reason, not the generic retry line');
+  assert.deepEqual(seen, [{ message: 'Questa email è già di un altro cliente', error: true }],
+    'the toast names the 409 reason too');
+});
+
+// Voce 5e13c9ef: detailsRefusalText names the 409 and keeps everything else.
+test('5e13c9ef: detailsRefusalText maps the 409, keeps other failures generic', async () => {
+  const taken = Object.assign(new Error('Questa email è già di un altro cliente'), { code: 'CONFLICT', status: 409 });
+  assert.equal(detailsRefusalText(taken), 'Questa email è già di un altro cliente',
+    'the server Italian sentence reaches the screen');
+  const bare409 = Object.assign(new Error('Request failed (409)'), { code: 'CONFLICT', status: 409 });
+  assert.equal(detailsRefusalText(bare409), 'Questa email è già di un altro cliente',
+    'a 409 without a readable message reads our own words');
+  const codeOnly = Object.assign(new Error('Questa email è già di un altro cliente'), { code: 'CONFLICT' });
+  assert.equal(detailsRefusalText(codeOnly), 'Questa email è già di un altro cliente',
+    'the CONFLICT code alone is enough, like PHONE_ALREADY_HELD');
+  const technical = Object.assign(new Error('duplicate key value violates unique constraint'), { status: 409 });
+  assert.equal(detailsRefusalText(technical), 'Questa email è già di un altro cliente',
+    'a technical message never reaches the screen');
+  const gone = Object.assign(new Error('Not Found'), { code: 'NOT_FOUND', status: 404 });
+  assert.equal(detailsRefusalText(gone), 'Salvataggio non riuscito. Riprova più tardi.',
+    'a 404 keeps the generic retry line');
+  const network = Object.assign(new TypeError('fetch failed'), { status: 0 });
+  assert.equal(detailsRefusalText(network), 'Salvataggio non riuscito. Riprova più tardi.',
+    'a network fault keeps the generic retry line');
+});
+
+// Voce 5e13c9ef: any other save failure keeps the generic retry line.
+test('5e13c9ef: Dettagli Salva on a 500 keeps the generic retry line', async () => {
+  const seen = [];
+  const failing = () => {
+    throw Object.assign(new Error('boom'), { code: 'UNKNOWN', status: 500 });
+  };
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, failing);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details').dispatch('click');
+  await flushClicks();
+
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error'
+    && node.textContent !== '');
+  assert.equal(fieldError?.textContent, 'Salvataggio non riuscito. Riprova più tardi.',
+    'a 500 keeps the generic retry line');
+  assert.deepEqual(seen, [{ message: 'Salvataggio non riuscito. Riprova più tardi.', error: true }],
+    'the toast keeps the generic retry line too');
 });
 
 test('two renders racing paint one scheda, so there is one Dettagli Salva', async () => {
