@@ -32,6 +32,7 @@ import {
   renderOggi,
   romeDayKey,
   romeDayPhrase,
+  romeDayKeyShift,
   romeTime,
   staleFields,
   triageState,
@@ -1905,4 +1906,32 @@ test('7d30fb517785: the advisor names the linked customer once the names land, w
   assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
   assert.equal(row().querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
   assert.equal(execute.__focused, true);
+});
+
+// Review #746 (P2): «oggi/ieri/domani» compare Rome calendar days, never
+// now ± 24 h — the 23 h day of 29/03 and the 25 h day of 25/10 would skip
+// or repeat a day.
+test('7d30fb517785: oggi, ieri and domani hold across the DST change (29/03 and 25/10)', () => {
+  // 28/03/2026 23:30 in Rome (CET): tomorrow is the 23 h day of 29/03 —
+  // now + 24 h would land on 30/03 00:30 and call 29/03 neither.
+  const springEve = new Date('2026-03-28T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(springEve, 1), '2026-03-29');
+  assert.equal(romeDayPhrase('2026-03-29T08:00:00.000Z', springEve, 'del'), 'di domani');
+  // 30/03/2026 00:30 in Rome (CEST): yesterday is 29/03 — now − 24 h
+  // would land on 28/03 23:30.
+  const springAfter = new Date('2026-03-29T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(springAfter, 0), '2026-03-30');
+  assert.equal(romeDayKeyShift(springAfter, -1), '2026-03-29');
+  assert.equal(romeDayPhrase('2026-03-29T08:00:00.000Z', springAfter, 'il'), 'ieri');
+  // 25/10/2026 00:30 in Rome (CEST, the 25 h day): tomorrow is 26/10 —
+  // now + 24 h would land on 25/10 23:30, today again.
+  const autumn = new Date('2026-10-24T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(autumn, 0), '2026-10-25');
+  assert.equal(romeDayKeyShift(autumn, 1), '2026-10-26');
+  assert.equal(romeDayPhrase('2026-10-25T20:00:00.000Z', autumn, 'del'), 'di oggi', '25/10 21:00 in Rome is today');
+  assert.equal(romeDayPhrase('2026-10-26T08:00:00.000Z', autumn, 'del'), 'di domani');
+  const brief = buildPreCallBrief({ appointment: { ...APPT_TODAY, startsAt: '2026-10-26T09:00:00.000Z' }, now: autumn });
+  assert.equal(brief.when, 'domani alle 10:00', 'the brief says domani for 26/10');
+  assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00'), brief.bullets[0]);
+  assert.equal(romeDayKeyShift('not a date', 1), null);
 });

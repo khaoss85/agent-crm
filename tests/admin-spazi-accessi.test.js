@@ -1087,3 +1087,66 @@ test('7d30fb517785: a refused invite shows its message once, inside the invite f
   assert.ok((invite.getAttribute('class') ?? '').split(/\s+/).includes('open'), 'the form stays open for the retry');
   assert.ok(!seen.toast.some((row) => row.error), 'no toast beside it');
 });
+
+// Review #746 (P1): when the reload after a refused write fails too, the
+// inline message has nowhere to go — it falls back to one toast with the
+// same text. Always exactly one visible message, never none, never two.
+test('7d30fb517785: a refused switch whose reload fails too still shows exactly one message, as a toast', async () => {
+  const inner = stubClient();
+  let refused = false;
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/space-permissions/set-permission') {
+        refused = true;
+        throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      if (refused && path.startsWith('/api/space-permissions/effective')) {
+        throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  await mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta').listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(20);
+  const inline = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  const toasts = seen.toast.filter((row) => row.error);
+  assert.equal(inline.length + toasts.length, 1, `exactly one visible message, not ${inline.length} inline + ${toasts.length} toast`);
+  assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.', 'the switch failure survives the failed reload');
+});
+
+test('7d30fb517785: a refused invite whose reload fails too still shows exactly one message, as a toast', async () => {
+  const inner = stubClient();
+  let refused = false;
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships') {
+        if (String(options?.method ?? 'GET').toUpperCase() === 'POST') {
+          refused = true;
+          throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+        }
+        if (refused) throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾').listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).listeners.click[0]();
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'luca@example.test';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuovo collega';
+  await mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(20);
+  const inline = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  const toasts = seen.toast.filter((row) => row.error);
+  assert.equal(inline.length + toasts.length, 1, `exactly one visible message, not ${inline.length} inline + ${toasts.length} toast`);
+  assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
+});

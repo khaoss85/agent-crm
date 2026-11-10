@@ -483,6 +483,19 @@ export function createSpaziAccessiView(deps) {
   }
 
   /**
+   * Whether the last render put a write refusal next to its control. Review
+   * #746 (P1): when it could not (the reload after the failure failed too,
+   * or the control is gone), the refusal falls back to one toast with the
+   * same text — there is always exactly one visible message.
+   */
+  let refusalPainted = false;
+
+  /** After the post-failure render: the toast only when no inline copy shows. @param {string} message */
+  function sayIfHidden(message) {
+    if (!refusalPainted) say(message, true);
+  }
+
+  /**
    * Normalize a client rejection without losing what the page branches on.
    * A rejection with a code passes through untouched; anything else becomes
    * {code: 'UNKNOWN', ...} keeping the record's own status and message, so a
@@ -820,6 +833,7 @@ export function createSpaziAccessiView(deps) {
         }));
         if (retry !== null) {
           confirmBox.appendChild(el(doc, 'p', { text: retry.note, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
+          refusalPainted = true;
         }
         const reason = el(doc, 'input', {
           cls: 'bo-spazi-input',
@@ -872,13 +886,14 @@ export function createSpaziAccessiView(deps) {
             : done === 0
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
-          // One message, inside the row that failed (no toast beside it).
+          // One message, inside the row that failed; a toast only if it cannot show.
           await load();
           // load() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
           state.removeRetry = { subject: refused[0].subject, reason: motive, note };
           render();
+          sayIfHidden(note);
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         no.addEventListener('click', () => { state.confirmRemove = null; state.removeRetry = null; render(); });
@@ -935,10 +950,11 @@ export function createSpaziAccessiView(deps) {
       } catch (error) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
-        // One message, inside the form that failed (no toast beside it).
+        // One message, inside the form that failed; a toast only if it cannot show.
         await load();
         state.inviteRefusal = message;
         render();
+        sayIfHidden(message);
         return;
       }
       await refresh();
@@ -946,6 +962,7 @@ export function createSpaziAccessiView(deps) {
     invite.appendChild(send);
     if (state.inviteRefusal !== null) {
       invite.appendChild(el(doc, 'p', { text: state.inviteRefusal, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
+      refusalPainted = true;
     }
     invite.appendChild(el(doc, 'p', {
       text: 'Nessuna email parte da qui: la persona entra con il suo account Google al primo accesso.',
@@ -1036,11 +1053,12 @@ export function createSpaziAccessiView(deps) {
             // refusal keeps its text; «Connessione non riuscita» only when
             // no answer came at all (humanWriteError draws that line).
             const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
-            // One message, under the switch that failed (no toast beside it).
+            // One message, under the switch that failed; a toast only if it cannot show.
             await load();
             state.confirmFlip = null;
             state.switchRefusal = { key: pending.key, message };
             render();
+            sayIfHidden(message);
             return;
           }
           state.confirmFlip = null;
@@ -1054,6 +1072,7 @@ export function createSpaziAccessiView(deps) {
       }
       if (state.switchRefusal !== null && state.switchRefusal.key === entry.key && state.confirmFlip === null) {
         list.appendChild(el(doc, 'p', { text: state.switchRefusal.message, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
+        refusalPainted = true;
       }
     }
     section.appendChild(list);
@@ -1071,6 +1090,7 @@ export function createSpaziAccessiView(deps) {
   const childrenOf = () => Array.from(mount?.childNodes ?? []);
 
   function render() {
+    refusalPainted = false;
     clear();
     const space = activeSpace();
     mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', fixCount: state.fixCount, navigate: typeof navigate === 'function' ? navigate : () => {} }));

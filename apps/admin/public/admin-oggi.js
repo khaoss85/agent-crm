@@ -192,6 +192,21 @@ export function romeLongDay(value) {
 }
 
 /**
+ * The Rome calendar day `shift` days from `now`'s Rome day, 'YYYY-MM-DD',
+ * null when `now` is not a real instant. Calendar arithmetic on the Rome
+ * date, never `now` ± 24 h: a 23 h or 25 h day (the DST change on the last
+ * Sunday of March and October) would skip or repeat a day (review #746).
+ * @param {unknown} now
+ * @param {number} shift
+ */
+export function romeDayKeyShift(now, shift) {
+  const key = romeDayKey(now);
+  if (key === null) return null;
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + shift)).toISOString().slice(0, 10);
+}
+
+/**
  * A day as Oggi writes it after a preposition (backlog:7d30fb517785,
  * production 10/11: «Appuntamento di 12 nov»): «oggi», «ieri», «domani» on
  * those Rome days, else the day with its article — `del` gives «del 12
@@ -204,9 +219,7 @@ export function romeLongDay(value) {
 export function romeDayPhrase(value, now, article) {
   const key = romeDayKey(value);
   if (key === null) return null;
-  const near = now instanceof Date && !Number.isNaN(now.getTime())
-    ? [[0, 'oggi'], [-1, 'ieri'], [1, 'domani']].find(([shift]) => romeDayKey(new Date(now.getTime() + shift * 86400000)) === key)
-    : undefined;
+  const near = [[0, 'oggi'], [-1, 'ieri'], [1, 'domani']].find(([shift]) => romeDayKeyShift(now, shift) === key);
   if (near) return article === 'del' ? `di ${near[1]}` : near[1];
   const long = romeLongDay(value);
   if (long === null) return null;
@@ -747,8 +760,8 @@ export function upcomingAppointment(appointments = [], now = new Date()) {
 function briefWhen(startsAt, now) {
   const time = romeTime(startsAt) ?? '—';
   if (isTodayInRome(startsAt, now)) return `oggi alle ${time}`;
-  const tomorrow = now instanceof Date ? new Date(now.getTime() + 86400000) : null;
-  if (tomorrow !== null && romeDayKey(startsAt) !== null && romeDayKey(startsAt) === romeDayKey(tomorrow)) {
+  const tomorrow = romeDayKeyShift(now, 1);
+  if (tomorrow !== null && romeDayKey(startsAt) === tomorrow) {
     return `domani alle ${time}`;
   }
   const day = romeLongDay(startsAt);
