@@ -1513,3 +1513,97 @@ test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those
   assert.equal(links[0].textContent, 'Proposta esempio · proposta', 'the stage reads in Italian like the scheda');
   assert.ok(!list.textContent.includes('Deal a'), 'offers of this board are not listed');
 });
+
+/**
+ * Voce 9d2209b24f0b: durante uno spostamento in coda la card restava
+ * aria-busy per minuti senza testo. Ora la card parla subito
+ * («Spostamento in corso…»), dopo il tempo massimo dice
+ * «Non ancora confermato» con Riprova, e una risposta ancora in coda
+ * (BO_CRM_PENDING) non legge mai come fallimento.
+ */
+function queuedClient({ pending = false } = {}) {
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const calls = [];
+  return {
+    calls,
+    release,
+    async request(path, options = {}) {
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE] };
+      if (options.method === 'POST') {
+        if (pending) throw Object.assign(new Error('still queued'), { code: 'BO_CRM_PENDING', status: 202 });
+        await gate;
+        return { ok: true };
+      }
+      return { items: [record('a', 'discovery')] };
+    },
+  };
+}
+
+function cardStatus(card) {
+  return card.findAll('small').find((n) => ((n.getAttribute('class') ?? '').split(/\s+/).includes('card-status')));
+}
+
+function cardRetry(card) {
+  return card.findAll('button').find((n) => n.getAttribute('data-action') === 'move-retry');
+}
+
+test('9d2209b24f0b: durante lo spostamento la card mostra un testo di stato, mai solo aria-busy', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const client = queuedClient();
+  const board = createPipelineBoard({
+    doc, mount, client, toast: (message) => toasts.push(String(message)), wait: () => Promise.resolve(),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  card.__select.value = 'demo';
+  const flight = card.__move();
+
+  // While the server holds the move: aria-busy AND a visible line.
+  const moveButton = card.findAll('button').find((n) => n.getAttribute('aria-busy') === 'true');
+  assert.ok(moveButton, 'the move button is marked aria-busy while in flight');
+  const status = cardStatus(card);
+  assert.ok(status, 'the card has a visible status line while in flight');
+  assert.ok(status.textContent.includes('Spostamento in corso'), `the line speaks at once (${status.textContent})`);
+
+  // The injected wait ends the maximum time: still no answer, still a line.
+  await Promise.resolve();
+  await Promise.resolve();
+  const unconfirmed = cardStatus(card);
+  assert.ok(unconfirmed.textContent.includes('Non ancora confermato'), `a bounded unconfirmed line (${unconfirmed.textContent})`);
+  const retry = cardRetry(card);
+  assert.ok(retry && !(retry.getAttribute('class') ?? '').includes('hidden'), 'Riprova is offered, never a second POST');
+
+  // The queued move lands: success is toasted with the stage label.
+  client.release();
+  await flight;
+  assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), `landing is toasted (${toasts.join(' | ')})`);
+});
+
+test('9d2209b24f0b: una risposta ancora in coda non legge mai come fallimento', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const client = queuedClient({ pending: true });
+  const board = createPipelineBoard({
+    doc, mount, client, toast: (message) => toasts.push(String(message)), wait: () => Promise.resolve(),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  card.__select.value = 'demo';
+  await card.__move();
+
+  const status = cardStatus(card);
+  assert.ok(status.textContent.includes('Non ancora confermato'), `queued reads as unconfirmed (${status.textContent})`);
+  assert.ok(!status.textContent.includes('non riuscito'), 'never a failure line for a queued move');
+  const retry = cardRetry(card);
+  assert.ok(retry && !(retry.getAttribute('class') ?? '').includes('hidden'), 'Riprova re-reads the board');
+  assert.ok(!toasts.some((message) => message.includes('non riuscito')), 'no failure toast for a queued move');
+  const moveButton = card.findAll('button').find((n) => n.getAttribute('aria-busy') === 'true');
+  assert.ok(moveButton, 'the move stays locked: no second POST while queued');
+});
