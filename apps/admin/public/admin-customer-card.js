@@ -601,6 +601,29 @@ export function phoneRefusalText(error) {
   return isItalianSentence(record.message) ? String(record.message).trim() : own;
 }
 
+const DETAILS_SAVE_FAILED = 'Salvataggio non riuscito. Riprova più tardi.';
+const EMAIL_TAKEN_REFUSAL = 'Questa email è già di un altro cliente';
+
+/**
+ * Voce 5e13c9ef: «Dettagli» Salva said «Salvataggio non riuscito…» even for
+ * a 409 the server already names (CONFLICT, email taken by another customer:
+ * contact-service EMAIL_TAKEN_MESSAGE). A 409 now reads its own reason —
+ * the server's Italian sentence when it sends one, else the same reason in
+ * our words; anything else (other 4xx, 5xx, network) keeps the generic retry
+ * line through humanReadError, exactly as before.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function detailsRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status
+    : (record.code === 'CONFLICT' ? 409 : null);
+  if (status !== 409) {
+    return humanReadError(error, { failed: DETAILS_SAVE_FAILED });
+  }
+  humanReadError(error, { failed: EMAIL_TAKEN_REFUSAL });
+  return isItalianSentence(record.message) ? String(record.message).trim() : EMAIL_TAKEN_REFUSAL;
+}
+
 /**
  * The reserved company a contact typed without Azienda sits under
  * (customer-data `NO_COMPANY_NAME`, production 07/11): the core needs a
@@ -2251,8 +2274,9 @@ export function createCustomerCardView(deps) {
         if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
-        error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
-        toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
+        const refusal = detailsRefusalText(err);
+        error.textContent = refusal;
+        toast(refusal, true);
       } finally {
         detailsInFlight.delete(flightKey);
         busy = false;
