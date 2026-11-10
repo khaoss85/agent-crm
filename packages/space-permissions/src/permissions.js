@@ -27,6 +27,19 @@ export const SPACE_AI_PERMISSIONS = Object.freeze([
 ]);
 
 /**
+ * The master AI switch of one space (backlog:2c3156a47f8e, backoffice
+ * "08 Spazi e accessi"). One key, stored as an override row like the five
+ * switches above, but deliberately NOT one of them: the five answer "may
+ * the agent do this on its own", the master answers "is the AI on in this
+ * space at all". A fresh space runs with the AI on; the owner switches the
+ * whole space off (and back on) from the /bo without touching the five.
+ */
+export const SPACE_AI_MASTER_KEY = 'ai-enabled';
+
+/** The master default: a space with no master row runs with the AI on. */
+export const SPACE_AI_MASTER_DEFAULT = true;
+
+/**
  * The effective value when a space stored no override.
  *
  * Only `send-without-approval` is off by default: an unattended send is the
@@ -81,6 +94,59 @@ export function checkPermissionKey(value) {
 }
 
 /**
+ * Validate a flippable switch key: one of the five permissions, or the
+ * master `ai-enabled` switch. Only the `set-permission` write path accepts
+ * the master; reads and gates keep the five-only key and consult the master
+ * separately through `isAiEnabled`, so no five-keyed surface silently
+ * changes shape.
+ *
+ * @param {unknown} value
+ * @returns {string} the key
+ */
+export function checkFlippableKey(value) {
+  if (typeof value === 'string' && (value === SPACE_AI_MASTER_KEY || SPACE_AI_PERMISSIONS.includes(value))) {
+    return value;
+  }
+  throw new AppError(`Unknown space AI permission "${String(value)}"`, {
+    code: 'SPACE_PERMISSION_UNKNOWN', status: 400,
+  });
+}
+
+/**
+ * The master AI state of one space. A stored master row wins; a space with
+ * no master row runs with the AI on. Rows of another space never leak in —
+ * only rows carrying this space's id are honored.
+ *
+ * @param {string} spaceId the opaque space id
+ * @param {Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>} [overrideRows]
+ * @returns {boolean} the master state
+ */
+export function isAiEnabled(spaceId, overrideRows = []) {
+  const id = checkSpaceId(spaceId);
+  const rows = Array.isArray(overrideRows) ? overrideRows : [];
+  const master = rows.find((row) => row && typeof row === 'object' && row.spaceId === id && row.permission === SPACE_AI_MASTER_KEY);
+  if (!master) return SPACE_AI_MASTER_DEFAULT === true;
+  return master.enabled === true;
+}
+
+/**
+ * Whether one AI action may run alone in one space: the master on AND the
+ * specific switch on. Either off turns the action into a proposal.
+ *
+ * @param {unknown} spaceId the opaque space id
+ * @param {unknown} permission one of the five keys
+ * @param {Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>} [overrideRows]
+ * @returns {boolean} true only when both the master and the switch are on
+ */
+export function isAiActionAllowed(spaceId, permission, overrideRows = []) {
+  // Muse #734 P2: trim once, so the master and the switch read the same id.
+  const id = checkSpaceId(spaceId);
+  const rows = Array.isArray(overrideRows) ? overrideRows : [];
+  if (!isAiEnabled(id, rows)) return false;
+  return effectivePermission(id, permission, rows);
+}
+
+/**
  * Read the stored override for one switch of one space. `overrideRows` are
  * stored `space-permission-override` rows; only rows carrying this space's id
  * are honored — a row of another space is ignored even when a caller passes
@@ -124,7 +190,10 @@ export function resolveSpacePermissions(spaceId, overrideRows = []) {
  *
  * This is the whole BO-F0-06 promise in one function: a switched-off action
  * is never executed by this path. The caller that receives `proposal` records
- * the proposal and stops; there is no third outcome.
+ * the proposal and stops; there is no third outcome. The space master switch
+ * (`ai-enabled`, backlog:2c3156a47f8e) gates everything: with the master off
+ * every action becomes a proposal no matter what its own switch says, while
+ * `enabled` keeps reporting that switch's own honest value.
  *
  * @param {{spaceId: unknown, permission: unknown, overrideRows?: Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>}} input
  * @returns {{decision: 'allow' | 'proposal', spaceId: string, permission: string, enabled: boolean}} frozen
@@ -133,9 +202,11 @@ export function evaluateAiPermission(input) {
   const record = input && typeof input === 'object' ? input : {};
   const spaceId = checkSpaceId(record.spaceId);
   const permission = checkPermissionKey(record.permission);
-  const enabled = effectivePermission(spaceId, permission, record.overrideRows);
+  const rows = Array.isArray(record.overrideRows) ? record.overrideRows : [];
+  const enabled = effectivePermission(spaceId, permission, rows);
+  const allowed = isAiActionAllowed(spaceId, permission, rows);
   return Object.freeze({
-    decision: enabled ? 'allow' : 'proposal',
+    decision: allowed ? 'allow' : 'proposal',
     spaceId,
     permission,
     enabled,

@@ -91,6 +91,22 @@ export const SPAZI_AI_DEFAULTS = Object.freeze({
 });
 
 /**
+ * The master AI switch of one space (backlog:2c3156a47f8e): one on/off for
+ * the whole AI, above the five single switches. Key and default mirror
+ * `packages/space-permissions` — the drift test pins the pair. With the
+ * master off every AI action becomes a proposal to approve, no matter what
+ * the five say; with it on, the five decide one by one.
+ */
+export const SPAZI_AI_MASTER = Object.freeze({
+  key: 'ai-enabled',
+  label: 'AI dello spazio',
+  line: 'Accende e spegne tutta l\u2019AI di questo spazio. Da spenta, ogni azione diventa una proposta da approvare.',
+});
+
+/** Master default, mirrored from the package — a space with no master row runs with the AI on. */
+export const SPAZI_AI_MASTER_DEFAULT = true;
+
+/**
  * Italian names for the control-plane membership roles the spine mirrors —
  * the same words the shell prints under the space name and the user
  * (admin-session.js), so one screen never calls the same role «Titolare»
@@ -339,6 +355,22 @@ export function effectiveSwitches(spaceId, overrideRows = []) {
       enabled: flipped ? flipped.enabled === true : SPAZI_AI_DEFAULTS[entry.key] === true,
     };
   });
+}
+
+/**
+ * The master AI state of one space: the flipped master row wins, the
+ * package default (on) covers a space with no master row. Rows of another
+ * space never leak in — only rows carrying this space id are honored.
+ * @param {string} spaceId
+ * @param {Array<{spaceId?: unknown, permission?: unknown, enabled?: unknown}>} [overrideRows]
+ * @returns {boolean} true while the space AI is on
+ */
+export function masterEnabled(spaceId, overrideRows = []) {
+  const rows = Array.isArray(overrideRows) ? overrideRows : [];
+  const flipped = rows.find(
+    (row) => row && typeof row === 'object' && row.spaceId === spaceId && row.permission === SPAZI_AI_MASTER.key,
+  );
+  return flipped ? flipped.enabled === true : SPAZI_AI_MASTER_DEFAULT === true;
 }
 
 /**
@@ -901,16 +933,32 @@ export function createSpaziAccessiView(deps) {
   function renderSwitches(box, space) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-ai-panel' });
     section.appendChild(el(doc, 'h3', { text: '\u2726 Cosa pu\u00F2 fare l\u2019AI' }));
-    section.appendChild(el(doc, 'p', {
-      text: `Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`,
-      cls: 'bo-muted',
-    }));
     if (state.overrides === null) {
       section.appendChild(el(doc, 'p', { text: state.switchesUnavailable ?? 'Permessi non disponibili.', cls: 'bo-muted' }));
       box.appendChild(section);
       return;
     }
-    const switches = effectiveSwitches(space.id, state.overrides);
+    // The master switch (backlog:2c3156a47f8e) renders first and its state
+    // is the panel's headline: with the master off the five stay visible
+    // with their own honest values but disabled, because they decide
+    // nothing until the master is back on.
+    const master = masterEnabled(space.id, state.overrides);
+    section.appendChild(el(doc, 'p', {
+      text: master
+        ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
+        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: ogni azione diventa una proposta da approvare, finch\u00E9 non la riaccendi.`,
+      cls: 'bo-muted',
+    }));
+    const switches = [
+      {
+        key: SPAZI_AI_MASTER.key,
+        label: SPAZI_AI_MASTER.label,
+        line: SPAZI_AI_MASTER.line,
+        enabled: master,
+        master: true,
+      },
+      ...effectiveSwitches(space.id, state.overrides),
+    ];
     const list = el(doc, 'div', { cls: 'bo-spazi-switches' });
     for (const entry of switches) {
       const row = el(doc, 'div', { cls: 'bo-spazi-switch' });
@@ -923,7 +971,7 @@ export function createSpaziAccessiView(deps) {
         attrs: { type: 'button', role: 'switch', 'aria-checked': entry.enabled ? 'true' : 'false', 'aria-label': entry.label },
       });
       toggle.setAttribute('data-on', entry.enabled ? 'true' : 'false');
-      toggle.disabled = state.busy;
+      toggle.disabled = state.busy || (master === false && entry.master !== true);
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.refusal = null;
@@ -937,9 +985,13 @@ export function createSpaziAccessiView(deps) {
         const pending = state.confirmFlip;
         const confirmBox = el(doc, 'div', { cls: 'bo-spazi-confirm' });
         confirmBox.appendChild(el(doc, 'p', {
-          text: pending.to
-            ? `Accendere \u00AB${entry.label}\u00BB? Da accesa, l\u2019AI agisce da sola.`
-            : `Spegnere \u00AB${entry.label}\u00BB? Da spenta, diventa una proposta da approvare.`,
+          text: entry.master === true
+            ? (pending.to
+              ? 'Accendere l\u2019AI dello spazio? Da accesa, i cinque interruttori decidono uno per uno.'
+              : 'Spegnere l\u2019AI dello spazio? Da spenta, ogni azione diventa una proposta da approvare.')
+            : (pending.to
+              ? `Accendere \u00AB${entry.label}\u00BB? Da accesa, l\u2019AI agisce da sola.`
+              : `Spegnere \u00AB${entry.label}\u00BB? Da spenta, diventa una proposta da approvare.`),
           cls: 'bo-muted',
         }));
         const yes = el(doc, 'button', { text: 'Conferma', cls: 'bo-spazi-open', attrs: { type: 'button' } });

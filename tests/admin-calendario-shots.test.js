@@ -140,11 +140,14 @@ const SLOTS = [
   { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
 ];
 
+// backlog:913c61ec: a phrase with a time proposes that time only, so the
+// shot drafts a day without a time («giovedì») to paint several proposals,
+// their ghost and the out-of-hours line.
 const DRAFT = {
   teamMemberId: 'marco',
   serviceKey: 'taglio',
-  startsAt: '2026-10-22T14:00:00.000Z',
-  endsAt: '2026-10-22T14:30:00.000Z',
+  day: '2026-10-22',
+  durationMinutes: 30,
   notes: 'taglio per Ada',
 };
 
@@ -185,7 +188,7 @@ byName('members').dispatchEvent(new Event('input', { bubbles: true }));
 click('Mostra settimana');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
 click('Trova slot liberi');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
