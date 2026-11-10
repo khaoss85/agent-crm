@@ -472,10 +472,12 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
   await flush(20);
   // backlog:9046f940: the refusal is Italian next to the command, never the
   // technical message — the detail stays in the log, not in the DOM.
-  const said = seen.toast.find((row) => row.error);
-  assert.ok(said, 'the refusal is said aloud');
-  assert.match(said.message, /non \u00e8 riuscita|non permette/, 'the spoken refusal is Italian');
-  assert.ok(!/human user actor|HUMAN_APPROVAL/.test(said.message), 'no technical detail is spoken');
+  // backlog:7d30fb517785: one message only, next to the switch (an alert),
+  // no toast beside it.
+  assert.ok(!seen.toast.some((row) => row.error), 'no second copy in a toast');
+  const refusals = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  assert.equal(refusals.length, 1, 'one refusal on screen');
+  assert.equal(refusals[0].getAttribute('role'), 'alert', 'the refusal is said aloud by an alert');
   assert.ok(!/human user actor|HUMAN_APPROVAL/.test(text(mount)), 'no technical detail is rendered');
   assert.match(text(mount), /non \u00e8 riuscita|non permette/, 'the refusal renders next to the switches');
   assert.ok(mount.findAll('button').some((node) => node.getAttribute('role') === 'switch'), 'the switches stay usable');
@@ -509,9 +511,7 @@ test('a 405 flip keeps the switch and shows an Italian refusal', async () => {
   const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
   await confirm.listeners.click[0]();
   await flush(20);
-  const said = seen.toast.find((row) => row.error);
-  assert.ok(said, 'the 405 is said aloud');
-  assert.match(said.message, /non permette/, 'the 405 names the refusal in Italian');
+  assert.ok(!seen.toast.some((row) => row.error), 'one message: no toast beside the inline one (7d30fb517785)');
   assert.match(text(mount), /non permette/, 'the 405 renders next to the switches');
   const kept = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
   assert.equal(kept.getAttribute('aria-checked'), 'false', 'the switch is back as it was');
@@ -942,10 +942,8 @@ test('6b44b0e9fcdf review: a refused subject does not stop the others, the outco
     `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
     `/api/spine/memberships/${encodeURIComponent('google|42')}/suspend`,
   ], 'the first refusal does not stop the second subject');
-  const said = seen.toast.at(-1);
-  assert.equal(said.error, true);
-  assert.match(said.message, /account sospesi 1 su 2, rifiutati 1/, 'the partial outcome is counted, not hidden behind a generic failure');
-  assert.match(text(mount), /account sospesi 1 su 2/, 'the outcome stays next to the row');
+  assert.ok(!seen.toast.some((row) => row.error), 'one message: no toast beside the row (7d30fb517785)');
+  assert.match(text(mount), /account sospesi 1 su 2, rifiutati 1/, 'the partial outcome is counted next to the row, not hidden behind a generic failure');
   assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|42'), 'no technical subject on screen');
   const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
   assert.ok(retry, 'the row stays open with Riprova');
@@ -1013,4 +1011,79 @@ test('6b44b0e9fcdf: the card foot pairs Tu: <ruolo> with the badge or Apri; a de
   assert.deepEqual(descriptions, ['Abbigliamento · Torino'], 'no description is invented for the space without one');
   const cards = byClassIn(mount, 'div', 'bo-spazi-card');
   assert.ok((cards.at(-1).getAttribute('class') ?? '').includes('bo-spazi-adder'), 'the dashed adder stays last');
+});
+
+// backlog:7d30fb517785 (production 10/11, Spazi e accessi): a 503
+// OPERATION_APP_UNAVAILABLE on the AI switch printed «Connessione non
+// riuscita, riprova.» twice — once under the invite form, which opened by
+// itself — and the text was false: the server answered. One true message,
+// under the switch that failed; the invite form stays closed.
+test('7d30fb517785: a 5xx on a switch shows one true message under that switch, the invite form stays closed', async () => {
+  const inner = stubClient();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/space-permissions/set-permission') {
+        throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(20);
+
+  const refusals = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  assert.equal(refusals.length, 1, `one message, not ${refusals.length}`);
+  assert.equal(refusals[0].textContent, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
+  assert.ok(!text(mount).includes('Connessione non riuscita'), 'the server answered: never a connection fault');
+  assert.ok(!seen.toast.some((row) => row.error), 'no toast beside it');
+  // Next to the control that failed: right after that switch's row.
+  const switches = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-spazi-switches');
+  const kids = switches.childNodes;
+  const at = kids.indexOf(refusals[0]);
+  assert.ok(at > 0, 'the message sits in the switch list');
+  const before = kids[at - 1];
+  assert.ok(before.findAll('button').some((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta'), 'right under the switch that failed');
+  const invite = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-invite'));
+  assert.ok(invite, 'the invite form is there');
+  assert.ok(!(invite.getAttribute('class') ?? '').split(/\s+/).includes('open'), 'the invite form does not open by itself');
+  assert.ok(!invite.textContent.includes('riprova'), 'nothing of the switch failure under Invita');
+});
+
+// backlog:7d30fb517785: a refused invite keeps its message inside the form,
+// never under the switches; a lost answer (no status) is the only
+// «Connessione non riuscita».
+test('7d30fb517785: a refused invite shows its message once, inside the invite form', async () => {
+  const inner = stubClient();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships' && String(options?.method ?? 'GET').toUpperCase() === 'POST') {
+        throw new TypeError('Failed to fetch');
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾').listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).listeners.click[0]();
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'luca@example.test';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuovo collega';
+  await mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(20);
+  const refusals = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  assert.equal(refusals.length, 1, `one message, not ${refusals.length}`);
+  assert.equal(refusals[0].textContent, 'Connessione non riuscita, riprova.', 'no answer at all: the connection text is true here');
+  const invite = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-invite'));
+  assert.ok(invite.findAll('p').includes(refusals[0]), 'inside the invite form');
+  assert.ok((invite.getAttribute('class') ?? '').split(/\s+/).includes('open'), 'the form stays open for the retry');
+  assert.ok(!seen.toast.some((row) => row.error), 'no toast beside it');
 });

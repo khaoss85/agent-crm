@@ -446,8 +446,15 @@ export function createSpaziAccessiView(deps) {
     /** @type {{key: string, to: boolean}|null} switch flip armed for confirm */
     confirmFlip: null,
     busy: false,
-    /** @type {string|null} last server refusal, shown next to the form */
-    refusal: null,
+    /**
+     * backlog:7d30fb517785 (production 10/11: a refused AI switch printed its
+     * refusal twice, once under the invite form, which opened by itself):
+     * each refusal belongs to the control that failed and shows only there.
+     * @type {string|null} last refused invite, shown inside the invite form
+     */
+    inviteRefusal: null,
+    /** @type {{key: string, message: string}|null} last refused switch flip, shown under that switch */
+    switchRefusal: null,
     // Voce 19c2e22a64a1 (1): the current space's own live fix count for the
     // Stato sync badge on the tab row — explicit, never another space's.
     /** @type {number | null} */ fixCount: null,
@@ -456,6 +463,18 @@ export function createSpaziAccessiView(deps) {
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
+  }
+
+  /**
+   * backlog:7d30fb517785: the text for a write the server answered but could
+   * not take. A 5xx carrying the server's own code (production 10/11: 503
+   * OPERATION_APP_UNAVAILABLE) is a server that cannot save right now, never
+   * a refusal and never a connection fault; anything else keeps `refused`.
+   * @param {any} failure @param {string} refused
+   */
+  function writeFailedText(failure, refused) {
+    const status = typeof failure?.status === 'number' ? failure.status : null;
+    return status !== null && status >= 500 ? 'Non riesco a salvare la modifica adesso, riprova tra poco.' : refused;
   }
 
   /** @param {string} message @param {boolean} [isError] */
@@ -473,8 +492,11 @@ export function createSpaziAccessiView(deps) {
   function errorOf(error) {
     if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') return error;
     if (error instanceof Error) {
+      // A fetch that never got an answer rejects with a TypeError: it keeps
+      // the NETWORK code, so it is the one failure that reads «Connessione
+      // non riuscita» (backlog:7d30fb517785).
       /** @type {{code: string, message: string, status?: number}} */
-      const normalized = { code: 'UNKNOWN', message: error.message };
+      const normalized = { code: error instanceof TypeError ? 'NETWORK' : 'UNKNOWN', message: error.message };
       const status = /** @type {any} */ (error).status;
       if (typeof status === 'number') normalized.status = status;
       return normalized;
@@ -534,7 +556,8 @@ export function createSpaziAccessiView(deps) {
     state.confirmRemove = null;
     state.removeRetry = null;
     state.confirmFlip = null;
-    state.refusal = null;
+    state.inviteRefusal = null;
+    state.switchRefusal = null;
     state.inviteMenuOpen = false;
     state.newSpaceMenuOpen = false;
     state.newSpaceNote = null;
@@ -840,16 +863,16 @@ export function createSpaziAccessiView(deps) {
           const total = row.removable.length;
           const done = total - refused.length;
           const why = humanWriteError(refused[0].failure, {
-            failed: total === 1
+            failed: writeFailedText(refused[0].failure, total === 1
               ? 'La rimozione non \u00E8 riuscita. Riprova pi\u00F9 tardi.'
-              : 'Il server ha rifiutato la sospensione.',
+              : 'Il server ha rifiutato la sospensione.'),
           });
           const note = total === 1
             ? why
             : done === 0
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
-          say(note, true);
+          // One message, inside the row that failed (no toast beside it).
           await load();
           // load() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
@@ -858,14 +881,14 @@ export function createSpaziAccessiView(deps) {
           render();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
-        no.addEventListener('click', () => { state.confirmRemove = null; state.removeRetry = null; state.refusal = null; render(); });
+        no.addEventListener('click', () => { state.confirmRemove = null; state.removeRetry = null; render(); });
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         item.appendChild(confirmBox);
       } else {
         const remove = el(doc, 'button', { text: 'Rimuovi', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         remove.disabled = state.busy;
-        remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; state.refusal = null; render(); });
+        remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; render(); });
         item.appendChild(remove);
       }
       list.appendChild(item);
@@ -874,7 +897,7 @@ export function createSpaziAccessiView(deps) {
     const agentRows = renderTeamAgentRows(doc, state.agents);
     if (agentRows) section.appendChild(agentRows);
 
-    const invite = el(doc, 'div', { cls: `bo-spazi-invite${state.inviteOpen || state.refusal !== null ? ' open' : ''}` });
+    const invite = el(doc, 'div', { cls: `bo-spazi-invite${state.inviteOpen || state.inviteRefusal !== null ? ' open' : ''}` });
     invite.appendChild(el(doc, 'h4', { text: 'Invita persona' }));
     const subject = el(doc, 'input', {
       cls: 'bo-spazi-input',
@@ -911,20 +934,18 @@ export function createSpaziAccessiView(deps) {
         say(`${who} invitato come ${spaceRoleLabel(picked)}.`);
       } catch (error) {
         const failure = errorOf(error);
-        const message = humanWriteError(failure, {
-          failed: 'L’invito non è riuscito. Riprova più tardi.',
-        });
-        say(message, true);
+        const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
+        // One message, inside the form that failed (no toast beside it).
         await load();
-        state.refusal = message;
+        state.inviteRefusal = message;
         render();
         return;
       }
       await refresh();
     });
     invite.appendChild(send);
-    if (state.refusal !== null) {
-      invite.appendChild(el(doc, 'p', { text: state.refusal, cls: 'bo-spazi-refusal' }));
+    if (state.inviteRefusal !== null) {
+      invite.appendChild(el(doc, 'p', { text: state.inviteRefusal, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
     }
     invite.appendChild(el(doc, 'p', {
       text: 'Nessuna email parte da qui: la persona entra con il suo account Google al primo accesso.',
@@ -978,7 +999,7 @@ export function createSpaziAccessiView(deps) {
       toggle.disabled = state.busy || (master === false && entry.master !== true);
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
-        state.refusal = null;
+        state.switchRefusal = null;
         render();
       });
       const knob = el(doc, 'span', { cls: 'bo-spazi-knob' });
@@ -1010,13 +1031,15 @@ export function createSpaziAccessiView(deps) {
             say(`\u00AB${entry.label}\u00BB ${pending.to ? 'accesa' : 'spenta'}.`);
           } catch (error) {
             const failure = errorOf(error);
-            const message = humanWriteError(failure, {
-              failed: 'La modifica non è riuscita. Riprova più tardi.',
-            });
-            say(message, true);
+            // A server that cannot take the change right now (a 5xx with
+            // its own code, e.g. OPERATION_APP_UNAVAILABLE) says so; a
+            // refusal keeps its text; «Connessione non riuscita» only when
+            // no answer came at all (humanWriteError draws that line).
+            const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
+            // One message, under the switch that failed (no toast beside it).
             await load();
             state.confirmFlip = null;
-            state.refusal = message;
+            state.switchRefusal = { key: pending.key, message };
             render();
             return;
           }
@@ -1024,16 +1047,16 @@ export function createSpaziAccessiView(deps) {
           await refresh();
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
-        no.addEventListener('click', () => { state.confirmFlip = null; state.refusal = null; render(); });
+        no.addEventListener('click', () => { state.confirmFlip = null; state.switchRefusal = null; render(); });
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         list.appendChild(confirmBox);
       }
+      if (state.switchRefusal !== null && state.switchRefusal.key === entry.key && state.confirmFlip === null) {
+        list.appendChild(el(doc, 'p', { text: state.switchRefusal.message, cls: 'bo-spazi-refusal', attrs: { role: 'alert' } }));
+      }
     }
     section.appendChild(list);
-    if (state.refusal !== null && state.confirmFlip === null) {
-      section.appendChild(el(doc, 'p', { text: state.refusal, cls: 'bo-spazi-refusal' }));
-    }
     box.appendChild(section);
   }
 
