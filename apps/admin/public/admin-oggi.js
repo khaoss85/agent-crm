@@ -259,6 +259,26 @@ function subjectDisplayLabel(row, names = {}) {
 }
 
 /**
+ * The next call's guest name, or null when no name exists yet — never a
+ * stand-in noun. The next-call card (verification 09/11, backlog
+ * 1a3a0ba236c0) must not print «il cliente» before the name: with no
+ * stored or profile name it waits for the name with a neutral
+ * placeholder, never a presumed customer.
+ */
+const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
+
+/**
+ * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} appointment
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+function appointmentGuestName(appointment, names = {}) {
+  const key = inboxSubjectKey(appointment);
+  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null;
+  return fromProfile ?? readableName(nonEmptyText(appointment?.subjectLabel));
+}
+
+/**
  * One advisor action from an open follow-up. The CTA completes the real
  * work-task (same server action the Work section uses); the motive names the
  * record that opened it.
@@ -339,13 +359,14 @@ function followupAction(task) {
  * preparation itself happens on fresh reads there, so this run navigates
  * rather than duplicating a mutation the scheda already owns.
  * @param {Record<string, any>} appointment a booked/confirmed appointment row
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
-function appointmentPrepAction(appointment) {
+function appointmentPrepAction(appointment, names = {}) {
   const id = nonEmptyText(appointment?.id);
   if (!id) return null;
   const time = romeTime(appointment?.startsAt);
   if (!time) return null;
-  const label = subjectDisplayLabel(appointment);
+  const label = appointmentGuestName(appointment, names) ?? APPOINTMENT_GUEST_LABEL;
   const href = cardHrefForSubject(appointment) ?? recordDetailHref('appointment', id);
   return Object.freeze({
     id: `bo04:appointment:${id}`,
@@ -371,9 +392,9 @@ function appointmentPrepAction(appointment) {
  * Deterministic advisor list: open follow-ups due (overdue first), then the
  * preparation of today's next appointment. Capped — the screen says so when
  * the cap hides actions.
- * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date }} input
+ * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null> }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date() } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date(), names = {} } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -395,7 +416,7 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
       && isTodayInRome(row.startsAt, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   if (today.length > 0) {
-    const prep = appointmentPrepAction(today[0]);
+    const prep = appointmentPrepAction(today[0], names);
     if (prep) actions.push(prep);
   }
   const capped = actions.length > ADVISOR_ACTION_LIMIT;
@@ -718,7 +739,7 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
   if (appointment == null) return null;
   const id = nonEmptyText(appointment?.id) ?? '';
   const time = romeTime(appointment?.startsAt) ?? '—';
-  const who = subjectDisplayLabel(appointment, names);
+  const who = appointmentGuestName(appointment, names) ?? APPOINTMENT_GUEST_LABEL;
   const when = briefWhen(appointment?.startsAt, now);
   // Today's call keeps the short line; a later day names its day.
   const opening = when.startsWith('oggi ') ? `Appuntamento delle ${time}` : `Appuntamento di ${when}`;
@@ -1796,7 +1817,7 @@ export function createOggiView(deps) {
   /** @param {any} [target] where to paint: the live mount, or a detached box for fill() */
   function paint(target = mount) {
     if (!last) return;
-    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now });
+    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now, names: last.appointmentNames ?? {} });
     lastBuilt = built;
     const merged = [...built.actions];
     const today = romeDayKey(lastMeta.now);

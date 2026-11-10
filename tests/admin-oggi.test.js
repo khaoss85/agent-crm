@@ -1600,8 +1600,8 @@ test('5083e7a77c26: the next-call card names the customer from the profile', asy
   const brief = buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Fio Neri' } });
   assert.equal(brief.title, 'Fio Neri');
   assert.ok(brief.bullets[0].includes('con Fio Neri'));
-  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday }).title, 'il cliente', 'only when no name exists');
-  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Unknown' } }).title, 'il cliente',
+  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday }).title, 'un ospite da confermare', 'only when no name exists: a neutral wait, never «il cliente» (1a3a0ba236c0)');
+  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Unknown' } }).title, 'un ospite da confermare',
     'a placeholder is not a name');
   const seen = [];
   const names = await readAppointmentNames({
@@ -1618,6 +1618,25 @@ test('5083e7a77c26: the next-call card names the customer from the profile', asy
   assert.ok(seen.includes('/api/customer-data/profile/contact/fio'));
   const agenda = buildTodayAgenda([{ ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' }], OGGI_NOW, names);
   assert.equal(agenda[0].title, 'Fio Neri', 'the agenda row reads the same name');
+});
+
+// Voce 1a3a0ba236c0 (verification 09/11): the next-call card never prints
+// «il cliente» before the name — with no name it waits with a neutral
+// placeholder, never a presumed customer.
+test('1a3a0ba236c0: the next-call card waits for the name, never «il cliente»', () => {
+  const nameless = { ...APPT_TODAY, subjectLabel: null };
+  const [prep] = buildAdvisorActions({ tasks: [], appointments: [nameless], now: OGGI_NOW }).actions;
+  assert.ok(prep, 'the prep action still exists without a name');
+  assert.ok(!`${prep.title} ${prep.why} ${prep.record.label}`.includes('il cliente'), 'no presumed customer on the prep card');
+  assert.equal(prep.title, 'Prepara la call con un ospite da confermare');
+  const brief = buildPreCallBrief({ appointment: nameless, messages: [], calls: [], now: OGGI_NOW });
+  assert.ok(!`${brief.title} ${brief.bullets.join(' ')}`.includes('il cliente'), 'no presumed customer on the brief card');
+  assert.equal(brief.title, 'un ospite da confermare');
+  const [named] = buildAdvisorActions({ tasks: [], appointments: [APPT_TODAY], now: OGGI_NOW }).actions;
+  assert.equal(named.title, 'Prepara la call con Giulia Romano', 'a known name still prints');
+  const profileOnly = { ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' };
+  const [fromProfile] = buildAdvisorActions({ tasks: [], appointments: [profileOnly], now: OGGI_NOW, names: { 'contact:fio': 'Fio Neri' } }).actions;
+  assert.equal(fromProfile.title, 'Prepara la call con Fio Neri', 'a profile-only name prints on the prep card, like the brief (1a3a0ba236c0 P1)');
 });
 
 /**

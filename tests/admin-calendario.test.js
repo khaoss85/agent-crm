@@ -4207,6 +4207,70 @@ test('AI off is remembered for its own space only', async () => {
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
 });
 
+// e98e7a346b37: a refusal that lands after the operator already switched
+// space belongs to the space just left — the new space keeps its phrase box
+// and never paints the other space's «AI spenta» note.
+test('a late AI-off refusal from the previous space never locks or labels the new space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'space-a';
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  let releasePhrase = null;
+  const refusal = Object.assign(new Error('Calendar phrase refused'), { status: 503, code: 'LLM_SPACE_DISABLED' });
+  const base = stubClient({});
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/phrase') {
+        await new Promise((resolve) => { releasePhrase = resolve; });
+        throw refusal;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(3);
+  assert.ok(releasePhrase, 'the space A phrase is still in flight');
+  // The operator switches before the answer lands.
+  space = 'space-b';
+  await view.render();
+  await flushMany();
+  releasePhrase();
+  await flushMany();
+  // Any later repaint still shows the new space's own card.
+  await view.render();
+  await flushMany();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B stays enabled');
+  assert.ok(!mount.textContent.includes('AI spenta'), 'the space A note never paints in space B');
+  // Back in the refusing space a fresh phrase still says it, only there.
+  space = 'space-a';
+  releasePhrase = null;
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(3);
+  assert.ok(releasePhrase, 'the space A retry is in flight');
+  releasePhrase();
+  await flushMany();
+  assert.ok(mount.textContent.includes('AI spenta'), 'space A names its own off state');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'space A locks its own box');
+  space = 'space-b';
+  await view.render();
+  await flushMany();
+  assert.ok(!mount.textContent.includes('AI spenta'), 'back in space B the note is gone');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
+});
+
 // Review #657 P1: a phrase naming a day outside the shown week moved the
 // grid and nulled the week before the held-overlap guard ran, so a booked
 // step in that week was proposed on top of its booking.
