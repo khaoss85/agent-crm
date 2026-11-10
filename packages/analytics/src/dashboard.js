@@ -52,7 +52,7 @@ const PERIOD_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
 export const DASHBOARD_DEFAULT_CURRENCY = 'EUR';
-/** Monthly chart depth: the selected period plus the five before it. */
+/** Monthly chart depth: the selected period plus the five after it — expected closings only, never the past. */
 export const DASHBOARD_MONTHS = 6;
 /** Weekly bars on the channel card: the four weeks opening the period month. */
 export const DASHBOARD_CHANNEL_WEEKS = 4;
@@ -62,6 +62,29 @@ export const DASHBOARD_CSV_SEPARATOR = ';';
 /** @param {string} stage */
 export function stageLabel(stage) {
   return /** @type {string} */ (STAGE_LABELS[/** @type {keyof typeof STAGE_LABELS} */ (stage)] ?? stage);
+}
+
+/**
+ * Display label for an opportunity owner key (backlog:b3d88f6e38ef).
+ *
+ * The registry stores the raw key (`coach-guido`, `alice`, `Maria Rossi`)
+ * and the membership store carries no display name, so the screen cannot
+ * look up a real person name: it renders the key itself in readable form
+ * (separators become spaces, each word capitalized) instead of the raw
+ * technical id. This never invents a mapping — real person names stay a
+ * follow-up for a member directory.
+ * @param {unknown} owner
+ */
+export function ownerDisplayName(owner) {
+  if (typeof owner !== 'string') return '—';
+  const words = owner.split(/[\s_.-]+/).filter((part) => part !== '');
+  if (words.length === 0) return '—';
+  return words
+    .map((word) => {
+      const [first, ...rest] = Array.from(word);
+      return `${first.toUpperCase()}${rest.join('').toLowerCase()}`;
+    })
+    .join(' ');
 }
 
 /**
@@ -402,8 +425,11 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     return Object.freeze({ stage, label: stageLabel(stage), count: found.count, minor: found.minor });
   }));
 
+  // «Chiusure attese per mese» (backlog:b3d88f6e38ef): expected closings run
+  // from the selected period onward — a past month is never "atteso", it is
+  // either closed or stale (stale stays visible in the KPIs and insights).
   const monthly = Object.freeze(
-    Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index - DASHBOARD_MONTHS + 1))
+    Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index))
       .map((month) => {
         const expected = sumRows(dated, (row) => isOpen(row) && monthOf(row['opportunity.expectedCloseDate']) === month);
         const closedRows = sumRows(dated, (row) => row['opportunity.stage'] === WON_STAGE && monthOf(row['opportunity.expectedCloseDate']) === month);
@@ -460,6 +486,10 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       const rate = decided === 0 ? null : entry.wonCount / decided;
       return Object.freeze({
         ...entry,
+        // Person label for the screen (backlog:b3d88f6e38ef): the raw key
+        // stays on `owner` (persona filter, CSV), the readable label on
+        // `displayName` — never the technical id on screen.
+        displayName: ownerDisplayName(entry.owner),
         winRate: rate,
         winRateDisplay: rate === null ? 'n.d.' : `${Math.round(rate * 100)}%`,
       });
@@ -508,8 +538,8 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       proposal = Object.freeze({
         title: 'Proposta di ridistribuzione lead',
         moves: Object.freeze([Object.freeze({
-          from: candidate.owner,
-          to: recipient.owner,
+          from: candidate.displayName,
+          to: recipient.displayName,
           count: candidate.staleCount,
           reason: `${candidate.staleCount} preventivi aperti senza data di chiusura attesa, tasso ${candidate.winRateDisplay} contro ${recipient.winRateDisplay}`,
         })]),
@@ -517,7 +547,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       });
       insights.push({
         id: 'redistribute',
-        text: `${candidate.owner} tiene ${formatMinor(candidate.openMinor, query.currency)} aperti con il tasso più basso (${candidate.winRateDisplay}): propone di spostare i lead senza data a ${recipient.owner}.`,
+        text: `${candidate.displayName} tiene ${formatMinor(candidate.openMinor, query.currency)} aperti con il tasso più basso (${candidate.winRateDisplay}): propone di spostare i lead senza data a ${recipient.displayName}.`,
       });
     }
     if (lost.count > 0 && closed > 0 && lost.count / closed >= 0.3) {

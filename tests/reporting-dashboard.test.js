@@ -32,6 +32,7 @@ import {
   formatMinor,
   formatMonth,
   monthOf,
+  ownerDisplayName,
   parseDashboardQuery,
   pickTarget,
   shiftMonth,
@@ -215,18 +216,37 @@ test('funnel, monthly chart and team table match hand-computed rows', (t) => {
   const october = model.monthly.find((entry) => entry.month === '2026-10');
   assert.deepEqual([october.openCount, october.expectedMinor], [2, 14000]);
   assert.deepEqual([october.wonCount, october.wonMinor], [2, 14000]);
-  const september = model.monthly.find((entry) => entry.month === '2026-09');
-  assert.deepEqual([september.openCount, september.expectedMinor], [1, 2500]);
+  // «Chiusure attese» runs from the selected month onward (backlog:b3d88f6e38ef):
+  // November holds the one future open row, September never appears.
+  const november = model.monthly.find((entry) => entry.month === '2026-11');
+  assert.deepEqual([november.openCount, november.expectedMinor], [1, 6000]);
+  assert.deepEqual([november.wonCount, november.wonMinor], [0, 0]);
   assert.equal(model.monthly.length, 6);
+  assert.deepEqual(
+    model.monthly.map((entry) => entry.month),
+    ['2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03'],
+  );
+  assert.ok(!model.monthly.some((entry) => entry.month < '2026-10'), 'no past months in Chiusure attese');
   assert.deepEqual(model.owners, ['alice', 'bob']);
   const alice = model.team.find((entry) => entry.owner === 'alice');
   assert.deepEqual([alice.openCount, alice.openMinor], [2, 14000]);
   assert.deepEqual([alice.wonCount, alice.wonMinor], [1, 9000]);
   assert.equal(alice.winRateDisplay, '50%');
+  assert.equal(alice.displayName, 'Alice');
   const bob = model.team.find((entry) => entry.owner === 'bob');
   assert.deepEqual([bob.openCount, bob.openMinor], [0, 0]);
   assert.deepEqual([bob.wonCount, bob.wonMinor], [1, 5000]);
   assert.equal(bob.winRateDisplay, '100%');
+  assert.equal(bob.displayName, 'Bob');
+});
+
+test('owner keys render as person labels, never raw ids (backlog:b3d88f6e38ef)', () => {
+  assert.equal(ownerDisplayName('coach-guido'), 'Coach Guido');
+  assert.equal(ownerDisplayName('alice'), 'Alice');
+  assert.equal(ownerDisplayName('Maria Rossi'), 'Maria Rossi');
+  assert.equal(ownerDisplayName('marco_de-luca'), 'Marco De Luca');
+  assert.equal(ownerDisplayName(''), '—');
+  assert.equal(ownerDisplayName(null), '—');
 });
 
 test('team table recalculates with periodo: September differs from October', (t) => {
@@ -290,7 +310,7 @@ test('Cosa noto proposes a redistribution that never reassigns by itself', (t) =
   const model = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   assert.ok(model.proposal !== null, 'the fixture earns a redistribution proposal');
   assert.equal(model.proposal.title, 'Proposta di ridistribuzione lead');
-  assert.deepEqual(model.proposal.moves.map((move) => [move.from, move.to, move.count]), [['alice', 'bob', 1]]);
+  assert.deepEqual(model.proposal.moves.map((move) => [move.from, move.to, move.count]), [['Alice', 'Bob', 1]]);
   assert.match(model.proposal.note, /non sposta nulla da sola/);
   assert.ok(model.insights.some((entry) => entry.id === 'redistribute'));
   assert.ok(model.insights.some((entry) => entry.id === 'lost-rate'));

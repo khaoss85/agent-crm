@@ -467,16 +467,22 @@ export function createReportingView(deps) {
       renderReporting();
     }));
     // Person sigle (spec: sigle delle persone in cerchio): one button per
-    // owner showing initials, with the full name on `title`. The circle
+    // owner showing initials, with the person label on `title`. The circle
     // shape is the supervisor's vestito (styles.css); the structure and
-    // the recalculation contract are here.
+    // the recalculation contract are here. The readable label comes from
+    // the team's `displayName` (backlog:b3d88f6e38ef) — the raw key never
+    // shows on screen — while the filter still travels as the raw key.
+    const personLabels = new Map((model.team ?? [])
+      .filter((entry) => entry !== null && typeof entry === 'object')
+      .map((entry) => [entry.owner, typeof entry.displayName === 'string' ? entry.displayName : entry.owner]));
     for (const owner of model.owners ?? []) {
-      const sigla = pill(ownerSigla(owner), dashboard.owner === owner, () => {
+      const person = personLabels.has(owner) ? personLabels.get(owner) : owner;
+      const sigla = pill(ownerSigla(person), dashboard.owner === owner, () => {
         dashboard.owner = owner;
         renderReporting();
       });
-      sigla.setAttribute('title', String(owner));
-      sigla.setAttribute('aria-label', String(owner));
+      sigla.setAttribute('title', String(person));
+      sigla.setAttribute('aria-label', String(person));
       sigla.setAttribute('data-owner', String(owner));
       people.appendChild(sigla);
     }
@@ -733,7 +739,8 @@ export function createReportingView(deps) {
     const tbody = el(doc, 'tbody');
     for (const entry of model.team) {
       const row = el(doc, 'tr');
-      row.appendChild(el(doc, 'td', { text: entry.owner }));
+      // Person label, never the technical id (backlog:b3d88f6e38ef).
+      row.appendChild(el(doc, 'td', { text: typeof entry.displayName === 'string' ? entry.displayName : entry.owner }));
       row.appendChild(el(doc, 'td', { text: String(entry.openCount) }));
       row.appendChild(el(doc, 'td', { text: formatMoney(entry.openMinor, model.currency) }));
       row.appendChild(el(doc, 'td', { text: `${entry.wonCount} (${formatMoney(entry.wonMinor, model.currency)})` }));
@@ -888,7 +895,9 @@ export function createReportingView(deps) {
       label: entry.label, minor: entry.expectedMinor, text: `${entry.openCount} · ${eur(entry.expectedMinor)}`,
     }))), 'bo-rep-third');
     tag(barChart(grid, 'Vendite per persona', 'valore aperto per persona', model.team.map((entry) => ({
-      label: entry.owner, minor: entry.openMinor, text: `${entry.openCount} · ${eur(entry.openMinor)}`,
+      // Person label, never the technical id (backlog:b3d88f6e38ef).
+      label: typeof entry.displayName === 'string' ? entry.displayName : entry.owner,
+      minor: entry.openMinor, text: `${entry.openCount} · ${eur(entry.openMinor)}`,
     }))), 'bo-rep-third');
     tag(forecastPanel(grid, model), 'bo-rep-full');
     tag(teamTable(grid, model), 'bo-rep-wide');
