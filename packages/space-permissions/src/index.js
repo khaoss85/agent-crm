@@ -58,7 +58,9 @@ export function createSpacePermissionsDomain(options = {}) {
     name: SPACE_PERMISSIONS_DOMAIN,
     // 1: BO-F0-06 — five AI switches per space with send-without-approval off
     // by default, switched-off actions recorded as human-decided proposals.
-    version: 1,
+    // 2: backlog:2c3156a47f8e — the ai-enabled master switch of the space
+    // (flippable, read back as aiEnabled, gating every action while off).
+    version: 2,
     label: 'Space AI permissions',
     description:
       'Per-space AI switches with human approval: five permission keys with effective defaults, per-space overrides, and proposals a switched-off action becomes instead of running. Stores no spaces, members or invitations.',
