@@ -1201,7 +1201,7 @@ export function createCalendarioView(deps) {
     manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
-    /** backlog:913c61ec — the form values the last phrase draft wrote, for «Annulla». @type {Record<string, string>|null} */
+    /** backlog:913c61ec — the form values the last phrase draft wrote and the ones before it, for «Annulla». @type {{values: Record<string, string>, prior: Record<string, any>}|null} */
     draftWrote: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
     phraseInput: null,
@@ -2836,10 +2836,13 @@ export function createCalendarioView(deps) {
         return;
       }
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
-      const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, clock().getTime()), heldWeek, searchIds));
+      const nowMs = clock().getTime();
+      const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
       // backlog:913c61ec — a sentence with a time asks for that time: when it
-      // is free the proposal is the draft itself; when it is taken the next
-      // free steps of the same afternoon follow, with the reason said.
+      // is free the proposal is the draft itself; when it is missing the next
+      // free steps of the same afternoon follow, with the reason said — «già
+      // passate» for a begun hour, «già occupato» only when the server
+      // answered the step held or a booking overlaps it (review #735).
       const timedAt = typeof draft.startsAt === 'string' && !draftDayOnly(draft) ? Date.parse(draft.startsAt) : NaN;
       const exact = Number.isFinite(timedAt)
         ? ranked.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
@@ -2849,9 +2852,15 @@ export function createCalendarioView(deps) {
       const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
-      const takenNote = Number.isFinite(timedAt) && !exact
-        ? `Alle ${romeTime(draft.startsAt) ?? ''} ${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} è già occupato`
-        : '';
+      let takenNote = '';
+      if (Number.isFinite(timedAt) && !exact) {
+        const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
+        const draftStep = { startsAt: draft.startsAt, endsAt: draft.endsAt ?? stepOf?.endsAt };
+        if (timedAt < nowMs) takenNote = `Le ${romeTime(draft.startsAt) ?? ''} sono già passate`;
+        else if (stepOf === null || dropHeldOverlaps([draftStep], heldWeek, searchIds).length === 0) {
+          takenNote = `Alle ${romeTime(draft.startsAt) ?? ''} ${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} è già occupato`;
+        }
+      }
       state.aiNote = proposals.length === 0
         ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
         : (takenNote !== '' ? `${takenNote}: ecco gli orari liberi dopo.` : '');
@@ -2944,13 +2953,15 @@ export function createCalendarioView(deps) {
     state.proposals = [];
     state.aiNote = '';
     state.phraseNoDraft = false;
-    // Only the values this draft wrote and nobody changed since: a search
+    // Each field this draft wrote and nobody changed since goes back to what
+    // the form held before the draft (review #735: a value the operator
+    // typed equal to the draft is restored, never blanked). A search
     // cancelled before the draft reached the form leaves the form as it was.
-    const wrote = state.draftWrote ?? {};
+    const { values = {}, prior = {} } = state.draftWrote ?? {};
     if (state.manual) {
       const kept = { ...state.manual };
-      for (const [name, value] of Object.entries(wrote)) {
-        if (kept[name] === value) kept[name] = '';
+      for (const [name, value] of Object.entries(values)) {
+        if (kept[name] === value) kept[name] = typeof prior[name] === 'string' ? prior[name] : '';
       }
       state.manual = kept;
     }
@@ -3500,6 +3511,15 @@ export function createCalendarioView(deps) {
     // cliente» button over an existing pick), set by renderCustomerPick
     // above so «Compila manualmente» focuses the customer first.
     if (state.draftFill) {
+      // backlog:913c61ec — the form as it was before this draft, for «Annulla».
+      // A previous draft's untouched fields carry their own «before».
+      const before = { ...(state.manual ?? {}) };
+      const earlier = state.draftWrote;
+      if (earlier) {
+        for (const [name, value] of Object.entries(earlier.values)) {
+          if (before[name] === value) before[name] = earlier.prior[name] ?? '';
+        }
+      }
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
@@ -3555,15 +3575,13 @@ export function createCalendarioView(deps) {
         absorbed.teamMemberId = String(draft.teamMemberId);
       }
       state.manual = absorbed;
-      // backlog:913c61ec — what this draft wrote into the form, so «Annulla»
-      // clears only its own values, never what the operator typed before.
-      const wrote = {};
+      // backlog:913c61ec — what this draft wrote into the form and what the
+      // form held before, so «Annulla» restores the operator's own values.
+      const wrote = { start: absorbed.start, end: absorbed.end };
       if (dayKey) wrote.date = absorbed.date;
-      if (absorbed.start !== '') wrote.start = absorbed.start;
-      if (absorbed.end !== '') wrote.end = absorbed.end;
-      if (draft.teamMemberId && absorbed.teamMemberId !== '') wrote.teamMemberId = absorbed.teamMemberId;
+      if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
       if (draft.notes) wrote.notes = absorbed.notes;
-      state.draftWrote = wrote;
+      state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });

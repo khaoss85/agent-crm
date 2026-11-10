@@ -207,3 +207,35 @@ test('Annulla while the slots are still searched: the late answer never paints (
   assert.deepEqual(['date', 'start', 'end'].map((name) => field(mount, name).value), ['2026-11-13', '10:00', '11:00'], 'the form keeps the operator values');
   assert.equal(bookingCalls(client).length, 0);
 });
+
+test('a begun draft hour says «già passate», never «già occupato» (review #735)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // Thursday 10:00 Rome; the draft asks 09:00 the same day, the afternoon is free.
+  const client = phraseClient({ draft: { teamMemberId: 'Guido', startsAt: '2026-11-12T08:00:00.000Z' } });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-11-12T09:00:00Z') });
+  await askPhrase(view, mount);
+  assert.ok(mount.textContent.includes('Le 09:00 sono già passate: ecco gli orari liberi dopo.'), mount.textContent);
+  assert.ok(!mount.textContent.includes('già occupato'), 'a free hour that has begun is not «occupato»');
+  assert.equal(slotRows(mount)[0], 'gio 12 nov · 10:00–10:30');
+});
+
+test('Annulla restores the operator values even when the draft wrote the same ones (review #735)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await view.render();
+  await flush();
+  const typed = [['date', '2026-11-12'], ['start', '15:00'], ['end', '15:30']];
+  for (const [name, value] of typed) {
+    field(mount, name).value = value;
+    field(mount, name).dispatch('input');
+  }
+  await askPhrase(view, mount);
+  assert.equal(field(mount, 'end').value, '15:30', 'the draft filled the same values');
+  button(mount, 'Annulla').dispatch('click');
+  await flush();
+  assert.equal(mount.querySelector('.cal-draft'), null);
+  assert.deepEqual(typed.map(([name]) => field(mount, name).value), typed.map(([, value]) => value), 'the operator values come back, never blanked');
+});
