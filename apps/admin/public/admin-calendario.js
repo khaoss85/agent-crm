@@ -582,8 +582,9 @@ export function draftMinutes(draft) {
  * backlog:913c61ec — production 10/11: «giovedì alle 15 con Guido» drafted
  * a start with no end (the sentence states no duration), so Fine stayed
  * empty. A timed draft without an end closes at its start plus the minutes
- * draftMinutes sizes (the stated ones, else 30). A day-only draft keeps its
- * hours to choose; an end the model gave is kept as it is.
+ * the sentence stated (any whole minutes the server accepted, 20 stays 20),
+ * else the 30-minute default. A day-only draft keeps its hours to choose;
+ * an end the model gave is kept as it is.
  * @param {any} draft
  */
 export function draftWithEnd(draft) {
@@ -591,7 +592,9 @@ export function draftWithEnd(draft) {
   if (typeof draft.startsAt !== 'string' || draftDayOnly(draft)) return draft;
   const from = Date.parse(draft.startsAt);
   if (!Number.isFinite(from)) return draft;
-  return { ...draft, endsAt: new Date(from + draftMinutes(draft) * 60000).toISOString() };
+  const stated = draft.durationMinutes;
+  const minutes = Number.isSafeInteger(stated) && stated >= 1 && stated <= 1440 ? stated : draftMinutes(draft);
+  return { ...draft, endsAt: new Date(from + minutes * 60000).toISOString() };
 }
 
 /**
@@ -1198,6 +1201,8 @@ export function createCalendarioView(deps) {
     manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
+    /** backlog:913c61ec — the form values the last phrase draft wrote, for «Annulla». @type {Record<string, string>|null} */
+    draftWrote: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
     phraseInput: null,
     /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
@@ -2785,7 +2790,7 @@ export function createCalendarioView(deps) {
         && personRows([], [], state.members).length > 0;
       if (memberIds.length === 0 && knownTeam && !member.includes('|')) {
         state.draftNote = '';
-        state.aiNote = `${member.trim()} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
         // The return skips the prefill after the search: fill the form here,
         // the finally below paints it.
         state.draftFill = draft;
@@ -2839,7 +2844,9 @@ export function createCalendarioView(deps) {
       const exact = Number.isFinite(timedAt)
         ? ranked.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
         : null;
-      const proposals = exact ? [exact] : ranked;
+      // The exact step books the draft's own end (a stated 20 minutes inside
+      // a free 30-minute step stays 20, never the search size).
+      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
       const takenNote = Number.isFinite(timedAt) && !exact
@@ -2922,12 +2929,11 @@ export function createCalendarioView(deps) {
    * backlog:913c61ec — «Annulla» on the draft card: the search in flight is
    * dropped (phraseSeq, like a route away), the draft, its note and its
    * proposals go, and the day and hours the draft wrote into the form are
-   * cleared — the person too when it is still the drafted one. The phrase,
+   * cleared when still untouched — the person too. The phrase,
    * the customer and the service stay, so the operator can fix the sentence
    * and search again. No request is sent.
    */
   function cancelDraft() {
-    const drafted = state.draft;
     phraseSeq += 1;
     state.aiLoading = false;
     state.phraseWaiting = false;
@@ -2938,15 +2944,17 @@ export function createCalendarioView(deps) {
     state.proposals = [];
     state.aiNote = '';
     state.phraseNoDraft = false;
+    // Only the values this draft wrote and nobody changed since: a search
+    // cancelled before the draft reached the form leaves the form as it was.
+    const wrote = state.draftWrote ?? {};
     if (state.manual) {
-      const kept = { ...state.manual, date: '', start: '', end: '' };
-      const person = typeof drafted?.teamMemberId === 'string' ? drafted.teamMemberId : '';
-      const ids = resolveDraftMemberIds(person, parseMemberFilter(state.memberFilter), state.members);
-      if (person !== '' && (kept.teamMemberId === person || (ids.length === 1 && kept.teamMemberId === ids[0]))) {
-        kept.teamMemberId = '';
+      const kept = { ...state.manual };
+      for (const [name, value] of Object.entries(wrote)) {
+        if (kept[name] === value) kept[name] = '';
       }
       state.manual = kept;
     }
+    state.draftWrote = null;
     renderAll();
   }
 
@@ -3189,6 +3197,7 @@ export function createCalendarioView(deps) {
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
+    state.draftWrote = null;
     state.proposals = [];
     state.aiNote = '';
     state.bookingNote = '';
@@ -3546,6 +3555,15 @@ export function createCalendarioView(deps) {
         absorbed.teamMemberId = String(draft.teamMemberId);
       }
       state.manual = absorbed;
+      // backlog:913c61ec — what this draft wrote into the form, so «Annulla»
+      // clears only its own values, never what the operator typed before.
+      const wrote = {};
+      if (dayKey) wrote.date = absorbed.date;
+      if (absorbed.start !== '') wrote.start = absorbed.start;
+      if (absorbed.end !== '') wrote.end = absorbed.end;
+      if (draft.teamMemberId && absorbed.teamMemberId !== '') wrote.teamMemberId = absorbed.teamMemberId;
+      if (draft.notes) wrote.notes = absorbed.notes;
+      state.draftWrote = wrote;
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });

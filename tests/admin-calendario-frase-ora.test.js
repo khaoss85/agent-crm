@@ -28,7 +28,7 @@ const ROSTER = [
 /**
  * @param {{roster?: Array<any>, held?: Array<{startsAt: string, endsAt: string}>, holdSuggest?: Promise<void>|null}} [options]
  */
-function phraseClient({ roster = ROSTER, held = [], holdSuggest = null } = {}) {
+function phraseClient({ roster = ROSTER, held = [], holdSuggest = null, draft = DRAFT } = {}) {
   const calls = [];
   return {
     calls,
@@ -36,7 +36,7 @@ function phraseClient({ roster = ROSTER, held = [], holdSuggest = null } = {}) {
       enforceAdminWriteGate(path, options);
       const method = options.method ?? 'GET';
       calls.push({ path, method });
-      if (path === '/api/appointments/phrase' && method === 'POST') return { draft: { ...DRAFT }, dryRun: false, spaceId: 'presti' };
+      if (path === '/api/appointments/phrase' && method === 'POST') return { draft: { ...draft }, dryRun: false, spaceId: 'presti' };
       if (path === '/api/spine/memberships') return { items: roster };
       if (path === '/api/profile') return { member: null, connections: { available: false, items: [] } };
       if (path.startsWith('/api/appointments/team-week')) {
@@ -87,6 +87,7 @@ async function askPhrase(view, mount) {
 test('draftWithEnd closes a timed draft with its minutes, never a day-only one (backlog:913c61ec)', () => {
   assert.deepEqual(draftWithEnd(DRAFT), { ...DRAFT, endsAt: '2026-11-12T14:30:00.000Z' }, 'no stated duration: 30 minutes');
   assert.equal(draftWithEnd({ ...DRAFT, durationMinutes: 45 }).endsAt, '2026-11-12T14:45:00.000Z', 'the stated minutes');
+  assert.equal(draftWithEnd({ ...DRAFT, durationMinutes: 20 }).endsAt, '2026-11-12T14:20:00.000Z', 'any stated minutes, never the search size');
   const closed = { ...DRAFT, endsAt: '2026-11-12T15:00:00.000Z' };
   assert.equal(draftWithEnd(closed), closed, 'an end the model gave is kept');
   const dayOnly = { teamMemberId: 'Guido', day: '2026-11-12' };
@@ -140,6 +141,16 @@ test('«giovedì alle 15 con Guido»: Fine 15:30, search from 15:00, the proposa
   assert.equal(mount.querySelector('textarea[name="phrase"]').value, 'giovedì alle 15 con Guido', 'the phrase stays, to fix and search again');
 });
 
+test('a stated 20 minutes keeps Fine 15:20 and the proposal books 15:00–15:20 (review #735)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({ draft: { ...DRAFT, durationMinutes: 20 } });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount);
+  assert.equal(field(mount, 'end').value, '15:20');
+  assert.deepEqual(slotRows(mount), ['gio 12 nov · 15:00–15:20']);
+});
+
 test('a taken draft hour proposes the next free steps of that afternoon, never the night (backlog:913c61ec)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -174,6 +185,13 @@ test('Annulla while the slots are still searched: the late answer never paints (
   const holdSuggest = new Promise((resolve) => { release = resolve; });
   const client = phraseClient({ holdSuggest });
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await view.render();
+  await flush();
+  // Review #735: what the operator typed before the phrase is never theirs to lose.
+  for (const [name, value] of [['date', '2026-11-13'], ['start', '10:00'], ['end', '11:00']]) {
+    field(mount, name).value = value;
+    field(mount, name).dispatch('input');
+  }
   await askPhrase(view, mount);
   assert.equal(suggestCalls(client).length, 1, 'the search is in flight');
   const cancel = button(mount, 'Annulla');
@@ -186,5 +204,6 @@ test('Annulla while the slots are still searched: the late answer never paints (
   assert.equal(mount.querySelector('.cal-slots'), null, 'the late answer stays unpainted');
   assert.equal(ghosts(mount).length, 0);
   assert.ok(!mount.textContent.includes('Cerco gli slot liberi…'), 'the card is idle again');
+  assert.deepEqual(['date', 'start', 'end'].map((name) => field(mount, name).value), ['2026-11-13', '10:00', '11:00'], 'the form keeps the operator values');
   assert.equal(bookingCalls(client).length, 0);
 });
