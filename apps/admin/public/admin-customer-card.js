@@ -1535,9 +1535,11 @@ export function createCustomerCardView(deps) {
           if (wording !== '') versions.push({ kind, label, text: wording.slice(0, 2000) });
         }
         const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
-        const subjectField = subject();
         // Regenerating keeps the person's original, never a previous AI draft.
         const fill = (picked) => {
+          // Muse #718 P2: read the live subject at pick time — a channel
+          // switch between the answer and the pick replaces the input.
+          const subjectField = subject();
           if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
           text.value = picked;
           if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);

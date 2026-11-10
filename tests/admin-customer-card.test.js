@@ -3081,6 +3081,28 @@ test('composer AI (backlog:01289e73): three versions offer a choice, never one t
   assert.equal(area.value, 'Il mio testo');
 });
 
+// Muse #718 P2: a channel switch between the answer and the pick replaces
+// the subject input; the pick fills the live one, never a detached field.
+test('composer AI (backlog:01289e73): a pick after a channel switch fills the live subject', async () => {
+  const client = draftClient({ corta: 'Ciao!', lunga: 'Ciao Guido, ci vediamo giovedì.', diretta: 'Giovedì alle 18.', subject: 'Prova di giovedì' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area, subject: before } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer();
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  byValue('instagram').dispatch('change');
+  byValue('email').dispatch('change');
+  const live = aiParts(panel).subject;
+  assert.ok(live && live !== before, 'the switch back to Email mounts a new subject field');
+  const picks = panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+  picks[0].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, 'Ciao!');
+  assert.equal(live.value, 'Prova di giovedì', 'the title lands in the subject the member sees');
+});
+
 test('composer AI (backlog:01289e73): a single-text answer from an older pilot still fills at once', async () => {
   const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
   const { panel } = await openComposerMount({ client });
