@@ -935,7 +935,9 @@ document.title = 'pipeline-ready';`;
 import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(DEMO_WEEK)};
 const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
-const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T14:30:00.000Z', notes: 'taglio per Ada' };
+// backlog:913c61ec: a phrase with a time proposes that time only, so the shot
+// drafts a day without a time («giovedì») to paint two proposals and a ghost.
+const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', day: '2026-10-22', durationMinutes: 30, notes: 'taglio per Ada' };
 const client = {
   async request(path) {
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
@@ -973,7 +975,7 @@ byName('members').dispatchEvent(new Event('input', { bubbles: true }));
 click('Mostra settimana');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
 click('Trova slot liberi');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
