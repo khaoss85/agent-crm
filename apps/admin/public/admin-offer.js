@@ -13,7 +13,7 @@
 import { elFor } from './admin-ui.js';
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { parseEuroToCents } from './admin-catalog.js';
-import { offerStageLabel } from './admin-labels.js';
+import { auditActorLabel, offerStageLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { shownCompanyName } from './admin-customer-card.js';
 import {
   fetchTeamRoster,
@@ -39,6 +39,25 @@ function auditActionLabel(action) {
   if (action === 'opportunity.updated') return 'Offerta aggiornata';
   if (action === 'opportunity.stage_changed') return 'Cambio di fase';
   return 'Variazione registrata';
+}
+
+/**
+ * Backlog c1649d1d: the history line of one audit entry — who, from which
+ * stage to which, when. A state move reads `da <from> a <to>` in the
+ * operator's Italian (a pipeline move `Cambio di stato`, a core move `Cambio
+ * di fase`); a side without a label falls back to the generic line, never a
+ * raw key. Anything that is not a move keeps the action label with the actor.
+ */
+function historyLine(entry, schema, record, roster) {
+  const when = italianDay(entry?.createdAt) ?? '—';
+  const who = actorLabel(entry, record, roster);
+  const move = stageMoveOf(entry);
+  const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
+  if (move !== null && words !== null) {
+    const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
+    return { when, what: `${what} · da ${words.from} a ${words.to} · da ${who}` };
+  }
+  return { when, what: `${auditActionLabel(entry?.action)} · da ${who}` };
 }
 
 /** Italian label of a quote status; unknown states stay an em dash. */
@@ -82,23 +101,18 @@ function periodLabel(count, interval) {
 const LIST_LIMIT = 200;
 
 /**
- * Display name of an audit actor (backlog:ddf7f416): nome e cognome, never
- * a technical id and never the generic `utente`. The system reads
- * `sistema`; a roster subject reads its member name; any other id paints
- * only when the record corroborates it as a human display value (the
- * painted referente, the contact or the company the deal stores). Anything
- * else misses (null) so the caller degrades honestly — the history omits
- * the author, the fact reads an em dash.
+ * Display name of an audit actor (backlog:ddf7f416, c1649d1d): nome e
+ * cognome, never a technical id and never the generic `utente` when the
+ * roster names the actor. A roster subject reads its member name through
+ * the roster; anything else falls back to the shared vocabulary in
+ * admin-labels.js, corroborated by this deal's painted human display
+ * values (the referente, the contact or the company the deal stores).
  */
 function actorLabel(entry, record, roster) {
-  if (entry?.actorType === 'system') return 'sistema';
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
-  if (id === '') return null;
-  const team = resolveTeamName(id, roster);
+  const team = id !== '' ? resolveTeamName(id, roster) : null;
   if (team !== null) return team;
-  const known = [paintOwnerName(record?.owner, roster), record?.contactName, record?.companyName]
-    .filter((value) => typeof value === 'string' && value !== '' && value !== '—');
-  return known.includes(id) ? id : null;
+  return auditActorLabel(entry, [paintOwnerName(record?.owner, roster), record?.contactName, record?.companyName]);
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -290,13 +304,11 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
     }
     for (const entry of auditItems) {
+      const line = historyLine(entry, schema, record);
       const row = el('p', 'history-event');
-      row.appendChild(el('span', 'history-when', italianDay(entry?.createdAt) ?? '—'));
-      // An unresolvable author omits the `da …` tail: the row never claims
-      // a technical id or the generic `utente` wrote it.
-      const author = actorLabel(entry, record, roster);
-      const what = author !== null ? `${auditActionLabel(entry?.action)} · da ${author}` : auditActionLabel(entry?.action);
-      row.appendChild(el('span', 'history-what', what));
+      const line = historyLine(entry, schema, record, roster);
+      row.appendChild(el('span', 'history-when', line.when));
+      row.appendChild(el('span', 'history-what', line.what));
       historyPanel.appendChild(row);
     }
     page.appendChild(historyPanel);

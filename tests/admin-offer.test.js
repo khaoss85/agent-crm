@@ -446,3 +446,33 @@ test('an offer missing from the board list too still says not found', async () =
   await view.renderOfferDetail('assente');
   assert.ok(mount.textContent.includes('non trovata'), 'a truly missing offer says so');
 });
+
+test('c1649d1d: the history names who moved the offer from which stage to which', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const audit = [
+    {
+      action: 'opportunity.updated', actorId: 'maria', actorType: 'user', createdAt: '2026-10-29T10:00:00.000Z',
+      data: { pipelineKey: 'b2b-sales', pipelineStage: 'won', fromPipelineStage: 'discovery' },
+    },
+    {
+      action: 'opportunity.stage_changed', actorId: 'maria', actorType: 'user', createdAt: '2026-10-29T11:00:00.000Z',
+      data: { from: 'qualification', to: 'proposal' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'maria', actorType: 'user', createdAt: '2026-10-29T12:00:00.000Z',
+      data: { pipelineKey: 'b2b-sales', pipelineStage: 'fantasma', fromPipelineStage: 'spettro' },
+    },
+  ];
+  const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [], audit }) });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(text.includes('Cambio di stato · da Scoperta a Vinta · da maria'),
+    'a pipeline move reads who, from which stage to which, and the actor the record corroborates');
+  assert.ok(text.includes('Cambio di fase · da qualificazione a proposta · da maria'),
+    'a core move reads its from/to in Italian too');
+  assert.ok(text.includes('Offerta aggiornata · da maria'), 'an unlabeled move keeps the generic line');
+  assert.ok(!text.includes('fantasma') && !text.includes('spettro'),
+    'a side without a label never paints a raw key');
+  assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
+});

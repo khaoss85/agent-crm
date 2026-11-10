@@ -111,6 +111,20 @@ test('postSubjectNote posts through the single writer', async () => {
   assert.deepEqual(client.calls[0].body, { resource: 'contact', id: 'c7', body: 'Ci ha conosciuti in palestra.' });
 });
 
+test('postSubjectNote folds textarea line breaks to spaces (verifier 09/11)', async () => {
+  const client = stubClient(() => ({ note: { id: 'n1' } }));
+  // Red before the cure: the raw text travelled with its line break, and
+  // the framework refused it 400 (safe text allows no control characters),
+  // so a two-line note was lost even though the refusal warning showed.
+  await postSubjectNote(client, {
+    resource: 'contact', id: 'c7', text: 'Ci ha conosciuti in palestra.\nCerca un pacchetto serale.',
+  });
+  assert.deepEqual(client.calls[0].body,
+    { resource: 'contact', id: 'c7', body: 'Ci ha conosciuti in palestra. Cerca un pacchetto serale.' });
+  assert.match(client.calls[0].body.body, /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]*$/,
+    'no control character survives in the posted body');
+});
+
 // Production 07/11, space 2f07eeb9: the framework route answers a BARE
 // array, and `answer.values` on an array is Array.prototype.values — the
 // card read every saved value as none and showed «—». Exactly that payload.

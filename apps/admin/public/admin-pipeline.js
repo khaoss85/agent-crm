@@ -404,6 +404,9 @@ export function createPipelineBoard(deps) {
     const offDefinition = onBoard.filter((record) => !stageKeys.has(record.pipelineStage));
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
     const offPipeline = records.length - onBoard.length;
+    // Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
+    // the read hits the cap every count below is a lower bound, never exact.
+    const truncated = records.length >= BOARD_LIMIT;
     const visible = placed.filter((record) => matchesFilters(record, state, ownerName));
 
     const panel = el(doc, 'section', { class: 'panel panel-wide pipeline-board-panel' });
@@ -443,7 +446,7 @@ export function createPipelineBoard(deps) {
       }));
     }
     if (offPipeline > 0 || composedPipelineNames(pipelines).length > 1) {
-      titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline));
+      titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline, truncated));
     }
     const tools = renderToolbar(pipeline, onBoard);
     tools.appendChild(renderSummary(visible));
@@ -777,11 +780,12 @@ export function createPipelineBoard(deps) {
    * count, never in an href. Every value renders as text, never HTML.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
+   * @param {boolean} truncated whether the read hit BOARD_LIMIT (counts are lower bounds)
    */
-  function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline) {
+  function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline, truncated) {
     const box = el(doc, 'div', { class: 'hint pipeline-switch' });
     if (offPipeline > 0) {
-      box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline));
+      box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated));
     }
     if (composedPipelineNames(pipelines).length > 1) {
       const selectId = 'pipeline-switch';
@@ -820,17 +824,21 @@ export function createPipelineBoard(deps) {
    * its offer page (#/offerte/<id>) with its stage in the same words as the
    * scheda (offerStageLabel) — so an offer placed on another board, or on
    * none, is one click away and never only a number.
+   * Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
+   * the read is truncated both counts below are lower bounds and say so
+   * («almeno N»): the true totals can only be higher.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
    * @param {string} pipelineName
    * @param {number} offPipeline
+   * @param {boolean} truncated whether the read hit BOARD_LIMIT
    */
-  function renderOffPipeline(pipelines, records, pipelineName, offPipeline) {
+  function renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated) {
     const wrap = el(doc, 'span', { class: 'pipeline-off' });
     const one = offPipeline === 1;
     const toggle = el(doc, 'button', {
       class: 'link-button',
-      text: `${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline`,
+      text: `${truncated ? 'almeno ' : ''}${offPipeline} offert${one ? 'a' : 'e'} di ${one ? "un'altra" : 'altre'} pipeline`,
       attrs: { type: 'button', 'data-action': 'show-off-pipeline', 'aria-expanded': 'false' },
     });
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
@@ -851,7 +859,10 @@ export function createPipelineBoard(deps) {
       list.appendChild(item);
     }
     if (offPipeline > others.length) {
-      list.appendChild(el(doc, 'li', { class: 'muted', text: `e altre ${offPipeline - others.length}` }));
+      list.appendChild(el(doc, 'li', {
+        class: 'muted',
+        text: `e ${truncated ? 'almeno ' : ''}altre ${offPipeline - others.length}`,
+      }));
     }
     toggle.addEventListener('click', () => {
       const open = toggle.getAttribute('aria-expanded') === 'true';

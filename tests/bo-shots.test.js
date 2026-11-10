@@ -265,7 +265,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['agenti', ['agents:', 'dafare:', 'catalog:', 'disabled:', 'talk:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
-    ['spazi-accessi', ['spaces:', 'members:', 'switches:', 'stats:', 'apri:']],
+    ['spazi-accessi', ['spaces:', 'members:', 'switches:', 'master:', 'masterAbove', 'stats:', 'apri:']],
     ['connettori', ['rows:', 'badges:', 'openers:', 'flows:']],
   ]);
   for (const [name, fields] of probes) {
@@ -351,7 +351,9 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     members: 2,
     avatars: 2,
     pills: 2,
-    switches: 5,
+    switches: 6,
+    master: 1,
+    masterAbove: true,
     stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
     apri: 1,
   }));
@@ -361,7 +363,9 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     members: 2,
     avatars: 2,
     pills: 2,
-    switches: 5,
+    switches: 6,
+    master: 1,
+    masterAbove: true,
     stats: ['2 canali · 2 persone · 3 clienti'],
     apri: 1,
   }), /stats/);
@@ -371,10 +375,22 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     members: 2,
     avatars: 2,
     pills: 2,
-    switches: 5,
+    switches: 6,
+    master: 1,
+    masterAbove: true,
     stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
     apri: 0,
   }), /Apri/);
+  // backlog:2c3156a4: five switches without the master, or a master not
+  // above the five, never pass.
+  const spazi = {
+    spaces: 3, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2,
+    switches: 6, master: 1, masterAbove: true,
+    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], apri: 1,
+  };
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, switches: 5 }), /expected 6/);
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, master: 0 }), /master AI switches/);
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, masterAbove: false }), /not above the five/);
   assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
   assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
   assert.throws(() => assertProbe('oggi', null), /not a JSON object/);
@@ -398,7 +414,7 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
     () => assertProbe('catalogo', { table: 'Pacchetto 10 lezioni', stripe: null, rules: null }),
     /Stripe state/,
   );
-  assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 5 }), /members/);
+  assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 6, master: 1, masterAbove: true }), /members/);
   assert.throws(() => assertProbe('connettori', { rows: 0, badges: 0, openers: 0, flows: 0 }), /channel rows/);
   assert.throws(() => assertProbe('import', { back: 0, title: false, crumb: false, drop: 0, rows: 0 }), /back links/);
 });

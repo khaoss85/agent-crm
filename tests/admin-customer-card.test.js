@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createCustomerCardView,
+  detailsRefusalText,
   failedSendReason,
   mergeLinkedIdentities,
   observedDirections,
@@ -185,7 +186,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -226,6 +227,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (failCalls) throw Object.assign(new Error('Not Found'), { status: 404 });
         if (callsError) throw callsError;
         return calls;
+      }
+      if (path.startsWith('/api/audit')) {
+        if (auditError) throw auditError;
+        return { items: audit };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -1724,6 +1729,85 @@ test('a contact typed without Azienda shows no Azienda on the scheda (production
   assert.ok(!facts.some((node) => node.textContent === 'Azienda'), 'no Azienda row for it');
 });
 
+// Voce 5e13c9ef: saving Dettagli with an email another customer holds is
+// refused 409 CONFLICT by the server (contact-service EMAIL_TAKEN_MESSAGE).
+// The scheda must show that message, not the generic retry line.
+test('5e13c9ef: Dettagli Salva on a taken email shows the 409 message', async () => {
+  const seen = [];
+  const taken = () => {
+    throw Object.assign(new Error('Questa email è già di un altro cliente'), { code: 'CONFLICT', status: 409 });
+  };
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, taken);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  assert.ok(save, 'Salva is in the form');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'email').value = 'altrui@palestra-esempio.it';
+  save.dispatch('click');
+  await flushClicks();
+
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error'
+    && node.textContent !== '');
+  assert.equal(fieldError?.textContent, 'Questa email è già di un altro cliente',
+    'the field names the 409 reason, not the generic retry line');
+  assert.deepEqual(seen, [{ message: 'Questa email è già di un altro cliente', error: true }],
+    'the toast names the 409 reason too');
+});
+
+// Voce 5e13c9ef: detailsRefusalText names the 409 and keeps everything else.
+test('5e13c9ef: detailsRefusalText maps the 409, keeps other failures generic', async () => {
+  const taken = Object.assign(new Error('Questa email è già di un altro cliente'), { code: 'CONFLICT', status: 409 });
+  assert.equal(detailsRefusalText(taken), 'Questa email è già di un altro cliente',
+    'the server Italian sentence reaches the screen');
+  const bare409 = Object.assign(new Error('Request failed (409)'), { code: 'CONFLICT', status: 409 });
+  assert.equal(detailsRefusalText(bare409), 'Questa email è già di un altro cliente',
+    'a 409 without a readable message reads our own words');
+  const codeOnly = Object.assign(new Error('Questa email è già di un altro cliente'), { code: 'CONFLICT' });
+  assert.equal(detailsRefusalText(codeOnly), 'Questa email è già di un altro cliente',
+    'the CONFLICT code alone is enough, like PHONE_ALREADY_HELD');
+  const technical = Object.assign(new Error('duplicate key value violates unique constraint'), { status: 409 });
+  assert.equal(detailsRefusalText(technical), 'Questa email è già di un altro cliente',
+    'a technical message never reaches the screen');
+  const gone = Object.assign(new Error('Not Found'), { code: 'NOT_FOUND', status: 404 });
+  assert.equal(detailsRefusalText(gone), 'Salvataggio non riuscito. Riprova più tardi.',
+    'a 404 keeps the generic retry line');
+  const network = Object.assign(new TypeError('fetch failed'), { status: 0 });
+  assert.equal(detailsRefusalText(network), 'Salvataggio non riuscito. Riprova più tardi.',
+    'a network fault keeps the generic retry line');
+});
+
+// Voce 5e13c9ef: any other save failure keeps the generic retry line.
+test('5e13c9ef: Dettagli Salva on a 500 keeps the generic retry line', async () => {
+  const seen = [];
+  const failing = () => {
+    throw Object.assign(new Error('boom'), { code: 'UNKNOWN', status: 500 });
+  };
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, failing);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details').dispatch('click');
+  await flushClicks();
+
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error'
+    && node.textContent !== '');
+  assert.equal(fieldError?.textContent, 'Salvataggio non riuscito. Riprova più tardi.',
+    'a 500 keeps the generic retry line');
+  assert.deepEqual(seen, [{ message: 'Salvataggio non riuscito. Riprova più tardi.', error: true }],
+    'the toast keeps the generic retry line too');
+});
+
 test('two renders racing paint one scheda, so there is one Dettagli Salva', async () => {
   const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
   const doc = createFakeDocument();
@@ -3047,6 +3131,181 @@ test('composer AI: a prompt fills message and empty subject, editable, and nothi
   assert.deepEqual(toasts, []);
 });
 
+test('composer AI (backlog:01289e73): three versions offer a choice, never one text at once', async () => {
+  const versions = {
+    corta: 'Ciao Guido!',
+    lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova con piacere.',
+    diretta: 'Guido, ci vediamo giovedì alle 18 per la prova.',
+  };
+  const client = draftClient({ ...versions, subject: 'Prova di giovedì' });
+  const { panel, toasts } = await openComposerMount({ client });
+  const { input, go, area, subject } = aiParts(panel);
+  area.value = 'Il mio testo';
+  input.value = 'ricordagli la prova di giovedì';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, 'Il mio testo', 'no version fills the field before the member picks one');
+  const picks = panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta']);
+  assert.match(panel.textContent, /Scegli la versione da usare/);
+  picks[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, versions.lunga, 'the picked wording fills the message, editable');
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.equal(go.textContent, 'Rigenera');
+  assert.equal(client.posts.length, 0, 'the draft never sends');
+  assert.deepEqual(toasts, []);
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla is offered after the pick');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+});
+
+// Muse #718 P2: a channel switch between the answer and the pick replaces
+// the subject input; the pick fills the live one, never a detached field.
+test('composer AI (backlog:01289e73): a pick after a channel switch fills the live subject', async () => {
+  const client = draftClient({ corta: 'Ciao!', lunga: 'Ciao Guido, ci vediamo giovedì.', diretta: 'Giovedì alle 18.', subject: 'Prova di giovedì' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area, subject: before } = aiParts(panel);
+  input.value = 'ricordagli la prova';
+  go.dispatch('click');
+  await flushComposer();
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  byValue('instagram').dispatch('change');
+  byValue('email').dispatch('change');
+  const live = aiParts(panel).subject;
+  assert.ok(live && live !== before, 'the switch back to Email mounts a new subject field');
+  const picks = panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+  picks[0].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, 'Ciao!');
+  assert.equal(live.value, 'Prova di giovedì', 'the title lands in the subject the member sees');
+});
+
+// Production 10/11 12:41Z (seguito di #718): after a pick the three
+// versions stay on screen; switching version refills the field with no new
+// draft call, and a hand-edited text is never replaced in silence.
+const aiPicks = (panel) => panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+const threeVersions = {
+  corta: 'Ciao Guido!',
+  lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova con piacere.',
+  diretta: 'Guido, ci vediamo giovedì alle 18 per la prova.',
+};
+async function pickedComposer() {
+  const client = draftClient({ ...threeVersions, subject: 'Prova di giovedì' });
+  const { panel, toasts } = await openComposerMount({ client });
+  const parts = aiParts(panel);
+  parts.area.value = 'Il mio testo';
+  parts.input.value = 'ricordagli la prova di giovedì';
+  parts.go.dispatch('click');
+  await flushComposer();
+  aiPicks(panel)[2].dispatch('click');
+  await flushComposer();
+  return { client, panel, toasts, ...parts };
+}
+
+test('composer AI: after a pick the three versions stay, the picked one is marked, a switch calls nothing', async () => {
+  const { client, panel, area, subject, toasts } = await pickedComposer();
+  assert.equal(area.value, threeVersions.diretta);
+  assert.equal(subject.value, 'Prova di giovedì');
+  const picks = aiPicks(panel);
+  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta'], 'the three versions stay after the pick');
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the picked version reads as selected');
+  picks[0].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.corta, 'switching refills the field with the other version');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.equal(client.drafts.length, 1, 'a switch never asks the draft route again');
+  assert.equal(client.posts.length, 0, 'the draft never sends');
+  assert.deepEqual(toasts, []);
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays offered');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'Annulla keeps the versions, none selected');
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.lunga, 'after Annulla a pick fills again, no confirmation over the person’s own text');
+  assert.equal(client.drafts.length, 1);
+});
+
+test('composer AI: a hand-edited text asks inline before a version replaces it, and Tieni il mio keeps it', async () => {
+  const { client, panel, area } = await pickedComposer();
+  area.value = `${threeVersions.diretta} A presto, Laura`;
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, `${threeVersions.diretta} A presto, Laura`, 'the edits are never replaced in silence');
+  assert.match(panel.textContent, /Sostituire il testo modificato/);
+  const keep = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-keep');
+  assert.ok(keep, 'the member can keep the edited text');
+  keep.dispatch('click');
+  assert.equal(area.value, `${threeVersions.diretta} A presto, Laura`);
+  assert.doesNotMatch(panel.textContent, /Sostituire il testo modificato/);
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the selection stays on the kept version');
+  // Replace when confirmed.
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  const replace = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-replace');
+  assert.ok(replace, 'Sostituisci confirms inline');
+  replace.dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.lunga);
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+  assert.equal(client.drafts.length, 1, 'no new draft call');
+});
+
+// Muse P2 on #737: a second pick while a confirmation is open updates it in
+// place; «Tieni il mio» brings back the draft line with Annulla, never the
+// first confirmation.
+test('composer AI: a second pick over an open confirmation keeps Annulla and Tieni il mio restores the draft line', async () => {
+  const { panel, area } = await pickedComposer();
+  const edited = `${threeVersions.diretta} A presto, Laura`;
+  area.value = edited;
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  aiPicks(panel)[0].dispatch('click');
+  await flushComposer();
+  assert.match(panel.textContent, /versione Corta\?/, 'the open confirmation now names the last pick');
+  assert.doesNotMatch(panel.textContent, /versione Lunga\?/);
+  assert.equal(panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-keep').length, 1, 'one confirmation, never two');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-keep').dispatch('click');
+  assert.equal(area.value, edited);
+  assert.doesNotMatch(panel.textContent, /Sostituire il testo modificato/);
+  assert.match(panel.textContent, /rileggila e modificala prima di inviare/, 'the draft line is back');
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+});
+
+test('composer AI: Rigenera asks three new versions that replace the old choice', async () => {
+  const { client, panel, go } = await pickedComposer();
+  assert.equal(go.textContent, 'Rigenera');
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts.length, 2, 'Rigenera is the one way to ask again');
+  const picks = aiPicks(panel);
+  assert.equal(picks.length, 3, 'one set of versions, never two');
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'new versions start unpicked');
+});
+
+test('composer AI (backlog:01289e73): a single-text answer from an older pilot still fills at once', async () => {
+  const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go, area } = aiParts(panel);
+  input.value = 'ricordagli la prova di giovedì';
+  go.dispatch('click');
+  await flushComposer();
+  assert.deepEqual(
+    panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick'),
+    [],
+    'no choice buttons on a legacy single-text answer',
+  );
+  assert.equal(area.value, 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.');
+});
+
 test('composer AI: existing text is replaced with an Annulla that restores it once', async () => {
   const client = draftClient({ body: 'Testo dell’AI' });
   const { panel } = await openComposerMount({ client });
@@ -4310,4 +4569,98 @@ test('review #683: a move still queued on the server reads neutral, never as an 
   assert.equal(fieldError, undefined, 'no error line');
   const status = mount.findAll('small').find((node) => node.getAttribute('role') === 'status');
   assert.equal(status?.textContent, 'Non ancora confermato: ricarica la scheda tra poco.');
+});
+
+test('c1649d1d: the scheda Storia stati names who moved the offer from which stage to which', async () => {
+  const profile = {
+    ...PLACED_QUOTE_PROFILE,
+    opportunities: {
+      ...PLACED_QUOTE_PROFILE.opportunities,
+      items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+    },
+  };
+  const audit = [
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T11:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'spettro', fromPipelineStage: 'fantasma' },
+    },
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T12:00:00.000Z',
+      data: { owner: 'marco' },
+    },
+  ];
+  const mount = await renderCard(stubClient({
+    profile, schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] }, audit,
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(text.includes('Storia stati'), 'the history block is titled');
+  assert.ok(text.includes('da Richiesta info a Prova · da elena'),
+    'a pipeline move reads who, from which stage to which, with the actor the record corroborates');
+  assert.ok(!text.includes('fantasma') && !text.includes('spettro'),
+    'a move whose side has no label never paints a raw key');
+  assert.ok(text.includes('Cambio di stato · da elena'),
+    'an unlabelled move still reads the generic Italian line, like the detail');
+});
+
+test('c1649d1d: an unreadable audit trail reads one honest line', async () => {
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+    auditError: new Error('boom'),
+  }));
+  await flushClicks(5);
+  assert.ok(mount.textContent.includes('Storia stati non leggibile.'),
+    'the trail failure is honest, and the card stands');
+});
+
+test('review giro 1: a rejected audit read logs its cause, never its payload', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const mount = await renderCard(stubClient({
+      profile: PLACED_QUOTE_PROFILE,
+      schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+      auditError: Object.assign(new Error('down'), { code: 'UNKNOWN', status: 500 }),
+    }));
+    await flushClicks(5);
+    assert.ok(mount.textContent.includes('Storia stati non leggibile.'),
+      'the operator still reads one honest line');
+  } finally {
+    console.error = original;
+  }
+  const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
+  assert.equal(reads.length, 1, 'the trail failure is logged once');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', status: 500 },
+    'on-call sees area, code and status');
+});
+
+test('review giro 1: moves without pipelines read generic lines, never a false empty', async () => {
+  const profile = {
+    ...PLACED_QUOTE_PROFILE,
+    opportunities: {
+      ...PLACED_QUOTE_PROFILE.opportunities,
+      items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+    },
+  };
+  const audit = [
+    {
+      action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+      data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+    },
+  ];
+  const mount = await renderCard(stubClient({
+    profile, schema: { pipelineContract: 1, pipelines: [] }, audit,
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(!text.includes('Ancora nessun cambio di stato.'),
+    'real moves never read as no moves when the pipelines are unavailable');
+  assert.ok(text.includes('Cambio di stato · da elena'),
+    'the move reads the generic Italian line, like the detail');
 });

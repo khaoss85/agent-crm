@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { nameFromProfile } from './admin-labels.js';
+import { isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -291,6 +291,23 @@ function personKeyOf(value) {
 }
 
 /**
+ * backlog:810ed0bf — the control-plane same-person key of a roster row
+ * (`operatorAccountId`, one per human), or null when the roster carries
+ * none. The pilot forwards it beside the subject when it knows it, so the
+ * Team card unites one member's identities (broker, github, google) even
+ * when they carry different mailboxes. Only this documented key merges:
+ * generic `personKey`/`personId`/`userId` fields have no producer contract
+ * in this repo, and two unrelated humans sharing one would merge into a
+ * single unbookable row — so they never merge here.
+ * @param {any} member
+ */
+function rosterPersonId(member) {
+  if (!member || typeof member !== 'object') return null;
+  const value = member.operatorAccountId;
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
+}
+
+/**
  * Member creation instant (epoch ms), or null when the roster carries none.
  * The roster's own order is the fallback: it lists members oldest first.
  * @param {any} member
@@ -334,24 +351,35 @@ export function personRows(named, hidden, members) {
   const groups = [];
   const bySubject = new Map();
   const byEmail = new Map();
+  const byPerson = new Map();
   const groupFor = (subject) => bySubject.get(subject) ?? null;
   for (const member of roster) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
-    const email = personKeyOf(member.email);
-    const display = cleanPersonText(member.displayName);
-    // One human shares one mailbox: only a shared mailbox merges two
-    // subjects into one person row. A shared display name alone never
-    // merges — two email-less homonyms are two humans, two rows.
-    let group = (email !== null && byEmail.get(email)) || null;
+    const personId = rosterPersonId(member);
+    // The shared member filter (admin-labels.js, production 10/11): a broker
+    // mailbox or a provider id never names or merges a person.
+    const email = personKeyOf(memberText(member.email));
+    const display = memberText(member.displayName);
+    // One human shares one mailbox — or one control-plane person key when
+    // the roster carries it (backlog:810ed0bf): either merges two subjects
+    // into one person row. A shared display name alone never merges — two
+    // email-less homonyms are two humans, two rows.
+    let group = (personId !== null && byPerson.get(personId))
+      || (email !== null && byEmail.get(email))
+      || null;
     if (!group) {
-      group = { subjects: [], displayName: null, email: null, born: null, bornIndex: groups.length };
+      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
       groups.push(group);
     }
     group.subjects.push(subject);
     bySubject.set(subject, group);
     const born = memberBornAt(member);
     if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
+    if (personId !== null && group.personId === null) {
+      group.personId = personId;
+      byPerson.set(personId, group);
+    }
     if (email !== null && group.email === null) {
       group.email = member.email.trim();
       byEmail.set(email, group);
@@ -381,7 +409,7 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    const base = name ?? (listed && !isTechnicalMemberText(primary) ? primary : 'Membro del team');
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -443,7 +471,7 @@ export function resolveMemberName(subject, named, members) {
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
-  if (!subject.includes('|')) return subject;
+  if (!isTechnicalMemberText(subject)) return subject;
   return null;
 }
 
@@ -519,6 +547,15 @@ export function slotInGrid(startsAt, endsAt) {
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
+/**
+ * backlog:3771ac637027 — slot Conferma refusals the manual form fixes. They
+ * name the form by its title, never «qui sotto»: a slot Conferma only
+ * exists after a phrase draft, which opens and fills the form
+ * (fillManual), so the form is always open here — but it sits in the
+ * rail, or in the popover beside the grid, not necessarily below the card.
+ */
+const CONFIRM_SERVICE_NOTE = 'Conferma non riuscita: scegli un servizio dal listino nel modulo «Nuovo appuntamento».';
+const CONFIRM_FORM_NOTE = 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo «Nuovo appuntamento».';
 export const PHRASE_RESUME_EVERY_MS = 3000;
 export const PHRASE_RESUME_ROUNDS = 20;
 
@@ -541,6 +578,25 @@ export function draftMinutes(draft) {
   if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
   if (statedOk) return stated;
   return 30;
+}
+
+/**
+ * backlog:913c61ec — production 10/11: «giovedì alle 15 con Guido» drafted
+ * a start with no end (the sentence states no duration), so Fine stayed
+ * empty. A timed draft without an end closes at its start plus the minutes
+ * the sentence stated (any whole minutes the server accepted, 20 stays 20),
+ * else the 30-minute default. A day-only draft keeps its hours to choose;
+ * an end the model gave is kept as it is.
+ * @param {any} draft
+ */
+export function draftWithEnd(draft) {
+  if (!draft || typeof draft !== 'object' || draft.endsAt !== undefined) return draft;
+  if (typeof draft.startsAt !== 'string' || draftDayOnly(draft)) return draft;
+  const from = Date.parse(draft.startsAt);
+  if (!Number.isFinite(from)) return draft;
+  const stated = draft.durationMinutes;
+  const minutes = Number.isSafeInteger(stated) && stated >= 1 && stated <= 1440 ? stated : draftMinutes(draft);
+  return { ...draft, endsAt: new Date(from + minutes * 60000).toISOString() };
 }
 
 /**
@@ -641,6 +697,85 @@ export function serviceKeyFor(typed, names) {
   return hits.length === 1 ? hits[0][0] : text;
 }
 
+/** A listino product key: lowercase slug, like the booking server requires. */
+const CATALOG_SLUG_RE = /^[a-z][a-z0-9-]{0,47}$/;
+
+/**
+ * backlog:810ed0bf — the catalog slug of a product or offer name
+ * («Lezione prova» → `lezione-prova`): lowercase, spaces and underscores
+ * become one hyphen, anything outside the key alphabet drops out. Empty
+ * when the name holds no slug character at all — never guessed.
+ * @param {unknown} value
+ */
+export function slugifyServiceKey(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '')
+    .replace(/-{2,}/g, '-').replace(/^-+/, '').replace(/-+$/, '').slice(0, 48);
+}
+
+/** Minor units of one `one_time` component, or null when it fixes no hour price. @param {any} only */
+function catalogSingleAmount(only) {
+  if (!only || typeof only !== 'object') return null;
+  if (only.chargeType !== 'one_time') return null;
+  const amount = only.pricingModel === 'per_unit'
+    ? only.unitAmountCents
+    : (only.pricingModel === 'flat_fee' ? only.flatAmountCents : undefined);
+  return Number.isSafeInteger(amount) && amount >= 0 ? amount : null;
+}
+
+/**
+ * backlog:810ed0bf — the bookable services of a `GET /api/catalog/products`
+ * answer: one entry per active product with an active offer fixing one
+ * `one_time` hour price — the same singles rule the booking worker uses, so
+ * the menu never offers a pack, a subscription or a price the worker would
+ * refuse. The key is the product sku the week titles already read as the
+ * listino key, slugified from the product name when the sku is no key;
+ * a product with no key and no nameable offer stays out. First
+ * bookable offer wins per product, first product wins per key.
+ * @param {unknown} payload
+ */
+export function catalogBookingServices(payload) {
+  const products = Array.isArray(payload?.products) ? payload.products : [];
+  const out = [];
+  const seen = new Set();
+  for (const product of products) {
+    if (!product || typeof product !== 'object' || product.active !== true) continue;
+    const sku = typeof product.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+    const name = typeof product.name === 'string' ? product.name.trim() : '';
+    if (name === '' || name.length > 200) continue;
+    const offers = Array.isArray(product.offers) ? product.offers : [];
+    for (const offer of offers) {
+      if (!offer || typeof offer !== 'object' || offer.active !== true) continue;
+      // The claim and the menu label only speak EUR (the form prices in
+      // EUR and the claim hardcodes currency:'EUR'): a non-EUR single
+      // would be mislabeled and misbooked, so it stays out of the menu.
+      const currency = offer.currency === 'EUR' ? 'EUR' : null;
+      if (currency === null) continue;
+      const components = Array.isArray(offer.components) ? offer.components : [];
+      if (components.length !== 1) continue;
+      const priceCents = catalogSingleAmount(components[0]);
+      if (priceCents === null) continue;
+      const key = CATALOG_SLUG_RE.test(sku) ? sku : slugifyServiceKey(name);
+      if (key === '' || seen.has(key)) continue;
+      seen.add(key);
+      out.push(Object.freeze({ key, name, priceCents, currency }));
+      break;
+    }
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * backlog:810ed0bf — minor units to the price text the manual form paints
+ * (`4500` → `'45.00'`), two decimals, dot separator like the form hint.
+ * Null when the amount is no integer of cents.
+ * @param {unknown} priceCents
+ */
+export function formatPriceCents(priceCents) {
+  if (!Number.isSafeInteger(priceCents) || priceCents < 0) return null;
+  return `${Math.floor(priceCents / 100)}.${String(priceCents % 100).padStart(2, '0')}`;
+}
+
 /**
  * The sendable shape of the service the claim carries: the framework books
  * the listino product key (lowercase slug, letters, digits, hyphens, at most
@@ -681,9 +816,30 @@ export function calendarRefusalText(error) {
   if (code === 'BO_APPOINTMENT_SERVICE_REFUSED' || record.details?.field === 'serviceKey') {
     return 'Scegli un servizio dal listino: questo servizio non c’è.';
   }
+  // backlog:3771ac637027 (production 08/11): never «usa il modulo qui
+  // sotto» — the manual form is closed until asked for. The card paints a
+  // «Compila a mano» button beside these sentences (aiBlockOf).
   if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') {
-    return 'L’AI è spenta in questo spazio: usa il modulo qui sotto.';
+    return 'AI spenta per questo spazio: puoi compilare l’appuntamento a mano.';
   }
+  if (code === 'LLM_DAILY_CAP_EXCEEDED') {
+    return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
+  }
+  return null;
+}
+
+/**
+ * backlog:3771ac637027 — whether a phrase refusal blocks the AI for now:
+ * 'off' (AI switched off or not configured for the space) or 'cap' (the
+ * daily AI spend ceiling, 429). Both offer «Compila a mano»; null for any
+ * other refusal.
+ * @param {unknown} error
+ * @returns {'off'|'cap'|null}
+ */
+export function aiBlockOf(error) {
+  const code = error !== null && typeof error === 'object' ? /** @type {any} */ (error).code : null;
+  if (code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE') return 'off';
+  if (code === 'LLM_DAILY_CAP_EXCEEDED') return 'cap';
   return null;
 }
 
@@ -1017,6 +1173,10 @@ export function createCalendarioView(deps) {
     aiNote: '',
     /** The spaces the server said have the AI off: the phrase box stays disabled there only. @type {Set<string>} */
     aiOff: new Set(),
+    /** The last phrase refusal blocked the AI ('off' or 'cap'): the card offers «Compila a mano». @type {'off'|'cap'|null} */
+    aiBlocked: null,
+    /** The last phrase answer carried no draft: the card offers «Compila a mano» too. */
+    phraseNoDraft: false,
     /** The space the view last rendered for, so a switch drops that space's search. @type {string|null} */
     renderedSpace: null,
     /** The phrase POST was queued and is being read back: the card says «Sto cercando…». */
@@ -1043,6 +1203,8 @@ export function createCalendarioView(deps) {
     manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
+    /** backlog:913c61ec — the form values the last phrase draft wrote and the ones before it, for «Annulla». @type {{values: Record<string, string>, prior: Record<string, any>}|null} */
+    draftWrote: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
     phraseInput: null,
     /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
@@ -1246,6 +1408,8 @@ export function createCalendarioView(deps) {
   async function loadServices() {
     /** @type {Map<string, string>} */
     const names = new Map();
+    /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
+    let bookable = [];
     try {
       const answer = await client.request('/api/catalog/products?limit=200');
       for (const product of Array.isArray(answer?.products) ? answer.products : []) {
@@ -1253,6 +1417,9 @@ export function createCalendarioView(deps) {
         const name = typeof product?.name === 'string' ? product.name.trim() : '';
         if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
       }
+      // The manual form's service menu (backlog:810ed0bf): the same
+      // singles rule the booking worker applies, read once with the names.
+      bookable = catalogBookingServices(answer);
     } catch (error) {
       // No catalog in this project (or a stale bundle): the readable key
       // stays. Anything else is unexpected and logged without the message.
@@ -1265,6 +1432,10 @@ export function createCalendarioView(deps) {
       }
     }
     state.services = names;
+    state.catalogServices = bookable;
+    // The service menu paints from this read: repaint once it settles while
+    // the calendar is still mounted (same guard as the roster read).
+    if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
 
   /**
@@ -2346,6 +2517,24 @@ export function createCalendarioView(deps) {
    * claim the manual form below holds; a missing customer, service or price
    * fails closed with a plain sentence naming the manual form.
    */
+  /**
+   * backlog:3771ac637027 — «Compila a mano» from the phrase card: opens the
+   * manual form like «Compila manualmente» and carries the phrase into its
+   * Note field when the operator has not written a note yet, so nothing
+   * typed is lost. Focus lands on the form's first field.
+   */
+  function openManualFromPhrase() {
+    const phrase = String(state.phrase ?? '').trim();
+    state.manualOpen = true;
+    if (phrase !== '' && String(state.manual?.notes ?? '').trim() === '') {
+      state.manual = { ...(state.manual ?? {}), notes: phrase.slice(0, 2000) };
+    }
+    renderAll();
+    const target = state.manualFirst;
+    if (target && typeof target.focus === 'function') target.focus();
+    if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
+  }
+
   function renderAi() {
     const panel = el(doc, 'div', { className: 'panel cal-ai' });
     panel.appendChild(el(doc, 'h2', { text: '✦ Fissa con una frase' }));
@@ -2394,6 +2583,20 @@ export function createCalendarioView(deps) {
     }
     if (state.draft) panel.appendChild(renderDraft(state.draft));
     if (state.draftNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.draftNote }));
+    // backlog:3771ac637027: with the AI off or over today's ceiling the way
+    // forward is the manual form, opened right here — the same form as
+    // «Nuovo appuntamento › Compila manualmente» (also when the phrase gave
+    // no draft). No «Accendi l'AI»: no /bo screen switches the AI on (the
+    // pilot's operator does), so none is offered rather than a button that
+    // leads nowhere.
+    if (!state.aiLoading && (aiOff || state.aiBlocked !== null || state.phraseNoDraft)) {
+      const manual = uiButton(doc, {
+        variant: 'secondary', small: true, label: 'Compila a mano',
+        attrs: { type: 'button', 'data-action': 'phrase-manual' },
+      });
+      manual.addEventListener('click', () => openManualFromPhrase());
+      panel.appendChild(manual);
+    }
     if (state.proposals.length > 0) {
       const list = el(doc, 'div', { className: 'cal-slots' });
       for (const slot of state.proposals.slice(0, 24)) {
@@ -2429,9 +2632,22 @@ export function createCalendarioView(deps) {
   /**
    * Suggest window over the shown Rome week, with the day-margin idiom of
    * the booking path — or over the one Rome day the phrase named.
-   * @param {string|null} [dayKey]
+   * backlog:913c61ec — a draft with a time searches from that time to the
+   * end of the painted hours (at least the draft's own minutes): never the
+   * whole day, never the night before it.
+   * @param {string|null} [dayKey] @param {any} [draft]
    */
-  function suggestBounds(dayKey = null) {
+  function suggestBounds(dayKey = null, draft = null) {
+    const timed = draft && typeof draft.startsAt === 'string' && !draftDayOnly(draft)
+      ? Date.parse(draft.startsAt) : NaN;
+    if (Number.isFinite(timed) && typeof dayKey === 'string') {
+      const close = Date.parse(romeInstant(dayKey, minutesLabel(GRID_END_MINUTES)) ?? '');
+      const own = timed + draftMinutes(draft) * 60000;
+      return {
+        from: new Date(timed).toISOString(),
+        to: new Date(Number.isFinite(close) ? Math.max(close, own) : own).toISOString(),
+      };
+    }
     const keys = typeof dayKey === 'string' && dayKey !== '' ? [dayKey] : state.weekKeys;
     if (!Array.isArray(keys) || keys.length === 0) return null;
     const first = Date.parse(`${keys[0]}T00:00:00Z`);
@@ -2498,6 +2714,8 @@ export function createCalendarioView(deps) {
     state.draftNote = '';
     state.proposals = [];
     state.aiNote = '';
+    state.aiBlocked = null;
+    state.phraseNoDraft = false;
     renderAll();
     // The phrase that asks this request (review #664): the queued id and the
     // answer both ride with it, never with a later edit of the textarea.
@@ -2507,14 +2725,21 @@ export function createCalendarioView(deps) {
     const askedSpace = readSpace();
     try {
       const answer = await phraseAnswer({ resumeId, seq });
+      // e98e7a346b37: the asking space left while the answer was on its way
+      // (space switch bumps phraseSeq in render): nothing of it paints here —
+      // neither the note nor the lock — the new space never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.phraseWaiting = false;
       // An edit while the answer was on its way never relabels it: the
       // draft paints under the phrase that asked it (review #664 P3).
       state.phrase = asked;
-      const draft = answer?.draft ?? null;
+      // backlog:913c61ec: a timed draft without an end closes at its minutes,
+      // so the card, the form's Fine and the search all read the same slot.
+      const draft = draftWithEnd(answer?.draft ?? null);
       state.draft = draft;
       if (!draft) {
-        state.draftNote = 'Nessuna bozza dalla frase: usa il modulo qui sotto.';
+        state.draftNote = 'Nessuna bozza dalla frase: riscrivila, o compila l’appuntamento a mano.';
+        state.phraseNoDraft = true;
         return;
       }
       const member = typeof draft.teamMemberId === 'string' ? draft.teamMemberId : '';
@@ -2539,10 +2764,11 @@ export function createCalendarioView(deps) {
         if (shown.length > 0) await loadWeek(shown);
         // A pager move during the preload leaves this answer unpublished:
         // the guard must never read a week other than the named one
-        // (review #657, round 5).
-        if (state.weekKeys !== wantedKeys) return;
+        // (review #657, round 5). A space switch owns the card now
+        // (e98e7a346b37): nothing of the old space paints here.
+        if (seq !== phraseSeq || state.weekKeys !== wantedKeys || readSpace() !== askedSpace) return;
       }
-      const bounds = suggestBounds(dayKey);
+      const bounds = suggestBounds(dayKey, draft);
       if (!bounds) {
         state.aiNote = 'Settimana non valida.';
         return;
@@ -2555,7 +2781,30 @@ export function createCalendarioView(deps) {
       // every identity the human holds. Unresolved words keep the outsider
       // path below, never a booking as the wrong human.
       const memberIds = resolveDraftMemberIds(member, parseMemberFilter(state.memberFilter), state.members);
+      // backlog:913c61ec — production 10/11: «Guido» matched nobody of the
+      // known team and travelled as teamMemberIds, so the server answered
+      // every step free for an identity that holds nothing. A plain name
+      // outside a known team never filters the slots: the draft stays in the
+      // form and the operator picks the person there. An opaque identity
+      // (`provider|id`), or a screen whose team roster is unread (the filter
+      // names only who is shown, never the whole team), keeps the search.
+      const knownTeam = Array.isArray(state.members)
+        && personRows([], [], state.members).length > 0;
+      if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
+        state.draftNote = '';
+        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // The return skips the prefill after the search: fill the form here,
+        // the finally below paints it. The outsider name never fills
+        // «Persona del team» (production after #735): the field stays empty,
+        // or keeps the person the operator had already chosen.
+        const withoutPerson = { ...draft };
+        delete withoutPerson.teamMemberId;
+        state.draftFill = withoutPerson;
+        return;
+      }
       const searchIds = memberIds.length > 0 ? memberIds : [member];
+      // The draft paints (with its Annulla) while the slots are searched.
+      renderAll();
       const found = await client.request(
         `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
         + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
@@ -2579,29 +2828,55 @@ export function createCalendarioView(deps) {
       // (nobody named, the filter shows marco and the phrase names sara, a
       // moved week the grid could not load), the guard reads theirs too — a
       // failed read proposes nothing, never an unguarded list (review #657).
-      if (state.weekKeys !== searchKeys) return;
+      // A space switch owns the card now (e98e7a346b37).
+      if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       let heldWeek = null;
       try {
         heldWeek = await heldWeekFor(searchIds, searchKeys);
       } catch {
         heldWeek = null;
       }
-      if (state.weekKeys !== searchKeys) return;
+      if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       if (!heldWeek) {
         state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
         return;
       }
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
-      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, clock().getTime()), heldWeek, searchIds));
+      const nowMs = clock().getTime();
+      const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
+      // backlog:913c61ec — a sentence with a time asks for that time: when it
+      // is free the proposal is the draft itself; when it is missing the next
+      // free steps of the same afternoon follow, with the reason said — «già
+      // passate» for a begun hour, «già occupato» only when the server
+      // answered the step held or a booking overlaps it (review #735).
+      const timedAt = typeof draft.startsAt === 'string' && !draftDayOnly(draft) ? Date.parse(draft.startsAt) : NaN;
+      const exact = Number.isFinite(timedAt)
+        ? ranked.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
+        : null;
+      // The exact step books the draft's own end (a stated 20 minutes inside
+      // a free 30-minute step stays 20, never the search size).
+      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      let takenNote = '';
+      if (Number.isFinite(timedAt) && !exact) {
+        const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
+        const draftStep = { startsAt: draft.startsAt, endsAt: draft.endsAt ?? stepOf?.endsAt };
+        if (timedAt < nowMs) takenNote = `Le ${romeTime(draft.startsAt) ?? ''} sono già passate`;
+        else if (stepOf === null || dropHeldOverlaps([draftStep], heldWeek, searchIds).length === 0) {
+          takenNote = `Alle ${romeTime(draft.startsAt) ?? ''} ${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} è già occupato`;
+        }
+      }
       state.aiNote = proposals.length === 0
         ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
-        : '';
+        : (takenNote !== '' ? `${takenNote}: ecco gli orari liberi dopo.` : '');
     } catch (error) {
       const record = error !== null && typeof error === 'object' ? error : {};
       // A newer search or a route away owns the card now: touch nothing.
       if (record.code === 'PHRASE_STALE') return;
+      // e98e7a346b37: a late refusal from the space just left never locks or
+      // labels the new space — it never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -2615,7 +2890,8 @@ export function createCalendarioView(deps) {
         return;
       }
       const refusal = calendarRefusalText(error);
-      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
+      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(askedSpace);
+      state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
         ? 'La frase indica un momento già passato: prova con un giorno futuro.'
@@ -2653,7 +2929,50 @@ export function createCalendarioView(deps) {
       text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
+    // backlog:913c61ec — production 10/11: the draft card had no way out but
+    // a page reload. Annulla closes it in place and books nothing.
+    const cancel = uiButton(doc, {
+      variant: 'secondary', small: true, label: 'Annulla',
+      attrs: { type: 'button', 'data-action': 'phrase-cancel' },
+    });
+    cancel.addEventListener('click', () => cancelDraft());
+    box.appendChild(cancel);
     return box;
+  }
+
+  /**
+   * backlog:913c61ec — «Annulla» on the draft card: the search in flight is
+   * dropped (phraseSeq, like a route away), the draft, its note and its
+   * proposals go, and the day and hours the draft wrote into the form are
+   * cleared when still untouched — the person too. The phrase,
+   * the customer and the service stay, so the operator can fix the sentence
+   * and search again. No request is sent.
+   */
+  function cancelDraft() {
+    phraseSeq += 1;
+    state.aiLoading = false;
+    state.phraseWaiting = false;
+    state.phrasePending = null;
+    state.draft = null;
+    state.draftNote = '';
+    state.draftFill = null;
+    state.proposals = [];
+    state.aiNote = '';
+    state.phraseNoDraft = false;
+    // Each field this draft wrote and nobody changed since goes back to what
+    // the form held before the draft (review #735: a value the operator
+    // typed equal to the draft is restored, never blanked). A search
+    // cancelled before the draft reached the form leaves the form as it was.
+    const { values = {}, prior = {} } = state.draftWrote ?? {};
+    if (state.manual) {
+      const kept = { ...state.manual };
+      for (const [name, value] of Object.entries(values)) {
+        if (kept[name] === value) kept[name] = typeof prior[name] === 'string' ? prior[name] : '';
+      }
+      state.manual = kept;
+    }
+    state.draftWrote = null;
+    renderAll();
   }
 
   /** Live manual values, from the rendered inputs when present. @param {string} name */
@@ -2839,7 +3158,7 @@ export function createCalendarioView(deps) {
       // production 07/11): said under the field before anything is sent —
       // never a 400 with «Riprova più tardi».
       state.serviceError = presend;
-      state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+      state.aiNote = CONFIRM_SERVICE_NOTE;
       renderAll();
       return;
     }
@@ -2863,10 +3182,10 @@ export function createCalendarioView(deps) {
       if (refusal !== null && isServiceRefusal(error)) {
         // The cause is the service field: say it there, and point at it here.
         state.serviceError = refusal;
-        state.aiNote = 'Conferma non riuscita: scegli un servizio dal listino nel modulo qui sotto.';
+        state.aiNote = CONFIRM_SERVICE_NOTE;
       } else {
         state.aiNote = humanWriteError(error, {
-          failed: 'Conferma non riuscita: controlla cliente, servizio e prezzo nel modulo qui sotto.',
+          failed: CONFIRM_FORM_NOTE,
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
       }
@@ -2895,6 +3214,7 @@ export function createCalendarioView(deps) {
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
+    state.draftWrote = null;
     state.proposals = [];
     state.aiNote = '';
     state.bookingNote = '';
@@ -2990,8 +3310,8 @@ export function createCalendarioView(deps) {
     const known = rows.length > 0 && (current === '' || groupOf(current) !== null);
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
-      if (current !== '' && !current.includes('|')) input.value = current;
-      if (current.includes('|')) {
+      if (current !== '' && !isTechnicalMemberText(current)) input.value = current;
+      if (current !== '' && isTechnicalMemberText(current)) {
         // A pipe id never paints: the visible field stays empty while the
         // opaque identity rides in state for the claim only.
         state.manual = { ...(state.manual ?? {}), teamMemberId: current };
@@ -3002,13 +3322,19 @@ export function createCalendarioView(deps) {
       form.appendChild(input);
       return input;
     }
-    // One option per SUBJECT under the person label: the value stays the
-    // exact opaque identity the operator chose or the draft named, never
-    // remapped to the group primary — a silent remap would book (or fail)
-    // as a different identity with no notice that the choice changed.
+    // One option per PERSON under the person label (backlog:810ed0bf:
+    // the Team card and this menu read the same personRows, so three
+    // identities of Dan are one «Dan» here too). The row's option carries
+    // the exact chosen or drafted subject — never the row primary — so
+    // the claim books precisely the identity the operator or the AI
+    // named, with no silent remap to another opaque subject.
+    const currentRow = current === '' ? null : groupOf(current);
     const shown = current;
     const options = [{ value: '', label: 'Scegli una persona…' },
-      ...rows.flatMap((row) => row.ids.map((subject) => ({ value: subject, label: row.label })))];
+      ...rows.map((row) => ({
+        value: currentRow === row && current !== '' ? current : row.id,
+        label: row.label,
+      }))];
     const wrap = uiSelect(doc, { name: 'teamMemberId', value: shown, options });
     const select = wrap.querySelector('select');
     if (select) {
@@ -3022,6 +3348,105 @@ export function createCalendarioView(deps) {
       return select;
     }
     return wrap;
+  }
+
+  /**
+   * backlog:810ed0bf — the manual form's service field: a menu of the
+   * bookable catalog singles (the same singles rule the booking worker
+   * applies, read once with the week labels), never free text. The first
+   * entry is preselected — the first bookable single, the same singles
+   * rule the worker's default-service is confirmed against — and the price
+   * field prefills from the chosen entry. The price follows every service
+   * change; a typed price sticks until the service changes again. Without
+   * a readable catalog the old typed field stays, and the server refuses
+   * unknown keys in Italian under the field.
+   * @param {any} form @param {any} priceInput
+   */
+  function renderServiceChoice(form, priceInput) {
+    const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : null;
+    const paintUnder = (node) => {
+      if (state.serviceError) {
+        // Production 07/11: a refused service names its cause under the
+        // field, never «Riprova più tardi». The hint clears on input AND
+        // on change: a menu switch fires change only, and a stale refusal
+        // must never stay painted under the newly chosen service.
+        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
+        node.setAttribute('aria-invalid', 'true');
+        const clear = () => {
+          state.serviceError = '';
+          hint.setAttribute('class', 'field-error hidden');
+          node.setAttribute('aria-invalid', 'false');
+        };
+        node.addEventListener('input', clear);
+        node.addEventListener('change', clear);
+        form.appendChild(hint);
+      }
+    };
+    if (bookable === null || bookable.length === 0) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
+      if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      paintUnder(input);
+      return input;
+    }
+    const kept = typeof state.manual?.serviceKey === 'string' ? state.manual.serviceKey : '';
+    const drafted = typeof state.draftFill?.serviceKey === 'string' ? state.draftFill.serviceKey : '';
+    const wanted = kept !== '' ? kept : drafted;
+    // A kept or drafted service is never replaced by the default: the
+    // match is case-insensitive (plus the catalog-name mapping), and an
+    // unknown key keeps the typed value in a text field instead of
+    // booking a service the operator never chose. Only with nothing kept
+    // and nothing drafted does the first entry preselect.
+    const mapped = serviceKeyFor(wanted, state.services);
+    const match = bookable.find((entry) => entry.key === wanted)
+      ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
+      ?? bookable.find((entry) => entry.key === mapped)
+      ?? (wanted === '' ? bookable[0] : null);
+    if (match === null) {
+      const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
+      input.value = wanted;
+      state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
+      input.addEventListener('input', () => {
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+      });
+      form.appendChild(input);
+      paintUnder(input);
+      return input;
+    }
+    const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
+    const options = bookable.map((entry) => ({
+      value: entry.key,
+      label: `${entry.name} · ${priceText(entry)} €`,
+    }));
+    const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
+    const select = wrap.querySelector('select') ?? wrap;
+    select.value = match.key;
+    const track = () => {
+      const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
+      state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      if (chosen !== null && priceInput) {
+        priceInput.value = priceText(chosen);
+        state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+      }
+    };
+    select.addEventListener('input', track);
+    select.addEventListener('change', track);
+    // The default is already chosen (backlog:810ed0bf): the price paints
+    // with it unless the operator already typed their own price. The
+    // default never lands in state: the claim, the snapshot and the next
+    // render all read the live menu, so a preselect stored here could
+    // never shadow a later draft as a «kept» choice (a kept choice is
+    // only what the operator or an absorbed draft actually set).
+    if (priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
+      priceInput.value = priceText(match);
+      state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+    }
+    form.appendChild(wrap);
+    paintUnder(select);
+    return select;
   }
 
   function renderManual() {
@@ -3052,13 +3477,21 @@ export function createCalendarioView(deps) {
     // The person is chosen from the known team, never typed as an opaque id
     // while the team is known (fetta 9): the select owns the claim value.
     inputs.teamMemberId = renderPersonChoice(form);
-    // The service rides the listino product key the server books: no
-    // listino-backed picker exists in the framework yet (nominated missing
-    // capability, never simulated), so the key stays typed — but the label
-    // names no technical concept (fetta 9, C22).
+    // The price rides the chosen catalog entry (backlog:810ed0bf): it
+    // prefills from the menu default and follows every service change
+    // until the operator types their own price.
+    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', placeholder: 'Prezzo EUR (es. 45.00)' } });
+    if (state.manual?.price != null) priceInput.value = String(state.manual.price);
+    priceInput.addEventListener('input', () => {
+      state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
+    });
+    // The service is a catalog menu with the default already chosen, never
+    // free text (backlog:810ed0bf): the claim sends the menu key the worker
+    // books by, with its price precompiled beside it.
+    inputs.serviceKey = renderServiceChoice(form, priceInput);
+    form.appendChild(priceInput);
+    inputs.price = priceInput;
     const fields = [
-      ['serviceKey', 'text', 'Servizio'],
-      ['price', 'text', 'Prezzo EUR (es. 45.00)'],
       ['date', 'date', 'Giorno'],
       ['start', 'time', 'Inizio'],
       ['end', 'time', 'Fine'],
@@ -3076,18 +3509,6 @@ export function createCalendarioView(deps) {
       });
       inputs[name] = input;
       form.appendChild(input);
-      if (name === 'serviceKey' && state.serviceError) {
-        // Production 07/11: a typed service the listino does not know read
-        // «Riprova più tardi». The cause is this field: say it right here.
-        const hint = el(doc, 'small', { className: 'field-error', attrs: { role: 'alert', 'data-role': 'service-error' }, text: state.serviceError });
-        input.setAttribute('aria-invalid', 'true');
-        input.addEventListener('input', () => {
-          state.serviceError = '';
-          hint.setAttribute('class', 'field-error hidden');
-          input.setAttribute('aria-invalid', 'false');
-        });
-        form.appendChild(hint);
-      }
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -3096,18 +3517,49 @@ export function createCalendarioView(deps) {
     // cliente» button over an existing pick), set by renderCustomerPick
     // above so «Compila manualmente» focuses the customer first.
     if (state.draftFill) {
+      // backlog:913c61ec — the form as it was before this draft, for «Annulla».
+      // A previous draft's untouched fields carry their own «before».
+      const before = { ...(state.manual ?? {}) };
+      const earlier = state.draftWrote;
+      if (earlier) {
+        for (const [name, value] of Object.entries(earlier.values)) {
+          if (before[name] === value) before[name] = earlier.prior[name] ?? '';
+        }
+      }
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
-        // The select offers every subject, so a known draft lands on its
-        // exact identity (never remapped); a pipe outsider never paints —
-        // its identity already rides in state for the claim only.
+        // The select offers one row per person whose option carries the
+        // exact drafted subject, so a draft naming a known identity lands
+        // on the person's row AND books that exact identity; a pipe
+        // outsider never paints — its identity already rides in state for
+        // the claim only.
         const raw = String(draft.teamMemberId);
         const people = personRows(parseMemberFilter(state.memberFilter), state.hiddenMembers, state.members);
         const person = people.find((row) => row.ids.includes(raw));
-        if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
+        if (inputs.teamMemberId?.tagName === 'SELECT') {
+          if (person) inputs.teamMemberId.value = raw;
+        } else if (person || !isTechnicalMemberText(raw)) inputs.teamMemberId.value = raw;
       }
-      if (draft.serviceKey) inputs.serviceKey.value = String(draft.serviceKey);
+      if (draft.serviceKey) {
+        // The service is a menu (backlog:810ed0bf): a drafted key the
+        // catalog knows lands on its option (case-insensitively, like the
+        // menu match); an unknown one already paints as typed text from
+        // the menu render, so here it only needs its value confirmed.
+        const rawService = String(draft.serviceKey);
+        if (inputs.serviceKey?.tagName === 'SELECT') {
+          const bookable = Array.isArray(state.catalogServices) ? state.catalogServices : [];
+          const hit = bookable.find((entry) => entry.key === rawService)
+            ?? bookable.find((entry) => entry.key === rawService.toLowerCase())
+            ?? null;
+          if (hit !== null) {
+            inputs.serviceKey.value = hit.key;
+            const priceText = formatPriceCents(hit.priceCents) ?? '';
+            if (inputs.price) inputs.price.value = priceText;
+            state.manual = { ...(state.manual ?? {}), serviceKey: hit.key, price: priceText };
+          }
+        } else inputs.serviceKey.value = rawService;
+      }
       if (draft.notes) inputs.notes.value = String(draft.notes);
       // backlog:65ed7430 — a day-only phrase rides draft.day with no hour:
       // prefill the day and ask the hour, never paint an invented midnight.
@@ -3129,6 +3581,13 @@ export function createCalendarioView(deps) {
         absorbed.teamMemberId = String(draft.teamMemberId);
       }
       state.manual = absorbed;
+      // backlog:913c61ec — what this draft wrote into the form and what the
+      // form held before, so «Annulla» restores the operator's own values.
+      const wrote = { start: absorbed.start, end: absorbed.end };
+      if (dayKey) wrote.date = absorbed.date;
+      if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
+      if (draft.notes) wrote.notes = absorbed.notes;
+      state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
@@ -3351,6 +3810,8 @@ export function createCalendarioView(deps) {
       state.phraseWaiting = false;
       state.phrasePending = null;
       state.aiNote = '';
+      state.aiBlocked = null;
+      state.phraseNoDraft = false;
       // Review #690 (P1): the customer search of space A dies with the
       // switch too — no pending timer fires under B, no answer read for A
       // paints A's customer names in B, and A's query, results and picked
@@ -3381,6 +3842,11 @@ export function createCalendarioView(deps) {
     // profile positively reports no connected calendar.
     void loadMembers();
     void loadCalendar();
+    // The service menu reads the catalog on entry (backlog:810ed0bf), not
+    // only with the first week: the manual form shows its options and its
+    // preselected default before any member is named. Shared in-flight
+    // with the week labels; the settled read repaints while mounted.
+    void ensureServices();
     const members = parseMemberFilter(state.memberFilter);
     if (members.length > 0) await loadWeek(members);
   }
