@@ -164,13 +164,33 @@ function legacyName(contact, company) {
   // restated here because the hub imports no other domain package: an
   // address-shaped word names nobody, placeholder words are dropped
   // (review #739 giro 3: «PayPal Unknown», «Fastweb —»).
-  // tests/customer-display-name.test.js runs both on the same table.
+  // tests/customer-display-name.test.js runs every rule of the three copies
+  // on the same table (parity).
   const words = joined.split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => LEGACY_ADDRESS_WORD.test(word))) return null;
   const kept = words.filter((word) => !LEGACY_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
   while (kept.length > 0 && LEGACY_NO_REPLY.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
   const text = kept.join(' ');
-  return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
+  if (text === '' || !/[\p{L}\p{N}]/u.test(text)) return null;
+  // And the pieces it repeats from its own address («Amazon.it It»,
+  // customer-data `nameWithoutAddressEchoes`, seguito P3 di #743).
+  return contact ? legacyWithoutEchoes(text, contact.email) : text;
+}
+
+/** customer-data `nameWithoutAddressEchoes`, restated (no cross-package import). @param {string} name @param {unknown} email */
+function legacyWithoutEchoes(name, email) {
+  const text = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const labels = new Set(text.slice(text.lastIndexOf('@') + 1).split('.').filter((label) => label !== ''));
+  const said = new Set();
+  const kept = [];
+  for (const word of name.split(/\s+/).filter((part) => part !== '')) {
+    const bare = word.toLowerCase().replace(/[^\p{L}\p{N}.-]/gu, '');
+    if (kept.length > 0 && labels.has(bare) && said.has(bare)) continue;
+    kept.push(word);
+    for (const part of bare.split('.')) if (part !== '') said.add(part);
+  }
+  const out = kept.join(' ');
+  return out !== '' ? out : null;
 }
 
 const LEGACY_NO_REPLY = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;

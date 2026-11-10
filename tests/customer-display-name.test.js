@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { writeFileSync } from 'node:fs';
 import {
-  companyDisplayName, contactDisplayName, isPlaceholderCompanyName, labelFromEmail, readableName, registrableDomain,
+  companyDisplayName, contactDisplayName, isPlaceholderCompanyName, labelFromEmail, nameWithoutAddressEchoes,
+  readableName, registrableDomain,
 } from '../packages/customer-data/src/display-name.js';
 import { shapeCustomerRow } from '../packages/customer-data/src/customers.js';
 import { contactNamesFor, leadNamesForEmail } from '../packages/customer-data/src/sender.js';
@@ -312,4 +313,47 @@ test('seguito #743: the browser and hub twins drop the same suffixes and ids', (
       { resource: 'contact', id: 'c1' }).name;
     assert.equal(card, readableName(sample), `hub: ${sample}`);
   }
+});
+
+// Seguito P3 di #743 (backlog:2a5f23b00f6f): the copies of the rule that
+// the hub (legacy profile) and the browser (nameFromProfile fallback) keep
+// apply every step the package applies to a stored name, address echoes
+// included; arrival drops echoes field by field.
+
+const STORED = [
+  // [first, last, email]
+  ['Amazon.it', 'It', 'conferma-spedizione@amazon.it'],
+  ['Amazon.it It', '', 'conferma-spedizione@amazon.it'],
+  ['Amazon.it', 'It Rossi', 'conferma-spedizione@amazon.it'],
+  ['Fastweb', 'Fastweb', 'info@fastweb.it'],
+  ['Mario', 'De Rossi', 'mario@rossi.de'],
+  ['Amazon', '—', 'x@amazon.it'],
+  ['UniCredit', 'S.p.A. Noreply', 'noreply@unicredit.it'],
+  ['PayPal', 'Unknown', 'assistenza@paypal.it'],
+  ['filiale_458', '—', 'filiale_458@bancaesempio.it'],
+  ['Studio', '@ Home', 'info@studio.it'],
+  ['Mittente:', BOUNCE, BOUNCE],
+  ['Unknown', 'null', 'x@esempio.it'],
+];
+
+test('seguito P3 #743 (1): hub and browser copies read a legacy stored name exactly like the package', () => {
+  for (const [firstName, lastName, email] of STORED) {
+    const read = readableName(`${firstName} ${lastName}`);
+    const expected = read === null ? null : nameWithoutAddressEchoes(read, email);
+    const hub = shapeCustomerCard({ ...LEGACY_SECTIONS(), identity: { contact: { firstName, lastName, email }, company: null } },
+      { resource: 'contact', id: 'c1' }).name;
+    const browser = nameFromProfile({ identity: { contact: { firstName, lastName, email }, company: null } });
+    assert.equal(hub, expected, `hub: ${firstName} ${lastName}`);
+    assert.equal(browser, expected, `browser: ${firstName} ${lastName}`);
+  }
+  assert.equal(nameFromProfile({ identity: { contact: { firstName: 'Amazon.it', lastName: 'It', email: 'a@amazon.it' } } }), 'Amazon.it');
+});
+
+test('seguito P3 #743 (2): arrival drops a repeated piece even inside the last name, never a real name', () => {
+  const email = 'conferma-spedizione@amazon.it';
+  assert.deepEqual(contactNamesFor({ firstName: 'Amazon.it', lastName: 'It Rossi', email }), { firstName: 'Amazon.it', lastName: 'Rossi' });
+  assert.deepEqual(contactNamesFor({ firstName: 'Amazon.it It', lastName: null, email }), { firstName: 'Amazon.it', lastName: '—' });
+  assert.deepEqual(contactNamesFor({ firstName: 'Fastweb', lastName: 'Fastweb', email: 'info@fastweb.it' }), { firstName: 'Fastweb', lastName: '—' });
+  assert.deepEqual(contactNamesFor({ firstName: 'Mario', lastName: 'De Rossi', email: 'mario@rossi.de' }), { firstName: 'Mario', lastName: 'De Rossi' });
+  assert.deepEqual(contactNamesFor({ firstName: 'Mario', lastName: null, email: 'mario.rossi@azienda.it' }), { firstName: 'Mario', lastName: 'Rossi' });
 });

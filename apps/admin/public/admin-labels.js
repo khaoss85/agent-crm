@@ -138,8 +138,32 @@ export function nameFromProfile(profile) {
   const full = readableName([contact?.firstName, contact?.lastName]
     .filter((part) => typeof part === 'string')
     .join(' '));
-  if (full !== null) return full;
+  if (full !== null) return nameWithoutAddressEchoes(full, contact?.email);
   return readableName(profile?.identity?.company?.name);
+}
+
+/**
+ * The name without the pieces it repeats from its own address
+ * («Amazon.it It» reads «Amazon.it»): the browser twin of customer-data
+ * `nameWithoutAddressEchoes`, held to it by the parity test in
+ * tests/customer-display-name.test.js (seguito P3 di #743).
+ * @param {string} name
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function nameWithoutAddressEchoes(name, email) {
+  const text = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const labels = new Set(text.slice(text.lastIndexOf('@') + 1).split('.').filter((label) => label !== ''));
+  const said = new Set();
+  const kept = [];
+  for (const word of name.split(/\s+/).filter((part) => part !== '')) {
+    const bare = word.toLowerCase().replace(/[^\p{L}\p{N}.-]/gu, '');
+    if (kept.length > 0 && labels.has(bare) && said.has(bare)) continue;
+    kept.push(word);
+    for (const part of bare.split('.')) if (part !== '') said.add(part);
+  }
+  const out = kept.join(' ');
+  return out !== '' ? out : null;
 }
 
 /**
