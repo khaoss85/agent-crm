@@ -6,7 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, italianDateTime, offerStageLabel, offerStateLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
@@ -192,7 +192,9 @@ const durationParts = (sec) => {
  * @param {unknown} value
  */
 export function teamName(value) {
-  if (!isHumanHandle(value)) return null;
+  // A provider id or the broker's reserved mailbox is no name (production
+  // 10/11: `broker+…@accordo.invalid` read «Broker»), shared filter.
+  if (!isHumanHandle(value) || isTechnicalMemberText(value)) return null;
   const text = String(value).trim();
   const isEmail = text.includes('@');
   // An e-mail never shows its domain: the local part, without a `+tag`.
@@ -2525,7 +2527,7 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
+          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? 'un membro del team'}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;

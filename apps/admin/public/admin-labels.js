@@ -118,6 +118,63 @@ export function nameFromProfile(profile) {
   return readableName(profile?.identity?.company?.name);
 }
 
+/**
+ * Whether a member text is a technical identity rather than a name
+ * (production 10/11: Oggi › Agenda read «broker+adopted-…@accordo.invalid»
+ * and «google|1049…», Spazi e accessi listed the broker mailboxes): a
+ * provider subject (`google|…`, `github|…`) or the broker's reserved mailbox
+ * (`broker+…`, `…@accordo.invalid`) never reaches the screen.
+ * @param {unknown} value
+ */
+export function isTechnicalMemberText(value) {
+  if (typeof value !== 'string') return true;
+  const text = value.trim().toLowerCase();
+  return text === '' || text.includes('|') || text.startsWith('broker+') || text.endsWith('@accordo.invalid');
+}
+
+/**
+ * A member text worth showing (a roster displayName or mailbox), trimmed,
+ * or null when it is empty or technical. The one filter every team screen
+ * (Oggi, Calendario, Spazi e accessi) reads member text through.
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function memberText(value) {
+  if (typeof value !== 'string' || isTechnicalMemberText(value)) return null;
+  return value.trim();
+}
+
+/**
+ * The name of the team member behind a subject, or null — never the id
+ * itself when it is technical. The roster (`GET /api/spine/memberships`,
+ * enriched by the pilot) names the subject; with no name on its own row, a
+ * row of the same person (`operatorAccountId`) lends its name. A subject
+ * the roster does not know reads as itself only when it is a plain word an
+ * operator typed («Marco»), never an address or a provider id.
+ * @param {unknown} subject
+ * @param {unknown} members roster items
+ * @returns {string | null}
+ */
+export function memberLabel(subject, members) {
+  if (typeof subject !== 'string' || subject.trim() === '') return null;
+  const roster = Array.isArray(members) ? members.filter((member) => member && typeof member === 'object') : [];
+  const own = roster.find((member) => member.subject === subject) ?? null;
+  const ownName = memberText(own?.displayName);
+  if (ownName !== null) return ownName;
+  const person = typeof own?.operatorAccountId === 'string' && own.operatorAccountId.trim() !== ''
+    ? own.operatorAccountId.trim() : null;
+  if (person !== null) {
+    for (const member of roster) {
+      if (member.operatorAccountId !== person) continue;
+      const name = memberText(member.displayName);
+      if (name !== null) return name;
+    }
+  }
+  if (own !== null) return null;
+  const typed = memberText(subject);
+  return typed !== null && !typed.includes('@') ? typed : null;
+}
+
 const ROME_DAY_TIME = new Intl.DateTimeFormat('it-IT', {
   day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Rome',
 });
