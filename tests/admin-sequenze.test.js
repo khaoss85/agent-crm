@@ -848,7 +848,7 @@ test('a refused creation says so in Italian and keeps the panel', async () => {
   assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open with its text');
 });
 
-test('backlog:7cc35edab50c: a 502 creation reads connection-failed and Crea retries', async () => {
+test('backlog:7cc35edab50c + 7d30fb517785: a 502 creation reads server-not-answering and Crea retries', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const inner = createDriveClient();
@@ -878,7 +878,10 @@ test('backlog:7cc35edab50c: a 502 creation reads connection-failed and Crea retr
   setField(mount, 'seq-step-0-template', 'Ciao');
   mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
   await flush();
-  assert.ok(mount.textContent.includes('Connessione non riuscita, riprova.'), 'the 502 reads as a connection fault');
+  // backlog:7d30fb517785: the gateway answered 502 — the server is not
+  // answering, never «Connessione non riuscita» (that is for no answer).
+  assert.ok(mount.textContent.includes('Il server non risponde adesso, riprova tra poco.'), 'the 502 reads as a server not answering');
+  assert.ok(!mount.textContent.includes('Connessione non riuscita'), 'never a connection fault after an answer');
   assert.ok(!mount.textContent.includes('Scrittura del pannello rifiutata'), 'the generic refusal never shows');
   assert.ok(!mount.textContent.includes('502'), 'no raw status on screen');
   assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open for the retry');
