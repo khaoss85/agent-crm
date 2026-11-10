@@ -2,12 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  SPACE_AI_MASTER_DEFAULT,
+  SPACE_AI_MASTER_KEY,
   SPACE_AI_PERMISSIONS,
   SPACE_AI_PERMISSION_DEFAULTS,
+  checkFlippableKey,
   checkPermissionKey,
   checkSpaceId,
   effectivePermission,
   evaluateAiPermission,
+  isAiActionAllowed,
+  isAiEnabled,
   resolveSpacePermissions,
   createSpacePermissionsDomain,
 } from '../packages/space-permissions/src/index.js';
@@ -86,6 +91,53 @@ test('unknown permission key is a typed refusal, including prototype keys', () =
   for (const hostile of ['__proto__', 'constructor', 'prototype', 'send', '', null, undefined, 42]) {
     assert.throws(() => checkPermissionKey(hostile), (error) => error.code === 'SPACE_PERMISSION_UNKNOWN');
   }
+});
+
+test('the master switch is ai-enabled: on by default, flippable but never a five-key', () => {
+  assert.equal(SPACE_AI_MASTER_KEY, 'ai-enabled');
+  assert.equal(SPACE_AI_MASTER_DEFAULT, true);
+  assert.equal(checkFlippableKey('ai-enabled'), 'ai-enabled');
+  assert.equal(checkFlippableKey('drafts'), 'drafts');
+  assert.throws(() => checkPermissionKey('ai-enabled'), (error) => error.code === 'SPACE_PERMISSION_UNKNOWN');
+  for (const hostile of ['__proto__', 'constructor', 'AI-ENABLED', '', null, undefined, 42]) {
+    assert.throws(() => checkFlippableKey(hostile), (error) => error.code === 'SPACE_PERMISSION_UNKNOWN');
+  }
+});
+
+test('master on by default; a stored master row wins, foreign rows ignored', () => {
+  assert.equal(isAiEnabled(SPACE_A, []), true);
+  assert.equal(isAiEnabled(SPACE_A, [{ spaceId: SPACE_A, permission: SPACE_AI_MASTER_KEY, enabled: false }]), false);
+  assert.equal(isAiEnabled(SPACE_A, [{ spaceId: SPACE_A, permission: SPACE_AI_MASTER_KEY, enabled: true }]), true);
+  assert.equal(
+    isAiEnabled(SPACE_A, [{ spaceId: SPACE_B, permission: SPACE_AI_MASTER_KEY, enabled: false }]),
+    true,
+    'another space master row never leaks in',
+  );
+});
+
+test('gate with the master off returns proposal for every switch, keeping the switch value honest', () => {
+  for (const permission of SPACE_AI_PERMISSIONS) {
+    const verdict = evaluateAiPermission({
+      spaceId: SPACE_A,
+      permission,
+      overrideRows: [
+        { spaceId: SPACE_A, permission, enabled: true },
+        { spaceId: SPACE_A, permission: SPACE_AI_MASTER_KEY, enabled: false },
+      ],
+    });
+    assert.equal(verdict.decision, 'proposal', `${permission} gates to proposal with the master off`);
+    assert.equal(verdict.enabled, true, `${permission} still reports its own switch value`);
+    assert.equal(isAiActionAllowed(SPACE_A, permission, [
+      { spaceId: SPACE_A, permission, enabled: true },
+      { spaceId: SPACE_A, permission: SPACE_AI_MASTER_KEY, enabled: false },
+    ]), false);
+  }
+  const open = evaluateAiPermission({
+    spaceId: SPACE_A,
+    permission: 'drafts',
+    overrideRows: [{ spaceId: SPACE_A, permission: 'drafts', enabled: true }],
+  });
+  assert.equal(open.decision, 'allow', 'master on leaves the five to decide one by one');
 });
 
 test('space id is opaque but shaped: empty and hostile ids refused', () => {
@@ -282,6 +334,47 @@ test('set-permission is human-only: agent and system flips are refused', async (
   }
   // A gated agent cannot switch itself on: no row is written by the refusal.
   assert.equal(stub.rows.overrides.length, 0);
+});
+
+test('set-permission flips the master switch like the five', async () => {
+  const stub = stubModules();
+  const action = buildSetPermissionAction();
+  const first = actionCtx(stub, {
+    input: { spaceId: SPACE_A, permission: SPACE_AI_MASTER_KEY, enabled: 'off' },
+    actor: USER,
+  });
+  const created = await action.execute(first.ctx);
+  assert.equal(created.created, true);
+  assert.equal(created.permission, SPACE_AI_MASTER_KEY);
+  assert.equal(created.enabled, false);
+  assert.equal(stub.rows.overrides.length, 1);
+  assert.equal(isAiEnabled(SPACE_A, stub.rows.overrides), false);
+
+  const second = actionCtx(stub, {
+    input: { spaceId: SPACE_A, permission: SPACE_AI_MASTER_KEY, enabled: 'on' },
+    actor: USER,
+  });
+  const updated = await action.execute(second.ctx);
+  assert.equal(updated.created, false);
+  assert.equal(isAiEnabled(SPACE_A, stub.rows.overrides), true, 'the owner switches the AI back on');
+});
+
+test('propose-action stays open with the master off, even when the switch is on', async () => {
+  const stub = stubModules();
+  stub.rows.overrides.push(
+    { id: 'row-0', spaceId: SPACE_A, scopeKey: `${SPACE_A}:drafts`, permission: 'drafts', enabled: true },
+    { id: 'row-1', spaceId: SPACE_A, scopeKey: `${SPACE_A}:ai-enabled`, permission: SPACE_AI_MASTER_KEY, enabled: false },
+  );
+  const action = buildProposeAction();
+  const { ctx } = actionCtx(stub, {
+    input: {
+      spaceId: SPACE_A, permission: 'drafts', actionKind: 'draft reply',
+      actionKey: 'conv-9', summary: 'Draft a reply.',
+    },
+  });
+  const opened = await action.execute(ctx);
+  assert.equal(opened.replayed, false, 'with the master off there is a proposal path, never a refusal');
+  assert.equal(stub.rows.proposals.length, 1);
 });
 
 test('actor identity is canonical: closed type set, trimmed id', async () => {
