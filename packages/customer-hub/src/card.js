@@ -150,6 +150,19 @@ function deriveStatusFromSections(profile) {
   });
 }
 
+/**
+ * The name of a profile from before `identity.displayName`: the stored join,
+ * never an address (review #739: a bounce address stored as a name, or the
+ * email standing in for none). Null when only an address is left.
+ * @param {any} contact @param {any} company
+ */
+function legacyName(contact, company) {
+  const joined = contact
+    ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim()
+    : String(company?.name ?? '').trim();
+  return joined === '' || /[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+/.test(joined) ? null : joined;
+}
+
 export function shapeCustomerCard(profile, subject) {
   const resource = subject?.resource;
   const id = subject?.id;
@@ -159,9 +172,15 @@ export function shapeCustomerCard(profile, subject) {
   if (!contact && !company) {
     throw new NotFoundError(String(resource ?? 'Customer'), String(id ?? 'unknown'));
   }
-  const name = contact
-    ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
-    : company?.name ?? null;
+  // The provider's display name (customer-data display-name.js, production
+  // 10/11): placeholders dropped, never an address as a name. A profile from
+  // before the field keeps the legacy join.
+  const providedName = profile.identity?.displayName;
+  const name = typeof providedName === 'string' && providedName !== ''
+    ? providedName
+    : (providedName === null
+      ? null
+      : legacyName(contact, company));
   const email = contact?.email ?? null;
 
   const identities = Array.isArray(profile.externalIdentities) ? profile.externalIdentities : [];

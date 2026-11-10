@@ -84,19 +84,30 @@ export function romeClock(value) {
  * lead path still stores `—` as the last name of a one-token address. None of
  * them names anyone: they are dropped from what the operator reads.
  */
-const NAME_PLACEHOLDERS = new Set(['unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', '-', '—', '–']);
+const NAME_PLACEHOLDERS = new Set([
+  'unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', 'none', '-', '—', '–',
+]);
+
+/** An address-shaped word; a lone `@` or a handle is not one (review #739). */
+const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
- * «PayPal»), null when nothing real is left.
+ * «PayPal»), null when nothing real is left. A name that carries an
+ * address (`Mittente: x@…`, or a bare email used as a label) names nobody:
+ * null, never the long address on screen (production 10/11).
+ * The browser twin of customer-data `readableName` (display-name.js): the
+ * bundle cannot import a package, so tests/customer-display-name.test.js
+ * runs both on the same table.
  * @param {unknown} value
  * @returns {string | null}
  */
 export function readableName(value) {
   if (typeof value !== 'string') return null;
-  const words = value.trim().split(/\s+/).filter((word) => word !== '' && !NAME_PLACEHOLDERS.has(word.toLowerCase()));
-  const text = words.join(' ');
-  return text !== '' ? text : null;
+  const words = value.trim().split(/\s+/).filter((word) => word !== '');
+  if (words.some((word) => ADDRESS_WORD.test(word))) return null;
+  const text = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase())).join(' ');
+  return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
 
 /**
@@ -110,6 +121,14 @@ export function readableName(value) {
  * @returns {string | null}
  */
 export function nameFromProfile(profile) {
+  // The provider's display name first (customer-data display-name.js): the
+  // one rule every screen reads, with the domain label for a nameless
+  // address. A profile from before the field keeps the join below.
+  const provided = profile?.identity?.displayName;
+  // An explicit null is the provider's verdict «no name» (review #739 giro
+  // 2): only a profile without the field falls back to the join below.
+  if (provided === null) return null;
+  if (typeof provided === 'string') return readableName(provided);
   const contact = profile?.identity?.contact ?? null;
   const full = readableName([contact?.firstName, contact?.lastName]
     .filter((part) => typeof part === 'string')
