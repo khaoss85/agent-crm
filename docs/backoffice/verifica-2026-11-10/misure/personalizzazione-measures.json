@@ -1,0 +1,122 @@
+{
+  "390": {
+    "checks": {
+      "Skill AI": true,
+      "Connettori": true,
+      "Pacchetti": true,
+      "I tuoi": true,
+      "Scopri": true,
+      "Cerca": true,
+      "+ Aggiungi": true,
+      "Curato da Accordo": true,
+      "Kit social": true,
+      "Esplora": true,
+      "Canali di conversazione": true,
+      "Agenda, lead e pagamenti": true,
+      "Mostra tutto": true
+    },
+    "tabs": [
+      "Personalizzazione",
+      "Catalogo prodotti",
+      "Stato sync",
+      "Spazi e accessi",
+      "Skill AI",
+      "Connettori"
+    ],
+    "kit": [
+      "IG",
+      "FB",
+      "TT",
+      "WA",
+      "WA",
+      "IG",
+      "FB",
+      "TT"
+    ],
+    "old": {
+      "ordinaNome": false,
+      "noveVoci": false,
+      "rigaVecchia": false
+    },
+    "dots": 4,
+    "arrows": [],
+    "cards": [
+      "WhatsApp",
+      "Instagram",
+      "Facebook",
+      "TikTok",
+      "Email",
+      "Telefono",
+      "Telegram",
+      "Form sito",
+      "Google Calendar",
+      "Stripe"
+    ],
+    "layout": {
+      "vw": 390,
+      "horizontalOverflowPx": 0,
+      "contentTop": 114,
+      "minFieldFontPx": 16
+    }
+  },
+  "1440": {
+    "checks": {
+      "Skill AI": true,
+      "Connettori": true,
+      "Pacchetti": true,
+      "I tuoi": true,
+      "Scopri": true,
+      "Cerca": true,
+      "+ Aggiungi": true,
+      "Curato da Accordo": true,
+      "Kit social": true,
+      "Esplora": true,
+      "Canali di conversazione": true,
+      "Agenda, lead e pagamenti": true,
+      "Mostra tutto": true
+    },
+    "tabs": [
+      "Personalizzazione",
+      "Catalogo prodotti",
+      "Stato sync",
+      "Spazi e accessi",
+      "Skill AI",
+      "Connettori"
+    ],
+    "kit": [
+      "IG",
+      "FB",
+      "TT",
+      "WA",
+      "WA",
+      "IG",
+      "FB",
+      "TT"
+    ],
+    "old": {
+      "ordinaNome": false,
+      "noveVoci": false,
+      "rigaVecchia": false
+    },
+    "dots": 4,
+    "arrows": [],
+    "cards": [
+      "WhatsApp",
+      "Instagram",
+      "Facebook",
+      "TikTok",
+      "Email",
+      "Telefono",
+      "Telegram",
+      "Form sito",
+      "Google Calendar",
+      "Stripe"
+    ],
+    "layout": {
+      "vw": 1440,
+      "horizontalOverflowPx": 0,
+      "contentTop": 94,
+      "minFieldFontPx": 14
+    }
+  }
+}
