@@ -53,7 +53,10 @@
       "Stripe"
     ],
     "layout": {
-      "vw": 390,
+      "ok": true,
+      "failures": [],
+      "innerWidth": 390,
+      "docScrollWidth": 390,
       "horizontalOverflowPx": 0,
       "contentTop": 114,
       "minFieldFontPx": 16
@@ -113,7 +116,10 @@
       "Stripe"
     ],
     "layout": {
-      "vw": 1440,
+      "ok": true,
+      "failures": [],
+      "innerWidth": 1440,
+      "docScrollWidth": 1440,
       "horizontalOverflowPx": 0,
       "contentTop": 94,
       "minFieldFontPx": 14

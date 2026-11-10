@@ -1,6 +1,9 @@
 {
   "4419:oggi:bar": {
-    "vw": 390,
+    "ok": true,
+    "failures": [],
+    "innerWidth": 390,
+    "docScrollWidth": 390,
     "topbarH": 110,
     "contentTop": 114,
     "crumb": "Studio Aurora / Oggi",
@@ -15,7 +18,13 @@
     "sidebarShownWhenClosed": false
   },
   "4419:clienti:bar": {
-    "vw": 612,
+    "ok": false,
+    "failures": [
+      "innerWidth 612 != 390",
+      "docScrollWidth 612 > 390"
+    ],
+    "innerWidth": 612,
+    "docScrollWidth": 612,
     "topbarH": 110,
     "contentTop": 114,
     "crumb": "Studio Aurora / Clienti",
@@ -30,7 +39,10 @@
     "sidebarShownWhenClosed": false
   },
   "4419:cliente:bar": {
-    "vw": 390,
+    "ok": true,
+    "failures": [],
+    "innerWidth": 390,
+    "docScrollWidth": 390,
     "topbarH": 110,
     "contentTop": 114,
     "crumb": "Studio Aurora / Clienti",
@@ -45,7 +57,10 @@
     "sidebarShownWhenClosed": false
   },
   "4419:calendario:bar": {
-    "vw": 390,
+    "ok": true,
+    "failures": [],
+    "innerWidth": 390,
+    "docScrollWidth": 390,
     "topbarH": 110,
     "contentTop": 114,
     "crumb": "Studio Aurora / Calendario",
@@ -106,7 +121,7 @@
       "TEXTAREA:16px"
     ],
     "overflow": 0,
-    "vw": 390,
+    "innerWidth": 390,
     "sendText": [
       "Invia su Email"
     ]
@@ -116,7 +131,7 @@
       {
         "method": "POST",
         "path": "/api/customer-hub/messages",
-        "body": "{\"spaceId\":\"spazio-demo\",\"resource\":\"contact\",\"id\":\"c1\",\"channel\":\"email\",\"text\":\"Ciao, ti confermo la prova di giovedì.\",\"connectionKey\":\"gmail-1\",\"messageKey\":\"3edee84d-109f-47d1-8bf5-1189c3957666\"}",
+        "body": "{\"spaceId\":\"spazio-demo\",\"resource\":\"contact\",\"id\":\"c1\",\"channel\":\"email\",\"text\":\"Ciao, ti confermo la prova di giovedì.\",\"connectionKey\":\"gmail-1\",\"messageKey\":\"ad24fb72-cc0f-4047-845d-e52376727f4d\"}",
         "answer": "{\"channel\":\"email\",\"to\":\"demo@example.test\",\"jobId\":\"job-1\"}"
       }
     ],
@@ -137,7 +152,7 @@
       "offer-owner:16px"
     ],
     "overflow": 0,
-    "vw": 390,
+    "innerWidth": 390,
     "buttons": [
       "–",
       "✕",
@@ -190,7 +205,7 @@
     ],
     "draggable": 0,
     "overflow": 0,
-    "vw": 390,
+    "innerWidth": 390,
     "grid": [
       366
     ]
@@ -200,13 +215,30 @@
       {
         "method": "POST",
         "path": "/api/appointments/confirm",
-        "body": "{\"spaceId\":\"\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"currency\":\"EUR\",\"startsAt\":\"2026-10-22T14:00:00.000Z\",\"endsAt\":\"2026-10-22T14:30:00.000Z\",\"notes\":\"taglio per Ada\",\"sourceKey\":\"calendario:marco:2026-10-22T14:00:00.000Z:senza-cliente\",\"source\":{\"package\":\"host\",\"action\":\"calendar-book\"},\"confirmed\":true}",
-        "answer": "{\"decision\":\"booked\",\"appointment\":{\"id\":\"appt-new\",\"spaceId\":\"\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"currency\":\"EUR\""
+        "body": "{\"spaceId\":\"spazio-demo\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"currency\":\"EUR\",\"startsAt\":\"2026-10-22T14:00:00.000Z\",\"endsAt\":\"2026-10-22T14:30:00.000Z\",\"notes\":\"taglio per Ada\",\"sourceKey\":\"calendario:marco:2026-10-22T14:00:00.000Z:senza-cliente\",\"source\":{\"package\":\"host\",\"action\":\"calendar-book\"},\"confirmed\":true}",
+        "answer": "{\"decision\":\"booked\",\"appointment\":{\"id\":\"appt-new\",\"spaceId\":\"spazio-demo\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"curr"
       }
     ],
     "notes": [
       "Prenotato: marco · 22 ott 16:00."
     ],
-    "overflowAfter": 0
+    "overflowAfter": {
+      "overflow": 0,
+      "innerWidth": 390
+    }
+  },
+  "d7c78:calendar-wrong-space-control": {
+    "writes": [
+      {
+        "method": "POST",
+        "path": "/api/appointments/confirm",
+        "body": "{\"spaceId\":\"spazio-demo\",\"subject\":{\"resource\":\"contact\",\"id\":\"\",\"owner\":\"host\"},\"teamMemberId\":\"marco\",\"serviceKey\":\"taglio\",\"priceCents\":null,\"currency\":\"EUR\",\"startsAt\":\"2026-10-22T14:00:00.000Z\",\"endsAt\":\"2026-10-22T14:30:00.000Z\",\"notes\":\"taglio per Ada\",\"sourceKey\":\"calendario:marco:2026-10-22T14:00:00.000Z:senza-cliente\",\"source\":{\"package\":\"host\",\"action\":\"calendar-book\"},\"confirmed\":true}",
+        "status": 400,
+        "refused": [
+          "spaceId=\"spazio-demo\""
+        ]
+      }
+    ],
+    "booked": false
   }
 }

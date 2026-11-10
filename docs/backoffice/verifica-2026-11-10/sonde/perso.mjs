@@ -21,7 +21,8 @@ for (const [w,h,phone] of [[390,844,true],[1440,1800,false]]) {
     const cards = [...vm.querySelectorAll('.ui-conn-card, [class*=conn-card]')].filter(vis).map(n => n.querySelector('h3,h4,strong,.name')?.textContent.trim()).filter(Boolean).slice(0,10);
     return { checks, tabs, kit, old, dots, arrows, cards };
   })()`);
-  r.layout = (({ vw, horizontalOverflowPx, contentTop, minFieldFontPx }) => ({ vw, horizontalOverflowPx, contentTop, minFieldFontPx }))(await b.eval(MEASURE));
+  r.layout = (({ ok, failures, innerWidth, docScrollWidth, horizontalOverflowPx, contentTop, minFieldFontPx }) => ({ ok, failures, innerWidth, docScrollWidth, horizontalOverflowPx, contentTop, minFieldFontPx }))(await b.eval(MEASURE(w)));
+  if (!r.layout.ok) process.exitCode = 1;
   out[w] = r; console.log(w, JSON.stringify(r));
   await b.shot(`${process.env.OUT}/personalizzazione-${w}-intera.png`, true);
 }

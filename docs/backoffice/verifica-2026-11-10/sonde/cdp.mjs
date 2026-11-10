@@ -19,6 +19,8 @@ export function page(name) {
   html = html.replace(/const client = \{/g, 'const client = window.__client = {');
   // the app passes the active space to the scheda (composer and offer need it)
   html = html.replace('createCustomerCardView({ doc: document,', "createCustomerCardView({ spaceId: 'spazio-demo', doc: document,");
+  // the calendar reads the active space from the shell storage, like app.js (storage: shellStorage)
+  html = html.replace('createCalendarioView({', "createCalendarioView({ storage: { getItem: (k) => (k === 'accordo.activeSpace' ? 'spazio-demo' : null), setItem() {}, removeItem() {} },");
   return html;
 }
 
@@ -38,7 +40,7 @@ export function serve() {
 
 export async function launch() {
   const dir = mkdtempSync(join(process.env.SCRATCH ?? tmpdir(), 'prof-'));
-  const child = spawn(process.env.CHROMIUM_BIN, ['--headless', '--disable-gpu', '--hide-scrollbars', '--disable-background-networking', `--user-data-dir=${dir}`, '--remote-debugging-port=0', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const child = spawn(process.env.CHROMIUM_BIN, ['--headless', ...(process.env.CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : []), '--disable-gpu', '--hide-scrollbars', '--disable-background-networking', `--user-data-dir=${dir}`, '--remote-debugging-port=0', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const wsUrl = await new Promise((resolve, reject) => {
     let buf = '';
     child.stderr.on('data', (c) => { buf += c; const m = /DevTools listening on (ws:\S+)/.exec(buf); if (m) resolve(m[1]); });
@@ -102,8 +104,12 @@ export async function launch() {
 // Generic layout measure: viewport, page scroll width, right-overflowing
 // elements not clipped by a scroll container inside the viewport, content
 // top, topbar box, smallest visible form-field font size.
-export const MEASURE = `(() => {
-  const vw = innerWidth;
+export const MEASURE = (width) => `(() => {
+  const want = ${Number(width)};
+  const vw = want;
+  const failures = [];
+  if (innerWidth !== want) failures.push('innerWidth ' + innerWidth + ' != ' + want);
+  if (document.documentElement.scrollWidth > want) failures.push('docScrollWidth ' + document.documentElement.scrollWidth + ' > ' + want);
   const rect = (sel) => { const n = document.querySelector(sel); if (!n) return null; const r = n.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height), bottom: Math.round(r.bottom) }; };
   const visible = (n) => { const cs = getComputedStyle(n); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
   const offenders = [];
@@ -121,8 +127,9 @@ export const MEASURE = `(() => {
   const vm = document.getElementById('view-module');
   const firstChild = vm ? [...vm.children].find(visible) : null;
   return {
+    ok: failures.length === 0, failures, requestedWidth: want, innerWidth,
     vw, vh: innerHeight, docScrollWidth: document.documentElement.scrollWidth, bodyScrollWidth: document.body.scrollWidth,
-    horizontalOverflowPx: Math.max(0, document.documentElement.scrollWidth - vw),
+    horizontalOverflowPx: Math.max(0, document.documentElement.scrollWidth - want),
     offenders: offenders.slice(0, 8).map((o) => o.desc), offenderCount: offenders.length,
     topbar: rect('.bo-topbar'), viewModuleTop: vm ? Math.round(vm.getBoundingClientRect().top) : null,
     contentTop: firstChild ? Math.round(firstChild.getBoundingClientRect().top) : null,

@@ -11,10 +11,11 @@ try {
       await b.viewport(w, h, phone);
       await b.goto(`http://127.0.0.1:${port}/m-${name}.html`, `${name}-ready`);
       await new Promise((r) => setTimeout(r, 400));
-      const m = await b.eval(MEASURE);
+      const m = await b.eval(MEASURE(w));
+      if (!m.ok) { process.exitCode = 1; console.log('FAIL', name, w, m.failures.join('; ')); }
       results[`${name}@${w}`] = m;
       await b.shot(`${OUT}/${name}-${w}-viewport.png`);
-      console.log(name, w, JSON.stringify({ vw: m.vw, overflow: m.horizontalOverflowPx, offenders: m.offenders, contentTop: m.contentTop, vmTop: m.viewModuleTop, topbarH: m.topbar?.h, crumb: m.crumb, minField: m.minFieldFontPx, under16: m.fieldsUnder16 }));
+      console.log(name, w, JSON.stringify({ ok: m.ok, failures: m.failures, innerWidth: m.innerWidth, docScrollWidth: m.docScrollWidth, vw: m.vw, overflow: m.horizontalOverflowPx, offenders: m.offenders, contentTop: m.contentTop, vmTop: m.viewModuleTop, topbarH: m.topbar?.h, crumb: m.crumb, minField: m.minFieldFontPx, under16: m.fieldsUnder16 }));
     }
   }
 } finally { b.close(); server.close(); }

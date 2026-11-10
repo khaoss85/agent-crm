@@ -18,9 +18,23 @@ stringe, il /bo vieta l'iframe con `frame-ancestors 'none'`).
    di `bo:shots` (`harnessHtml`), con il telefono simulato a 390x844
    (mobile, tocco, `hover: none`, `pointer: coarse`). Due ritocchi rispetto
    a bo:shots, come fa l'app vera: la shell riceve `window` (per Esc e il
-   focus) e la scheda riceve lo spazio attivo (serve al composer e
-   all'offerta). Le scritture rispondono con dati finti e vengono registrate.
-   Risultati completi in `misure/*.json`.
+   focus); la scheda e il Calendario ricevono lo spazio attivo
+   `spazio-demo` (la scheda come `spaceId`, il Calendario dallo storage
+   della shell, come `app.js`). Risultati completi in `misure/*.json`.
+   - La misura è legata alla larghezza chiesta: se `innerWidth` non è 390
+     (o 1440) o se la pagina è più larga (`scrollWidth` > 390), la sonda
+     segna `ok: false` ed esce con errore. Lo scorrimento laterale si conta
+     contro 390, non contro `innerWidth`.
+   - Le scritture vanno a uno stub che le registra. `POST
+     /api/appointments/confirm` risponde «booked» solo se porta lo spazio
+     atteso, `teamMemberId`, `serviceKey`, `startsAt`, `endsAt`,
+     `sourceKey`, `subject.resource = contact` e `confirmed: true`;
+     altrimenti 400. `POST /api/customer-hub/messages` risponde 400 se lo
+     spazio non è quello atteso. Controllo al contrario: con uno spazio
+     diverso la stessa Conferma riceve 400 e non compare «Prenotato».
+   - **È una prova dell'interfaccia**: col dito a 390 parte la richiesta
+     giusta, con i dati giusti, e la schermata mostra la risposta. **Non
+     prova la prenotazione, il messaggio o l'offerta sul server.**
 3. backlog:aaafeded28af: `node --test tests/browser/criteri-supervisore.browser.js`
    nel pilota, con il Chromium del server. L'esito scritto dalla prova è
    in `aaafeded28af/ESITO.md` (file della prova, non l'evidence del supervisore).
@@ -29,11 +43,14 @@ Nota sul server: `npm run bo:shots` qui salta in silenzio («no runnable
 Chromium found») perché `chromiumRuns` in `scripts/bo-shots.js` prova il
 binario senza `--no-sandbox` e su questo Ubuntu Chromium muore («No usable
 sandbox»). Gli altri test `*-shots` riprovano con `--no-sandbox`. Per
-questa prova ho usato un involucro (`sonde/chromium-nosandbox.sh`).
+questa prova ho usato un involucro (`sonde/chromium-nosandbox.sh`, prende
+il binario da `CHROMIUM_REAL_BIN`, da `CHROMIUM_BIN` o da `chromium` nel
+PATH); le sonde DevTools aggiungono `--no-sandbox` con `CHROMIUM_NO_SANDBOX=1`.
 
 ## backlog:d7c78e9cdf53 — telefono (390): messaggio, appuntamento, offerta
 
-AC-1, tutto col tocco, senza hover:
+AC-1, tutto col tocco, senza hover (prova dell'interfaccia: parte la
+richiesta giusta; il server non è provato):
 
 | Passo | Misura |
 |---|---|
@@ -41,8 +58,9 @@ AC-1, tutto col tocco, senza hover:
 | Scheda: testo + «Invia su Email» | parte `POST /api/customer-hub/messages` con il testo scritto (`misure/interaction-measures.json`) |
 | Scheda: «Nuova offerta» | finestra 390x844, campi 16 px, scorrimento laterale 0 |
 | Offerta: Titolo, Valore, Referente + «Crea offerta» | parte `POST /api/opportunities` (valueCents 25000) |
-| Calendario: tocco su «Conferma» della proposta | parte `POST /api/appointments/confirm`, compare «Prenotato: marco · 22 ott 16:00.»; 0 elementi `draggable`, bottone 103x43 |
+| Calendario: tocco su «Conferma» della proposta | parte `POST /api/appointments/confirm` con `spaceId: spazio-demo` e il claim completo, lo stub risponde «booked», compare «Prenotato: marco · 22 ott 16:00.»; 0 elementi `draggable`, bottone 103x43. Controllo: con uno spazio diverso → 400, nessun «Prenotato» |
 | Zoom | tutti i campi di Scheda, composer, offerta e Calendario a 16 px |
+| Larghezza | Scheda, composer, offerta e Calendario: `innerWidth` 390, pagina 390 px |
 
 Attenzione: la finestra dell'offerta scrive «Non viene inviata al cliente»
 (`apps/admin/public/admin-offer-panel.js:443`). «Crea offerta» la registra,
@@ -72,10 +90,15 @@ carosello insieme in basso a destra, puntini sotto.
 
 ## backlog:4419cc25e2df — barra del telefono entro 120 px (#720)
 
+**Non passa su Clienti.** La barra è compatta su tutte e 4 le schermate, ma
+a 390 Clienti non sta in 390 px: la pagina è larga 612 px e il telefono
+la allarga (`innerWidth` 612). Causa: `apps/admin/public/styles.css:1292`,
+vedi «Trovato in più». Oggi, Scheda e Calendario passano.
+
 | Schermata (390x844) | Altezza barra | Inizio contenuto | Percorso visibile |
 |---|---|---|---|
 | Oggi | 110 px | 114 px | «Studio Aurora / Oggi», intero |
-| Clienti | 110 px | 114 px | «Studio Aurora / Clienti», intero |
+| Clienti | 110 px | 114 px | «Studio Aurora / Clienti», intero — **ma la pagina è larga 612 px, non 390 (`innerWidth` 612): sonda `ok: false`** |
 | Scheda | 110 px | 114 px | «Studio Aurora / Clienti», intero |
 | Calendario | 110 px | 114 px | «Studio Aurora / Calendario», intero |
 
@@ -99,10 +122,12 @@ Schermate in `aaafeded28af/`. Nel log compare `ExecutorRefused
 OPERATION_NOT_ALLOWED mark_customer_read` dello spazio di prova: non tocca
 l'esito.
 
-## Trovato in più (non è di queste 4 voci)
+## Trovato in più: Clienti e Pipeline più larghi di 390 (tocca 4419cc25e2df su Clienti)
 
 A 390 Clienti e Pipeline scorrono di lato: larghezza della pagina 612 px e
-1073 px (`telefono/finding-*-scorrimento-laterale.png`). La causa sono le
+1073 px. Nella prima versione di questo README lo scorrimento risultava 0
+perché la sonda lo contava contro `innerWidth`, che il telefono simulato
+allarga a 612 e 1073: ora si conta contro 390 (`telefono/finding-*-scorrimento-laterale.png`). La causa sono le
 etichette nascoste per i lettori di schermo, `position: absolute` senza un
 contenitore posizionato dentro la tabella che scorre:
 

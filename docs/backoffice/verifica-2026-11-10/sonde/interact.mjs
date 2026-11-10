@@ -5,13 +5,14 @@ const OUT = process.env.OUT; mkdirSync(OUT, { recursive: true });
 const server = await serve(); const port = server.address().port;
 const b = await launch();
 const R = {};
-const log = (k, v) => { R[k] = v; console.log(k, JSON.stringify(v)); };
+const widthFail = (v) => v && typeof v === 'object' && ((typeof v.overflow === 'number' && v.overflow > 0) || (v.innerWidth !== undefined && v.innerWidth !== 390) || v.ok === false || (v.overflowAfter && widthFail(v.overflowAfter)));
+const log = (k, v) => { R[k] = v; console.log(k, JSON.stringify(v)); if (widthFail(v)) { process.exitCode = 1; console.log('FAIL', k, 'width/overflow not 390'); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Recording stub layered over the fixture client: every request is logged;
 // writes and the reads the composer/offer/booking need get demo answers.
 const STUB = `(() => {
-  window.__req = [];
+  window.__req = []; window.__expectSpace = 'spazio-demo';
   const c = window.__client; const orig = c.request.bind(c);
   c.request = async (path, options = {}) => {
     const method = String(options.method ?? 'GET').toUpperCase();
@@ -21,9 +22,20 @@ const STUB = `(() => {
     if (path.startsWith('/api/connectors')) answer = { connectors: [{ channel: 'email', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra-esempio.it' }, { channel: 'whatsapp', status: 'active', connectionKey: 'wa-1', account: '+390000000000' }] };
     else if (path === '/api/profile') answer = { profile: {} };
     else if (path.startsWith('/api/catalog/products')) answer = { products: [{ sku: 'taglio', name: 'Taglio', priceCents: 2500, currency: 'EUR', active: true }] };
+    else if (path === '/api/customer-hub/messages' && method === 'POST' && JSON.parse(body || '{}').spaceId !== window.__expectSpace) { entry.status = 400; throw Object.assign(new Error('stub refused: spaceId'), { status: 400, code: 'VALIDATION_FAILED' }); }
     else if (path === '/api/customer-hub/messages' && method === 'POST') answer = { channel: 'email', to: 'demo@example.test', jobId: 'job-1' };
     else if (path === '/api/opportunities' && method === 'POST') answer = { opportunity: { id: 'opp-new', title: 'Offerta demo', status: 'open' }, id: 'opp-new' };
-    else if (path === '/api/appointments/confirm') { const claim = JSON.parse(body || '{}'); answer = { decision: 'booked', appointment: { id: 'appt-new', ...claim } }; }
+    else if (path === '/api/appointments/confirm') {
+      // Like the server: booked only for the active space and a complete claim; anything else is a 4xx.
+      const claim = JSON.parse(body || '{}');
+      const missing = [];
+      if (claim.spaceId !== window.__expectSpace) missing.push('spaceId=' + JSON.stringify(claim.spaceId));
+      for (const k of ['teamMemberId', 'serviceKey', 'startsAt', 'endsAt', 'sourceKey']) if (typeof claim[k] !== 'string' || claim[k] === '') missing.push(k);
+      if (!claim.subject || claim.subject.resource !== 'contact') missing.push('subject');
+      if (claim.confirmed !== true) missing.push('confirmed');
+      if (missing.length > 0) { entry.status = 400; entry.refused = missing; const e = Object.assign(new Error('stub refused: ' + missing.join(', ')), { status: 400, code: 'VALIDATION_FAILED' }); throw e; }
+      answer = { decision: 'booked', appointment: { id: 'appt-new', ...claim } };
+    }
     else if (path === '/api/appointments/propose') answer = { decision: 'draft' };
     if (answer !== undefined) { entry.answer = JSON.stringify(answer).slice(0, 200); return answer; }
     try { const a = await orig(path, options); entry.answer = 'fixture'; return a; } catch (e) { entry.error = String(e.message || e); throw e; }
@@ -44,8 +56,9 @@ try {
   // ---------- 4419cc25e2df: compact bar + menu at 390 ----------
   for (const name of ['oggi', 'clienti', 'cliente', 'calendario']) {
     await open(name);
-    const m = await b.eval(MEASURE);
-    log(`4419:${name}:bar`, { vw: m.vw, topbarH: m.topbar?.h, contentTop: m.contentTop, crumb: m.crumb?.text, crumbVisible: m.crumb?.inViewport && !m.crumb?.truncated, toggle: m.menuToggle, sidebarShownWhenClosed: m.sidebarVisibleInViewport });
+    const m = await b.eval(MEASURE(390));
+    if (!m.ok) process.exitCode = 1;
+    log(`4419:${name}:bar`, { ok: m.ok, failures: m.failures, innerWidth: m.innerWidth, docScrollWidth: m.docScrollWidth, topbarH: m.topbar?.h, contentTop: m.contentTop, crumb: m.crumb?.text, crumbVisible: m.crumb?.inViewport && !m.crumb?.truncated, toggle: m.menuToggle, sidebarShownWhenClosed: m.sidebarVisibleInViewport });
   }
   await open('oggi');
   await b.shot(`${OUT}/4419-oggi-390-menu-chiuso.png`);
@@ -80,7 +93,7 @@ try {
   await open('cliente');
   await b.tap(textBtn('Scrivi'));
   await sleep(800);
-  let comp = await b.eval(`(() => { const p = document.querySelector('.bo-scheda-composer'); if (!p) return null; const r = p.getBoundingClientRect(); const f = [...p.querySelectorAll('textarea, input:not([type=radio]):not([type=checkbox])')].filter(n => n.getClientRects().length > 0); return { box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], fields: f.map(n => (n.name || n.tagName) + ':' + getComputedStyle(n).fontSize), overflow: document.documentElement.scrollWidth - innerWidth, vw: innerWidth, sendText: ([...p.querySelectorAll('button.primary')].map(x => x.textContent)) }; })()`);
+  let comp = await b.eval(`(() => { const p = document.querySelector('.bo-scheda-composer'); if (!p) return null; const r = p.getBoundingClientRect(); const f = [...p.querySelectorAll('textarea, input:not([type=radio]):not([type=checkbox])')].filter(n => n.getClientRects().length > 0); return { box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], fields: f.map(n => (n.name || n.tagName) + ':' + getComputedStyle(n).fontSize), overflow: Math.max(0, document.documentElement.scrollWidth - 390), innerWidth, sendText: ([...p.querySelectorAll('button.primary')].map(x => x.textContent)) }; })()`);
   log('d7c78:composer-open', comp);
   await b.shot(`${OUT}/d7c78-scheda-390-composer.png`);
   await b.tap(`document.querySelector('.bo-scheda-composer textarea')`);
@@ -96,7 +109,7 @@ try {
   await open('cliente');
   await b.tap(textBtn('Nuova offerta'));
   await sleep(800);
-  comp = await b.eval(`(() => { const p = [...document.querySelectorAll('[aria-label="Nuova offerta"]')].find(n => n.getClientRects().length > 0); if (!p) return null; const r = p.getBoundingClientRect(); const f = [...p.querySelectorAll('textarea, input:not([type=radio]):not([type=checkbox]), select')].filter(n => n.getClientRects().length > 0); return { box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], fields: f.map(n => (n.name || n.getAttribute('aria-label') || n.tagName) + ':' + getComputedStyle(n).fontSize), overflow: document.documentElement.scrollWidth - innerWidth, vw: innerWidth, buttons: [...p.querySelectorAll('button')].map(x => x.textContent.trim()).filter(Boolean) }; })()`);
+  comp = await b.eval(`(() => { const p = [...document.querySelectorAll('[aria-label="Nuova offerta"]')].find(n => n.getClientRects().length > 0); if (!p) return null; const r = p.getBoundingClientRect(); const f = [...p.querySelectorAll('textarea, input:not([type=radio]):not([type=checkbox]), select')].filter(n => n.getClientRects().length > 0); return { box: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)], fields: f.map(n => (n.name || n.getAttribute('aria-label') || n.tagName) + ':' + getComputedStyle(n).fontSize), overflow: Math.max(0, document.documentElement.scrollWidth - 390), innerWidth, buttons: [...p.querySelectorAll('button')].map(x => x.textContent.trim()).filter(Boolean) }; })()`);
   log('d7c78:offer-open', comp);
   await b.shot(`${OUT}/d7c78-scheda-390-offerta.png`);
   // fill title and value by touch + typing
@@ -118,14 +131,22 @@ try {
   await b.shot(`${OUT}/d7c78-scheda-390-dopo-offerta.png`);
 
   await open('calendario');
-  const cal = await b.eval(`(() => { const confirms = [...document.querySelectorAll('.cal-slots button')].filter(n => n.textContent === 'Conferma'); const grid = document.querySelector('.cal-grid, .cal-week, .cal-wrap'); const g = grid ? grid.getBoundingClientRect() : null; return { confirms: confirms.length, firstConfirm: confirms[0] ? (() => { const r = confirms[0].getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })() : null, draggable: document.querySelectorAll('[draggable=true]').length, overflow: document.documentElement.scrollWidth - innerWidth, vw: innerWidth, grid: g ? [Math.round(g.width)] : null }; })()`);
+  const cal = await b.eval(`(() => { const confirms = [...document.querySelectorAll('.cal-slots button')].filter(n => n.textContent === 'Conferma'); const grid = document.querySelector('.cal-grid, .cal-week, .cal-wrap'); const g = grid ? grid.getBoundingClientRect() : null; return { confirms: confirms.length, firstConfirm: confirms[0] ? (() => { const r = confirms[0].getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; })() : null, draggable: document.querySelectorAll('[draggable=true]').length, overflow: Math.max(0, document.documentElement.scrollWidth - 390), innerWidth, grid: g ? [Math.round(g.width)] : null }; })()`);
   log('d7c78:calendar-before', cal);
   await b.tap(`[...document.querySelectorAll('.cal-slots button')].find(n => n.textContent === 'Conferma')`);
   await sleep(1200);
   reqs = await b.eval(`window.__req.filter(r => r.method !== 'GET')`);
   const calNote = await b.eval(`[...document.querySelectorAll('.cal-note, [role=status], .lede, p')].map(n => n.textContent.trim()).filter(t => /Prenot|Confermat|Registrat|Fissat/.test(t)).slice(0, 4)`);
-  log('d7c78:calendar-booked', { writes: reqs, notes: calNote, overflowAfter: await b.eval('document.documentElement.scrollWidth - innerWidth') });
+  log('d7c78:calendar-booked', { writes: reqs, notes: calNote, overflowAfter: await b.eval('({ overflow: Math.max(0, document.documentElement.scrollWidth - 390), innerWidth })') });
   await b.shot(`${OUT}/d7c78-calendario-390-dopo-conferma.png`, true);
+  // Negative control: the same tap with a space the stub does not expect must be refused (4xx) and show no «Prenotato».
+  await open('calendario');
+  await b.eval(`(window.__expectSpace = 'altro-spazio', true)`);
+  await b.tap(`[...document.querySelectorAll('.cal-slots button')].find(n => n.textContent === 'Conferma')`);
+  await sleep(1200);
+  const neg = { writes: await b.eval(`window.__req.filter(r => r.method !== 'GET')`), booked: await b.eval(`[...document.querySelectorAll('p, .lede, [role=status]')].some(n => /^Prenotato:/.test(n.textContent.trim()))`) };
+  log('d7c78:calendar-wrong-space-control', neg);
+  if (neg.booked || !neg.writes.some((w) => w.status === 400)) { process.exitCode = 1; console.log('FAIL negative control'); }
 } finally {
   b.close(); server.close();
   writeFileSync(`${OUT}/interaction-measures.json`, JSON.stringify(R, null, 2));
