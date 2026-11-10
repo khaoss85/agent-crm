@@ -239,3 +239,37 @@ test('Annulla restores the operator values even when the draft wrote the same on
   assert.equal(mount.querySelector('.cal-draft'), null);
   assert.deepEqual(typed.map(([name]) => field(mount, name).value), typed.map(([, value]) => value), 'the operator values come back, never blanked');
 });
+
+// Production after #735: «giovedì alle 15 con Guido» with Guido outside the
+// team still prefilled «Persona del team = Guido». A name the team does not
+// hold never lands in the person field: it stays empty, or keeps the person
+// the operator had already chosen; the note says why.
+const personValue = (mount) => (mount.querySelector('select[name="teamMemberId"]') ?? field(mount, 'teamMemberId'))?.value;
+
+test('a name outside the team leaves «Persona del team» empty', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({ roster: [ROSTER[1]] });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await askPhrase(view, mount);
+  assert.ok(mount.textContent.includes('Guido non è nel team'), mount.textContent);
+  assert.ok(mount.querySelector('select[name="teamMemberId"]'), 'the person stays a choice among the team');
+  assert.equal(personValue(mount), '', 'never prefilled with the outsider name');
+  assert.equal(field(mount, 'end').value, '15:30', 'the draft hours still fill the form');
+});
+
+test('a name outside the team keeps the person the operator had chosen', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = phraseClient({ roster: [ROSTER[1]] });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: NOW });
+  await view.render();
+  await flush();
+  const person = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(person, 'the known team starts as a choice');
+  person.value = 'google|sara';
+  person.dispatch('change');
+  await askPhrase(view, mount);
+  assert.ok(mount.textContent.includes('Guido non è nel team'), mount.textContent);
+  assert.equal(personValue(mount), 'google|sara', 'the operator choice stays');
+});

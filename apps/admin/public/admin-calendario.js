@@ -2792,8 +2792,12 @@ export function createCalendarioView(deps) {
         state.draftNote = '';
         state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
         // The return skips the prefill after the search: fill the form here,
-        // the finally below paints it.
-        state.draftFill = draft;
+        // the finally below paints it. The outsider name never fills
+        // «Persona del team» (production after #735): the field stays empty,
+        // or keeps the person the operator had already chosen.
+        const withoutPerson = { ...draft };
+        delete withoutPerson.teamMemberId;
+        state.draftFill = withoutPerson;
         return;
       }
       const searchIds = memberIds.length > 0 ? memberIds : [member];

@@ -2862,9 +2862,11 @@ test('no known team keeps the plain person field', async () => {
   assert.equal(payload(proposes[0]).teamMemberId, 'marco');
 });
 
-// Fetta 9: a phrase draft naming someone outside the known team keeps the
-// typed field prefilled, so nothing the AI named is lost.
-test('a draft outsider keeps the typed person field', async () => {
+// Fetta 9, superseded after #735 (production 10/11, supervisor): a phrase
+// draft naming someone outside the read team roster never prefills
+// «Persona del team» — the choice stays among the team, empty, and the card
+// says the name is not in the team.
+test('a draft outsider leaves the team choice empty', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -2886,17 +2888,17 @@ test('a draft outsider keeps the typed person field', async () => {
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'an outsider is not forced into the choice');
-  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
-  assert.ok(field, 'the typed field keeps the drafted person');
-  assert.equal(field.value, 'marco');
+  const choice = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(choice, 'the person stays a choice among the team');
+  assert.equal(choice.value, '', 'the outsider name never fills it');
+  assert.ok(mount.textContent.includes('marco non è nel team'), 'the card says why');
 });
 
-// Fetta 10 (P2 di #481): a phrase draft naming an outsider wins over a
-// previous known choice. Before the fix the kept choice ('sara') decided the
-// control, the draft id ('marco') was assigned to a select with no matching
-// option, the browser cleared it, and the snapshot saved an empty person.
-test('a draft outsider wins over a previous known choice', async () => {
+// Fetta 10 (P2 di #481) protected the drafted outsider from a select that
+// cleared it. Superseded after #735 (production 10/11, supervisor): with the
+// team roster read, a name outside it never replaces the person the operator
+// already chose — the choice stays and the claim books it.
+test('a previous known choice stays over a draft outsider', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -2924,10 +2926,9 @@ test('a draft outsider wins over a previous known choice', async () => {
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'the outsider draft leaves the choice');
-  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
-  assert.ok(field, 'the typed field keeps the drafted outsider');
-  assert.equal(field.value, 'marco', 'the drafted identity is not lost');
+  const choice = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(choice, 'the person stays a choice among the team');
+  assert.equal(choice.value, 'sara', 'the operator choice stays');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   const form = byName();
   form.serviceKey.value = 'taglio';
@@ -2939,7 +2940,7 @@ test('a draft outsider wins over a previous known choice', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
-  assert.equal(payload(proposes[0]).teamMemberId, 'marco', 'the claim carries the drafted person');
+  assert.equal(payload(proposes[0]).teamMemberId, 'sara', 'the claim books the chosen person, never the outsider name');
 });
 
 // Fetta 9 (C22): the service label names no technical concept.
