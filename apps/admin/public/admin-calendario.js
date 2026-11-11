@@ -1168,6 +1168,12 @@ export function createCalendarioView(deps) {
   /** Guards the phrase search and its read-back: a newer search or a route away stops the old one. */
   let phraseSeq = 0;
   let renderToken = 0;
+  /**
+   * Bumps only when the operator leaves the Calendario (invalidate), never
+   * on a week reload: a write in flight survives «Mostra settimana» and
+   * still lands its outcome (review #781).
+   */
+  let viewToken = 0;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
   /**
@@ -1191,6 +1197,7 @@ export function createCalendarioView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    viewToken += 1;
     phraseSeq += 1;
     // The search in flight is dropped with the route (review #664): the
     // card comes back idle, never wedged on «Sto cercando…».
@@ -3289,7 +3296,9 @@ export function createCalendarioView(deps) {
    */
   async function submitCancel(row) {
     if (state.cancelBusy) return;
-    const token = renderToken;
+    // The view generation, not the render token: a week reload during the
+    // request is no route away (review #781).
+    const token = viewToken;
     const id = String(row?.id ?? '');
     state.cancelBusy = true;
     state.cancelNote = '';
@@ -3317,7 +3326,7 @@ export function createCalendarioView(deps) {
     }
     // A route away during the request: the late answer never repaints the
     // next screen nor reloads a week nobody looks at.
-    if (token !== renderToken) return;
+    if (token !== viewToken) return;
     // The operator may have closed the popover or opened another event
     // meanwhile: the outcome then speaks through the toast, never inside
     // another event's popover.

@@ -1328,6 +1328,32 @@ export function createCalendarSyncOperations(options = {}) {
       if (!link) {
         const reconciled = await providerCall(calendarId, 'findByAccordoSourceKey',
           { calendarId, sourceKey: row.sourceKey }, GRANT_PURPOSE_READ);
+        if (row.status === 'cancelled') {
+          // backlog:5346ab531538 (review #781): a cancelled row is never
+          // exported as an active event. An event an earlier export left
+          // without its link is cancelled first, then linked with the
+          // cancelled fingerprint; with nothing on Google there is nothing
+          // to converge and nothing is written anywhere.
+          if (!reconciled) {
+            return { status: 'noop', sourceKey: row.sourceKey, reason: 'cancelled before any export: nothing to create on Google' };
+          }
+          const pushed = reconciled.status === 'cancelled'
+            ? reconciled
+            : await providerCall(calendarId, 'cancelEvent', { calendarId, eventId: reconciled.id }, GRANT_PURPOSE_WRITE);
+          await storeLink({
+            linkKey: linkKeyFor(calendarId, reconciled.id),
+            calendarId,
+            googleEventId: linkKeyFor(calendarId, reconciled.id),
+            appointmentSourceKey: row.sourceKey,
+            appointmentId: row.id,
+            googleUpdated: pushed?.updated ?? reconciled.updated,
+            localFingerprint: appointmentFingerprint(row),
+            revision: 0,
+            conflictNote: null,
+            pendingRemote: null,
+          }, who);
+          return { status: 'pushed', eventId: reconciled.id, sourceKey: row.sourceKey, change: 'cancelled', healed: true };
+        }
         if (reconciled) {
           await storeLink({
             linkKey: linkKeyFor(calendarId, reconciled.id),

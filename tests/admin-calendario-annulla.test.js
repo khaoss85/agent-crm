@@ -298,3 +298,34 @@ test('annulla: the pure helpers', () => {
   assert.match(cancelRefusalText({ code: 'APPOINTMENTS_INVALID_STATE' }) ?? '', /già chiuso/);
   assert.equal(cancelRefusalText({ code: 'SOMETHING_ELSE', status: 500 }), null);
 });
+
+test('annulla: a week reload during the cancel still lands its outcome (review #781)', async () => {
+  const { mount, client, toasts } = await openWeek({ cancel: 'hold' });
+  const box = await askCancel(mount, 'p1');
+  action(box, 'cancel-yes').dispatch('click');
+  await settle(2);
+  // «Mostra settimana» while the cancellation is in flight: a reload, not a
+  // route away.
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  client.held.forEach((release) => release());
+  await settle();
+  assert.equal(popover(mount), null, 'the popover closes on success');
+  assert.equal(eventButton(mount, 'p1'), null, 'the cancelled booking leaves the grid');
+  assert.deepEqual(toasts, [{ message: 'Appuntamento annullato.', error: false }]);
+});
+
+test('annulla: leaving the Calendario during the cancel never repaints the next screen', async () => {
+  const { mount, client, toasts, view } = await openWeek({ cancel: 'hold' });
+  const box = await askCancel(mount, 'p1');
+  action(box, 'cancel-yes').dispatch('click');
+  await settle(2);
+  view.invalidate();
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const other = createFakeDocument().createElement('div');
+  mount.appendChild(other);
+  client.held.forEach((release) => release());
+  await settle();
+  assert.equal(mount.firstChild, other, 'the next screen stays mounted');
+  assert.deepEqual(toasts, [], 'no toast for a screen the operator left');
+});
