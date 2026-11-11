@@ -303,7 +303,7 @@ test('full screen: elenco, dettaglio with passi, double-ask activate posts once'
   const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
   mount.querySelector('button[data-action="activate"]').dispatch('click', {});
   await flush();
-  assert.ok(mount.textContent.includes('Attivare questa sequenza?'));
+  assert.ok(mount.textContent.includes('Avviare questa sequenza?'));
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore);
   mount.querySelector('button[data-confirm="activate"]').dispatch('click', {});
   await flush();
@@ -442,8 +442,8 @@ test('loadSequenzeData marks availability from the contract, not from rows', asy
 test('offered write follows the state: draft and paused activate, active pauses', () => {
   assert.deepEqual(sequenzaOfferedAction('draft'), {
     action: 'activate',
-    button: 'Attiva',
-    confirm: 'Attivare questa sequenza? I passi dovuti possono partire.',
+    button: 'Avvia la sequenza',
+    confirm: 'Avviare questa sequenza? I passi dovuti possono partire.',
   });
   assert.equal(sequenzaOfferedAction('paused').button, 'Riattiva');
   assert.equal(sequenzaOfferedAction('active').button, 'Metti in pausa');
@@ -579,10 +579,10 @@ test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', as
   assert.ok(mount.textContent.includes('Si ferma quando: quando risponde'));
   assert.ok(mount.textContent.includes('In corso'));
   assert.ok(mount.textContent.includes('Risposte'));
-  assert.ok(mount.textContent.includes('Call fissate'));
-  assert.ok(mount.textContent.includes('—'), 'the call card stays an honest dash without appointments data');
+  // backlog:bd9ae1482194: no appointments read, so no «Call fissate» card.
+  assert.ok(!mount.textContent.includes('Call fissate'), 'a KPI with no read behind it is left out');
   const cards = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('metric'));
-  assert.equal(cards.length, 3, 'the dettaglio paints the 3 KPI cards with the Reporting classes');
+  assert.equal(cards.length, 2, 'the dettaglio paints the KPI cards it can count, with the Reporting classes');
   for (const card of cards) {
     const kids = card.childNodes ?? [];
     assert.equal(kids.length, 3, 'each KPI card is label + big number + a line below');
@@ -591,7 +591,7 @@ test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', as
     assert.equal(String(kids[2].tagName ?? '').toLowerCase(), 'span');
   }
   assert.ok(mount.textContent.includes('persone dentro adesso'));
-  assert.ok(mount.textContent.includes('non lette in questa vista'), 'the dash card says why it has no number');
+  assert.ok(!mount.textContent.includes('non lette in questa vista'), 'no technical reason on screen');
   assert.ok(mount.textContent.includes(
     'Con «Inviare risposte senza approvazione» spento, ogni messaggio della sequenza aspetta il tuo ok prima di partire.',
   ));
@@ -1023,6 +1023,68 @@ test('Bozza wears the same ui-* chip class in elenco and dettaglio (backlog:05e5
   const chipClasses = (node) => String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
   const listClasses = chipClasses(listChip);
   assert.ok(listClasses.includes('ui-chip'), 'the elenco chip uses the system chip');
-  assert.ok(listClasses.includes('ui-chip-wa'), 'the elenco chip uses the prototype tint');
+  assert.ok(listClasses.includes('ui-chip-plain'), 'Bozza wears the neutral system chip (backlog:bd9ae1482194)');
+  assert.ok(!listClasses.includes('ui-chip-wa'), 'Bozza never wears the WhatsApp tint');
   assert.deepEqual(chipClasses(detailChip), listClasses, 'the dettaglio paints the same chip class as the elenco');
+});
+
+// backlog:bd9ae1482194 (verifica browser 11/11 sulla produzione): the
+// dettaglio of a Bozza read as two states at once («Bozza» beside «Attiva»),
+// the Bozza chip wore the WhatsApp green, and a KPI card said «non lette in
+// questa vista».
+const bd9DetailFor = (status) => {
+  const detail = buildSequenzaDettaglio({
+    sequence: { ...SEQUENCE, status },
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  return renderSequenzaDettaglio(createFakeDocument(), detail, null, () => {}, () => {}, () => {}, false);
+};
+
+test('backlog:bd9ae1482194: a Bozza shows no «Attiva» beside its chip, and can still be started', () => {
+  const root = bd9DetailFor('draft');
+  const head = root.querySelector('.bo-seq-headcard');
+  assert.ok(head.textContent.includes('Bozza'), 'the chip says Bozza');
+  assert.doesNotMatch(head.textContent, /\bAttiva\b/, 'no «Attiva» word beside the Bozza chip');
+  const start = root.querySelector('button[data-action="activate"]');
+  assert.ok(start, 'the draft can still be started');
+  assert.equal(start.textContent, 'Avvia la sequenza');
+  // The other states keep their words.
+  assert.equal(bd9DetailFor('paused').querySelector('button[data-action="activate"]').textContent, 'Riattiva');
+  assert.equal(bd9DetailFor('active').querySelector('button[data-action="pause"]').textContent, 'Metti in pausa');
+});
+
+test('backlog:bd9ae1482194: the dettaglio has no «non lette in questa vista» line', () => {
+  for (const status of ['draft', 'active', 'paused']) {
+    const text = bd9DetailFor(status).textContent;
+    assert.ok(!text.includes('non lette in questa vista'), `no technical reason on a ${status} sequence`);
+    assert.ok(!text.includes('Call fissate'), 'a KPI with no read behind it is left out');
+    assert.ok(text.includes('In corso') && text.includes('Risposte'), 'the counted KPIs stay');
+  }
+});
+
+test('backlog:bd9ae1482194: the Bozza chip is the neutral ui-chip-plain, and styles.css lets the class pick the tint', async () => {
+  const chipClasses = (node) => String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  const doc = createFakeDocument();
+  const listChip = renderSequenzeElenco(doc, [SEQUENCE], ENROLLMENTS, SENDS, '', () => {}).querySelector('.bo-seq-status');
+  const detailChip = bd9DetailFor('draft').querySelector('.bo-seq-status');
+  for (const chip of [listChip, detailChip]) {
+    assert.equal(chip.textContent, 'Bozza');
+    assert.ok(chipClasses(chip).includes('ui-chip-plain'), 'Bozza is neutral ink');
+    assert.ok(!chipClasses(chip).includes('ui-chip-wa'), 'never the WhatsApp tint');
+  }
+  assert.deepEqual(chipClasses(detailChip), chipClasses(listChip), 'elenco and dettaglio share one class (backlog:05e53e77)');
+  // The rule that sized the chip also painted it green over any ui-chip-*
+  // class (higher specificity): the tint must come from the class alone.
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const rules = [...css.matchAll(/([^{}]*\.bo-seq-status[^{}]*)\{([^}]*)\}/g)];
+  assert.ok(rules.length > 0, 'styles.css sizes the sequence chip');
+  for (const [, selector, body] of rules) {
+    if (/\[data-|ui-chip-/.test(selector)) continue;
+    assert.doesNotMatch(body, /(^|;|\s)(background|color)\s*:/, `${selector.trim()} must not paint the chip`);
+  }
+  assert.match(css, /\.ui-chip-plain\s*\{[^}]*background:\s*var\(--surface-soft\)/, 'ui-chip-plain is the neutral system chip');
 });

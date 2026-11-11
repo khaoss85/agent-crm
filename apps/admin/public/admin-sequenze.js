@@ -45,13 +45,16 @@ export const SEQUENCE_STATUS_LABEL = Object.freeze({
 
 /**
  * The state chip the elenco and the dettaglio share (supervisor
- * 2026-11-07.md:46: live paints Bozza green in the list and blue in the
- * detail). DECISION (to be confirmed): keep the elenco's green — the
- * dettaglio's blue duplicates the adjacent «Parte quando» trigger pill, so
- * the list side is the prototype side. One constant, one system tint, so a
- * supervisor verdict the other way is a one-token change.
+ * 2026-11-07.md:46, backlog:05e53e77: one class on both sides). The tint
+ * follows the state (backlog:bd9ae1482194, verifica 11/11): a Bozza is
+ * neutral ink, `ui-chip-plain`, never the WhatsApp green it wore before —
+ * the styles.css note on Sequenze says «draft is ink». Active and paused
+ * keep the accent tint they had.
+ * @param {unknown} status
  */
-const SEQUENCE_STATUS_CHIP_CLASS = 'bo-seq-status ui-chip ui-chip-wa';
+export function sequenceStatusChipClass(status) {
+  return `bo-seq-status ui-chip ${status === 'draft' ? 'ui-chip-plain' : 'ui-chip-wa'}`;
+}
 
 /** Enrollment states in the order the package publishes them. */
 export const ENROLLMENT_STATUS_LABEL = Object.freeze({
@@ -442,7 +445,8 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFaile
   // The prototype's 3 KPI cards: `In corso` (active enrollments) and
   // `Risposte` (stopped at the first reply) counted from the rows just
   // read; `Call fissate` belongs to the appointments package, which this
-  // view cannot read, so it stays an honest dash — never invented.
+  // view cannot read, so it stays null and the dettaglio leaves that
+  // card out (backlog:bd9ae1482194) — never invented.
   const kpi = Object.freeze({
     inCorso: byStatus.get('active') ?? 0,
     risposte: byStatus.get('stopped-replied') ?? 0,
@@ -606,7 +610,9 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
  * @param {unknown} status
  */
 export function sequenzaOfferedAction(status) {
-  if (status === 'draft') return Object.freeze({ action: 'activate', button: 'Attiva', confirm: 'Attivare questa sequenza? I passi dovuti possono partire.' });
+  // backlog:bd9ae1482194: a Bozza offers «Avvia la sequenza», not «Attiva»
+  // — beside the Bozza chip the bare word read as a second state.
+  if (status === 'draft') return Object.freeze({ action: 'activate', button: 'Avvia la sequenza', confirm: 'Avviare questa sequenza? I passi dovuti possono partire.' });
   if (status === 'paused') return Object.freeze({ action: 'activate', button: 'Riattiva', confirm: 'Riattivare questa sequenza? I passi dovuti possono partire.' });
   if (status === 'active') return Object.freeze({ action: 'pause', button: 'Metti in pausa', confirm: 'Mettere in pausa? Non parte più niente finché non la riattivi.' });
   return null;
@@ -646,7 +652,7 @@ export function renderSequenzeElenco(doc, sequences, enrollments, sends, selecte
     if (row.sourceKey !== '' && row.sourceKey === selectedKey) item.setAttribute('data-selected', 'true');
     const head = el(doc, 'div', 'bo-seq-head');
     head.appendChild(el(doc, 'p', 'bo-seq-name', row.name));
-    head.appendChild(el(doc, 'p', SEQUENCE_STATUS_CHIP_CLASS, row.statusLabel));
+    head.appendChild(el(doc, 'p', sequenceStatusChipClass(row.status), row.statusLabel));
     item.appendChild(head);
     item.appendChild(el(doc, 'p', 'bo-seq-quando', row.quando));
     item.appendChild(el(doc, 'p', 'bo-seq-stats', row.stats));
@@ -680,7 +686,7 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
   const headCard = el(doc, 'div', 'bo-seq-card bo-seq-headcard');
   const headText = el(doc, 'div', 'bo-seq-headtext');
   headText.appendChild(el(doc, 'h3', undefined, detail.name));
-  headText.appendChild(el(doc, 'p', SEQUENCE_STATUS_CHIP_CLASS, detail.statusLabel));
+  headText.appendChild(el(doc, 'p', sequenceStatusChipClass(detail.status), detail.statusLabel));
   const pills = el(doc, 'div', 'bo-seq-pills');
   pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-trigger', detail.pills.trigger));
   pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-stop', detail.pills.stop));
@@ -711,20 +717,21 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
       headActions.appendChild(button);
     }
   }
-  // The prototype's 3 KPI cards under the detail, dressed like Reporting
+  // The prototype's KPI cards under the detail, dressed like Reporting
   // (owner 31/10): the same `metrics`/`metric` classes, the big number and a
-  // line below. `Call fissate` has no appointments read behind it, so it
-  // stays a dash with the reason said out loud — never invented.
+  // line below. A card with no read behind it is left out
+  // (backlog:bd9ae1482194): `Call fissate` has no appointments read yet, so
+  // it does not show — never a dash with a technical reason, never invented.
   const kpi = el(doc, 'div', 'metrics');
   const kpiCards = [
     ['In corso', detail.metrics.kpi.inCorso, 'persone dentro adesso'],
     ['Risposte', detail.metrics.kpi.risposte, 'ferme alla prima risposta'],
-    ['Call fissate', detail.metrics.kpi.callFissate, 'non lette in questa vista'],
-  ];
+    ['Call fissate', detail.metrics.kpi.callFissate, 'nate da questa sequenza'],
+  ].filter(([, value]) => value !== null && value !== undefined);
   for (const [label, value, sub] of kpiCards) {
     const card = el(doc, 'div', 'metric');
     card.appendChild(el(doc, 'span', undefined, label));
-    card.appendChild(el(doc, 'strong', undefined, value === null || value === undefined ? '—' : String(value)));
+    card.appendChild(el(doc, 'strong', undefined, String(value)));
     card.appendChild(el(doc, 'span', undefined, sub));
     kpi.appendChild(card);
   }

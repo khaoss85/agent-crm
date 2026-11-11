@@ -328,7 +328,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('sequenze', {
     rows: 2, names: ['Bentornato in palestra', 'Promemoria appuntamento'],
     detail: 'Bentornato in palestra', steps: 2, firstDay: 'Subito',
-    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Attivare questa sequenza?',
+    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Avviare questa sequenza?',
   }));
   assert.doesNotThrow(() => assertProbe('reporting', { kpis: 3 }));
   assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 2, toConnect: 7 }));
