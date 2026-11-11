@@ -17,6 +17,7 @@ import {
   humanizeLabel,
   hasCapability,
   humanReadError,
+  humanWriteError,
   isNotComposedFailure,
   isUnsupportedContractFailure,
 } from './admin-core.js';
@@ -111,6 +112,18 @@ export function selectedProductTotal(picks) {
 }
 
 /**
+ * Voce 0c9a27bb: integer cents for the Valore field in the Italian screen
+ * form (`149,00`), never a float and never a dot: `parseEuroToCents` reads
+ * this back, and the same comma rule paints every other amount.
+ * @param {number} cents
+ */
+export function centsToEuroField(cents) {
+  const whole = String(Math.floor(cents / 100));
+  const rest = String(cents % 100).padStart(2, '0');
+  return `${whole},${rest}`;
+}
+
+/**
  * Voce 0c9a27bb: the display names of the ticked catalog offers, joined for
  * the offer title (`Pacchetto 10 lezioni`, or `A + B` when two are ticked).
  * An unticked or nameless selection reads as no title, never a raw id.
@@ -159,11 +172,13 @@ export function quoteLineInputs(picks) {
  * lines of the offer's quote, so the detail never reads «Ancora nessun
  * preventivo» over chosen products. The offer rows stay authoritative: each
  * chosen offer is re-read for its price book, and one draft quote opens on
- * their single shared book before the lines file. Writes carry derived keys
- * of the offer's own submission key, so a retry replays instead of filing
- * twice, like the offer write itself. Mixed books or an unreadable offer
- * refuse with a named error — the offer stays filed, and the caller says so.
- * @param {{request: (path: string, options?: any) => Promise<any>}} client a mutation-capable (bound) client
+ * their single shared book before the lines file. `client` routes every
+ * write through the caller's submission controller (idempotency slots ride
+ * in `options.idempotencySlot`, one per write, so a retry replays instead
+ * of filing twice, like the offer write itself). Mixed books or an
+ * unreadable offer refuse with a named error — the offer stays filed, and
+ * the caller says so.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client reads open; writes go through the caller's submission controller
  */
 export async function fileQuoteWithLines(client, { opportunityId, lines, keyPrefix }) {
   if (!Array.isArray(lines) || lines.length === 0) return null;
@@ -176,7 +191,7 @@ export async function fileQuoteWithLines(client, { opportunityId, lines, keyPref
   }
   const created = await client.request(
     `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
-    { method: 'POST', idempotencyKey: `${keyPrefix}-quote`, body: JSON.stringify({ priceBookId: bookIds[0] }) },
+    { method: 'POST', idempotencySlot: `${keyPrefix}-quote`, body: JSON.stringify({ priceBookId: bookIds[0] }) },
   );
   const quoteId = created?.result?.quote?.id;
   if (typeof quoteId !== 'string' || quoteId === '') {
@@ -188,7 +203,7 @@ export async function fileQuoteWithLines(client, { opportunityId, lines, keyPref
       `/api/modules/quote/records/${encodeURIComponent(quoteId)}/actions/add-line`,
       {
         method: 'POST',
-        idempotencyKey: `${keyPrefix}-line-${line.offerId}`,
+        idempotencySlot: `${keyPrefix}-line-${line.offerId}`,
         body: JSON.stringify({ offerId: line.offerId, quantity: line.quantity }),
       },
     );
@@ -444,7 +459,7 @@ export function createModuleAdmin(deps) {
       fieldErrors[name] = errorNode;
     };
     addField('title', 'Titolo', { placeholder: 'es. Pacchetto 10 ingressi', required: true });
-    addField('value', 'Valore EUR', { placeholder: 'es. 250.00', required: true });
+    addField('value', 'Valore EUR', { placeholder: 'es. 250,00', required: true });
     addField('expiry', 'Scadenza', { type: 'date' });
     addField('owner', 'Referente', { placeholder: 'Chi la segue', required: true });
 
@@ -554,7 +569,7 @@ export function createModuleAdmin(deps) {
           }));
           if (qtyInput !== null) row.appendChild(qtyInput);
           section.appendChild(row);
-          productPicks.push({ offer, checkbox, qtyInput });
+          productPicks.push({ offer, productName: product?.name, checkbox, qtyInput });
         }
       }
       if (tickable === 0) {
@@ -568,7 +583,17 @@ export function createModuleAdmin(deps) {
         const useTotal = el(doc, 'button', {
           class: 'small secondary', text: 'Usa il totale', attrs: { type: 'button', 'data-action': 'use-product-total' },
         });
+        // Voce 0c9a27bb: the ticked products name the offer. A hand-typed
+        // title is never touched: only an empty title, or one still showing
+        // the previous automatic fill, follows the selection.
+        let lastAutoTitle = '';
         const refreshTotal = () => {
+          const autoTitle = pickedOfferTitle(productPicks);
+          const currentTitle = String(inputs.title.value ?? '');
+          if (currentTitle === '' || currentTitle === lastAutoTitle) {
+            inputs.title.value = autoTitle;
+            lastAutoTitle = autoTitle;
+          }
           const total = selectedProductTotal(productPicks);
           if (total === null) {
             totalLine.textContent = 'Totale prodotti: nessun prodotto scelto.';
@@ -590,7 +615,7 @@ export function createModuleAdmin(deps) {
             refreshTotal();
             return;
           }
-          inputs.value.value = (total.total / 100).toFixed(2);
+          inputs.value.value = centsToEuroField(total.total);
           refreshTotal();
         });
         section.appendChild(useTotal);
@@ -671,11 +696,23 @@ export function createModuleAdmin(deps) {
       /** @type {Record<string, string>} */
       const failures = {};
       if (title === '') failures.title = 'Il titolo è obbligatorio.';
-      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250.00).';
+      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250,00).';
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
         showErrors(failures);
+        return;
+      }
+      // Voce 0c9a27bb: the ticked rows must file honestly as quote lines, so
+      // their quantities are validated before any write — a bad quantity
+      // refuses with the offer still unfiled.
+      const picked = quoteLineInputs(productPicks);
+      if (picked !== null && picked.error === 'qty') {
+        showErrors({}, 'Una quantit\u00e0 non \u00e8 valida: scrivi un intero da 1 in su.');
+        return;
+      }
+      if (picked !== null && picked.error === 'offer') {
+        showErrors({}, 'Un prodotto scelto non si pu\u00f2 archiviare: ricarica la pagina e riprova.');
         return;
       }
       setBusy(true);
@@ -683,6 +720,9 @@ export function createModuleAdmin(deps) {
         // Through the view's submission controller like every other write:
         // the raw client refuses a mutation without a submission-owned key
         // before any request leaves (production 04/11, same class as #581).
+        // The keys stay on the form until the quote lines are filed too, so
+        // a retry after a half-filed quote replays instead of doubling.
+        const submissionKey = form.__submissionKey ?? (form.__submissionKey = submissions.issueKey());
         const created = await submissions.submit({
           path: '/api/opportunities',
           method: 'POST',
@@ -695,9 +735,32 @@ export function createModuleAdmin(deps) {
             ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
             owner,
           },
-          key: form.__submissionKey ?? (form.__submissionKey = submissions.issueKey()),
+          key: submissionKey,
         });
+        if (picked !== null) {
+          const opportunityId = created?.result?.id ?? created?.id;
+          const quoteKeys = (form.__quoteKeys ??= {});
+          const filingClient = {
+            request: (path, options = {}) => {
+              const method = String(options.method ?? 'GET').toUpperCase();
+              if (method === 'GET') return client.request(path, options);
+              const body = typeof options.body === 'string' ? JSON.parse(options.body) : (options.body ?? {});
+              const slot = typeof options.idempotencySlot === 'string' ? options.idempotencySlot : `${method} ${path}`;
+              return submissions.submit({
+                path, method, body, key: (quoteKeys[slot] ??= submissions.issueKey()),
+              });
+            },
+          };
+          try {
+            await fileQuoteWithLines(filingClient, { opportunityId, lines: picked.lines, keyPrefix: submissionKey });
+          } catch (quoteError) {
+            setBusy(false);
+            showErrors({}, `Offerta creata, ma il preventivo non si \u00e8 compilato (${humanWriteError(quoteError, { failed: 'il server non ha risposto' })}). Premi di nuovo Crea offerta per riprovare.`);
+            return null;
+          }
+        }
         form.__submissionKey = undefined;
+        form.__quoteKeys = undefined;
         toast('Offerta creata');
         navigate('#/pipelines/accordo-sales');
         return created;

@@ -219,6 +219,9 @@ footer { display: flex; justify-content: space-between; color: var(--dim); font-
 .field-row input[type="text"], .field-row input[type="number"], .field-row input[type="email"], .field-row select {
   padding: 12px; border: 1px solid var(--line); border-radius: 9px; font: inherit; width: 100%; background: var(--surface); color: var(--ink);
 }
+/* Voce 0c9a27bb: placeholders read as placeholders (dim), never as typed
+ * text in ink color — same rule the bo-* screens already paint. */
+.field-row input::placeholder { color: var(--dim); opacity: 1; }
 .field-row input[type="checkbox"] { width: 18px; height: 18px; }
 .field-row .hint { color: var(--dim); font-size: 12px; }
 .field-error { color: var(--danger); font-size: 12px; }

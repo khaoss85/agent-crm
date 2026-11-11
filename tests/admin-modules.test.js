@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
-import { createModuleAdmin } from '../apps/admin/public/admin-modules.js';
+import {
+  createModuleAdmin, centsToEuroField, pickedOfferTitle, quoteLineInputs, fileQuoteWithLines,
+} from '../apps/admin/public/admin-modules.js';
 import { writePendingCustomerPick, takePendingCustomerPick } from '../apps/admin/public/admin-prefill.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { NotFoundError, ValidationError, ConflictError } from '../packages/core/src/errors.js';
@@ -709,7 +711,7 @@ test('96e7b579: ticked catalog products total into Valore and file the offer', a
   unit.checkbox.checked = true;
   unit.qtyInput.value = '2';
   form.__useTotal();
-  assert.equal(form.__inputs.value.value, '149.00', 'flat once plus per-unit times quantity');
+  assert.equal(form.__inputs.value.value, '149,00', 'flat once plus per-unit times quantity, comma decimals');
   form.__inputs.company.value = company.id;
   form.__inputs.title.value = 'Pacchetto 10 ingressi';
   form.__inputs.owner.value = 'elena';
@@ -792,4 +794,267 @@ test('96e7b579: mixed-currency products refuse instead of filing', async (t) => 
   await form.__submit({ preventDefault() {} });
   assert.ok(mount.textContent.includes('valute diverse'), 'a mixed selection refuses honestly');
   assert.equal(app.services.opportunities.list({ companyId: company.id }).length, 0, 'no write on a mixed selection');
+});
+
+// Voce 0c9a27bb: il prodotto scelto in «Nuova offerta» diventa la riga del
+// preventivo dell'offerta. Prima i puri, poi la vista con un client finto:
+// il titolo si compila da solo, il submit archivia offerta + preventivo.
+test('0c9a27bb: pickedOfferTitle names the ticked offers, never a raw id', () => {
+  assert.equal(pickedOfferTitle([]), '', 'nothing ticked reads as no title');
+  assert.equal(
+    pickedOfferTitle([{ checkbox: { checked: false }, offer: { name: 'Pacchetto' } }]),
+    '',
+    'an unticked row names nothing',
+  );
+  assert.equal(
+    pickedOfferTitle([{ checkbox: { checked: true }, offer: { name: '  Pacchetto 10 lezioni  ' } }]),
+    'Pacchetto 10 lezioni',
+    'the ticked name is trimmed',
+  );
+  assert.equal(
+    pickedOfferTitle([
+      { checkbox: { checked: true }, offer: { name: 'Pacchetto 10 lezioni' } },
+      { checkbox: { checked: true }, offer: { name: '' }, productName: 'Ingresso singolo' },
+      { checkbox: { checked: true }, offer: {} },
+    ]),
+    'Pacchetto 10 lezioni + Ingresso singolo',
+    'nameless rows fall back to the product, never to an id',
+  );
+});
+
+test('0c9a27bb: centsToEuroField writes the comma form with integer math', () => {
+  assert.equal(centsToEuroField(1500), '15,00', 'the acceptance example');
+  assert.equal(centsToEuroField(14900), '149,00', 'what Usa il totale writes');
+  assert.equal(centsToEuroField(120000), '1200,00', 'no float, no dot');
+});
+
+test('0c9a27bb: quoteLineInputs files one line per ticked offer', () => {
+  assert.equal(quoteLineInputs([]), null, 'nothing ticked files nothing');
+  assert.equal(quoteLineInputs([{ checkbox: { checked: false } }]), null, 'unticked files nothing');
+  assert.deepEqual(
+    quoteLineInputs([
+      { checkbox: { checked: true }, offer: { offerId: 'o-flat' }, qtyInput: null },
+      { checkbox: { checked: true }, offer: { offerId: 'o-unit' }, qtyInput: { value: '2' } },
+    ]),
+    { lines: [{ offerId: 'o-flat', quantity: 1 }, { offerId: 'o-unit', quantity: 2 }] },
+    'flat fees file once, per-unit multiply',
+  );
+  assert.deepEqual(
+    quoteLineInputs([{ checkbox: { checked: true }, offer: { offerId: 'o' }, qtyInput: { value: '0' } }]),
+    { error: 'qty' },
+    'a zero quantity cannot file',
+  );
+  assert.deepEqual(
+    quoteLineInputs([{ checkbox: { checked: true }, offer: { offerId: 'o' }, qtyInput: { value: 'tante' } }]),
+    { error: 'qty' },
+    'a written-out quantity cannot file',
+  );
+  assert.deepEqual(
+    quoteLineInputs([{ checkbox: { checked: true }, offer: {}, qtyInput: null }]),
+    { error: 'offer' },
+    'a row without an offer id cannot file',
+  );
+});
+
+function quoteFilingClient({ books = { 'o-flat': 'pb1', 'o-unit': 'pb1' } } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if ((options.method ?? 'GET') === 'GET') {
+        const id = decodeURIComponent(String(path).split('/').pop());
+        if (!Object.hasOwn(books, id)) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return { id, priceBookId: books[id] };
+      }
+      if (String(path).endsWith('/actions/create-quote')) return { ok: true, result: { quote: { id: 'q1' } } };
+      if (String(path).endsWith('/actions/add-line')) return { ok: true, result: { line: { id: 'l1' } } };
+      throw new Error(`unexpected write ${path}`);
+    },
+  };
+}
+
+test('0c9a27bb: fileQuoteWithLines opens one quote on the shared book and files the lines', async () => {
+  const client = quoteFilingClient();
+  const filed = await fileQuoteWithLines(client, {
+    opportunityId: 'opp-1',
+    lines: [{ offerId: 'o-flat', quantity: 1 }, { offerId: 'o-unit', quantity: 2 }],
+    keyPrefix: 'k',
+  });
+  assert.deepEqual(filed, { quoteId: 'q1' }, 'the filed quote id comes back');
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 3, 'one quote plus two lines');
+  assert.ok(posts[0].path.endsWith('/api/modules/opportunity/records/opp-1/actions/create-quote'), 'the quote opens on the offer');
+  assert.deepEqual(JSON.parse(posts[0].body), { priceBookId: 'pb1' }, 'the shared book prices the quote');
+  assert.deepEqual(JSON.parse(posts[1].body), { offerId: 'o-flat', quantity: 1 }, 'the flat fee files once');
+  assert.deepEqual(JSON.parse(posts[2].body), { offerId: 'o-unit', quantity: 2 }, 'the per-unit line keeps its quantity');
+});
+
+test('0c9a27bb: fileQuoteWithLines refuses mixed price books before any write', async () => {
+  const client = quoteFilingClient({ books: { 'o-a': 'pb1', 'o-b': 'pb2' } });
+  await assert.rejects(
+    fileQuoteWithLines(client, {
+      opportunityId: 'opp-1',
+      lines: [{ offerId: 'o-a', quantity: 1 }, { offerId: 'o-b', quantity: 1 }],
+      keyPrefix: 'k',
+    }),
+    (error) => error.code === 'QUOTE_BOOKS_MISMATCH',
+    'mixed books refuse with a named error',
+  );
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'no write on mixed books');
+});
+
+test('0c9a27bb: fileQuoteWithLines files nothing without lines', async () => {
+  const client = quoteFilingClient();
+  assert.equal(
+    await fileQuoteWithLines(client, { opportunityId: 'opp-1', lines: [], keyPrefix: 'k' }),
+    null,
+    'nothing ticked files nothing',
+  );
+  assert.equal(client.calls.length, 0, 'no read and no write without lines');
+});
+
+// The view double: catalog plus the offer/quote writes, gated like the real
+// client (a write without the submission key dies here, as live).
+function quoteFilingStub({ client = quoteFilingClient() } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (String(path).startsWith('/api/catalog/products')) return CATALOG_FLAT;
+      if (String(path).startsWith('/api/modules/offer/records/')) return client.request(path);
+      if (String(path) === '/api/opportunities' && (options.method ?? 'GET') === 'POST') return { id: 'opp-1' };
+      if (String(path).endsWith('/actions/create-quote')) return client.request(path, options);
+      if (String(path).endsWith('/actions/add-line')) return client.request(path, options);
+      throw new Error(`unexpected request ${options.method ?? 'GET'} ${path}`);
+    },
+  };
+}
+
+test('0c9a27bb: ticking a catalog product fills the title, a hand-typed title stays', async () => {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'company', id: 'c1', name: 'Palestra Esempio',
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const admin = createModuleAdmin({
+    doc, mount, client: quoteFilingStub(), navigate: () => {}, toast: () => {}, storage,
+  });
+  const form = await admin.renderNew('opportunity');
+  const [flat, unit] = form.__productPicks;
+
+  flat.checkbox.checked = true;
+  flat.checkbox.dispatch('change');
+  assert.equal(form.__inputs.title.value, 'Pacchetto 10 lezioni', 'the ticked product names the offer');
+  unit.checkbox.checked = true;
+  unit.checkbox.dispatch('change');
+  assert.equal(
+    form.__inputs.title.value,
+    'Pacchetto 10 lezioni + Ingresso singolo',
+    'two ticked products join with +',
+  );
+  form.__inputs.title.value = 'Offerta per Guido';
+  flat.checkbox.checked = false;
+  flat.checkbox.dispatch('change');
+  assert.equal(form.__inputs.title.value, 'Offerta per Guido', 'a hand-typed title is never touched');
+});
+
+test('0c9a27bb: submit files the offer and its quote lines, never an empty quote', async () => {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'company', id: 'c1', name: 'Palestra Esempio',
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const stub = quoteFilingStub();
+  const navs = [];
+  const toasts = [];
+  const admin = createModuleAdmin({
+    doc, mount, client: stub, navigate: (h) => navs.push(h), toast: (message) => toasts.push(message), storage,
+  });
+  const form = await admin.renderNew('opportunity');
+  const [flat, unit] = form.__productPicks;
+  flat.checkbox.checked = true;
+  flat.checkbox.dispatch('change');
+  unit.checkbox.checked = true;
+  unit.qtyInput.value = '2';
+  unit.checkbox.dispatch('change');
+  form.__inputs.value.value = '149,00';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+
+  const posts = stub.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 4, 'offer plus quote plus two lines');
+  assert.equal(posts[0].path, '/api/opportunities', 'the offer files first');
+  assert.equal(
+    JSON.parse(posts[0].body).name,
+    'Pacchetto 10 lezioni + Ingresso singolo',
+    'the product names file as the offer title',
+  );
+  assert.ok(posts[1].path.endsWith('/actions/create-quote'), 'one draft quote opens on the offer');
+  const lines = posts.slice(2).map((call) => JSON.parse(call.body));
+  assert.deepEqual(
+    lines,
+    [{ offerId: 'o-flat', quantity: 1 }, { offerId: 'o-unit', quantity: 2 }],
+    'every ticked product becomes a quote line',
+  );
+  assert.deepEqual(toasts, ['Offerta creata'], 'the creation toasts in Italian');
+  assert.deepEqual(navs, ['#/pipelines/accordo-sales'], 'success lands on the offers board');
+});
+
+test('0c9a27bb: a bad row quantity refuses before any write', async () => {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'company', id: 'c1', name: 'Palestra Esempio',
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const stub = quoteFilingStub();
+  const navs = [];
+  const admin = createModuleAdmin({
+    doc, mount, client: stub, navigate: (h) => navs.push(h), toast: () => {}, storage,
+  });
+  const form = await admin.renderNew('opportunity');
+  const [, unit] = form.__productPicks;
+  unit.checkbox.checked = true;
+  unit.qtyInput.value = '0';
+  form.__inputs.title.value = 'Prova';
+  form.__inputs.value.value = '15,00';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  assert.ok(mount.textContent.includes('non \u00e8 valida'), 'a bad quantity refuses honestly');
+  assert.equal(stub.calls.filter((call) => call.method === 'POST').length, 0, 'no write on a bad quantity');
+  assert.deepEqual(navs, [], 'no navigation without a filed offer');
+});
+
+test('0c9a27bb: a failed quote filing says the offer is filed and stays for a retry', async () => {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'company', id: 'c1', name: 'Palestra Esempio',
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const stub = quoteFilingStub({ client: quoteFilingClient({ books: {} }) });
+  const navs = [];
+  const admin = createModuleAdmin({
+    doc, mount, client: stub, navigate: (h) => navs.push(h), toast: () => {}, storage,
+  });
+  const form = await admin.renderNew('opportunity');
+  const [flat] = form.__productPicks;
+  flat.checkbox.checked = true;
+  flat.checkbox.dispatch('change');
+  form.__inputs.value.value = '99,00';
+  form.__inputs.owner.value = 'elena';
+  await form.__submit({ preventDefault() {} });
+  assert.ok(
+    mount.textContent.includes('Offerta creata, ma il preventivo non si \u00e8 compilato'),
+    'the half-filed offer is said out loud with a way back',
+  );
+  assert.deepEqual(navs, [], 'no silent landing on the board without the lines');
+  const posts = stub.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'only the offer filed, no quote write after the refusal');
+  assert.equal(posts[0].path, '/api/opportunities', 'the offer write stands for the retry');
 });
