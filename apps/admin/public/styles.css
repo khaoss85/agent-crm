@@ -326,8 +326,11 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-toolbar input[type="search"], .pipeline-toolbar input[type="text"] { flex: 0 1 240px; }
 .pipeline-toolbar .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
 .pipeline-toolbar .pipeline-summary { margin: 0 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
-.pipeline-board { gap: 14px; }
-.pipeline-column { min-width: 200px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
+/* backlog:930b3bc9ba24: a 1280 le cinque colonne stanno nella pagina
+   (prima 5×200 px + spazi = 1056 su 952 e la colonna Perso tagliata):
+   colonne a parti uguali, minimo 168 px; sotto quel minimo la board scorre. */
+.pipeline-board { gap: 12px; }
+.pipeline-column { flex: 1 1 0; min-width: 168px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
 .pipeline-column-header h3 { font-size: 14px; display: flex; align-items: center; gap: 8px; }
@@ -1344,6 +1347,8 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--line-soft); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
 .bo-clienti-who { min-width: 0; display: flex; flex-direction: column; }
 .bo-clienti-who a { font-size: 15px; font-weight: 700; color: var(--ink); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* backlog:930b3bc9ba24: a 1280 il nome non si taglia («UX Esplorativo 111…»): va a capo, due righe al massimo. */
+.bo-clienti-who a { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; line-height: 1.25; }
 .bo-clienti-sub { font-size: 12px; color: var(--muted); }
 .bo-clienti-fact { margin: 0; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bo-clienti-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1407,6 +1412,11 @@ select.bo-spazi-input { flex: none; }
 .cal-wrap .actions .ui-btn-cta { padding: 0 14px 0 16px; }
 .cal-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
 .cal-rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* backlog:930b3bc9ba24: fra 701 e 1400 px la colonna di sinistra si stringe
+   e la settimana prende lo spazio (a 1280 la griglia era 634 su 952). */
+@media (min-width: 701px) and (max-width: 1400px) {
+  .cal-layout { grid-template-columns: 252px minmax(0, 1fr); gap: 14px; }
+}
 .cal-main { min-width: 0; position: relative; }
 .cal-wrap .panel { box-shadow: none; border-radius: 16px; border-color: var(--line-soft); padding: 18px; }
 .cal-wrap .panel > h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: 0; }
@@ -1447,6 +1457,8 @@ select.bo-spazi-input { flex: none; }
 .cal-day-compact { display: none; }
 .cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
+.cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }
