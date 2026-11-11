@@ -489,6 +489,69 @@ test('a Chromium that only runs with --no-sandbox is used, not skipped (backlog:
   assert.ok(!String(run.stderr ?? '').includes('no runnable Chromium'), 'but it tried with --no-sandbox instead of gating out');
 });
 
+test('in CI (CI=true) without a runnable Chromium bo:shots exits non-zero and says why (backlog:cd0ad69b)', () => {
+  // The 2026-11-10/11 green-but-empty shots job: CI=true, no runnable
+  // Chromium, exit 0. In CI the same situation must be a red job.
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-ci-nochromium-'));
+  const inert = join(dir, 'not-a-browser');
+  writeFileSync(inert, 'this file is not a browser\n');
+  const out = join(dir, 'out');
+  const run = spawnSync(process.execPath, [join(root, 'scripts', 'bo-shots.js'), '--out', out, '--screen', 'login'], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    cwd: root,
+    env: { ...process.env, CI: 'true', CHROMIUM_BIN: inert, HOME: mkdtempSync(join(tmpdir(), 'bo-shots-ci-home-')) },
+  });
+  assert.notEqual(run.status, 0, `CI without Chromium must be red (stdout: ${(run.stdout ?? '').slice(-300)})`);
+  assert.match(String(run.stderr ?? ''), /no runnable Chromium found, even with --no-sandbox/, 'the failure names the cause');
+  assert.ok(!String(run.stdout ?? '').includes('Skipping'), 'never the old silent skip');
+});
+
+/**
+ * The workflow's PNG-count step, extracted from bo-shots.yml and run with
+ * bash against a given RUNNER_TEMP: the test exercises the exact shell the
+ * runner executes, not a copy.
+ */
+function runCountStep(runnerTemp) {
+  const yml = readFileSync(join(root, '.github', 'workflows', 'bo-shots.yml'), 'utf8');
+  const match = yml.match(/- name: Count the PNGs[^\n]*\n\s+run: \|\n((?:\s{10}[^\n]*\n|\s*\n)+)/);
+  assert.ok(match, 'bo-shots.yml has the PNG count step');
+  const script = match[1].split('\n').map((line) => line.replace(/^ {10}/, '')).join('\n');
+  return spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: runnerTemp } });
+}
+
+test('the CI count step fails the shots job on zero PNGs and passes with PNGs (backlog:cd0ad69b)', () => {
+  const empty = mkdtempSync(join(tmpdir(), 'bo-shots-count-empty-'));
+  const none = runCountStep(empty);
+  assert.notEqual(none.status, 0, 'no output dir at all is red');
+  assert.match(String(none.stdout ?? ''), /produced 0 PNGs/);
+
+  mkdirSync(join(empty, 'bo-shots'));
+  writeFileSync(join(empty, 'bo-shots', 'manifest.json'), '{"shots":[]}\n');
+  const zero = runCountStep(empty);
+  assert.notEqual(zero.status, 0, 'an empty output dir (manifest, 0 PNGs) is red');
+  assert.match(String(zero.stdout ?? ''), /produced 0 PNGs/);
+
+  const full = mkdtempSync(join(tmpdir(), 'bo-shots-count-full-'));
+  mkdirSync(join(full, 'bo-shots'));
+  writeFileSync(join(full, 'bo-shots', 'login-1440.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+  const noManifest = runCountStep(full);
+  assert.notEqual(noManifest.status, 0, 'PNGs without the manifest are red');
+  writeFileSync(join(full, 'bo-shots', 'manifest.json'), '{"shots":[{}]}\n');
+  const ok = runCountStep(full);
+  assert.equal(ok.status, 0, `PNGs plus manifest pass (stdout: ${ok.stdout})`);
+  assert.match(String(ok.stdout ?? ''), /produced 1 PNG/);
+});
+
+test('the shots upload can no longer go green without its artifact (backlog:cd0ad69b)', () => {
+  const yml = readFileSync(join(root, '.github', 'workflows', 'bo-shots.yml'), 'utf8');
+  const upload = yml.slice(yml.indexOf('- name: Upload the PNGs'));
+  assert.ok(upload.includes('actions/upload-artifact@'), 'the upload step exists');
+  assert.ok(!/continue-on-error:\s*true/.test(upload), 'a failed upload turns the job red');
+  assert.match(upload, /if-no-files-found:\s*error/, 'an empty upload turns the job red');
+  assert.ok(yml.indexOf('- name: Count the PNGs') < yml.indexOf('- name: Upload the PNGs'), 'the count runs before the upload');
+});
+
 const CHROMIUM = findChromium();
 const SHOTS_SKIP = chromiumFlags(CHROMIUM) !== null
   ? false

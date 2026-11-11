@@ -1892,6 +1892,12 @@ async function main() {
     return;
   }
   server.close();
+  if (manifest.length === 0) {
+    // Zero PNGs is never a pass (backlog:cd0ad69b).
+    console.error(`bo:shots: 0 PNGs written to ${outDir}: refusing to exit 0 without screenshots.`);
+    process.exitCode = 1;
+    return;
+  }
   writeFileSync(join(outDir, 'manifest.json'), `${JSON.stringify({ generatedAt: new Date().toISOString(), shots: manifest }, null, 2)}\n`);
   console.log(`\n${manifest.length} PNG(s) in ${outDir}`);
 }
