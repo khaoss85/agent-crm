@@ -1302,3 +1302,31 @@ test('67e14a50efb6: unreadable connectors read honestly on every row, never sile
   assert.doesNotMatch(rows[0].textContent ?? '', /NOT_FOUND/, 'no technical code on the page');
   assert.equal(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).length, 0, 'no invented tiles');
 });
+
+test('67e14a50efb6 Codex P2 on #756: a failed customer count keeps the team calendar and channel tiles', async () => {
+  // Repro: /api/connectors ok (active calendar + WA) but
+  // /api/customer-data/customers 404 — the shared Promise.all discarded the
+  // good connectors and every row read «non sono attivi». Red before, green
+  // after: the rows keep the indicators, only the card statistic is omitted.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const missing = Object.assign(new Error('no listCustomers'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      fail: { customers: missing },
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /Calendario condiviso: collegato/, 'the row keeps the calendar state');
+  assert.deepEqual(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).map((node) => node.textContent), ['WA'], 'the row keeps the active channel tile');
+  assert.doesNotMatch(text(mount), /canali ·/, 'only the card statistic is omitted');
+});

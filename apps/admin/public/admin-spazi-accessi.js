@@ -640,15 +640,26 @@ export function createSpaziAccessiView(deps) {
   async function loadSpaceStat(spaceId, memberCount) {
     if (memberCount === null) return null;
     try {
-      const [channelsAnswer, customersAnswer] = await Promise.all([
+      const [channelsSettled, customersSettled] = await Promise.allSettled([
         client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
         client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
       ]);
       // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
       // the team rows tile this space's calendar and channels from the same
-      // answer — no second request, no new failure mode.
+      // answer — no second request. A failed customer count never hides the
+      // team indicators: the connectors answer survives on its own (Codex P2
+      // on #756).
+      // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
+      // the team rows tile this space's calendar and channels from the same
+      // answer — no second request. The connectors answer is stored before
+      // the customer read can fail, so a failed customer count never hides
+      // the team indicators (Codex P2 on #756).
+      if (channelsSettled.status === 'rejected') throw channelsSettled.reason;
+      const channelsAnswer = channelsSettled.value;
       const entries = Array.isArray(channelsAnswer?.connectors) ? channelsAnswer.connectors : null;
       state.spaceConns.set(spaceId, { entries, unreadable: entries === null ? 'failed' : null });
+      if (customersSettled.status === 'rejected') throw customersSettled.reason;
+      const customersAnswer = customersSettled.value;
       return formatSpaceStat({
         channels: countSpaceChannels(channelsAnswer),
         members: memberCount,
@@ -671,10 +682,15 @@ export function createSpaziAccessiView(deps) {
       // backlog:67e14a50efb6: the team rows read this too — a 404 (the
       // connectors are not composed here) is honest scope, anything else a
       // transient failure — and both say so on the row, never silently bare.
-      state.spaceConns.set(spaceId, {
-        entries: null,
-        unreadable: code === 'NOT_FOUND' || status === 404 ? 'not-composed' : 'failed',
-      });
+      // A failed customer count keeps the good connector entries above: only
+      // a failed connector read marks the rows unreadable (Codex P2 on #756).
+      const kept = state.spaceConns.get(spaceId);
+      if (kept === undefined || kept.entries === null) {
+        state.spaceConns.set(spaceId, {
+          entries: null,
+          unreadable: code === 'NOT_FOUND' || status === 404 ? 'not-composed' : 'failed',
+        });
+      }
       return null;
     }
   }
