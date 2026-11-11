@@ -307,6 +307,45 @@ export function readSpaces(storage) {
 }
 
 /**
+ * Join two space lists into one menu list (backlog:029409ff): the primary
+ * source first (the session profile's spaces), then any extra the secondary
+ * source names (spaces this browser already opened, under a session that
+ * only carries the current space). Entries keep the readSpaces shape;
+ * blanks are dropped, duplicates collapse on id, order is stable — the
+ * menu never renders a blank or doubled row, and the result is never
+ * empty: with nothing usable it falls back to the single local space.
+ * @param {unknown} primary
+ * @param {unknown} secondary
+ */
+export function mergeSpaces(primary, secondary) {
+  const clean = (value) => {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (entry === null || typeof entry !== 'object') continue;
+      const id = typeof /** @type {any} */ (entry).id === 'string'
+        ? /** @type {any} */ (entry).id.trim() : '';
+      const name = typeof /** @type {any} */ (entry).name === 'string'
+        ? /** @type {any} */ (entry).name.trim() : '';
+      if (id === '' || name === '') continue;
+      if (out.some((known) => known.id === id)) continue;
+      const initials = typeof /** @type {any} */ (entry).initials === 'string'
+        && /** @type {any} */ (entry).initials.trim() !== ''
+        ? /** @type {any} */ (entry).initials.trim().slice(0, 2).toUpperCase()
+        : name.slice(0, 2).toUpperCase();
+      out.push({ id, name, initials });
+    }
+    return out;
+  };
+  const merged = [...clean(primary)];
+  for (const entry of clean(secondary)) {
+    if (merged.some((known) => known.id === entry.id)) continue;
+    merged.push(entry);
+  }
+  return merged.length > 0 ? merged : defaultSpaces();
+}
+
+/**
  * Resolve a ⌘1/2/3 (or Ctrl+1/2/3) keypress to a space id among the user's
  * spaces. Anything else — no modifier, another key, out of range — is null.
  * @param {{ metaKey?: boolean, ctrlKey?: boolean, key?: string }} event
