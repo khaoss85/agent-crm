@@ -220,10 +220,20 @@ const statusLabel = (value) => ownLabel(STATUS_LABELS, String(value ?? '').toLow
  * evidence sections are readable with exact zero counts — the same
  * absence-proof discipline the API verdict follows. Otherwise the line stays
  * honest about the unreadable checks.
+ * Voce ebde30a307f2: when the space composes none of the order,
+ * commercial-contract and subscription modules, every evidence section reads
+ * «not composed» (or the whole profile is a 404 null) — the line is hidden
+ * instead of printing a false «non leggibili adesso», which would read as a
+ * fault. A read failure on composed modules keeps the temporary hedge.
  */
 const EVIDENCE_KEYS = Object.freeze(['orders', 'contracts', 'subscriptions']);
+const isNotComposedSection = (section) => section?.available === false
+  && typeof section?.reason === 'string'
+  && /not composed/i.test(section.reason);
 const statusMicrocopy = (card, profile) => {
   if (String(card?.status?.value ?? '').toLowerCase() === 'cliente') return 'Attività firmata collegata';
+  if (profile == null) return null;
+  if (EVIDENCE_KEYS.every((key) => profile?.[key] == null || isNotComposedSection(profile[key]))) return null;
   const proven = EVIDENCE_KEYS.every((key) => profile?.[key]?.available === true
     && (profile[key]?.count ?? 0) === 0
     && profile[key]?.countIsComplete !== false);
@@ -2241,7 +2251,11 @@ export function createCustomerCardView(deps) {
     // Voce 1a066ddfe42a, P2 di review: «nessuna attività» è definitivo solo a
     // prove complete (le tre sezioni leggibili con conteggio esatto a zero),
     // altrimenti l'italiano resta onesto sulle verifiche mancanti.
-    box.appendChild(el('p', 'bo-muted', statusMicrocopy(card, profile)));
+    // Voce ebde30a307f2: moduli order/commercial-contract/subscription non
+    // composti → la riga non compare (statusMicrocopy null); a moduli
+    // composti ma illeggibili resta il messaggio temporaneo.
+    const microcopy = statusMicrocopy(card, profile);
+    if (microcopy !== null) box.appendChild(el('p', 'bo-muted', microcopy));
     const active = card?.activePackage;
     const activeItems = active?.available === true && Array.isArray(active.active) ? active.active : null;
     if (activeItems && activeItems.length > 0) {

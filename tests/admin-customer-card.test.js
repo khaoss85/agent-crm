@@ -933,7 +933,10 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
   assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
-  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'unreadable evidence never reads as a definitive none');
+  // Voce ebde30a307f2: moduli order/commercial-contract/subscription non
+  // composti → nessuna riga (né hedge né «nessuna attività»).
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'uncomposed evidence shows no false hedge');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'uncomposed evidence never reads as a definitive none');
 });
 
 test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
@@ -984,6 +987,48 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'proven absence carries no hedge');
   assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
+});
+
+test('ebde30a307f2: moduli non composti, nessuna riga ordini/contratti', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: PROFILE_BARE, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'uncomposed evidence card');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'no false hedge when nothing is composed');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'no definitive none when nothing is composed');
+});
+
+test('ebde30a307f2: profilo non composto (404), nessuna riga ordini/contratti', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: null, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'missing profile card');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'a 404 profile hides the line instead of a false hedge');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'a 404 profile never claims a definitive none');
+});
+
+test('ebde30a307f2: moduli composti ma illeggibili, resta il messaggio temporaneo', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE,
+    timeline: TIMELINE_BARE,
+    profile: {
+      ...PROFILE_BARE,
+      orders: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      contracts: {
+        available: false,
+        reason: 'commercial contracts could not be read from this application',
+        items: null, count: null,
+      },
+      subscriptions: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    },
+    enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'failed-evidence card');
+  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'a failed read on composed modules keeps the temporary message');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'a failed read never reads as a definitive none');
 });
 
 // Voce 59def6cb805d: la colonna centrale parla come il prototipo — titolo,
