@@ -68,6 +68,21 @@ const PIPELINE_MANAGED_FIELDS = Object.freeze([
   'stageEnteredAt',
   'closedAt',
   'closeReason',
+  'boardPosition',
+]);
+
+/**
+ * Board order (migration v11, backlog:67a3116f4f65). A card's place inside
+ * its pipeline column: 0 = not placed (new rows, legacy rows, a card that
+ * just changed stage), shown first and newest-first; placed cards follow in
+ * ascending position. Placed positions are spaced by BOARD_GAP so a drop
+ * between two cards writes one row; a column with unplaced cards, or with no
+ * room left between two neighbours, is renumbered in the same transaction.
+ */
+export const BOARD_GAP = 1024;
+const BOARD_ORDER = Object.freeze([
+  Object.freeze({ column: 'board_position', direction: 'asc' }),
+  Object.freeze({ column: 'updated_at', direction: 'desc' }),
 ]);
 
 export class OpportunityService {
@@ -152,12 +167,15 @@ export class OpportunityService {
       stageEnteredAt: 'stage_entered_at',
       closedAt: 'closed_at',
       closeReason: 'close_reason',
+      boardPosition: 'board_position',
     };
     for (const [field, column] of Object.entries(columns)) {
       if (!Object.hasOwn(patch, field)) continue;
       const raw = patch[field];
       let value;
-      if (raw === null) {
+      if (field === 'boardPosition') {
+        value = nonNegativeInteger(raw, field);
+      } else if (raw === null) {
         value = null;
       } else if (field === 'stageEnteredAt' || field === 'closedAt') {
         value = requiredIsoDate(raw, field);
@@ -173,6 +191,15 @@ export class OpportunityService {
       && fromPipelineStage !== null
       && changes.pipelineStage !== fromPipelineStage) {
       changes.fromPipelineStage = fromPipelineStage;
+    }
+    // A card that changes stage arrives unplaced in its new column (on top,
+    // like before positions existed) unless the same patch places it.
+    if (Object.hasOwn(changes, 'pipelineStage')
+      && changes.pipelineStage !== (current?.pipelineStage ?? null)
+      && !Object.hasOwn(changes, 'boardPosition')
+      && Number(current?.boardPosition ?? 0) !== 0) {
+      values.push({ column: 'board_position', value: 0 });
+      changes.boardPosition = 0;
     }
     if (!values.length) return Promise.resolve(this.get(id));
     values.push({ column: 'updated_at', value: nowIso() });
@@ -256,6 +283,7 @@ export class OpportunityService {
       stageEnteredAt: placement?.stageEnteredAt ?? null,
       closedAt: null,
       closeReason: null,
+      boardPosition: 0,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -390,9 +418,17 @@ export class OpportunityService {
     });
   }
 
-  /** @param {{stage?: string, type?: string, companyId?: string, limit?: number}} [filters] */
+  /**
+   * @param {{stage?: string, type?: string, companyId?: string, limit?: number, order?: string}} [filters]
+   *   `order: 'board'` reads the pipeline board order (position, then newest
+   *   first); without it the list stays newest first, as every other reader
+   *   expects.
+   */
   list(filters = {}) {
     const where = [];
+    if (filters.order !== undefined && filters.order !== null && filters.order !== '' && filters.order !== 'board') {
+      throw new ValidationError('order must be "board" when given', { field: 'order' });
+    }
     if (filters.stage) {
       enumValue(filters.stage, [...OPPORTUNITY_STAGES], 'stage');
       where.push({ column: 'stage', op: 'eq', value: filters.stage });
@@ -407,8 +443,105 @@ export class OpportunityService {
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 500);
     return storageMany(this.database, {
       kind: 'select', table: 'opportunities', columns: '*', where,
-      orderBy: [{ column: 'updated_at', direction: 'desc' }], limit,
+      orderBy: filters.order === 'board' ? BOARD_ORDER.map((entry) => ({ ...entry })) : [{ column: 'updated_at', direction: 'desc' }],
+      limit,
     }, (row) => this.#mapRow(row));
+  }
+
+  /**
+   * Place a card inside its pipeline column (backlog:67a3116f4f65): right
+   * after `afterId`, or first with `first: true`. The column is the card's
+   * current (pipelineKey, pipelineStage) — a stage move happens before,
+   * through applyManaged. Usually one row changes; when the column holds
+   * unplaced cards or no room is left between the two neighbours, the whole
+   * column is renumbered in the same transaction. Only the moved card gets an
+   * audit row (its `data` names how many neighbours were renumbered) and an
+   * updated_at bump: the neighbours' updated_at stays, so a renumber never
+   * trips a concurrent stage claim fenced on it.
+   *
+   * @param {string} id
+   * @param {{afterId?: unknown, first?: unknown}} placement
+   * @param {{actor?: unknown}} [context]
+   */
+  async positionOnBoard(id, placement, context = {}) {
+    const first = placement?.first === true;
+    const afterId = typeof placement?.afterId === 'string' && placement.afterId.trim() !== '' ? placement.afterId.trim() : null;
+    if (first === (afterId !== null)) {
+      throw new ValidationError('A board placement names exactly one of afterId or first', { field: 'afterId' });
+    }
+    if (afterId === id) {
+      throw new ValidationError('A card cannot be placed after itself', { field: 'afterId' });
+    }
+    const current = await Promise.resolve(this.get(id));
+    if (typeof current.pipelineKey !== 'string' || current.pipelineKey === ''
+      || typeof current.pipelineStage !== 'string' || current.pipelineStage === '') {
+      throw new AppError('This opportunity is not on a pipeline board', {
+        code: 'NO_PIPELINE', status: 409, details: { pipelineKey: current.pipelineKey, pipelineStage: current.pipelineStage },
+      });
+    }
+    const column = await Promise.resolve(storageMany(this.database, {
+      kind: 'select', table: 'opportunities', columns: ['id', 'board_position'],
+      where: [
+        { column: 'pipeline_key', op: 'eq', value: current.pipelineKey },
+        { column: 'pipeline_stage', op: 'eq', value: current.pipelineStage },
+      ],
+      orderBy: BOARD_ORDER.map((entry) => ({ ...entry })),
+    }, (row) => ({ id: String(row.id), position: Number(row.board_position ?? 0) })));
+    const others = column.filter((entry) => entry.id !== id);
+    let index = 0;
+    if (afterId !== null) {
+      const at = others.findIndex((entry) => entry.id === afterId);
+      if (at < 0) {
+        throw new AppError('The card to place after is no longer in this column; re-read the board', {
+          code: 'STALE_POSITION', status: 409,
+          details: { afterId, pipelineKey: current.pipelineKey, pipelineStage: current.pipelineStage },
+        });
+      }
+      index = at + 1;
+    }
+    const plan = boardPlan(others, index);
+    const neighbours = plan.writes.filter((entry) => entry.id !== id);
+    const changes = {
+      boardPosition: plan.position,
+      ...(afterId !== null ? { afterId } : { first: true }),
+      ...(neighbours.length ? { renumbered: neighbours.length } : {}),
+    };
+    const ownWrite = {
+      kind: 'update', table: 'opportunities',
+      values: [{ column: 'board_position', value: plan.position }, { column: 'updated_at', value: nowIso() }],
+      where: [{ column: 'id', op: 'eq', value: id }],
+    };
+    const neighbourWrites = neighbours.map((entry) => ({
+      kind: 'update', table: 'opportunities',
+      values: [{ column: 'board_position', value: entry.position }],
+      where: [{ column: 'id', op: 'eq', value: entry.id }],
+    }));
+    const auditEntry = {
+      actor: context.actor,
+      action: 'opportunity.updated',
+      entityType: 'opportunity',
+      entityId: id,
+      data: changes,
+    };
+    let updated;
+    if (isSyncStorage(this.database)) {
+      updated = this.database.storage.sync.savepoint('opportunity_board_position', () => {
+        for (const write of neighbourWrites) this.database.storage.sync.execute(write);
+        this.database.storage.sync.execute(ownWrite);
+        const next = this.get(id);
+        this.audit.record(auditEntry);
+        return next;
+      });
+    } else {
+      await storageMutate(this.database, 'opportunity_board_position', async (tx) => {
+        for (const write of neighbourWrites) await tx.execute(write);
+        await tx.execute(ownWrite);
+        await this.audit.record(auditEntry, tx);
+      });
+      updated = await this.get(id);
+    }
+    await this.events.emit('opportunity.updated', updated);
+    return updated;
   }
 
   /**
@@ -588,7 +721,44 @@ function mapOpportunityRow(row) {
     stageEnteredAt: row.stage_entered_at ?? null,
     closedAt: row.closed_at ?? null,
     closeReason: row.close_reason ?? null,
+    boardPosition: Number(row.board_position ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Where a card lands among `others` (the column without it, in board order)
+ * at `index`, and which rows must be written. One row when there is room
+ * between placed neighbours; otherwise the whole column, spaced by
+ * BOARD_GAP in its new order.
+ * @param {Array<{id: string, position: number}>} others
+ * @param {number} index
+ * @returns {{position: number, writes: Array<{id: string, position: number}>}}
+ */
+export function boardPlan(others, index) {
+  const before = index > 0 ? others[index - 1] : null;
+  const after = index < others.length ? others[index] : null;
+  const placed = others.every((entry) => entry.position > 0);
+  if (placed) {
+    if (!before && !after) return { position: BOARD_GAP, writes: [] };
+    if (!before && after) {
+      const candidate = after.position > BOARD_GAP ? after.position - BOARD_GAP : Math.floor(after.position / 2);
+      if (candidate > 0 && candidate < after.position) return { position: candidate, writes: [] };
+    } else if (before && !after) {
+      const candidate = before.position + BOARD_GAP;
+      if (Number.isSafeInteger(candidate)) return { position: candidate, writes: [] };
+    } else if (before && after && after.position - before.position >= 2) {
+      return { position: before.position + Math.floor((after.position - before.position) / 2), writes: [] };
+    }
+  }
+  // Renumber: unplaced cards keep their place in the column, which now
+  // becomes explicit, and the moved card takes its slot at `index`.
+  /** @type {Array<{id: string, position: number}>} */
+  const writes = [];
+  others.forEach((entry, at) => {
+    const next = (at < index ? at + 1 : at + 2) * BOARD_GAP;
+    if (entry.position !== next) writes.push({ id: entry.id, position: next });
+  });
+  return { position: (index + 1) * BOARD_GAP, writes };
 }
