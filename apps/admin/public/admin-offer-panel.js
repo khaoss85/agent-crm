@@ -611,12 +611,14 @@ export function openOfferPanel(deps) {
         }
       }
       shut();
+      // The scheda shows the offer first, so the toast never speaks ahead
+      // of the screen (backlog:2a214b66fe12).
+      if (typeof deps.onCreated === 'function') deps.onCreated(created);
       // A quote already opened is completed from its own page, never
       // opened twice: the line names the step that is left.
       if (quoteFailed && progress.opened > 0) toast('Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe.', true);
       else if (quoteFailed) toast('Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', true);
       else toast(chosen.length > 0 ? 'Offerta e preventivo creati' : 'Offerta creata');
-      if (typeof deps.onCreated === 'function') deps.onCreated(created);
     } catch (error) {
       // Review #616 round 4: a failed create is always logged (code, status
       // and space, never the offer) and, with the window already closed
