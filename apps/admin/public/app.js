@@ -666,9 +666,11 @@ const clientiListView = createCustomerListView({
 const customerFormView = createCustomerFormView({
   doc: document,
   // backlog:ff8bb60f417f: a window over the list, like the scheda's panels.
-  // It lives on the page body, never in the list's mount (which the list
-  // repaints); the router closes it on every other route (invalidate).
-  mount: document.body,
+  // It lives in the shared screen mount beside the list frame (the list
+  // repaints only inside its own frame), so the session-loss keep/restore,
+  // which reads moduleView, keeps its text too (review #791 giro 1). The
+  // router closes it on every other route (invalidate).
+  mount: moduleView,
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },

@@ -301,6 +301,17 @@ export function customerFullName(values) {
   return [firstName, lastName].filter((part) => part !== '').join(' ');
 }
 
+/**
+ * Same first and last name, field by field (review #791 giro 1): a moved
+ * Nome/Cognome split spells the same full name but is a real change.
+ * @param {{ nome?: unknown, cognome?: unknown }} left @param {{ nome?: unknown, cognome?: unknown }} right
+ */
+export function sameCustomerNames(left, right) {
+  const a = customerNames(left);
+  const b = customerNames(right);
+  return a.firstName === b.firstName && a.lastName === b.lastName;
+}
+
 /** True when the form holds something the operator typed. @param {Record<string, unknown>} values */
 export function hasTypedText(values) {
   return Object.values(values ?? {}).some((value) => String(value ?? '').trim() !== '');
@@ -617,6 +628,19 @@ export function createCustomerFormView(deps) {
       else requestClose();
     });
 
+    // Salva works from the first moment (review #791 giro 1): a click that
+    // lands while the reads below are still out waits for them, then saves.
+    let setupDone = false;
+    let saveQueued = false;
+    save.addEventListener('click', () => {
+      if (setupDone) {
+        void saveCustomer();
+        return;
+      }
+      saveQueued = true;
+      save.disabled = true;
+    });
+
     // The window shows now, before the reads below.
     mount.appendChild(win);
     openWindow = win;
@@ -735,7 +759,12 @@ export function createCustomerFormView(deps) {
     };
     for (const entry of customControls) watchCustom(entry);
     watchCustomControl = watchCustom;
-    save.addEventListener('click', () => void saveCustomer());
+    setupDone = true;
+    if (saveQueued) {
+      saveQueued = false;
+      save.disabled = false;
+      void saveCustomer();
+    }
 
     // The session may die after the customer exists (phone, custom value,
     // note). The shell is already leaving for the space login: keep the
@@ -813,7 +842,7 @@ export function createCustomerFormView(deps) {
         const keptAzienda = kept !== null ? String(kept.azienda ?? '').trim() : '';
         const sameIdentity = kept !== null
           && keptEmail === liveEmail
-          && keptNome === cleanNome
+          && sameCustomerNames(kept, values)
           && keptAzienda === cleanAzienda;
         // An empty email is no identity: two customers without an email are
         // not the same person, so the overlap needs a real address or the
@@ -842,7 +871,7 @@ export function createCustomerFormView(deps) {
           subject = kept.created;
           done = new Set(kept.done);
           const namePatch = {};
-          if (customerFullName(kept) !== cleanNome) {
+          if (!sameCustomerNames(kept, values)) {
             const { firstName, lastName } = customerNames(values);
             namePatch.firstName = firstName;
             if (lastName !== '') namePatch.lastName = lastName;
