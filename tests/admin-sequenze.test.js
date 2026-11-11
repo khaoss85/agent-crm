@@ -268,6 +268,21 @@ test('opening with sequences selects the first: detail visible without a click (
   assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=seq-bentornato')), 'the first steps are read');
 });
 
+test('opening with a whitespace-only first sourceKey selects the elenco key, like a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const blank = { ...SEQUENCE, id: 7, sourceKey: '   ' };
+  const client = stubClient({ sequences: [blank] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  const elencoKey = buildSequenzeElenco({ sequences: [blank] })[0].sourceKey;
+  assert.equal(elencoKey, '7');
+  assert.equal(view.state.selectedKey, '7');
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=7')), 'auto-open and click query the same key');
+});
+
 test('full screen: elenco, dettaglio with passi, double-ask activate posts once', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

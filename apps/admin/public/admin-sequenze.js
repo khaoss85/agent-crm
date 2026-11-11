@@ -1264,9 +1264,8 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     // sourceKey, else the record id — never an invented key.
     if (state.selectedKey === '' && state.available && state.sequences.length > 0) {
       const first = state.sequences[0];
-      const firstKey = typeof first?.sourceKey === 'string' && first.sourceKey !== ''
-        ? first.sourceKey
-        : (first?.id !== undefined && first?.id !== null ? String(first.id) : '');
+      const firstKey = nonEmptyText(first?.sourceKey)
+        ?? (first?.id !== undefined && first?.id !== null ? String(first.id) : '');
       if (firstKey !== '') state.selectedKey = firstKey;
     }
     if (state.selectedKey !== '' && state.available) {
