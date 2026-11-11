@@ -1572,6 +1572,13 @@ select.bo-spazi-input { flex: none; }
 .cal-slots { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .cal-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .cal-form input { flex: 1 1 160px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
+/* backlog:c2f21b5debdd: the customer search keeps room for its magnifier on
+ * every width — `.cal-form input`'s 12px left padding put the lens over the
+ * placeholder on the desktop form too (the phone rule was the first cure,
+ * for one width only) — and takes the whole row, so its placeholder reads
+ * whole instead of being cut in a content-sized box. */
+.cal-form .ui-search .ui-search-input { padding-left: 36px; }
+.cal-form .ui-search { display: flex; flex: 1 1 100%; width: 100%; }
 .cal-ok { color: var(--accent); font-weight: 700; font-size: 13px; }
 
 @media (max-width: 700px) {
@@ -2566,10 +2573,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* B5 — real phone pass (backlog:d7c78e9cdf53): send from the scheda, book
  * without dragging, no zoom and no sideways scroll on a 390px phone. */
 @media (max-width: 700px) {
-  /* The inline new-appointment form (phone, no popover): its customer search
-   * kept `.cal-form input`'s 12px left padding, so the magnifier sat on the
-   * placeholder. Same 36px the popover already gives it; desktop untouched. */
-  .cal-form .ui-search .ui-search-input { padding-left: 36px; }
+  /* The customer search's 36px lens room is a rule for every width now
+   * (backlog:c2f21b5debdd), above. */
   /* iOS Safari zooms the page when a field under 16px takes focus, and the
    * page stays zoomed (sideways scroll included): on a phone every typed
    * field reads at 16px. `!important` because the desktop sizes ride

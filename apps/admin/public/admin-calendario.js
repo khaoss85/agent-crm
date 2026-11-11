@@ -760,6 +760,21 @@ export function catalogBookingServices(payload) {
 }
 
 /**
+ * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
+ * the name and the price as Italian money («Lezione di prova · 1,00 €»),
+ * never the dotted «1.00 €» the price field keeps for typing. A price that
+ * is not whole cents reads as the name alone.
+ * @param {{name: string, priceCents: number, currency?: string}} entry
+ */
+export function serviceOptionLabel(entry) {
+  const cents = entry?.priceCents;
+  if (!Number.isSafeInteger(cents) || cents < 0) return String(entry?.name ?? '');
+  const money = new Intl.NumberFormat('it-IT', { style: 'currency', currency: entry?.currency === undefined ? 'EUR' : String(entry.currency) })
+    .format(cents / 100).replace(/\u00a0/g, ' ');
+  return `${entry.name} · ${money}`;
+}
+
+/**
  * backlog:810ed0bf — minor units to the price text the manual form paints
  * (`4500` → `'45.00'`), two decimals, dot separator like the form hint.
  * Null when the amount is no integer of cents.
@@ -3977,7 +3992,7 @@ export function createCalendarioView(deps) {
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
     const options = bookable.map((entry) => ({
       value: entry.key,
-      label: `${entry.name} · ${priceText(entry)} €`,
+      label: serviceOptionLabel(entry),
     }));
     const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
     const select = wrap.querySelector('select') ?? wrap;
