@@ -1513,22 +1513,39 @@ export function createCalendarioView(deps) {
     const names = new Map();
     /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
     let bookable = [];
+    /** @type {any} */
+    let catalog;
     try {
       const answer = await client.request('/api/catalog/products?limit=200');
+      catalog = answer;
       for (const product of Array.isArray(answer?.products) ? answer.products : []) {
         const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
         const name = typeof product?.name === 'string' ? product.name.trim() : '';
         if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
       }
-      // The manual form's service menu (backlog:810ed0bf): the same
-      // singles rule the booking worker applies, read once with the names.
-      bookable = catalogBookingServices(answer);
     } catch (error) {
-      // No catalog in this project (or a stale bundle): the readable key
-      // stays. Anything else is unexpected and logged without the message.
       if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
         console.warn(
           'bo-calendario catalog unreadable:',
+          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
+          `spaceId=${readSpace()}`,
+        );
+      }
+    }
+    // P1 11/11: the menu is the server's own bookable list when it serves
+    // one (the pilot), so a Conferma never sends a key the worker refuses;
+    // its keys name the booked rows too (`personal-training` reads «PT
+    // singola», not the raw key).
+    try {
+      bookable = await readBookingServices(client, catalog === undefined ? {} : { catalog });
+      for (const entry of bookable) names.set(entry.key, entry.name);
+    } catch (error) {
+      bookable = [];
+      // No bookable list and no catalog here: the menu stays empty and the
+      // readable key stays. Anything else is logged without the message.
+      if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
+        console.warn(
+          'bo-calendario services unreadable:',
           error instanceof Error ? error.name : (error?.code ?? 'unknown'),
           `spaceId=${readSpace()}`,
         );
@@ -4464,3 +4481,42 @@ export function suggestSlotsPath(searchIds, from, to, minutes) {
 
 /** The slot sizes `suggest-slots` accepts, in minutes. */
 export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
+
+/**
+ * P1 11/11: the services a booking can name, as the server that books
+ * them lists them. The pilot answers `GET /api/appointments/services` with
+ * the very list its worker resolves a Conferma against (the menu used to
+ * key services by product SKU, and every key was refused). Only when the
+ * server serves no such list — a 404 or 405, the framework on its own —
+ * (or no HTTP answer at all) the menu falls back to the catalog singles
+ * rule. A served list that fails is thrown: guessing a list the server
+ * would refuse is the bug this ends.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options] a catalog answer already read, for the fallback
+ * @returns {Promise<ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>>}
+ */
+export async function readBookingServices(client, { catalog = undefined } = {}) {
+  let answer;
+  try {
+    answer = await client.request('/api/appointments/services');
+  } catch (error) {
+    // Fallback only where no list is served: 404/405, the framework's
+    // not-composed answer, or no HTTP answer at all. A server that answers
+    // the list with an error (5xx, 403) stays an error.
+    const status = typeof error?.status === 'number' ? error.status : null;
+    if (status !== null && status !== 404 && status !== 405 && !isNotComposedFailure(error)) throw error;
+    // The caller's own catalog read when it has one: never read it twice.
+    return catalogBookingServices(catalog !== undefined ? catalog : await client.request('/api/catalog/products?limit=200'));
+  }
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(answer?.services) ? answer.services : []) {
+    const key = typeof entry?.serviceKey === 'string' ? entry.serviceKey.trim() : '';
+    const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    if (!CATALOG_SLUG_RE.test(key) || name === '' || seen.has(key)) continue;
+    if (!Number.isSafeInteger(entry.priceCents) || entry.priceCents < 0 || entry.currency !== 'EUR') continue;
+    seen.add(key);
+    out.push(Object.freeze({ key, name, priceCents: entry.priceCents, currency: 'EUR' }));
+  }
+  return Object.freeze(out);
+}

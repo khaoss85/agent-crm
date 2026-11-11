@@ -5,6 +5,7 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   catalogBookingServices,
+  readBookingServices,
   channelOf,
   createCalendarioView,
   calendarRefusalText,
@@ -304,7 +305,9 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(texts(mount, 'p').some((text) => text.includes('Scegli le persone')));
   // No appointment read without named members (fetta 7 refines this pin:
   // the Team roster read is not a week read and may go out on its own).
-  assert.ok(client.calls.every((call) => !String(call.path).startsWith('/api/appointments/')));
+  // P1 11/11: the bookable services list is a menu read, not a week read.
+  assert.ok(client.calls.every((call) => !String(call.path).startsWith('/api/appointments/')
+    || call.path === '/api/appointments/services'));
 
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -3931,6 +3934,86 @@ test('the manual form offers the catalog menu with the default and price prefill
   assert.equal(payload(proposes[0]).serviceKey, 'lezione-prova', 'the claim sends the menu key');
   assert.equal(payload(proposes[0]).priceCents, 1500);
   assert.equal(payload(proposes[0]).teamMemberId, 'broker|dan');
+});
+
+// P1 11/11 (release 6b886ee, test space 2f07eeb9): the menu keyed services
+// by product SKU (pv-0711-b, prova, pt, and the pack price for PT) and the
+// pilot worker refused every key. When the server serves its bookable list
+// (GET /api/appointments/services, the list its worker books from), the
+// menu is exactly that list: its keys, its names, its prices.
+const TEST_SPACE_CATALOG = { products: [
+  { active: true, sku: 'PV-0711-B', name: 'Prova verifica 07/11 B prodotto', offers: [{ active: true, name: 'Prova verifica 07/11 B prodotto', currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 100 }] }] },
+  { active: true, sku: 'PROVA', name: 'Lezione di prova', offers: [{ active: true, name: 'Lezione di prova', currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 1500 }] }] },
+  { active: true, sku: 'PT', name: 'Personal Training', offers: [
+    { active: true, name: 'Pacchetto 10 PT', currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 35000 }] },
+    { active: true, name: 'PT singola', currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4000 }] },
+  ] },
+] };
+const PILOT_SERVICES = { services: [
+  { serviceKey: 'prova-verifica-0711-b-prodotto', name: 'Prova verifica 07/11 B prodotto', priceCents: 100, currency: 'EUR' },
+  { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+  { serviceKey: 'personal-training', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+] };
+
+test('P1 11/11: the old catalog rule keyed the test space by SKU and priced PT as the pack', () => {
+  assert.deepEqual(catalogBookingServices(TEST_SPACE_CATALOG).map((entry) => [entry.key, entry.priceCents]),
+    [['pv-0711-b', 100], ['prova', 1500], ['pt', 35000]], 'the keys the worker refused');
+});
+
+test('P1 11/11: with a served bookable list the menu and the claim use the worker keys and prices', async () => {
+  const base = stubClient({
+    memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }],
+    catalog: TEST_SPACE_CATALOG,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/services') {
+        base.calls.push({ path, method: 'GET' });
+        return PILOT_SERVICES;
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.deepEqual(service.findAll('option').map((node) => node.getAttribute('value')).filter(Boolean),
+    ['prova-verifica-0711-b-prodotto', 'lezione-prova', 'personal-training'], 'the menu is the served list');
+  assert.ok(service.findAll('option').some((node) => node.textContent.includes('PT singola')), 'the single, never the pack');
+  service.value = 'personal-training';
+  service.dispatch('change');
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  assert.equal(byName().price.value, '40.00', 'the price of the single session');
+  choosePerson(mount, 'sara');
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await flushMany(4);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1);
+  assert.equal(payload(proposes[0]).serviceKey, 'personal-training', 'the key the worker books');
+  assert.equal(payload(proposes[0]).priceCents, 4000);
+});
+
+test('P1 11/11: a served list that fails never falls back to keys the worker would refuse', async () => {
+  const failing = { request: async () => { throw Object.assign(new Error('boom'), { status: 503 }); } };
+  await assert.rejects(() => readBookingServices(failing), (error) => error.status === 503);
+  const notServed = {
+    request: async (path) => {
+      if (path === '/api/appointments/services') throw Object.assign(new Error('nf'), { status: 404 });
+      return TEST_SPACE_CATALOG;
+    },
+  };
+  assert.deepEqual((await readBookingServices(notServed)).map((entry) => entry.key), ['pv-0711-b', 'prova', 'pt'],
+    'without a served list (the framework alone) the catalog rule stays');
 });
 
 // backlog:810ed0bf review (P1 currency): the claim only speaks EUR, so a
