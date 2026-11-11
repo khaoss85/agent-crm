@@ -12,7 +12,7 @@
 // involved: the window works the same with the AI switched off.
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError, humanWriteError, isNotComposedFailure } from './admin-core.js';
+import { humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
   BOOKING_MINUTES, bookingClaim, calendarRefusalText, catalogBookingServices, filterPhraseProposals,
   formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, servicePresendError, slotInGrid, slotLabel,
@@ -337,15 +337,10 @@ export function openAppointmentPanel(deps) {
         : 'Registrato come proposta: lo spazio non fissa in automatico.');
       if (typeof deps.onBooked === 'function') deps.onBooked(answer);
     } catch (error) {
-      // Like the offer window: the cause is logged (code, status, space —
-      // never the customer), and a closed window still says it as a toast.
-      if (typeof console !== 'undefined' && typeof console.error === 'function') {
-        console.error('[bo] appuntamento non fissato', {
-          code: error?.code ?? null,
-          status: typeof error?.status === 'number' ? error.status : null,
-          spaceId: deps.spaceId ?? null,
-        });
-      }
+      // The cause is logged once, in the shared write line
+      // (backlog:0a980182918f: never «[bo] appuntamento non fissato
+      // Object»), and a closed window still says it as a toast.
+      logWriteFailure(error, { context: { spaceId: deps.spaceId ?? null } });
       if (gone()) {
         toast('Appuntamento non fissato: riapri «Nuovo appuntamento» e riprova.', true);
         return;
@@ -361,6 +356,8 @@ export function openAppointmentPanel(deps) {
         say(errors.service, calendarRefusalText(error) ?? 'Scegli un servizio dal listino.');
       } else {
         say(generalError, humanWriteError(error, {
+          // Already logged above: one line per failure.
+          log: () => {},
           failed: 'Appuntamento non fissato. Riprova tra poco: non verrà fissato due volte.',
           notComposed: 'Il calendario non è attivo in questo spazio.',
         }));

@@ -439,8 +439,9 @@ test('review #616 round 4: a create failing after the window closed is logged an
   assert.deepEqual(toasts, ['Offerta non creata: riapri «Nuova offerta» e riprova.'], 'the person learns it was not filed');
   assert.equal(created.length, 0);
   assert.equal(logged.length, 1, 'the failure is logged');
-  assert.equal(logged[0][0], '[bo] offerta non creata');
-  assert.deepEqual(logged[0][1], { code: 'UPSTREAM', status: 502, spaceId: 'presti' });
+  // backlog:0a980182918f: the shared write line, never a bare «Object».
+  assert.equal(logged[0][0], '[bo] scrittura fallita · 502 UPSTREAM: bad gateway');
+  assert.deepEqual(logged[0][1], { spaceId: 'presti', code: 'UPSTREAM', status: 502, message: 'bad gateway', method: null, path: null });
   assert.ok(!JSON.stringify(logged).includes('Pacchetto'), 'never the offer itself');
 });
 

@@ -701,12 +701,24 @@ export function tagRequestFailure(error, method, path) {
  * @param {'lettura' | 'scrittura'} fallback what the caller expected
  * @param {{ code: string, status: number | null, message: string, method: string | null, path: string | null, report: (message: string, cause: unknown) => void }} failure
  */
-function reportFailure(fallback, { code, status, message, method, path, report }) {
+function reportFailure(fallback, { code, status, message, method, path, report }, context = {}) {
   const kind = method === null ? fallback : (WRITE_METHODS.has(method) ? 'scrittura' : 'lettura');
   const request = method !== null && path !== null ? ` ${method} ${path}` : '';
   const outcome = [status === null ? '' : String(status), code].filter((part) => part !== '').join(' ');
   report(`[bo] ${kind} fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
-    { code, status, message, method, path });
+    { ...context, code, status, message, method, path });
+}
+
+/**
+ * The shared console line for a failed write (backlog:0a980182918f), for
+ * the screens that pick their own sentence instead of humanWriteError's:
+ * «[bo] scrittura fallita POST <percorso> · <stato> <codice>: messaggio».
+ * @param {unknown} error the rejection from `client.request`
+ * `context` adds ids to the logged object (a space id), never record bodies.
+ * @param {{ log?: ((message: string, cause: unknown) => void) | null, context?: Record<string, unknown> }} [options]
+ */
+export function logWriteFailure(error, { log = null, context = {} } = {}) {
+  reportFailure('scrittura', normalizeFailure(error, log), context);
 }
 
 export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
