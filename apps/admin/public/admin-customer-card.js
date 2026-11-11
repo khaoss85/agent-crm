@@ -3177,11 +3177,13 @@ export function createCustomerCardView(deps) {
    */
 
   /** Log a decoration-read failure with its cause, never its payload. */
-  function logHistoryFailure(error) {
+  function logHistoryFailure(error, area = 'scheda-stati') {
     if (typeof console !== 'undefined' && typeof console.error === 'function') {
       console.error('[bo] offerta non leggibile', {
-        area: 'scheda-stati',
+        area,
         code: error?.code ?? null,
+        name: typeof error?.name === 'string' ? error.name : null,
+        spaceId: activeSpaceId(),
         status: Number(error?.status ?? 0) || null,
       });
     }
@@ -3235,17 +3237,23 @@ export function createCustomerCardView(deps) {
     };
     // backlog:e52c5e0dd49f (review Muse #750 giro 2, famiglia F5): the team
     // roster names the actors, like the offer detail — a team subject reads
-    // its profile name, never «utente». A roster read that fails leaves the
-    // record names only, never a new failure line.
+    // its profile name, never «utente». A roster read that fails logs its
+    // sanitized cause (P1 on this PR: an unavailable roster must stay
+    // distinguishable from an empty one) and leaves the record names only,
+    // never a new failure line.
     const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
     void client.request('/api/spine/memberships').then(
       (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
-      () => [],
+      (error) => {
+        logHistoryFailure(error, 'scheda-stati-roster');
+        return [];
+      },
     ).then((people) => client.request(auditPath).then(
       (answer) => fill(answer?.items, people),
       (error) => {
         // Review giro 1 (P2): the rejection cause reaches on-call, like the
-        // detail does — code and status only, never payload or PII.
+        // detail does — area, code, name, space and status only, never
+        // payload or PII.
         logHistoryFailure(error);
         if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
       },

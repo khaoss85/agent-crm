@@ -186,7 +186,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [] } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -232,7 +232,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (auditError) throw auditError;
         return { items: audit };
       }
-      if (path === '/api/spine/memberships') return { items: team };
+      if (path === '/api/spine/memberships') {
+        if (teamError) throw teamError;
+        return { items: team };
+      }
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -4656,8 +4659,43 @@ test('review giro 1: a rejected audit read logs its cause, never its payload', a
   }
   const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
   assert.equal(reads.length, 1, 'the trail failure is logged once');
-  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', status: 500 },
-    'on-call sees area, code and status');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', name: 'Error', spaceId: null, status: 500 },
+    'on-call sees area, code, name, space and status — never payload or PII');
+});
+
+test('review Muse #750 giro 2, P1 on this PR (backlog:e52c5e0dd49f): a rejected roster read is logged and the Storia stati still paints record names', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const profile = {
+      ...PLACED_QUOTE_PROFILE,
+      opportunities: {
+        ...PLACED_QUOTE_PROFILE.opportunities,
+        items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+      },
+    };
+    const mount = await renderCard(stubClient({
+      profile,
+      schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+      audit: [
+        {
+          action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+          data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+        },
+      ],
+      teamError: Object.assign(new Error('down'), { code: 'UNKNOWN', status: 500 }),
+    }));
+    await flushClicks(5);
+    assert.ok(mount.textContent.includes('da elena'),
+      'the move still names its record actor when the roster is unavailable');
+  } finally {
+    console.error = original;
+  }
+  const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
+  assert.equal(reads.length, 1, 'the roster failure is logged once, like the trail failure');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati-roster', code: 'UNKNOWN', name: 'Error', spaceId: null, status: 500 },
+    'on-call can tell an unavailable roster from an empty one — with no roster data');
 });
 
 test('review giro 1: moves without pipelines read generic lines, never a false empty', async () => {
