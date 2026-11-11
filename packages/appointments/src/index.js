@@ -208,7 +208,11 @@ export function createAppointmentsPackage(options = {}) {
     // propose/confirmBooking and the phrase-to-draft parse, attached
     // generically as `app.readAppointmentTeamWeek` and siblings. Additive:
     // capabilities, records and the booking contract are untouched.
-    version: 2,
+    // 3 (backlog:3d0fbe7dc8d1): reschedule-appointment moves one booking to
+    // a new slot through `app.rescheduleAppointmentBooking` (409 on overlap,
+    // terminal states and stranded reminders). Additive: reads, capabilities
+    // and the booking contract are untouched.
+    version: 3,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -325,6 +329,23 @@ export function createAppointmentsPackage(options = {}) {
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).parseBookingPhrase(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'reschedule-appointment',
+        label: 'Reschedule appointment',
+        appMethod: 'rescheduleAppointmentBooking',
+        description:
+          'Move one booking to a new slot (backlog:3d0fbe7dc8d1): the row named by exactly one of id/sourceKey takes the new startsAt/endsAt when its member holds no overlapping booking — refused 409 on overlap, terminal states and stranded reminders, never moved silently.',
+        input: [
+          { name: 'id', type: 'string', required: false, hint: 'The booking row id; exactly one of id/sourceKey.' },
+          { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
+          { name: 'startsAt', type: 'string', required: true, hint: 'New slot start, ISO instant.' },
+          { name: 'endsAt', type: 'string', required: true, hint: 'New slot end, ISO instant.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).rescheduleAppointment(input);
         },
       },
     ],

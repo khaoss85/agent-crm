@@ -1419,6 +1419,19 @@ select.bo-spazi-input { flex: none; }
  * half hours read as one accent block, the form opens beside it. */
 .cal-day { cursor: cell; touch-action: none; user-select: none; }
 .cal-day .cal-event, .cal-day .bo-add-button { cursor: pointer; }
+/* backlog:3d0fbe7dc8d1: movable events drag (grab) and stretch from the
+ * bottom edge (ns-resize); the drag never starts a page scroll or a text
+ * selection, on desktop or on the 390 px phone. The «Sposta» form in the
+ * detail card is the same move as named fields. */
+.cal-grid .cal-event.is-movable { cursor: grab; touch-action: none; user-select: none; }
+.cal-resize { display: block; height: 10px; margin: 3px -6px -4px; border-radius: 4px; cursor: ns-resize; touch-action: none;
+  background: linear-gradient(to bottom, transparent 4px, rgba(0, 0, 0, .28) 4px, rgba(0, 0, 0, .28) 6px, transparent 6px); }
+.cal-move { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cal-move-title { font-size: 13px; margin: 0 0 8px; }
+.cal-move-field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.cal-move-field input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.cal-move-note { font-size: 13px; }
 .cal-pick { z-index: 3; margin: 1px 3px; padding: 4px 8px; border-radius: 8px; border: 2px solid var(--accent);
   background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 700;
   pointer-events: none; box-shadow: 0 6px 16px rgba(23, 107, 42, .14); }
