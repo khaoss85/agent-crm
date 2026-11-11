@@ -31,6 +31,7 @@ import { CHANNEL_CONNECT_ROUTES, channelState } from './admin-channels-count.js'
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
+import { readProfile } from './admin-profilo.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
@@ -397,12 +398,15 @@ export function connettoriHref(entry) {
  * with neither (Stripe).
  * @param {{ channel?: unknown, countAs?: unknown, href?: unknown }} entry
  * @param {unknown} connectors
+ * @param {unknown} [profile] the /api/profile answer, null when unread
  */
-export function connettoriCardState(entry, connectors) {
+export function connettoriCardState(entry, connectors, profile = null) {
   const guided = entry && typeof entry.channel === 'string' && entry.channel !== '' ? entry.channel : '';
   const counted = guided !== '' ? guided
     : entry && typeof entry.countAs === 'string' ? entry.countAs : '';
-  if (counted !== '' && channelState(counted, { rows: Array.isArray(connectors) ? connectors : [] }).state === 'collegato') {
+  // The profile (GET /api/profile) merges like the shared count: a link
+  // that lives only on Profilo is one of yours too (review #782 P1).
+  if (counted !== '' && channelState(counted, { rows: Array.isArray(connectors) ? connectors : [], profile }).state === 'collegato') {
     return 'collegato';
   }
   if (guided !== '') return 'da-collegare';
@@ -419,12 +423,12 @@ export function connettoriCardState(entry, connectors) {
  * order (no usage counts exist server-side, so the catalog order is the
  * honest ranking), `stato` sorts connected cards first.
  */
-export function filterConnettori({ connectors = [], query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
+export function filterConnettori({ connectors = [], profile = null, query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
   const needle = String(query ?? '').trim().toLowerCase();
   return CONNETTORI_SECTIONS.map((section) => {
     const cards = [];
     for (const entry of section.entries) {
-      const state = connettoriCardState(entry, connectors);
+      const state = connettoriCardState(entry, connectors, profile);
       if (view === 'tuoi' && state !== 'collegato') continue;
       if (stato === 'attivi' && state !== 'collegato') continue;
       if (stato === 'da-attivare' && state !== 'da-collegare') continue;
@@ -484,6 +488,7 @@ export function createPersonalizzazioneView(deps) {
     /** @type {string | null} human text for a failed catalog read, with a retry */
     unitsError: null,
     /** @type {Array<any> | null} */ connectors: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
     connectorsMissing: false,
     connectorsForbidden: false,
     /** @type {string | null} */ previewFor: null,
@@ -564,6 +569,9 @@ export function createPersonalizzazioneView(deps) {
     state.connectorsMissing = false;
     state.connectorsForbidden = false;
     if (space === '') return;
+    // The profile links merge like the shared count (review #782 P1);
+    // readProfile never throws — an unreadable profile adds nothing.
+    state.profile = await readProfile(deps.client);
     try {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(space)}`);
       state.connectors = Array.isArray(sync?.connectors) ? sync.connectors : [];
@@ -1120,7 +1128,7 @@ export function createPersonalizzazioneView(deps) {
     if (state.view !== 'tuoi') renderConnettoriHero(box);
     const connectors = state.connectors ?? [];
     const groups = filterConnettori({
-      connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+      connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
     });
     const sections = el(doc, 'div', { cls: 'connettori-sections' });
     let shown = 0;
@@ -1340,7 +1348,7 @@ export function createPersonalizzazioneView(deps) {
       count = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort }).length;
     } else if (Array.isArray(state.connectors)) {
       count = filterConnettori({
-        connectors: state.connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+        connectors: state.connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
     renderToolbar(toolRow, count);

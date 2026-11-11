@@ -261,6 +261,9 @@ function isProfileRow(row) {
     || (typeof row.connectionKey === 'string' && row.connectionKey.startsWith('profile:')));
 }
 
+/** Channels of the nine the guided `#/connettori/<channel>` flow never serves. */
+const OUTSIDE_GUIDED_FLOW = Object.freeze({ calendar: true, stripe: true });
+
 /** The Meta connectors: their Collega completes only on a configured Meta app. */
 const META_CONNECTORS = Object.freeze(['whatsapp', 'instagram', 'messenger']);
 
@@ -323,19 +326,28 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
   });
   if (active !== null) {
     const account = typeof active.account === 'string' && active.account.trim() !== '' ? active.account.trim() : null;
-    if (composed !== false) return shape('collegato', { account, managedHere: true });
-    const onProfile = isProfileRow(active);
+    // A profile link (Google, Meta) is managed on Profilo, wherever an
+    // adapter is composed: only a package row is configured here.
+    const onProfile = isProfileRow(active)
+      && !matching.some((row) => row.status === 'active' && !isProfileRow(row));
+    if (composed !== false && !onProfile) return shape('collegato', { account, managedHere: true });
     return shape('collegato', {
       account,
       note: onProfile ? LINKED_ON_PROFILE_NOTE : LINKED_ELSEWHERE_NOTE,
       manageRoute: onProfile ? '#/profilo' : null,
     });
   }
-  if (matching.length > 0 && composed === true) return shape('da-completare', { managedHere: true });
-  const connectRoute = composed === true
+  if (matching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
+    return shape('da-completare', { managedHere: true });
+  }
+  // A composed adapter opens the guided flow only for a channel that flow
+  // serves: Google Calendar connects on Profilo, Stripe nowhere (review
+  // #782 P3), whatever the schema lists.
+  const guidedHere = composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id);
+  const connectRoute = guidedHere
     ? `#/connettori/${id}`
     : channelConnectRoute(id, { guided: composed === false ? [] : guided, profile })
       ?? (profileConnects(profile, id) ? '#/profilo' : null);
-  if (connectRoute !== null) return shape('da-collegare', { managedHere: composed === true, connectRoute });
+  if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
   return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
 }

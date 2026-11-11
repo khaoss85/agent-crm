@@ -692,6 +692,37 @@ test('space cards show the real statistic from the composed reads (BO-F6-17 slic
   assert.match(text(mount), /2 canali · 2 persone · 3 clienti/);
 });
 
+// Review #782 P1: the raw GET /api/connectors carries no profile link; the
+// Google and Meta links live in GET /api/profile. The active space card
+// counts them like Oggi's «x di 9»; another space's card never borrows them.
+test('e381c48581fa: the active space card counts the profile links, another space does not', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const base = stubClient({
+    members,
+    connectorsBySpace: { [SPACE]: [], altro: [] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true }, altro: { total: 3, totalIsExact: true } },
+  });
+  const profile = { connections: { available: true, items: [
+    { connector: 'calendar', status: 'connected', account: 'dan@presti.it' },
+    { connector: 'gmail', status: 'connected', account: 'dan@presti.it' },
+  ] } };
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') return profile;
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({
+    client,
+    spaces: [{ id: SPACE, name: 'Negozio', initials: 'NE' }, { id: 'altro', name: 'Altro', initials: 'AL' }],
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /2 canali · 1 persona · 3 clienti/, 'the active space counts Calendar and Gmail');
+  assert.match(rendered, /0 canali · 1 persona · 3 clienti/, 'another space never borrows the profile links');
+});
+
 test('an unreadable count omits the statistic, never an invented row', async () => {
   const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
   const notFound = Object.assign(new Error('not found'), { code: 'NOT_FOUND', status: 404 });

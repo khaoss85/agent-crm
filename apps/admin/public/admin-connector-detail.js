@@ -37,7 +37,7 @@ import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
+import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { grantExpiring, grantExpiryWording } from './admin-sync.js';
 
@@ -534,6 +534,7 @@ export function createConnectorDetailView(deps) {
     loaded: false,
     loadError: null,
     /** @type {any} */ google: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
   };
 
   // The observer role watches without touching: the renewal write below
@@ -587,6 +588,9 @@ export function createConnectorDetailView(deps) {
       state.loadError = errorOf(error);
       return;
     }
+    // The profile links merge like the shared count (review #782 P1): the
+    // Email detail reuses the Google card's read, any other reads it once.
+    state.profile = state.google !== null ? await state.google.answer : await readProfile(deps.client);
     // The provider-stated grant expiries live only in the activity payload
     // (the same one the Stato sync yellow card reads): without them the
     // detail cannot offer a renewal, so they merge onto the rows below.
@@ -789,6 +793,7 @@ export function createConnectorDetailView(deps) {
       entry,
       adapters: matchAdapters(channel, state.adapters),
       connections: matchConnections(channel, state.entries),
+      profile: state.profile,
     });
     const shared = mapped.shared;
     const connections = mapped.connections;
@@ -804,9 +809,10 @@ export function createConnectorDetailView(deps) {
     const configurable = shared.managedHere === true;
     const badge = !configurable ? shared.text
       : connection !== null ? statusLabel(connection.status) : shared.text;
+    const shownAccount = connection !== null && accountOf(connection) !== null ? accountOf(connection) : shared.account;
     mount.appendChild(el(doc, 'p', 'bo-muted',
-      connection !== null && accountOf(connection) !== null
-        ? `${entry.label} · ${accountOf(connection)} · ${badge}`
+      shownAccount !== null
+        ? `${entry.label} · ${shownAccount} · ${badge}`
         : `${entry.label} · ${badge}`));
     if (!configurable) {
       // Nothing to configure here: the plain note, the declared consumers
@@ -816,6 +822,9 @@ export function createConnectorDetailView(deps) {
       renderConsumers(mount, channel);
       const row = el(doc, 'p', 'bo-connector-actions');
       if (typeof shared.manageRoute === 'string') row.appendChild(routeButton('Apri il Profilo', shared.manageRoute));
+      else if (shared.state === 'da-collegare' && typeof shared.connectRoute === 'string') {
+        row.appendChild(routeButton('Collega', shared.connectRoute, 'cta'));
+      }
       row.appendChild(routeButton('Torna ai connettori', '#/connettori'));
       mount.appendChild(row);
       return;

@@ -215,13 +215,16 @@ export function matchConnections(channel, entries) {
  * nothing here can connect it.
  * @param {{ entry: ConnectorCatalogEntry, adapters: Array<any>, connections: Array<any> }} input
  */
-export function connectorStatus({ entry, adapters, connections }) {
+export function connectorStatus({ entry, adapters, connections, profile = null }) {
   const list = Array.isArray(connections) ? connections : [];
   // The rows arrive already matched to this channel: name it on each copy
-  // so the shared state reads them, and hand back the original rows.
+  // so the shared state reads them, and hand back the original rows. The
+  // profile (GET /api/profile) merges like the shared count, so a link that
+  // lives only on Profilo is `collegato` here too (review #782 P1).
   const shared = channelState(entry.channel, {
     rows: list.map((row) => ({ ...row, channel: entry.channel })),
     adapters: Array.isArray(adapters) ? adapters : [],
+    profile,
   });
   const keep = shared.state === 'collegato' || shared.state === 'da-completare';
   return Object.freeze({
@@ -380,6 +383,7 @@ export function createConnectorsView(deps) {
     /** @type {any} */ flow: null,
     busyControls: /** @type {Array<any>} */ ([]),
     /** @type {any} */ google: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
     /** @type {any} */ meta: null,
   };
 
@@ -634,7 +638,7 @@ export function createConnectorsView(deps) {
   function renderRow(box, catalog) {
     const adapters = matchAdapters(catalog.channel, state.adapters);
     const connections = matchConnections(catalog.channel, state.entries);
-    const mapped = connectorStatus({ entry: catalog, adapters, connections });
+    const mapped = connectorStatus({ entry: catalog, adapters, connections, profile: state.profile });
     // One row like the Google rows above it (apps/admin/public/admin-profilo.js):
     // badge tile, bold name, one description line, status pill and Collega.
     // No underlined link and no bullet list: the row itself opens the detail.
@@ -656,7 +660,7 @@ export function createConnectorsView(deps) {
       && /** @type {{ status?: unknown }} */ (item).status === 'active') ?? null;
     const account = active !== null && typeof /** @type {{ account?: unknown }} */ (active).account === 'string'
       && /** @type {{ account?: string }} */ (active).account.trim() !== ''
-      ? /** @type {{ account?: string }} */ (active).account.trim() : null;
+      ? /** @type {{ account?: string }} */ (active).account.trim() : mapped.shared.account;
     open.appendChild(el(doc, 'span', 'bo-profilo-conn-line',
       account !== null ? `Collegato come ${account}` : String(catalog.syncLines[0] ?? catalog.accountLabel)));
     open.addEventListener('click', (event) => {
@@ -668,7 +672,20 @@ export function createConnectorsView(deps) {
     // One label per state, the same words on every screen (backlog:e381c48581fa).
     const pill = CHANNEL_STATE_LABELS[mapped.status];
     side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${pill.tone}`, pill.text));
-    if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
+    if (mapped.status === 'da-collegare' && mapped.shared.managedHere !== true
+      && typeof mapped.shared.connectRoute === 'string') {
+      // Nothing here connects it, but Profilo does (a Meta channel with no
+      // adapter): Collega leads there, never into a wizard with no adapter.
+      const route = mapped.shared.connectRoute;
+      const go = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
+      go.setAttribute('href', route);
+      go.setAttribute('data-action', 'connect-elsewhere');
+      go.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        navigate(route);
+      });
+      side.appendChild(go);
+    } else if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
       const go = el(doc, 'button', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
       go.setAttribute('data-action', 'connect-open');
       state.busyControls.push(go);
@@ -793,6 +810,9 @@ export function createConnectorsView(deps) {
       state.google = googleConnectionsCard({ doc, client: deps.client });
       state.meta = metaConnectionsCard({ doc, ready: state.google.answer });
       await load();
+      // The same profile read as the Google card (never a second request):
+      // the rows' state merges it like the shared count (review #782 P1).
+      state.profile = await state.google.answer;
       render();
     },
   };

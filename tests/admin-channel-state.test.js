@@ -19,8 +19,10 @@ import {
   NINE_CHANNEL_IDS,
   channelConnectionCount,
   channelState,
+  mergeProfileConnections,
 } from '../apps/admin/public/admin-channels-count.js';
-import { CONNECTOR_CATALOG, connectorStatus } from '../apps/admin/public/admin-connectors.js';
+import { CONNECTOR_CATALOG, connectorStatus, createConnectorsView } from '../apps/admin/public/admin-connectors.js';
+import { createConnectorDetailView } from '../apps/admin/public/admin-connector-detail.js';
 import { createPersonalizzazioneView, filterConnettori } from '../apps/admin/public/admin-personalizzazione.js';
 import { countSpaceChannels } from '../apps/admin/public/admin-spazi-accessi.js';
 import { SETTINGS_VIEW_AREAS, keepSettingsTabs } from '../apps/admin/public/admin-shell.js';
@@ -46,7 +48,8 @@ test('channelState: an active row is collegato on every screen, adapter or not',
   assert.equal(linked.managedHere, false, 'no adapter: not configured here');
   assert.match(linked.note ?? '', /i messaggi arrivano nelle schede dei clienti/);
   assert.equal(linked.manageRoute, '#/profilo', 'a profile link is managed on Profilo');
-  const composed = channelState('whatsapp', { rows: ROWS, adapters: [{ name: 'wa', version: 1 }] });
+  const packageRow = { connectionKey: 'presti:whatsapp:+390200000001', channel: 'whatsapp', status: 'active' };
+  const composed = channelState('whatsapp', { rows: [packageRow], adapters: [{ name: 'wa', version: 1 }] });
   assert.equal(composed.state, 'collegato');
   assert.equal(composed.managedHere, true);
   assert.equal(composed.note, null);
@@ -77,28 +80,129 @@ test('channelState: not linked reads da-completare, da-collegare or non-disponib
   }
 });
 
-test('e381c48581fa: the same space counts the same channels on every screen', () => {
-  const shared = channelConnectionCount(ROWS);
+/**
+ * The raw production input (review #782 P1): the framework's GET
+ * /api/connectors carries only channel-connection rows, and the Google and
+ * Meta links live apart in GET /api/profile. No pre-merged `profile:` row.
+ */
+const RAW_ROWS = Object.freeze([]);
+const PROFILE = Object.freeze({
+  member: { name: 'Dan' },
+  connections: {
+    available: true,
+    reason: null,
+    items: [
+      { connector: 'whatsapp', status: 'connected', account: '+390200000001' },
+      { connector: 'calendar', status: 'connected', account: 'dan@presti.it' },
+      { connector: 'gmail', status: 'disconnected', account: null },
+    ],
+    meta: { configured: true },
+  },
+});
+
+test('e381c48581fa: from the raw rows plus the profile, every screen counts the same channels', () => {
+  const merged = mergeProfileConnections(RAW_ROWS, PROFILE);
+  const shared = channelConnectionCount(merged);
   assert.equal(shared.connected, 2, '«2 di 9» on Oggi and Stato sync');
-  assert.equal(countSpaceChannels({ connectors: ROWS }), 2, 'the space card says 2 canali');
-  const mine = filterConnettori({ connectors: ROWS, view: 'tuoi' })
+  assert.equal(countSpaceChannels({ connectors: RAW_ROWS }, PROFILE), 2, 'the space card says 2 canali');
+  assert.equal(countSpaceChannels({ connectors: RAW_ROWS }), 0, 'without the profile it could not know');
+  const mine = filterConnettori({ connectors: RAW_ROWS, profile: PROFILE, view: 'tuoi' })
     .flatMap((group) => group.cards.map((card) => card.entry.label));
   assert.deepEqual(mine.sort(), ['Google Calendar', 'WhatsApp'], '«I tuoi» lists both, Google Calendar included');
-  // Connettori and its detail read collegato for WhatsApp with no adapter.
   const whatsapp = CONNECTOR_CATALOG.find((entry) => entry.channel === 'whatsapp');
-  const mapped = connectorStatus({ entry: whatsapp, adapters: [], connections: [ROWS[0]] });
+  const mapped = connectorStatus({ entry: whatsapp, adapters: [], connections: [], profile: PROFILE });
   assert.equal(mapped.status, 'collegato');
-  // Each of the nine agrees with the count.
+  assert.equal(mapped.shared.manageRoute, '#/profilo');
   for (const id of NINE_CHANNEL_IDS) {
-    const linked = channelState(id, { rows: ROWS }).state === 'collegato';
+    const linked = channelState(id, { rows: RAW_ROWS, profile: PROFILE }).state === 'collegato';
     assert.equal(linked, shared.connectedChannels.includes(id), `${id}: one answer`);
   }
+});
+
+test('review #782 P3: a composed adapter never routes Calendar or Stripe into the guided flow', () => {
+  const offering = { connections: { available: true, items: [{ connector: 'calendar', status: 'disconnected' }] } };
+  assert.equal(channelState('calendar', { rows: [], adapters: [{}], profile: offering }).connectRoute, '#/profilo');
+  assert.equal(channelState('stripe', { rows: [], adapters: [{}] }).state, 'non-disponibile');
+  // A profile link stays managed on Profilo even beside a composed adapter.
+  const linked = channelState('whatsapp', { rows: [], adapters: [{}], profile: PROFILE });
+  assert.equal(linked.state, 'collegato');
+  assert.equal(linked.managedHere, false);
+  assert.equal(linked.manageRoute, '#/profilo');
+});
+
+function connectorsClient(calls = []) {
+  return {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      if (path === '/api/schema') return { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
+      if (path === '/api/profile') return PROFILE;
+      if (path.startsWith('/api/connectors?')) return { connectors: [...RAW_ROWS] };
+      if (path.startsWith('/api/connectors/activity')) return { connections: [] };
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+}
+
+test('e381c48581fa: Connettori and the WhatsApp detail read the profile link as Collegato', async () => {
+  const doc = createFakeDocument();
+  const list = createMount();
+  const calls = [];
+  const storage = { getItem: () => 'presti', setItem: () => {} };
+  await createConnectorsView({ doc, mount: list, client: connectorsClient(calls), navigate: () => {}, storage }).render();
+  await flush();
+  const row = list.findAll('div').find((node) => node.getAttribute('data-channel') === 'whatsapp');
+  assert.ok(row.textContent.includes('Collegato'), 'the list row says Collegato');
+  assert.ok(row.textContent.includes('Collegato come +390200000001'));
+  assert.ok(!row.textContent.includes('Non ancora disponibile'));
+  assert.equal(calls.filter((path) => path === '/api/profile').length, 1, 'one profile read, shared with the Google card');
+  const detail = createMount();
+  await createConnectorDetailView({ doc, mount: detail, client: connectorsClient(), navigate: () => {}, storage }).render('whatsapp');
+  await flush();
+  assert.ok(detail.textContent.includes('WhatsApp · +390200000001 · Collegato'));
+  assert.ok(detail.textContent.includes('Si gestisce dal Profilo'));
+  assert.ok(!detail.textContent.includes('Nessun adattatore'));
+  // Instagram: no row, no adapter, and the profile does not offer it:
+  // nothing here connects it.
+  const instagram = list.findAll('div').find((node) => node.getAttribute('data-channel') === 'instagram');
+  assert.ok(instagram.textContent.includes('Non ancora disponibile'));
+});
+
+test('e381c48581fa: a Meta channel Profilo can connect offers the green Collega towards Profilo', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const offering = {
+    connections: { available: true, items: [{ connector: 'instagram', status: 'disconnected', account: null }], meta: { configured: true } },
+  };
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
+      if (path === '/api/profile') return offering;
+      if (path.startsWith('/api/connectors?')) return { connectors: [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const storage = { getItem: () => 'presti', setItem: () => {} };
+  await createConnectorsView({ doc, mount, client, navigate: (hash) => navigated.push(hash), storage }).render();
+  await flush();
+  const row = mount.findAll('div').find((node) => node.getAttribute('data-channel') === 'instagram');
+  assert.ok(row.textContent.includes('Da collegare'));
+  const collega = row.findAll('a').find((node) => node.getAttribute('data-action') === 'connect-elsewhere');
+  assert.ok(collega, 'Collega is there');
+  assert.match(collega.getAttribute('class') ?? '', /\bui-btn-cta\b/, 'green');
+  assert.equal(collega.getAttribute('href'), '#/profilo');
+  collega.dispatch('click', { preventDefault() {} });
+  assert.deepEqual(navigated, ['#/profilo'], 'it leads to Profilo, never into a wizard with no adapter');
 });
 
 function perso(connectors) {
   return {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
+      if (path === '/api/profile') return PROFILE;
       if (path === '/api/space-packages/catalog') return { units: [] };
       if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
       if (path.startsWith('/api/connectors?')) return { connectors };
@@ -113,7 +217,7 @@ function perso(connectors) {
 test('e381c48581fa: «I tuoi» shows the linked cards without the Kit social hero', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createPersonalizzazioneView({ doc, mount, client: perso([...ROWS]), navigate: () => {}, spaceId: () => 'presti' });
+  const view = createPersonalizzazioneView({ doc, mount, client: perso([...RAW_ROWS]), navigate: () => {}, spaceId: () => 'presti' });
   view.test.state.tab = 'connettori';
   view.test.state.view = 'tuoi';
   await view.render();

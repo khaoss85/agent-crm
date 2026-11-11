@@ -40,7 +40,8 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
-import { channelConnectionCount } from './admin-channels-count.js';
+import { channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
@@ -161,16 +162,17 @@ export function formatSpaceStat({ channels = null, members = null, customers = n
  * suspended connection is not "collegato". No `connectors` array means the
  * package is not composed here, never zero.
  * @param {unknown} answer
+ * @param {unknown} [profile] the /api/profile answer: only for the space it describes
  */
-export function countSpaceChannels(answer) {
+export function countSpaceChannels(answer, profile = null) {
   const entries = answer !== null && typeof answer === 'object'
     ? /** @type {{connectors?: unknown}} */ (answer).connectors
     : null;
   if (!Array.isArray(entries)) return null;
   // The shared count (backlog:e381c48581fa): linked channels, not active
-  // rows — two accounts on one channel are one channel, like «2 di 9» on
-  // Oggi and Stato sync.
-  return channelConnectionCount(entries).connected;
+  // rows — two accounts on one channel are one channel — with the profile
+  // links merged, like «2 di 9» on Oggi and Stato sync (review #782 P1).
+  return channelConnectionCount(mergeProfileConnections(entries, profile)).connected;
 }
 
 /**
@@ -585,8 +587,9 @@ export function createSpaziAccessiView(deps) {
    * missing enhancement, never a page error, so it stays silent.
    * @param {string} spaceId
    * @param {number|null} memberCount
+   * @param {unknown} [profile] the /api/profile answer for this space, null otherwise
    */
-  async function loadSpaceStat(spaceId, memberCount) {
+  async function loadSpaceStat(spaceId, memberCount, profile = null) {
     if (memberCount === null) return null;
     try {
       const [channelsSettled, customersSettled] = await Promise.allSettled([
@@ -610,7 +613,7 @@ export function createSpaziAccessiView(deps) {
       if (customersSettled.status === 'rejected') throw customersSettled.reason;
       const customersAnswer = customersSettled.value;
       return formatSpaceStat({
-        channels: countSpaceChannels(channelsAnswer),
+        channels: countSpaceChannels(channelsAnswer, profile),
         members: memberCount,
         customers: countSpaceCustomers(customersAnswer),
       });
@@ -710,8 +713,12 @@ export function createSpaziAccessiView(deps) {
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
         && /** @type {{id?: unknown}} */ (entry).id !== '')
       .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    // The profile describes the session's own space: its links count on
+    // that card only, never on another space's (review #782 P1).
+    const profile = ids.length > 0 ? await readProfile(client) : null;
+    const current = readActiveSpace().trim();
     await Promise.all(ids.map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCount);
+      const stat = await loadSpaceStat(id, memberCount, id === current ? profile : null);
       if (stat !== null) state.stats.set(id, stat);
     }));
   }
