@@ -586,7 +586,7 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
       const retry = await readModulePage(client, 'sequence-step', { sequenceSourceKey });
       return { rows: retry.rows, failed: false };
     } catch (retryError) {
-      console.warn('bo-sequenze steps key-only retry unreadable:', retryError instanceof Error ? retryError.name : 'unknown');
+      console.warn('bo-sequenze steps key-only retry unreadable:', retryError instanceof Error ? retryError.name : 'unknown', spaceId ?? '');
       return { rows: page.rows, failed: true };
     }
   } catch (error) {
