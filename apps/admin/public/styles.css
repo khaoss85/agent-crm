@@ -266,6 +266,16 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pipeline-table th, .pipeline-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .pipeline-table th { font-size: 11px; color: var(--dim); }
+/* backlog:fb47ab99b6ee: ogni intestazione della Lista ordina; la freccia dice
+   quale colonna e in che verso, il resto resta un'etichetta grigia. */
+.pipeline-table th .pipeline-sort.ui-btn { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; font-weight: 700; letter-spacing: inherit; text-transform: inherit; cursor: pointer; transform: none; }
+.pipeline-table th .pipeline-sort.ui-btn:hover { color: var(--ink); transform: none; }
+.pipeline-table th .pipeline-sort.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pipeline-table th .pipeline-sort.ui-btn::after { content: "↕"; opacity: .35; font-size: 10px; }
+.pipeline-table th[aria-sort="ascending"] .pipeline-sort.ui-btn { color: var(--ink); }
+.pipeline-table th[aria-sort="ascending"] .pipeline-sort.ui-btn::after { content: "↑"; opacity: 1; }
+.pipeline-table th[aria-sort="descending"] .pipeline-sort.ui-btn { color: var(--ink); }
+.pipeline-table th[aria-sort="descending"] .pipeline-sort.ui-btn::after { content: "↓"; opacity: 1; }
 .pipeline-table tr[data-openable="true"] { cursor: pointer; transition: background-color .12s ease; }
 .pipeline-table tbody tr[data-openable="true"]:hover { background: var(--surface-soft); }
 .pipeline-row-link { color: inherit; font-weight: 600; text-decoration: none; }
