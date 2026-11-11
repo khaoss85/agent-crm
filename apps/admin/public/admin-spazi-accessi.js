@@ -40,6 +40,7 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
+import { channelConnectionCount } from './admin-channels-count.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
@@ -166,8 +167,10 @@ export function countSpaceChannels(answer) {
     ? /** @type {{connectors?: unknown}} */ (answer).connectors
     : null;
   if (!Array.isArray(entries)) return null;
-  return entries.filter((entry) => entry !== null && typeof entry === 'object'
-    && /** @type {{status?: unknown}} */ (entry).status === 'active').length;
+  // The shared count (backlog:e381c48581fa): linked channels, not active
+  // rows — two accounts on one channel are one channel, like «2 di 9» on
+  // Oggi and Stato sync.
+  return channelConnectionCount(entries).connected;
 }
 
 /**
@@ -1133,8 +1136,20 @@ export function createSpaziAccessiView(deps) {
         cls: 'bo-spazi-toggle',
         attrs: { type: 'button', role: 'switch', 'aria-checked': entry.enabled ? 'true' : 'false', 'aria-label': entry.label },
       });
-      toggle.setAttribute('data-on', entry.enabled ? 'true' : 'false');
-      toggle.disabled = state.busy || (master === false && entry.master !== true);
+      // backlog:1cfc68175ab7: with the space AI off the five decide
+      // nothing, so none of them reads on (green): each shows off and «in
+      // pausa», and keeps its own value for when the AI is back on.
+      const paused = master === false && entry.master !== true;
+      if (paused) {
+        toggle.setAttribute('aria-checked', 'false');
+        toggle.setAttribute('data-paused', 'true');
+        texts.appendChild(el(doc, 'div', {
+          text: entry.enabled ? 'In pausa: riparte acceso quando riaccendi l\u2019AI.' : 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.',
+          cls: 'bo-spazi-paused',
+        }));
+      }
+      toggle.setAttribute('data-on', entry.enabled && !paused ? 'true' : 'false');
+      toggle.disabled = state.busy || paused;
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.switchRefusal = null;

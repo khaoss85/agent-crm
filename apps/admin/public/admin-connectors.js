@@ -25,6 +25,7 @@
 // createElement + textContent/setAttribute — never innerHTML with data, so a
 // hostile channel, account or adapter label is inert text, never markup.
 
+import { channelState, CHANNEL_STATE_LABELS, NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { googleConnectionsCard, metaConnectionsCard } from './admin-profilo.js';
@@ -205,23 +206,29 @@ export function matchConnections(channel, entries) {
 }
 
 /**
- * The screen status of one catalog connector: no composed adapter means the
- * connector honestly cannot connect here; no connection row means it shows
- * the "cosa succede" preview; otherwise the live row decides.
+ * The screen status of one catalog connector, from the one shared channel
+ * state (admin-channels-count.js `channelState`, backlog:e381c48581fa): an
+ * active row is `collegato` whether or not this composition configures the
+ * channel (`shared.managedHere` and `shared.note` say which), rows without
+ * an active one are `da-completare` when an adapter can finish them, no row
+ * is `da-collegare` when an adapter is composed, `non-disponibile` when
+ * nothing here can connect it.
  * @param {{ entry: ConnectorCatalogEntry, adapters: Array<any>, connections: Array<any> }} input
  */
 export function connectorStatus({ entry, adapters, connections }) {
-  if (adapters.length === 0) {
-    return Object.freeze({ status: 'non-disponibile', connections: Object.freeze([]) });
-  }
-  if (connections.length === 0) {
-    return Object.freeze({ status: 'da-collegare', connections: Object.freeze([]) });
-  }
-  const active = connections.find((row) => row.status === 'active') ?? null;
-  if (active !== null) {
-    return Object.freeze({ status: 'collegato', connections: Object.freeze(connections) });
-  }
-  return Object.freeze({ status: 'da-completare', connections: Object.freeze(connections) });
+  const list = Array.isArray(connections) ? connections : [];
+  // The rows arrive already matched to this channel: name it on each copy
+  // so the shared state reads them, and hand back the original rows.
+  const shared = channelState(entry.channel, {
+    rows: list.map((row) => ({ ...row, channel: entry.channel })),
+    adapters: Array.isArray(adapters) ? adapters : [],
+  });
+  const keep = shared.state === 'collegato' || shared.state === 'da-completare';
+  return Object.freeze({
+    status: shared.state,
+    connections: Object.freeze(keep ? [...list] : []),
+    shared,
+  });
 }
 
 /**
@@ -419,7 +426,7 @@ export function createConnectorsView(deps) {
       `Passo 1: autorizzi ${catalog.label} a parlare con Accordo. Non chiede password né segreti: registra solo dove la custodia dello spazio troverà il riferimento.`));
     const adapters = matchAdapters(catalog.channel, state.adapters);
     if (adapters.length === 0) {
-      box.appendChild(el(doc, 'p', 'field-error', 'Nessun adattatore composto per questo canale: non si può collegare qui.'));
+      box.appendChild(el(doc, 'p', 'field-error', NOT_AVAILABLE_NOTE));
       return;
     }
     const names = adapters.map((entry) => String(entry.label ?? entry.name)).join(', ');
@@ -447,7 +454,7 @@ export function createConnectorsView(deps) {
       }
       const picked = matchAdapters(catalog.channel, state.adapters)[0] ?? null;
       if (picked === null) {
-        state.flow = flowFail(state.flow, 'Nessun adattatore composto per questo canale.');
+        state.flow = flowFail(state.flow, NOT_AVAILABLE_NOTE);
         render();
         return;
       }
@@ -658,13 +665,8 @@ export function createConnectorsView(deps) {
     });
     row.appendChild(open);
     const side = el(doc, 'div', 'bo-profilo-conn-side');
-    const pill = mapped.status === 'collegato'
-      ? { text: 'Collegato', tone: 'ok' }
-      : mapped.status === 'da-completare'
-        ? { text: 'Da completare', tone: 'warn' }
-        : mapped.status === 'non-disponibile'
-          ? { text: 'Non disponibile qui', tone: 'muted' }
-          : { text: 'Da collegare', tone: 'muted' };
+    // One label per state, the same words on every screen (backlog:e381c48581fa).
+    const pill = CHANNEL_STATE_LABELS[mapped.status];
     side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${pill.tone}`, pill.text));
     if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
       const go = el(doc, 'button', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');

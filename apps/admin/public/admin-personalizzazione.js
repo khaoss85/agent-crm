@@ -27,7 +27,7 @@
 // usa solo DOM API — createElement + textContent/setAttribute — mai innerHTML
 // con dati, così un nome o un blurb ostile resta testo, mai markup.
 
-import { CHANNEL_CONNECT_ROUTES } from './admin-channels-count.js';
+import { CHANNEL_CONNECT_ROUTES, channelState } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
@@ -360,11 +360,11 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['Ogni invio del form crea o aggiorna un contatto.', 'di Accordo · ← in entrata']),
       },
       {
-        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: CHANNEL_CONNECT_ROUTES.calendar,
+        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, countAs: 'calendar', href: CHANNEL_CONNECT_ROUTES.calendar,
         lines: Object.freeze(['Appuntamenti del team e disponibilità condivisa.', 'di Google · ↔ bidirezionale']),
       },
       {
-        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, href: null,
+        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, countAs: 'stripe', href: null,
         lines: Object.freeze(['Pagamenti, abbonamenti e rinnovi.', 'di Stripe · ↔ pagamenti e link']),
       },
     ]),
@@ -388,21 +388,26 @@ export function connettoriHref(entry) {
 }
 
 /**
- * The card state from the live rows: `collegato` when an active row serves
- * the entry's channel, `da-collegare` otherwise (and for entries without
- * a channel that still have a destination, such as Google Calendar on
- * Profilo); `non-disponibile` for an entry with neither (Stripe).
- * @param {{ channel?: unknown }} entry
+ * The card state from the live rows, read through the one shared channel
+ * state (`channelState`, backlog:e381c48581fa): `collegato` when the
+ * channel is linked — the same predicate as «<n> di 9 collegati», so a
+ * Google Calendar linked on Profilo is in «I tuoi» too (`countAs` names the
+ * counted channel of a card the guided flow does not serve); `da-collegare`
+ * otherwise when the card has a destination; `non-disponibile` for a card
+ * with neither (Stripe).
+ * @param {{ channel?: unknown, countAs?: unknown, href?: unknown }} entry
  * @param {unknown} connectors
  */
 export function connettoriCardState(entry, connectors) {
-  const channel = entry && typeof entry.channel === 'string' ? entry.channel : '';
-  if (channel === '') {
-    // No channel and no destination (Stripe): nothing here connects it.
-    return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
+  const guided = entry && typeof entry.channel === 'string' && entry.channel !== '' ? entry.channel : '';
+  const counted = guided !== '' ? guided
+    : entry && typeof entry.countAs === 'string' ? entry.countAs : '';
+  if (counted !== '' && channelState(counted, { rows: Array.isArray(connectors) ? connectors : [] }).state === 'collegato') {
+    return 'collegato';
   }
-  const rows = matchConnections(channel, Array.isArray(connectors) ? connectors : []);
-  return rows.some((row) => row && row.status === 'active') ? 'collegato' : 'da-collegare';
+  if (guided !== '') return 'da-collegare';
+  // No guided channel: connectable only where its destination leads.
+  return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
 }
 
 /**
@@ -1110,7 +1115,9 @@ export function createPersonalizzazioneView(deps) {
       box.appendChild(el(doc, 'p', { text: 'Lettura dei collegamenti…', cls: 'muted' }));
       return;
     }
-    renderConnettoriHero(box);
+    // backlog:e381c48581fa: the hero invites to connect; «I tuoi» lists
+    // what is already linked, so it shows the cards alone.
+    if (state.view !== 'tuoi') renderConnettoriHero(box);
     const connectors = state.connectors ?? [];
     const groups = filterConnettori({
       connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,

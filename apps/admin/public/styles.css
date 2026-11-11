@@ -1157,6 +1157,11 @@ select.bo-spazi-input { flex: none; }
   border-radius: 50%; background: var(--paper); transition: left .2s;
 }
 .bo-spazi-toggle[data-on="true"] .bo-spazi-knob { left: 21px; }
+/* backlog:1cfc68175ab7: with the space AI off the five read paused, never green. */
+.bo-spazi-toggle[data-paused="true"] { background: var(--line); opacity: .6; cursor: not-allowed; }
+.bo-spazi-paused { font-size: 12px; color: var(--muted); }
+/* backlog:e381c48581fa: the connector detail's buttons sit in one row. */
+.bo-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 /* Supervisor design pass: Spazi e accessi like prototype 08. */
 .bo-spazi-title { margin: 0; font-size: clamp(34px, 4.4vw, 46px); line-height: 1; letter-spacing: -.03em; }
 .bo-spazi-lede { max-width: 640px; margin: 12px 0 0; font-size: 16px; line-height: 1.5; }
