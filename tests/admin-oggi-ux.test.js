@@ -387,6 +387,15 @@ test('bab63e32acdb: the general rule on the real Presti rows — receipts, PEC, 
   assert.equal(isNotificationMessage({ channel: 'website-form', remoteHandle: 'noreply@sito.it', body: 'Ciao' }), false, 'the form channel is a person');
   assert.equal(isNotificationMessage({ channel: 'whatsapp', remoteHandle: '+393331234567', subjectLabel: 'Noreply' }), false, 'only e-mail is classified');
   assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'avvocato@legalmail.it' }), true, 'a PEC-only provider');
+  // Receipts: the service mailboxes of payment providers only (team-lead 11/11).
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'service@paypal.com' }), true, 'service@ of a payment provider');
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'assistenza@paypal.it' }), true, 'assistenza@ of a payment provider, without any label');
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'assistenza@fornitore-esempio.it', body: 'Buongiorno, le scrivo per…' }), false,
+    'elsewhere assistenza@ can be a person');
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'service@officina-rossi.it' }), false, 'service@ outside payments is a person');
+  // PEC by its wording, whatever the mailbox.
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'mario@studio-esempio.it', body: 'Copia di messaggio di Posta Elettronica Certificata' }), true);
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'posta-certificata@legalmail.it' }), true);
   // The owner writing to themselves, whatever the mailbox looks like.
   const own = ownMailboxes({ member: { email: 'Dan@Presti.it' }, connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'op@presti.it' }] } });
   assert.deepEqual(own, ['op@presti.it', 'dan@presti.it']);

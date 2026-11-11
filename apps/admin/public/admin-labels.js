@@ -165,7 +165,21 @@ function machineToken(token) {
  * only: the Gmail sync keeps storing these messages (receipts carry their
  * subject and attachments), they just never wait for a reply.
  */
-const ITALIAN_ROLE_LOCALS = Object.freeze(['assistenza', 'notifiche', 'avvisi', 'fatturazione', 'fatture', 'ordini', 'ricevute']);
+const ITALIAN_ROLE_LOCALS = Object.freeze(['notifiche', 'avvisi', 'fatturazione', 'fatture', 'ordini', 'ricevute']);
+
+/**
+ * Payment providers whose service mailboxes send receipts (team-lead
+ * decision 11/11: `assistenza@paypal.it`, `service@paypal.com`): a domain
+ * label naming one, with a service local part, is a receipt — never a
+ * person waiting. Kept to the receipt locals: elsewhere `assistenza@` can
+ * be a person.
+ */
+const PAYMENT_PROVIDERS = Object.freeze(['paypal', 'stripe', 'satispay', 'klarna', 'scalapay', 'sumup', 'nexi']);
+const RECEIPT_LOCALS = Object.freeze(['assistenza', 'service', 'servizio-clienti', 'payments', 'pagamenti', 'receipts']);
+
+/** The certified-mail wording a PEC copy or receipt carries in its subject or body. */
+const PEC_WORDS = /posta elettronica certificata|^posta certificata:|^(?:accettazione|avvenuta consegna|consegna|anomalia messaggio):/i;
+
 
 /** A PEC mailbox: a `pec` label in the domain (`pec.libero.it`, `pec.aruba.it`) or a PEC-only provider. */
 const PEC_PROVIDERS = Object.freeze(['legalmail.it', 'postacert.it', 'postecert.it', 'arubapec.it']);
@@ -194,8 +208,11 @@ function addressOf(handle) {
  *   words in the subject or the opening of the body);
  * - an automated sender (`isAutomatedSender`: no-reply, notifications,
  *   receipts and billing mailboxes, a «Noreply» display name) or the
- *   Italian mailbox of the same roles (`assistenza@`, `ricevute@`…);
- * - a certified-mail (PEC) mailbox: the receipts and copies a PEC box sends;
+ *   Italian mailbox of the same roles (`notifiche@`, `ricevute@`…);
+ * - a payment receipt: a service mailbox (`assistenza@`, `service@`) of a
+ *   payment provider (`paypal.*`, `stripe.*`…);
+ * - a certified-mail (PEC) message: a PEC mailbox (`pec.*` domains,
+ *   `posta-certificata@`) or the PEC wording in subject or body;
  * - the owner writing to themselves: a sender among the space's own
  *   addresses (`ownAddresses`, the linked mailboxes of the profile).
  * Only e-mail is classified: a WhatsApp or Instagram message is a person.
@@ -216,7 +233,10 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [] 
   const local = address.slice(0, address.lastIndexOf('@')).split('+')[0] ?? '';
   if (ITALIAN_ROLE_LOCALS.some((role) => local === role || ['-', '_', '.'].some((sep) => local.startsWith(`${role}${sep}`)))) return true;
   const domain = address.slice(address.lastIndexOf('@') + 1);
-  if (domain.split('.').includes('pec') || PEC_PROVIDERS.includes(domain) || address.startsWith('posta-certificata@')) return true;
+  const domainLabels = domain.split('.');
+  if (RECEIPT_LOCALS.includes(local) && domainLabels.some((label) => PAYMENT_PROVIDERS.includes(label))) return true;
+  if (PEC_WORDS.test(subject) || PEC_WORDS.test(opening.trim())) return true;
+  if (domainLabels.includes('pec') || PEC_PROVIDERS.includes(domain) || address.startsWith('posta-certificata@')) return true;
   for (const own of ownAddresses) {
     if (addressOf(own) === address) return true;
   }
