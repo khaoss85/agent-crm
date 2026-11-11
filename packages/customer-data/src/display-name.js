@@ -169,8 +169,14 @@ export function isTechnicalLocalPart(email) {
   if (/^(?:no[._-]?reply|do[._-]?not[._-]?reply|mailer[._-]?daemon|postmaster|bounces?|notifications?|notify|alerts?)$/.test(local)) {
     return true;
   }
+  // A no-reply piece of a longer local part (`comments-noreply@docs.google.com`,
+  // backlog:bab63e32acdb) is a mailbox too.
+  if (NO_REPLY_PIECE.test(local)) return true;
   return local.split(/[._-]+/).some(isMachineToken);
 }
+
+/** A no-reply piece of a longer local part (`comments-noreply`, `drive-shares-dm-noreply`). */
+const NO_REPLY_PIECE = /(?:^|[._-])(?:no[._-]?reply|do[._-]?not[._-]?reply)(?:[._-]|$)/;
 
 /**
  * A machine id, not a human handle (review #739 giro 2): very long, or at

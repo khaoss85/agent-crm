@@ -1281,6 +1281,9 @@ async function route() {
         mount: mountGate.owned('dashboard'),
         client: moduleClient,
         navigate: (next) => { window.location.hash = next; },
+        // backlog:bd5e84545021: «Fonti: Appuntamento …» hands the event to
+        // the Calendario through the shared shell storage.
+        storage: shellStorage,
       });
     }
     await oggiView.render({
