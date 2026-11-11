@@ -170,8 +170,8 @@ test('bd5e84545021: no Oggi link opens the technical appointment page', () => {
   const agenda = buildTodayAgenda([unlinked], NOW);
   const hrefs = [...brief.sources.map((source) => source.href), ...agenda.map((row) => row.href)];
   assert.ok(hrefs.every((href) => !String(href).startsWith('#/modules/appointment')), hrefs.join(', '));
-  assert.deepEqual(brief.sources[0], { label: 'Appuntamento delle 12:00', href: '#/calendario', calendarEvent: { id: 'appt-9', day: '2026-10-19' } });
-  assert.deepEqual(agenda[0].calendarEvent, { id: 'appt-9', day: '2026-10-19' });
+  assert.deepEqual(brief.sources[0], { label: 'Appuntamento delle 12:00', href: '#/calendario', calendarEvent: { id: 'appt-9', day: '2026-10-19', member: 'google|1049' } });
+  assert.deepEqual(agenda[0].calendarEvent, { id: 'appt-9', day: '2026-10-19', member: 'google|1049' });
 });
 
 test('bd5e84545021: a click on the appointment source hands the event to the calendar and goes there', async () => {
@@ -190,7 +190,7 @@ test('bd5e84545021: a click on the appointment source hands the event to the cal
   source.dispatch('click', { preventDefault: () => { prevented = true; } });
   assert.equal(prevented, true);
   assert.deepEqual(seen, ['#/calendario']);
-  assert.deepEqual(takePendingCalendarEvent(storage), { id: 'appt-9', day: '2026-10-19' }, 'the event waits for the calendar, once');
+  assert.deepEqual(takePendingCalendarEvent(storage), { id: 'appt-9', day: '2026-10-19', member: 'google|1049' }, 'the event waits for the calendar, once');
   assert.equal(takePendingCalendarEvent(storage), null, 'taken once');
 });
 
@@ -413,4 +413,118 @@ test('bab63e32acdb: Presti › Da rispondere keeps Arvo Contact and the person, 
   assert.deepEqual(inbox.rows.map((row) => row.id).sort(), ['c-form', 'c-person']);
   assert.equal(inbox.total, 2);
   assert.deepEqual(inbox.notifications.rows.map((row) => row.id).sort(), ['c-ahrefs', 'c-docs', 'c-namecheap', 'c-paypal', 'c-pec']);
+});
+
+// ---------------------------------------------------------------------------
+// Review Muse #792 (giro 1, testa 18fa606): three P2.
+// ---------------------------------------------------------------------------
+
+test('review #792 P2: a slow call recap never keeps the actions waiting once the names are in', async () => {
+  const brief = deferred();
+  const base = slowNamesClient();
+  base.names.resolve();
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/modules/interaction-call/records')
+        || (path.startsWith('/api/modules/interaction-message/records') && path.includes('filter.subjectId'))) {
+        await brief.promise;
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: NOW }).then(() => { rendered = true; });
+  await flush();
+  assert.equal(rendered, false, 'the call recap is still reading');
+  assert.ok(mount.textContent.includes('Fio Neri'), 'the names are in');
+  const postpone = mount.querySelector('button[data-triage="postpone"]');
+  const buttons = mount.findAll('button').filter((node) => node.getAttribute('data-triage') !== null || node.getAttribute('data-action') === 'inbox-reply');
+  assert.ok(buttons.length >= 3 && buttons.every((node) => node.disabled === false), 'every action is live while the recap reads');
+  assert.ok(mount.querySelector('section[data-oggi-section="brief"]').textContent.includes('Carico messaggi e chiamate da ripassare'));
+  brief.resolve();
+  await flush();
+  assert.equal(rendered, true);
+  assert.equal(mount.querySelector('button[data-triage="postpone"]'), postpone, 'the same buttons after the recap lands');
+  assert.ok(!mount.querySelector('section[data-oggi-section="brief"]').textContent.includes('Carico'));
+});
+
+function calendarClient(week, { roster = true } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      if (path === '/api/spine/memberships') {
+        if (!roster) throw Object.assign(new Error('refused'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
+        return { items: [{ subject: 'marco', displayName: 'Marco' }, { subject: 'sara', displayName: 'Sara' }] };
+      }
+      if (path === '/api/profile') return { member: null, connections: { available: false, items: [] } };
+      if (path.startsWith('/api/appointments/team-week')) return week;
+      const error = new Error('not composed');
+      Object.assign(error, { code: 'NOT_FOUND', status: 404 });
+      throw error;
+    },
+  };
+}
+const HANDOFF_WEEK = {
+  from: '2026-11-02T00:00:00.000Z',
+  to: '2026-11-09T00:00:00.000Z',
+  members: [
+    { teamMemberId: 'marco', appointments: [{ id: 'a1', status: 'booked', startsAt: '2026-11-05T11:00:00.000Z', endsAt: '2026-11-05T11:30:00.000Z', serviceKey: 'prova', teamMemberId: 'marco', subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' } }] },
+    { teamMemberId: 'sara', appointments: [] },
+  ],
+};
+
+test('review #792 P2: the asked event opens even when its member was hidden in the Team card', async () => {
+  const storage = memoryStorage();
+  const client = calendarClient(HANDOFF_WEEK);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-11-04T06:00:00Z') });
+  await view.render();
+  await flush();
+  const toggle = () => mount.findAll('button').find((node) => String(node.getAttribute('title') ?? '').includes('settimana') && node.textContent.includes('Marco'));
+  toggle().dispatch('click');
+  assert.equal(toggle().getAttribute('aria-pressed'), 'false', 'Marco is hidden');
+  writePendingCalendarEvent(storage, { id: 'a1', day: '2026-11-05', member: 'marco' });
+  await view.render();
+  await flush();
+  assert.ok(mount.querySelector('div[data-role="event-detail"]'), 'the asked event is open');
+  assert.equal(toggle().getAttribute('aria-pressed'), 'true', 'its member shows again');
+});
+
+test('review #792 P2: the asked event loads with its member even when the typed filter leaves them out', async () => {
+  const storage = memoryStorage();
+  const client = calendarClient(HANDOFF_WEEK, { roster: false });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-11-04T06:00:00Z') });
+  await view.render();
+  await flush();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'sara';
+  mount.findAll('button').find((node) => node.textContent === 'Mostra settimana').dispatch('click');
+  await flush();
+  writePendingCalendarEvent(storage, { id: 'a1', day: '2026-11-05', member: 'marco' });
+  await view.render();
+  await flush();
+  const weekRead = client.calls.filter((path) => path.startsWith('/api/appointments/team-week')).pop();
+  assert.ok(decodeURIComponent(weekRead).includes('marco'), `the asked member is read: ${weekRead}`);
+  assert.ok(mount.querySelector('div[data-role="event-detail"]'), 'the asked event is open');
+});
+
+test('review #792 P2: a machine sender with a display name («Name <addr>») is still a notification', () => {
+  assert.equal(isAutomatedSender('Namecheap Support <support@namecheap.com>'), true);
+  assert.equal(isAutomatedSender('Google Docs <comments-noreply@docs.google.com>'), true);
+  assert.equal(isAutomatedSender('<noreply@ahrefs.com>'), true);
+  assert.equal(isAutomatedSender('Lia Marroni <lia.marroni@gmail.com>'), false);
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'Namecheap Support <support@namecheap.com>' }), true);
+  const event = buildPreCallBrief({ appointment: APPT, now: NOW });
+  assert.deepEqual(event.sources.find((source) => source.calendarEvent)?.calendarEvent, { id: 'appt-9', day: '2026-10-19', member: 'google|1049' },
+    'the handoff names the member holding the slot');
 });

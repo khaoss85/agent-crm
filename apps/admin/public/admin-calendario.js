@@ -1233,6 +1233,8 @@ export function createCalendarioView(deps) {
     selectedId: null,
     /** An event another screen asked to open (Oggi «Fonti»): selected once its week loads. @type {string|null} */
     pendingEventId: null,
+    /** Its team member: loaded and shown for that selection whatever the filters say (review Muse #792). @type {string|null} */
+    pendingEventMember: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1406,6 +1408,9 @@ export function createCalendarioView(deps) {
         .filter((row) => row.listed)
         .flatMap((row) => row.ids);
       const expanded = [...members, ...listedIds.filter((id) => !members.includes(id))];
+      // An event Oggi asked for loads with its member even when the typed
+      // filter or the roster leaves them out (review Muse #792).
+      if (state.pendingEventMember !== null && !expanded.includes(state.pendingEventMember)) expanded.push(state.pendingEventMember);
       const week = await client.request(
         `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(expanded.join(','))}`
         + `&from=${encodeURIComponent(window.from)}&to=${encodeURIComponent(window.to)}`,
@@ -1419,7 +1424,12 @@ export function createCalendarioView(deps) {
       if (state.pendingEventId !== null) {
         state.selectedId = state.pendingEventId;
         state.pendingEventId = null;
-        if (selectedRow() === null) state.selectedId = null;
+        state.pendingEventMember = null;
+        const asked = selectedRow();
+        if (asked === null) state.selectedId = null;
+        // The explicit request beats a retained «hide this person»
+        // (review Muse #792): the asked event's member shows again.
+        else state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(asked.teamMemberId ?? ''));
       }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
@@ -4381,6 +4391,7 @@ export function createCalendarioView(deps) {
       state.aiNote = '';
       state.selectedId = null;
       state.pendingEventId = askedEvent.id;
+      state.pendingEventMember = askedEvent.member ?? null;
     }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {

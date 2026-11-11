@@ -120,13 +120,14 @@ const EVENT_KEY = 'accordo.bo.calendar-event';
 
 /**
  * @param {unknown} pick
- * @returns {{id: string, day: string} | null}
+ * @returns {{id: string, day: string, member?: string} | null}
  */
 function validEvent(pick) {
   if (pick === null || typeof pick !== 'object') return null;
-  const { id, day } = /** @type {{id: unknown, day: unknown}} */ (pick);
+  const { id, day, member } = /** @type {{id: unknown, day: unknown, member?: unknown}} */ (pick);
   if (typeof id !== 'string' || id === '' || id.length > 200) return null;
   if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  if (typeof member === 'string' && member !== '' && member.length <= 200) return { id, day, member };
   return { id, day };
 }
 
@@ -135,7 +136,9 @@ function validEvent(pick) {
  * Oggi's «Fonti: Appuntamento delle …» opened the technical record page).
  * Same one-time handoff as the customer pick: the calendar takes it once,
  * shows the week of `day` (Rome calendar day, YYYY-MM-DD) and selects the
- * event `id` there. A stale id simply selects nothing.
+ * event `id` there; `member`, when given, is the team member holding it,
+ * loaded and shown whatever the calendar's filters say. A stale id simply
+ * selects nothing.
  * @param {any} storage
  * @param {unknown} pick `{ id, day }`
  * @returns {boolean} true when the event was stored.
@@ -155,7 +158,7 @@ export function writePendingCalendarEvent(storage, pick) {
 /**
  * Take the stashed calendar event once (read + clear).
  * @param {any} storage
- * @returns {{id: string, day: string} | null}
+ * @returns {{id: string, day: string, member?: string} | null}
  */
 export function takePendingCalendarEvent(storage) {
   const api = storageApi(storage);

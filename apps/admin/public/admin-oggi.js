@@ -309,12 +309,16 @@ export const CALENDAR_ROUTE = '#/calendario';
  * that week with the event selected. Null when the row has no id or no
  * readable start.
  * @param {Record<string, any> | null | undefined} appointment
- * @returns {{ id: string, day: string } | null}
+ * @returns {{ id: string, day: string, member?: string } | null}
  */
 export function calendarEventOf(appointment) {
   const id = nonEmptyText(appointment?.id);
   const day = romeDayKey(appointment?.startsAt);
-  return id && day ? Object.freeze({ id, day }) : null;
+  if (!id || !day) return null;
+  // The member holding the slot rides along (review Muse #792): the
+  // calendar loads and shows them even when its filters left them out.
+  const member = nonEmptyText(appointment?.teamMemberId);
+  return Object.freeze(member ? { id, day, member } : { id, day });
 }
 
 /**
@@ -1307,7 +1311,7 @@ export async function readAppointmentNames(client, appointments, next, now) {
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {Date} [now]
  */
-export async function loadOggiData(client, now = new Date(), { onEssentials = null } = {}) {
+export async function loadOggiData(client, now = new Date(), { onEssentials = null, onNames = null } = {}) {
   const outcome = {
     workAvailable: false,
     appointmentsAvailable: false,
@@ -1406,6 +1410,24 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     ? { subjectResource: outcome.next.subjectResource, subjectId: outcome.next.subjectId }
     : null;
   const withMember = outcome.appointments.some((row) => nonEmptyText(row?.teamMemberId) !== null);
+  // review Muse #792: the call recap reads apart, so a slow brief never
+  // keeps the actions waiting once the names are in.
+  const briefRead = (async () => {
+    if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
+    try {
+      const [briefMessages, calls] = await Promise.all([
+        readModulePage(client, 'interaction-message', subject),
+        readModulePage(client, 'interaction-call', subject),
+      ]);
+      outcome.briefMessages = briefMessages;
+      outcome.briefCalls = calls;
+      outcome.interactionsAvailable = true;
+    } catch (error) {
+      noteReadFailure('interactions', error);
+      outcome.briefMessages = [];
+      outcome.briefCalls = [];
+    }
+  })();
   const [inboxNames, appointmentNames, members] = await Promise.all([
     outcome.inboxAvailable
       ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile) })
@@ -1419,26 +1441,20 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
         (error) => { noteReadFailure('memberships', error); return []; },
       )
       : Promise.resolve([]),
-    (async () => {
-      if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
-      try {
-        const [briefMessages, calls] = await Promise.all([
-          readModulePage(client, 'interaction-message', subject),
-          readModulePage(client, 'interaction-call', subject),
-        ]);
-        outcome.briefMessages = briefMessages;
-        outcome.briefCalls = calls;
-        outcome.interactionsAvailable = true;
-      } catch (error) {
-        noteReadFailure('interactions', error);
-        outcome.briefMessages = [];
-        outcome.briefCalls = [];
-      }
-    })(),
   ]);
   outcome.inboxNames = inboxNames;
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
+  // backlog:bd5e84545021: the names are in — the actions wake up now; only
+  // the call recap may still be reading.
+  if (typeof onNames === 'function') {
+    try {
+      onNames({ ...outcome, pending: false, briefPending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+  }
+  await briefRead;
   return outcome;
 }
 
@@ -2197,7 +2213,7 @@ export function createOggiView(deps) {
         capped,
         agenda,
         brief,
-        briefPending: last.pending === true,
+        briefPending: last.pending === true || last.briefPending === true,
         inbox: !last.inboxComposed
           ? null
           : last.inboxAvailable
@@ -2433,12 +2449,20 @@ export function createOggiView(deps) {
             last = partial;
             paint();
           },
+          // The names (and the team) are in: the grey bars take their
+          // words and every action wakes up, in place.
+          onNames: (named) => {
+            if (round !== current || current.essentials === null) return;
+            current.essentials = named;
+            last = named;
+            fill();
+          },
         })).catch(() => null);
       }
       const data = await current.load;
       if (token !== renderToken) return;
       endRound();
-      const partialShown = last?.pending === true;
+      const partialShown = last?.pending === true || last?.briefPending === true;
       if (data && partialShown) {
         last = data;
         fill();

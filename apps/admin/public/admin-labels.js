@@ -260,7 +260,8 @@ export function isAutomatedSender(handle, ...labels) {
     const words = label.trim().split(/\s+/).map((word) => word.replace(/^[([<"']+|[)\]>"',;:]+$/g, ''));
     if (words.some((word) => NO_REPLY_WORD.test(word))) return true;
   }
-  const address = typeof handle === 'string' ? handle.trim().toLowerCase().replace(/^<|>$/g, '') : '';
+  // «Name <addr>» and «<addr>» read like addressOf (review Muse #792).
+  const address = addressOf(handle) ?? '';
   const at = address.lastIndexOf('@');
   if (at <= 0 || at === address.length - 1) return false;
   const local = address.slice(0, at).split('+')[0] ?? '';
