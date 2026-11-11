@@ -557,6 +557,36 @@ export function uiToast(doc, options = {}) {
 }
 
 /**
+ * Fill the shell toast (backlog:7b2203e69826): the message and, when given,
+ * one action button after it — «Annulla» after a Pipeline move, like
+ * Trello. The action runs once; `onDone` lets the shell hide the toast.
+ * Text only, never HTML.
+ * @param {any} doc @param {any} node
+ * @param {unknown} message
+ * @param {{ error?: boolean, action?: { label: string, run: () => void } | null, onDone?: () => void }} [options]
+ */
+export function paintToast(doc, node, message, options = {}) {
+  node.textContent = String(message ?? '');
+  if (node.classList && typeof node.classList.toggle === 'function') node.classList.toggle('error', Boolean(options.error));
+  const action = options.action;
+  if (!action || typeof action.run !== 'function' || typeof action.label !== 'string' || action.label === '') return;
+  const button = doc.createElement('button');
+  button.setAttribute('type', 'button');
+  button.setAttribute('class', 'ui-toast-action');
+  button.setAttribute('data-action', 'toast-action');
+  button.textContent = action.label;
+  let used = false;
+  button.addEventListener('click', () => {
+    if (used) return;
+    used = true;
+    if (typeof options.onDone === 'function') options.onDone();
+    action.run();
+  });
+  node.appendChild(el(doc, 'span', { text: ' ' }));
+  node.appendChild(button);
+}
+
+/**
  * @param {any} doc
  * @param {{ title?: unknown }} [options]
  */

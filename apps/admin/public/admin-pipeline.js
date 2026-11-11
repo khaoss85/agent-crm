@@ -203,7 +203,7 @@ export function readStageConfirm(panel, target) {
 }
 
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean, options?: {action?: {label: string, run: () => void}}) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
@@ -334,7 +334,7 @@ export function createPipelineBoard(deps) {
    * read (Riprova) releases it, never a second POST.
    * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
    */
-  async function runMove(pipeline, recordId, fromStage, toStage, reason) {
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null } = {}) {
     const id = String(recordId);
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
@@ -347,7 +347,24 @@ export function createPipelineBoard(deps) {
       await postMove(pipeline, id, fromStage, toStage, reason);
       settled = true;
       moveLocks.delete(id);
-      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
+      // backlog:7b2203e69826: «Annulla» in the toast, like Trello — only
+      // between working stages: a won or lost offer never reopens (the
+      // server refuses TERMINAL_STAGE), so a closing move offers none.
+      const working = (key) => {
+        const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
+        return type === 'open' || type === 'renewal';
+      };
+      const undoable = undo && working(fromStage) && working(toStage);
+      toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+        action: {
+          label: 'Annulla',
+          run: () => {
+            void runMove(pipeline, id, toStage, fromStage, undefined, {
+              undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
+            });
+          },
+        },
+      } : undefined);
       await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
       return { moved: true };
     } catch (error) {
@@ -1091,8 +1108,8 @@ export function createPipelineBoard(deps) {
     // open offer shares one currency (Codex P2 on #467).
     const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
       ? ownerText(riskiest.owner)
-      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
-        ? riskiest.companyName
+      : openCurrencies.size === 1 && customerName(riskiest)
+        ? customerName(riskiest)
         : null;
     if (riskName) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: `Il rischio più alto è ${riskName}.` }));
@@ -1296,15 +1313,20 @@ export function createPipelineBoard(deps) {
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
-    card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
+    // backlog:7b2203e69826: the customer the offer is for — the contact,
+    // else the company — never «Senza azienda».
+    card.appendChild(el(doc, 'p', { class: 'card-company', text: customerName(record) ?? '—' }));
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     // BO-F6-10 C15: the referente badge shows the initials; the accessible
     // title carries the full name. Class hook unchanged (supervisor owns CSS).
     if (typeof record.owner === 'string' && record.owner) {
+      // backlog:7b2203e69826: the initials name the person — on hover and
+      // for a screen reader («Referente: Guido Presti»).
+      const who = `Referente: ${ownerText(record.owner)}`;
       card.appendChild(el(doc, 'p', {
         class: 'card-owner',
         text: ownerInitials(ownerText(record.owner)),
-        attrs: { title: ownerText(record.owner) },
+        attrs: { title: who, 'aria-label': who },
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
@@ -1352,6 +1374,18 @@ export function createPipelineBoard(deps) {
       open.addEventListener('click', go);
       card.appendChild(open);
       card.__open = go; // test hook
+      // backlog:7b2203e69826: the whole card opens the panel, like a Trello
+      // card; its own controls (Apri, Sposta, Conferma, Riprova) keep their
+      // click, and a click that ends a text selection stays on the board.
+      card.setAttribute('data-openable', 'true');
+      card.addEventListener('click', (event) => {
+        const target = event?.target ?? null;
+        if (target && typeof target.closest === 'function'
+          && target.closest('button, a, select, input, textarea, label, .card-confirm')) return;
+        const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+        if (selection && selection.isCollapsed === false && String(selection) !== '') return;
+        go();
+      });
     }
 
     // Terminal stages have no move control (server enforces it regardless).
@@ -1517,10 +1551,11 @@ export function createPipelineBoard(deps) {
 
   /** The customer's name as the scheda shows it: the contact, else the company. */
   function customerName(record) {
-    for (const value of [record?.contactName, record?.companyName]) {
-      if (typeof value === 'string' && value.trim() !== '') return value.trim();
-    }
-    return null;
+    const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+    if (contact !== '') return contact;
+    const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+    // «Senza azienda» is the scheda's placeholder company, not a customer.
+    return company !== '' && company !== 'Senza azienda' ? company : null;
   }
 
   /**

@@ -2063,6 +2063,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 /* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
    card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+/* backlog:7b2203e69826: tutta la card apre il pannello; il toast ha «Annulla». */
+.pipeline-card[data-openable="true"] { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
+.pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
+.ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
+.ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
 .pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
 .pipeline-card.dragging { opacity: .45; }
 .pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
