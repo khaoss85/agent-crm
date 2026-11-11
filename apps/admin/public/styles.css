@@ -384,6 +384,24 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+/* backlog 169cd4bc988c: the offer page is never a dead end — the customer
+ * opens their scheda, «Cambia stato» sits beside Modifica as a small menu
+ * card, «Crea preventivo» heads the quotes. */
+.bo-offer-customer { color: inherit; text-decoration: underline; text-decoration-color: var(--line-dashed); text-underline-offset: 3px; }
+.bo-offer-customer:hover { text-decoration-color: var(--ink); }
+.bo-offer .bo-offer-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 16px; }
+.bo-offer .bo-offer-actions .offer-edit { margin-top: 0; }
+.bo-offer-stage-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+/* In the flow under its button: the sheet clips (its accent stripe needs overflow hidden). */
+.bo-offer-stage-voices { min-width: 200px; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.bo-offer-stage-voices.hidden { display: none; }
+.bo-offer-stage-voices .bo-offer-stage-voice { justify-content: flex-start; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font-size: 13.5px; font-weight: 600; text-align: left; }
+.bo-offer-stage-voices .bo-offer-stage-voice:hover, .bo-offer-stage-voices .bo-offer-stage-voice:focus-visible { background: var(--surface-soft); }
+.bo-offer .offer-quotes-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+.bo-offer .offer-quotes-head h3 { margin: 0; }
+.bo-offer .offer-quote-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bo-offer .offer-quote-create-line { margin: 6px 0 0; font-size: 13px; }
+.bo-offer .offer-quote-create-line:empty { display: none; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -2576,5 +2594,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 /* Backlog 1e939a362c7c: «N offerte di altre pipeline» reads as a link and unfolds the offers. */
 .pipeline-switch .link-button { padding: 0; border: none; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
-.pipeline-off-list { margin: 6px 0 0; padding-left: 18px; }
-.pipeline-off-list li { margin: 2px 0; }
+/* backlog 169cd4bc988c: the offers of other pipelines in the /bo dress —
+ * ink names that open the offer, muted customer and stato, no browser blue. */
+.pipeline-off-list { margin: 8px 0 0; padding: 6px; list-style: none; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; }
+.pipeline-off-list li { margin: 0; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: var(--muted); }
+.pipeline-off-list li:hover { background: var(--surface-soft); }
+.pipeline-off-list .pipeline-off-name { color: var(--ink); font-weight: 600; text-decoration: none; }
+.pipeline-off-list a.pipeline-off-name:hover { text-decoration: underline; }
+.pipeline-off-list .pipeline-off-meta { color: var(--muted); }

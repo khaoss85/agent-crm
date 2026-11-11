@@ -481,6 +481,42 @@ export function offerStageLabel(pipelines, offer) {
 }
 
 /**
+ * Backlog 169cd4bc988c: who one offer (opportunity row) is for, and where
+ * their scheda lives — the contact first, else the company. The reserved
+ * «Senza azienda» a contact without Azienda sits under, and any stored
+ * placeholder company (`Unknown (…)`), name nobody: the same rule as the
+ * scheda's shownCompanyName, so no screen reads «Per Senza azienda». Null
+ * when the offer names no one.
+ * @param {any} offer
+ * @returns {{ name: string, href: string | null } | null}
+ */
+export function offerCustomer(offer) {
+  const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+  const contactName = text(offer?.contactName);
+  const contactId = text(offer?.contactId);
+  if (contactName !== null) {
+    return { name: contactName, href: contactId !== null ? `#/customer-card/contact/${encodeURIComponent(contactId)}` : null };
+  }
+  const company = text(offer?.companyName);
+  const companyId = text(offer?.companyId);
+  const reserved = company !== null && company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
+  if (company === null || reserved || readableName(company.replace(/\([^)]*\)/g, ' ')) === null) return null;
+  return { name: company, href: companyId !== null ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null };
+}
+
+/**
+ * Backlog 169cd4bc988c: a state word as a heading or a list shows it —
+ * «Proposta», never the bare «proposta» — the first letter upper-cased,
+ * the rest untouched. Null stays null.
+ * @param {string | null | undefined} text
+ * @returns {string | null}
+ */
+export function upperFirst(text) {
+  if (typeof text !== 'string' || text === '') return text ?? null;
+  return text.charAt(0).toLocaleUpperCase('it-IT') + text.slice(1);
+}
+
+/**
  * Backlog c1649d1d: the label of one pipeline stage key for the state
  * history (scheda «Storia stati», offerta «Cronologia»). The named pipeline
  * first, like the scheda line and the board; any composed pipeline after it.

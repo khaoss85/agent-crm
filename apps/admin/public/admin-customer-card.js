@@ -3291,8 +3291,8 @@ export function createCustomerCardView(deps) {
           // label (pipelines unavailable, unknown keys). Like the detail,
           // the row reads the generic Italian line — never a raw key, and
           // never a false «no moves» message for moves that exist.
-          const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
-          rows.push(`${what} · da ${who} · ${when}`);
+          // Backlog 169cd4bc988c: one word for every move, like the offer page.
+          rows.push(`Cambio di stato · da ${who} · ${when}`);
         } else {
           rows.push(`da ${words.from} a ${words.to} · da ${who} · ${when}`);
         }

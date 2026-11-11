@@ -49,7 +49,7 @@
 
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { offerStageLabel, personLabel, teamPeople } from './admin-labels.js';
+import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
 /** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
@@ -1047,18 +1047,21 @@ export function createPipelineBoard(deps) {
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
     const others = records.filter((record) => record.pipelineKey !== pipelineName).slice(0, OFF_PIPELINE_LISTED);
     for (const record of others) {
-      const item = el(doc, 'li');
+      // Backlog 169cd4bc988c: one row per offer in the /bo dress — its name
+      // opens its page, then who it is for (never «Senza azienda») and its
+      // stato capitalised («Proposta», never the bare «proposta»).
+      const item = el(doc, 'li', { class: 'pipeline-off-item' });
       const id = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
       const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
-      const stage = offerStageLabel(pipelines, record);
-      const text = stage ? `${name} · ${stage}` : name;
       if (id === null) {
-        item.appendChild(el(doc, 'span', { text }));
+        item.appendChild(el(doc, 'span', { class: 'pipeline-off-name', text: name }));
       } else {
-        const link = el(doc, 'a', { attrs: { href: `#/offerte/${encodeURIComponent(id)}` } });
-        link.textContent = text;
-        item.appendChild(link);
+        item.appendChild(el(doc, 'a', { class: 'pipeline-off-name', text: name, attrs: { href: `#/offerte/${encodeURIComponent(id)}` } }));
       }
+      const customer = offerCustomer(record);
+      const stage = upperFirst(offerStageLabel(pipelines, record));
+      const facts = [customer?.name ?? null, stage].filter((part) => typeof part === 'string' && part !== '');
+      if (facts.length > 0) item.appendChild(el(doc, 'span', { class: 'pipeline-off-meta', text: ` · ${facts.join(' · ')}` }));
       list.appendChild(item);
     }
     if (offPipeline > others.length) {
