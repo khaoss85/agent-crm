@@ -786,7 +786,8 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
  * so it carries the card's own inner margins (like .bo-scheda-timeline);
  * field and button stay inside, the help sentence below them too. */
 .bo-scheda-note-form { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 14px 20px 20px; }
-.bo-scheda-note-form input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
@@ -2570,6 +2571,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
 .bo-scheda-entry .bo-scheda-note-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pending-ink); font-weight: 600; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-body { padding: 4px 0 0; border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }
+/* backlog:82235e46e3e9: offers and stage moves in «Tutti i contatti» — a quiet system line, not a bubble. */
+.bo-scheda-chan.bo-tile-event { background: var(--agent-soft); color: var(--agent-ink); font-family: inherit; font-size: 14px; }
+.bo-scheda-event-paper { grid-column: 2; border: 1px dashed var(--line); border-radius: 14px; background: var(--surface); padding: 8px 14px 10px; }
+.bo-scheda-entry .bo-scheda-event-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-weight: 600; }
+.bo-scheda-entry .bo-scheda-event-paper p.bo-scheda-event-body { margin: 2px 0 0; padding: 0; border: 0; background: transparent; color: var(--ink); overflow-wrap: anywhere; }
 .bo-scheda-chips .bo-scheda-chip-note { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; border: 1px dashed color-mix(in srgb, var(--pending) 70%, var(--line)); background: var(--pending-soft); color: var(--pending-ink); cursor: pointer; }
 .bo-scheda-chips .bo-scheda-chip-note[data-active="true"] { border-style: solid; border-color: var(--pending-ink); background: var(--pending-ink); color: var(--surface); }
 .bo-scheda-chips-authors { display: inline-flex; flex-wrap: wrap; gap: 6px; padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line-soft); }

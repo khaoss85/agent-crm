@@ -1148,9 +1148,12 @@ test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27
     timeline: { ...TIMELINE, entries: { available: true, count: 0, truncated: false, items: [] } },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Nessun messaggio qui'), 'the empty title is exact');
-  assert.ok(text.includes('Prova un altro canale oppure scrivi il primo messaggio qui sotto.'),
+  // backlog:82235e46e3e9: the field below writes a note, not a message —
+  // the empty state names «Scrivi» for messages and the note below.
+  assert.ok(text.includes('Ancora nessun contatto'), 'the empty title is exact');
+  assert.ok(text.includes('Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'),
     'the empty hint is exact');
+  assert.ok(!text.includes('primo messaggio qui sotto'), 'never a message «qui sotto»: below is the note');
   assert.ok(!text.includes('nessun passaggio'), 'no technical empty sentence remains');
 });
 
@@ -1869,7 +1872,7 @@ test('714433c2: Modifica opens the edit form and Salva PATCHes the contact, then
   assert.ok(save, 'Salva is in the form');
   assert.ok(cancel, 'Annulla is in the form');
 
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('firstName').value = 'Guido';
   byName('lastName').value = 'Presti';
   byName('email').value = 'guido@palestra-esempio.it';
@@ -2050,7 +2053,7 @@ test('714433c2: Annulla drops the edits with no write and re-reads the card', as
   await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
 
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('firstName').value = 'Inventato';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details').dispatch('click');
   await flushClicks();
@@ -2070,7 +2073,7 @@ test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline'
     doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
   }).renderCard('contact', 'c1');
 
-  const noteInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  const noteInput = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody');
   assert.ok(noteInput, 'the note field names its purpose for assistive tech');
   noteInput.value = 'Richiamare giovedì';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
@@ -2965,7 +2968,7 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const form = mount.findAll('div')
     .find((node) => node.getAttribute('class') === 'bo-scheda-note-form');
   assert.ok(form, 'the note field lives in the note form block');
-  assert.ok(form.findAll('input').some((node) => node.getAttribute('name') === 'noteBody'),
+  assert.ok(form.findAll('textarea').some((node) => node.getAttribute('name') === 'noteBody'),
     'the note field is inside the form');
   assert.ok(form.findAll('button').some((node) => node.getAttribute('data-action') === 'add-note'),
     'the note button is inside the form');
@@ -3250,7 +3253,7 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
   await createCustomerCardView({
     doc, mount, client: strict, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
   }).renderCard('contact', 'c1');
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare giovedì';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare giovedì';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
   await flushClicks();
   assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
@@ -4444,7 +4447,7 @@ test('review #612 round 2: the Scrivi window stays open with its text through a 
   assert.notEqual(mount.findAll('div').find((node) => String(node.getAttribute('class')).split(' ').includes('bo-scheda')), card, 'the scheda itself was swapped');
 
   async function reRead() {
-    mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'nota';
+    mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'nota';
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
     await flushComposer();
   }
@@ -4457,7 +4460,7 @@ test('review #612: a note being typed survives a re-read of the same scheda', as
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  const noteField = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  const noteField = () => mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody');
   noteField().value = 'Richiamare giovedì';
 
   await view.renderCard('contact', 'c1');
@@ -4475,7 +4478,7 @@ test('review #612: an open Dettagli form keeps its edits through a re-read, and 
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('firstName').value = 'Guidino';
   byName('email').value = 'nuova@esempio.invalid';
 
@@ -4514,9 +4517,9 @@ test('review #612: another customer never inherits the previous one\'s typing', 
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'solo per c1';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'solo per c1';
   await view.renderCard('contact', 'c2');
-  assert.equal(mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value ?? '', '');
+  assert.equal(mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value ?? '', '');
 });
 
 // Review #612 round 3 (P1): an open Dettagli form carries through a re-read
@@ -4535,7 +4538,7 @@ test('review #612 round 3: an untouched Dettagli field takes the fresh value aft
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('email').value = 'nuova@esempio.invalid';
 
   // Another operator renames the contact; an Invia elsewhere re-reads.
@@ -4629,7 +4632,7 @@ test('review #612 round 5: typing in the scheda survives a failed re-read and re
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, toast: () => {} });
   await view.renderCard('contact', 'c1');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('noteBody').value = 'Richiamare giovedì';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
   byName('email').value = 'nuova@esempio.invalid';
