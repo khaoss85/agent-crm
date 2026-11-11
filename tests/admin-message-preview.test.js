@@ -236,3 +236,17 @@ test('Muse giro 1 P2: angle brackets in plain text are not tags', () => {
   assert.equal(core.cleanMessageBody('<S> e <b>grassetto</b>'), '<S> e grassetto', 'known HTML tags still go');
   assert.equal(core.cleanMessageBody('<x-card class="a">Ciao</x-card>'), 'Ciao', 'an unknown tag with attributes, and its closing tag, go');
 });
+
+test('Muse giro 3 P1: a service phrase goes only as a whole unit, the customer\'s sentence stays whole', () => {
+  for (const words of [
+    'Se non visualizzi correttamente il file, dimmelo',
+    'Apri la versione web del sito e dimmi se funziona',
+  ]) {
+    assert.equal(previewLastContactText(words), words);
+  }
+  assert.equal(
+    previewLastContactText('Visualizza la versione web <https://news.example.com/v?id=1>\nNovità di novembre: sconti fino al 30%.'),
+    'Novità di novembre: sconti fino al 30%.',
+    'a real newsletter line still goes',
+  );
+});

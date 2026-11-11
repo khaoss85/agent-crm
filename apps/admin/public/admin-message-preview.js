@@ -105,6 +105,28 @@ const SERVICE_PHRASE_RES = Object.freeze([
   /\bview (?:this (?:e-?mail|message|newsletter) )?(?:in (?:your |a )?(?:web )?browser|as a web ?page)[.!:]?/gi,
   /\bview (?:this |the )?(?:e-?mail|message|newsletter) online[.!:]?/gi,
 ]);
+/**
+ * A service phrase goes only as a whole unit (Muse giro 3): it carries a
+ * newsletter tail («clicca qui», «nel browser»), or closes its sentence
+ * (`.`, `!`, `?`, `:`), or nothing but spaces and punctuation follow it up
+ * to the line end or the end of the text (URLs are already gone). Otherwise
+ * it is the start of the customer's sentence and the text stays whole:
+ * «Se non visualizzi correttamente il file, dimmelo» keeps every word.
+ */
+const SERVICE_TAIL_RE = /\b(?:clicca|click|apri|vai) (?:qui|here|sul link)\b|\b(?:nel (?:tuo )?|in (?:your |a )?(?:web )?)browser\b|html[- ]capable/i;
+const UNIT_END_RE = /^[ \t]*(?:[.,;:!?|•·–—-][ \t]*)*(?:\n|$)/;
+
+/** @param {string} text */
+function dropServicePhrases(text) {
+  let out = text;
+  for (const re of SERVICE_PHRASE_RES) {
+    out = out.replace(re, (match, offset, whole) => (
+      SERVICE_TAIL_RE.test(match) || /[.!?:]$/.test(match) || UNIT_END_RE.test(whole.slice(offset + match.length))
+        ? ' ' : match));
+  }
+  return out;
+}
+
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 /**
  * Format and zero-width characters (Dan 10/11: «Pagamento confermato» followed by
@@ -184,7 +206,7 @@ export function cleanPreviewText(value) {
   for (const re of IMAGE_RES) text = text.replace(re, ' ');
   for (const re of URL_RES) text = text.replace(re, ' ');
   text = text.replace(DECORATIVE_RE, ' ');
-  for (const re of SERVICE_PHRASE_RES) text = text.replace(re, ' ');
+  text = dropServicePhrases(text);
   return text
     .replace(/\(\s*\)|\[\s*\]|<\s*>/g, ' ')
     .replace(/\s+/g, ' ')
