@@ -3496,6 +3496,16 @@ export function createCalendarioView(deps) {
       }));
       return;
     }
+    // backlog:7d82fd84 (review #678 giro-2 P3): a partial list says so above
+    // the buttons too, not only on the empty branch — the operator could
+    // otherwise pick a visible name while a better match stays unread past
+    // the bound.
+    if (state.customerPartial) {
+      box.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: 'L’elenco è parziale: potrebbero esserci altri clienti oltre quelli letti.',
+      }));
+    }
     for (const item of state.customerItems) {
       const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
       const pick = uiSecondaryButton(doc, name);
