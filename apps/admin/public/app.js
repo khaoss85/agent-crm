@@ -128,8 +128,12 @@ function leaveForSpaceLogin(target) {
 // local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   // One schema read per open, shared by every view (admin-schema-cache.js).
+  // backlog:e7bdcbcc6864: every rejection names its request, so the log
+  // helpers tell a failed POST from a failed read.
   request(path, options = {}) {
-    return schemaCachedRequest(path, options);
+    return schemaCachedRequest(path, options).catch((error) => {
+      throw tagRequestFailure(error, options.method ?? 'GET', path);
+    });
   },
   async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
@@ -472,7 +476,7 @@ import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
+import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -872,6 +876,10 @@ if (boAssistant) {
     notify: (message) => toast(message),
     // backlog:33782ba68747: «@Agente …» in the bar reads this space's agents.
     spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+    // backlog:1968c3320cd3: Esc closes the panel; the titolare is never
+    // told to ask the titolare.
+    role: () => shellUser?.role ?? null,
+    win: window,
   });
 }
 

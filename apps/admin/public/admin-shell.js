@@ -45,9 +45,9 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1', icon: 'clienti' },
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2', icon: 'pipeline' },
   { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
-  // backlog:33782ba68747: «Agenti» takes the place of Sequenze in the
-  // sidebar. Sequenze keep their route (#/sequenze, linked from Agenti and
-  // from the native-modules catalog) but no sidebar voice of their own.
+  // backlog:33782ba68747 put «Agenti» in the sidebar; backlog:b368bbf992ce
+  // (Dan 11/11) gives Sequenze its voice back when the sequences module is
+  // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
@@ -394,7 +394,7 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
-        return { ...item, route: '#/sequenze', available: true, disabledReason: '' };
+        return { ...item, route: '#/sequenze', available: true, disabledReason: '', nav: true };
       }
       return { ...item, route: null, available: false, disabledReason: 'In arrivo con BO-F3' };
     }
