@@ -18,7 +18,7 @@
 // honest line and the fields stay for writing by hand.
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatAmount, humanReadError, isNotComposedFailure } from './admin-core.js';
+import { formatAmount, humanReadError, isNetworkFailure, isNotComposedFailure } from './admin-core.js';
 import { isPricedOffer, offerPriceText, selectedProductTotal } from './admin-modules.js';
 
 export const OFFER_PROMPT_MAX = 500;
@@ -52,6 +52,20 @@ function pickQuantity(pick) {
   if (pick.qtyInput === null) return 1;
   const raw = String(pick.qtyInput.value ?? '1').trim();
   return /^\d+$/.test(raw) ? Number(raw) : NaN;
+}
+
+/**
+ * Review #786: whether a write may have landed although no answer says so —
+ * no answer at all, a gateway 5xx, a queued write (BO_CRM_PENDING) or an
+ * unknown commit. Such a write is retried on its own key, never re-issued.
+ * @param {any} error
+ */
+function uncertainOutcome(error) {
+  const code = error?.code ?? null;
+  if (code === 'COMMIT_OUTCOME_UNKNOWN' || code === 'BO_CRM_PENDING' || code === 'QUOTE_UNREADABLE') return true;
+  if (isNetworkFailure(error)) return true;
+  const status = typeof error?.status === 'number' ? error.status : 0;
+  return status === 0 || status >= 500 || [408, 425, 429].includes(status);
 }
 
 /** The name a chip shows for one catalog offer. */
@@ -107,7 +121,15 @@ export function openOfferPanel(deps) {
   close.setAttribute('type', 'button');
   close.setAttribute('aria-label', 'Chiudi');
   close.setAttribute('data-action', 'offer-close');
-  const shut = () => { if (panel.parentNode) panel.parentNode.removeChild(panel); };
+  /** Set while an offer is filed but its quote is not: closing then tells what is left. */
+  let afterShut = null;
+  const shut = () => {
+    if (!panel.parentNode) return;
+    panel.parentNode.removeChild(panel);
+    const after = afterShut;
+    afterShut = null;
+    if (typeof after === 'function') after();
+  };
   close.addEventListener('click', shut);
   panel.addEventListener('keydown', (event) => {
     if (event?.key === 'Escape') shut();
@@ -487,45 +509,58 @@ export function openOfferPanel(deps) {
    * quantity. The server prices every line from the catalog; the window
    * sends only the offer id and the quantity. A quote binds one price book,
    * read from the offer record (never guessed), so products from two books
-   * file two quotes. Each write owns its own submission key.
+   * file two quotes.
+   *
+   * Review #786: the plan is a snapshot taken at Crea offerta (offer ids and
+   * quantities, never the live fields), and it remembers every step: each
+   * write owns one submission key, kept until that step is answered, so a
+   * «Riprova il preventivo» after an uncertain answer replays the same
+   * write instead of opening a second quote; a step already answered is
+   * never sent again.
    * @param {string} opportunityId
-   * @param {Array<any>} chosen
-   * @param {{opened: number}} progress how many quotes already exist, for the failure line
+   * @param {{lines: Array<{offerId: string, quantity: number, book: string|null}>, keys: Map<string, string>, quotes: Map<string, {id: string, revision: number|null}>, added: Set<number>}} plan
    */
-  async function fileQuote(opportunityId, chosen, progress) {
-    /** @type {Map<string, Array<any>>} */
-    const byBook = new Map();
-    for (const pick of chosen) {
-      const offerId = String(pick.offer.offerId ?? '');
-      const record = await client.request(`/api/modules/offer/records/${encodeURIComponent(offerId)}`);
+  async function fileQuote(opportunityId, plan) {
+    const keyFor = (step) => {
+      if (!plan.keys.has(step)) plan.keys.set(step, deps.issueKey());
+      return /** @type {string} */ (plan.keys.get(step));
+    };
+    const send = async (step, path, body) => {
+      try {
+        const answer = await client.request(path, { method: 'POST', idempotencyKey: keyFor(step), body: JSON.stringify(body) });
+        plan.keys.delete(step);
+        return answer;
+      } catch (error) {
+        // A refusal created nothing: the next try is a new write.
+        if (!uncertainOutcome(error)) plan.keys.delete(step);
+        throw error;
+      }
+    };
+    for (const line of plan.lines) {
+      if (line.book !== null) continue;
+      const record = await client.request(`/api/modules/offer/records/${encodeURIComponent(line.offerId)}`);
       const book = typeof record?.priceBookId === 'string' && record.priceBookId !== '' ? record.priceBookId : null;
-      if (book === null) throw Object.assign(new Error('offer without price book'), { code: 'OFFER_PRICE_BOOK_UNKNOWN' });
-      byBook.set(book, [...(byBook.get(book) ?? []), pick]);
+      if (book === null) throw Object.assign(new Error('offer without price book'), { code: 'OFFER_PRICE_BOOK_UNKNOWN', status: 409 });
+      line.book = book;
     }
-    for (const [priceBookId, group] of byBook) {
-      const opened = await client.request(
-        `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
-        { method: 'POST', idempotencyKey: deps.issueKey(), body: JSON.stringify({ priceBookId }) },
-      );
-      const quote = opened?.result?.quote;
-      if (typeof quote?.id !== 'string' || quote.id === '') throw Object.assign(new Error('quote without id'), { code: 'QUOTE_UNREADABLE' });
-      progress.opened += 1;
-      let revision = Number.isSafeInteger(quote.draftRevision) ? quote.draftRevision : null;
-      for (const pick of group) {
-        const added = await client.request(
+    const books = [...new Set(plan.lines.map((line) => /** @type {string} */ (line.book)))];
+    for (const priceBookId of books) {
+      if (!plan.quotes.has(priceBookId)) {
+        const opened = await send(`quote:${priceBookId}`,
+          `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`, { priceBookId });
+        const quote = opened?.result?.quote;
+        if (typeof quote?.id !== 'string' || quote.id === '') throw Object.assign(new Error('quote without id'), { code: 'QUOTE_UNREADABLE' });
+        plan.quotes.set(priceBookId, { id: quote.id, revision: Number.isSafeInteger(quote.draftRevision) ? quote.draftRevision : null });
+      }
+      const quote = /** @type {{id: string, revision: number|null}} */ (plan.quotes.get(priceBookId));
+      for (const [index, line] of plan.lines.entries()) {
+        if (line.book !== priceBookId || plan.added.has(index)) continue;
+        const added = await send(`line:${index}`,
           `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/add-line`,
-          {
-            method: 'POST',
-            idempotencyKey: deps.issueKey(),
-            body: JSON.stringify({
-              offerId: String(pick.offer.offerId ?? ''),
-              quantity: pickQuantity(pick),
-              ...(revision !== null ? { expectedRevision: revision } : {}),
-            }),
-          },
-        );
+          { offerId: line.offerId, quantity: line.quantity, ...(quote.revision !== null ? { expectedRevision: quote.revision } : {}) });
+        plan.added.add(index);
         const next = added?.result?.quote?.draftRevision;
-        revision = Number.isSafeInteger(next) ? next : null;
+        quote.revision = Number.isSafeInteger(next) ? next : null;
       }
     }
   }
@@ -537,8 +572,94 @@ export function openOfferPanel(deps) {
   // One key per window: a retry or a double click files the same offer.
   let submissionKey = null;
   let creating = false;
+  /** The offer once filed, and the snapshot of its quote, kept across «Riprova il preventivo». */
+  /** @type {any} */
+  let filed = null;
+  /** @type {null | {lines: Array<{offerId: string, quantity: number, book: string|null}>, keys: Map<string, string>, quotes: Map<string, {id: string, revision: number|null}>, added: Set<number>}} */
+  let plan = null;
+  /** The chips, quantities and fields stay as filed while the window works on them. */
+  const lockForm = (locked) => {
+    const controls = [...Object.values(inputs), prompt, go, ...picks.flatMap((pick) => [pick.chip, pick.qtyInput].filter(Boolean))];
+    for (const control of controls) {
+      if (locked) control.setAttribute('disabled', 'disabled');
+      else control.removeAttribute('disabled');
+    }
+  };
+  /** The offer is filed and its quote complete (or never asked): close and say it. */
+  const finish = (withQuote) => {
+    afterShut = null;
+    shut();
+    // The scheda shows the offer first, so the toast never speaks ahead
+    // of the screen (backlog:2a214b66fe12).
+    if (typeof deps.onCreated === 'function') deps.onCreated(filed);
+    toast(withQuote ? 'Offerta e preventivo creati' : 'Offerta creata');
+  };
+  /**
+   * The quote is not complete and the window is gone: the scheda re-reads
+   * the offer and the toast names what is left. An uncertain answer may
+   * already have saved the quote, so it never says «Crea preventivo».
+   */
+  const leftIncomplete = (uncertain) => {
+    if (typeof deps.onCreated === 'function') deps.onCreated(filed);
+    const opened = plan !== null && plan.quotes.size > 0;
+    if (uncertain) toast('Offerta creata. Il preventivo potrebbe essere già salvato: apri l’offerta e controlla prima di crearne un altro.');
+    else if (opened) toast('Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe.', true);
+    else toast('Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', true);
+  };
+  /** Files the snapshot's quote; on failure the window stays with «Riprova il preventivo». */
+  async function runQuote() {
+    create.textContent = 'Creo il preventivo…';
+    try {
+      const createdId = typeof filed?.id === 'string' && filed.id !== '' ? filed.id : null;
+      if (createdId === null) throw Object.assign(new Error('offer without id'), { code: 'OFFER_UNREADABLE' });
+      await fileQuote(createdId, /** @type {any} */ (plan));
+    } catch (error) {
+      const uncertain = uncertainOutcome(error);
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[bo] preventivo dell’offerta non creato', {
+          code: error?.code ?? null,
+          status: typeof error?.status === 'number' ? error.status : null,
+          spaceId: deps.spaceId ?? null,
+        });
+      }
+      if (gone()) {
+        leftIncomplete(uncertain);
+        return false;
+      }
+      afterShut = () => leftIncomplete(uncertain);
+      generalError.textContent = uncertain
+        ? 'Offerta creata. Il preventivo non ha ancora risposto: premi «Riprova il preventivo», non ne verrà creato un secondo.'
+        : 'Offerta creata, ma il preventivo non si è salvato: riprova, oppure completalo dalla pagina dell’offerta.';
+      return false;
+    }
+    if (gone()) {
+      if (typeof deps.onCreated === 'function') deps.onCreated(filed);
+      toast('Offerta e preventivo creati');
+    } else {
+      finish(true);
+    }
+    return true;
+  }
   async function submit() {
     if (creating) return;
+    // Review #786: once the offer exists, Crea offerta only completes its quote.
+    if (filed !== null) {
+      creating = true;
+      create.setAttribute('disabled', 'disabled');
+      create.setAttribute('aria-busy', 'true');
+      generalError.textContent = '';
+      try {
+        await runQuote();
+      } finally {
+        creating = false;
+        if (!gone()) {
+          create.removeAttribute('disabled');
+          create.setAttribute('aria-busy', 'false');
+          create.textContent = 'Riprova il preventivo';
+        }
+      }
+      return;
+    }
     if (pendingWanted !== null) {
       generalError.textContent = 'Aspetto il catalogo per i prodotti scelti dall’AI, poi puoi creare.';
       return;
@@ -569,11 +690,16 @@ export function openOfferPanel(deps) {
       bad = true;
     }
     if (bad) return;
+    // Review #786: the quote is the snapshot validated here — offer ids and
+    // quantities read once, never the fields as they are later.
+    const snapshot = chosen.map((pick) => ({ offerId: String(pick.offer.offerId ?? ''), quantity: pickQuantity(pick), book: null }));
     creating = true;
+    lockForm(true);
     create.setAttribute('disabled', 'disabled');
     create.setAttribute('aria-busy', 'true');
     create.textContent = 'Creo…';
     if (submissionKey === null) submissionKey = deps.issueKey();
+    let quoteLeft = false;
     try {
       const created = await client.request('/api/opportunities', {
         method: 'POST',
@@ -589,36 +715,20 @@ export function openOfferPanel(deps) {
         }),
       });
       submissionKey = null;
+      filed = created;
+      if (snapshot.length === 0) {
+        if (gone()) {
+          if (typeof deps.onCreated === 'function') deps.onCreated(filed);
+          toast('Offerta creata');
+        } else {
+          finish(false);
+        }
+        return;
+      }
       // The offer exists: its products become the quote lines. A quote that
       // fails never undoes the offer, and is said, never hidden.
-      let quoteFailed = false;
-      const progress = { opened: 0 };
-      const createdId = typeof created?.id === 'string' && created.id !== '' ? created.id : null;
-      if (chosen.length > 0) {
-        if (!gone()) create.textContent = 'Creo il preventivo…';
-        try {
-          if (createdId === null) throw Object.assign(new Error('offer without id'), { code: 'OFFER_UNREADABLE' });
-          await fileQuote(createdId, chosen, progress);
-        } catch (error) {
-          quoteFailed = true;
-          if (typeof console !== 'undefined' && typeof console.error === 'function') {
-            console.error('[bo] preventivo dell’offerta non creato', {
-              code: error?.code ?? null,
-              status: typeof error?.status === 'number' ? error.status : null,
-              spaceId: deps.spaceId ?? null,
-            });
-          }
-        }
-      }
-      shut();
-      // The scheda shows the offer first, so the toast never speaks ahead
-      // of the screen (backlog:2a214b66fe12).
-      if (typeof deps.onCreated === 'function') deps.onCreated(created);
-      // A quote already opened is completed from its own page, never
-      // opened twice: the line names the step that is left.
-      if (quoteFailed && progress.opened > 0) toast('Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe.', true);
-      else if (quoteFailed) toast('Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', true);
-      else toast(chosen.length > 0 ? 'Offerta e preventivo creati' : 'Offerta creata');
+      plan = { lines: snapshot, keys: new Map(), quotes: new Map(), added: new Set() };
+      quoteLeft = !(await runQuote());
     } catch (error) {
       // Review #616 round 4: a failed create is always logged (code, status
       // and space, never the offer) and, with the window already closed
@@ -643,7 +753,9 @@ export function openOfferPanel(deps) {
       if (!gone()) {
         create.removeAttribute('disabled');
         create.setAttribute('aria-busy', 'false');
-        create.textContent = 'Crea offerta';
+        // The filed offer keeps its fields; only the quote is left to retry.
+        if (filed === null) lockForm(false);
+        create.textContent = quoteLeft ? 'Riprova il preventivo' : 'Crea offerta';
       }
     }
   }

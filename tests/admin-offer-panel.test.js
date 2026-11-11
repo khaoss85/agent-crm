@@ -53,6 +53,10 @@ function fakeClient({ draft = null, create = null, catalog = CATALOG, profile = 
       }
       const offer = /^\/api\/modules\/offer\/records\/([^/?]+)$/.exec(path);
       if (offer && method === 'GET') return { id: offer[1], priceBookId: books[decodeURIComponent(offer[1])] ?? null };
+      const failWith = typeof quoteFail === 'function'
+        ? quoteFail({ path, n: calls.filter((call) => call.path === path).length })
+        : null;
+      if (failWith) throw failWith;
       if (/^\/api\/modules\/opportunity\/records\/[^/]+\/actions\/create-quote$/.test(path)) {
         if (quoteFail === 'create-quote') throw Object.assign(new Error('refused'), { status: 409, code: 'PRICE_BOOK_INACTIVE' });
         quotes += 1;
@@ -520,48 +524,130 @@ test('backlog 0c9a27bb9ac0: products from two price books file two quotes, never
   assert.deepEqual(client.lines().map((call) => [call.path.split('/')[5], call.body.offerId]), [['q1', 'pt10'], ['q2', 'prova']]);
 });
 
-test('backlog 0c9a27bb9ac0: a quote that fails never hides it — the offer stays, the toast says what to do', async () => {
-  for (const quoteFail of ['create-quote', 'add-line']) {
-    const client = fakeClient({ quoteFail });
-    const toasts = [];
-    const errors = [];
-    const created = [];
-    const doc = createFakeDocument();
-    const host = createMount();
-    let keys = 0;
-    const panel = openOfferPanel({
-      doc, host, client, issueKey: () => `key-${(keys += 1)}`, card: { name: 'Guido Presti' },
-      navCtx: { resource: 'contact', id: 'c1' }, company: { id: 'co1', name: 'X' }, spaceId: 'presti',
-      toast: (text, error = false) => { toasts.push(text); errors.push(error); },
-      onCreated: (answer) => created.push(answer),
-    });
+function openWith(client) {
+  const toasts = [];
+  const created = [];
+  const doc = createFakeDocument();
+  const host = createMount();
+  let keys = 0;
+  const panel = openOfferPanel({
+    doc, host, client, issueKey: () => `key-${(keys += 1)}`, card: { name: 'Guido Presti' },
+    navCtx: { resource: 'contact', id: 'c1' }, company: { id: 'co1', name: 'X' }, spaceId: 'presti',
+    toast: (text, error = false) => toasts.push({ text, error }),
+    onCreated: (answer) => created.push(answer),
+  });
+  return { panel, toasts, created };
+}
+
+async function quietly(fn) {
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    await fn();
+  } finally {
+    console.error = realError;
+  }
+  return logged;
+}
+
+test('review #786: a refused quote keeps the window, the offer is never filed twice, Riprova completes it', async () => {
+  let refuse = true;
+  const client = fakeClient({ quoteFail: ({ path }) => (refuse && path.endsWith('/create-quote')
+    ? Object.assign(new Error('refused'), { status: 409, code: 'PRICE_BOOK_INACTIVE' }) : null) });
+  const { panel, toasts, created } = openWith(client);
+  await flush();
+  chip(panel, 'pt10').dispatch('click');
+  const logged = await quietly(async () => { await panel.__submit(); await flush(12); });
+  assert.equal(client.creates().length, 1);
+  assert.notEqual(panel.parentNode, null, 'the window stays: the quote is still to do');
+  assert.match(panel.textContent, /Offerta creata, ma il preventivo non si è salvato: riprova, oppure completalo dalla pagina dell’offerta\./);
+  assert.equal(byAction(panel, 'offer-create').textContent, 'Riprova il preventivo');
+  assert.equal(input(panel, 'title').getAttribute('disabled'), 'disabled', 'the filed offer keeps its fields');
+  assert.equal(chip(panel, 'pt10').getAttribute('disabled'), 'disabled', 'and its products');
+  const line = logged.find((args) => args[0] === '[bo] preventivo dell’offerta non creato');
+  assert.deepEqual(Object.keys(line[1]).sort(), ['code', 'spaceId', 'status']);
+  assert.deepEqual(toasts, []);
+  refuse = false;
+  await panel.__submit();
+  await flush(12);
+  assert.equal(client.creates().length, 1, 'Riprova never files the offer again');
+  const quoteKeys = client.quotes().map((call) => call.key);
+  assert.equal(quoteKeys.length, 2);
+  assert.notEqual(quoteKeys[0], quoteKeys[1], 'a refusal created nothing: the retry is a new write');
+  assert.equal(client.lines().length, 1);
+  assert.equal(panel.parentNode, null);
+  assert.deepEqual(toasts, [{ text: 'Offerta e preventivo creati', error: false }]);
+  assert.equal(created.length, 1);
+});
+
+test('review #786: an uncertain answer is retried on the same key, never a second quote or line', async () => {
+  for (const [label, fail] of [
+    ['gateway on add-line', ({ path, n }) => (path.endsWith('/add-line') && n === 1 ? Object.assign(new Error('gateway'), { status: 502 }) : null)],
+    ['queued create-quote', ({ path, n }) => (path.endsWith('/create-quote') && n === 1 ? Object.assign(new Error('queued'), { code: 'BO_CRM_PENDING', status: 504 }) : null)],
+  ]) {
+    const client = fakeClient({ quoteFail: fail });
+    const { panel, toasts } = openWith(client);
     await flush();
     chip(panel, 'pt10').dispatch('click');
-    const logged = [];
-    const realError = console.error;
-    console.error = (...args) => { logged.push(args); };
-    try {
-      await panel.__submit();
-      await flush(12);
-    } finally {
-      console.error = realError;
-    }
-    assert.equal(client.creates().length, 1, `${quoteFail}: the offer is filed once`);
-    assert.equal(panel.parentNode, null);
-    assert.equal(toasts.length, 1);
-    if (quoteFail === 'create-quote') {
-      assert.match(toasts[0], /Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo»/);
-    } else {
-      assert.match(toasts[0], /Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe\./,
-        'a quote already opened is completed, never opened a second time');
-      assert.doesNotMatch(toasts[0], /Crea preventivo/);
-    }
-    assert.deepEqual(errors, [true], 'an error toast');
-    assert.equal(created.length, 1, 'the scheda still re-reads the new offer');
-    const line = logged.find((args) => args[0] === '[bo] preventivo dell’offerta non creato');
-    assert.ok(line, `${quoteFail}: the cause reaches the log`);
-    assert.deepEqual(Object.keys(line[1]).sort(), ['code', 'spaceId', 'status']);
+    await quietly(async () => { await panel.__submit(); await flush(12); });
+    assert.match(panel.textContent, /Il preventivo non ha ancora risposto: premi «Riprova il preventivo», non ne verrà creato un secondo\./, label);
+    assert.doesNotMatch(panel.textContent, /Crea preventivo/, `${label}: never an invitation to open another quote`);
+    await panel.__submit();
+    await flush(12);
+    const step = label.includes('add-line') ? client.lines() : client.quotes();
+    assert.equal(step.length, 2, label);
+    assert.equal(step[0].key, step[1].key, `${label}: the same key replays the same write`);
+    assert.deepEqual(step[0].body, step[1].body, `${label}: with the same body`);
+    if (label.includes('add-line')) assert.equal(client.quotes().length, 1, 'the quote that answered is not opened again');
+    assert.deepEqual(toasts, [{ text: 'Offerta e preventivo creati', error: false }], label);
   }
+});
+
+test('review #786: closing an incomplete quote says what is left — and an uncertain one never says «Crea preventivo»', async () => {
+  const cases = [
+    ['uncertain', ({ path }) => (path.endsWith('/create-quote') ? Object.assign(new Error('gateway'), { status: 502 }) : null),
+      { text: 'Offerta creata. Il preventivo potrebbe essere già salvato: apri l’offerta e controlla prima di crearne un altro.', error: false }],
+    ['refused, no quote', ({ path }) => (path.endsWith('/create-quote') ? Object.assign(new Error('refused'), { status: 409 }) : null),
+      { text: 'Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', error: true }],
+    ['refused line, quote opened', ({ path }) => (path.endsWith('/add-line') ? Object.assign(new Error('refused'), { status: 409 }) : null),
+      { text: 'Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe.', error: true }],
+  ];
+  for (const [label, fail, toast] of cases) {
+    const client = fakeClient({ quoteFail: fail });
+    const { panel, toasts, created } = openWith(client);
+    await flush();
+    chip(panel, 'pt10').dispatch('click');
+    await quietly(async () => { await panel.__submit(); await flush(12); });
+    assert.deepEqual(toasts, [], `${label}: nothing said while the window shows it`);
+    byAction(panel, 'offer-close').dispatch('click');
+    assert.equal(panel.parentNode, null);
+    assert.deepEqual(toasts, [toast], label);
+    assert.equal(created.length, 1, `${label}: the scheda re-reads the new offer`);
+  }
+});
+
+test('review #786: the quote files the quantities validated at Crea offerta, never a later edit', async () => {
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const client = fakeClient({ create: () => held.then(() => ({ id: 'o1' })) });
+  const { panel } = openWith(client);
+  await flush();
+  chip(panel, 'pt1').dispatch('click');
+  const qty = panel.findAll('input').find((node) => node.getAttribute('aria-label') === 'Quantità per PT singola');
+  qty.value = '2';
+  qty.dispatch('input');
+  const pending = panel.__submit();
+  await flush();
+  assert.equal(qty.getAttribute('disabled'), 'disabled', 'the quantity is locked while the offer is filed');
+  assert.equal(chip(panel, 'pt1').getAttribute('disabled'), 'disabled');
+  qty.value = '20';
+  qty.dispatch('input');
+  release();
+  await pending;
+  await flush(12);
+  assert.equal(client.creates()[0].body.valueCents, 8000);
+  assert.deepEqual(client.lines().map((call) => call.body.quantity), [2], 'the line is the snapshot');
 });
 
 test('backlog 0c9a27bb9ac0: the chosen product writes the title; a typed title is never overwritten', async () => {

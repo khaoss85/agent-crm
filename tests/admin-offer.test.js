@@ -702,3 +702,52 @@ test('169cd4bc988c: the app hands the offer page its toast', async () => {
   const wiring = /const offerDetail = createOfferDetail\(\{([\s\S]*?)\}\);/.exec(app);
   assert.ok(wiring && /\btoast\b/.test(wiring[1]), 'moves and quotes answer with a toast like the scheda');
 });
+
+test('review #786: an answer landing after another offer opened never pulls the person back', async () => {
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const { mount, toasts, went, view } = await openPage({ createQuote: () => held.then(() => ({ ok: true, result: { quote: { id: 'q9' } } })) });
+  button(mount, 'offer-create-quote').dispatch('click');
+  await view.renderOfferDetail('off2');
+  release();
+  await flushAll();
+  assert.deepEqual(went, [], 'no navigation to the old offer’s quote');
+  assert.deepEqual(toasts, [], 'no toast for a page no longer on screen');
+
+  let releaseMove = () => {};
+  const heldMove = new Promise((resolve) => { releaseMove = resolve; });
+  const moving = await openPage({ move: () => heldMove.then(() => ({ ok: true })) });
+  button(moving.mount, 'change-offer-stage').dispatch('click');
+  stageVoice(moving.mount, 'proposal').dispatch('click');
+  await moving.view.renderOfferDetail('off2');
+  const reads = moving.client.calls.filter((call) => call.path === '/api/schema').length;
+  releaseMove();
+  await flushAll();
+  assert.equal(moving.client.calls.filter((call) => call.path === '/api/schema').length, reads, 'the old move never re-reads over the new page');
+  assert.deepEqual(moving.toasts, []);
+});
+
+test('review #786: an offer outside any board asks Conferma before won or lost, with no reason it would drop', async () => {
+  const core = await openPage({ record: { pipelineKey: null, pipelineStage: null, stage: 'proposal' } });
+  button(core.mount, 'change-offer-stage').dispatch('click');
+  const lost = stageVoice(core.mount, 'lost');
+  assert.ok(lost, 'lost is a voice of the core workflow');
+  lost.dispatch('click');
+  await flushAll();
+  assert.equal(core.client.writes().length, 0, 'never posted on the first click');
+  assert.match(core.mount.textContent, /Segnare «Cucina per Giulia» come Persa\?/);
+  const reason = core.mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo di chiusura');
+  assert.match(reason.getAttribute('class') ?? '', /hidden/, 'the core workflow records no reason, so none is asked');
+  core.mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await flushAll();
+  assert.deepEqual(core.client.writes().map((call) => [call.path, call.body]), [['/api/opportunities/off1/stage', { targetStage: 'lost' }]]);
+
+  const won = await openPage({ record: { pipelineKey: null, pipelineStage: null, stage: 'proposal' } });
+  button(won.mount, 'change-offer-stage').dispatch('click');
+  stageVoice(won.mount, 'won').dispatch('click');
+  await flushAll();
+  assert.equal(won.client.writes().length, 0);
+  won.mount.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
+  await flushAll();
+  assert.equal(won.client.writes().length, 0, 'Annulla writes nothing');
+});

@@ -305,7 +305,7 @@ export function createOfferDetail(deps) {
     // board and the scheda.
     const actions = el('div', 'bo-offer-actions');
     sheet.appendChild(actions);
-    paintStageMenu(actions, page, schema, record, offerId);
+    paintStageMenu(actions, page, schema, record, offerId, token);
     const editWrap = el('div', 'offer-edit');
     actions.appendChild(editWrap);
     paintEdit(editWrap, record, offerId, token, people);
@@ -485,9 +485,11 @@ export function createOfferDetail(deps) {
    * needs its reason). Esc or a click elsewhere closes the menu; a refused
    * move keeps the server's Italian error on screen; a move the server still
    * holds reads neutral; a completed move re-reads the page.
-   * @param {any} box @param {any} page @param {any} schema @param {any} record @param {string} offerId
+   * Review #786: an answer that lands after the page changed (another
+   * offer opened) never toasts, re-reads or navigates.
+   * @param {any} box @param {any} page @param {any} schema @param {any} record @param {string} offerId @param {number} token
    */
-  function paintStageMenu(box, page, schema, record, offerId) {
+  function paintStageMenu(box, page, schema, record, offerId, token) {
     const stageMenu = offerStageMenu(record, false, null, schema?.pipelines);
     if (stageMenu === null) return;
     const wrap = el('div', 'bo-offer-stage-menu');
@@ -540,6 +542,7 @@ export function createOfferDetail(deps) {
             `/api/modules/${encodeURIComponent(stageMenu.pipeline.module)}/records/${encodeURIComponent(stageMenu.id)}/actions/move-stage`,
             { method: 'POST', body: JSON.stringify(input) },
           );
+          if (token !== renderToken) return;
           close();
           toast(`Spostata in ${upperFirst(voice.label)}.`);
         } else {
@@ -547,6 +550,7 @@ export function createOfferDetail(deps) {
             `/api/opportunities/${encodeURIComponent(stageMenu.id)}/stage`,
             { method: 'POST', body: JSON.stringify({ targetStage: voice.key }) },
           );
+          if (token !== renderToken) return;
           close();
           toast(result?.output?.outcome === 'approval_required'
             ? 'Stato aggiornato: serve un\u2019approvazione'
@@ -554,6 +558,7 @@ export function createOfferDetail(deps) {
         }
         await renderOfferDetail(offerId);
       } catch (error) {
+        if (token !== renderToken) return;
         if (error?.code === 'BO_CRM_PENDING') {
           close();
           stageStatus.textContent = 'Non ancora confermato: ricarica la pagina tra poco.';
@@ -586,11 +591,16 @@ export function createOfferDetail(deps) {
       voice.setAttribute('type', 'button');
       voice.setAttribute('role', 'menuitem');
       voice.setAttribute('data-stage', voiceDef.key);
+      // Review #786: won and lost ask Conferma on every offer. A core move
+      // (outside any pipeline) asks it too; its governed workflow records
+      // no closing reason, so its Conferma asks none — never a reason that
+      // would be collected and then dropped.
+      const coreClosing = stageMenu.kind === 'core' && (voiceDef.key === 'won' || voiceDef.key === 'lost');
       voice.addEventListener('click', () => {
-        if (stageMenu.kind === 'pipeline' && stageNeedsConfirm(voiceDef)) {
-          confirmVoice = voiceDef;
+        if ((stageMenu.kind === 'pipeline' && stageNeedsConfirm(voiceDef)) || coreClosing) {
+          confirmVoice = coreClosing ? { ...voiceDef, type: 'core' } : voiceDef;
           close();
-          showStageConfirm(confirmPanel, offerName, { ...voiceDef, label });
+          showStageConfirm(confirmPanel, offerName, { ...confirmVoice, label });
           return;
         }
         void move(voiceDef);
@@ -648,6 +658,7 @@ export function createOfferDetail(deps) {
       // never opens a second quote; a refusal or another book frees it.
       /** @type {null | {key: string, book: string}} */
       let pending = null;
+      const offerId = String(record.id);
       create.addEventListener('click', async () => {
         if (busy) return;
         busy = true;
@@ -658,10 +669,13 @@ export function createOfferDetail(deps) {
         line.textContent = '';
         try {
           const created = await client.request(
-            `/api/modules/opportunity/records/${encodeURIComponent(String(record.id))}/actions/create-quote`,
+            `/api/modules/opportunity/records/${encodeURIComponent(offerId)}/actions/create-quote`,
             { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({ priceBookId: book }) },
           );
           pending = null;
+          // Review #786: the page changed meanwhile — never pull the person
+          // away from the offer they opened since.
+          if (token !== renderToken) return;
           const quoteId = created?.result?.quote?.id;
           if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
           toast('Preventivo creato: aggiungi le righe.');
@@ -669,6 +683,7 @@ export function createOfferDetail(deps) {
         } catch (error) {
           const status = typeof error?.status === 'number' ? error.status : 0;
           if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
+          if (token !== renderToken) return;
           line.setAttribute('class', 'field-error offer-quote-create-line');
           line.textContent = humanWriteError(error, { failed: 'Preventivo non creato. Riprova più tardi: non ne verrà creato un secondo.' });
         } finally {
