@@ -23,6 +23,7 @@ import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { AGENT_CATALOG, catalogAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
   buildDashboardModel,
@@ -1526,11 +1527,25 @@ export function buildRouter(app) {
 
   router.add('GET', '/api/companies', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
-    return { items: await app.services.companies.list({ limit: parseLimit(query.limit) }) };
+    const items = await app.services.companies.list({ limit: parseLimit(query.limit) });
+    // Backlog ece81578305d: a «no company» placeholder stands behind one
+    // contact and is never a company to pick — neither the Aziende surfaces
+    // nor the «Nuova offerta» company list (same endpoint) show it. The
+    // predicate keys on the core placeholder flag once voce ac65e448fcb4
+    // lands, on the reserved name until then.
+    return { items: items.filter((company) => !isNoCompany(company)) };
   });
   router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.companies.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+    const input = recordInput(body);
+    // The «no company» flag (backlog:ac65e448fcb4, review giro 2 P1): only
+    // the trusted internal placeholder path may set it — a records.write
+    // caller sending it is refused, never silently stripped, so a hidden
+    // company can never be created over HTTP.
+    if (input.placeholder !== undefined) {
+      throw new ValidationError('placeholder is set only by the customer-data placeholder path', { field: 'placeholder' });
+    }
+    return respond(201, await app.services.companies.create(input, writeContext(app, { actor, identity, organizationId, headers })));
   });
 
   router.add('GET', '/api/contacts', async ({ query, identity, organizationId }) => {

@@ -50,9 +50,50 @@ test('a taken email refuses with ConflictError, like create', async (t) => {
   });
   await assert.rejects(
     () => app.services.contacts.update(contact.id, { email: 'altra@palestra-esempio.it' }, { actor: ACTOR }),
-    (error) => error instanceof ConflictError,
-    'a taken address refuses, never a silent duplicate',
+    (error) => error instanceof ConflictError
+      && error.message === 'Questa email è già di un altro cliente',
+    'a taken address refuses in Italian, never a silent duplicate',
   );
+  const reread = await app.services.contacts.get(contact.id);
+  assert.equal(reread.email, 'guido@palestra-esempio.it', 'the refused patch writes nothing');
+});
+
+test('a Postgres unique violation refuses in Italian, like SQLite (voce d8fb9fcc)', async (t) => {
+  const { app, contact } = await scene(t);
+  const contacts = app.services.contacts;
+  const realDatabase = contacts.database;
+  const realSync = realDatabase.storage.sync;
+  const pgTaken = () => {
+    throw Object.assign(
+      new Error('duplicate key value violates unique constraint "contacts_email_key"'),
+      { code: '23505' },
+    );
+  };
+  // Reads travel to the real storage; only writes speak Postgres (voce d8fb9fcc).
+  // The real sync handle is frozen, so the fake inherits its prototype and
+  // shadows only `execute`: writes raise the Postgres wording, reads pass.
+  const fakeSync = Object.create(Object.getPrototypeOf(realSync), {
+    execute: {
+      value: (operation) => (
+        operation && (operation.kind === 'update' || operation.kind === 'insert')
+          ? pgTaken()
+          : realSync.execute(operation)
+      ),
+      enumerable: true, configurable: true, writable: true,
+    },
+  });
+  for (const key of Object.keys(realSync)) {
+    if (key !== 'execute') fakeSync[key] = realSync[key];
+  }
+  contacts.database = { storage: { sync: fakeSync } };
+  t.after(() => { contacts.database = realDatabase; });
+  await assert.rejects(
+    () => contacts.update(contact.id, { email: 'libera@palestra-esempio.it' }, { actor: ACTOR }),
+    (error) => error instanceof ConflictError
+      && error.message === 'Questa email è già di un altro cliente',
+    'the Postgres wording refuses as a taken email, never a 500',
+  );
+  contacts.database = realDatabase;
   const reread = await app.services.contacts.get(contact.id);
   assert.equal(reread.email, 'guido@palestra-esempio.it', 'the refused patch writes nothing');
 });

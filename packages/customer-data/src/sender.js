@@ -7,6 +7,7 @@ import {
   MAX_EXTERNAL_ID_LENGTH, domainShape, emailShape, safeString,
 } from './normalize.js';
 import { assertMatchResult } from './policy.js';
+import { isTechnicalLocalPart, labelFromEmail, nameWithoutAddressEchoes, readableName } from './display-name.js';
 import {
   deciding, orderedPair, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -274,8 +275,12 @@ function namesNoCompany(name) {
  * @param {any} core
  * @param {{email: string|null, firstName: string|null, lastName: string|null, companyName: string|null, domain: string|null}} row
  * @param {any} actor
- * @param {{companyFromEmail?: boolean}} [options] `companyFromEmail: false`
- *   (the import apply) never derives a company from the email domain.
+ * @param {{companyFromEmail?: boolean}} [options] Defaults to false
+ *   (backlog:ece81578305d): the company is never derived from the email
+ *   domain — a contact without Azienda takes its own placeholder. Only the
+ *   import may pass `companyFromEmail: true` where a domain-derived company
+ *   is intended; every other caller (sender resolution, enrichment) leaves
+ *   the default.
  */
 export async function createSubjectForRow(core, row, actor, options = {}) {
   if (!core || typeof core.createCompany !== 'function') {
@@ -287,21 +292,27 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     // The fallback names before any write (backlog:1a4d9b30): it refuses
     // an email that names nobody, so computing it first leaves no company
     // row behind when the lead cannot be created.
-    const fallback = leadNamesForEmail(row.email);
+    const contactNames = contactNamesFor(row);
     // A contact needs a company: reuse the named one when it exists, else
     // create it. Both go through the adapters, never through raw SQL.
     let company;
     // An explicit «Senza azienda» names no company (review #654, giro 4):
     // it takes the contact's own placeholder, never another customer's.
     const reservedName = Boolean(row.companyName) && namesNoCompany(row.companyName);
-    if ((!row.companyName && options.companyFromEmail === false) || reservedName) {
+    if ((!row.companyName && options.companyFromEmail !== true) || reservedName) {
       // Production 07/11: a customer typed or imported with no Azienda got
       // the email domain as its company («esempio.invalid»). The core still
       // needs a company behind a contact, so the contact gets its own
       // NO_COMPANY_NAME placeholder — never a name derived from the email,
       // never a row another customer or space shares. An explicit domain
       // column stays on it as evidence (review #654).
-      company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null, placeholder: true }, { actor });
+      // The internal placeholder path (backlog:ac65e448fcb4): the only
+      // caller allowed to set the core flag, via the context grant the
+      // public company-create path never carries.
+      company = await core.createCompany(
+        { name: NO_COMPANY_NAME, domain: row.domain ?? null, placeholder: true },
+        { actor, allowPlaceholder: true },
+      );
     } else {
       const companies = row.companyName
         ? (await core.findCompaniesByNormalizedName(row.companyName)).filter((found) => !isNoCompany(found))
@@ -312,13 +323,25 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     }
     const contact = await core.createContact({
       companyId: company.id,
-      firstName: row.firstName ?? fallback.firstName,
-      lastName: row.lastName ?? fallback.lastName,
+      firstName: contactNames.firstName,
+      lastName: contactNames.lastName,
       email: row.email,
     }, { actor });
     return { resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null, label: contact.email ?? row.email };
   }
-  const company = await core.createCompany({ name: row.companyName, domain: row.domain ?? null }, { actor });
+  // The company-only branch honors the same write boundary as the contact
+  // branch (review giro 2 P2): a row literally naming «Senza azienda» takes
+  // its own placeholder instead of creating a real, visible company for
+  // the reserved name.
+  const companyOnlyReserved = namesNoCompany(row.companyName);
+  const company = await core.createCompany(
+    {
+      name: row.companyName,
+      domain: row.domain ?? null,
+      ...(companyOnlyReserved ? { placeholder: true } : {}),
+    },
+    companyOnlyReserved ? { actor, allowPlaceholder: true } : { actor },
+  );
   return { resource: 'company', id: company.id, owner: 'host', ownerPackage: null, label: company.name ?? row.companyName };
 }
 
@@ -338,6 +361,12 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
  */
 export function leadNamesForEmail(email) {
   const text = typeof email === 'string' ? email : '';
+  // A machine mailbox (`noreply@`, `32ezyaggtanwlm-…@…bounces.google.com`)
+  // names its sender's domain, never the token (production 10/11).
+  if (isTechnicalLocalPart(text)) {
+    const label = labelFromEmail(text);
+    if (label !== null && label !== '') return { firstName: label.slice(0, 64), lastName: '—' };
+  }
   const at = text.lastIndexOf('@');
   const local = ((at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '').trim();
   const tokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean)
@@ -348,6 +377,40 @@ export function leadNamesForEmail(email) {
   }
   const lastName = tokens.length > 1 ? tokens.slice(1).join(' ').slice(0, 128) : '—';
   return { firstName, lastName };
+}
+
+/**
+ * The names a new contact is created with (production 10/11): the sender's
+ * own names when they name someone, else the names from its email. The
+ * email's last name only completes a first name it agrees with («Mario» +
+ * `mario.rossi@…` → Mario Rossi); a brand display name keeps the `—`
+ * placeholder instead of borrowing a mailbox word («Fastweb» +
+ * `info.clienti@…` never reads «Fastweb Clienti»). A display name that is an
+ * address or a placeholder (`Unknown`) names nobody.
+ * Throws like `leadNamesForEmail` when the email names nobody.
+ * @param {{firstName?: string|null, lastName?: string|null, email: unknown}} sender
+ */
+export function contactNamesFor(sender) {
+  const fallback = leadNamesForEmail(sender.email);
+  // The pieces a name repeats from its own address are dropped field by
+  // field (production 10/11, seguito P3 di #743): `Amazon.it It` as first
+  // name reads `Amazon.it`, and a last name keeps only what the first name
+  // did not already say (`Amazon.it` + `It Rossi` → `Rossi`; `It` alone →
+  // no last name).
+  const readFirst = readableName(sender.firstName ?? null);
+  const first = readFirst === null ? null : nameWithoutAddressEchoes(readFirst, sender.email);
+  const rawLast = readableName(sender.lastName ?? null);
+  let last = rawLast;
+  if (rawLast !== null) {
+    const said = first === null ? 0 : first.split(/\s+/).length;
+    const joined = nameWithoutAddressEchoes(first === null ? rawLast : `${first} ${rawLast}`, sender.email) ?? '';
+    const rest = joined.split(/\s+/).filter((word) => word !== '').slice(said).join(' ');
+    last = rest !== '' ? rest : null;
+  }
+  if (first === null) return { firstName: fallback.firstName, lastName: last ?? fallback.lastName };
+  if (last !== null) return { firstName: first, lastName: last };
+  const agrees = first.toLowerCase() === fallback.firstName.toLowerCase();
+  return { firstName: first, lastName: agrees ? fallback.lastName : '—' };
 }
 
 /**
@@ -766,11 +829,11 @@ export function createChannelSenderResolution({
         const emailReplay = await replayEmailWinner();
         if (emailReplay) return emailReplay;
         try {
-          const fallback = leadNamesForEmail(sender.email);
+          const contactNames = contactNamesFor(sender);
           const contact = await core.createContact({
             companyId: result.subject.id,
-            firstName: sender.firstName ?? fallback.firstName,
-            lastName: sender.lastName ?? fallback.lastName,
+            firstName: contactNames.firstName,
+            lastName: contactNames.lastName,
             email: sender.email,
           }, { actor });
           const subject = {

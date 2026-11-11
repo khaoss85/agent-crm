@@ -17,15 +17,22 @@ export class CompanyService {
 
   /**
    * @param {{name: unknown, domain?: unknown, placeholder?: unknown}} input
-   * @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string}} [context]
+   * @param {{actor?: unknown, identity?: any, idempotencyKey?: string, tenantId?: string, allowPlaceholder?: boolean}} [context]
    */
   async create(input, context = {}) {
     const name = requiredString(input.name, 'name');
     const domain = optionalString(input.domain, 'domain')?.toLowerCase() ?? null;
-    // The «no company» flag (backlog:ac65e448fcb4): set only by the
-    // customer-data placeholder path. A real company keeps false, whatever
-    // its name is — readers never match the name.
-    const placeholder = optionalBoolean(input.placeholder, 'placeholder') ?? false;
+    // The «no company» flag (backlog:ac65e448fcb4, review giro 2 P1): only
+    // the trusted internal placeholder path (the customer-data sender via
+    // the core adapters, carrying `allowPlaceholder`) may set it. Every
+    // other caller gets a real company, whatever it sends — the public
+    // POST /api/companies refuses the key with a 400 before it reaches
+    // here, so a records.write caller can never hide a company. Readers
+    // never match the name, so a real company keeps false whatever its
+    // name is.
+    const placeholder = context?.allowPlaceholder === true
+      ? (optionalBoolean(input.placeholder, 'placeholder') ?? false)
+      : false;
     const insertFor = (company) => ({
       kind: 'insert', table: 'companies', values: [
         { column: 'id', value: company.id },
@@ -114,13 +121,17 @@ export class CompanyService {
   }
 
   /**
-   * Rewrite a company's name or domain (backlog:d271d723, GDPR erasure).
+   * Rewrite a company's name, domain or placeholder flag
+   * (backlog:d271d723, GDPR erasure; backlog:ac65e448fcb4, V11 recovery).
    * In-process only — no HTTP route reaches it: the customer-data erasure
    * anonymizes an erased company through here instead of leaving its name
-   * readable. The write names only the columns the patch supplies, and the
-   * update and its audit row commit together, like the contact update.
+   * readable, and a V11-misflagged row is unflagged through here (the one
+   * recovery path for the one-time name repair, which no public write can
+   * use to hide a company). The write names only the columns the patch
+   * supplies, and the update and its audit row commit together, like the
+   * contact update.
    * @param {string} id
-   * @param {{name?: unknown, domain?: unknown}} patch
+   * @param {{name?: unknown, domain?: unknown, placeholder?: unknown}} patch
    * @param {{actor?: unknown}} [context]
    */
   async update(id, patch, context = {}) {
@@ -138,8 +149,12 @@ export class CompanyService {
       next.domain = optionalString(patch.domain, 'domain')?.toLowerCase() ?? null;
       values.push({ column: 'domain', value: next.domain });
     }
+    if (patch.placeholder !== undefined) {
+      next.placeholder = optionalBoolean(patch.placeholder, 'placeholder') ?? false;
+      values.push({ column: 'placeholder', value: next.placeholder ? 1 : 0 });
+    }
     if (values.length === 0) {
-      throw new ValidationError('a company update needs at least one of name, domain', { field: 'patch' });
+      throw new ValidationError('a company update needs at least one of name, domain, placeholder', { field: 'patch' });
     }
     next.updatedAt = nowIso();
     values.push({ column: 'updated_at', value: next.updatedAt });
