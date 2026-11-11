@@ -110,6 +110,92 @@ export function selectedProductTotal(picks) {
   return { total, currency: [...currencies][0] };
 }
 
+/**
+ * Voce 0c9a27bb: the display names of the ticked catalog offers, joined for
+ * the offer title (`Pacchetto 10 lezioni`, or `A + B` when two are ticked).
+ * An unticked or nameless selection reads as no title, never a raw id.
+ * @param {Array<Record<string, any>>} picks
+ */
+export function pickedOfferTitle(picks) {
+  const names = [];
+  for (const pickRow of picks) {
+    if (pickRow?.checkbox?.checked !== true) continue;
+    const offer = pickRow.offer ?? {};
+    const name = typeof offer.name === 'string' ? offer.name.trim() : '';
+    const fallback = typeof pickRow.productName === 'string' ? pickRow.productName.trim() : '';
+    const label = name !== '' ? name : fallback;
+    if (label !== '') names.push(label);
+  }
+  return names.join(' + ');
+}
+
+/**
+ * Voce 0c9a27bb: the chosen catalog rows as quote lines (offer id plus the
+ * row quantity: flat fees file once, per-unit prices multiply). Null when
+ * nothing is ticked; a named error when a quantity cannot file honestly —
+ * the same digit rule `selectedProductTotal` prices by, so a total and its
+ * lines never disagree.
+ * @param {Array<Record<string, any>>} picks
+ */
+export function quoteLineInputs(picks) {
+  const chosen = picks.filter((pickRow) => pickRow?.checkbox?.checked === true);
+  if (chosen.length === 0) return null;
+  const lines = [];
+  for (const pickRow of chosen) {
+    const rawQty = pickRow.qtyInput === null || pickRow.qtyInput === undefined
+      ? '1'
+      : String(pickRow.qtyInput.value ?? '1').trim();
+    const qty = /^\d+$/.test(rawQty) ? Number(rawQty) : NaN;
+    if (!Number.isSafeInteger(qty) || qty < 1 || qty > 1000000) return { error: 'qty' };
+    const offerId = pickRow?.offer?.offerId;
+    if (typeof offerId !== 'string' || offerId === '') return { error: 'offer' };
+    lines.push({ offerId, quantity: qty });
+  }
+  return { lines };
+}
+
+/**
+ * Voce 0c9a27bb: the catalog products chosen in «Nuova offerta» become the
+ * lines of the offer's quote, so the detail never reads «Ancora nessun
+ * preventivo» over chosen products. The offer rows stay authoritative: each
+ * chosen offer is re-read for its price book, and one draft quote opens on
+ * their single shared book before the lines file. Writes carry derived keys
+ * of the offer's own submission key, so a retry replays instead of filing
+ * twice, like the offer write itself. Mixed books or an unreadable offer
+ * refuse with a named error — the offer stays filed, and the caller says so.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client a mutation-capable (bound) client
+ */
+export async function fileQuoteWithLines(client, { opportunityId, lines, keyPrefix }) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+  const records = await Promise.all(lines.map((line) =>
+    client.request(`/api/modules/offer/records/${encodeURIComponent(line.offerId)}`)));
+  const bookIds = [...new Set(records.map((record) => String(record?.priceBookId ?? '').trim()))]
+    .filter((bookId) => bookId !== '');
+  if (bookIds.length !== 1) {
+    throw Object.assign(new Error('the chosen products do not share one price book'), { code: 'QUOTE_BOOKS_MISMATCH' });
+  }
+  const created = await client.request(
+    `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
+    { method: 'POST', idempotencyKey: `${keyPrefix}-quote`, body: JSON.stringify({ priceBookId: bookIds[0] }) },
+  );
+  const quoteId = created?.result?.quote?.id;
+  if (typeof quoteId !== 'string' || quoteId === '') {
+    throw Object.assign(new Error('the quote did not open'), { code: 'QUOTE_NOT_OPENED' });
+  }
+  for (const line of lines) {
+    // eslint-disable-next-line no-await-in-loop
+    await client.request(
+      `/api/modules/quote/records/${encodeURIComponent(quoteId)}/actions/add-line`,
+      {
+        method: 'POST',
+        idempotencyKey: `${keyPrefix}-line-${line.offerId}`,
+        body: JSON.stringify({ offerId: line.offerId, quantity: line.quantity }),
+      },
+    );
+  }
+  return { quoteId };
+}
+
 export function createModuleAdmin(deps) {
   const { doc, mount, client, navigate } = deps;
   const toast = deps.toast ?? (() => {});
