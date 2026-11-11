@@ -24,6 +24,7 @@ import {
   POSTGRESQL_HTTP_SPINE_REQUIRED,
 } from '../packages/cli/src/commands.js';
 import { MCP_PRODUCTION_SURFACE_UNAVAILABLE } from '../packages/mcp/src/production-surface.js';
+import { awaitChildExit } from './helpers/child-exit.js';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -493,7 +494,7 @@ test('M2-16 non-application commands do not load deployment storage', () => {
   }
 });
 
-test('M2-16 production MCP is static-context-only and does not load a FIFO config', { timeout: 15_000 }, async () => {
+test('M2-16 production MCP is static-context-only and does not load a FIFO config', async () => {
   const root = scratch();
   const fifoPath = join(root, 'deployment-storage.json');
   const fifo = spawnSync('mkfifo', ['-m', '600', fifoPath], { encoding: 'utf8' });
@@ -525,17 +526,14 @@ test('M2-16 production MCP is static-context-only and does not load a FIFO confi
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
   child.stdin.end(input);
 
-  const exitCode = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`production MCP hung on FIFO: ${stderr}`));
-    }, 4_000);
-    child.once('exit', (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
+  // Not opening the FIFO is proved by how the process ended: it exits on its own
+  // after input EOF (a read of the FIFO would block forever, so the hang guard of
+  // awaitChildExit fails the test by name). No speed budget.
+  const exit = await awaitChildExit(child, {
+    label: 'M2-16 production MCP on a FIFO config',
+    diagnostics: () => stderr,
   });
-  assert.equal(exitCode, 0, stderr);
+  assert.deepEqual(exit, { code: 0, signal: null, signalSent: null }, `production MCP did not exit on its own: ${stderr}`);
   assert.equal(existsSync(dbPath), false, 'production MCP opened SQLite');
   const responses = stdout.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   assert.equal(responses[0].result.serverInfo.name, 'accordo');
@@ -550,7 +548,7 @@ test('M2-16 production MCP is static-context-only and does not load a FIFO confi
   assertCredentialFree(`${stdout}\n${stderr}`, [fifoPath, SENTINEL_PASSWORD]);
 });
 
-test('M2-16 local MCP --db still composes and lists application tools', { timeout: 20_000 }, async () => {
+test('M2-16 local MCP --db still composes and lists application tools', async () => {
   const root = scratch();
   const dbPath = join(root, 'mcp.sqlite');
   const child = spawn(process.execPath, [
@@ -567,17 +565,11 @@ test('M2-16 local MCP --db still composes and lists application tools', { timeou
   child.stdin.end(`${JSON.stringify({
     jsonrpc: '2.0', id: 1, method: 'tools/list', params: {},
   })}\n`);
-  const exitCode = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`local MCP did not exit: ${stderr}`));
-    }, 15_000);
-    child.once('exit', (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
+  const exit = await awaitChildExit(child, {
+    label: 'M2-16 local MCP --db exit after input EOF',
+    diagnostics: () => stderr,
   });
-  assert.equal(exitCode, 0, stderr);
+  assert.deepEqual(exit, { code: 0, signal: null, signalSent: null }, `local MCP did not exit on its own: ${stderr}`);
   const responses = stdout.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
   const names = responses[0].result.tools.map((tool) => tool.name);
   assert.equal(names.includes('crm_list_opportunities'), true);

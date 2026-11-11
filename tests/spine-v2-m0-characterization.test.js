@@ -13,6 +13,7 @@ import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import { CORE_MIGRATIONS_FOR_CHARACTERIZATION } from '../packages/core/src/database.js';
 import createWorkPackage from '../packages/work/src/index.js';
+import { awaitChildExit } from './helpers/child-exit.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
@@ -288,25 +289,14 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.stdin.end(input);
-  const exitCode = await new Promise((resolve, reject) => {
-    let timedOut = false;
-    let force;
-    const terminate = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      force = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`MCP stdio did not stop after input EOF: ${stderr}`));
-      }, 1_000);
-    }, 10_000);
-    child.once('exit', (code) => {
-      clearTimeout(terminate);
-      if (force) clearTimeout(force);
-      if (timedOut) reject(new Error(`MCP stdio required SIGTERM after input EOF (exit ${code}): ${stderr}`));
-      else resolve(code);
-    });
+  // The property is how the process ended, not how fast: it must exit on its own
+  // after input EOF (code 0, no terminating signal, no signal sent by the test).
+  // awaitChildExit's only timer is a hang guard, not a speed budget.
+  const exit = await awaitChildExit(child, {
+    label: 'M0 MCP stdio exit after input EOF',
+    diagnostics: () => stderr,
   });
-  assert.equal(exitCode, 0, stderr);
+  assert.deepEqual(exit, { code: 0, signal: null, signalSent: null }, `MCP stdio did not exit on its own after input EOF: ${stderr}`);
   const responses = stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(responses.map(({ id }) => id), [1, 2]);
   assert.equal(responses[0].result.serverInfo.name, 'accordo');
