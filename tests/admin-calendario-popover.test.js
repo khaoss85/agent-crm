@@ -300,6 +300,25 @@ test('popover: a click outside closes it, a click inside or on another event doe
   assert.equal(doc.activeElement, mount.querySelector('textarea[name="phrase"]'), 'Esc from another field keeps that field focused');
 });
 
+test('popover: a click on «Nuovo appuntamento» closes the popover and still opens its menu (review #773)', async () => {
+  const { doc, mount } = await openWeek();
+  click(doc, eventButton(mount, 'p1'));
+  assert.ok(popover(mount));
+  const toggle = mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento'));
+  click(doc, toggle);
+  assert.equal(popover(mount), null, 'the outside click closes the popover');
+  const menu = mount.findAll('div').find((node) => node.getAttribute('role') === 'menu');
+  assert.ok(menu && !menu.classList.contains('hidden'), 'the menu the same click opened stays open');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+  assert.ok(mount.contains(toggle), 'no repaint replaced the control the operator clicked');
+  const block = eventButton(mount, 'p1');
+  assert.ok(!hasClass(block, 'cal-selected'), 'the event drops its highlight');
+  assert.equal(block.getAttribute('aria-pressed'), 'false');
+  // A later click on the same event opens it again.
+  click(doc, block);
+  assert.ok(popover(mount), 'the event opens again');
+});
+
 test('popover: a route away drops the closer, it never repaints the next screen', async () => {
   const { doc, mount, view } = await openWeek();
   click(doc, eventButton(mount, 'p1'));

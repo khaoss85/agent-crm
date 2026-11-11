@@ -1153,10 +1153,20 @@ export function createCalendarioView(deps) {
     state.moveOpen = false;
     state.moveNote = '';
     if (mount.querySelector('.cal-wrap') === null) return;
-    renderAll();
-    if (!restoreFocus) return;
+    // A light dismissal, never a full repaint (review #773): the click that
+    // closes the popover may have just changed another control — the
+    // «Nuovo appuntamento» menu it opened — and a repaint would put that
+    // control back closed. Only the popover leaves and the block drops its
+    // selected mark.
+    detachNode(paintedPop);
+    paintedPop = null;
     const block = paintedEvents.get(id);
-    if (block && typeof block.focus === 'function') block.focus();
+    if (block && typeof block.setAttribute === 'function') {
+      const classes = String(block.getAttribute?.('class') ?? '').split(/\s+/).filter((name) => name !== '' && name !== 'cal-selected');
+      block.setAttribute('class', classes.join(' '));
+      block.setAttribute('aria-pressed', 'false');
+    }
+    if (restoreFocus && block && typeof block.focus === 'function') block.focus();
   }
 
   /** True when keyboard focus sits inside the painted event popover. */
