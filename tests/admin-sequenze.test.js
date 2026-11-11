@@ -948,3 +948,22 @@ test('backlog:1d6dc54f19db dettaglio mostra il passo whatsapp anche quando lo sp
   assert.equal(detail.steps[0].channelLabel, 'WhatsApp');
   assert.ok(detail.steps[0].title.includes('Ciao, ci manchi'));
 });
+
+test('backlog:1d6dc54f19db retry senza spazio che fallisce resta un errore, mai zero passi', async () => {
+  // P2 Codex su PR 755: lettura con spazio vuota + retry che lancia (rete,
+  // 500) dipingeva «non ha passi registrati». Resta failed: true.
+  const key = 'bo-seq-b6028139-retry-down';
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, true);
+  assert.deepEqual(outcome.rows, []);
+});

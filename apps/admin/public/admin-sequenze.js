@@ -576,7 +576,7 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
       const retry = await readModulePage(client, 'sequence-step', { sequenceSourceKey });
       return { rows: retry.rows, failed: false };
     } catch {
-      return { rows: page.rows, failed: false };
+      return { rows: page.rows, failed: true };
     }
   } catch (error) {
     console.warn('bo-sequenze steps unreadable:', error instanceof Error ? error.name : 'unknown');
