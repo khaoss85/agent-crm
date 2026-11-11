@@ -9,7 +9,9 @@ import {
   CUSTOMER_SEARCH_SCAN_LIMIT,
   PHONE_SEARCH_MIN_DIGITS,
   applyCustomerListQuery,
+  matchesSearch,
   parseCustomerListQuery,
+  searchNeedle,
   shapeCustomerRow,
 } from '../packages/customer-data/src/customers.js';
 
@@ -370,6 +372,54 @@ test('review agent-crm#707 P2: identity-store failures are logged with the space
   }
   assert.ok(logged.some((line) => line.includes('STORE_DOWN') && line.includes('spazio-1')),
     'the failure is logged with its code and the space');
+});
+
+test('review agent-crm#707 giro-2 P1: digits read only the held phone, with the floor (single source of truth)', () => {
+  // One table for every digit case of the earlier rounds and this one:
+  // the digit rule lives only in searchRank (customers.js), judged against
+  // the held phone with PHONE_SEARCH_MIN_DIGITS — never by word start on
+  // the phone, name, email or company words.
+  const phone = '+393331234567';
+  const cases = [
+    // [query, parts, held phone, expected match]
+    ['333', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], phone, true, 'held phone holds the digits'],
+    ['39', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], phone, false, 'two digits stay below the floor, even an Italian prefix'],
+    ['33', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], phone, false, 'below the floor matches nothing'],
+    ['333', ['Ada', 'Rossi', 'user333@example.com', 'Studio Blu'], '', false, 'email digits without a held phone match nothing'],
+    ['333', ['Ada', 'Rossi', 'ada@example.com', '333 Studio'], '', false, 'company digits without a held phone match nothing'],
+    ['333', ['Ada', 'Rossi', '333@example.com', 'Studio Blu'], '', false, 'numeric email word without a held phone matches nothing'],
+    ['333', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], '', false, 'no phone held matches nothing'],
+    ['999', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], phone, false, 'digits the phone does not hold match nothing'],
+    ['Ada 333', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], phone, true, 'name plus digits still finds the phone'],
+    ['Ada 333', ['Marco', 'Bianchi', 'marco@example.com', 'Studio Blu'], phone, false, 'wrong name plus right digits matches nothing'],
+    ['Ada', ['Ada', 'Rossi', 'ada@example.com', 'Studio Blu'], '', true, 'pure text still matches by word start'],
+    ['ada', ['Studio', 'Canada', 'info@canada.example', 'Canada'], '', false, 'short text never matches inside a word'],
+  ];
+  for (const [q, parts, held, expected, why] of cases) {
+    assert.equal(matchesSearch(parts, searchNeedle(q), held), expected, `${q} — ${why}`);
+  }
+});
+
+test('review agent-crm#707 giro-2 P1: a digit query keeps the display-size cap on candidates', async () => {
+  // With full tables every 3-digit search used to keep the whole ~5k-row
+  // search scan as candidates (shaped plus batched reads); now the extra
+  // candidates stay capped at CUSTOMER_SCAN_LIMIT, identity hits first.
+  const reads = [];
+  const contacts = senders(CUSTOMER_SEARCH_SCAN_LIMIT);
+  const companies = Array.from({ length: CUSTOMER_SEARCH_SCAN_LIMIT }, (_, index) => ({ id: `co-${index}`, name: `Riempitivo ${index}` }));
+  const modules = boundedModules(contacts, companies, reads, { identities: [] });
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { q: '333', pageSize: '10' });
+  assert.equal(page.complete, false, 'the answer stays partial');
+  const shapes = reads.filter((entry) => entry.name === 'external-identity' && entry.method === 'listWhere');
+  const batchedSizes = shapes
+    .map((entry) => entry.shape)
+    .filter((shape) => Array.isArray(shape?.subjectId))
+    .map((shape) => shape.subjectId.length);
+  assert.ok(batchedSizes.length > 0, 'the list still batches its reads');
+  assert.ok(batchedSizes.every((size) => size <= CUSTOMER_SCAN_LIMIT * 2),
+    `every batched subject read stays bounded (got ${Math.max(...batchedSizes)})`);
+  assert.ok(batchedSizes.some((size) => size <= CUSTOMER_SCAN_LIMIT + 500),
+    'digit candidates keep the display-size cap instead of the whole search scan');
 });
 
 test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {

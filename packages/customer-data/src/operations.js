@@ -822,12 +822,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // beside it as an identity), so the pre-filter below can only judge the
     // text half of the needle (review agent-crm#707: a digit pre-filter over
     // phone-less parts drops true in-scan phone matches). A digit-only
-    // query keeps every scanned row as a candidate and lets the shaped-row
-    // filter — which sees the held phone — decide; a mixed query pre-filters
-    // on its text words only. Without digits the needle is unchanged.
+    // query pre-filters on nothing and lets the shaped-row filter — which
+    // sees the held phone — decide, but the candidates below stay capped
+    // (review agent-crm#707 giro-2 P1); a mixed query pre-filters on its
+    // text words only. Without digits the needle is unchanged.
     const textNeedle = needle.filter((word) => !/^[0-9]+$/.test(word));
-    const digitNeedle = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
-    const hasDigits = digitNeedle.length >= PHONE_SEARCH_MIN_DIGITS;
     const scannedContacts = new Set(contacts.map((contact) => contact.id));
     const extraContacts = scannedContactsAll
       .filter((contact) => !scannedContacts.has(contact.id)
@@ -836,15 +835,17 @@ export async function listCustomerRecords({ modules, core, names, interactions =
           textNeedle,
         )));
     // A digit-carrying query is decided by the shaped-row filter (which
-    // sees the held phone), so its candidates skip the display-size cap —
-    // still bounded by the search scans above, never the whole table.
-    const cappedExtraContacts = hasDigits ? extraContacts : extraContacts.slice(0, CUSTOMER_SCAN_LIMIT);
-    for (const contact of phoneContacts) {
-      if (contact !== null && !scannedContacts.has(contact.id)
-        && !cappedExtraContacts.some((entry) => entry.id === contact.id)) {
-        cappedExtraContacts.push(contact);
-      }
-    }
+    // sees the held phone), but its candidates keep the display-size cap
+    // (review agent-crm#707 giro-2 P1): every 3-digit search otherwise
+    // shapes ~5k rows plus batched reads. Identity-derived subjects come
+    // first, then a bounded top-up from the search scan — never the whole
+    // scan, never the whole table.
+    const dedupedPhoneContacts = phoneContacts.filter((contact) => contact !== null
+      && !scannedContacts.has(contact.id));
+    const cappedExtraContacts = [
+      ...dedupedPhoneContacts,
+      ...extraContacts.filter((contact) => !dedupedPhoneContacts.some((entry) => entry.id === contact.id)),
+    ].slice(0, CUSTOMER_SCAN_LIMIT);
     const scannedCompanies = new Set(companies.map((company) => company.id));
     const behindExtra = new Set([...cappedExtraContacts.map((contact) => contact?.companyId),
       ...phoneContacts.map((contact) => contact?.companyId)].filter(Boolean));
@@ -852,13 +853,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       .filter((company) => !scannedCompanies.has(company.id)
         && (behindExtra.has(company.id) || textNeedle.length === 0
           || matchesSearch([company?.name], textNeedle)));
-    const extraCompanies = hasDigits ? extraCompaniesUncapped : extraCompaniesUncapped.slice(0, CUSTOMER_SCAN_LIMIT);
-    for (const company of phoneCompanies) {
-      if (!scannedCompanies.has(company.id)
-        && !extraCompanies.some((entry) => entry.id === company.id)) {
-        extraCompanies.push(company);
-      }
-    }
+    const dedupedPhoneCompanies = phoneCompanies.filter((company) => !scannedCompanies.has(company.id));
+    const extraCompanies = [
+      ...dedupedPhoneCompanies,
+      ...extraCompaniesUncapped.filter((company) => !dedupedPhoneCompanies.some((entry) => entry.id === company.id)),
+    ].slice(0, CUSTOMER_SCAN_LIMIT);
     contacts = [...contacts, ...cappedExtraContacts];
     companies = [...companies, ...extraCompanies];
   }

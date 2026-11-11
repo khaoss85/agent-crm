@@ -289,34 +289,71 @@ export const PHONE_SEARCH_MIN_DIGITS = 3;
  */
 export function searchRank(parts, needle, phone = '') {
   if (!Array.isArray(needle) || needle.length === 0) return 0;
-  const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
-  let rank = 0;
-  let failed = false;
-  for (const wanted of needle) {
-    if (words.some((word) => word.startsWith(wanted))) continue;
-    if (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))) {
-      rank = 1;
-      continue;
-    }
-    failed = true;
-    break;
-  }
-  if (!failed) return rank;
-  // A needle carrying digits is also a phone search (backlog:7d82fd84):
-  // every non-numeric word must still match by the word rules above, and
-  // the joined digits must sit inside the digits of the HELD phone, so
-  // «333» finds «+39333123456» and «Ada 333» finds Ada Rossi by her phone.
-  // Ranked like an infix match, never a word start.
+  // Single digit path (review agent-crm#707 giro-2 P1): a needle of ONLY
+  // digits names a phone, never words — judged below against the digits
+  // of the HELD phone with the PHONE_SEARCH_MIN_DIGITS floor. The
+  // first-pass words also exclude the held phone value itself, so no
+  // digit word ever matches the phone by word start (one source of truth).
+  const phoneValue = typeof phone === 'string' ? phone : String(phone ?? '');
+  const textWords = parts
+    .filter((part) => typeof part === 'string' && part !== '' && part !== phoneValue)
+    .flatMap(searchWords);
   const numeric = needle.filter((word) => /^[0-9]+$/.test(word));
   const text = needle.filter((word) => !/^[0-9]+$/.test(word));
-  if (numeric.length > 0) {
+  if (numeric.length === 0) {
+    let rank = 0;
+    for (const wanted of text) {
+      if (textWords.some((word) => word.startsWith(wanted))) continue;
+      if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+        rank = 1;
+        continue;
+      }
+      return -1;
+    }
+    return rank;
+  }
+  // A pure-digit needle names ONLY a phone (review agent-crm#707 giro-2
+  // P1): «39» must not match every Italian phone by word start, and «333»
+  // must not match «333 Studio» or «333@example.com» — digits read ONLY
+  // the held phone, with the floor. Mixed needles (text plus digits, like
+  // «verifica 07/11») still match their digit words by word start below.
+  if (text.length === 0) {
     const digits = numeric.join('');
-    const textOk = text.every((wanted) => words.some((word) => word.startsWith(wanted))
-      || (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))));
-    if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS
-      && phoneDigitsOf(phone).includes(digits)) {
+    if (digits.length >= PHONE_SEARCH_MIN_DIGITS
+      && phoneDigitsOf(phoneValue).includes(digits)) {
       return 1;
     }
+    return -1;
+  }
+  // A mixed needle (text plus digits, like «verifica 07/11») first tries
+  // the word rules on every word, digits included, against the non-phone
+  // words — so date fragments still find the row by word start.
+  {
+    let rank = 0;
+    let failed = false;
+    for (const wanted of needle) {
+      if (textWords.some((word) => word.startsWith(wanted))) continue;
+      if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+        rank = 1;
+        continue;
+      }
+      failed = true;
+      break;
+    }
+    if (!failed) return rank;
+  }
+  // Otherwise the needle is also a phone search (backlog:7d82fd84): every
+  // non-numeric word must still match by the word rules above, and the
+  // joined digits must sit inside the digits of the HELD phone, so
+  // «Ada 333» finds Ada Rossi by her phone. Ranked like an infix match,
+  // never a word start. Below the digit floor or without a held phone
+  // holding the digits, it matches nothing.
+  const digits = numeric.join('');
+  const textOk = text.every((wanted) => textWords.some((word) => word.startsWith(wanted))
+    || (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))));
+  if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS
+    && phoneDigitsOf(phoneValue).includes(digits)) {
+    return 1;
   }
   return -1;
 }
