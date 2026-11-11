@@ -56,3 +56,20 @@ export function awaitChildExit(child, { label, hangGuardMs = CHILD_EXIT_HANG_GUA
     });
   });
 }
+
+/**
+ * The same hang guard for a `spawnSync` child: pass `timeout: CHILD_EXIT_HANG_GUARD_MS`
+ * and call this before reading the result, so a child that never exits fails by name
+ * instead of as an unexplained `null !== 0` (a fixed 10 s `timeout` did exactly that
+ * under load on the touched-files phase of #796).
+ *
+ * @param {import('node:child_process').SpawnSyncReturns<string>} result
+ * @param {string} label
+ */
+export function assertSyncChildExited(result, label) {
+  const error = /** @type {NodeJS.ErrnoException | undefined} */ (result.error);
+  if (error?.code === 'ETIMEDOUT') {
+    throw new Error(`${label}: child never exited within the ${CHILD_EXIT_HANG_GUARD_MS} ms hang guard `
+      + `(killed with ${result.signal}): ${result.stderr ?? ''}`);
+  }
+}

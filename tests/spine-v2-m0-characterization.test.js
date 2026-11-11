@@ -13,7 +13,7 @@ import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import { CORE_MIGRATIONS_FOR_CHARACTERIZATION } from '../packages/core/src/database.js';
 import createWorkPackage from '../packages/work/src/index.js';
-import { awaitChildExit } from './helpers/child-exit.js';
+import { CHILD_EXIT_HANG_GUARD_MS, assertSyncChildExited, awaitChildExit } from './helpers/child-exit.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
@@ -133,8 +133,9 @@ test('M0 records PostgreSQL-shaped --db input as legacy SQLite path semantics, n
     const result = spawnSync(process.execPath, [cli, 'db:migrate', '--db', shapedInput], {
       cwd: workspace,
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: CHILD_EXIT_HANG_GUARD_MS,
     });
+    assertSyncChildExited(result, 'M0 db:migrate with PostgreSQL-shaped --db');
     assert.equal(result.status, 0, result.stderr);
     const sqlitePath = join(workspace, 'postgresql:', 'sentinel.invalid', 'accordo');
     assert.equal(existsSync(sqlitePath), true, 'legacy --db resolves the string as a local filesystem path');
@@ -310,8 +311,9 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   for (const command of ['db:migrate', 'seed', 'demo', 'doctor', 'workflow:list', 'trace:list']) {
     const dbPath = join(directory, `${command.replace(':', '-')}.sqlite`);
     const run = spawnSync(process.execPath, ['--no-warnings', cli, command, '--db', dbPath], {
-      cwd: root, encoding: 'utf8', timeout: 30_000,
+      cwd: root, encoding: 'utf8', timeout: CHILD_EXIT_HANG_GUARD_MS,
     });
+    assertSyncChildExited(run, `M0 ${command}`);
     assert.equal(run.status, 0, `${command}: ${run.stderr}`);
     const receipt = JSON.parse(run.stdout);
     assert.equal(typeof receipt, 'object', `${command} writes one JSON object`);
@@ -342,8 +344,8 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`serve did not start: ${stderr}`));
-    }, 30_000);
+      reject(new Error(`M0 serve did not start within the ${CHILD_EXIT_HANG_GUARD_MS} ms hang guard: ${stderr}`));
+    }, CHILD_EXIT_HANG_GUARD_MS);
     child.stdout.on('data', () => {
       if (!stdout.includes('Accordo running at')) return;
       clearTimeout(timeout);
@@ -353,21 +355,13 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   });
   const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
   assert.ok(advertised, stdout);
-  const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(CHILD_EXIT_HANG_GUARD_MS) });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).generatedResourceContract, 1);
   child.kill('SIGTERM');
-  const exitCode = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`serve did not stop after SIGTERM: ${stderr}`));
-    }, 10_000);
-    child.once('exit', (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
-  });
-  assert.equal(exitCode, 0, stderr);
+  // Graceful shutdown is how serve ends after our SIGTERM (code 0), not how fast.
+  const stopped = await awaitChildExit(child, { label: 'M0 serve stop after SIGTERM', diagnostics: () => stderr });
+  assert.equal(stopped.code, 0, stderr);
   assert.match(stdout, /Database: .*serve\.sqlite/);
   assertMigrated(servePath, 'serve');
 });

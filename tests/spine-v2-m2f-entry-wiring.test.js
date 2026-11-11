@@ -24,7 +24,7 @@ import {
   POSTGRESQL_HTTP_SPINE_REQUIRED,
 } from '../packages/cli/src/commands.js';
 import { MCP_PRODUCTION_SURFACE_UNAVAILABLE } from '../packages/mcp/src/production-surface.js';
-import { awaitChildExit } from './helpers/child-exit.js';
+import { CHILD_EXIT_HANG_GUARD_MS, assertSyncChildExited, awaitChildExit } from './helpers/child-exit.js';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -178,10 +178,13 @@ function spawnEnv(extra = {}) {
   return env;
 }
 
-function runCli(args, { cwd = repoRoot, env = spawnEnv(), timeout = 30_000 } = {}) {
-  return spawnSync(process.execPath, ['--no-warnings', cli, ...args], {
-    cwd, encoding: 'utf8', timeout, env,
+// The timeout is the hang guard of tests/helpers/child-exit.js, not a speed budget.
+function runCli(args, { cwd = repoRoot, env = spawnEnv() } = {}) {
+  const result = spawnSync(process.execPath, ['--no-warnings', cli, ...args], {
+    cwd, encoding: 'utf8', timeout: CHILD_EXIT_HANG_GUARD_MS, env,
   });
+  assertSyncChildExited(result, `accordo ${args[0]}`);
+  return result;
 }
 
 function failureCode(result) {
@@ -272,9 +275,7 @@ test('M2-11/M2-32 PostgreSQL documents refuse before composition for every APP_C
   writeModule(root, 'providers/secret-provider.mjs', VALID_SECRET_PROVIDER);
   const configPath = writeConfig(root, postgresEnvelope());
   for (const command of APP_COMMANDS.filter((name) => name !== 'serve')) {
-    const run = runCli([command, '--deployment-storage', configPath, '--root', root], {
-      cwd: repoRoot, env: spawnEnv(), timeout: 10_000,
-    });
+    const run = runCli([command, '--deployment-storage', configPath, '--root', root]);
     assert.notEqual(run.status, 0, `${command} should refuse postgresql`);
     assert.equal(failureCode(run), CLI_VERIFIED_OPERATOR_REQUIRED, command);
     assertCredentialFree(haystackOf(run), [configPath, root, SENTINEL_PASSWORD]);
@@ -283,14 +284,12 @@ test('M2-11/M2-32 PostgreSQL documents refuse before composition for every APP_C
   assert.equal(existsSync(join(root, 'tenant.sqlite')), false);
 });
 
-test('M2-17 serve refuses a PostgreSQL document before listen', { timeout: 15_000 }, async () => {
+test('M2-17 serve refuses a PostgreSQL document before listen', async () => {
   const root = scratch();
   writeModule(root, 'providers/identity-verifier.mjs', VALID_VERIFIER.replaceAll("'local-development'", "'production'"));
   writeModule(root, 'providers/secret-provider.mjs', VALID_SECRET_PROVIDER);
   const configPath = writeConfig(root, postgresEnvelope());
-  const run = runCli(['serve', '--deployment-storage', configPath, '--root', root, '--port', '0'], {
-    cwd: repoRoot, env: spawnEnv(), timeout: 8_000,
-  });
+  const run = runCli(['serve', '--deployment-storage', configPath, '--root', root, '--port', '0']);
   assert.notEqual(run.status, 0);
   assert.equal(run.stdout.includes('Accordo running at'), false);
   assert.equal(failureCode(run), POSTGRESQL_HTTP_SPINE_REQUIRED);
@@ -336,7 +335,7 @@ test('M2-17 env ACCORDO_DEPLOYMENT_STORAGE selects the same document', () => {
   assert.equal(existsSync(join(root, 'tenant.sqlite')), true);
 });
 
-test('M2-22 serve does not listen until the verifier contract passes', { timeout: 15_000 }, async () => {
+test('M2-22 serve does not listen until the verifier contract passes', async () => {
   const root = scratch();
   writeModule(root, 'providers/identity-verifier.mjs', HANG_VERIFIER);
   const configPath = writeConfig(root, sqliteEnvelope(root));
@@ -357,17 +356,10 @@ test('M2-22 serve does not listen until the verifier contract passes', { timeout
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const exitCode = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`serve hang verifier did not exit: ${stderr}`));
-    }, 8_000);
-    child.once('exit', (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
-  });
-  assert.notEqual(exitCode, 0);
+  // serve must end on its own (its verifier timeout), never by a signal from the test.
+  const exit = await awaitChildExit(child, { label: 'M2-22 serve with a hanging verifier', diagnostics: () => stderr });
+  assert.equal(exit.signal, null, stderr);
+  assert.notEqual(exit.code, 0);
   assert.equal(stdout.includes('Accordo running at'), false);
   assert.equal(existsSync(dbPath), false);
   const haystack = `${stdout}\n${stderr}`;
@@ -375,7 +367,7 @@ test('M2-22 serve does not listen until the verifier contract passes', { timeout
   assertCredentialFree(haystack, [configPath, root]);
 });
 
-test('M2-17 serve --db still discloses the ratified SQLite path and listens', { timeout: 45_000 }, async () => {
+test('M2-17 serve --db still discloses the ratified SQLite path and listens', async () => {
   const root = scratch();
   const dbPath = join(root, 'serve.sqlite');
   const child = spawn(process.execPath, [
@@ -393,8 +385,8 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', { 
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new Error(`serve did not start: ${stderr}`));
-      }, 30_000);
+        reject(new Error(`serve did not start within the ${CHILD_EXIT_HANG_GUARD_MS} ms hang guard: ${stderr}`));
+      }, CHILD_EXIT_HANG_GUARD_MS);
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
         if (!stdout.includes(`Database: ${dbPath}`)) return;
@@ -406,7 +398,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', { 
     assert.equal(stdout.includes(`Database: ${dbPath}`), true, stdout);
     const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
     assert.ok(advertised, stdout);
-    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(CHILD_EXIT_HANG_GUARD_MS) });
     assert.equal(response.status, 200);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
@@ -423,7 +415,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', { 
   }
 });
 
-test('M2-17 serve document-selected stdout is {adapter,available} not a path', { timeout: 45_000 }, async () => {
+test('M2-17 serve document-selected stdout is {adapter,available} not a path', async () => {
   const { root, configPath } = sqliteScratch();
   const dbPath = join(root, 'tenant.sqlite');
   const child = spawn(process.execPath, [
@@ -444,8 +436,8 @@ test('M2-17 serve document-selected stdout is {adapter,available} not a path', {
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new Error(`serve did not start: ${stderr}`));
-      }, 30_000);
+        reject(new Error(`serve did not start within the ${CHILD_EXIT_HANG_GUARD_MS} ms hang guard: ${stderr}`));
+      }, CHILD_EXIT_HANG_GUARD_MS);
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
         if (!stdout.includes('"adapter":"sqlite"')) return;
@@ -460,7 +452,7 @@ test('M2-17 serve document-selected stdout is {adapter,available} not a path', {
     assert.equal(stdout.includes('"available":true'), true, stdout);
     const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
     assert.ok(advertised, stdout);
-    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(CHILD_EXIT_HANG_GUARD_MS) });
     assert.equal(response.status, 200);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
