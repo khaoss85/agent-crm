@@ -289,12 +289,17 @@ const DRAG_WEEK = () => ({
   ],
 });
 
-async function openPointerWeek() {
+async function openPointerWeek({ failRescheduleWith = null, wait = undefined } = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const week = DRAG_WEEK();
-  const client = stubClient({ week });
-  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const client = stubClient({ week, failRescheduleWith });
+  const toasts = [];
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z'),
+    toast: (message, error) => toasts.push({ message, error: error === true }),
+    ...(wait ? { wait } : {}),
+  });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -305,7 +310,7 @@ async function openPointerWeek() {
   attachClosest(mount);
   // 1 px per minute from 09:00: clientY 300 is 14:00, 330 is 14:30, 390 is 15:30.
   col.getBoundingClientRect = () => ({ top: 0, height: 540 });
-  return { doc, mount, client, week, view, col };
+  return { doc, mount, client, week, view, col, toasts };
 }
 
 function resizeHandleOf(mount) {
@@ -442,11 +447,13 @@ test('3d0fbe7d: a second move while a reschedule is in flight names the wait (re
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const toasts = [];
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, toast: (message, error) => toasts.push({ message, error: error === true }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
   mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
   await settle();
+  const popoverOpen = () => mount.findAll('div').some((node) => node.getAttribute('data-role') === 'event-detail');
   let button = eventButton(mount, 'a9');
   let col = button.parentNode;
   attachClosest(mount);
@@ -469,33 +476,25 @@ test('3d0fbe7d: a second move while a reschedule is in flight names the wait (re
   col.dispatch('pointerup', {});
   await settle(5);
   assert.equal(rescheduleBodies.length, 1, 'no second request leaves while busy');
-  assert.ok(
-    mount.findAll('p').some((node) => node.textContent.includes('già uno spostamento')),
-    'the wait reads Italian beside the event',
-  );
+  // backlog:a332dcd070ca: a drag never opens the popover, so the wait reads
+  // in a toast, in Italian.
+  assert.equal(popoverOpen(), false, 'the drag opened no popover');
+  assert.ok(toasts.some((toast) => toast.message.includes('già uno spostamento') && toast.error), JSON.stringify(toasts));
   // The first request lands: the grid confirms the new time, and the click
   // guard is eaten exactly once afterwards — never stuck.
   releaseReschedule({ appointment: { id: 'a9', startsAt: rescheduleBodies[0].startsAt, endsAt: rescheduleBodies[0].endsAt } });
   await settle(15);
   assert.equal(rescheduleBodies.length, 1, 'the landing sends nothing new');
-  assert.ok(
-    mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
-    'the landing confirms the new time',
-  );
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Spostato a') && !toast.error), 'the landing confirms the new time');
+  assert.equal(popoverOpen(), false, 'the landing opens no popover either');
   const firstClick = eventButton(mount, 'a9');
   firstClick.dispatch('click', { target: firstClick });
   await settle(5);
-  assert.ok(
-    mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
-    'the drag click is eaten once, the note stays',
-  );
+  assert.equal(popoverOpen(), false, 'the drag click is eaten once');
   const secondClick = eventButton(mount, 'a9');
   secondClick.dispatch('click', { target: secondClick });
   await settle(5);
-  assert.ok(
-    !mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
-    'the next click selects again: the guard is not wedged',
-  );
+  assert.equal(popoverOpen(), true, 'the next click opens the popover: the guard is not wedged');
 });
 
 test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P2)', async () => {
@@ -539,4 +538,79 @@ test('3d0fbe7d: bad move fields fail closed in Italian before any request', asyn
     mount.findAll('p').some((node) => node.textContent.includes('validi')),
     'bad fields get an Italian note',
   );
+});
+
+// backlog:a332dcd070ca (pilota 11/11): a refused drag must not open the
+// popover by itself; the refusal reads in a toast and the block goes back.
+test('a332dcd0: a refused drag opens no popover, the block goes back, the refusal reads in a toast', async () => {
+  const refusal = Object.assign(new Error('overlap'), { code: 'APPOINTMENTS_OVERLAP', status: 409 });
+  const { mount, client, week, col, toasts } = await openPointerWeek({ failRescheduleWith: refusal });
+  const before = { ...week.members[0].appointments[0] };
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(client.calls.some((call) => call.path === '/api/appointments/reschedule'), 'the move was asked');
+  assert.equal(
+    mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length,
+    0,
+    'the refused drag opens no popover',
+  );
+  assert.equal(eventButton(mount, 'a9').getAttribute('aria-pressed'), 'false', 'nothing selected');
+  assert.equal(week.members[0].appointments[0].startsAt, before.startsAt, 'the block is back where it was');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].error, true);
+  assert.match(toasts[0].message, /occupata/, 'the Italian refusal reads in the toast');
+  // The click after the drop is eaten once, then a click opens the popover.
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 1);
+});
+
+test('a332dcd0: a successful drag opens no popover either and confirms in a toast', async () => {
+  const { mount, col, toasts } = await openPointerWeek();
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 0);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].error, false);
+  assert.match(toasts[0].message, /^Spostato a Giovedì 15:00–16:00\.$/);
+});
+
+test('a332dcd0: a move still queued on the shared /bo stays where it was dropped and the week is read again', async () => {
+  const queued = Object.assign(new Error('pending'), { code: 'BO_CRM_PENDING', status: 504, requestId: 'req-1', claimId: 'c-1' });
+  const waits = [];
+  let release = () => {};
+  const wait = (ms) => { waits.push(ms); return new Promise((resolve) => { release = resolve; }); };
+  const { mount, client, week, col, toasts } = await openPointerWeek({ failRescheduleWith: queued, wait });
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.equal(week.members[0].appointments[0].startsAt, '2026-10-22T13:00:00.000Z', 'the drop stands, never reverted as refused');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].error, false);
+  assert.match(toasts[0].message, /in coda/);
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 0);
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length;
+  const before = reads();
+  assert.deepEqual(waits, [4000], 'the week is read again after a short wait');
+  release();
+  await settle(10);
+  assert.equal(reads(), before + 1, 'the week read shows where the worker put it');
+});
+
+test('a332dcd0: the Sposta form in the popover still answers inside the popover', async () => {
+  const refusal = Object.assign(new Error('overlap'), { code: 'APPOINTMENTS_OVERLAP', status: 409 });
+  const { mount, toasts } = await openPointerWeek({ failRescheduleWith: refusal });
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  const form = moveForm(mount);
+  fillMove(form, { date: '2026-10-22', start: '16:00', end: '17:00' });
+  submitMove(form);
+  await settle(15);
+  const note = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'move-note');
+  assert.match(note?.textContent ?? '', /occupata/, 'the refusal reads beside the form');
+  assert.equal(toasts.length, 0, 'no toast while the popover shows it');
 });
