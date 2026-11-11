@@ -20,6 +20,7 @@ import { stableKey, optionsShareable, templateDirName, project as cachedProject 
 import * as cached from './helpers/contracts-project-cache.js';
 import * as original from './helpers/contracts-project.js';
 import { createHash } from 'node:crypto';
+import { spawnGit } from './helpers/isolated-git.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 /**
@@ -30,12 +31,10 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
  */
 function sharingEngages() {
   try {
-    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });
+    const head = spawnGit(['rev-parse', 'HEAD'], { cwd: repoRoot });
     if (head.status !== 0 || !/^[0-9a-f]{40}$/.test(head.stdout.trim())) return false;
-    const status = spawnSync(
-      'git',
-      ['status', '--porcelain', '--', 'packages', 'apps', 'examples', 'package.json'],
-      { cwd: repoRoot, encoding: 'utf8' },
+    const status = spawnGit(['status', '--porcelain', '--', 'packages', 'apps', 'examples', 'package.json'],
+      { cwd: repoRoot },
     );
     return status.status === 0 && status.stdout.trim() === '';
   } catch {

@@ -17,13 +17,13 @@
  * unchanged in behaviour.
  */
 
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { project as buildFreshProject } from './contracts-project.js';
+import { spawnGit } from './isolated-git.js';
 
 export * from './contracts-project.js';
 
@@ -158,14 +158,12 @@ function sharingScope() {
   try {
     const base = process.env.RUNNER_TEMP;
     if (!base || !isDirectory(base)) return sharingScopeMemo;
-    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });
+    const head = spawnGit(['rev-parse', 'HEAD'], { cwd: repoRoot });
     if (head.status !== 0) return sharingScopeMemo;
     const sha = head.stdout.trim();
     if (!/^[0-9a-f]{40}$/.test(sha)) return sharingScopeMemo;
-    const status = spawnSync(
-      'git',
-      ['status', '--porcelain', '--', 'packages', 'apps', 'examples', 'package.json'],
-      { cwd: repoRoot, encoding: 'utf8' },
+    const status = spawnGit(['status', '--porcelain', '--', 'packages', 'apps', 'examples', 'package.json'],
+      { cwd: repoRoot },
     );
     if (status.status !== 0 || status.stdout.trim() !== '') return sharingScopeMemo;
     sharingScopeMemo = { base, sha };
