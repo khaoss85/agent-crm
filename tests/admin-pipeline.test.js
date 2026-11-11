@@ -1209,8 +1209,9 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
     .find((n) => n.textContent === ({ a: 'MR', b: 'M', c: 'P' })[id]);
   const cardA = ownerOf('a');
   assert.ok(cardA, 'card a shows the referente initials');
-  assert.equal(cardA.getAttribute('title'), 'Maria Rossi', 'the badge title names the referente');
-  assert.equal(ownerOf('b').getAttribute('title'), 'Maria', 'single-word names read as a name in the title');
+  assert.equal(cardA.getAttribute('title'), 'Referente: Maria Rossi', 'the badge title names the referente');
+  assert.equal(cardA.getAttribute('aria-label'), 'Referente: Maria Rossi', 'and so does its accessible name (backlog:7b2203e69826)');
+  assert.equal(ownerOf('b').getAttribute('title'), 'Referente: Maria', 'single-word names read as a name in the title');
   assert.equal(ownerOf('c').textContent, 'P', 'single-word names badge the first letter');
 
   const closeOf = (id) => mount.findAll('div')
