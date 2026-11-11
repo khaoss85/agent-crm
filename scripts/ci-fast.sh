@@ -63,6 +63,18 @@ parallel_cap() {
   esac
 }
 
+# The busy rule (backlog:3d560518f3e2): the touched-tests phase writes
+# CI_TOUCHED_BUSY_FILE when it timed out on a full machine with no failed
+# file. Only the parallel gate offers the one retry
+# (scripts/ci-fast-busy-retry.sh, called by the workflow step), so the
+# variable is dropped in sequential mode; a stale file never survives.
+busy_file="${CI_TOUCHED_BUSY_FILE:-}"
+[ -z "$busy_file" ] || rm -f "$busy_file"
+if [ "$(parallel_cap)" -le 1 ]; then
+  unset CI_TOUCHED_BUSY_FILE
+  busy_file=''
+fi
+
 # Parallel mode: start one lane (one log, one exit code, one name in the
 # failure list) once fewer than the cap are running.
 launch() {
@@ -184,6 +196,12 @@ if [ "$(parallel_cap)" -gt 1 ]; then
   for i in "${!phases[@]}"; do cat "$logs_dir/$i.log"; done
   rm -rf "$logs_dir"
   if [ "${#failed[@]}" -gt 0 ]; then
+    if [ -n "$busy_file" ] && [ -s "$busy_file" ] && [ "${#failed[@]}" -eq 1 ] \
+      && [ "${failed[0]}" = 'tests of the touched files, then public claims and packaging agree' ]; then
+      echo "::warning::ci-fast: the touched tests timed out on a full machine ($(tr -d '\n' < "$busy_file")): busy, not red; every other phase passed in $((SECONDS - started))s, the step retries the touched tests once"
+      exit "$first_code"
+    fi
+    [ -z "$busy_file" ] || rm -f "$busy_file"
     echo "::error::ci-fast: ${#failed[@]} of ${#phases[@]} phases failed in parallel after $((SECONDS - started))s: ${failed[*]}"
     exit "$first_code"
   fi
