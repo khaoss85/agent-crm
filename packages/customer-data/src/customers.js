@@ -2,6 +2,7 @@
 
 import { ValidationError } from '../../core/index.js';
 import { messagePreview } from '../../core/message-preview.js';
+import { isNotificationMessage } from '../../core/sender-kind.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
 import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
@@ -120,7 +121,57 @@ export const CUSTOMER_VIEWS = Object.freeze([
   // read state (no member, no watermark table) carry unreadCount null and
   // never match — the view reads empty, never everybody.
   { id: 'da-leggere', label: 'Da leggere', filters: Object.freeze({ daLeggere: true }) },
+  // «Da rispondere» (backlog:c2bf6b206d96, MVP Presti): customers with a
+  // conversation whose last message is a person's, never answered after —
+  // notifications (core/sender-kind.js) never wait. Newest waiting first.
+  { id: 'da-rispondere', label: 'Da rispondere', filters: Object.freeze({ daRispondere: true }) },
 ]);
+
+/**
+ * The conversations of one customer waiting for the team (backlog:c2bf6b206d96):
+ * one per thread (its conversation, else its channel), the thread waits
+ * when its latest message is inbound from a person — not a notification by
+ * the kernel sender rule — and the thread is not closed. Pure: the caller
+ * hands every message row of the customer it already read (exact reads, no
+ * display bound), so the count never stops at a page.
+ * @param {Array<any>} messages the customer's interaction-message rows
+ * @param {Array<any>} [conversations] the customer's conversation rows (closed state, labels)
+ * @returns {{ count: number, lastAt: string | null, text: string | null, subject: string | null, channel: string | null }}
+ */
+export function awaitingReplyFor(messages, conversations = []) {
+  const byConversation = new Map();
+  for (const row of Array.isArray(conversations) ? conversations : []) {
+    if (row?.id !== undefined && row?.id !== null) byConversation.set(String(row.id), row);
+  }
+  const latest = new Map();
+  for (const row of Array.isArray(messages) ? messages : []) {
+    if (!row || row.entry === 'call') continue;
+    const time = Date.parse(String(row.occurredAt ?? ''));
+    if (!Number.isFinite(time)) continue;
+    const thread = row.conversationId !== undefined && row.conversationId !== null && row.conversationId !== ''
+      ? `c:${row.conversationId}` : `ch:${String(row.channel ?? '')}`;
+    const seen = latest.get(thread);
+    if (!seen || time > seen.time) latest.set(thread, { time, row });
+  }
+  let count = 0;
+  let newest = null;
+  for (const { time, row } of latest.values()) {
+    if (row.direction !== 'inbound') continue;
+    const conversation = row.conversationId != null ? byConversation.get(String(row.conversationId)) ?? null : null;
+    if (conversation?.status === 'closed') continue;
+    const message = { ...row, remoteHandle: row.remoteHandle ?? conversation?.remoteHandle ?? null };
+    if (isNotificationMessage(message, { labels: [conversation?.subjectLabel] })) continue;
+    count += 1;
+    if (newest === null || time > newest.time) newest = { time, row };
+  }
+  return {
+    count,
+    lastAt: newest === null ? null : String(newest.row.occurredAt),
+    text: newest === null || typeof newest.row.body !== 'string' ? null : newest.row.body,
+    subject: newest === null || typeof newest.row.mailSubject !== 'string' ? null : newest.row.mailSubject,
+    channel: newest === null ? null : (newest.row.channel ?? null),
+  };
+}
 
 /** Sort orders from the approved prototype ("04 Clienti"). */
 export const CUSTOMER_SORTS = Object.freeze([
@@ -442,6 +493,8 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     // «Da leggere»: only rows with unread inbound messages. A null
     // unreadCount (no member, no watermark table) never matches.
     if (viewExtra.daLeggere === true && !((row?.unreadCount ?? 0) > 0)) return false;
+    // «Da rispondere»: only rows with a conversation waiting for the team.
+    if (viewExtra.daRispondere === true && !((row?.awaitingReplyCount ?? 0) > 0)) return false;
     return true;
   });
   return Object.freeze(filtered);
@@ -468,6 +521,10 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     const time = Date.parse(String(row?.lastUnreadAt ?? ''));
     return Number.isFinite(time) ? time : -1;
   };
+  const lastAwaitingMs = (row) => {
+    const time = Date.parse(String(row?.lastAwaitingAt ?? ''));
+    return Number.isFinite(time) ? time : -1;
+  };
   const sorted = [...filtered];
   if (query.sort === 'name') sorted.sort(byName);
   else if (query.sort === 'value') sorted.sort((a, b) => (Number(b?.offerValueCents ?? 0) - Number(a?.offerValueCents ?? 0)) || byName(a, b));
@@ -480,6 +537,9 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     // contact: a customer whose latest event is an outbound reply still sorts
     // by the inbound message nobody read. Nulls (no unread) sort last.
     sorted.sort((a, b) => (lastUnreadMs(b) - lastUnreadMs(a)) || byName(a, b));
+  } else if (query.view?.id === 'da-rispondere') {
+    // «Da rispondere» recency is the newest message still waiting.
+    sorted.sort((a, b) => (lastAwaitingMs(b) - lastAwaitingMs(a)) || byName(a, b));
   } else {
     sorted.sort((a, b) => (lastContactMs(b) - lastContactMs(a)) || byName(a, b));
   }
@@ -573,6 +633,9 @@ export function shapeCustomerRow(subject, reads = {}) {
   // with the core's one unread rule. Nulls when the caller passed no read
   // state (no member, no watermark table) — never an invented zero.
   const unread = reads.unreadBySubject?.get(key) ?? null;
+  // «Da rispondere» (backlog:c2bf6b206d96): conversations waiting for the
+  // team; null when the messages were not read here, never an invented zero.
+  const awaiting = reads.awaitingBySubject?.get(key) ?? null;
   const task = reads.taskBySubject?.get(key) ?? null;
   const budget = reads.budgetBySubject?.get(key)
     ?? { available: false, value: null, source: null, reason: 'nessun budget estratto dall\u2019AI per questo cliente' };
@@ -598,6 +661,10 @@ export function shapeCustomerRow(subject, reads = {}) {
     lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
+    awaitingReplyCount: awaiting === null ? null : awaiting.count,
+    lastAwaitingAt: awaiting === null ? null : awaiting.lastAt,
+    awaitingChannel: awaiting === null ? null : awaiting.channel,
+    awaitingText: awaiting === null ? null : previewLastContactText(awaiting.text, awaiting.subject),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,
