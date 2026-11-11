@@ -208,7 +208,11 @@ export function createAppointmentsPackage(options = {}) {
     // propose/confirmBooking and the phrase-to-draft parse, attached
     // generically as `app.readAppointmentTeamWeek` and siblings. Additive:
     // capabilities, records and the booking contract are untouched.
-    version: 2,
+    // 3 (backlog:3d0fbe7dc8d1): reschedule-appointment moves one booking to
+    // a new slot through `app.rescheduleAppointmentBooking` (409 on overlap,
+    // terminal states and stranded reminders). Additive: reads, capabilities
+    // and the booking contract are untouched.
+    version: 3,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
