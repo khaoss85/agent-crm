@@ -1524,70 +1524,56 @@ export function createCalendarioView(deps) {
 
   /** Catalog product names for the block titles; fail-soft to the readable key. */
   async function loadServices() {
+    // Review #805 giro 2: the list belongs to the space it was asked in; a
+    // space switch while it loads reads its own (render resets the cache).
+    const askedSpace = readSpace();
     /** @type {Map<string, string>} */
     const names = new Map();
     /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
     let bookable = [];
-    /** @type {any} */
-    let catalog;
-    try {
-      const answer = await client.request('/api/catalog/products?limit=200');
-      catalog = answer;
-      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
-        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
-        const name = typeof product?.name === 'string' ? product.name.trim() : '';
-        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
-      }
-    } catch (error) {
-      if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
-        console.warn(
-          'bo-calendario catalog unreadable:',
-          error instanceof Error ? error.name : (error?.code ?? 'unknown'),
-          `spaceId=${readSpace()}`,
-        );
-      }
-    }
     // P1 11/11: the menu is the server's own bookable list when it serves
-    // one (the pilot), so a Conferma never sends a key the worker refuses;
-    // its keys name the booked rows too (`personal-training` reads «PT
-    // singola», not the raw key).
-    // Review #805: a served list is the whole truth. Its names alone map a
-    // typed service and title the week (a catalog SKU entry could map a
-    // typed «Personal Training» to the refused «pt»); a served list that
-    // failed, or that is empty, blocks the service field instead of
-    // reopening free text.
+    // one (the pilot), so a Conferma never sends a key the worker refuses.
+    // Review #805: a served list is the whole truth — its names alone map a
+    // typed service and title the week, and a served list that failed (or
+    // is empty) blocks the service field instead of reopening free text.
+    // The catalog is read only when no list is served (review #805 P3).
     /** @type {'served' | 'failed' | 'fallback'} */
     let mode = 'fallback';
     try {
-      const read = await readBookingServicesDetailed(client, catalog === undefined ? {} : { catalog });
+      const read = await readBookingServicesDetailed(client);
       bookable = [...read.services];
       if (read.served) {
         mode = read.failed ? 'failed' : 'served';
-        names.clear();
-        for (const entry of bookable) names.set(entry.key, entry.name);
         if (read.failed) {
           console.warn(
             'bo-calendario services unreadable:',
             read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
             `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
-            `spaceId=${readSpace()}`,
+            `spaceId=${askedSpace}`,
           );
         }
       } else {
-        for (const entry of bookable) names.set(entry.key, entry.name);
+        // The framework on its own: catalog product names title the week.
+        for (const product of Array.isArray(read.catalog?.products) ? read.catalog.products : []) {
+          const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+          const name = typeof product?.name === 'string' ? product.name.trim() : '';
+          if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+        }
       }
+      for (const entry of bookable) names.set(entry.key, entry.name);
     } catch (error) {
       bookable = [];
-      // No bookable list and no catalog here: the menu stays empty and the
-      // readable key stays. Anything else is logged without the message.
+      // No served list and no catalog in this project (or a stale bundle):
+      // the readable key stays. Anything else is logged without the message.
       if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
         console.warn(
-          'bo-calendario services unreadable:',
+          'bo-calendario catalog unreadable:',
           error instanceof Error ? error.name : (error?.code ?? 'unknown'),
-          `spaceId=${readSpace()}`,
+          `spaceId=${askedSpace}`,
         );
       }
     }
+    if (readSpace() !== askedSpace) return;
     state.services = names;
     state.catalogServices = bookable;
     state.servicesMode = mode;
@@ -1595,6 +1581,7 @@ export function createCalendarioView(deps) {
     // the calendar is still mounted (same guard as the roster read).
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
+
 
   /**
    * The organization team behind the Team card (specs/calendario.md C10):
@@ -4493,6 +4480,12 @@ export function createCalendarioView(deps) {
       state.customerError = null;
       state.customerPartial = false;
       state.customerPick = null;
+      // Review #805 giro 2: space B has its own bookable list — never
+      // book or block with space A's.
+      state.services = undefined;
+      state.catalogServices = undefined;
+      state.servicesMode = null;
+      servicesRead = null;
     }
     state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
@@ -4589,10 +4582,10 @@ export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
  * them lists them. The pilot answers `GET /api/appointments/services` with
  * the very list its worker resolves a Conferma against (the menu used to
  * key services by product SKU, and every key was refused). Only when the
- * server serves no such list — a 404 or 405, the framework on its own —
- * (or no HTTP answer at all) the menu falls back to the catalog singles
- * rule. A served list that fails is thrown: guessing a list the server
- * would refuse is the bug this ends.
+ * server answers that it serves no such list — a 404 or 405, the
+ * framework on its own — the menu falls back to the catalog singles rule.
+ * Any other failure is thrown: guessing a list the server would refuse is
+ * the bug this ends.
  * @param {{request: (path: string, options?: any) => Promise<any>}} client
  * @param {{catalog?: any}} [options] a catalog answer already read, for the fallback
  * @returns {Promise<ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>>}
@@ -4610,23 +4603,25 @@ export async function readBookingServices(client, { catalog = undefined } = {}) 
  * caller blocks the booking then, never falls back to catalog keys.
  * @param {{request: (path: string, options?: any) => Promise<any>}} client
  * @param {{catalog?: any}} [options]
- * @returns {Promise<{served: boolean, failed: boolean, error: any, services: ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>}>}
+ * @returns {Promise<{served: boolean, failed: boolean, error: any, catalog: any, services: ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>}>}
  */
 export async function readBookingServicesDetailed(client, { catalog = undefined } = {}) {
   let answer;
   try {
     answer = await client.request('/api/appointments/services');
   } catch (error) {
-    // Fallback only where no list is served: 404/405, the framework's
-    // not-composed answer, or no HTTP answer at all. A server that answers
-    // the list with an error (5xx, 403) stays an error.
+    // Review #805 giro 2: fallback only where the server answers that it
+    // serves no list — 404/405 or the framework's not-composed answer. Any
+    // other failure, a missing HTTP answer included (a timeout, a dropped
+    // connection), blocks like a 5xx: guessing catalog keys is the bug.
     const status = typeof error?.status === 'number' ? error.status : null;
-    if (status !== null && status !== 404 && status !== 405 && !isNotComposedFailure(error)) {
-      return { served: true, failed: true, error, services: Object.freeze([]) };
+    const notServed = status === 404 || status === 405 || (status !== null && isNotComposedFailure(error));
+    if (!notServed) {
+      return { served: true, failed: true, error, services: Object.freeze([]), catalog: undefined };
     }
     // The caller's own catalog read when it has one: never read it twice.
-    const services = catalogBookingServices(catalog !== undefined ? catalog : await client.request('/api/catalog/products?limit=200'));
-    return { served: false, failed: false, error: null, services };
+    const read = catalog !== undefined ? catalog : await client.request('/api/catalog/products?limit=200');
+    return { served: false, failed: false, error: null, services: catalogBookingServices(read), catalog: read };
   }
   const out = [];
   const seen = new Set();
@@ -4638,5 +4633,5 @@ export async function readBookingServicesDetailed(client, { catalog = undefined 
     seen.add(key);
     out.push(Object.freeze({ key, name, priceCents: entry.priceCents, currency: 'EUR' }));
   }
-  return { served: true, failed: false, error: null, services: Object.freeze(out) };
+  return { served: true, failed: false, error: null, services: Object.freeze(out), catalog: undefined };
 }

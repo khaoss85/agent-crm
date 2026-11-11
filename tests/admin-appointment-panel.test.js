@@ -58,6 +58,8 @@ function fakeClient({ catalog = CATALOG, members = MEMBERS, slots = SLOTS, confi
     async request(path, options = {}) {
       const method = String(options.method ?? 'GET').toUpperCase();
       calls.push({ path, method, body: options.body ? JSON.parse(options.body) : null, key: options.idempotencyKey ?? null });
+      // The framework on its own serves no bookable services list (review #805 giro 2).
+      if (path === '/api/appointments/services') throw Object.assign(new Error('Not Found'), { status: 404 });
       if (path === '/api/catalog/products?limit=200') {
         if (catalog instanceof Error) throw catalog;
         return catalog;

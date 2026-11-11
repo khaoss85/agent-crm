@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {
   catalogBookingServices,
   readBookingServices,
+  readBookingServicesDetailed,
   channelOf,
   createCalendarioView,
   calendarRefusalText,
@@ -120,6 +121,9 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (failWith) throw failWith;
+      // The framework on its own serves no bookable services list: 404,
+      // and the menu reads the catalog (review #805 giro 2).
+      if (path === '/api/appointments/services') throw notFound();
       if (path.startsWith('/api/customer-data/profile/')) {
         if (profiles && Object.hasOwn(profiles, path)) return profiles[path];
         throw notFound();
@@ -1744,6 +1748,7 @@ test('an unexpected profile failure is logged with the space, never the message'
       enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/catalog/products')) throw Object.assign(new Error('no catalog'), { code: 'NOT_FOUND', status: 404 });
+      if (path === '/api/appointments/services') throw Object.assign(new Error('no list'), { code: 'NOT_FOUND', status: 404 });
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
         // No roster on this double: the spine is uncomposed here, an
@@ -1802,6 +1807,7 @@ test('a missing profile stays silent while the card falls back', async () => {
       enforceAdminWriteGate(path, options);
       if (path.startsWith('/api/customer-data/profile/')) throw failure;
       if (path.startsWith('/api/catalog/products')) throw Object.assign(new Error('no catalog'), { code: 'NOT_FOUND', status: 404 });
+      if (path === '/api/appointments/services') throw Object.assign(new Error('no list'), { code: 'NOT_FOUND', status: 404 });
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       if (path === '/api/spine/memberships') {
         // No roster on this double: the spine is uncomposed here, an
@@ -4080,6 +4086,60 @@ test('review #805: with a served list the week titles and the typed-name mapping
     'Personal Training', 'a catalog product name maps to no served key (the presend check stops it)');
   assert.equal(serviceKeyFor('PT singola', new Map(PILOT_SERVICES.services.map((entry) => [entry.serviceKey, entry.name]))),
     'personal-training', 'the served name maps to the served key');
+});
+
+// Review Muse giro 2 su #805.
+test('review #805 giro 2: a served list that gets no HTTP answer blocks like a 5xx, never SKU keys', async () => {
+  const { mount, client } = await servedCalendar(new TypeError('Failed to fetch'));
+  assert.equal(mount.querySelector('select[name="serviceKey"]').getAttribute('disabled'), 'disabled');
+  assert.ok(mount.textContent.includes('I servizi prenotabili non si sono potuti leggere'));
+  assert.ok(!client.calls.some((call) => call.path.startsWith('/api/catalog/products')), 'no catalog guess');
+  assert.deepEqual(await tryPropose(mount, client), [], 'nothing is sent');
+  const read = await readBookingServicesDetailed({ request: async () => { throw new TypeError('Failed to fetch'); } });
+  assert.equal(read.failed, true, 'no HTTP answer is a failure, not «no list here»');
+});
+
+test('review #805 giro 2: a space switch reads the new space list and books its keys', async () => {
+  const box = { space: 'space-a' };
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? box.space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  const lists = {
+    'space-a': { services: [{ serviceKey: 'personal-training', name: 'PT singola', priceCents: 4000, currency: 'EUR' }] },
+    'space-b': { services: [{ serviceKey: 'taglio', name: 'Taglio', priceCents: 2500, currency: 'EUR' }] },
+  };
+  const base = stubClient({
+    memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }],
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/services') {
+        base.calls.push({ path, method: 'GET', space: box.space });
+        return lists[box.space];
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const keysOf = () => mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.getAttribute('value')).filter(Boolean);
+  assert.deepEqual(keysOf(), ['personal-training']);
+  box.space = 'space-b';
+  await view.render();
+  await flushMany(9);
+  assert.deepEqual(keysOf(), ['taglio'], 'space B lists its own services');
+  assert.ok(client.calls.some((call) => call.path === '/api/appointments/services' && call.space === 'space-b'), 'read again for B');
+  const sent = await tryPropose(mount, client);
+  assert.equal(sent.length, 1, 'a booking in B is not blocked by A\'s list');
+  assert.equal(payload(sent[0]).serviceKey, 'taglio');
 });
 
 // backlog:810ed0bf review (P1 currency): the claim only speaks EUR, so a
