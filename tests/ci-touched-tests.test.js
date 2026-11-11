@@ -1882,13 +1882,26 @@ test('a timeout over core plus bonus drains the core and warns on the bonus rema
   // The queue the cure builds for an oversized selection: the core first,
   // the dropped remainder behind it. The bound hits mid-bonus with the core
   // finished and green: warn, naming the bonus files that remained.
-  const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
+  // No wall clock decides who is late (backlog:3d560518f3e2): under load a
+  // one-line core file once missed a 3 s bound. The bonus never ends (it
+  // waits on a promise nothing resolves, an interval keeps it alive) and the
+  // injected bound fires the moment the core file has finished — so the
+  // core is done and the bonus remains, whatever the machine's load.
+  const blocked = "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n";
   const dir = scratchTests({
     'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
-    'bonus.test.js': sleeper,
+    'bonus.test.js': blocked,
   });
   try {
-    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    /** @type {() => void} */
+    let fireBound = () => {};
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
+      parts: 2,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fireBound = fire; return () => {}; },
+      onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+    });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['bonus.test.js']);
     assert.deepEqual(result.failedFiles, []);

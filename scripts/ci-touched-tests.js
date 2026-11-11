@@ -1073,7 +1073,7 @@ export function testJobs(
  */
 export function runTestShards(
   /** @type {string[]} */ tests,
-  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string }} */ options,
+  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string, startTimer?: (fire: () => void, ms: number) => () => void, onJobDone?: (files: string[], status: number) => void }} */ options,
 ) {
   const jobs = testJobs(tests, options.parts);
   const parts = Math.min(Math.max(1, Math.floor(options.parts)), Math.max(1, jobs.length));
@@ -1102,10 +1102,17 @@ export function runTestShards(
     ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cancelTimer();
       resolve(result);
     };
-    const timer = setTimeout(() => {
+    // The bound's clock is injectable (backlog:3d560518f3e2): a test decides
+    // when the bound fires — e.g. once a given file has finished — instead
+    // of racing a wall-clock second against the machine's load.
+    const startTimer = options.startTimer ?? ((fire, ms) => {
+      const handle = setTimeout(fire, ms);
+      return () => clearTimeout(handle);
+    });
+    const cancelTimer = startTimer(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
@@ -1189,6 +1196,7 @@ export function runTestShards(
         if (status !== 0) failedFiles.push(...files);
         const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
         process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
+        options.onJobDone?.(files, status);
         startNext(part);
       });
     };
