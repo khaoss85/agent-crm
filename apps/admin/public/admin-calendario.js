@@ -284,10 +284,10 @@ export function teamRows(named, hidden) {
  * display name alone never merges — two email-less homonyms are two humans,
  * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
  * «Rossi (2)» in member-creation order, never a technical id). A group
- * with no roster name and no mailbox paints the
- * operator's own typed words, unless they look like a technical subject
- * (a pipe id never paints anywhere); such a row falls back to the generic
- * «Membro del team». No role line: the E2E takes the «Proprietario» chip out
+ * with no roster name and no mailbox paints the teamPeople label (plain
+ * words for a stored id, the operator's own typed words, a pipe id never
+ * paints anywhere); such a row falls back to the generic «Membro del
+ * team». No role line: the E2E takes the «Proprietario» chip out
  * of the card — the Team card filters the week, roles live on in Spazi e
  * accessi. Tint stays hashed on the stable primary subject and initials
  * follow the painted name, so a block and its toggle always match.
@@ -304,7 +304,8 @@ export function personRows(named, hidden, members) {
   // name; a mailbox alone or a name alone never merges (backlog:f4a1f25048c8,
   // the Spazi e accessi rule of agent-crm#644/#742).
   const groups = teamPeople(roster).map((person, index) => ({
-    subjects: [...person.subjects], displayName: person.name, email: person.email, born: person.born, bornIndex: index,
+    subjects: [...person.subjects], displayName: person.name, email: person.email, label: person.label,
+    born: person.born, bornIndex: index,
   }));
   const bySubject = new Map();
   for (const group of groups) for (const subject of group.subjects) bySubject.set(subject, group);
@@ -313,7 +314,10 @@ export function personRows(named, hidden, members) {
   // group, an unknown one stands alone with no roster name.
   for (const id of names) {
     if (!groupFor(id)) {
-      const group = { subjects: [id], displayName: null, email: null };
+      const group = {
+        subjects: [id], displayName: null, email: null, label: subjectText(id) ?? 'Membro del team',
+        born: null, bornIndex: groups.length,
+      };
       groups.push(group);
       bySubject.set(id, group);
     }
@@ -332,9 +336,10 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    // An id with no person behind it reads as a name («marco» → «Marco»,
-    // subjectText), never as the raw id (design check #750).
-    const base = name ?? (listed ? subjectText(primary) : null) ?? 'Membro del team';
+    // backlog:e52c5e0dd49f (review Muse #750 giro 2): a row without a name
+    // paints the teamPeople label (name, mailbox, plain words, else the
+    // generic fallback) — never the raw stored id, so no slug leaks.
+    const base = name ?? group.label;
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -395,10 +400,9 @@ export function resolveMemberName(subject, named, members) {
   // show, so every line names the same human.
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
-  // a technical subject and never paints — the caller omits it instead.
-  const words = subjectText(subject);
-  if (words !== null) return words;
-  return null;
+  // a technical subject and never paints — the caller omits it instead. A
+  // stored slug reads as words, never the raw id (backlog:e52c5e0dd49f).
+  return subjectText(subject);
 }
 
 /**

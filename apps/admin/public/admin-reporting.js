@@ -247,11 +247,15 @@ export function withPersonNames(model, roster) {
   const names = new Map(owners.map((owner) => [owner, ownerName(owner, people)]));
   // One pass over the sentence (review Muse #750): every owner is matched in
   // the original text only, longest first, so a name just written in is
-  // never rewritten by another owner.
+  // never rewritten by another owner. Owners match as whole words only
+  // (backlog:e52c5e0dd49f): a short owner never rewrites inside a longer
+  // word («Sara» leaves «Saranno» alone), and never inside a longer
+  // hyphenated id or mailbox («guido» leaves «coach-guido» and
+  // «guido.rossi@esempio.it» alone).
   const ordered = [...owners].sort((a, b) => b.length - a.length);
   const pattern = ordered.length === 0
     ? null
-    : new RegExp(ordered.map((owner) => owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g');
+    : new RegExp(`(?<![\\p{L}\\p{N}_@.\\-])(?:${ordered.map((owner) => owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\p{L}\\p{N}_@\\-]|\\.(?=[\\p{L}\\p{N}]))`, 'gu');
   const say = (text) => (typeof text === 'string' && pattern !== null
     ? text.replace(pattern, (owner) => names.get(owner) ?? owner)
     : text);

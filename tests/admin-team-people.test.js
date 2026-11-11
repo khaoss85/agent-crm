@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
-import { memberLabelFor, personRows } from '../apps/admin/public/admin-calendario.js';
+import { auditActorLabel, memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
+import { memberLabelFor, personRows, resolveMemberName } from '../apps/admin/public/admin-calendario.js';
 import { buildTeamRows } from '../apps/admin/public/admin-spazi-accessi.js';
 import { createReportingView, withPersonNames } from '../apps/admin/public/admin-reporting.js';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
@@ -133,6 +133,78 @@ test('review Muse #750 P2: «Cosa noto» swaps every owner once, never a name ju
     insights: [{ text: 'coach-guido tiene i lead: spostarli a Bianchi.' }],
   };
   assert.equal(withPersonNames(model, roster).insights[0].text, 'Guido Bianchi tiene i lead: spostarli a Luca Neri.');
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): «Cosa noto» swaps owners as whole words only', () => {
+  const roster = [
+    { subject: 'Sara', displayName: 'Sara Neri' },
+    { subject: 'Bianchi', displayName: 'Luca Neri' },
+  ];
+  const model = {
+    owners: ['Sara', 'Bianchi'], team: [],
+    insights: [{ text: 'Saranno spostati i lead Bianchini: parlarne con Sara e Bianchi.' }],
+  };
+  assert.equal(
+    withPersonNames(model, roster).insights[0].text,
+    'Saranno spostati i lead Bianchini: parlarne con Sara Neri e Luca Neri.',
+    'a short owner never rewrites inside a longer word',
+  );
+});
+
+test('review Muse #767 su #750 giro 2 (backlog:e52c5e0dd49f): «Cosa noto» never rewrites inside hyphenated ids or mailboxes', () => {
+  const roster = [{ subject: 'guido', displayName: 'Guido Bianchi' }];
+  const model = {
+    owners: ['guido'], team: [],
+    insights: [{ text: 'aspetta coach-guido-2 domani, scrivi a guido.rossi@example.com; parla con guido.' }],
+  };
+  assert.equal(
+    withPersonNames(model, roster).insights[0].text,
+    'aspetta coach-guido-2 domani, scrivi a guido.rossi@example.com; parla con Guido Bianchi.',
+    'a short owner leaves longer hyphenated ids and mailboxes alone',
+  );
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): a slug-shaped displayName echo never becomes the label', () => {
+  assert.equal(
+    teamPeople([{ subject: 'coach-guido', displayName: 'coach-guido' }])[0].label,
+    'Coach Guido',
+    'an id echoed as displayName reads as words',
+  );
+  assert.equal(
+    teamPeople([{ subject: 'x', displayName: 'coach-guido' }])[0].label,
+    'Coach Guido',
+    'a slug displayName on another subject reads as words too',
+  );
+  assert.equal(
+    teamPeople([{ subject: 'google|77', displayName: 'anna-maria', email: 'am@example.com' }])[0].label,
+    'anna-maria',
+    'a genuine name on a technical subject still reads verbatim',
+  );
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Calendario personRows never paints the raw stored id', () => {
+  const roster = [{ subject: 'coach-guido' }];
+  const listed = personRows(['coach-guido'], [], roster);
+  assert.equal(listed[0].label, 'Coach Guido');
+  const unlisted = personRows([], [], roster);
+  assert.equal(unlisted[0].label, 'Coach Guido', 'like Spazi, not «Membro del team»');
+  for (const row of [...listed, ...unlisted]) assert.doesNotMatch(`${row.label} ${row.name ?? ''}`, TECHNICAL);
+  assert.equal(
+    resolveMemberName('coach-guido', ['coach-guido'], roster),
+    'Coach Guido',
+    'a booking line reads words, never the slug',
+  );
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): memberLabel keeps a real mailbox like personLabel', () => {
+  assert.equal(memberLabel('mario.rossi@esempio.it', []), 'mario.rossi@esempio.it', 'an unknown mailbox reads as itself');
+  assert.equal(
+    memberLabel('m1', [{ subject: 'm1', email: 'mario.rossi@esempio.it' }]),
+    'mario.rossi@esempio.it',
+    'a person known only by mailbox keeps it, never the notes snippet',
+  );
+  assert.equal(memberLabel('broker+x@accordo.invalid', []), null, 'a technical mailbox still hides');
+  assert.equal(memberLabel('google|1049', []), null, 'a provider id still hides');
 });
 
 test('review Muse #750 P2: Pipeline and Offerta show a mailbox referente as written', async () => {
@@ -276,7 +348,6 @@ test('Pipeline: the referente filter, the card badge and the list name the perso
   assert.match(text, /Guido Bianchi/);
   assert.doesNotMatch(text, TECHNICAL);
 });
-
 test('design check #750: an id with no person behind it reads as a name, never raw', async () => {
   // Calendario: the week names «marco» and «sara», the roster knows neither.
   assert.deepEqual(personRows(['marco', 'sara'], [], null).map((row) => row.label), ['Marco', 'Sara']);
@@ -307,4 +378,27 @@ test('design check #750: an id with no person behind it reads as a name, never r
   const text = textOf(mount);
   assert.match(text, /Alice tiene molto aperto: propone di spostare i lead a Bob\./);
   assert.doesNotMatch(text, /\balice\b|\bbob\b/);
+});
+
+test('review follow-up (backlog:e52c5e0dd49f): «Cosa noto» never rewrites inside hyphenated ids or mailboxes', () => {
+  const roster = [{ subject: 'guido', displayName: 'Guido Bianchi' }];
+  const model = {
+    owners: ['guido'], team: [],
+    insights: [{ text: 'coach-guido scrive a guido.rossi@esempio.it: senti guido.' }],
+  };
+  assert.equal(
+    withPersonNames(model, roster).insights[0].text,
+    'coach-guido scrive a guido.rossi@esempio.it: senti Guido Bianchi.',
+    'a short owner stays out of longer hyphenated ids and mailboxes',
+  );
+});
+
+test('review follow-up (backlog:e52c5e0dd49f): auditActorLabel corroboration paints words, never the raw id', () => {
+  assert.equal(auditActorLabel({ actorId: 'coach-guido' }, ['coach-guido'], []), 'Coach Guido');
+  assert.equal(auditActorLabel({ actorId: 'Guido Bianchi' }, ['Guido Bianchi'], []), 'Guido Bianchi');
+  assert.equal(
+    auditActorLabel({ actorId: 'mario.rossi@esempio.it' }, ['mario.rossi@esempio.it'], []),
+    'mario.rossi@esempio.it',
+  );
+  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), 'utente');
 });
