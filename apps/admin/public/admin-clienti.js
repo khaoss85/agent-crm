@@ -258,6 +258,8 @@ export function createCustomerListView(deps) {
 
   /** Route entry: a fresh frame, then the read. */
   function render() {
+    // A keystroke read left pending by the previous frame dies here.
+    searchSeq += 1;
     drawShell();
     return load();
   }
@@ -527,10 +529,12 @@ export function createCustomerListView(deps) {
     // read after SEARCH_DEBOUNCE_MS of quiet, never one per keystroke. The
     // field itself is never rebuilt, so focus and caret stay where they are.
     // Enter still searches at once.
-    const searchNow = () => {
+    // The quiet-time read skips a query already on screen; an explicit
+    // Cerca/Invio or Azzera always reads, so it also retries a failed read.
+    const searchNow = ({ explicit = false } = {}) => {
       searchSeq += 1;
       const next = String(input.value ?? '').trim().replace(/\s+/g, ' ');
-      if (next === state.q) return;
+      if (!explicit && next === state.q && !data?.error) return;
       state.q = next;
       reload();
     };
@@ -545,7 +549,7 @@ export function createCustomerListView(deps) {
     clearSearch.addEventListener('click', () => {
       input.value = '';
       syncClearSearch();
-      searchNow();
+      searchNow({ explicit: true });
     });
     const go = el('button', undefined, 'Cerca');
     go.setAttribute('type', 'submit');
@@ -554,7 +558,7 @@ export function createCustomerListView(deps) {
     form.appendChild(go);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      searchNow();
+      searchNow({ explicit: true });
     });
     panel.appendChild(form);
 
@@ -1069,6 +1073,8 @@ export function createCustomerListView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    // A pending keystroke read never fires on a screen the operator left.
+    searchSeq += 1;
   }
 
   return { render, reload, invalidate, getState: () => ({ ...state }) };

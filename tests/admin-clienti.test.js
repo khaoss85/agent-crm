@@ -1051,3 +1051,57 @@ test('754918ad8da7: the status line sits under the bar, so an empty page never p
   assert.ok(at('bo-clienti-status') > at('bo-clienti-chips'), `status after the chips: ${kids}`);
   assert.ok(mount.textContent.includes('Nessun cliente corrisponde'));
 });
+
+test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
+  const client = stubClient();
+  const clock = timers();
+  const { mount, view } = await render(client, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  const input = mount.findAll('input')[0];
+  input.value = 'mil';
+  input.dispatch('input');
+  view.invalidate();
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, 1, 'no read for a screen the operator left');
+  assert.equal(view.getState().q, '', 'the left screen keeps its query');
+  // Route re-entry before the timer fires: the old keystroke dies too.
+  input.value = 'mil';
+  input.dispatch('input');
+  await view.render();
+  const reads = client.calls.length;
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, reads, 'the previous frame’s keystroke never reads');
+});
+
+test('754918ad8da7 review giro 1: Cerca/Invio retries a failed read with the same query', async () => {
+  let fail = false;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options) => {
+    if (fail) {
+      client.calls.push(path);
+      throw Object.assign(new Error('boom'), { status: 500 });
+    }
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  const form = mount.findAll('form')[0];
+  input.value = 'milano';
+  fail = true;
+  form.dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 2);
+  assert.match(mount.textContent, /Riprova/, 'the failure reads as an Italian retry');
+  fail = false;
+  form.dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 3, 'the same query reads again on Invio');
+  assert.ok(client.calls[2].includes('q=milano'));
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the retry paints the list');
+  // Invio on the query already on screen reads again too (explicit).
+  form.dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 4);
+});
