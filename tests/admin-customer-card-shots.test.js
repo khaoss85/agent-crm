@@ -37,7 +37,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 for (let i = 0; i < 200 && document.title !== 'cliente-ready'; i += 1) await wait(20);
 const grid = document.querySelector('.bo-scheda-grid');
 const cols = grid ? Array.from(grid.children).map((col) => Math.round(col.getBoundingClientRect().width)) : [];
-const note = document.querySelector('input[name="noteBody"]');
+const note = document.querySelector('[name="noteBody"]');
 let placeholder = null;
 if (note) {
   const style = getComputedStyle(note);
