@@ -931,7 +931,6 @@ export function createCustomerCardView(deps) {
     };
   }
 
-  /** First Unicode letter of a word, or '?' when the word holds none. */
   function header(panel, card, resource, id) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is

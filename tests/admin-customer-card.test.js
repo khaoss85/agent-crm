@@ -5044,3 +5044,12 @@ test('review giro 1: moves without pipelines read generic lines, never a false e
   assert.ok(text.includes('Cambio di stato · da elena'),
     'the move reads the generic Italian line, like the detail');
 });
+
+test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda avatar, never «S?»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client: stubClient({ card: { ...CARD, name: 'Solo SpazioB 0711' } }) }).renderCard('contact', 'c1');
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.equal(avatar.textContent, 'SS');
+  assert.ok(!avatar.textContent.includes('?'));
+});
