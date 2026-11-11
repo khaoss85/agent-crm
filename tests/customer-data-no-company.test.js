@@ -70,7 +70,7 @@ test('the placeholder lists no customer row of its own and is never a duplicate 
   await applyOne(app, { firstName: 'Anna', email: 'anna@uno.invalid' });
   await applyOne(app, { firstName: 'Bruno', email: 'bruno@due.invalid' });
   // A placeholder left without its contact still never reads as a customer.
-  const orphan = await app.services.companies.create({ name: NO_COMPANY_NAME, domain: null, placeholder: true }, { actor: OPERATOR });
+  const orphan = await app.services.companies.create({ name: NO_COMPANY_NAME, domain: null, placeholder: true }, { actor: OPERATOR, allowPlaceholder: true });
   const list = await app.listCustomers({});
   assert.ok(!list.items.some((item) => item.resource === 'company' && item.id === orphan.id), 'no standalone placeholder row');
   assert.ok(!list.items.some((item) => item.name === NO_COMPANY_NAME), 'no row named after the placeholder');
@@ -236,4 +236,74 @@ test('sender resolution never matches a placeholder company by name (backlog:ac6
   assert.equal(answer.rule, 'none', 'no company rule fires on a placeholder');
   assert.deepEqual(answer.candidates, [], 'the placeholder is never a resolution candidate');
   assert.equal(answer.contact, null, 'no contact is created from a placeholder match');
+});
+
+test('only the internal placeholder path may set the flag (backlog:ac65e448fcb4, review giro 2 P1)', async (t) => {
+  const { app } = scene(t);
+  // A public create sending the flag gets a real company: the flag stays down.
+  const sneaky = await app.services.companies.create(
+    { name: 'Acme', domain: null, placeholder: true }, { actor: OPERATOR },
+  );
+  assert.equal(sneaky.placeholder, false, 'no grant, no flag');
+  assert.equal(isNoCompany(await app.services.companies.get(sneaky.id)), false);
+  // The trusted internal path sets it, carrying its grant.
+  const inner = await app.services.companies.create(
+    { name: NO_COMPANY_NAME, domain: null, placeholder: true },
+    { actor: OPERATOR, allowPlaceholder: true },
+  );
+  assert.equal(isNoCompany(await app.services.companies.get(inner.id)), true);
+});
+
+test('POST /api/companies refuses the placeholder key with a 400 (backlog:ac65e448fcb4, review giro 2 P1)', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    app.close();
+  });
+
+  const refused = await fetch(`${baseUrl}/api/companies`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Intrusa', placeholder: true }),
+  });
+  assert.equal(refused.status, 400, 'the flag never enters over HTTP');
+  const accepted = await fetch(`${baseUrl}/api/companies`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Reale Srl', domain: 'reale.invalid' }),
+  });
+  assert.equal(accepted.status, 201);
+  const stored = await app.services.companies.get((await accepted.json()).id);
+  assert.equal(isNoCompany(stored), false, 'an HTTP-created company is real');
+});
+
+test('a V11-misflagged row is unflagged through company update, the one recovery path (backlog:ac65e448fcb4, review giro 2 P1)', async (t) => {
+  const { app } = scene(t);
+  const real = await app.services.companies.create({ name: 'Senza azienda', domain: null }, { actor: OPERATOR });
+  assert.equal(isNoCompany(real), false, 'created through the company path it is real');
+  // The one-time name repair flags by exact name, so a real same-named row
+  // is caught too — the privileged update clears it again.
+  const flagged = await app.services.companies.update(real.id, { placeholder: true }, { actor: OPERATOR });
+  assert.equal(isNoCompany(flagged), true);
+  const recovered = await app.services.companies.update(real.id, { placeholder: false }, { actor: OPERATOR });
+  assert.equal(isNoCompany(recovered), false, 'the misflagged row reads as a company again');
+  assert.equal(isNoCompany(await app.services.companies.get(real.id)), false);
+});
+
+test('a company-only import row naming «Senza azienda» takes its own placeholder (backlog:ac65e448fcb4, review giro 2 P2)', async (t) => {
+  const { app } = scene(t);
+  const result = await applyOne(app, { companyName: 'Senza azienda', externalId: 'X-1' }, 'crm-export');
+  const subject = result.receipts[0].subject;
+  assert.equal(subject.resource, 'company');
+  const company = await app.services.companies.get(subject.id);
+  assert.equal(isNoCompany(company), true, 'the reserved name never becomes a visible company');
+  const list = await app.listCustomers({});
+  assert.ok(!list.items.some((item) => item.id === company.id), 'no standalone row for the reserved name');
 });

@@ -1545,7 +1545,15 @@ export function buildRouter(app) {
   });
   router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.companies.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+    const input = recordInput(body);
+    // The «no company» flag (backlog:ac65e448fcb4, review giro 2 P1): only
+    // the trusted internal placeholder path may set it — a records.write
+    // caller sending it is refused, never silently stripped, so a hidden
+    // company can never be created over HTTP.
+    if (input.placeholder !== undefined) {
+      throw new ValidationError('placeholder is set only by the customer-data placeholder path', { field: 'placeholder' });
+    }
+    return respond(201, await app.services.companies.create(input, writeContext(app, { actor, identity, organizationId, headers })));
   });
 
   router.add('GET', '/api/contacts', async ({ query, identity, organizationId }) => {

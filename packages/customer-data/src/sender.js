@@ -306,7 +306,13 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
       // NO_COMPANY_NAME placeholder — never a name derived from the email,
       // never a row another customer or space shares. An explicit domain
       // column stays on it as evidence (review #654).
-      company = await core.createCompany({ name: NO_COMPANY_NAME, domain: row.domain ?? null, placeholder: true }, { actor });
+      // The internal placeholder path (backlog:ac65e448fcb4): the only
+      // caller allowed to set the core flag, via the context grant the
+      // public company-create path never carries.
+      company = await core.createCompany(
+        { name: NO_COMPANY_NAME, domain: row.domain ?? null, placeholder: true },
+        { actor, allowPlaceholder: true },
+      );
     } else {
       const companies = row.companyName
         ? (await core.findCompaniesByNormalizedName(row.companyName)).filter((found) => !isNoCompany(found))
@@ -323,7 +329,19 @@ export async function createSubjectForRow(core, row, actor, options = {}) {
     }, { actor });
     return { resource: 'contact', id: contact.id, owner: 'host', ownerPackage: null, label: contact.email ?? row.email };
   }
-  const company = await core.createCompany({ name: row.companyName, domain: row.domain ?? null }, { actor });
+  // The company-only branch honors the same write boundary as the contact
+  // branch (review giro 2 P2): a row literally naming «Senza azienda» takes
+  // its own placeholder instead of creating a real, visible company for
+  // the reserved name.
+  const companyOnlyReserved = namesNoCompany(row.companyName);
+  const company = await core.createCompany(
+    {
+      name: row.companyName,
+      domain: row.domain ?? null,
+      ...(companyOnlyReserved ? { placeholder: true } : {}),
+    },
+    companyOnlyReserved ? { actor, allowPlaceholder: true } : { actor },
+  );
   return { resource: 'company', id: company.id, owner: 'host', ownerPackage: null, label: company.name ?? row.companyName };
 }
 
