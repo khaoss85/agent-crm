@@ -61,6 +61,23 @@ class FakeNode {
     return child;
   }
 
+  // Real-DOM insertBefore: a null reference appends; a node already
+  // attached elsewhere moves (it leaves its old parent first).
+  insertBefore(child, reference) {
+    if (child.parentNode) child.parentNode.removeChild(child);
+    const at = reference ? this.childNodes.indexOf(reference) : -1;
+    if (at < 0) this.childNodes.push(child);
+    else this.childNodes.splice(at, 0, child);
+    child.parentNode = this;
+    return child;
+  }
+
+  get nextSibling() {
+    const siblings = this.parentNode?.childNodes ?? [];
+    const at = siblings.indexOf(this);
+    return at < 0 ? null : siblings[at + 1] ?? null;
+  }
+
   removeChild(child) {
     this.childNodes = this.childNodes.filter((node) => node !== child);
     // Like the real Node.removeChild: a removed node is detached.

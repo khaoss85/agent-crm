@@ -1,0 +1,432 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createPipelineBoard } from '../apps/admin/public/admin-pipeline.js';
+import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+
+/**
+ * Dan 11/11, Pipeline:
+ * 1. While a card is dragged, the column under the pointer shows a dashed
+ *    placeholder as tall as the card, where the card lands. Offers carry no
+ *    stored position (the list reads updated_at desc and a move bumps it),
+ *    so the card lands on top of the new column and stays there after a
+ *    reload: the placeholder sits there, and the source column offers none.
+ *    Esc or a release outside a column moves nothing; during the write the
+ *    card waits in its new place; a failure puts it back with the reason.
+ * 2. Apri opens a side panel over the board (the scheda composer window):
+ *    offer, customer, value, stage, Cambia fase, «Apri scheda cliente».
+ *    ×, Esc and a click outside close it without re-rendering the board.
+ */
+
+const PIPELINE = {
+  pipelineContract: 1,
+  name: 'b2b-sales',
+  label: 'B2B Sales',
+  module: 'opportunity',
+  defaultStage: 'discovery',
+  movePath: '/api/modules/opportunity/records/:id/actions/move-stage',
+  stages: [
+    { key: 'discovery', label: 'Scoperta', order: 10, type: 'open', probability: 10 },
+    { key: 'demo', label: 'Demo', order: 20, type: 'open', probability: 30 },
+    { key: 'won', label: 'Vinta', order: 50, type: 'won', probability: 100 },
+    { key: 'lost', label: 'Persa', order: 60, type: 'lost', probability: 0 },
+  ],
+};
+
+function record(id, stage, extra = {}) {
+  return {
+    id,
+    name: `Offerta ${id}`,
+    companyId: 'co1',
+    companyName: 'Palestra Esempio',
+    valueCents: 100_000,
+    currency: 'EUR',
+    pipelineKey: 'b2b-sales',
+    pipelineStage: stage,
+    ...extra,
+  };
+}
+
+/**
+ * A server double: GET answers the current records (updated_at desc, like
+ * OpportunityService.list), POST runs `onPost`. A successful move rewrites
+ * the record's stage and puts it first, as the real list would.
+ */
+function server(initial, { onPost } = {}) {
+  let records = initial.map((item) => ({ ...item }));
+  const calls = [];
+  return {
+    calls,
+    get records() { return records; },
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (options.method === 'POST') {
+        if (onPost) await onPost(path, options);
+        const id = decodeURIComponent(path.split('/records/')[1].split('/')[0]);
+        const { toStage } = JSON.parse(options.body);
+        const moved = records.find((item) => item.id === id);
+        records = [{ ...moved, pipelineStage: toStage }, ...records.filter((item) => item.id !== id)];
+        return { ok: true };
+      }
+      return { items: records };
+    },
+  };
+}
+
+/** A document that, like the real one, takes listeners (Esc, click outside). */
+function listeningDocument() {
+  const doc = createFakeDocument();
+  const listeners = Object.create(null);
+  doc.addEventListener = (type, handler) => { (listeners[type] ??= []).push(handler); };
+  doc.removeEventListener = (type, handler) => {
+    listeners[type] = (listeners[type] ?? []).filter((item) => item !== handler);
+  };
+  doc.dispatch = (type, event = {}) => { for (const handler of [...(listeners[type] ?? [])]) handler(event); };
+  doc.listenerCount = (type) => (listeners[type] ?? []).length;
+  return doc;
+}
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+const classes = (node) => String(node.getAttribute('class') ?? '').split(/\s+/);
+const columnOf = (mount, stage) => mount.findAll('div').find((n) => n.getAttribute('data-stage') === stage);
+const cardOf = (mount, id) => mount.findAll('div').find((n) => n.getAttribute('data-record') === id && classes(n).includes('pipeline-card'));
+const slotsIn = (node) => node.findAll('div').filter((n) => classes(n).includes('pipeline-drop-slot'));
+const cardIds = (column) => column.childNodes.filter((n) => classes(n).includes('pipeline-card')).map((n) => n.getAttribute('data-record'));
+const panelOf = (mount) => mount.findAll('div').find((n) => n.getAttribute('data-offer-drawer') !== null);
+const apriOf = (mount, id) => cardOf(mount, id).findAll('button').find((n) => n.getAttribute('data-action') === 'open-offer');
+const dataTransfer = () => {
+  const store = {};
+  return { effectAllowed: 'all', setData(type, value) { store[type] = value; }, getData(type) { return store[type] ?? ''; } };
+};
+
+/** Start a drag on card `id`, as tall as `height`. */
+function startDrag(mount, id, height = 92) {
+  const card = cardOf(mount, id);
+  card.getBoundingClientRect = () => ({ height, width: 240, top: 0, left: 0 });
+  const transfer = dataTransfer();
+  card.dispatch('dragstart', { dataTransfer: transfer });
+  return { card, transfer };
+}
+
+async function board(records, options = {}) {
+  const doc = options.doc ?? createFakeDocument();
+  const mount = createMount();
+  const client = server(records, options);
+  const toasts = [];
+  const hashes = [];
+  const view = createPipelineBoard({
+    doc, mount, client,
+    toast: (message, error) => toasts.push({ message: String(message), error: Boolean(error) }),
+    navigate: (hash) => hashes.push(hash),
+    wait: () => new Promise(() => {}),
+  });
+  await view.renderBoard('b2b-sales');
+  return { doc, mount, client, toasts, hashes, view };
+}
+
+// ---- 1. Drag placeholder -------------------------------------------------
+
+test('Dan 11/11: dragging over another column shows a dashed placeholder as tall as the card, on top', async () => {
+  const { mount } = await board([record('a', 'discovery'), record('b', 'demo'), record('c', 'demo')]);
+  startDrag(mount, 'a', 92);
+  const demo = columnOf(mount, 'demo');
+  let prevented = false;
+  demo.dispatch('dragover', { preventDefault() { prevented = true; } });
+  assert.ok(prevented, 'the column takes the drop');
+  const slots = slotsIn(demo);
+  assert.equal(slots.length, 1, 'one placeholder in the hovered column');
+  assert.equal(slots[0].getAttribute('style'), 'height: 92px', 'as tall as the dragged card');
+  assert.equal(slots[0].getAttribute('aria-hidden'), 'true', 'a visual cue only');
+  const firstCard = demo.childNodes.findIndex((n) => classes(n).includes('pipeline-card'));
+  assert.equal(demo.childNodes.indexOf(slots[0]), firstCard - 1, 'on top of the column, right before its first card');
+  // Hovering again never duplicates it.
+  demo.dispatch('dragover', { preventDefault() {} });
+  assert.equal(slotsIn(mount).length, 1, 'still a single placeholder on the board');
+  assert.deepEqual(cardIds(demo), ['b', 'c'], 'the placeholder is not a card: counts stay honest');
+});
+
+test('Dan 11/11: an empty column shows the placeholder too; it follows the pointer between columns', async () => {
+  const { mount } = await board([record('a', 'discovery')]);
+  startDrag(mount, 'a', 80);
+  const demo = columnOf(mount, 'demo');
+  const won = columnOf(mount, 'won');
+  demo.dispatch('dragover', { preventDefault() {} });
+  assert.equal(slotsIn(demo).length, 1, 'the empty column shows where the card lands');
+  const empty = demo.childNodes.find((n) => classes(n).includes('empty'));
+  assert.equal(demo.childNodes.indexOf(slotsIn(demo)[0]), demo.childNodes.indexOf(empty) - 1, 'above the «Trascina qui» line');
+  won.dispatch('dragover', { preventDefault() {} });
+  assert.equal(slotsIn(demo).length, 0, 'the old column lets it go');
+  assert.equal(slotsIn(won).length, 1, 'the new column shows it');
+  won.dispatch('dragleave', { relatedTarget: null });
+  assert.equal(slotsIn(mount).length, 0, 'leaving the column removes it');
+});
+
+test('Dan 11/11: the source column offers no placeholder and no drop (a reorder would not survive a reload)', async () => {
+  const { mount } = await board([record('a', 'discovery'), record('b', 'discovery')]);
+  startDrag(mount, 'a');
+  const discovery = columnOf(mount, 'discovery');
+  let prevented = false;
+  discovery.dispatch('dragover', { preventDefault() { prevented = true; } });
+  assert.equal(prevented, false, 'the browser shows «not allowed» over the source column');
+  assert.equal(slotsIn(mount).length, 0, 'no placeholder where nothing would be saved');
+  assert.ok(!classes(discovery).includes('drop-target'), 'the source column is not marked');
+});
+
+test('Dan 11/11: Esc or a release outside a column (dragend alone) moves nothing and clears the placeholder', async () => {
+  const { mount, client } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  const { card } = startDrag(mount, 'a');
+  const demo = columnOf(mount, 'demo');
+  demo.dispatch('dragover', { preventDefault() {} });
+  assert.equal(slotsIn(mount).length, 1);
+  card.dispatch('dragend', { dataTransfer: { dropEffect: 'none' } });
+  assert.equal(slotsIn(mount).length, 0, 'the placeholder is gone');
+  assert.ok(!classes(demo).includes('drop-target'), 'no column stays marked');
+  assert.ok(!classes(card).includes('dragging'), 'the card is no longer flying');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is written');
+  assert.deepEqual(cardIds(columnOf(mount, 'discovery')), ['a'], 'the card stays in its column');
+});
+
+test('Dan 11/11: on drop the card sits where the placeholder was, waits for the write, and stays there after the reload', async () => {
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { mount, client, toasts } = await board(
+    [record('a', 'discovery'), record('b', 'demo'), record('c', 'demo')],
+    { onPost: () => gate },
+  );
+  const { card, transfer } = startDrag(mount, 'a');
+  const demo = columnOf(mount, 'demo');
+  demo.dispatch('dragover', { preventDefault() {} });
+  demo.dispatch('drop', { preventDefault() {}, dataTransfer: transfer });
+  await tick();
+  assert.equal(slotsIn(mount).length, 0, 'the placeholder leaves on drop');
+  assert.deepEqual(cardIds(demo), ['a', 'b', 'c'], 'the card is where the placeholder was: on top of Demo');
+  assert.deepEqual(cardIds(columnOf(mount, 'discovery')), [], 'it left its old column');
+  assert.equal(card.getAttribute('aria-busy'), 'true', 'the card waits while the write runs');
+  assert.ok(card.textContent.includes('Spostamento in corso…'), 'and says so');
+  const status = card.childNodes.find((n) => n.getAttribute('role') === 'status');
+  assert.ok(status && !classes(status).includes('hidden'), 'the wait line sits on the card, outside the keyboard-only row');
+  const post = client.calls.find((call) => call.method === 'POST');
+  assert.ok(post.path.endsWith('/records/a/actions/move-stage'), 'the existing move-stage write');
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  release();
+  await tick();
+  await tick();
+  // The re-read is the reload: the server's order puts the moved card on top.
+  assert.deepEqual(cardIds(columnOf(mount, 'demo')), ['a', 'b', 'c'], 'after the reload the card is still where it was dropped');
+  assert.ok(toasts.some((item) => item.message === 'Spostata in Demo.' && !item.error));
+  // A fresh board from the same server, as after a page reload.
+  const again = await board(client.records);
+  assert.deepEqual(cardIds(columnOf(again.mount, 'demo')), ['a', 'b', 'c'], 'a page reload shows the same order');
+});
+
+test('Dan 11/11: a failed drop puts the card back in its place with a clear message', async () => {
+  const { mount, toasts } = await board(
+    [record('x', 'discovery'), record('a', 'discovery'), record('y', 'discovery'), record('b', 'demo')],
+    { onPost: () => { throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' }); } },
+  );
+  const { card, transfer } = startDrag(mount, 'a');
+  const demo = columnOf(mount, 'demo');
+  demo.dispatch('dragover', { preventDefault() {} });
+  demo.dispatch('drop', { preventDefault() {}, dataTransfer: transfer });
+  await tick();
+  await tick();
+  assert.deepEqual(cardIds(columnOf(mount, 'discovery')), ['x', 'a', 'y'], 'back in its old column, at its old place');
+  assert.deepEqual(cardIds(demo), ['b'], 'gone from the target column');
+  assert.equal(card.getAttribute('aria-busy'), 'false', 'no longer waiting');
+  const error = card.childNodes.find((n) => classes(n).includes('field-error'));
+  assert.ok(error && !classes(error).includes('hidden'), 'the reason shows on the card itself');
+  assert.equal(error.textContent, 'Spostamento non riuscito. Riprova più tardi.');
+  assert.ok(toasts.some((item) => item.error && item.message === 'Spostamento non riuscito. Riprova più tardi.'), 'and in a toast');
+});
+
+test('Dan 11/11: a drop onto Vinta asks Conferma first and leaves the card in place', async () => {
+  const { mount, client } = await board([record('a', 'discovery')]);
+  const { transfer } = startDrag(mount, 'a');
+  const won = columnOf(mount, 'won');
+  won.dispatch('dragover', { preventDefault() {} });
+  won.dispatch('drop', { preventDefault() {}, dataTransfer: transfer });
+  await tick();
+  assert.equal(slotsIn(mount).length, 0, 'no placeholder left behind');
+  assert.deepEqual(cardIds(columnOf(mount, 'discovery')), ['a'], 'the card waits in its column for Conferma');
+  assert.ok(mount.textContent.includes('Segnare «Offerta a» come Vinta?'), 'Conferma shows');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing written before Conferma');
+});
+
+test('Dan 11/11: a card still being written cannot be dragged again', async () => {
+  const { mount } = await board([record('a', 'discovery')], { onPost: () => new Promise(() => {}) });
+  const { transfer } = startDrag(mount, 'a');
+  const demo = columnOf(mount, 'demo');
+  demo.dispatch('drop', { preventDefault() {}, dataTransfer: transfer });
+  await tick();
+  const card = cardOf(mount, 'a');
+  card.dispatch('dragend', {});
+  let prevented = false;
+  card.dispatch('dragstart', { preventDefault() { prevented = true; }, dataTransfer: dataTransfer() });
+  assert.ok(prevented, 'the busy card refuses a second drag');
+});
+
+// ---- 2. Apri panel -------------------------------------------------------
+
+test('Dan 11/11: Apri opens a side panel over the board with offer, customer, value, stage and the scheda link', async () => {
+  const { mount, hashes } = await board([record('a', 'discovery', {
+    name: 'Cucina per Giulia', contactId: 'c1', contactName: 'Giulia Bianchi',
+    valueCents: 2_750_000, expectedCloseDate: '2026-11-20T00:00:00.000Z',
+  })]);
+  const boardPanel = mount.childNodes[0];
+  apriOf(mount, 'a').dispatch('click');
+  const panel = panelOf(mount);
+  assert.ok(panel, 'the panel opens');
+  assert.deepEqual(hashes, [], 'the pipeline stays on screen');
+  assert.equal(mount.childNodes[0], boardPanel, 'the board is not rebuilt');
+  assert.ok(classes(panel).includes('bo-scheda-composer'), 'the scheda composer window, reused');
+  assert.equal(panel.getAttribute('role'), 'dialog');
+  assert.equal(panel.getAttribute('aria-label'), 'Offerta Cucina per Giulia');
+  const text = panel.textContent;
+  assert.ok(text.includes('Cucina per Giulia · Giulia Bianchi'), 'offer and customer in the head');
+  assert.ok(text.includes('Cliente') && text.includes('Giulia Bianchi'));
+  assert.ok(text.includes('Valore') && text.includes('27.500'), `the value (${text})`);
+  assert.ok(text.includes('Fase') && text.includes('Scoperta'), 'the stage in the operator words');
+  assert.ok(text.includes('Chiusura prevista') && text.includes('2026-11-20'));
+  assert.ok(text.includes('Cambia fase'), 'the stage change is offered');
+  const links = panel.findAll('a');
+  const scheda = links.find((n) => n.textContent === 'Apri scheda cliente');
+  assert.equal(scheda?.getAttribute('href'), '#/customer-card/contact/c1', 'the contact scheda');
+  const page = links.find((n) => n.getAttribute('data-action') === 'open-offer-page');
+  assert.equal(page?.getAttribute('href'), '#/offerte/a', 'the full offer stays one click away');
+  const close = panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close');
+  assert.ok(close.__focused, 'focus moves into the panel');
+});
+
+test('Dan 11/11: a company-only offer links the company scheda; no customer, no scheda link', async () => {
+  const { mount } = await board([
+    record('a', 'discovery'),
+    record('b', 'discovery', { companyId: '', companyName: '', name: 'Senza cliente' }),
+  ]);
+  apriOf(mount, 'a').dispatch('click');
+  let link = panelOf(mount).findAll('a').find((n) => n.textContent === 'Apri scheda cliente');
+  assert.equal(link?.getAttribute('href'), '#/customer-card/company/co1');
+  apriOf(mount, 'b').dispatch('click');
+  assert.equal(mount.findAll('div').filter((n) => n.getAttribute('data-offer-drawer') !== null).length, 1, 'one panel at a time');
+  link = panelOf(mount).findAll('a').find((n) => n.textContent === 'Apri scheda cliente');
+  assert.equal(link, undefined, 'no dead link without a customer');
+});
+
+test('Dan 11/11: × closes the panel without re-rendering the board and hands focus back to Apri', async () => {
+  const { mount, client } = await board([record('a', 'discovery')]);
+  const boardPanel = mount.childNodes[0];
+  const reads = client.calls.length;
+  const apri = apriOf(mount, 'a');
+  apri.dispatch('click');
+  const panel = panelOf(mount);
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click');
+  assert.equal(panelOf(mount), undefined, 'the panel is gone');
+  assert.equal(mount.childNodes[0], boardPanel, 'the same board node: the scroll stays where it was');
+  assert.equal(client.calls.length, reads, 'no re-read of the board');
+  assert.ok(apri.__focused, 'focus goes back to Apri');
+});
+
+test('Dan 11/11: Esc and a click outside close the panel; a click inside keeps it', async () => {
+  const doc = listeningDocument();
+  const { mount } = await board([record('a', 'discovery'), record('b', 'demo')], { doc });
+  const boardPanel = mount.childNodes[0];
+  apriOf(mount, 'a').dispatch('click');
+  let panel = panelOf(mount);
+  const inside = panel.findAll('span')[0];
+  doc.dispatch('pointerdown', { target: inside });
+  assert.ok(panelOf(mount), 'a click inside keeps the panel');
+  doc.dispatch('keydown', { key: 'Escape' });
+  assert.equal(panelOf(mount), undefined, 'Esc closes it');
+  assert.equal(doc.listenerCount('keydown') + doc.listenerCount('pointerdown'), 0, 'no listener left behind');
+
+  apriOf(mount, 'b').dispatch('click');
+  panel = panelOf(mount);
+  assert.ok(panel);
+  doc.dispatch('pointerdown', { target: cardOf(mount, 'a') });
+  assert.equal(panelOf(mount), undefined, 'a click outside closes it');
+  assert.equal(mount.childNodes[0], boardPanel, 'the board was never rebuilt');
+  assert.equal(doc.listenerCount('keydown') + doc.listenerCount('pointerdown'), 0, 'no listener left behind');
+
+  // Esc on the panel itself works where the document takes no listener.
+  apriOf(mount, 'a').dispatch('click');
+  panelOf(mount).dispatch('keydown', { key: 'Escape' });
+  assert.equal(panelOf(mount), undefined, 'Esc from inside closes it too');
+});
+
+test('Dan 11/11: leaving the pipeline closes the panel; coming back shows the board without it', async () => {
+  const doc = listeningDocument();
+  const { mount, view } = await board([record('a', 'discovery')], { doc });
+  apriOf(mount, 'a').dispatch('click');
+  assert.ok(panelOf(mount));
+  // The router empties the mount for another view (a keyboard Invio on a
+  // menu voice: no pointerdown reaches the document).
+  for (const child of [...mount.childNodes]) mount.removeChild(child);
+  await view.renderBoard('b2b-sales');
+  assert.equal(panelOf(mount), undefined, 'the panel does not come back on its own');
+  assert.equal(doc.listenerCount('keydown') + doc.listenerCount('pointerdown'), 0, 'no listener left behind');
+});
+
+test('Dan 11/11: a filter re-render keeps the panel open over the new board', async () => {
+  const { mount } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  apriOf(mount, 'a').dispatch('click');
+  const panel = panelOf(mount);
+  assert.ok(panel, 'the panel is open');
+  const search = mount.findAll('input').find((n) => n.getAttribute('data-filter') === 'q');
+  search.value = 'Offerta';
+  search.dispatch('input');
+  assert.equal(panelOf(mount), panel, 'the same panel is still open');
+});
+
+test('Dan 11/11: Cambia fase in the panel writes move-stage and the panel shows the new stage', async () => {
+  const { mount, client, toasts } = await board([record('a', 'discovery')]);
+  apriOf(mount, 'a').dispatch('click');
+  const panel = panelOf(mount);
+  const select = panel.findAll('select')[0];
+  select.value = 'demo';
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move').dispatch('click');
+  await tick();
+  await tick();
+  const post = client.calls.find((call) => call.method === 'POST');
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  assert.ok(toasts.some((item) => item.message === 'Spostata in Demo.'));
+  const after = panelOf(mount);
+  assert.ok(after, 'the panel stays open');
+  const stageFact = after.findAll('p').find((n) => n.textContent.startsWith('Fase'));
+  assert.equal(stageFact.textContent, 'FaseDemo', 'the panel shows the new stage');
+  assert.deepEqual(cardIds(columnOf(mount, 'demo')), ['a'], 'the board moved the card too');
+});
+
+test('Dan 11/11: Persa from the panel asks the reason; a failed move says why inside the panel', async () => {
+  const { mount, client } = await board([record('a', 'discovery')], {
+    onPost: () => { throw Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' }); },
+  });
+  apriOf(mount, 'a').dispatch('click');
+  const panel = panelOf(mount);
+  panel.findAll('select')[0].value = 'lost';
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move').dispatch('click');
+  assert.ok(panel.textContent.includes('Segnare «Offerta a» come Persa?'), 'Conferma names the offer');
+  const yes = panel.findAll('button').find((n) => n.textContent === 'Conferma');
+  yes.dispatch('click');
+  await tick();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'no reason, no write');
+  assert.ok(panel.textContent.includes('Scrivi il motivo della perdita'));
+  panel.findAll('input').find((n) => n.getAttribute('aria-label') === 'Motivo di chiusura').value = 'Budget';
+  yes.dispatch('click');
+  await tick();
+  await tick();
+  const post = client.calls.find((call) => call.method === 'POST');
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'lost', fromStage: 'discovery', reason: 'Budget' });
+  const alert = panel.findAll('small').find((n) => n.getAttribute('role') === 'alert');
+  assert.equal(alert.textContent, 'Spostamento non riuscito. Riprova più tardi.', 'the failure reads inside the panel');
+  assert.ok(!classes(alert).includes('hidden'));
+});
+
+test('Dan 11/11: a closed offer (Vinta) shows no Cambia fase in the panel', async () => {
+  const { mount } = await board([record('a', 'won')]);
+  apriOf(mount, 'a').dispatch('click');
+  const panel = panelOf(mount);
+  assert.ok(panel.textContent.includes('Vinta'), 'the stage shows');
+  assert.ok(!panel.textContent.includes('Cambia fase'), 'no move out of a closed stage');
+});

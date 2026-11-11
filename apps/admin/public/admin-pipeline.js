@@ -10,8 +10,8 @@
 //
 // Views: Kanban columns plus a Lista table over the same filtered records.
 // Search plus the Referente, Creata and Stati pills filter both views
-// client-side; "Azzera filtri" resets them. Apri navigates to the offer
-// detail page (#/offerte/<id>) — the card never expands in place. The
+// client-side; "Azzera filtri" resets them. Apri opens the offer panel over
+// the board (Dan 11/11) — the card never expands in place. The
 // summary (count + per-currency totals) and the forecast always describe the
 // filtered set. The forecast is a declared heuristic — won and paid at face
 // value plus 60% of the open ones — labeled as a stima, never a commitment.
@@ -26,9 +26,21 @@
 // to a won or lost stage — from Sposta or a drop — never posts straight:
 // it reveals the card's Conferma panel (Persa adds the mandatory reason
 // input) and only Conferma posts. The Lista rows are read-only; moves
-// happen on Kanban cards. Apri navigates to the offer detail page
-// (#/offerte/<id>), where its three commercial facts (importo, chiusura,
-// referente) are read and edited through PATCH.
+// happen on Kanban cards. Apri opens a side panel over the board (the
+// composer window of the scheda): offer, customer, value, stage, Cambia
+// fase and the links to the scheda cliente and the full offer page
+// (#/offerte/<id>, where importo, chiusura and referente are edited through
+// PATCH). Closing it (×, Esc, a click outside) never re-renders the board,
+// so the scroll stays where it was.
+//
+// Drag placeholder (Dan 11/11): while a card flies, the column under the
+// pointer shows a dashed slot as tall as the card, at the top — where the
+// card really lands: the list reads `updated_at desc` and a move bumps it.
+// There is no stored position yet, so the source column offers no slot (a
+// reorder would not survive a reload). On drop the card moves into the slot
+// at once and waits there (aria-busy); a failure puts it back where it was
+// with the reason. Esc or a release outside a column only fires dragend,
+// which removes the slot: nothing moves.
 //
 // BO-F6-10 fetta Lista (backlog:31bed527): testi esatti C7/C16/C21, intestazioni
 // C19 nell'ordine del prototipo, pill di stato con pallino e percentuale di
@@ -237,8 +249,46 @@ export function createPipelineBoard(deps) {
     for (const column of columnNodes) toggleHook(column, 'drop-target', false);
   }
 
+  /**
+   * The card in flight (Dan 11/11): its id, source stage and height, set on
+   * dragstart and dropped on dragend. Null while nothing is dragged (or a
+   * drag comes from outside the board): columns then behave as before.
+   * @type {{ id: string, fromStage: string, height: number } | null}
+   */
+  let drag = null;
+  /** Record id → its card's Apri button, where closing the panel hands focus back. */
+  const openButtons = new Map();
+  /** Column → the node the slot sits before: the first card, or the empty line. */
+  const slotAnchors = new Map();
+  /** The dashed placeholder, one for the whole board, built on first use. */
+  let slot = null;
+  function dropSlot() {
+    if (!slot) {
+      slot = el(doc, 'div', { class: 'pipeline-drop-slot', attrs: { 'aria-hidden': 'true', 'data-drop-slot': 'true' } });
+    }
+    return slot;
+  }
+  /** Seat the placeholder at the top of `column`, as tall as the dragged card. */
+  function showSlot(column) {
+    const node = dropSlot();
+    const height = drag && drag.height > 0 ? Math.round(drag.height) : 0;
+    if (height > 0) node.setAttribute('style', `height: ${height}px`);
+    else node.removeAttribute('style');
+    const anchor = slotAnchors.get(column) ?? null;
+    if (node.parentNode === column && (anchor === null ? true : node.nextSibling === anchor)) return;
+    column.insertBefore(node, anchor && anchor.parentNode === column ? anchor : null);
+  }
+  /** Take the placeholder off the board (idempotent: drop and dragend both call it). */
+  function hideSlot() {
+    if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
+  }
+
   function clear() {
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    // The offer panel stays over the board while it reloads (Dan 11/11).
+    const keep = drawer ? drawer.node : null;
+    for (const child of [...mount.childNodes]) {
+      if (child !== keep) mount.removeChild(child);
+    }
   }
 
   /** @param {string} message @param {{retry?: () => void}} [options] */
@@ -270,8 +320,15 @@ export function createPipelineBoard(deps) {
    * would 409 SAME_STAGE); drops onto a won or lost stage never post
    * directly — they reveal the card's Conferma panel (with the mandatory
    * reason input for lost), like the Sposta button.
+   *
+   * Dan 11/11: with the column at hand, a direct move seats the card where
+   * the placeholder was (the top of the column) before the write answers,
+   * marked as waiting; a failure puts it back in its old place and says why.
    */
-  async function handleDrop(pipeline, toStage, payload) {
+  async function handleDrop(pipeline, toStage, payload, column = null) {
+    // The slot only previews: whatever happens next, it leaves the board.
+    const slotWasIn = slot && slot.parentNode === column ? column : null;
+    hideSlot();
     let parsed;
     try {
       parsed = JSON.parse(payload);
@@ -303,7 +360,19 @@ export function createPipelineBoard(deps) {
     // as Sposta, so a queued move never reads as a failure.
     const controls = cardNodes.get(recordId);
     if (controls && typeof controls.move === 'function') {
-      await controls.move(toStage);
+      const card = controls.card;
+      const target = column ?? slotWasIn;
+      // Where the card was, to put it back on a failure.
+      const home = card && card.parentNode ? { parent: card.parentNode, next: card.nextSibling ?? null } : null;
+      if (card && target && typeof target.insertBefore === 'function') {
+        const anchor = slotAnchors.get(target) ?? null;
+        target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
+      }
+      const outcome = await controls.move(toStage);
+      if ((outcome?.failed || outcome?.busy) && card && home && typeof home.parent.insertBefore === 'function') {
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+        if (outcome.failed) toast(outcome.message, true);
+      }
       return;
     }
     try {
@@ -322,6 +391,9 @@ export function createPipelineBoard(deps) {
    */
   async function renderBoard(pipelineName) {
     const token = ++renderToken;
+    // A panel the router took off the page (the view was left) never comes
+    // back on its own: only a reload of this same board keeps it.
+    if (drawer && drawer.node.parentNode !== mount) closeOfferDrawer({ refocus: false });
     showMessage('Caricamento…');
     let pipeline;
     let records;
@@ -366,6 +438,8 @@ export function createPipelineBoard(deps) {
       return;
     }
     if (token !== renderToken) return;
+    // An offer panel of another board never survives a switch.
+    if (drawer && drawer.pipelineName !== pipeline.name) closeOfferDrawer({ refocus: false });
     if (filteredPipeline !== pipeline.name) {
       // New pipeline: drop the previous board's filters so a stage, owner
       // or creation interval from pipeline A cannot silently empty pipeline B.
@@ -387,6 +461,8 @@ export function createPipelineBoard(deps) {
     clear();
     cardNodes.clear();
     columnNodes.length = 0;
+    slotAnchors.clear();
+    openButtons.clear();
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
     const stageKeys = new Set(pipeline.stages.map((stage) => stage.key));
@@ -476,6 +552,17 @@ export function createPipelineBoard(deps) {
       panel.appendChild(drift);
     }
     mount.appendChild(panel);
+    // The offer panel lives over the board: a re-render (a filter, a move)
+    // brings it back with the fresh record, or closes it when the offer
+    // left the board.
+    if (drawer) {
+      const fresh = records.find((candidate) => String(candidate.id) === drawer.recordId);
+      if (!fresh || fresh.pipelineKey !== pipeline.name) closeOfferDrawer({ refocus: false });
+      else {
+        if (drawer.node.parentNode !== mount) mount.appendChild(drawer.node);
+        if (drawer.paintedFrom !== fresh) paintOfferDrawer(pipeline, fresh);
+      }
+    }
     return panel;
   }
 
@@ -1091,30 +1178,40 @@ export function createPipelineBoard(deps) {
     // can paint the dashed outline; the dragged card is attenuated the same way.
     columnNodes.push(column);
     column.addEventListener('dragover', (event) => {
+      // Dan 11/11: the source column takes no drop — a reorder would not
+      // survive a reload (no stored position). Without preventDefault the
+      // browser shows «not allowed» and a release there moves nothing.
+      if (drag && drag.fromStage === stage.key) return;
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       toggleHook(column, 'drop-target', true);
+      if (drag) showSlot(column);
     });
     column.addEventListener('dragleave', (event) => {
       // Entering a child card still hovers this column: only a true exit
       // unmarks it, otherwise the marker flickers while crossing children.
       if (event?.relatedTarget && column.contains(event.relatedTarget)) return;
       toggleHook(column, 'drop-target', false);
+      if (slot && slot.parentNode === column) hideSlot();
     });
     column.addEventListener('drop', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       unmarkDropTargets();
       const payload = event?.dataTransfer?.getData?.('text/plain') ?? '';
-      void handleDrop(pipeline, stage.key, payload);
+      void handleDrop(pipeline, stage.key, payload, column);
     });
     // Test hook: drive a drop without a real DataTransfer.
-    column.__drop = (payload) => handleDrop(pipeline, stage.key, payload);
+    column.__drop = (payload) => handleDrop(pipeline, stage.key, payload, column);
 
     if (!records.length) {
-      column.appendChild(el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" }));
+      const empty = el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" });
+      column.appendChild(empty);
+      slotAnchors.set(column, empty);
       return column;
     }
-    for (const record of records) {
-      column.appendChild(renderCard(pipeline, stage, record, token));
+    for (const [index, record] of records.entries()) {
+      const card = renderCard(pipeline, stage, record, token);
+      if (index === 0) slotAnchors.set(column, card);
+      column.appendChild(card);
     }
     return column;
   }
@@ -1146,16 +1243,28 @@ export function createPipelineBoard(deps) {
       card.appendChild(el(doc, 'p', { class: 'card-reason', text: String(record.closeReason) }));
     }
     card.addEventListener('dragstart', (event) => {
+      // A card whose move is still being written stays put.
+      if (card.getAttribute('aria-busy') === 'true') {
+        if (typeof event?.preventDefault === 'function') event.preventDefault();
+        return;
+      }
       event?.dataTransfer?.setData?.('text/plain', JSON.stringify({ id: record.id, fromStage: stage.key }));
+      if (event?.dataTransfer && 'effectAllowed' in event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      const box = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+      const height = Number(box?.height ?? card.offsetHeight ?? 0);
+      drag = { id: String(record.id), fromStage: stage.key, height: Number.isFinite(height) ? height : 0 };
       toggleHook(card, 'dragging', true);
     });
     card.addEventListener('dragend', () => {
+      // Drop, Esc or a release outside a column: the slot and the marks go.
+      drag = null;
+      hideSlot();
       toggleHook(card, 'dragging', false);
       unmarkDropTargets();
     });
 
-    // Backlog ef92f728: Apri navigates to the offer detail page
-    // (#/offerte/<id>) — the card never expands in place. Only the
+    // Dan 11/11: Apri opens the offer panel over the board — the card never
+    // expands in place and the board stays where it was. Only the
     // opportunity board offers it: a generated staged module has its own
     // record screen behind its rows.
     const detailed = pipeline.module === 'opportunity';
@@ -1163,11 +1272,10 @@ export function createPipelineBoard(deps) {
       const open = el(doc, 'button', {
         class: 'small secondary',
         text: 'Apri',
-        attrs: { type: 'button', 'data-action': 'open-offer' },
+        attrs: { type: 'button', 'data-action': 'open-offer', 'aria-haspopup': 'dialog' },
       });
-      const go = () => {
-        if (typeof deps.navigate === 'function') deps.navigate(`#/offerte/${encodeURIComponent(String(record.id))}`);
-      };
+      openButtons.set(String(record.id), open);
+      const go = () => openOfferDrawer(pipeline, String(record.id), open);
       open.addEventListener('click', go);
       card.appendChild(open);
       card.__open = go; // test hook
@@ -1211,9 +1319,17 @@ export function createPipelineBoard(deps) {
     } = confirmPanel;
 
     let busy = false;
+    /** Dan 11/11: the card itself shows the wait, wherever the move began. */
+    const markCardBusy = (on) => {
+      card.setAttribute('aria-busy', on ? 'true' : 'false');
+    };
+    /**
+     * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+     */
     const doPost = async (toStage, reason) => {
-      if (busy) return;
+      if (busy) return { busy: true };
       busy = true;
+      markCardBusy(true);
       moveButton.disabled = true;
       moveButton.setAttribute('aria-busy', 'true');
       confirmYes.disabled = true;
@@ -1231,6 +1347,7 @@ export function createPipelineBoard(deps) {
         settled = true;
         toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
         await renderBoard(pipeline.name); // re-render: server state is the truth
+        return { moved: true };
       } catch (error) {
         settled = true;
         if (isMovePending(error)) {
@@ -1240,15 +1357,18 @@ export function createPipelineBoard(deps) {
           // queue a duplicate or meet a stale-stage refusal.
           console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
           showStatus(MOVE_UNCONFIRMED, true);
-          return;
+          return { pending: true };
         }
         busy = false;
+        markCardBusy(false);
         moveButton.disabled = false;
         moveButton.setAttribute('aria-busy', 'false');
         confirmYes.disabled = false;
         showStatus('', false);
-        errorNode.textContent = moveFailureText(error);
+        const message = moveFailureText(error);
+        errorNode.textContent = message;
         errorNode.setAttribute('class', 'field-error');
+        return { failed: true, message };
       }
     };
     const confirm = async () => {
@@ -1283,13 +1403,16 @@ export function createPipelineBoard(deps) {
     controls.appendChild(label);
     controls.appendChild(select);
     controls.appendChild(moveButton);
-    controls.appendChild(errorNode);
-    controls.appendChild(statusNode);
-    controls.appendChild(retryButton);
     card.appendChild(controls);
+    // Dan 11/11: the wait, the failure and Riprova sit on the card itself,
+    // outside the keyboard-only «Sposta in» row (visually hidden to the
+    // mouse), so a dropped card shows them too.
+    card.appendChild(errorNode);
+    card.appendChild(statusNode);
+    card.appendChild(retryButton);
     card.appendChild(confirmBox);
     cardNodes.set(String(record.id), {
-      select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      card, select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
       move: (toStage) => doPost(toStage, undefined),
     });
     card.__move = submit; // test hook
@@ -1318,6 +1441,239 @@ export function createPipelineBoard(deps) {
     controls.select.value = toStage;
     showStageConfirm(controls.confirmPanel, String(record.name ?? record.id), target);
     return true;
+  }
+
+  /**
+   * The open offer panel (Dan 11/11): the composer window of the scheda
+   * (`bo-scheda-composer`, dark head, ✕) over the board. One at a time.
+   * @type {null | { node: any, body: any, title: any, close: any, recordId: string, pipelineName: string, opener: any, paintedFrom: any, detach: () => void }}
+   */
+  let drawer = null;
+
+  /** Scheda cliente of the offer: the contact when named, else its company. */
+  function customerHref(record) {
+    const contactId = typeof record?.contactId === 'string' && record.contactId !== '' ? record.contactId : null;
+    if (contactId) return `#/customer-card/contact/${encodeURIComponent(contactId)}`;
+    const companyId = typeof record?.companyId === 'string' && record.companyId !== '' ? record.companyId : null;
+    return companyId ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null;
+  }
+
+  /** The customer's name as the scheda shows it: the contact, else the company. */
+  function customerName(record) {
+    for (const value of [record?.contactName, record?.companyName]) {
+      if (typeof value === 'string' && value.trim() !== '') return value.trim();
+    }
+    return null;
+  }
+
+  /**
+   * Apri on a card: the offer panel over the board. Opening never
+   * re-renders the board, closing never does either, so the scroll stays.
+   * @param {any} pipeline @param {string} recordId @param {any} opener
+   */
+  function openOfferDrawer(pipeline, recordId, opener) {
+    const record = cached.records.find((candidate) => String(candidate.id) === recordId);
+    if (!record) return;
+    closeOfferDrawer({ refocus: false });
+    const node = el(doc, 'div', {
+      class: 'bo-scheda-composer bo-pipeline-offer',
+      attrs: { role: 'dialog', 'aria-modal': 'false', 'data-offer-drawer': recordId },
+    });
+    const head = el(doc, 'div', { class: 'bo-composer-head' });
+    const title = el(doc, 'h4', { class: 'bo-composer-title' });
+    head.appendChild(title);
+    const close = el(doc, 'button', {
+      class: 'bo-composer-icon',
+      text: '✕',
+      attrs: { type: 'button', 'aria-label': 'Chiudi', 'data-action': 'offer-drawer-close' },
+    });
+    close.addEventListener('click', () => closeOfferDrawer({ refocus: true }));
+    head.appendChild(close);
+    node.appendChild(head);
+    const body = el(doc, 'div', { class: 'bo-composer-body bo-pipeline-offer-body' });
+    node.appendChild(body);
+
+    const onKey = (event) => {
+      if (event?.key !== 'Escape' || !drawer || drawer.node !== node) return;
+      // Esc inside an open Conferma or a select is still a close: the panel
+      // is the only layer the pipeline opens over the board.
+      closeOfferDrawer({ refocus: true });
+    };
+    const onPointer = (event) => {
+      if (!drawer || drawer.node !== node) return;
+      // A panel the router took off the page only lets go of its listeners.
+      if (!node.parentNode) { closeOfferDrawer({ refocus: false }); return; }
+      const target = event?.target ?? null;
+      if (target && node.contains(target)) return;
+      closeOfferDrawer({ refocus: false });
+    };
+    node.addEventListener('keydown', onKey);
+    const docListens = typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function';
+    // pointerdown, not click: the click that opened the panel has already
+    // gone by, so it can never close it on the way up.
+    if (docListens) {
+      doc.addEventListener('keydown', onKey);
+      doc.addEventListener('pointerdown', onPointer);
+    }
+    drawer = {
+      node, body, recordId, pipelineName: pipeline.name, opener, paintedFrom: null,
+      title, close,
+      detach: () => {
+        if (docListens) {
+          doc.removeEventListener('keydown', onKey);
+          doc.removeEventListener('pointerdown', onPointer);
+        }
+      },
+    };
+    paintOfferDrawer(pipeline, record);
+    mount.appendChild(node);
+    if (typeof close.focus === 'function') close.focus();
+    node.__close = () => closeOfferDrawer({ refocus: true }); // test hook
+  }
+
+  /** Close the offer panel; with `refocus`, focus goes back to its Apri. */
+  function closeOfferDrawer({ refocus }) {
+    if (!drawer) return;
+    const { node, opener, recordId, detach } = drawer;
+    drawer = null;
+    detach();
+    if (node.parentNode) node.parentNode.removeChild(node);
+    if (!refocus) return;
+    const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
+    if (live && typeof live.focus === 'function') live.focus();
+  }
+
+  /**
+   * The panel's content from one record: who, how much, which stage, the
+   * stage change (open stages only, the same move-stage action and Conferma
+   * as the card) and the way to the scheda cliente and the full offer.
+   * @param {any} pipeline @param {Record<string, any>} record
+   */
+  function paintOfferDrawer(pipeline, record) {
+    if (!drawer) return;
+    const { body, title, node } = drawer;
+    drawer.paintedFrom = record;
+    const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
+    const customer = customerName(record);
+    title.textContent = name;
+    if (customer) title.appendChild(el(doc, 'span', { class: 'bo-composer-to-name', text: ` · ${customer}` }));
+    node.setAttribute('aria-label', `Offerta ${name}`);
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    const stage = pipeline.stages.find((candidate) => candidate.key === record.pipelineStage);
+    const facts = el(doc, 'div', { class: 'offer-facts' });
+    for (const [label, value] of [
+      ['Cliente', customer ?? '—'],
+      ['Valore', Number.isSafeInteger(record.valueCents) ? formatAmount(record.valueCents, record.currency) : '—'],
+      ['Fase', stageLabel(pipeline, record.pipelineStage)],
+      ['Chiusura prevista', dayOf(record.expectedCloseDate) ?? '—'],
+      ['Referente', typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—'],
+    ]) {
+      const cell = el(doc, 'p', { class: 'offer-fact' });
+      cell.appendChild(el(doc, 'span', { class: 'offer-fact-label', text: label }));
+      cell.appendChild(el(doc, 'span', { class: 'offer-fact-value', text: value }));
+      facts.appendChild(cell);
+    }
+    body.appendChild(facts);
+
+    if (stage && stage.type === 'open') body.appendChild(drawerStageChange(pipeline, record, stage));
+
+    const links = el(doc, 'div', { class: 'bo-pipeline-offer-links' });
+    const href = customerHref(record);
+    if (href) {
+      links.appendChild(el(doc, 'a', {
+        class: 'ui-btn ui-btn-primary ui-btn-small',
+        text: 'Apri scheda cliente',
+        attrs: { href, 'data-action': 'open-customer-card' },
+      }));
+    }
+    links.appendChild(el(doc, 'a', {
+      class: 'ui-btn ui-btn-secondary ui-btn-small',
+      text: 'Vedi tutta l’offerta',
+      attrs: { href: `#/offerte/${encodeURIComponent(String(record.id))}`, 'data-action': 'open-offer-page' },
+    }));
+    body.appendChild(links);
+  }
+
+  /** «Cambia fase» in the panel: the card's move, with its Conferma for won and lost. */
+  function drawerStageChange(pipeline, record, stage) {
+    const box = el(doc, 'div', { class: 'bo-pipeline-offer-move', attrs: { 'data-drawer-move': 'true' } });
+    const selectId = `drawer-move-${record.id}`;
+    box.appendChild(el(doc, 'label', { text: 'Cambia fase', attrs: { for: selectId } }));
+    const row = el(doc, 'div', { class: 'bo-pipeline-offer-move-row' });
+    const select = el(doc, 'select', { attrs: { id: selectId } });
+    for (const target of pipeline.stages) {
+      if (target.key === stage.key) continue;
+      select.appendChild(el(doc, 'option', { text: target.label ?? target.key, attrs: { value: target.key } }));
+    }
+    const go = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button', 'data-action': 'drawer-move' } });
+    row.appendChild(select);
+    row.appendChild(go);
+    box.appendChild(row);
+    const status = el(doc, 'small', { class: 'card-status hidden', attrs: { role: 'status', 'aria-live': 'polite' } });
+    const error = el(doc, 'small', { class: 'field-error hidden', attrs: { role: 'alert' } });
+    box.appendChild(status);
+    box.appendChild(error);
+    const confirmPanel = createStageConfirm(doc);
+    box.appendChild(confirmPanel.box);
+    let pending = null;
+    let busy = false;
+    const say = (node, text) => {
+      node.textContent = text;
+      const base = node === status ? 'card-status' : 'field-error';
+      node.setAttribute('class', text ? base : `${base} hidden`);
+    };
+    const post = async (toStage, reason) => {
+      if (busy) return;
+      busy = true;
+      go.disabled = true;
+      go.setAttribute('aria-busy', 'true');
+      confirmPanel.yes.disabled = true;
+      say(error, '');
+      say(status, MOVE_IN_FLIGHT);
+      try {
+        await postMove(pipeline, record.id, record.pipelineStage, toStage, reason);
+        toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
+        // The board re-reads the truth; renderAll repaints this panel, and
+        // focus, whose button the repaint replaced, lands on its ✕.
+        await renderBoard(pipeline.name);
+        if (drawer && typeof drawer.close?.focus === 'function') drawer.close.focus();
+      } catch (failure) {
+        if (isMovePending(failure)) {
+          say(status, `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`);
+          return;
+        }
+        busy = false;
+        go.disabled = false;
+        go.setAttribute('aria-busy', 'false');
+        confirmPanel.yes.disabled = false;
+        say(status, '');
+        say(error, moveFailureText(failure));
+      }
+    };
+    go.addEventListener('click', () => {
+      if (busy) return;
+      const toStage = select.value;
+      const target = pipeline.stages.find((candidate) => candidate.key === toStage);
+      if (!target) return;
+      if (stageNeedsConfirm(target)) {
+        pending = target;
+        showStageConfirm(confirmPanel, String(record.name ?? 'questa offerta'), target);
+        return;
+      }
+      void post(toStage, undefined);
+    });
+    confirmPanel.yes.addEventListener('click', () => {
+      if (!pending) return;
+      const answer = readStageConfirm(confirmPanel, pending);
+      if (!answer.ok) return;
+      void post(pending.key, answer.reason);
+    });
+    confirmPanel.no.addEventListener('click', () => {
+      pending = null;
+      confirmPanel.box.setAttribute('class', 'card-confirm hidden');
+    });
+    return box;
   }
 
   return { renderBoard };
