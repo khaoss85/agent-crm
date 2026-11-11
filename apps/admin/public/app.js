@@ -441,6 +441,7 @@ import {
   loadFixCount,
   mergeSpaces,
   readSpaces,
+  readStoredSpaces,
   renderSettingsPanel,
   renderUnknownRoute,
   rerendersOnSpaceSwitch,
@@ -840,11 +841,13 @@ const sessionProfile = readSessionProfile(document);
 // when the host names the person's spaces; otherwise this browser's own
 // history fills in: every space mount visited on this origin merges its
 // space in, so after opening each space once the menu shows all of them.
+// The history is read without the development fallback, so a fresh
+// browser never adds a fictitious «Spazio locale» to a real session.
 // A stored entry the person lost stays a plain row: picking it lands on
 // that space's mount, where the host refuses or logs in, never inside the
 // wrong space.
 const shellSpaces = sessionProfile
-  ? mergeSpaces(sessionProfile.spaces, readSpaces(shellStorage))
+  ? mergeSpaces(sessionProfile.spaces, readStoredSpaces(shellStorage))
   : readSpaces(shellStorage);
 if (sessionProfile) {
   try {

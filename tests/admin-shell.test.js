@@ -19,6 +19,7 @@ import {
   defaultSpaces,
   mergeSpaces,
   readSpaces,
+  readStoredSpaces,
   resolveSpaceShortcut,
   spaceMenuItems,
   buildShellNav,
@@ -213,6 +214,30 @@ test('backlog:029409ff — mergeSpaces joins the session spaces with the visited
   // With nothing usable the menu still shows the single local space.
   assert.deepEqual(mergeSpaces([], []), defaultSpaces());
   assert.deepEqual(mergeSpaces(null, undefined), defaultSpaces());
+});
+
+test('backlog:029409ff — a fresh browser never merges «Spazio locale» into a real session', () => {
+  // Codex P2 on agent-crm#754: readSpaces falls back to defaultSpaces, so a
+  // fresh, missing or corrupt storage merged a fictitious «Spazio locale»
+  // into the session spaces and persisted it. The session merge reads the
+  // stored history without the development fallback instead.
+  const fresh = { getItem: () => null };
+  const corrupt = { getItem: () => 'not json' };
+  assert.deepEqual(readStoredSpaces(null), []);
+  assert.deepEqual(readStoredSpaces(fresh), []);
+  assert.deepEqual(readStoredSpaces(corrupt), []);
+  assert.deepEqual(readStoredSpaces({ getItem: () => '[]' }), []);
+  const sessionSpaces = [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ];
+  for (const storage of [fresh, corrupt]) {
+    const merged = mergeSpaces(sessionSpaces, readStoredSpaces(storage));
+    assert.deepEqual(merged, sessionSpaces);
+    assert.ok(!merged.some((space) => space.id === 'locale'));
+  }
+  // The sessionless shell keeps its single local space fallback.
+  assert.deepEqual(readSpaces(fresh), defaultSpaces());
 });
 
 test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking one picks it', () => {
