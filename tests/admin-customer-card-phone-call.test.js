@@ -385,8 +385,11 @@ test('03a6535a7110: Chiama with several known numbers asks which one to use', as
   assert.ok(mount.textContent.includes('Scegli quale numero chiamare.'));
   const picked = choices.find((node) => node.textContent.includes('+393331111111'));
   assert.ok(picked, 'the observed WhatsApp number is offered');
-  picked.listeners.click[0]();
+  await picked.listeners.click[0]();
   await flush();
+  const phonePosts = client.posts.filter((post) => post.path === '/api/customer-hub/phone');
+  assert.equal(phonePosts.length, 1, 'review #788 P2: the picked number is saved first, so the logged call carries it');
+  assert.equal(phonePosts[0].body.phone, '+393331111111');
   const fallback = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'call-fallback');
   assert.ok(fallback, 'picking a number starts the call (device dialer without a voice link)');
   assert.ok(String(fallback.getAttribute('href')).includes('+393331111111'),
@@ -395,13 +398,61 @@ test('03a6535a7110: Chiama with several known numbers asks which one to use', as
     'choosing never logs a call the CRM never placed');
 });
 
-test('03a6535a7110: Chiama with a single known number calls at once, no chooser', async () => {
+test('03a6535a7110: picking the saved number calls it at once, with no extra save', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, timeline: TIMELINE_TWO_NUMBERS, connectors: [VOICE] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  const saved = chooseButtons(mount).find((node) => node.textContent.includes('+393331234567'));
+  assert.ok(saved, 'the saved number is offered in the chooser');
+  await saved.listeners.click[0]();
+  await flush();
+  assert.ok(!client.posts.some((post) => post.path === '/api/customer-hub/phone'),
+    'the saved number needs no save');
+  assert.ok(button(mount, 'log-call'), 'the call starts on the saved number');
+});
+
+test('03a6535a7110: a refused pick reads Italian and starts no call', async () => {
+  const client = stubClient({
+    card: CARD_WITH_PHONE,
+    timeline: TIMELINE_ONE_NUMBER,
+    connectors: [VOICE],
+    onPost: { phone: () => { throw Object.assign(new Error('held'), { status: 409, code: 'PHONE_ALREADY_HELD' }); } },
+  });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  const picked = chooseButtons(mount).find((node) => node.textContent.includes('+393331111111'));
+  await picked.listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('Questo numero è già collegato a un altro cliente'),
+    'the refusal reads its Italian reason, never a generic error');
+  assert.equal(button(mount, 'log-call'), null, 'no call starts on a refused save');
+  assert.ok(chooseButtons(mount).length > 0, 'the panel stays open with every choice');
+});
+
+test('03a6535a7110: Chiama with a single known number saves it, then calls at once, no chooser', async () => {
   const client = stubClient({ timeline: TIMELINE_ONE_NUMBER, connectors: [VOICE] });
   const mount = await renderCard(client);
   button(mount, 'call-customer').listeners.click[0]();
   await flush();
   assert.equal(chooseButtons(mount).length, 0, 'no chooser for a single number');
+  const phonePosts = client.posts.filter((post) => post.path === '/api/customer-hub/phone');
+  assert.equal(phonePosts.length, 1, 'review #788 P2: the observed number is saved first, or the log would refuse it');
   assert.ok(button(mount, 'log-call'), 'the call starts at once: the outcome form opens');
+});
+
+test('03a6535a7110: an observed handle that is not a phone number is never offered to call', async () => {
+  const client = stubClient({
+    timeline: {
+      conversations: { items: [{ channel: 'voice', peer: 'CRM-1' }] },
+      entries: { items: [] },
+    },
+  });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  assert.equal(chooseButtons(mount).length, 0, 'review #788 P2: CRM-1 is held, never callable — no chooser, no tel:1');
+  assert.ok(mount.textContent.includes('Nessun numero salvato'),
+    'the panel asks for a number instead of bypassing the entry');
+  assert.ok(mount.findAll('input')[0], 'a number can still be typed and saved');
 });
 
 test('03a6535a7110: an empty number in the Chiama panel never posts, a refused one reads Italian', async () => {

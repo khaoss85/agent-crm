@@ -533,7 +533,14 @@ export function knownCallNumbers(card, timeline) {
     for (const row of merged.rows) {
       if (!PHONE_LIKE_SYSTEMS.includes(row?.system)) continue;
       if (typeof row?.externalId !== 'string' || row.externalId.trim() === '') continue;
-      push(row.externalId);
+      // Review agent-crm#788 (P2): an observed handle is callable only when
+      // it dials as E.164 — the `toDialablePhone` contract in
+      // packages/customer-hub/src/card.js (a CRM id such as `CRM-1` is held,
+      // never callable). The browser bundle never imports packages, so the
+      // same check lives here; the pinned test keeps the two in step.
+      const dialable = String(row.externalId).replace(/[\s\-().]/g, '');
+      if (!/^\+[1-9]\d{6,14}$/.test(dialable)) continue;
+      push(dialable);
     }
   }
   return Object.freeze(numbers);
@@ -1103,7 +1110,13 @@ export function createCustomerCardView(deps) {
     call.setAttribute('data-action', 'call-customer');
     call.setAttribute('title', known.length === 1 ? `Chiama ${known[0]}` : 'Chiama il cliente (scegli il numero)');
     call.addEventListener('click', () => {
-      if (known.length === 1) openCallPanel(box, card, navCtx, known[0]);
+      // Review agent-crm#788 (P2): the server re-derives the dialed number
+      // from card.phone, so a chosen number that is not the saved one is
+      // saved first — otherwise the call would be logged against the wrong
+      // number, or refused with CHANNEL_CALL_NO_RECIPIENT. One known number
+      // still calls at once (the save runs, then the call panel opens).
+      if (known.length === 1 && known[0] === phone) openCallPanel(box, card, navCtx, known[0]);
+      else if (known.length === 1) saveNumberThenCall(box, card, navCtx, known[0]);
       else openCallNumberPanel(box, card, navCtx, known);
     });
     row.appendChild(call);
@@ -1235,7 +1248,42 @@ export function createCustomerCardView(deps) {
    * pannello di chiamata. Ogni clic fa qualcosa di visibile; il numero
    * digitato resta nel campo finché non è salvato.
    */
-  function openCallNumberPanel(box, card, navCtx, known) {
+  /**
+   * Voce 03a6535a7110, review agent-crm#788 (P2): saves `typed` on the
+   * contact through POST /api/customer-hub/phone (the server validates E.164
+   * and refuses numbers held by another customer) and resolves the saved
+   * value — the same number the server re-derives when the call is logged. A
+   * refused save rejects, and the caller reads its Italian reason.
+   */
+  async function postPhoneNumber(navCtx, typed) {
+    const saved = await client.request('/api/customer-hub/phone', {
+      method: 'POST',
+      body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone: typed }),
+    });
+    const number = typeof saved?.externalId === 'string' && saved.externalId.trim() !== ''
+      ? saved.externalId.trim() : typed;
+    toast('Telefono salvato');
+    return number;
+  }
+  /**
+   * Voce 03a6535a7110, review agent-crm#788 (P2): the one-known-number path —
+   * the save runs, then the call panel opens. A refused save opens the
+   * number panel with the Italian reason instead of a dead click.
+   */
+  function saveNumberThenCall(box, card, navCtx, number) {
+    postPhoneNumber(navCtx, number).then(
+      (saved) => {
+        openCallPanel(box, card, navCtx, saved);
+      },
+      (error) => {
+        openCallNumberPanel(box, card, navCtx, [number], phoneRefusalText(error));
+      },
+    );
+  }
+  function openCallNumberPanel(box, card, navCtx, known, notice = null) {
+    const savedPhone = card?.phone?.available === true
+      && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
+      ? card.phone.value.trim() : null;
     const old = box.querySelector('div[data-call-number="open"]');
     if (old) {
       while (old.firstChild) old.removeChild(old.firstChild);
@@ -1244,15 +1292,37 @@ export function createCustomerCardView(deps) {
     panel.setAttribute('data-call-number', 'open');
     if (!old) box.appendChild(panel);
     panel.appendChild(el('h4', undefined, 'Chiama'));
+    let pickBusy = false;
     if (known.length > 0) {
       panel.appendChild(el('p', 'bo-muted', 'Scegli quale numero chiamare.'));
       for (const number of known) {
         const pick = el('button', undefined, number);
         pick.setAttribute('type', 'button');
         pick.setAttribute('data-action', 'choose-call-number');
-        pick.addEventListener('click', () => {
-          if (panel.parentNode) panel.parentNode.removeChild(panel);
-          openCallPanel(box, card, navCtx, number);
+        pick.addEventListener('click', async () => {
+          // Review agent-crm#788 (P2): the saved number calls directly; any
+          // other known number is saved first so the logged call carries the
+          // picked number. A refused save reads its Italian reason here, and
+          // no call starts.
+          if (number === savedPhone) {
+            if (panel.parentNode) panel.parentNode.removeChild(panel);
+            openCallPanel(box, card, navCtx, number);
+            return;
+          }
+          if (pickBusy) return;
+          pickBusy = true;
+          err.textContent = '';
+          try {
+            const saved = await postPhoneNumber(navCtx, number);
+            if (panel.parentNode) panel.parentNode.removeChild(panel);
+            openCallPanel(box, card, navCtx, saved);
+          } catch (error) {
+            // The panel stays open with every choice: the operator picks
+            // another number or types a new one.
+            err.textContent = phoneRefusalText(error);
+          } finally {
+            pickBusy = false;
+          }
         });
         panel.appendChild(pick);
       }
@@ -1289,13 +1359,7 @@ export function createCustomerCardView(deps) {
       busy = true;
       err.textContent = '';
       try {
-        const saved = await client.request('/api/customer-hub/phone', {
-          method: 'POST',
-          body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone: typed }),
-        });
-        const number = typeof saved?.externalId === 'string' && saved.externalId.trim() !== ''
-          ? saved.externalId.trim() : typed;
-        toast('Telefono salvato');
+        const number = await postPhoneNumber(navCtx, typed);
         if (panel.parentNode) panel.parentNode.removeChild(panel);
         openCallPanel(box, card, navCtx, number);
       } catch (error) {
@@ -1308,6 +1372,7 @@ export function createCustomerCardView(deps) {
     cancel.addEventListener('click', () => {
       if (panel.parentNode) panel.parentNode.removeChild(panel);
     });
+    if (typeof notice === 'string' && notice !== '') err.textContent = notice;
   }
   function openCallPanel(box, card, navCtx, phone) {
     const old = box.querySelector('div[data-call="open"]');
