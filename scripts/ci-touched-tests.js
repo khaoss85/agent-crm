@@ -1097,6 +1097,11 @@ export function runTestShards(
     /** @type {string[]} */
     const failedFiles = [];
     let settled = false;
+    // Assigned below once the bound is armed. Declared first so a timer
+    // that fires synchronously (an injected one may) finds a callable
+    // cancel instead of a temporal-dead-zone ReferenceError.
+    /** @type {() => void} */
+    let cancelTimer = () => {};
     const settle = (
       /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }} */ result,
     ) => {
@@ -1112,7 +1117,7 @@ export function runTestShards(
       const handle = setTimeout(fire, ms);
       return () => clearTimeout(handle);
     });
-    const cancelTimer = startTimer(() => {
+    const cancel = startTimer(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
@@ -1130,6 +1135,8 @@ export function runTestShards(
         failedFiles: [...failedFiles],
       });
     }, options.timeoutSec * 1000);
+    // Fired already (settled): nothing left to cancel later, cancel now.
+    if (settled) cancel(); else cancelTimer = cancel;
     const startNext = (/** @type {number} */ part) => {
       const tag = `touched ${part + 1}/${parts}`;
       if (settled) return;
@@ -1196,7 +1203,12 @@ export function runTestShards(
         if (status !== 0) failedFiles.push(...files);
         const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
         process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
-        options.onJobDone?.(files, status);
+        try {
+          options.onJobDone?.(files, status);
+        } catch (error) {
+          // An observer must never stall its part: log and keep draining.
+          process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+        }
         startNext(part);
       });
     };
