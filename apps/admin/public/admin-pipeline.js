@@ -71,6 +71,24 @@ const MONTHS_IT = [
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
 ];
 
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Review #789: the sort key of a date column is the same Rome day the cell
+ * shows (italianDay's rule: a bare YYYY-MM-DD is that day, an instant is its
+ * day in Europe/Rome), as YYYY-MM-DD so it sorts as text. Null when absent.
+ * @param {unknown} value
+ */
+export function romeDayKey(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
+  if (Number.isNaN(time)) return null;
+  return ROME_DAY_KEY.format(new Date(time));
+}
+
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
   if (typeof value !== 'string' || !value) return null;
@@ -101,8 +119,10 @@ export function customerOf(record) {
   const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
   if (contact !== '') return contact;
   const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
-  // «Senza azienda» is the scheda's placeholder company, not a customer.
-  return company !== '' && company !== 'Senza azienda' ? company : null;
+  // «Senza azienda» is the scheda's placeholder company, not a customer —
+  // in any case or spacing (review #789).
+  const placeholder = company.toLocaleLowerCase('it').replace(/\s+/g, ' ') === 'senza azienda';
+  return company !== '' && !placeholder ? company : null;
 }
 
 /**
@@ -535,6 +555,9 @@ export function createPipelineBoard(deps) {
       state.owner = '';
       state.stage = '';
       state.created = '';
+      // Review #789: the Lista sort is part of the board's view state too.
+      listSort.key = null;
+      listSort.dir = 'asc';
     }
     cached = { pipeline, pipelines: composed, records };
     // A fresh read is the truth a queued move waited for: it releases it.
@@ -1220,15 +1243,9 @@ export function createPipelineBoard(deps) {
       { key: 'customer', label: 'Cliente', value: (record) => text(customerOf(record)) },
       { key: 'stage', label: 'Stato', value: (record) => stageRank.get(record.pipelineStage) ?? null },
       { key: 'value', label: 'Valore', value: (record) => (Number.isSafeInteger(record.valueCents) ? record.valueCents : null) },
-      {
-        key: 'probability', label: 'Probabilità',
-        value: (record) => {
-          const probability = stageOf.get(record.pipelineStage)?.probability;
-          return typeof probability === 'number' ? probability : null;
-        },
-      },
-      { key: 'close', label: 'Chiusura', value: (record) => dayOf(record.expectedCloseDate) },
-      { key: 'created', label: 'Creata', value: (record) => (typeof record.createdAt === 'string' && record.createdAt ? record.createdAt : null) },
+      { key: 'probability', label: 'Probabilità', value: (record) => stageProbability(stageOf.get(record.pipelineStage)) },
+      { key: 'close', label: 'Chiusura', value: (record) => romeDayKey(record.expectedCloseDate) },
+      { key: 'created', label: 'Creata', value: (record) => romeDayKey(record.createdAt) },
       {
         key: 'owner', label: 'Referente',
         value: (record) => (typeof record.owner === 'string' && record.owner ? text(ownerText(record.owner)) : null),
@@ -1263,11 +1280,16 @@ export function createPipelineBoard(deps) {
     return pill;
   }
 
+  /** A stage's probability when it is a real percentage (0-100), else null: one rule for the cell and its sort. */
+  function stageProbability(stage) {
+    const probability = stage?.probability;
+    return typeof probability === 'number' && probability >= 0 && probability <= 100 ? probability : null;
+  }
+
   /** Stage probability as `NN%`, or an em dash when the stage is unknown. */
   function probabilityText(stage) {
-    const probability = stage?.probability;
-    if (typeof probability !== 'number' || probability < 0 || probability > 100) return '—';
-    return `${probability}%`;
+    const probability = stageProbability(stage);
+    return probability === null ? '—' : `${probability}%`;
   }
 
   /**

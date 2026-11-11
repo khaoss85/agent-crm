@@ -34,20 +34,21 @@ const MEMBERS = [
   { subject: 'coach-guido', role: 'member', status: 'active', displayName: 'Guido Presti' },
 ];
 
-async function lista(records) {
+async function lista(records, { pipelines = [PIPELINE], name = 'b2b-sales' } = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
-      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE] };
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines };
       if (path === '/api/spine/memberships') return { items: MEMBERS };
       return { items: records };
     },
   };
   const board = createPipelineBoard({ doc, mount, client });
-  await board.renderBoard('b2b-sales');
+  await board.renderBoard(name);
   mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
+  mount.__board = board;
   return mount;
 }
 
@@ -135,4 +136,59 @@ test('fb47ab99b6ee: the sort survives a search and the switch back from Kanban',
   mount.findAll('button').find((node) => node.getAttribute('data-view') === 'kanban').dispatch('click');
   mount.findAll('button').find((node) => node.getAttribute('data-view') === 'lista').dispatch('click');
   assert.equal(header(mount, 'name').getAttribute('aria-sort'), 'ascending', 'the chosen sort is kept');
+});
+
+// ---- Review Muse #789, giro 1 ---------------------------------------------
+
+test('review #789: date columns sort by the Rome day they show, not the UTC day or the instant', async () => {
+  // 22:30Z is still 1 nov in Rome, 23:30Z is already 2 nov (CET, +1).
+  const mount = await lista([
+    record('late', 'discovery', { expectedCloseDate: '2026-11-01T23:30:00.000Z', createdAt: '2026-11-01T23:30:00.000Z' }),
+    record('early', 'discovery', { expectedCloseDate: '2026-11-01T22:30:00.000Z', createdAt: '2026-11-01T22:30:00.000Z' }),
+    record('same', 'discovery', { expectedCloseDate: '2026-11-02T08:00:00.000Z', createdAt: '2026-11-02T08:00:00.000Z' }),
+  ]);
+  assert.equal(cellsOf(mount, 'early')[5].textContent, '1 nov 2026');
+  assert.equal(cellsOf(mount, 'late')[5].textContent, '2 nov 2026');
+  sortBy(mount, 'close');
+  assert.deepEqual(ids(mount), ['early', 'late', 'same'], 'Chiusura: 1 nov before both 2 nov, and the two 2 nov keep their order');
+  sortBy(mount, 'created');
+  assert.deepEqual(ids(mount), ['early', 'late', 'same'], 'Creata: the same Rome day reads as a tie, not as two instants');
+  sortBy(mount, 'created');
+  assert.deepEqual(ids(mount), ['late', 'same', 'early'], 'reversed: the 2 nov pair first, in its stable order');
+});
+
+test('review #789: switching pipeline drops the previous board\'s Lista sort', async () => {
+  const other = { ...PIPELINE, name: 'altra', stages: [{ key: 'x', label: 'X', order: 10, type: 'open', probability: 50 }] };
+  const mount = await lista([
+    record('a', 'discovery', { name: 'Zeta' }),
+    record('b', 'discovery', { name: 'Alfa' }),
+    { ...record('c', 'x', { name: 'Zeta' }), pipelineKey: 'altra' },
+    { ...record('d', 'x', { name: 'Alfa' }), pipelineKey: 'altra' },
+  ], { pipelines: [PIPELINE, other] });
+  sortBy(mount, 'name');
+  assert.deepEqual(ids(mount), ['b', 'a']);
+  await mount.__board.renderBoard('altra');
+  assert.deepEqual(ids(mount), ['c', 'd'], 'the other board opens in server order');
+  for (const th of table(mount).findAll('th')) assert.equal(th.getAttribute('aria-sort'), 'none');
+});
+
+test('review #789: a probability the cell shows as «—» sorts with the blanks', async () => {
+  const odd = { ...PIPELINE, stages: [...PIPELINE.stages, { key: 'odd', label: 'Strana', order: 30, type: 'open', probability: 150 }] };
+  const mount = await lista([
+    record('o', 'odd'), record('d', 'demo'), record('s', 'discovery'),
+  ], { pipelines: [odd] });
+  assert.equal(cellsOf(mount, 'o')[4].textContent, '—');
+  sortBy(mount, 'probability');
+  assert.deepEqual(ids(mount), ['s', 'd', 'o'], '10%, 30%, then the blank');
+  sortBy(mount, 'probability');
+  assert.deepEqual(ids(mount), ['d', 's', 'o'], 'reversed, the blank still last');
+});
+
+test('review #789: the «Senza azienda» placeholder is recognised in any case or spacing', async () => {
+  const mount = await lista([
+    record('a', 'discovery', { companyName: 'senza azienda' }),
+    record('b', 'discovery', { companyName: ' SENZA  AZIENDA ' }),
+  ]);
+  assert.equal(cellsOf(mount, 'a')[1].textContent, '—');
+  assert.equal(cellsOf(mount, 'b')[1].textContent, '—');
 });
