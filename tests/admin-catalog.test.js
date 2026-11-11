@@ -1487,18 +1487,16 @@ test('AI draft Annulla writes nothing', async () => {
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'Annulla writes nothing');
 });
 
-test('\u2726 Aggiungi con l\u2019AI without an assistant names the keyboard shortcut and sends nothing', async () => {
+test('\u2726 Aggiungi con l\u2019AI needs no assistant: it opens the field inline and sends nothing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const toasted = [];
-  const view = createCatalogView({ doc, mount, client, toast: (message) => { toasted.push(message); } });
+  const view = createCatalogView({ doc, mount, client });
   await view.renderTable({});
 
   clickButton(mount, '\u2726 Aggiungi con l\u2019AI');
-  assert.equal(toasted.length, 1, 'the fallback names the way in');
-  assert.ok(toasted[0].includes('\u2318K'), 'the fallback names the AI shortcut');
-  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the fallback sends nothing');
+  assert.ok(mount.findAll('input').some((node) => node.getAttribute('aria-label') === 'Descrivi il prodotto in una frase'), 'the field opens inline, no assistant needed');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'opening the field sends nothing');
 });
 
 // backlog:b44fe65ac3e5 \u2014 supervisor design review at 1440: one line per
