@@ -999,6 +999,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // The preview is the latest message body read above — calls name no
     // body field, so a latest call (or a non-string body) previews as null.
     let lastContactText = null;
+    // An email's stored subject heads the preview, like a mail client.
+    let lastContactSubject = null;
     for (const row of myMessages) {
       const time = Date.parse(String(row?.occurredAt ?? ''));
       if (!Number.isFinite(time)) continue;
@@ -1006,6 +1008,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         lastContactAt = row.occurredAt;
         lastContactChannel = row.channel ?? null;
         lastContactText = typeof row?.body === 'string' ? row.body : null;
+        lastContactSubject = typeof row?.mailSubject === 'string' ? row.mailSubject : null;
       }
     }
     const renewalWithinDays = evidenceReads.subscriptions.rows.filter(mine).some((row) => (
@@ -1020,7 +1023,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       observedComplete,
       unreadBySubject: new Map(myUnread === null ? [] : [[key, myUnread]]),
       statusBySubject,
-      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText }]]),
+      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject }]]),
       offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {
         valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
       }]]),

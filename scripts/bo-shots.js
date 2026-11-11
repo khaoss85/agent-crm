@@ -19,8 +19,11 @@
  * nothing is invented for the camera. The completion probe stays in the DOM
  * but hidden, so it can never leak into a PNG. The Chromium lookup mirrors
  * the `*-shots` tests (`CHROMIUM_BIN`, then the Playwright headless-shell
- * caches). Where no binary exists, or it cannot run here, the command exits
- * 0 with a skip message: shots are a publishing convenience, not a gate.
+ * caches). Sandbox-less Linux executors refuse Chromium's zygote bootstrap,
+ * so the runnable probe retries once with `--no-sandbox` and every render
+ * run reuses the winning flags. Where no binary exists, or none runs even
+ * without the sandbox, the command fails loudly (exit 1) instead of
+ * skipping in silence: missing PNGs must never look like a pass.
  *
  * The command never touches the network: the fixture server binds 127.0.0.1
  * and Chromium runs with background networking disabled. The default output
@@ -1452,6 +1455,37 @@ export function chromiumRuns(binary) {
 }
 
 /**
+ * Sandbox-less Linux executors (this lane: unprivileged user namespaces
+ * disabled) refuse Chromium's zygote bootstrap, so a plain probe dies with
+ * "No usable sandbox" on a binary that paints fine without the sandbox.
+ * Probe once with a blank page, retrying once with `--no-sandbox`: only an
+ * exit-0 HTML dump counts as runnable. Returns the winning extra flags
+ * (`[]` when the sandbox works, `['--no-sandbox']` when only the retry
+ * paints) or `null` when nothing runs. Every render run reuses the winning
+ * flags, so the probe and the PNGs always launch Chromium the same way.
+ * (backlog:cd0ad69b)
+ * @param {string | null} binary
+ * @returns {Array<string> | null}
+ */
+export function chromiumFlags(binary) {
+  if (!binary) return null;
+  const probe = (extra) => {
+    try {
+      const out = spawnSync(binary, ['--headless', '--disable-gpu', '--dump-dom', ...extra, 'about:blank'], {
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      return out.status === 0 && String(out.stdout ?? '').includes('<html');
+    } catch {
+      return false;
+    }
+  };
+  if (probe([])) return [];
+  if (probe(['--no-sandbox'])) return ['--no-sandbox'];
+  return null;
+}
+
+/**
  * The browser must run WITHOUT blocking this process: the fixture server
  * lives on the same event loop, so a synchronous spawn would starve it and
  * the page could never load. Async spawn keeps the loop free to serve.
@@ -1720,9 +1754,9 @@ export function assertProbe(name, probe) {
  * proof come from two Chromium runs over the same harness URL with the
  * same fixtures under a frozen virtual clock, so both runs paint the same
  * logical page state and the PNG is gated on the probe of that state.
- * @param {{ binary: string, port: number, screen: object, outDir: string }} options
+ * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string }} options
  */
-async function renderScreen({ binary, port, screen, outDir }) {
+async function renderScreen({ binary, flags, port, screen, outDir }) {
   const page = screen.name === 'login'
     ? `http://127.0.0.1:${port}/login.html`
     : `http://127.0.0.1:${port}/shot-${screen.name}.html`;
@@ -1738,6 +1772,7 @@ async function renderScreen({ binary, port, screen, outDir }) {
     const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
     const run = await runChromium(binary, [
       '--headless',
+      ...flags,
       `--screenshot=${file}`,
       `--window-size=${viewport.width},${viewport.height}`,
       '--virtual-time-budget=8000',
@@ -1749,7 +1784,7 @@ async function renderScreen({ binary, port, screen, outDir }) {
       throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
     }
     const dom = await runChromium(binary, [
-      '--headless', '--dump-dom',
+      '--headless', ...flags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
       '--virtual-time-budget=8000',
       '--disable-background-networking',
@@ -1826,8 +1861,10 @@ async function main() {
     return;
   }
   const binary = findChromium();
-  if (!chromiumRuns(binary)) {
-    console.log('Skipping bo:shots: no runnable Chromium found (set CHROMIUM_BIN to override).');
+  const flags = chromiumFlags(binary);
+  if (flags === null) {
+    console.error('bo:shots: no runnable Chromium found, even with --no-sandbox (set CHROMIUM_BIN to override).');
+    process.exitCode = 1;
     return;
   }
   const wanted = args.screen ?? null;
@@ -1845,7 +1882,7 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, port: address.port, screen, outDir });
+      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

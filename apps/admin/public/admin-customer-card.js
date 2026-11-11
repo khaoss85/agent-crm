@@ -8,6 +8,7 @@ import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
+import { cleanMessageBody } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
@@ -2761,7 +2762,9 @@ export function createCustomerCardView(deps) {
           bubble.appendChild(el('p', 'bo-scheda-entry-body',
             [isOutbound ? 'chiamata in uscita' : isInbound ? 'chiamata in entrata' : 'chiamata', dur, outcome].filter(Boolean).join(' · ')));
         } else if (typeof item?.body === 'string' && item.body !== '') {
-          const text = readableText(item.body);
+          // The full body stays as written; only markup residue a mail
+          // stored (tags, style="…" fragments, hidden preheaders) goes.
+          const text = readableText(cleanMessageBody(item.body));
           const bodyNode = el('p', 'bo-scheda-entry-body', text);
           bubble.appendChild(bodyNode);
           if (text.length > ENTRY_FOLD_CHARS) {

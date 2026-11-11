@@ -34,6 +34,7 @@ import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { memberLabel, nameFromProfile, readableName } from './admin-labels.js';
+import { messagePreview } from './admin-message-preview.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -827,7 +828,8 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
     .sort((a, b) => (String(a.occurredAt ?? '') < String(b.occurredAt ?? '') ? 1 : String(a.occurredAt ?? '') > String(b.occurredAt ?? '') ? -1 : 0))
     .slice(0, 3);
   for (const message of inbound) {
-    const body = briefSnippet(message?.body);
+    // Read like a mail client: «Oggetto — estratto pulito» (Dan 10/11).
+    const body = messagePreview(message?.body, { subject: message?.mailSubject, max: 140 });
     // «Messaggio WhatsApp di ieri», «del 12 novembre»; without a stored
     // date «senza data», never «del data non registrata».
     const when = romeDayPhrase(message?.occurredAt, now, 'del') ?? 'senza data';
@@ -982,7 +984,9 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectKey,
       mono: channelTile(channel) ?? badgeInitials(name),
       name,
-      preview: briefSnippet(message.body, 110) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
+      // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
+      // residue or hidden preheaders; the subject alone when the body cleans away.
+      preview: messagePreview(message.body, { subject: message.mailSubject, max: 110 }) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
       when: [waitedFor(message.occurredAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject(subject),
     });
