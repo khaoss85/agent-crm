@@ -1971,3 +1971,44 @@ test('the fallback core says how many tests the PR changed and how many filled t
   );
   assert.equal(describeFallbackCore([], ['docs/x.md']), '0 changed test file(s), 0 nearest selected');
 });
+
+test('an injected bound that fires at once settles timed out, without a TDZ error', async () => {
+  const dir = scratchTests({ 'never.test.js': "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n" });
+  try {
+    let cancelled = 0;
+    const result = await runTestShards(['never.test.js'], {
+      parts: 1,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fire(); return () => { cancelled += 1; }; },
+    });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['never.test.js']);
+    assert.equal(cancelled, 1, 'the cancel of an already-fired bound is still called once');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an onJobDone observer that throws never stalls its part', async () => {
+  const dir = scratchTests({
+    'a.test.js': "import test from 'node:test';\ntest('a', () => {});\n",
+    'b.test.js': "import test from 'node:test';\ntest('b', () => {});\n",
+  });
+  try {
+    /** @type {string[]} */
+    const seen = [];
+    const result = await runTestShards(['a.test.js', 'b.test.js'], {
+      parts: 1,
+      timeoutSec: 3600,
+      cwd: dir,
+      onJobDone: (files) => { seen.push(...files); throw new Error('observer boom'); },
+    });
+    assert.equal(result.timedOut, false);
+    assert.equal(result.status, 0);
+    assert.deepEqual(result.remaining, []);
+    assert.deepEqual(seen.sort(), ['a.test.js', 'b.test.js']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
