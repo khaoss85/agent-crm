@@ -12,6 +12,8 @@ import {
   personStatusLabel,
   personStepLabel,
   proposeSequenceFromPhrase,
+  renderSequenzaDettaglio,
+  renderSequenzeElenco,
   sequenceChannelLabel,
   sequenceDayLabel,
   sequenceQuandoLine,
@@ -966,4 +968,28 @@ test('backlog:1d6dc54f19db retry senza spazio che fallisce resta un errore, mai 
   const outcome = await loadSequenzaSteps(client, key, 'presti');
   assert.equal(outcome.failed, true);
   assert.deepEqual(outcome.rows, []);
+});
+
+test('Bozza wears the same ui-* chip class in elenco and dettaglio (backlog:05e53e77)', () => {
+  // Supervisor 2026-11-07.md:46: live painted Bozza green in the list and
+  // blue in the detail. Both renders must share one system chip class.
+  const doc = createFakeDocument();
+  const list = renderSequenzeElenco(doc, [SEQUENCE], ENROLLMENTS, SENDS, '', () => {});
+  const listChip = list.querySelector('.bo-seq-status');
+  assert.equal(listChip.textContent, 'Bozza');
+  const detail = buildSequenzaDettaglio({
+    sequence: SEQUENCE,
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  const detailRoot = renderSequenzaDettaglio(doc, detail, null, () => {}, () => {}, () => {}, false);
+  const detailChip = detailRoot.querySelector('.bo-seq-status');
+  assert.equal(detailChip.textContent, 'Bozza');
+  const chipClasses = (node) => String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  const listClasses = chipClasses(listChip);
+  assert.ok(listClasses.includes('ui-chip'), 'the elenco chip uses the system chip');
+  assert.ok(listClasses.includes('ui-chip-wa'), 'the elenco chip uses the prototype tint');
+  assert.deepEqual(chipClasses(detailChip), listClasses, 'the dettaglio paints the same chip class as the elenco');
 });

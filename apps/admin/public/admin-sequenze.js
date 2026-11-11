@@ -43,6 +43,16 @@ export const SEQUENCE_STATUS_LABEL = Object.freeze({
   paused: 'In pausa',
 });
 
+/**
+ * The state chip the elenco and the dettaglio share (supervisor
+ * 2026-11-07.md:46: live paints Bozza green in the list and blue in the
+ * detail). DECISION (to be confirmed): keep the elenco's green — the
+ * dettaglio's blue duplicates the adjacent «Parte quando» trigger pill, so
+ * the list side is the prototype side. One constant, one system tint, so a
+ * supervisor verdict the other way is a one-token change.
+ */
+const SEQUENCE_STATUS_CHIP_CLASS = 'bo-seq-status ui-chip ui-chip-wa';
+
 /** Enrollment states in the order the package publishes them. */
 export const ENROLLMENT_STATUS_LABEL = Object.freeze({
   active: 'Attiva',
@@ -636,7 +646,7 @@ export function renderSequenzeElenco(doc, sequences, enrollments, sends, selecte
     if (row.sourceKey !== '' && row.sourceKey === selectedKey) item.setAttribute('data-selected', 'true');
     const head = el(doc, 'div', 'bo-seq-head');
     head.appendChild(el(doc, 'p', 'bo-seq-name', row.name));
-    head.appendChild(el(doc, 'p', 'bo-seq-status', row.statusLabel));
+    head.appendChild(el(doc, 'p', SEQUENCE_STATUS_CHIP_CLASS, row.statusLabel));
     item.appendChild(head);
     item.appendChild(el(doc, 'p', 'bo-seq-quando', row.quando));
     item.appendChild(el(doc, 'p', 'bo-seq-stats', row.stats));
@@ -670,7 +680,7 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
   const headCard = el(doc, 'div', 'bo-seq-card bo-seq-headcard');
   const headText = el(doc, 'div', 'bo-seq-headtext');
   headText.appendChild(el(doc, 'h3', undefined, detail.name));
-  headText.appendChild(el(doc, 'p', 'bo-seq-status', detail.statusLabel));
+  headText.appendChild(el(doc, 'p', SEQUENCE_STATUS_CHIP_CLASS, detail.statusLabel));
   const pills = el(doc, 'div', 'bo-seq-pills');
   pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-trigger', detail.pills.trigger));
   pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-stop', detail.pills.stop));

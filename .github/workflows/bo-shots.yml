@@ -9,9 +9,10 @@
 #
 # Where it runs: the self-hosted accordo-ci Mac runner, the only runner with
 # a working Chromium (the billing lock rejects GitHub-hosted jobs for this
-# account, and sandboxes refuse Chromium's Mach bootstrap, so the script
-# skips cleanly anywhere else). When no runnable Chromium exists the render
-# exits 0 with a skip message and the upload warns instead of failing.
+# account). On sandbox-less Linux the script retries Chromium with
+# --no-sandbox (backlog:cd0ad69b); when no runnable Chromium exists at all
+# the render fails loudly (exit 1) instead of skipping in silence, and the
+# upload warns instead of failing.
 
 name: bo-shots
 
