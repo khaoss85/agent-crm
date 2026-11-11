@@ -506,6 +506,40 @@ export function mergeLinkedIdentities(timeline) {
 }
 
 /**
+ * Voce 03a6535a7110 (Dan 11/11): i numeri chiamabili noti del contatto — il
+ * numero salvato per primo, poi i numeri visti sui canali telefono
+ * (WhatsApp, SMS, voce…), senza doppioni. Un numero in due forme di scrittura
+ * conta una volta sola; un timeline illeggibile lascia solo il salvato, mai
+ * una lista inventata.
+ * @param {any} card the read-customer-card answer
+ * @param {any} timeline the read-customer-timeline answer (or null)
+ * @returns {readonly string[]} the known numbers, saved first
+ */
+export function knownCallNumbers(card, timeline) {
+  const numbers = [];
+  const seen = new Set();
+  const push = (raw) => {
+    if (typeof raw !== 'string') return;
+    const trimmed = raw.trim();
+    if (trimmed === '') return;
+    const key = trimmed.replaceAll(/[^\d+]/g, '');
+    if (key === '' || seen.has(key)) return;
+    seen.add(key);
+    numbers.push(trimmed);
+  };
+  if (card?.phone?.available === true) push(card.phone.value);
+  const merged = mergeLinkedIdentities(timeline ?? null);
+  if (Array.isArray(merged.rows)) {
+    for (const row of merged.rows) {
+      if (!PHONE_LIKE_SYSTEMS.includes(row?.system)) continue;
+      if (typeof row?.externalId !== 'string' || row.externalId.trim() === '') continue;
+      push(row.externalId);
+    }
+  }
+  return Object.freeze(numbers);
+}
+
+/**
  * Voce 59def6cb805d (C10): the directions observed per channel on the
  * customer's passages — `{in, out}` by lowercase system. Evidence only: a
  * direction nobody recorded is never assumed.
@@ -1053,22 +1087,27 @@ export function createCustomerCardView(deps) {
     const phone = card?.phone?.available === true
       && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
       ? card.phone.value.trim() : null;
-    if (phone !== null) {
-      // Voce 105563eea902: voice-aware «Chiama» — the number is dialed from
-      // the CRM only through a linked voice connection (the call then enters
-      // the scheda cronologia through POST /api/customer-hub/calls); without
-      // one the card says so and falls back to `tel:`, never logging a call
-      // the CRM never placed. A hostile value stays text in the title: the
-      // href is built only from the fallback branch below, never here.
-      const call = tile('Chiama', 'telefono');
-      call.setAttribute('type', 'button');
-      call.setAttribute('data-action', 'call-customer');
-      call.setAttribute('title', `Chiama ${phone}`);
-      call.addEventListener('click', () => {
-        openCallPanel(box, card, navCtx, phone);
-      });
-      row.appendChild(call);
-    } else {
+    // Voce 03a6535a7110 (Dan 11/11): «Chiama» c'è sempre. Con un solo numero
+    // noto chiama subito; con più numeri o senza numero apre il pannello che
+    // chiede quale usare (un numero nuovo si salva sul contatto, poi parte
+    // la chiamata). Mai un clic che non fa niente.
+    const known = knownCallNumbers(card, navCtx?.timeline ?? extra.timeline ?? null);
+    // Voce 105563eea902: voice-aware «Chiama» — the number is dialed from
+    // the CRM only through a linked voice connection (the call then enters
+    // the scheda cronologia through POST /api/customer-hub/calls); without
+    // one the card says so and falls back to `tel:`, never logging a call
+    // the CRM never placed. A hostile value stays text in the title: the
+    // href is built only from the fallback branch below, never here.
+    const call = tile('Chiama', 'telefono');
+    call.setAttribute('type', 'button');
+    call.setAttribute('data-action', 'call-customer');
+    call.setAttribute('title', known.length === 1 ? `Chiama ${known[0]}` : 'Chiama il cliente (scegli il numero)');
+    call.addEventListener('click', () => {
+      if (known.length === 1) openCallPanel(box, card, navCtx, known[0]);
+      else openCallNumberPanel(box, card, navCtx, known);
+    });
+    row.appendChild(call);
+    if (phone === null) {
       // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
       // Voce 105563eea902: the empty state offers its own cure — the
@@ -1187,6 +1226,89 @@ export function createCustomerCardView(deps) {
       `tel:${dialable === '' ? dialPhone : dialable}`,
       `Chiama ${dialPhone} (tel:)`, 'call-fallback'));
   };
+  /**
+   * Voce 03a6535a7110 (Dan 11/11): il pannello «Chiama» quando il numero da
+   * usare non è uno solo — con più numeri noti chiede quale usare, senza
+   * numero salvato chiede di scriverne uno. Un numero nuovo si salva sul
+   * contatto con POST /api/customer-hub/phone (la stessa strada di «Aggiungi
+   * telefono», stessi testi italiani in caso di rifiuto), poi si apre il
+   * pannello di chiamata. Ogni clic fa qualcosa di visibile; il numero
+   * digitato resta nel campo finché non è salvato.
+   */
+  function openCallNumberPanel(box, card, navCtx, known) {
+    const old = box.querySelector('div[data-call-number="open"]');
+    if (old) {
+      while (old.firstChild) old.removeChild(old.firstChild);
+    }
+    const panel = old ?? el('div', 'bo-scheda-composer');
+    panel.setAttribute('data-call-number', 'open');
+    if (!old) box.appendChild(panel);
+    panel.appendChild(el('h4', undefined, 'Chiama'));
+    if (known.length > 0) {
+      panel.appendChild(el('p', 'bo-muted', 'Scegli quale numero chiamare.'));
+      for (const number of known) {
+        const pick = el('button', undefined, number);
+        pick.setAttribute('type', 'button');
+        pick.setAttribute('data-action', 'choose-call-number');
+        pick.addEventListener('click', () => {
+          if (panel.parentNode) panel.parentNode.removeChild(panel);
+          openCallPanel(box, card, navCtx, number);
+        });
+        panel.appendChild(pick);
+      }
+      panel.appendChild(el('p', 'bo-muted', 'Oppure salva un numero nuovo e chiama.'));
+    } else {
+      panel.appendChild(el('p', 'bo-muted',
+        'Nessun numero salvato per questo cliente: scrivi il numero da chiamare, lo salvo sul contatto.'));
+    }
+    const input = el('input');
+    input.setAttribute('type', 'tel');
+    input.setAttribute('placeholder', '+393331234567');
+    input.setAttribute('aria-label', 'Numero di telefono in formato internazionale');
+    panel.appendChild(input);
+    const err = el('p', 'field-error', '');
+    const row = el('div', 'bo-scheda-form-actions');
+    const save = el('button', undefined, 'Salva e chiama');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'save-call-number');
+    const cancel = el('button', undefined, 'Annulla');
+    cancel.setAttribute('type', 'button');
+    cancel.setAttribute('data-action', 'cancel-call-number');
+    row.appendChild(save);
+    row.appendChild(cancel);
+    panel.appendChild(row);
+    panel.appendChild(err);
+    let busy = false;
+    save.addEventListener('click', async () => {
+      if (busy) return;
+      const typed = input.value.trim();
+      if (typed === '') {
+        err.textContent = 'Scrivi il numero prima di chiamare.';
+        return;
+      }
+      busy = true;
+      err.textContent = '';
+      try {
+        const saved = await client.request('/api/customer-hub/phone', {
+          method: 'POST',
+          body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone: typed }),
+        });
+        const number = typeof saved?.externalId === 'string' && saved.externalId.trim() !== ''
+          ? saved.externalId.trim() : typed;
+        toast('Telefono salvato');
+        if (panel.parentNode) panel.parentNode.removeChild(panel);
+        openCallPanel(box, card, navCtx, number);
+      } catch (error) {
+        // The typed number stays in the field: the operator corrects it.
+        err.textContent = phoneRefusalText(error);
+      } finally {
+        busy = false;
+      }
+    });
+    cancel.addEventListener('click', () => {
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+    });
+  }
   function openCallPanel(box, card, navCtx, phone) {
     const old = box.querySelector('div[data-call="open"]');
     if (old) {
@@ -3589,6 +3711,7 @@ export function createCustomerCardView(deps) {
     };
     section(left, '', quickActions, card, {
       resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
+      timeline,
     });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
