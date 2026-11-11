@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError } from '../../core/index.js';
+import { htmlToText, isPlaceholderBody } from '../../core/message-preview.js';
 import {
   GMAIL_MAX_ATTACHMENTS,
   GMAIL_MAX_TEXT,
@@ -154,23 +155,22 @@ function collectPartTexts(part, out) {
   out.push({ kind: mime === 'text/html' ? 'html' : 'text', text });
 }
 
-/** An HTML part to readable text: scripts gone, blocks broken, tags stripped. */
+/**
+ * An HTML part to readable text: the core `htmlToText` (Dan 10/11) — head,
+ * scripts, styles and hidden preheaders (display:none, max-height:0,
+ * opacity:0) gone, blocks broken, tags stripped quote-aware, never an
+ * attribute fragment left behind. The old stripper rewrote `<div id=…>`
+ * as `<div>id=…>` and stored the attributes as text.
+ */
 function stripHtmlToText(html) {
-  return String(html)
-    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
-    .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
-    .replace(/<br(?:\s[^>]*)?\/?>/gi, '\n')
-    .replace(/<(p|div|li|tr|h[1-6])[\s>]/gi, '\n<$1>')
-    .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n');
+  return htmlToText(html);
 }
 
 /**
  * The readable body of one `format=full` payload (backlog:3055d50330b5):
  * the first `text/plain` part wins, then the first `text/html` part
- * stripped to text, then the snippet. Sanitized either way (entities
+ * stripped to text, then the snippet. A plain part that is only a stand-in
+ * for the HTML (core `isPlaceholderBody`) loses to the HTML part. Sanitized either way (entities
  * decoded, padding invisibles stripped). Longer than
  * `GMAIL_MAX_STORED_TEXT` truncates instead of refusing the message — a
  * newsletter stays saved with its preheader at the top, never skipped over
@@ -188,16 +188,24 @@ function readMailBodyText(payload, snippet) {
     const out = sanitizeGmailText(text);
     return out.length > GMAIL_MAX_STORED_TEXT ? out.slice(0, GMAIL_MAX_STORED_TEXT) : out;
   };
+  // A plain part that is only a stand-in (Dan 10/11: «Please view this
+  // email in an HTML-capable email client», «Visualizza la versione Web
+  // <url>», a list of tracking links) gives way to the HTML part; it is
+  // kept only when no HTML part reads to text.
+  let standIn = null;
   for (const entry of found) {
     if (entry.kind !== 'text') continue;
     const text = clean(entry.text);
-    if (text !== '') return text;
+    if (text === '') continue;
+    if (!isPlaceholderBody(text)) return text;
+    standIn ??= text;
   }
   for (const entry of found) {
     if (entry.kind !== 'html') continue;
     const text = clean(stripHtmlToText(entry.text));
     if (text !== '') return text;
   }
+  if (standIn !== null) return standIn;
   return clean(snippet);
 }
 

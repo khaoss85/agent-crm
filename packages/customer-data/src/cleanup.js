@@ -4,6 +4,7 @@ import { AppError, normalizeActor } from '../../core/index.js';
 import { CUSTOMER_SCAN_LIMIT, PHONE_BEARING_SYSTEMS } from './customers.js';
 import { emailShape, normalizeCompanyName } from './normalize.js';
 import { isNoCompany, recordCandidatePairs } from './sender.js';
+import { contactDisplayName } from './display-name.js';
 import {
   deciding,
   optional,
@@ -73,7 +74,8 @@ function cleanLabel(value) {
 }
 
 function contactLabel(contact) {
-  return cleanLabel(`${contact?.firstName ?? ''} ${contact?.lastName ?? ''}`.trim());
+  // The one display rule (display-name.js): «Fastweb —» reads «Fastweb».
+  return cleanLabel(contactDisplayName(contact) ?? '');
 }
 
 function digitsOf(value) {

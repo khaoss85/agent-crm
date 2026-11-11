@@ -1,7 +1,7 @@
 // @ts-check
 
 import { deciding, newestFirst, optional, subjectKey, subjectOf, trusted } from './store.js';
-import { isNoCompany } from './sender.js';
+import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 import { deriveCustomerStatus } from './customer-status.js';
 
 /**
@@ -402,8 +402,13 @@ async function readIdentity({ modules, subject, cluster }) {
   // placeholder (production 07/11): the profile — and the card and timeline
   // that read it — names no company for it. The contact still carries its
   // companyId, the one id an offer for this customer is filed under.
-  const shownCompany = company && !(contact && isNoCompany(company)) ? company : null;
+  // A placeholder company (`Unknown (assistenza@…)`) is no company either.
+  const shownCompany = shownCompanyOf(company, contact);
   return Object.freeze({
+    // The name every screen shows (display-name.js, production 10/11):
+    // computed here by the owning package, so the card, Oggi and Calendario
+    // read it through the capability instead of re-deriving it.
+    displayName: contact ? contactDisplayName(contact) : companyDisplayName(shownCompany),
     company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name, domain: shownCompany.domain ?? null }) : null,
     contact: contact ? Object.freeze({
       id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName,

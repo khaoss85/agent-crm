@@ -44,3 +44,21 @@ test('d128847d21fc: an empty answer over a complete list keeps the plain sentenc
   const text = await search({ items: [], total: 0, complete: true }, 'Zzz');
   assert.match(text, /Nessun cliente corrisponde\. Prova con un altro nome\./, text);
 });
+
+test('7d82fd84: items over a partial list still say the list is partial', async () => {
+  const text = await search(
+    { items: [{ name: 'Ada Rossi', resource: 'contact', id: 'c1' }], total: 1, complete: false },
+    'Ada',
+  );
+  assert.match(text, /Ada Rossi/, text);
+  assert.match(text, /L’elenco è parziale/, text);
+});
+
+test('7d82fd84: items over a complete list say nothing about partial', async () => {
+  const text = await search(
+    { items: [{ name: 'Ada Rossi', resource: 'contact', id: 'c1' }], total: 1, complete: true },
+    'Ada',
+  );
+  assert.match(text, /Ada Rossi/, text);
+  assert.doesNotMatch(text, /parziale/, text);
+});

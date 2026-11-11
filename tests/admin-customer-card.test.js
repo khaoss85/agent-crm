@@ -186,7 +186,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -231,6 +231,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       if (path.startsWith('/api/audit')) {
         if (auditError) throw auditError;
         return { items: audit };
+      }
+      if (path === '/api/spine/memberships') {
+        if (teamError) throw teamError;
+        return { items: team };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -933,7 +937,10 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
   assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
-  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'unreadable evidence never reads as a definitive none');
+  // Voce ebde30a307f2: moduli order/commercial-contract/subscription non
+  // composti → nessuna riga (né hedge né «nessuna attività»).
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'uncomposed evidence shows no false hedge');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'uncomposed evidence never reads as a definitive none');
 });
 
 test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
@@ -982,8 +989,51 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   assertCustomerItalian(text, 'proven-empty card');
   assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
   assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'proven absence carries no hedge');
-  assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
+  assert.ok(!text.includes('Nessuna offerta firmata'), '2f2d22f2: the old confirmed-none line is gone');
+  assert.ok(!text.includes('Offerta'), '2f2d22f2: a readable-but-empty commercial page hides the offer card');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
+});
+
+test('ebde30a307f2: moduli non composti, nessuna riga ordini/contratti', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: PROFILE_BARE, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'uncomposed evidence card');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'no false hedge when nothing is composed');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'no definitive none when nothing is composed');
+});
+
+test('ebde30a307f2: profilo non composto (404), nessuna riga ordini/contratti', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: null, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'missing profile card');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'a 404 profile hides the line instead of a false hedge');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'a 404 profile never claims a definitive none');
+});
+
+test('ebde30a307f2: moduli composti ma illeggibili, resta il messaggio temporaneo', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE,
+    timeline: TIMELINE_BARE,
+    profile: {
+      ...PROFILE_BARE,
+      orders: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      contracts: {
+        available: false,
+        reason: 'commercial contracts could not be read from this application',
+        items: null, count: null,
+      },
+      subscriptions: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    },
+    enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'failed-evidence card');
+  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'a failed read on composed modules keeps the temporary message');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'a failed read never reads as a definitive none');
 });
 
 // Voce 59def6cb805d: la colonna centrale parla come il prototipo — titolo,
@@ -1580,7 +1630,7 @@ test('826e377c: observed rows on any labeled channel render with no buttons', as
   assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
-test('a customer with no linked offer reads none registered, never another customer offer', async () => {
+test('2f2d22f2: a customer with no linked offer shows no offer card, never another customer offer', async () => {
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
@@ -1589,8 +1639,103 @@ test('a customer with no linked offer reads none registered, never another custo
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!titles.includes('Offerta'), 'the offer card stays hidden without an offer');
+  assert.ok(!text.includes('Nessuna offerta firmata'), 'no confirmed-none line without an offer');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
+});
+
+test('2f2d22f2: a half-readable commercial page keeps the offer card with its unavailable line', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: { available: false, items: null, reason: 'the commercial package is not composed' },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(titles.includes('Offerta'), 'the half-readable offer card stays');
+  assert.ok(text.includes('offerte non disponibili'), 'the unavailable side reads a fixed Italian line');
+  assert.ok(!text.includes('Nessuna offerta firmata'), 'a half read never claims a confirmed none');
+});
+
+test('2f2d22f2: the card names its customer to the shell breadcrumb, once per name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, ['Guido Presti'], 'the name fires once, not on every re-read');
+});
+
+test('2f2d22f2 review #722 P2-1: another customer with the same name re-narrows the breadcrumb', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  // Same name on another customer (the router repainted plain «Clienti» on
+  // entry): the dedup must not swallow the second narrowing.
+  await view.renderCard('contact', 'c2');
+  assert.deepEqual(titles, ['Guido Presti', 'Guido Presti'], 'same name, other customer: the crumb narrows again');
+});
+
+test('2f2d22f2 review #722 P2-1: re-entering the same card after navigation restores the name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  // The operator leaves the card (the router repaints plain «Clienti»)
+  // and comes back on the same scheda with the same hash.
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, ['Guido Presti', 'Guido Presti'], 're-entry restores «Clienti / <nome>»');
+});
+
+test('2f2d22f2 review #722 P2-2: a card read resolving after navigation never titles the new screen', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  let releaseCard;
+  const cardGate = new Promise((resolve) => { releaseCard = resolve; });
+  const inner = stubClient();
+  const slowClient = {
+    ...inner,
+    async request(path, options = {}) {
+      if (path.includes('/card/')) await cardGate;
+      return inner.request(path, options);
+    },
+  };
+  const view = createCustomerCardView({
+    doc, mount, client: slowClient, onCustomerTitle: (title) => { titles.push(title); },
+  });
+  const pending = view.renderCard('contact', 'c1');
+  // The operator navigates on (Calendario) while the card read is in flight.
+  view.invalidate();
+  releaseCard();
+  await pending;
+  assert.deepEqual(titles, [], 'the stale read stays silent on the new screen');
+});
+
+test('2f2d22f2: a failed card read clears the shell breadcrumb', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient({ cardError: failure }), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, [null], 'the shell falls back to plain Clienti');
 });
 
 test('backlog:32820692: attachments render on the card: thumbnail, player, icon with name', async () => {
@@ -3183,6 +3328,114 @@ test('composer AI (backlog:01289e73): a pick after a channel switch fills the li
   assert.equal(live.value, 'Prova di giovedì', 'the title lands in the subject the member sees');
 });
 
+// Production 10/11 12:41Z (seguito di #718): after a pick the three
+// versions stay on screen; switching version refills the field with no new
+// draft call, and a hand-edited text is never replaced in silence.
+const aiPicks = (panel) => panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
+const threeVersions = {
+  corta: 'Ciao Guido!',
+  lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova con piacere.',
+  diretta: 'Guido, ci vediamo giovedì alle 18 per la prova.',
+};
+async function pickedComposer() {
+  const client = draftClient({ ...threeVersions, subject: 'Prova di giovedì' });
+  const { panel, toasts } = await openComposerMount({ client });
+  const parts = aiParts(panel);
+  parts.area.value = 'Il mio testo';
+  parts.input.value = 'ricordagli la prova di giovedì';
+  parts.go.dispatch('click');
+  await flushComposer();
+  aiPicks(panel)[2].dispatch('click');
+  await flushComposer();
+  return { client, panel, toasts, ...parts };
+}
+
+test('composer AI: after a pick the three versions stay, the picked one is marked, a switch calls nothing', async () => {
+  const { client, panel, area, subject, toasts } = await pickedComposer();
+  assert.equal(area.value, threeVersions.diretta);
+  assert.equal(subject.value, 'Prova di giovedì');
+  const picks = aiPicks(panel);
+  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta'], 'the three versions stay after the pick');
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the picked version reads as selected');
+  picks[0].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.corta, 'switching refills the field with the other version');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['true', 'false', 'false']);
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.equal(client.drafts.length, 1, 'a switch never asks the draft route again');
+  assert.equal(client.posts.length, 0, 'the draft never sends');
+  assert.deepEqual(toasts, []);
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays offered');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'Annulla keeps the versions, none selected');
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.lunga, 'after Annulla a pick fills again, no confirmation over the person’s own text');
+  assert.equal(client.drafts.length, 1);
+});
+
+test('composer AI: a hand-edited text asks inline before a version replaces it, and Tieni il mio keeps it', async () => {
+  const { client, panel, area } = await pickedComposer();
+  area.value = `${threeVersions.diretta} A presto, Laura`;
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, `${threeVersions.diretta} A presto, Laura`, 'the edits are never replaced in silence');
+  assert.match(panel.textContent, /Sostituire il testo modificato/);
+  const keep = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-keep');
+  assert.ok(keep, 'the member can keep the edited text');
+  keep.dispatch('click');
+  assert.equal(area.value, `${threeVersions.diretta} A presto, Laura`);
+  assert.doesNotMatch(panel.textContent, /Sostituire il testo modificato/);
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the selection stays on the kept version');
+  // Replace when confirmed.
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  const replace = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-replace');
+  assert.ok(replace, 'Sostituisci confirms inline');
+  replace.dispatch('click');
+  await flushComposer();
+  assert.equal(area.value, threeVersions.lunga);
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+  assert.equal(client.drafts.length, 1, 'no new draft call');
+});
+
+// Muse P2 on #737: a second pick while a confirmation is open updates it in
+// place; «Tieni il mio» brings back the draft line with Annulla, never the
+// first confirmation.
+test('composer AI: a second pick over an open confirmation keeps Annulla and Tieni il mio restores the draft line', async () => {
+  const { panel, area } = await pickedComposer();
+  const edited = `${threeVersions.diretta} A presto, Laura`;
+  area.value = edited;
+  aiPicks(panel)[1].dispatch('click');
+  await flushComposer();
+  aiPicks(panel)[0].dispatch('click');
+  await flushComposer();
+  assert.match(panel.textContent, /versione Corta\?/, 'the open confirmation now names the last pick');
+  assert.doesNotMatch(panel.textContent, /versione Lunga\?/);
+  assert.equal(panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-keep').length, 1, 'one confirmation, never two');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-keep').dispatch('click');
+  assert.equal(area.value, edited);
+  assert.doesNotMatch(panel.textContent, /Sostituire il testo modificato/);
+  assert.match(panel.textContent, /rileggila e modificala prima di inviare/, 'the draft line is back');
+  const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays');
+  undo.dispatch('click');
+  assert.equal(area.value, 'Il mio testo');
+});
+
+test('composer AI: Rigenera asks three new versions that replace the old choice', async () => {
+  const { client, panel, go } = await pickedComposer();
+  assert.equal(go.textContent, 'Rigenera');
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts.length, 2, 'Rigenera is the one way to ask again');
+  const picks = aiPicks(panel);
+  assert.equal(picks.length, 3, 'one set of versions, never two');
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'new versions start unpicked');
+});
+
 test('composer AI (backlog:01289e73): a single-text answer from an older pilot still fills at once', async () => {
   const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
   const { panel } = await openComposerMount({ client });
@@ -4499,6 +4752,25 @@ test('c1649d1d: the scheda Storia stati names who moved the offer from which sta
     'an unlabelled move still reads the generic Italian line, like the detail');
 });
 
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Storia stati names a team actor from the roster, never «utente»', async () => {
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+    audit: [
+      {
+        action: 'opportunity.updated', actorId: 'github|48571113', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+        data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+      },
+    ],
+    team: [{ subject: 'github|48571113', displayName: 'Daniele Pelleri', email: 'dan@example.com' }],
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(text.includes('da Daniele Pelleri'), 'the team actor reads the profile name from the roster');
+  assert.ok(!text.includes('da utente'), 'no team actor hides behind «utente»');
+  assert.ok(!text.includes('github|'), 'no provider id leaks on screen');
+});
+
 test('c1649d1d: an unreadable audit trail reads one honest line', async () => {
   const mount = await renderCard(stubClient({
     profile: PLACED_QUOTE_PROFILE,
@@ -4528,8 +4800,43 @@ test('review giro 1: a rejected audit read logs its cause, never its payload', a
   }
   const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
   assert.equal(reads.length, 1, 'the trail failure is logged once');
-  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', status: 500 },
-    'on-call sees area, code and status');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', name: 'Error', spaceId: null, status: 500 },
+    'on-call sees area, code, name, space and status — never payload or PII');
+});
+
+test('review Muse #750 giro 2, P1 on this PR (backlog:e52c5e0dd49f): a rejected roster read is logged and the Storia stati still paints record names', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const profile = {
+      ...PLACED_QUOTE_PROFILE,
+      opportunities: {
+        ...PLACED_QUOTE_PROFILE.opportunities,
+        items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+      },
+    };
+    const mount = await renderCard(stubClient({
+      profile,
+      schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+      audit: [
+        {
+          action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+          data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+        },
+      ],
+      teamError: Object.assign(new Error('down'), { code: 'UNKNOWN', status: 500 }),
+    }));
+    await flushClicks(5);
+    assert.ok(mount.textContent.includes('da elena'),
+      'the move still names its record actor when the roster is unavailable');
+  } finally {
+    console.error = original;
+  }
+  const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
+  assert.equal(reads.length, 1, 'the roster failure is logged once, like the trail failure');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati-roster', code: 'UNKNOWN', name: 'Error', spaceId: null, status: 500 },
+    'on-call can tell an unavailable roster from an empty one — with no roster data');
 });
 
 test('review giro 1: moves without pipelines read generic lines, never a false empty', async () => {

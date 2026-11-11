@@ -31,6 +31,8 @@ import {
   oggiDateLine,
   renderOggi,
   romeDayKey,
+  romeDayPhrase,
+  romeDayKeyShift,
   romeTime,
   staleFields,
   triageState,
@@ -450,13 +452,23 @@ test('recap follows the prototype sentence with real counts', () => {
     buildTodayRecap({ appointments: [APPT_TODAY], openTasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-9' }], now: OGGI_NOW }),
     'Oggi hai 2 cose da fare e 1 appuntamento. Ti servono circa 6 minuti.',
   );
+  // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
+  // the verb agrees with the count, and zero reads as a person says it.
   assert.equal(
     buildTodayRecap({ appointments: [], openTasks: [], now: OGGI_NOW }),
-    'Niente in sospeso. Ti restano 0 appuntamenti.',
+    'Niente in sospeso e nessun appuntamento per oggi.',
   );
   assert.equal(
     buildTodayRecap({ appointments: [APPT_TODAY, APPT_TOMORROW], openTasks: [], now: OGGI_NOW }),
-    'Niente in sospeso. Ti restano 1 appuntamento.',
+    'Niente in sospeso. Ti resta 1 appuntamento.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [APPT_TODAY, { ...APPT_TODAY, id: 'appt-9' }], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso. Ti restano 2 appuntamenti.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [TASK_OPEN], now: OGGI_NOW }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti.',
   );
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
@@ -1460,7 +1472,7 @@ test('5083e7a77c26: with no more calls today the card prepares the next one ahea
   assert.equal(brief.when, 'domani alle 10:00');
   assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00 con Giulia Romano'), brief.bullets[0]);
   const later = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-10-23T08:00:00.000Z' }, now: lateToday });
-  assert.equal(later.when, '23 ott alle 10:00');
+  assert.equal(later.when, '23 ottobre alle 10:00', 'the month in full (7d30fb517785)');
   const today = buildPreCallBrief({ appointment: APPT_TODAY, now: OGGI_NOW });
   assert.equal(today.when, 'oggi alle 10:00', 'today keeps its wording');
 });
@@ -1671,7 +1683,7 @@ function virtualClock() {
   };
 }
 
-function slowOggiClient(clock, ms) {
+function slowOggiClient(clock, ms, appointment = APPT_TODAY) {
   /** @type {Array<string>} */
   const asked = [];
   const answer = (path) => {
@@ -1679,7 +1691,7 @@ function slowOggiClient(clock, ms) {
     if (path === '/api/profile') return {};
     if (path.startsWith('/api/customer-data/profile/')) return { identity: { contact: { firstName: 'Giulia', lastName: 'Romano' } } };
     if (path.startsWith('/api/modules/work-task/records')) return { items: [TASK_OPEN] };
-    if (path.startsWith('/api/modules/appointment/records')) return { items: [APPT_TODAY] };
+    if (path.startsWith('/api/modules/appointment/records')) return { items: [appointment] };
     if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
     if (path.startsWith('/api/modules/conversation/records')) return { items: [{ id: 'conv-1', status: 'open' }] };
     if (path.startsWith('/api/modules/interaction-message/records')) {
@@ -1812,4 +1824,114 @@ test('#692 P2: Oggi counts of the nine only, an active SMS included', () => {
   const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
   assert.ok(strip.includes('0 di 9 collegati'), strip);
   assert.ok(!strip.includes('di 10'), 'never «di 10» on Oggi');
+});
+
+// backlog:7d30fb517785 (production 10/11, Oggi): «Appuntamento di 12 nov
+// alle 10:00» — the brief writes the day as a person does: the right
+// article, the month in full, «oggi»/«domani»/«ieri» when it is one of them.
+test('7d30fb517785: Oggi writes days with the right article and the month in full', () => {
+  const lateToday = new Date('2026-10-19T16:00:00.000Z');
+  const twelfth = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-11-12T09:00:00.000Z' }, now: lateToday });
+  assert.ok(twelfth.bullets[0].startsWith('Appuntamento del 12 novembre alle 10:00 con Giulia Romano'), twelfth.bullets[0]);
+  assert.equal(twelfth.when, '12 novembre alle 10:00');
+  const eighth = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-11-08T09:00:00.000Z' }, now: lateToday });
+  assert.ok(eighth.bullets[0].startsWith('Appuntamento dell\u20198 novembre alle 10:00'), eighth.bullets[0]);
+  const tomorrow = buildPreCallBrief({ appointment: APPT_TOMORROW, now: lateToday });
+  assert.ok(tomorrow.bullets[0].startsWith('Appuntamento di domani alle 10:00'), tomorrow.bullets[0]);
+
+  assert.equal(romeDayPhrase('2026-10-11T10:00:00.000Z', OGGI_NOW, 'il'), 'l\u201911 ottobre');
+  assert.equal(romeDayPhrase('2026-10-01T10:00:00.000Z', OGGI_NOW, 'del'), 'dell\u20191 ottobre');
+  assert.equal(romeDayPhrase('2026-10-12T10:00:00.000Z', OGGI_NOW, 'il'), 'il 12 ottobre');
+  assert.equal(romeDayPhrase('2026-10-18T10:00:00.000Z', OGGI_NOW, 'del'), 'di ieri');
+  assert.equal(romeDayPhrase('not a date', OGGI_NOW, 'del'), null);
+
+  // The brief's messages and calls, and the follow-up motive, read alike.
+  const brief = buildPreCallBrief({
+    appointment: APPT_TODAY,
+    messages: [MESSAGE_IN, { ...MESSAGE_IN, id: 'msg-2', occurredAt: '2026-10-12T09:00:00.000Z' }, { ...MESSAGE_IN, id: 'msg-3', occurredAt: null, channel: 'email' }],
+    calls: [CALL_MADE],
+    now: OGGI_NOW,
+  });
+  const lines = brief.bullets.join('\n');
+  assert.ok(lines.includes('Messaggio WhatsApp di ieri: “Ciao'), lines);
+  assert.ok(lines.includes('Messaggio WhatsApp del 12 ottobre: “Ciao'), lines);
+  assert.ok(lines.includes('Email senza data: “Ciao'), lines);
+  assert.ok(lines.includes('Chiamata del 17 ottobre: Interessata'), lines);
+  assert.ok(brief.sources.some((source) => source.label === 'Messaggio WhatsApp di ieri'), 'the source label reads the same');
+  assert.ok(!/\b(gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic)\b/.test(lines), `no short month: ${lines}`);
+  assert.ok(!/ di \d/.test(lines) && !lines.includes('del data'), 'never «di 12», never «del data non registrata»');
+
+  const [followup] = buildAdvisorActions({
+    tasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-8', openedAt: '2026-10-08T08:00:00.000Z', dueAt: '2026-10-20T00:00:00.000Z' }],
+    appointments: [],
+    now: OGGI_NOW,
+  }).actions;
+  assert.equal(followup.why, 'Follow-up aperto ieri: Giulia Romano.');
+  const [, older] = buildAdvisorActions({
+    tasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-8', openedAt: '2026-10-08T08:00:00.000Z', dueAt: '2026-10-20T00:00:00.000Z' }],
+    appointments: [],
+    now: OGGI_NOW,
+  }).actions;
+  assert.equal(older.why, 'Follow-up aperto l\u20198 ottobre: Giulia Romano.');
+});
+
+// backlog:7d30fb517785 (production 10/11, Oggi): the advisor read
+// «Appuntamento oggi alle 11:00 con un ospite da confermare» while the
+// agenda, at the same hour, named the linked customer. The names land after
+// the advisor painted: its row takes the same name, in place.
+test('7d30fb517785: the advisor names the linked customer once the names land, with the agenda, keeping its buttons', async () => {
+  const clock = virtualClock();
+  const synced = { ...APPT_TODAY, subjectLabel: null };
+  const client = slowOggiClient(clock, 2000, synced);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW }).then(() => { rendered = true; });
+  await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
+  const row = () => mount.querySelector('div[data-action="bo04:appointment:appt-1"]');
+  assert.ok(row(), 'the prep card is on screen');
+  assert.ok(row().textContent.includes('ospite da confermare'), 'before the names land, the neutral wait');
+  const advisor = mount.findAll('section')[0];
+  const execute = row().querySelector('button[data-triage="execute"]');
+  execute.focus();
+
+  await clock.runUntil(() => rendered);
+  const agenda = mount.querySelector('section[data-oggi-section="agenda"]').textContent;
+  assert.ok(agenda.includes('Giulia Romano'), 'the agenda names the linked customer');
+  const prep = row().textContent;
+  assert.ok(prep.includes('Prepara la call con Giulia Romano'), prep);
+  assert.ok(prep.includes('Appuntamento oggi alle 10:00 con Giulia Romano.'), prep);
+  assert.ok(!mount.findAll('section')[0].textContent.includes('ospite da confermare'), 'no stand-in left in the advisor');
+  assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
+  assert.equal(row().querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
+  assert.equal(execute.__focused, true);
+});
+
+// Review #746 (P2): «oggi/ieri/domani» compare Rome calendar days, never
+// now ± 24 h — the 23 h day of 29/03 and the 25 h day of 25/10 would skip
+// or repeat a day.
+test('7d30fb517785: oggi, ieri and domani hold across the DST change (29/03 and 25/10)', () => {
+  // 28/03/2026 23:30 in Rome (CET): tomorrow is the 23 h day of 29/03 —
+  // now + 24 h would land on 30/03 00:30 and call 29/03 neither.
+  const springEve = new Date('2026-03-28T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(springEve, 1), '2026-03-29');
+  assert.equal(romeDayPhrase('2026-03-29T08:00:00.000Z', springEve, 'del'), 'di domani');
+  // 30/03/2026 00:30 in Rome (CEST): yesterday is 29/03 — now − 24 h
+  // would land on 28/03 23:30.
+  const springAfter = new Date('2026-03-29T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(springAfter, 0), '2026-03-30');
+  assert.equal(romeDayKeyShift(springAfter, -1), '2026-03-29');
+  assert.equal(romeDayPhrase('2026-03-29T08:00:00.000Z', springAfter, 'il'), 'ieri');
+  // 25/10/2026 00:30 in Rome (CEST, the 25 h day): tomorrow is 26/10 —
+  // now + 24 h would land on 25/10 23:30, today again.
+  const autumn = new Date('2026-10-24T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(autumn, 0), '2026-10-25');
+  assert.equal(romeDayKeyShift(autumn, 1), '2026-10-26');
+  assert.equal(romeDayPhrase('2026-10-25T20:00:00.000Z', autumn, 'del'), 'di oggi', '25/10 21:00 in Rome is today');
+  assert.equal(romeDayPhrase('2026-10-26T08:00:00.000Z', autumn, 'del'), 'di domani');
+  const brief = buildPreCallBrief({ appointment: { ...APPT_TODAY, startsAt: '2026-10-26T09:00:00.000Z' }, now: autumn });
+  assert.equal(brief.when, 'domani alle 10:00', 'the brief says domani for 26/10');
+  assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00'), brief.bullets[0]);
+  assert.equal(romeDayKeyShift('not a date', 1), null);
 });

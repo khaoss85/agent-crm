@@ -12,6 +12,8 @@ import {
   personStatusLabel,
   personStepLabel,
   proposeSequenceFromPhrase,
+  renderSequenzaDettaglio,
+  renderSequenzeElenco,
   sequenceChannelLabel,
   sequenceDayLabel,
   sequenceQuandoLine,
@@ -246,6 +248,39 @@ test('hostile names are inert text, never markup', () => {
     assert.ok(name.textContent.includes('<script>alert(1)</script>'));
     assert.equal(name.findAll('script').length, 0);
   });
+});
+
+test('opening with sequences selects the first: detail visible without a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const other = { ...SEQUENCE, id: 8, sourceKey: 'seq-seconda', name: 'Seconda sequenza', status: 'active' };
+  const client = stubClient({ sequences: [SEQUENCE, other] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  assert.equal(view.state.selectedKey, 'seq-bentornato');
+  assert.ok(!mount.textContent.includes('Scegli una sequenza per vedere i passi'));
+  assert.ok(mount.textContent.includes('Passi'));
+  assert.ok(mount.textContent.includes('WhatsApp · Ciao, ci manchi'));
+  assert.ok(mount.textContent.includes('Persone nella sequenza'));
+  assert.ok(mount.textContent.includes('Giulia Rossi'));
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=seq-bentornato')), 'the first steps are read');
+});
+
+test('opening with a whitespace-only first sourceKey selects the elenco key, like a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const blank = { ...SEQUENCE, id: 7, sourceKey: '   ' };
+  const client = stubClient({ sequences: [blank] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  const elencoKey = buildSequenzeElenco({ sequences: [blank] })[0].sourceKey;
+  assert.equal(elencoKey, '7');
+  assert.equal(view.state.selectedKey, '7');
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=7')), 'auto-open and click query the same key');
 });
 
 test('full screen: elenco, dettaglio with passi, double-ask activate posts once', async () => {
@@ -848,7 +883,7 @@ test('a refused creation says so in Italian and keeps the panel', async () => {
   assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open with its text');
 });
 
-test('backlog:7cc35edab50c: a 502 creation reads connection-failed and Crea retries', async () => {
+test('backlog:7cc35edab50c + 7d30fb517785: a 502 creation reads server-not-answering and Crea retries', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const inner = createDriveClient();
@@ -878,7 +913,10 @@ test('backlog:7cc35edab50c: a 502 creation reads connection-failed and Crea retr
   setField(mount, 'seq-step-0-template', 'Ciao');
   mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
   await flush();
-  assert.ok(mount.textContent.includes('Connessione non riuscita, riprova.'), 'the 502 reads as a connection fault');
+  // backlog:7d30fb517785: the gateway answered 502 — the server is not
+  // answering, never «Connessione non riuscita» (that is for no answer).
+  assert.ok(mount.textContent.includes('Il server non risponde adesso, riprova tra poco.'), 'the 502 reads as a server not answering');
+  assert.ok(!mount.textContent.includes('Connessione non riuscita'), 'never a connection fault after an answer');
   assert.ok(!mount.textContent.includes('Scrittura del pannello rifiutata'), 'the generic refusal never shows');
   assert.ok(!mount.textContent.includes('502'), 'no raw status on screen');
   assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open for the retry');
@@ -909,4 +947,82 @@ test('Crea con l\u2019AI proposes without a POST and creates only on confirm', a
   assert.equal(posts.length, 1, 'confirming posts exactly once');
   assert.equal(posts[0].body.triggerLabel, 'offerta inviata');
   assert.ok(mount.textContent.includes('Quando offerta inviata'), 'the elenco shows the confirmed sequence');
+});
+
+test('backlog:1d6dc54f19db dettaglio mostra il passo whatsapp anche quando lo spazio del passo manca', async () => {
+  // Live pre-space rows (sequence-step revision 1 had no spaceId): the
+  // space-scoped steps read returns nothing while the key-only read carries
+  // the whatsapp passo. Before the cure the detail painted
+  // «Questa sequenza non ha passi registrati»; after it paints the passo.
+  const key = 'bo-seq-b6028139-live';
+  const preSpaceStep = {
+    id: 901, sequenceSourceKey: key, spaceId: null, stepOrder: 0, dayOffset: 0,
+    channel: 'whatsapp', templateName: 'Ciao, ci manchi', templateLanguage: 'it', templateVars: '[]',
+  };
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        assert.ok(path.includes(`filter.sequenceSourceKey=${encodeURIComponent(key)}`));
+        return { items: [preSpaceStep] };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, false);
+  assert.equal(outcome.rows.length, 1, 'the key-only retry recovers the pre-space passo');
+  const detail = buildSequenzaDettaglio({
+    sequence: { id: 77, sourceKey: key, spaceId: 'presti', name: 'Bentornato', status: 'draft' },
+    steps: outcome.rows,
+    enrollments: [],
+    sends: [],
+  });
+  assert.equal(detail.steps.length, 1);
+  assert.equal(detail.steps[0].channelLabel, 'WhatsApp');
+  assert.ok(detail.steps[0].title.includes('Ciao, ci manchi'));
+});
+
+test('backlog:1d6dc54f19db retry senza spazio che fallisce resta un errore, mai zero passi', async () => {
+  // P2 Codex su PR 755: lettura con spazio vuota + retry che lancia (rete,
+  // 500) dipingeva «non ha passi registrati». Resta failed: true.
+  const key = 'bo-seq-b6028139-retry-down';
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, true);
+  assert.deepEqual(outcome.rows, []);
+});
+
+test('Bozza wears the same ui-* chip class in elenco and dettaglio (backlog:05e53e77)', () => {
+  // Supervisor 2026-11-07.md:46: live painted Bozza green in the list and
+  // blue in the detail. Both renders must share one system chip class.
+  const doc = createFakeDocument();
+  const list = renderSequenzeElenco(doc, [SEQUENCE], ENROLLMENTS, SENDS, '', () => {});
+  const listChip = list.querySelector('.bo-seq-status');
+  assert.equal(listChip.textContent, 'Bozza');
+  const detail = buildSequenzaDettaglio({
+    sequence: SEQUENCE,
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  const detailRoot = renderSequenzaDettaglio(doc, detail, null, () => {}, () => {}, () => {}, false);
+  const detailChip = detailRoot.querySelector('.bo-seq-status');
+  assert.equal(detailChip.textContent, 'Bozza');
+  const chipClasses = (node) => String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  const listClasses = chipClasses(listChip);
+  assert.ok(listClasses.includes('ui-chip'), 'the elenco chip uses the system chip');
+  assert.ok(listClasses.includes('ui-chip-wa'), 'the elenco chip uses the prototype tint');
+  assert.deepEqual(chipClasses(detailChip), listClasses, 'the dettaglio paints the same chip class as the elenco');
 });
