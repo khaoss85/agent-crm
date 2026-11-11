@@ -485,7 +485,7 @@ test('Lista view renders the same filtered records as a read-only table', async 
   const rows = list.findAll('tr').filter((row) => row.getAttribute('data-record') !== null);
   assert.equal(rows.length, 5, 'all placed records are listed');
   assert.ok(rows[0].textContent.includes('Discovery'), 'stage renders as its label');
-  assert.ok(rows[0].textContent.includes('alice'), 'referente is visible');
+  assert.ok(rows[0].textContent.includes('Alice'), 'referente is visible');
   assert.ok(rows[0].textContent.includes('2026-11-01'), 'expected close renders as a day');
 
   const kanbanButton = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'kanban');
@@ -518,7 +518,7 @@ test('search and the Referente, Creata, Stati pills narrow both views (C8)', asy
 
   pickVoice(mount, 'owner', 'bob');
   assert.match(summaryText(mount), /2 offerte/, 'Referente pill keeps only bob’s cards');
-  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente bob'), 'the pill names the active referente');
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente Bob'), 'the pill names the active referente');
 
   pickVoice(mount, 'stage', 'discovery');
   assert.match(summaryText(mount), /1 offerta/, 'Stati pill intersects with Referente');
@@ -610,7 +610,7 @@ test('forecast names the highest-value open offer when one currency is in play',
   const box = forecastBox(mount);
   assert.ok(box, 'a forecast section exists');
   assert.ok(
-    box.textContent.includes('Il rischio più alto è alice.'),
+    box.textContent.includes('Il rischio più alto è Alice.'),
     `the risk names the owner of the highest-value open offer (${box.textContent})`,
   );
 });
@@ -1088,7 +1088,7 @@ test('pipeline lista follows the prototype: headers order, pill, probability, da
   assert.equal(cells[3].textContent, '10%', 'probabilità shows the discovery stage probability');
   assert.equal(cells[4].textContent, '2026-11-20', 'chiusura shows the expected close day');
   assert.equal(cells[5].textContent, '2026-10-02', 'creata shows the creation day');
-  assert.ok(cells[6].textContent.includes('maria'), 'referente shows the owner');
+  assert.ok(cells[6].textContent.includes('Maria'), 'referente shows the owner');
 
   // C21: an empty filter shows the exact prototype message.
   const search = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
@@ -1210,7 +1210,7 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   const cardA = ownerOf('a');
   assert.ok(cardA, 'card a shows the referente initials');
   assert.equal(cardA.getAttribute('title'), 'Maria Rossi', 'the badge title names the referente');
-  assert.equal(ownerOf('b').getAttribute('title'), 'maria', 'single-word names keep their title');
+  assert.equal(ownerOf('b').getAttribute('title'), 'Maria', 'single-word names read as a name in the title');
   assert.equal(ownerOf('c').textContent, 'P', 'single-word names badge the first letter');
 
   const closeOf = (id) => mount.findAll('div')

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
+import { auditActorLabel, memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
 import { memberLabelFor, personRows, resolveMemberName } from '../apps/admin/public/admin-calendario.js';
 import { buildTeamRows } from '../apps/admin/public/admin-spazi-accessi.js';
 import { createReportingView, withPersonNames } from '../apps/admin/public/admin-reporting.js';
@@ -334,4 +334,58 @@ test('Pipeline: the referente filter, the card badge and the list name the perso
   const text = textOf(mount);
   assert.match(text, /Guido Bianchi/);
   assert.doesNotMatch(text, TECHNICAL);
+});
+test('design check #750: an id with no person behind it reads as a name, never raw', async () => {
+  // Calendario: the week names «marco» and «sara», the roster knows neither.
+  assert.deepEqual(personRows(['marco', 'sara'], [], null).map((row) => row.label), ['Marco', 'Sara']);
+  assert.equal(memberLabelFor('sara', [], []), 'Sara');
+  // …and once the roster joins «marco» to Marco Ferri, the row is the person.
+  const roster = [
+    { subject: 'google|1002', displayName: 'Marco Ferri', email: 'marco@studioaurora.it', operatorAccountId: 'op-marco' },
+    { subject: 'marco', operatorAccountId: 'op-marco' },
+  ];
+  const rows = personRows(['marco', 'sara'], [], roster);
+  assert.deepEqual(rows.map((row) => row.label), ['Marco Ferri', 'Sara']);
+  assert.deepEqual(rows[0].ids.sort(), ['google|1002', 'marco']);
+  // Reporting: owners «alice» and «bob» with no roster read Alice and Bob,
+  // and the chips take their initials from that name.
+  const model = { ...dashboard(), owners: ['alice', 'bob'], team: [
+    { owner: 'alice', openCount: 1, openMinor: 100, wonCount: 0, wonMinor: 0, winRateDisplay: 'n.d.' },
+    { owner: 'bob', openCount: 1, openMinor: 100, wonCount: 0, wonMinor: 0, winRateDisplay: 'n.d.' },
+  ], insights: [{ text: 'alice tiene molto aperto: propone di spostare i lead a bob.' }] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createReportingView({
+    doc, mount, navigate: () => {}, log: () => {}, download: () => {},
+    client: { request: async (path) => (path.includes('/api/reporting/dashboard') ? model : { items: [] }) },
+  });
+  await view.renderReporting();
+  const chips = mount.findAll('button').filter((node) => node.getAttribute('data-owner') !== null);
+  assert.deepEqual(chips.map((node) => [node.textContent, node.getAttribute('title')]), [['A', 'Alice'], ['B', 'Bob']]);
+  const text = textOf(mount);
+  assert.match(text, /Alice tiene molto aperto: propone di spostare i lead a Bob\./);
+  assert.doesNotMatch(text, /\balice\b|\bbob\b/);
+});
+
+test('review follow-up (backlog:e52c5e0dd49f): «Cosa noto» never rewrites inside hyphenated ids or mailboxes', () => {
+  const roster = [{ subject: 'guido', displayName: 'Guido Bianchi' }];
+  const model = {
+    owners: ['guido'], team: [],
+    insights: [{ text: 'coach-guido scrive a guido.rossi@esempio.it: senti guido.' }],
+  };
+  assert.equal(
+    withPersonNames(model, roster).insights[0].text,
+    'coach-guido scrive a guido.rossi@esempio.it: senti Guido Bianchi.',
+    'a short owner stays out of longer hyphenated ids and mailboxes',
+  );
+});
+
+test('review follow-up (backlog:e52c5e0dd49f): auditActorLabel corroboration paints words, never the raw id', () => {
+  assert.equal(auditActorLabel({ actorId: 'coach-guido' }, ['coach-guido'], []), 'Coach Guido');
+  assert.equal(auditActorLabel({ actorId: 'Guido Bianchi' }, ['Guido Bianchi'], []), 'Guido Bianchi');
+  assert.equal(
+    auditActorLabel({ actorId: 'mario.rossi@esempio.it' }, ['mario.rossi@esempio.it'], []),
+    'mario.rossi@esempio.it',
+  );
+  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), 'utente');
 });

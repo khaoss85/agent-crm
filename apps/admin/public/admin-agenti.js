@@ -46,6 +46,15 @@ import { el, uiBadge, uiButton, uiEmpty } from './admin-ui.js';
 /** How many rows each module read takes: one page, said out loud. */
 export const AGENTI_READ_LIMIT = 200;
 
+/**
+ * Backlog 2df6a513cc4d: the worker runs an assignment after Affida, so the
+ * card reads «In attesa di partire» until the first run lands. The screen
+ * reads again on its own: every AGENTI_POLL_MS while it is shown, plus one
+ * read at each AGENTI_FOLLOWUP_MS delay after an Affida that succeeded.
+ */
+export const AGENTI_POLL_MS = 20_000;
+export const AGENTI_FOLLOWUP_MS = Object.freeze([10_000, 30_000]);
+
 export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In pausa' });
 
 /** The one autonomy the package supports: proposals always wait. */
@@ -588,11 +597,85 @@ function romeStamp(iso) {
  * The Agenti screen.
  * @param {{ doc?: any, mount: any, client: any, submissions?: any, storage?: any, spaceId?: () => (string | null), navigate?: (hash: string) => void, now?: () => string }} deps
  */
-export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString() }) {
+export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer }) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
   const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
+  const later = typeof setTimer === 'function' ? setTimer : (fn, ms) => setTimeout(fn, ms);
+  const forget = typeof clearTimer === 'function' ? clearTimer : (id) => clearTimeout(id);
   let renderToken = 0;
+  /** Backlog 2df6a513cc4d: the self-refresh below lives here. */
+  let polling = false;
+  let pollTimer = null;
+  const followupTimers = new Set();
+  function arm(fn, ms) {
+    let handle = null;
+    try {
+      handle = later(fn, ms);
+    } catch {
+      handle = null;
+    }
+    try {
+      handle?.unref?.();
+    } catch {
+      // Browsers answer a number: nothing to release.
+    }
+    return handle;
+  }
+  function stopAutoRefresh() {
+    polling = false;
+    if (pollTimer !== null) {
+      try {
+        forget(pollTimer);
+      } catch {
+        // Stopping is best-effort.
+      }
+      pollTimer = null;
+    }
+    for (const handle of [...followupTimers]) {
+      try {
+        forget(handle);
+      } catch {
+        // Stopping is best-effort.
+      }
+    }
+    followupTimers.clear();
+  }
+  function schedulePoll() {
+    if (!polling || pollTimer !== null) return;
+    pollTimer = arm(() => {
+      pollTimer = null;
+      if (!polling) return;
+      pollOnce();
+    }, AGENTI_POLL_MS);
+  }
+  async function pollOnce() {
+    try {
+      if (!polling || !state.space || readSpace() !== state.space) return;
+      if (documentNode && documentNode.visibilityState === 'hidden') return;
+      if (await reload()) paint();
+    } catch {
+      // A failed poll only waits for the next one, never breaks the screen.
+    } finally {
+      schedulePoll();
+    }
+  }
+  function scheduleFollowups() {
+    if (!polling) return;
+    for (const ms of AGENTI_FOLLOWUP_MS) {
+      const handle = arm(async () => {
+        followupTimers.delete(handle);
+        if (!polling) return;
+        try {
+          if (!state.space || readSpace() !== state.space) return;
+          if (await reload()) paint();
+        } catch {
+          // The next follow-up or poll still comes.
+        }
+      }, ms);
+      if (handle !== null && handle !== undefined) followupTimers.add(handle);
+    }
+  }
   const state = {
     loaded: false,
     available: false,
@@ -639,6 +722,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function invalidate() {
     renderToken += 1;
+    stopAutoRefresh();
   }
 
   function draftOf(key) {
@@ -849,6 +933,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       draft.attempt = null;
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`;
       if (await reload()) paint();
+      // Backlog 2df6a513cc4d: the run lands after this answer, so read
+      // again twice: the card leaves «In attesa di partire» on its own.
+      scheduleFollowups();
     } catch (error) {
       draft.busy = false;
       if (isPhraseUnclear(error)) {
@@ -1181,6 +1268,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   async function render() {
+    stopAutoRefresh();
+    polling = true;
     const space = readSpace();
     if (space !== state.space) {
       state.space = space;
@@ -1195,6 +1284,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.loaded = false;
     paint();
     if (await reload()) paint();
+    // Backlog 2df6a513cc4d: keep reading while the screen is shown, so a
+    // run that lands after Affida paints without a manual reload.
+    schedulePoll();
   }
 
   return { render, paint, state, invalidate };

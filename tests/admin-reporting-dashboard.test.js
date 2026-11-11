@@ -181,7 +181,7 @@ test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', as
   assert.match(text, /non è una promessa/);
   assert.match(text, /Team e vendite/);
   assert.match(text, /Cosa noto/);
-  assert.ok(mount.findAll('td').map((node) => node.textContent).includes('alice'));
+  assert.ok(mount.findAll('td').map((node) => node.textContent).includes('Alice'));
 });
 
 test('ownerSigla renders person initials, never a guess', () => {
@@ -204,8 +204,8 @@ test('periodo/persona filters refetch the registry (ricalcolo)', async () => {
   const bob = mount.findAll('button').find((node) => node.getAttribute('data-owner') === 'bob');
   assert.ok(bob, 'the persona filter renders from the model owners');
   assert.equal(bob.textContent, 'B', 'the persona filter shows the owner sigla, not the name');
-  assert.equal(bob.getAttribute('title'), 'bob', 'the full name stays on the title');
-  assert.equal(bob.getAttribute('aria-label'), 'bob', 'the accessible name is the full owner, not the sigla');
+  assert.equal(bob.getAttribute('title'), 'Bob', 'the full name stays on the title');
+  assert.equal(bob.getAttribute('aria-label'), 'Bob', 'the accessible name is the full owner, not the sigla');
   bob.dispatch('click', {});
   await tick();
   const second = requests.filter((path) => path.includes('/api/reporting/dashboard'));
@@ -704,7 +704,7 @@ test('c3e66b36ddb7: «Cosa noto» is the violet card and still only proposes', a
   await view.renderReporting();
   const [card] = byClass(mount, 'section', 'bo-cosa-noto');
   assert.ok(card, 'the insights wear the AI card');
-  assert.deepEqual(byClass(card, 'p', 'bo-cosa-noto-item').map((node) => node.textContent), [MODEL.insights[0].text]);
+  assert.deepEqual(byClass(card, 'p', 'bo-cosa-noto-item').map((node) => node.textContent), ['Alice tiene molto aperto con il tasso più basso: propone di spostare i lead senza data a Bob.']);
   const before = requests.length;
   card.findAll('button')[0].dispatch('click', {});
   await tick();

@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, memberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**

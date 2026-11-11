@@ -556,8 +556,15 @@ const DEMO_SPACES = [
 const DEMO_MEMBERS = [
   { subject: 'broker|owner-1', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
   { subject: 'google|1001', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'Elena@studioaurora.it' },
-  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it' },
+  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it', operatorAccountId: 'op-marco' },
+  // The calendar books Marco as `marco` (the week's teamMemberId): the same
+  // person key joins it to Marco Ferri, so the shots prove the per-person
+  // union, not only the fallback (design check #750).
+  { subject: 'marco', role: 'operator', status: 'active', operatorAccountId: 'op-marco' },
 ];
+
+// Sara as the calendar roster names her (the week books her as «sara»).
+const DEMO_SARA = { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara Conti', email: 'sara@studioaurora.it' };
 
 // The connectors screen (BO-F6-02): every catalog channel has a composed
 // fake adapter and no connection yet, so all eight rows paint the
@@ -941,8 +948,13 @@ const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
 // backlog:913c61ec: a phrase with a time proposes that time only, so the shot
 // drafts a day without a time («giovedì») to paint two proposals and a ghost.
 const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', day: '2026-10-22', durationMinutes: 30, notes: 'taglio per Ada' };
+// The space roster (design check #750): the week books «marco» and «sara»;
+// the roster joins «marco» to Marco Ferri (google|1002) by person key and
+// names Sara, so Team and «Scegli una persona…» paint people, never ids.
+const MEMBERS = ${JSON.stringify([...DEMO_MEMBERS, DEMO_SARA])};
 const client = {
   async request(path) {
+    if (path === '/api/spine/memberships') return { items: MEMBERS };
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
     // Block titles read the catalog service names (backlog:5fbebe8559e9);
     // the demo has no customer profiles, so the row labels name them.
@@ -954,7 +966,9 @@ const client = {
     }
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
-      return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
+      // Marco holds two identities (marco, google|1002): the search asks for
+      // the whole person, both answer the same free slots.
+      return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }, { teamMemberId: 'google|1002', slots: SLOTS }] };
     }
     throw new Error('unexpected ' + path);
   },
@@ -973,9 +987,7 @@ const view = createCalendarioView({
   now: () => new Date('2026-10-22T10:00:00Z'),
 });
 await view.render();
-byName('members').value = 'marco, sara';
-byName('members').dispatchEvent(new Event('input', { bubbles: true }));
-click('Mostra settimana');
+// The roster loads the whole team's week by itself: no typed filter.
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
 document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';

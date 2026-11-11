@@ -204,15 +204,18 @@ export function memberText(value) {
  * A stored id (a roster subject, an offer referente, a reporting owner) as
  * words, or null (backlog:b3d88f6e38ef, ddf7f416ad22): a technical id never
  * shows, a slug reads as words («coach-guido» → «Coach Guido»; one with
- * digits, like «user-12345» or a UUID, names nobody), anything else — a
- * typed name, a real mailbox — reads as itself.
+ * digits, like «user-12345» or a UUID, names nobody), a one-word
+ * lower-case id reads as a name («marco» → «Marco», design check #750),
+ * anything else — a typed name, a real mailbox — reads as itself.
  * @param {unknown} value
  * @returns {string | null}
  */
 export function subjectText(value) {
   const text = memberText(value);
   if (text === null) return null;
-  return SLUG_SHAPE.test(text) ? slugAsName(text) : text;
+  if (SLUG_SHAPE.test(text)) return slugAsName(text);
+  if (/^[a-zà-ÿ]+$/.test(text)) return text.charAt(0).toUpperCase() + text.slice(1);
+  return text;
 }
 
 /**
@@ -587,5 +590,9 @@ export function auditActorLabel(entry, known = [], roster = []) {
   if (isTechnicalMemberText(id)) return 'utente';
   if (UUID_SHAPE.test(id) || SERVICE_ACTORS.has(id)) return 'utente';
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
-  return names.includes(id) ? id : 'utente';
+  // A corroborated slug still paints as words, never the raw stored id
+  // («coach-guido» reads «Coach Guido», a digit slug names nobody and
+  // stays «utente»); any other corroborated value paints verbatim, like
+  // the scheda tests read it («elena», a typed name, a real mailbox).
+  return names.includes(id) ? (SLUG_SHAPE.test(id) ? (subjectText(id) ?? 'utente') : id) : 'utente';
 }
